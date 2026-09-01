@@ -474,10 +474,11 @@ export async function runSandboxShell(
   options: {
     artifactName: string;
     redactionValues: string[];
+    sandboxName?: string;
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
-  return sandbox.exec(SANDBOX_NAME, buildSandboxShellInvocation(script), {
+  return sandbox.exec(options.sandboxName ?? SANDBOX_NAME, buildSandboxShellInvocation(script), {
     artifactName: options.artifactName,
     env: sandboxAccessEnv(),
     redactionValues: options.redactionValues,
@@ -634,6 +635,7 @@ export async function sandboxOutput(
 
 export async function rawTokenSurfaceProbe(
   sandbox: SandboxClient,
+  sandboxName: string,
   token: string,
   surface: "env" | "process" | "filesystem",
   artifactName: string,
@@ -649,7 +651,13 @@ if env 2>/dev/null | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
         : `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 match="$(grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"
 if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
-  return sandboxOutput(sandbox, probe, artifactName, redactionValues);
+  const result = await runSandboxShell(sandbox, probe, {
+    artifactName,
+    redactionValues,
+    sandboxName,
+  });
+  expectExitZero(result, artifactName);
+  return result.stdout.trim();
 }
 
 async function collectFakeApiStartupDiagnostics(

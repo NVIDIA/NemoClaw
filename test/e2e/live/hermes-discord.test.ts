@@ -12,13 +12,13 @@ import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts"
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import {
   applyFakeApiPolicy,
   assertDiscordGatewayCapture,
   type FakeDockerApi,
+  rawTokenSurfaceProbe,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
 import {
@@ -297,27 +297,6 @@ async function assertRawTokenAbsentFromFiles(
   );
   expectExitZero(probe, "raw Discord token config probe");
   expect(probe.stdout.trim()).toBe("OK");
-}
-
-async function rawTokenSurfaceProbe(
-  sandbox: SandboxClient,
-  token: string,
-  surface: "env" | "process" | "filesystem",
-  artifactName: string,
-  redactionValues: string[],
-): Promise<ShellProbeResult> {
-  const tokenB64 = Buffer.from(token, "utf8").toString("base64");
-  const script =
-    surface === "env"
-      ? `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nif env 2>/dev/null | grep -Fq "$token"; then echo FOUND_TOKEN; elif env 2>/dev/null | grep -q '^DISCORD_PROXY='; then echo FOUND_DISCORD_PROXY; else echo ABSENT; fi`
-      : surface === "process"
-        ? buildProcessTokenProbe(token)
-        : `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nhit="$(grep -rFlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"\nif [ -n "$hit" ]; then printf 'FOUND_TOKEN %s\\n' "$hit"; else echo ABSENT; fi`;
-  return sandboxShWithArgs(sandbox, SANDBOX_NAME, script, [], {
-    artifactName,
-    redactionValues,
-    timeoutMs: surface === "filesystem" ? 120_000 : 60_000,
-  });
 }
 
 test("hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite", {
@@ -602,33 +581,33 @@ PY`,
 
   const envSurface = await rawTokenSurfaceProbe(
     sandbox,
+    SANDBOX_NAME,
     DISCORD_TOKEN,
     "env",
     "phase-5-raw-token-env-probe",
     redactionValues,
   );
-  expectExitZero(envSurface, "sandbox environment token isolation");
-  expect(envSurface.stdout.trim()).toBe("ABSENT");
+  expect(envSurface).toBe("ABSENT");
 
   const processSurface = await rawTokenSurfaceProbe(
     sandbox,
+    SANDBOX_NAME,
     DISCORD_TOKEN,
     "process",
     "phase-5-raw-token-process-probe",
     redactionValues,
   );
-  expectExitZero(processSurface, "sandbox process token isolation");
-  expect(processSurface.stdout.trim()).toBe("ABSENT");
+  expect(processSurface).toBe("ABSENT");
 
   const filesystemSurface = await rawTokenSurfaceProbe(
     sandbox,
+    SANDBOX_NAME,
     DISCORD_TOKEN,
     "filesystem",
     "phase-5-raw-token-filesystem-probe",
     redactionValues,
   );
-  expectExitZero(filesystemSurface, "sandbox filesystem token isolation");
-  expect(filesystemSurface.stdout.trim()).toBe("ABSENT");
+  expect(filesystemSurface).toBe("ABSENT");
 
   const discordApi = await sandboxNode(
     sandbox,

@@ -464,6 +464,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       for (const surface of ["env", "process", "filesystem"] as const) {
         const probe = await rawTokenSurfaceProbe(
           sandbox,
+          SANDBOX_NAME,
           token,
           surface,
           `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${surface}-leak-probe`,

@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { CommandRunner } from "../fixtures/clients/command.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -24,6 +25,7 @@ import {
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
+  rawTokenSurfaceProbe,
   startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
 import {
@@ -310,6 +312,39 @@ function fakeDockerHost(
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("runs the shared raw-token probe against the caller's sandbox", async () => {
+    const token = "raw-token-probe-must-not-enter-argv";
+    let observedSandbox = "";
+    let observedInvocation: string[] = [];
+    let observedArtifact = "";
+    const sandbox = {
+      async exec(
+        sandboxName: string,
+        invocation: string[],
+        options: { artifactName?: string },
+      ) {
+        observedSandbox = sandboxName;
+        observedInvocation = invocation;
+        observedArtifact = options.artifactName ?? "";
+        return successfulShellResult(["openshell", "sandbox", "exec"], "ABSENT\n");
+      },
+    } as unknown as SandboxClient;
+
+    const output = await rawTokenSurfaceProbe(
+      sandbox,
+      "e2e-hermes-discord",
+      token,
+      "env",
+      "hermes-raw-token-env",
+      [token],
+    );
+
+    expect(output).toBe("ABSENT");
+    expect(observedSandbox).toBe("e2e-hermes-discord");
+    expect(observedArtifact).toBe("hermes-raw-token-env");
+    expect(JSON.stringify(observedInvocation)).not.toContain(token);
+  });
+
   it("applies mixed fake API endpoints and bindings through one policy transition", async () => {
     const calls: Array<{
       command: string;
