@@ -329,12 +329,14 @@ describe("live OpenShell policy mutations", () => {
   });
 
   it("loads a live custom preset without reporting a built-in miss (#10775)", () => {
+    vi.mocked(console.error).mockClear();
     expect(
       applyPresetContent(sandboxName, "fixture-weather", preset, {
         custom: { sourcePath: "/tmp/weather.yaml" },
         nonFatal: true,
       }),
     ).toBe(true);
+    expect(console.error).not.toHaveBeenCalled();
     vi.mocked(console.error).mockClear();
 
     expect(loadPresetForSandbox(sandboxName, "fixture-weather")).toContain(
