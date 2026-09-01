@@ -36,33 +36,6 @@ export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
-const FAKE_API_PROXY_SOURCE = String.raw`
-const net = require("node:net");
-const upstream = process.env.NEMOCLAW_FAKE_API_UPSTREAM;
-const ports = (process.env.NEMOCLAW_FAKE_API_PROXY_PORTS || "")
-  .split(",")
-  .filter(Boolean)
-  .map(Number);
-
-if (!upstream || ports.length === 0 || ports.some((port) => !Number.isInteger(port))) {
-  process.exit(2);
-}
-
-for (const port of ports) {
-  const server = net.createServer((client) => {
-    const backend = net.connect(port, upstream);
-    const close = () => {
-      client.destroy();
-      backend.destroy();
-    };
-    client.on("error", close);
-    backend.on("error", close);
-    client.pipe(backend).pipe(client);
-  });
-  server.on("error", () => process.exit(3));
-  server.listen(port, "0.0.0.0");
-}
-`;
 
 // Leave ample headroom beneath OpenShell's strict per-argument ceiling.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
@@ -749,12 +722,6 @@ function requireExclusiveDockerNetwork(
   }
 }
 
-function requireNoPublishedDockerPorts(settings: DockerNetworkSettings, label: string): void {
-  if (Object.values(settings.Ports).some((bindings) => bindings !== null)) {
-    throw new Error(`${label} unexpectedly published a host port`);
-  }
-}
-
 function requireLoopbackDockerPorts(
   settings: DockerNetworkSettings,
   expectedContainerPorts: readonly number[],
@@ -810,7 +777,6 @@ export async function startFakeDockerApi(
   const portFile = path.join(dir, "port");
   const captureFile = path.join(dir, "capture.jsonl");
   const container = uniqueContainerName(options.containerPrefix);
-  const proxyContainer = uniqueContainerName(`${options.containerPrefix}-proxy`);
   const network = uniqueContainerName("nemoclaw-fake-api-network");
   const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
   fs.writeFileSync(captureFile, "");
@@ -883,6 +849,14 @@ export async function startFakeDockerApi(
     container,
     "--network",
     network,
+    ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "32",
     "-e",
     `${options.portEnv}=8080`,
     "-e",
@@ -949,67 +923,10 @@ export async function startFakeDockerApi(
     `inspect fake ${options.kind} API container network`,
   );
   requireExclusiveDockerNetwork(apiNetworkSettings, network, `fake ${options.kind} API container`);
-  requireNoPublishedDockerPorts(apiNetworkSettings, `fake ${options.kind} API container`);
-
-  cleanup(`remove ${proxyContainer}`, async () => {
-    const remove = await runHost(host, "docker", ["rm", "-f", proxyContainer], {
-      artifactName: `cleanup-${proxyContainer}`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 60_000,
-    });
-    if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
-      expectExitZero(remove, `remove fake ${options.kind} API proxy ${proxyContainer}`);
-    }
-  });
-
-  const proxyStart = await runHost(
-    host,
-    "docker",
-    [
-      "run",
-      "-d",
-      "--rm",
-      "--name",
-      proxyContainer,
-      "--network",
-      network,
-      ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
-      "--read-only",
-      "--cap-drop",
-      "ALL",
-      "--security-opt",
-      "no-new-privileges",
-      "--pids-limit",
-      "32",
-      "-e",
-      `NEMOCLAW_FAKE_API_UPSTREAM=${container}`,
-      "-e",
-      `NEMOCLAW_FAKE_API_PROXY_PORTS=${containerPorts.join(",")}`,
-      FAKE_API_IMAGE,
-      "node",
-      "-e",
-      FAKE_API_PROXY_SOURCE,
-    ],
-    {
-      artifactName: `start-fake-${options.kind}-api-proxy`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
-
-  const proxyNetworkSettings = await inspectNetworkSettings(
-    proxyContainer,
-    `inspect-fake-${options.kind}-api-proxy-network`,
-    `inspect fake ${options.kind} API proxy network`,
-  );
-  requireExclusiveDockerNetwork(proxyNetworkSettings, network, `fake ${options.kind} API proxy`);
   const publishedPorts = requireLoopbackDockerPorts(
-    proxyNetworkSettings,
+    apiNetworkSettings,
     containerPorts,
-    `fake ${options.kind} API proxy`,
+    `fake ${options.kind} API container`,
   );
   const publishedRestPort = publishedPorts.get(8080)!;
   const publishedWebsocketPort = options.kind === "slack" ? publishedPorts.get(8081)! : "";

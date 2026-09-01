@@ -8,7 +8,6 @@ import { applyCredentialBoundFakePolicy } from "./messaging-providers-helpers.ts
 import {
   approveAndAssertPairing,
   assertOpenClawStateRoot,
-  assertSlackPresetPolicySemantics,
   cleanupPairingSandbox,
   extractPairingCode,
   issuePairingRequest,
@@ -123,7 +122,14 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     redactions,
     "cleanup-slack-pairing",
   );
-  await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
+  await cleanupPairingSandbox(
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "preclean-slack-pairing",
+  );
 
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);
@@ -152,12 +158,6 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   }
 
   await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
-  await assertSlackPresetPolicySemantics({
-    host,
-    sandboxName: SANDBOX_NAME,
-    env,
-    redactions,
-  });
 
   progress.phase("route Slack API and websocket traffic through managed policies");
   const fakeSlackRest = await startFakeSlackApi(

@@ -81,7 +81,14 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
     redactions,
     "cleanup-discord-pairing",
   );
-  await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-discord-pairing");
+  await cleanupPairingSandbox(
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "preclean-discord-pairing",
+  );
 
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);

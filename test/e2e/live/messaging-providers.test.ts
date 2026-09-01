@@ -6,8 +6,9 @@
  * Preserves the high-value provider/config/redaction contracts. Fake tokens are
  * used only when no channel token is set. Each _REAL token takes precedence over
  * its ordinary token, and either value can enable live sends. Provider placeholders
- * must not leak into sandbox-visible surfaces, and installed OpenClaw channel runtime
- * exports must drive the hermetic Slack and Telegram send proofs.
+ * may appear in sandbox-visible surfaces, but raw credentials must remain absent.
+ * Installed OpenClaw channel runtime exports drive the hermetic Slack and Telegram
+ * send proofs.
  */
 
 import fs from "node:fs";

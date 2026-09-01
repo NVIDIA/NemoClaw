@@ -11,9 +11,9 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/credential-policy-boundary-build.ts";
+import { bindCredentialPolicyDocument } from "../fixtures/credential-policy-transaction.ts";
 import { managedRegistrationSource, SANDBOX_ID } from "../../helpers/live-policy-fixture.ts";
 
-const HELPER = path.resolve(import.meta.dirname, "../fixtures/credential-policy-binding.ts");
 const TRANSACTION = path.resolve(
   import.meta.dirname,
   "../fixtures/credential-policy-transaction.ts",
@@ -24,24 +24,6 @@ const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const SPAWN_TEST_TIMEOUT_MS = 15_000;
 const tempDirs: string[] = [];
-
-function runBinding(policyFile: string, protocol = "websocket") {
-  return spawnSync(
-    process.execPath,
-    [
-      "--disable-warning=DEP0205",
-      "--import",
-      "tsx",
-      HELPER,
-      policyFile,
-      "e2e-messaging-bridge",
-      "host.docker.internal",
-      "43117",
-      protocol,
-    ],
-    { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
-  );
-}
 
 describe("credential-bound E2E policy endpoint", () => {
   beforeAll(async () => {
@@ -62,11 +44,7 @@ describe("credential-bound E2E policy endpoint", () => {
   it(
     "strips OpenShell revision metadata before binding the requested endpoint",
     () => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-policy-"));
-      tempDirs.push(tempDir);
-      const policyFile = path.join(tempDir, "policy.yaml");
-      fs.writeFileSync(
-        policyFile,
+      const result = bindCredentialPolicyDocument(
         [
           "Config rev:   15880558010371530494",
           "---",
@@ -81,13 +59,13 @@ describe("credential-bound E2E policy endpoint", () => {
           "        port: 443",
           "",
         ].join("\n"),
+        "e2e-messaging-bridge",
+        "host.docker.internal",
+        43117,
+        "websocket",
       );
 
-      const result = runBinding(policyFile);
-
-      expect(result.stderr).toBe("");
-      expect(result.status).toBe(0);
-      expect(YAML.parse(fs.readFileSync(policyFile, "utf8"))).toEqual({
+      expect(YAML.parse(result)).toEqual({
         version: 1,
         network_policies: {
           fake: {
@@ -103,7 +81,6 @@ describe("credential-bound E2E policy endpoint", () => {
           },
         },
       });
-      expect(fs.statSync(policyFile).mode & 0o777).toBe(0o600);
     },
     SPAWN_TEST_TIMEOUT_MS,
   );
@@ -111,28 +88,15 @@ describe("credential-bound E2E policy endpoint", () => {
   it(
     "rejects a missing protocol before choosing among shared endpoints (#10155)",
     () => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
-      tempDirs.push(tempDir);
-      const policyFile = path.join(tempDir, "policy.yaml");
-      fs.writeFileSync(policyFile, "version: 1\nnetwork_policies: {}\n");
-
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--disable-warning=DEP0205",
-          "--import",
-          "tsx",
-          HELPER,
-          policyFile,
+      expect(() =>
+        bindCredentialPolicyDocument(
+          "version: 1\nnetwork_policies:\n  fake:\n    endpoints:\n      - host: host.docker.internal\n        port: 43117\n        protocol: websocket\n",
           "e2e-messaging-bridge",
           "host.docker.internal",
-          "43117",
-        ],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
-      );
-
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("<protocol>");
+          43117,
+          "",
+        ),
+      ).toThrow("credential-bound endpoint is missing from the base policy");
     },
     SPAWN_TEST_TIMEOUT_MS,
   );
@@ -140,11 +104,7 @@ describe("credential-bound E2E policy endpoint", () => {
   it.each(["rest", "websocket"] as const)(
     "binds only the requested %s protocol when a fake host and port are shared",
     (protocol) => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
-      tempDirs.push(tempDir);
-      const policyFile = path.join(tempDir, "policy.yaml");
-      fs.writeFileSync(
-        policyFile,
+      const result = bindCredentialPolicyDocument(
         [
           "version: 1",
           "network_policies:",
@@ -158,14 +118,14 @@ describe("credential-bound E2E policy endpoint", () => {
           "        protocol: websocket",
           "",
         ].join("\n"),
+        "e2e-messaging-bridge",
+        "host.docker.internal",
+        43117,
+        protocol,
       );
-
-      const result = runBinding(policyFile, protocol);
-      const endpoints = YAML.parse(fs.readFileSync(policyFile, "utf8")).network_policies.fake
-        .endpoints as Array<Record<string, unknown>>;
-
-      expect(result.stderr).toBe("");
-      expect(result.status).toBe(0);
+      const endpoints = YAML.parse(result).network_policies.fake.endpoints as Array<
+        Record<string, unknown>
+      >;
       const requestedIndex = protocol === "rest" ? 0 : 1;
       expect(endpoints[requestedIndex]).toHaveProperty("credential_binding", {
         provider: "e2e-messaging-bridge",

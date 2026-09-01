@@ -12,15 +12,14 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   type FakeDockerApi,
+  precleanMessagingResources,
   runDiscordGatewayClient,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
 import {
-  cleanupSandbox,
   expectExitZero,
   phase6Env,
   resultText,
-  runSecondaryCleanup,
   sandboxSh,
   sandboxShWithArgs,
   shellQuote,
@@ -74,69 +73,18 @@ export function pairingRedactions(options: {
 
 export async function cleanupPairingSandbox(
   host: HostCliClient,
+  sandbox: Pick<SandboxClient, "cleanupSandbox">,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
   redactions: string[],
   prefix: string,
 ): Promise<void> {
-  await cleanupSandbox(host, sandboxName, env, redactions, prefix);
-  await runSecondaryCleanup(() =>
-    host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: `${prefix}-openshell-gateway-destroy`,
-      env,
-      redactionValues: redactions,
-      timeoutMs: 120_000,
-    }),
-  );
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function policyEndpointBlock(text: string, host: string): string {
-  const lines = text.split(/\r?\n/);
-  const hostPattern = new RegExp(`^\\s*-\\s+host:\\s*["']?${escapeRegExp(host)}["']?\\s*$`);
-  const start = lines.findIndex((line) => hostPattern.test(line));
-  expect(start, `Slack policy includes endpoint block for ${host}`).toBeGreaterThanOrEqual(0);
-  const next = lines.findIndex((line, index) => index > start && /^\s*-\s+host:\s*/.test(line));
-  return lines.slice(start, next === -1 ? undefined : next).join("\n");
-}
-
-export async function assertSlackPresetPolicySemantics(options: {
-  host: HostCliClient;
-  sandboxName: string;
-  env: NodeJS.ProcessEnv;
-  redactions: string[];
-}): Promise<void> {
-  const policy = await options.host.command(
-    "openshell",
-    ["policy", "get", "--full", options.sandboxName],
-    {
-      artifactName: "slack-preset-policy-before-fake-overrides",
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(policy, "Slack preset policy before fake-host overrides");
-  const text = resultText(policy);
-  const requiredRestHosts = ["slack.com", "api.slack.com", "hooks.slack.com"];
-  const requiredWebsocketHosts = ["wss-primary.slack.com", "wss-backup.slack.com"];
-  for (const host of requiredRestHosts) {
-    const block = policyEndpointBlock(text, host);
-    expect(
-      block,
-      `Slack REST endpoint ${host} preserves request-body credential rewrite`,
-    ).toContain("request_body_credential_rewrite: true");
-  }
-  for (const host of requiredWebsocketHosts) {
-    const block = policyEndpointBlock(text, host);
-    expect(
-      block,
-      `Slack websocket endpoint ${host} preserves websocket credential rewrite`,
-    ).toContain("websocket_credential_rewrite: true");
-  }
+  await precleanMessagingResources(host, sandbox, {
+    sandboxName,
+    artifactPrefix: prefix,
+    env,
+    redactionValues: redactions,
+  });
 }
 
 export async function startFakeDiscordGateway(

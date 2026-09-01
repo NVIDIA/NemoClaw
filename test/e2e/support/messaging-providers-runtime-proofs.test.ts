@@ -130,13 +130,14 @@ function successfulCommand(stdout = "") {
 }
 
 type FakeDockerObservationOverrides = {
-  readonly apiPublishedAddress?: string;
+  readonly extraNetwork?: boolean;
   readonly internal?: boolean;
-  readonly proxyExtraBridge?: boolean;
-  readonly proxyPublishedAddress?: string;
+  readonly publishedAddress?: string;
 };
 
-function fakeDockerHost(overrides: FakeDockerObservationOverrides = {}): HostCliClient {
+function fakeDockerHost(
+  overrides: FakeDockerObservationOverrides = {},
+): HostCliClient & { readonly calls: string[][] } {
   const calls: string[][] = [];
   const host = {
     command: async (command: string, args: string[]) => {
@@ -156,36 +157,27 @@ function fakeDockerHost(overrides: FakeDockerObservationOverrides = {}): HostCli
         );
         expect(run, `Docker run exists for ${String(containerName)}`).toBeDefined();
         const network = run![run!.indexOf("--network") + 1]!;
-        const proxy = run!.some((argument) =>
-          argument.startsWith("NEMOCLAW_FAKE_API_PROXY_PORTS="),
-        );
         const networks: Record<string, unknown> = {
           [network]: {},
-          ...(proxy && overrides.proxyExtraBridge ? { bridge: {} } : {}),
+          ...(overrides.extraNetwork ? { bridge: {} } : {}),
         };
         const publications = run!.flatMap((argument, index) =>
           argument === "-p" ? [run![index + 1]!] : [],
         );
-        const proxyPorts = Object.fromEntries(
+        const ports = Object.fromEntries(
           publications.map((publication, index) => {
             const containerPort = publication.split(":").at(-1)!;
             return [
               `${containerPort}/tcp`,
               [
                 {
-                  HostIp: overrides.proxyPublishedAddress ?? "127.0.0.1",
+                  HostIp: overrides.publishedAddress ?? "127.0.0.1",
                   HostPort: index === 0 ? "32100" : "32101",
                 },
               ],
             ];
           }),
         );
-        const apiPorts = overrides.apiPublishedAddress
-          ? {
-              "8080/tcp": [{ HostIp: overrides.apiPublishedAddress, HostPort: "32099" }],
-            }
-          : {};
-        const ports = proxy ? proxyPorts : apiPorts;
         return successfulCommand(`${JSON.stringify({ Networks: networks, Ports: ports })}\n`);
       };
       const responses: Record<string, () => ReturnType<typeof successfulCommand>> = {
@@ -195,8 +187,10 @@ function fakeDockerHost(overrides: FakeDockerObservationOverrides = {}): HostCli
       };
       return (responses[`${String(args[0])}:${String(args[1])}`] ?? successfulCommand)();
     },
-  } as unknown as HostCliClient;
-  return host;
+  };
+  return Object.assign(host, { calls }) as unknown as HostCliClient & {
+    readonly calls: string[][];
+  };
 }
 
 async function runCleanup(actions: CleanupAction[]): Promise<void> {
@@ -554,6 +548,29 @@ network_policies:
           redactionValues: [],
           env: {},
         });
+        const runCalls = host.calls.filter((args) => args[0] === "run");
+        expect(runCalls).toHaveLength(1);
+        const apiRun = runCalls[0]!;
+        expect(apiRun).toEqual(expect.arrayContaining(["--network"]));
+        expect(
+          apiRun.flatMap((argument, index) => (argument === "-p" ? [apiRun[index + 1]] : [])),
+        ).toEqual(
+          kind === "slack"
+            ? ["127.0.0.1::8080", "127.0.0.1::8081"]
+            : ["127.0.0.1::8080"],
+        );
+        expect(apiRun).toEqual(
+          expect.arrayContaining([
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "32",
+          ]),
+        );
+        expect(apiRun.some((argument) => argument.includes("FAKE_API_PROXY"))).toBe(false);
         expect(api.port).toBe("32100");
         expect(api.alternatePort).toBe(kind === "slack" ? "32101" : undefined);
       } finally {
@@ -562,8 +579,8 @@ network_policies:
     },
   );
 
-  it("rejects a fake API proxy port that Docker publishes beyond loopback", async () => {
-    const host = fakeDockerHost({ proxyPublishedAddress: "0.0.0.0" });
+  it("rejects a fake API port that Docker publishes beyond loopback", async () => {
+    const host = fakeDockerHost({ publishedAddress: "0.0.0.0" });
     const cleanup: CleanupAction[] = [];
 
     try {
@@ -592,14 +609,9 @@ network_policies:
       /fake discord-gateway API network is not internal/u,
     ],
     [
-      "a fake API host publication",
-      { apiPublishedAddress: "127.0.0.1" },
-      /API container unexpectedly published a host port/u,
-    ],
-    [
-      "an extra proxy bridge attachment",
-      { proxyExtraBridge: true },
-      /API proxy did not use only its internal Docker network/u,
+      "an extra bridge attachment",
+      { extraNetwork: true },
+      /API container did not use only its internal Docker network/u,
     ],
   ] as const)(
     "rejects observed Docker isolation evidence with %s",

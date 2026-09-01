@@ -9,6 +9,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertDiscordGatewayCapture,
   DISCORD_GATEWAY_CLIENT_SOURCE,
@@ -23,6 +25,7 @@ import {
 import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
+  cleanupPairingSandbox,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
   SLACK_PAIRING_SCRIPT,
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
@@ -148,6 +151,63 @@ function localDiscordGatewayClientSource(): string {
 }
 
 describe("OpenClaw Discord pairing helper contracts", () => {
+  it.each([
+    ["nemoclaw", ["nemoclaw"]],
+    ["openshell-sandbox", ["nemoclaw", "openshell-sandbox"]],
+    ["openshell-gateway", ["nemoclaw", "openshell-sandbox", "openshell-gateway"]],
+  ] as const)(
+    "stops pairing setup when %s preclean is denied",
+    async (deniedStage, expectedStages) => {
+      const calls: string[] = [];
+      const outcomes = new Map<string, () => Promise<void>>([
+        [
+          deniedStage,
+          async () => Promise.reject(new Error(`permission denied during ${deniedStage} cleanup`)),
+        ],
+      ]);
+      const record = async (stage: string, name: string, artifactName: unknown): Promise<void> => {
+        calls.push(`${stage}:${name}:${String(artifactName)}`);
+        await (outcomes.get(stage) ?? (async () => undefined))();
+      };
+      const host = {
+        cleanupSandbox: async (name: string, options?: { artifactName?: string }) =>
+          record("nemoclaw", name, options?.artifactName),
+        cleanupGatewayRegistration: async (
+          name: string,
+          options?: { artifactName?: string },
+        ) => record("openshell-gateway", name, options?.artifactName),
+      } as unknown as HostCliClient;
+      const sandbox = {
+        cleanupSandbox: async (name: string, options?: { artifactName?: string }) =>
+          record("openshell-sandbox", name, options?.artifactName),
+      } as unknown as Pick<SandboxClient, "cleanupSandbox">;
+      const expectedByStage: Record<string, string> = {
+        nemoclaw: "nemoclaw:e2e-pair-clean:preclean-pairing-nemoclaw-destroy",
+        "openshell-sandbox":
+          "openshell-sandbox:e2e-pair-clean:preclean-pairing-openshell-sandbox-delete",
+        "openshell-gateway":
+          "openshell-gateway:nemoclaw:preclean-pairing-openshell-gateway-destroy",
+      };
+      let installAttempted = false;
+
+      await expect(
+        (async () => {
+          await cleanupPairingSandbox(
+            host,
+            sandbox,
+            "e2e-pair-clean",
+            {},
+            [],
+            "preclean-pairing",
+          );
+          installAttempted = true;
+        })(),
+      ).rejects.toThrow(`permission denied during ${deniedStage} cleanup`);
+      expect(calls).toEqual(expectedStages.map((stage) => expectedByStage[stage]));
+      expect(installAttempted).toBe(false);
+    },
+  );
+
   it("sends an absolute-form fake Slack WebSocket upgrade through the proxy", async () => {
     const targetPort = 4443;
     const envelope = { payload: { event: { type: "message" } } };
