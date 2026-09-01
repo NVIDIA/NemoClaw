@@ -172,7 +172,7 @@ export function runRebuildBackupPhase(
   const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
   if (retainedPolicy && !isSandboxPolicyCredentialFree(retainedPolicy)) {
     return input.bail(
-      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Keep the backup for manual data recovery. Retire the failed rebuild state with \`nemoclaw ${input.sandboxName} destroy --force\`, then create a fresh sandbox under a new name with \`nemoclaw onboard\`. Do not discard the handoff and retry rebuild.`,
+      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Keep the backup for manual data recovery. Retire the failed rebuild state with \`nemoclaw ${input.sandboxName} destroy --force\`, then create a fresh sandbox under a new name by replacing \`<new-sandbox>\` in \`nemoclaw onboard --name <new-sandbox>\`. Do not discard the handoff and retry rebuild.`,
     );
   }
   if (retainedPolicy && backupManifest && retainedHandoff) {

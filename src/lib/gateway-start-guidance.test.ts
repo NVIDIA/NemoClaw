@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { gatewayStartGuidance, resolveGatewayLauncher } from "./gateway-start-guidance";
+import {
+  formatOpenShellPolicyRecoveryAction,
+  gatewayStartGuidance,
+  resolveGatewayLauncher,
+} from "./gateway-start-guidance";
 import type { GatewayManagementDeclaration } from "./onboard/gateway-management";
 import { resolveCurrentOpenShellComputePlan } from "./onboard/compute/plan";
 
@@ -69,6 +73,44 @@ describe("gatewayStartGuidance", () => {
   it("resolves the launcher from the plan when the caller supplies no override", () => {
     expect(gatewayStartGuidance("nemoclaw")).toBe(
       gatewayStartGuidance("nemoclaw", resolveGatewayLauncher({ gatewayName: "nemoclaw" })),
+    );
+  });
+
+  it.each([
+    {
+      label: "timeout",
+      error: { kind: "timeout", message: "policy read timed out" } as const,
+    },
+    {
+      label: "unreachable gateway",
+      error: {
+        kind: "transport",
+        reason: "unreachable",
+        message: "gateway unreachable",
+      } as const,
+    },
+    {
+      label: "gateway identity mismatch",
+      error: {
+        kind: "transport",
+        reason: "identity_mismatch",
+        message: "gateway identity mismatch",
+      } as const,
+    },
+  ])("selects the recorded gateway before status recovery after a $label", ({ error }) => {
+    const retryCommand = "nemoclaw alpha rebuild";
+    const recovery = formatOpenShellPolicyRecoveryAction(
+      error,
+      retryCommand,
+      "nemoclaw-8091",
+      "Restart the recorded gateway if it is unavailable.",
+    );
+
+    expect(recovery.indexOf("openshell gateway select nemoclaw-8091")).toBeLessThan(
+      recovery.indexOf("openshell status"),
+    );
+    expect(recovery.indexOf("openshell status")).toBeLessThan(
+      recovery.indexOf(retryCommand),
     );
   });
 });

@@ -93,17 +93,20 @@ export function formatOpenShellPolicyRecoveryAction(
   gatewayName?: string,
   unreachableGatewayRecovery?: string,
 ): string {
+  const selectRecordedGateway = gatewayName
+    ? `Select the sandbox's recorded gateway first with \`openshell gateway select ${gatewayName}\`. `
+    : "";
   if (error.kind === "authentication") {
     return `Restore authentication for the sandbox's OpenShell gateway, then retry \`${retryCommand}\`.`;
   }
   if (error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable")) {
-    return `Verify the gateway with \`openshell status\`. ${unreachableGatewayRecovery ?? gatewayStartGuidance(gatewayName)} Then retry \`${retryCommand}\`.`;
+    return `${selectRecordedGateway}Verify the gateway with \`openshell status\`. ${unreachableGatewayRecovery ?? gatewayStartGuidance(gatewayName)} Then retry \`${retryCommand}\`.`;
   }
   if (error.kind === "transport") {
-    return `Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${retryCommand}\`.`;
+    return `${selectRecordedGateway}Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${retryCommand}\`.`;
   }
   if (error.kind === "schema") {
     return `Update the OpenShell CLI and gateway to compatible versions, then retry \`${retryCommand}\`.`;
   }
-  return `Inspect \`openshell status\`, correct the policy-read failure, then retry \`${retryCommand}\`.`;
+  return `${selectRecordedGateway}Inspect \`openshell status\`, correct the policy-read failure, then retry \`${retryCommand}\`.`;
 }

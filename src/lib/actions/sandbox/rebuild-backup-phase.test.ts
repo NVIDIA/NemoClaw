@@ -273,7 +273,7 @@ describe("rebuild policy handoff", () => {
 
     expect(refusal?.message).toContain("nemoclaw alpha destroy --force");
     expect(refusal?.message).toContain(
-      "create a fresh sandbox under a new name with `nemoclaw onboard`",
+      "create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`",
     );
     expect(refusal?.message).toContain("Do not discard the handoff and retry rebuild");
     expect(
