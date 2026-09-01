@@ -908,6 +908,7 @@ function inspectPolicyDocumentReadback(
 
 const POLICY_RECONCILE_ATTEMPTS = 5;
 const POLICY_RECOVERY_ATTEMPTS = 5;
+const POLICY_FINAL_RECOVERY_SUBMISSIONS = 1;
 const MISSING_POLICY_VALUE = Symbol("missing-policy-value");
 type MergePolicyValue = PolicyValue | typeof MISSING_POLICY_VALUE;
 
@@ -1035,7 +1036,12 @@ export function setPolicyDocument(
     context.gatewayName,
   );
 
-  const submissionAttempts = POLICY_RECONCILE_ATTEMPTS + POLICY_RECOVERY_ATTEMPTS + 2;
+  // The ordinary bound can end immediately after readback discovers the newest
+  // external revision. Reserve one final submission so that document is
+  // restored and read back instead of leaving the preceding recovery document
+  // active.
+  const submissionAttempts =
+    POLICY_RECONCILE_ATTEMPTS + POLICY_RECOVERY_ATTEMPTS + 2 + POLICY_FINAL_RECOVERY_SUBMISSIONS;
   for (let attempt = 1; attempt <= submissionAttempts; attempt += 1) {
     if (attempt > 1) {
       try {

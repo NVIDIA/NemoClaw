@@ -366,6 +366,48 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
+  it("reserves a final restore after every bounded recovery submission races", () => {
+    let activeVersion = 1;
+    let concurrentRevision = livePolicy;
+    let writes = 0;
+    mocks.inspectSandboxPolicy.mockImplementation(() => {
+      const policy = YAML.parse(livePolicy);
+      return {
+        policySource: "sandbox",
+        effectivePolicy: policy,
+        policy,
+        policyIdentity: { hash: `sha256:live-${String(activeVersion)}`, activeVersion },
+      };
+    });
+    mocks.captureSandboxBasePolicyRevision.mockImplementation(() => concurrentRevision);
+    mocks.run.mockImplementation((command: readonly string[]) => {
+      writes += 1;
+      const policyIndex = command.indexOf("--policy");
+      const requested = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+      const concurrent = YAML.parse(livePolicy);
+      concurrent.network_policies[`external_recovery_edit_${String(writes)}`] = {
+        endpoints: [{ host: `external-${String(writes)}.example.com`, port: 443 }],
+      };
+      writes >= 7 && delete concurrent.network_policies.requested_policy;
+      const raced = writes <= 12;
+      concurrentRevision = raced ? YAML.stringify(concurrent) : concurrentRevision;
+      activeVersion += Number(raced);
+      livePolicy = requested;
+      activeVersion += 1;
+      return { status: 0 };
+    });
+    const desired = YAML.parse(livePolicy);
+    desired.network_policies.requested_policy = {
+      endpoints: [{ host: "requested.example.com", port: 443 }],
+    };
+
+    expect(setPolicyDocument(sandboxName, YAML.stringify(desired), { nonFatal: true })).toBe(false);
+    expect(writes).toBe(13);
+    expect(YAML.parse(livePolicy)).toEqual(YAML.parse(concurrentRevision));
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("external_recovery_edit_12");
+    expect(YAML.parse(livePolicy).network_policies).not.toHaveProperty("requested_policy");
+  });
+
   it("accepts an ambiguous write only when live readback matches", () => {
     const desiredPolicy = YAML.stringify({
       version: 1,
