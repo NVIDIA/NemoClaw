@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -33,6 +34,7 @@ function touch(root: string, relativePath: string): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -70,6 +72,60 @@ describe("removed immutability migration boundary", () => {
       hasUnattributedRecoveryState: false,
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("has been retired"));
+  });
+
+  it.each([
+    [
+      "symbolic link",
+      (root: string, record: string) => {
+        const target = touch(root, "linked-state.json");
+        fs.symlinkSync(target, record);
+      },
+    ],
+    ["directory", (_root: string, record: string) => fs.mkdirSync(record)],
+    [
+      "FIFO",
+      (_root: string, record: string) => {
+        const created = spawnSync("mkfifo", [record], { encoding: "utf8" });
+        expect(created.status, created.stderr).toBe(0);
+      },
+    ],
+    [
+      "multiply-linked file",
+      (root: string, record: string) => {
+        fs.writeFileSync(record, "fixture\n");
+        fs.linkSync(record, path.join(root, "state-alias.json"));
+      },
+    ],
+  ] as const)("blocks an unsafe legacy state record that is a %s", (_kind, arrange) => {
+    const root = stateDir();
+    const record = path.join(root, "shields-alpha.json");
+    arrange(root, record);
+
+    expect(inspectRemovedImmutabilityMigration("alpha", root)).toEqual({
+      stateRecord: null,
+      recoveryArtifacts: [record],
+    });
+    expect(() =>
+      enforceRemovedImmutabilityMigrationBoundary("alpha", {
+        allowStateRecord: true,
+        stateDir: root,
+      }),
+    ).toThrow(/Blocking paths to quarantine/u);
+  });
+
+  it("blocks a legacy state record when its no-follow inspection fails", () => {
+    const root = stateDir();
+    const record = touch(root, "shields-alpha.json");
+    fs.chmodSync(record, 0o000);
+    vi.spyOn(fs, "openSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+    });
+
+    expect(inspectRemovedImmutabilityMigration("alpha", root)).toEqual({
+      stateRecord: null,
+      recoveryArtifacts: [record],
+    });
   });
 
   it("blocks every requested name while top-level recovery artifacts remain", () => {

@@ -58,6 +58,20 @@ function entryExists(entryPath: string): boolean {
   }
 }
 
+function isRetirableLegacyStateRecord(recordPath: string): boolean {
+  try {
+    const opened = openRegularFileNoFollow(recordPath);
+    try {
+      opened.stat();
+    } finally {
+      opened.close();
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isLegacyTopLevelRecoveryEntry(entry: string): boolean {
   return (
     entry.startsWith("shields-timer-") ||
@@ -227,9 +241,16 @@ function inspectRemovedImmutabilityMigrationState(
   }
 
   const stateRecordName = `shields-${sandboxName}.json`;
-  const stateRecord = entries.includes(stateRecordName)
-    ? path.join(stateDir, stateRecordName)
-    : null;
+  const stateRecordPath = path.join(stateDir, stateRecordName);
+  let stateRecord: string | null = null;
+  const unsafeStateRecordArtifacts: string[] = [];
+  if (entries.includes(stateRecordName)) {
+    if (isRetirableLegacyStateRecord(stateRecordPath)) {
+      stateRecord = stateRecordPath;
+    } else {
+      unsafeStateRecordArtifacts.push(stateRecordPath);
+    }
+  }
   const recoveryNames = entries.filter(isLegacyTopLevelRecoveryEntry);
   const nestedRecoveryPaths = inspectLegacyLifecycleSentinels(stateDir);
   const providerLedger = inspectLegacyProviderLedger(stateDir);
@@ -243,6 +264,7 @@ function inspectRemovedImmutabilityMigrationState(
         ...nestedRecoveryPaths,
         ...providerArtifacts,
         ...providerLedger.ambiguousArtifacts,
+        ...unsafeStateRecordArtifacts,
       ]),
     ].sort(),
   };

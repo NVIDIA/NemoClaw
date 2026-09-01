@@ -17,6 +17,12 @@ import {
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import {
+  enforceRemovedImmutabilityMigrationBoundary,
+} from "../../state/migrations/removed-immutability";
+
+const enforceRemovedImmutabilityMigrationBoundaryReal =
+  enforceRemovedImmutabilityMigrationBoundary;
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
@@ -55,6 +61,31 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(
       harness.removeSandboxRegistryEntryWithReceiptSpy,
     ).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
+  it("blocks an unsafe removed-immutability record before rebuild effects", async () => {
+    const stateDir = createHarnessTempDir("nemoclaw-rebuild-unsafe-retired-state-");
+    fs.mkdirSync(path.join(stateDir, "shields-alpha.json"));
+    const harness = createRebuildFlowHarness();
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockImplementation(
+      (sandboxName: string, options: { readonly allowStateRecord?: boolean } = {}) =>
+        enforceRemovedImmutabilityMigrationBoundaryReal(sandboxName, {
+          ...options,
+          stateDir,
+        }),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(/Blocking paths to quarantine/u);
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(
+      harness.removeSandboxRegistryEntryWithReceiptSpy,
+    ).not.toHaveBeenCalled();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 

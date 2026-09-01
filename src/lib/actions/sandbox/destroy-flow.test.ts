@@ -29,12 +29,15 @@ import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/
 import type { SandboxWorkloadReceipt } from "../../state/registry";
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import {
   createManagedState,
   engineHarness,
   NETWORK_ID,
   RUNTIME_ID,
 } from "../../inference/local-model-profile/cleanup.test-support";
+
+const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
 
 const managedHermesWorkload = {
   schemaVersion: 1,
@@ -93,6 +96,34 @@ describe("destroySandbox flow", () => {
       );
     },
   );
+
+  it("blocks an unsafe removed-immutability record before destroy effects", async ({
+    onTestFinished,
+  }) => {
+    const stateDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-destroy-unsafe-retired-state-"),
+    );
+    onTestFinished(() => fs.rmSync(stateDir, { force: true, recursive: true }));
+    fs.mkdirSync(path.join(stateDir, "shields-alpha.json"));
+    const harness = createDestroyHarness();
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockImplementation(
+      (sandboxName: string, options: { readonly allowStateRecord?: boolean } = {}) =>
+        enforceRemovedImmutabilityMigrationBoundaryReal(sandboxName, {
+          ...options,
+          stateDir,
+        }),
+    );
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      /Blocking paths to quarantine/u,
+    );
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.events).not.toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["--yes", false],
