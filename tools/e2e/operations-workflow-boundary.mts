@@ -891,9 +891,9 @@ const STOCK_ONBOARDING_CATALOGUE_JOBS = [
 ] as const;
 
 const MANAGED_IMAGE_REVISION_EXPRESSION =
-  "${{ needs.base-image-publication.outputs.managed_image_revision }}";
+  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}";
 const MANAGED_IMAGE_RECEIPT_EXPRESSION =
-  "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
+  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}";
 
 /** Require publication success and one exact cohort revision for every stock onboarding job. */
 export function validateStockOnboardingPublicationBoundary(workflow: OperationsWorkflow): string[] {
@@ -1456,6 +1456,26 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
   if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
     errors.push("Unified advisor specialists must retain target refs through execution");
+  }
+  const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
+  const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");
+  const specialistSteps = advisor.jobs?.["review-specialists"]?.steps ?? [];
+  const contextDownload = specialistSteps.find(
+    (step) => step.name === "Download GitHub review context",
+  );
+  const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
+  const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
+  if (
+    contextUpload?.with?.name !== contextArtifactName ||
+    contextDownload?.with?.name !== contextArtifactName ||
+    contextUpload?.with?.overwrite !== true
+  ) {
+    errors.push("Unified advisor context artifact must survive failed-job and full reruns");
+  }
+  if (
+    specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}"
+  ) {
+    errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
   }
 }
 

@@ -13,6 +13,7 @@ import { retryUntilAsync } from "../../core/retry";
 
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
+  buildGatewayInferenceGetArgs,
   type GatewayInference,
   parseGatewayInference,
   planInferenceRouteReconcile,
@@ -32,10 +33,7 @@ import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { getGatewayPresets } from "../../policy";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
-import {
-  buildGatewayInferenceGetArgs,
-  canSandboxGatewayRouteRealign,
-} from "./connect-inference-gateway";
+import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
