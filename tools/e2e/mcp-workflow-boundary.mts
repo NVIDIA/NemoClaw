@@ -883,6 +883,8 @@ function validateCredentialWindowJob(
     E2E_MANAGED_IMAGE_COHORT_RECEIPT:
       "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
     E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON:
+      "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",

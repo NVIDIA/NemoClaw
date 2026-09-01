@@ -42,6 +42,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     /^[.]github\/actions\/publish-base-image-manifest\/.+$/u,
   ],
   ["agents/**", /^agents\/.+$/u],
+  ["ci/pi-agent-qualification-v1-*.json", /^ci\/pi-agent-qualification-v1-[^/]*[.]json$/u],
   ["nemoclaw/**", /^nemoclaw\/.+$/u],
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
   ["scripts/**", /^scripts\/.+$/u],
@@ -49,6 +50,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     "test/e2e/live/managed-image-activation-e2e*.ts",
     /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
   ],
+  ["test/e2e/live/mcp-bridge*.ts", /^test\/e2e\/live\/mcp-bridge[^/]*[.]ts$/u],
   [
     "src/lib/actions/sandbox/mcp-bridge-*.ts",
     /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,
@@ -58,6 +60,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
   ],
   ["src/lib/messaging/**", /^src\/lib\/messaging\/.+$/u],
+  ["src/lib/onboard/**", /^src\/lib\/onboard\/.+$/u],
   [
     "src/lib/onboard/managed-bootstrap/envelope.ts",
     /^src\/lib\/onboard\/managed-bootstrap\/envelope[.]ts$/u,
