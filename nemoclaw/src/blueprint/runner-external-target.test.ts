@@ -19,6 +19,7 @@ const externalTargetBoundaryMocks = vi.hoisted(() => ({
   buildSanitizedExternalOpenShellTargetPlan: vi.fn(),
   withExternalOpenShellTargetCa: vi.fn(),
 }));
+const fsMocks = vi.hoisted(() => ({ readFileSync: vi.fn() }));
 const observeHealth = vi.fn();
 const gatewayHealthObserver = { observeHealth };
 
@@ -35,7 +36,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...original,
     mkdirSync: memory.mkdirSync,
-    readFileSync: memory.readFileSync,
+    readFileSync: fsMocks.readFileSync.mockImplementation(memory.readFileSync),
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -125,14 +126,17 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(() => actionExternalOpenShellTargetPlan({})).toThrow(
       /does not declare an external OpenShell target/,
     );
-    expect(() => actionExternalOpenShellTargetPlan({ openshell_target: {} })).toThrow(
-      /requires blueprint min_openshell_version and max_openshell_version/,
-    );
+    expect(() =>
+      actionExternalOpenShellTargetPlan({ version: "1.0.0", openshell_target: {} }),
+    ).toThrow(/requires blueprint min_openshell_version and max_openshell_version/);
     await expect(actionExternalOpenShellTargetStatus({}, gatewayHealthObserver)).rejects.toThrow(
       /does not declare an external OpenShell target/,
     );
     await expect(
-      actionExternalOpenShellTargetStatus({ openshell_target: {} }, gatewayHealthObserver),
+      actionExternalOpenShellTargetStatus(
+        { version: "1.0.0", openshell_target: {} },
+        gatewayHealthObserver,
+      ),
     ).rejects.toThrow(/requires blueprint min_openshell_version and max_openshell_version/);
 
     expect(
@@ -141,6 +145,33 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).not.toHaveBeenCalled();
     expect(observeHealth).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["missing", undefined, ["plan"]],
+    ["invalid", "1.0", ["plan"]],
+    ["missing", undefined, ["status", "--external-target"]],
+    ["invalid", "1.0", ["status", "--external-target"]],
+  ])(
+    "rejects a %s blueprint version for %s before target reads or observation",
+    async (_case, version, argv) => {
+      const blueprint = externalTargetBlueprint();
+      blueprint.version = version;
+      addFile("blueprint.yaml", YAML.stringify(blueprint));
+
+      const action = argv[0] === "plan" ? "planning" : "status";
+      await expect(runMain(argv)).rejects.toThrow(
+        `External OpenShell target ${action} requires blueprint version in X.Y.Z format.`,
+      );
+
+      expect(fsMocks.readFileSync).toHaveBeenCalledOnce();
+      expect(fsMocks.readFileSync).toHaveBeenCalledWith("blueprint.yaml", "utf-8");
+      expect(
+        externalTargetBoundaryMocks.buildSanitizedExternalOpenShellTargetPlan,
+      ).not.toHaveBeenCalled();
+      expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).not.toHaveBeenCalled();
+      expect(observeHealth).not.toHaveBeenCalled();
+    },
+  );
 
   it("emits only the sanitized plan without subprocess or network calls (#9872)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");

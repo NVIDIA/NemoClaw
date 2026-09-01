@@ -1399,6 +1399,11 @@ function validateExternalOpenShellTargetBlueprint(
   if (blueprint.openshell_target === undefined) {
     throw new Error("blueprint does not declare an external OpenShell target");
   }
+  if (blueprint.version === undefined || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(blueprint.version)) {
+    throw new Error(
+      `External OpenShell target ${action} requires blueprint version in X.Y.Z format.`,
+    );
+  }
   if (
     blueprint.min_openshell_version === undefined ||
     blueprint.max_openshell_version === undefined

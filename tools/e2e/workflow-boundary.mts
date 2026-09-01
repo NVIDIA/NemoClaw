@@ -55,10 +55,6 @@ import {
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
 import { validateE2eWorkspaceBootstrapBoundary } from "./workspace-bootstrap-workflow-boundary.mts";
-import {
-  type ExternalGatewayHealthWorkflow,
-  validateExternalGatewayHealthWorkflow,
-} from "./external-gateway-health-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -2609,9 +2605,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(
     ...validateOpenShellGatewayAuthContractWorkflow(
       workflow as unknown as OpenShellGatewayAuthContractWorkflow,
-    ),
-    ...validateExternalGatewayHealthWorkflow(
-      workflow as unknown as ExternalGatewayHealthWorkflow,
     ),
   );
   errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));

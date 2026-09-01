@@ -588,10 +588,6 @@ function collectDeclarativeImports(imports: readonly ImportBinding[]): Map<strin
 }
 
 const RAW_CONFIG_ACCESSORS: Readonly<Record<string, readonly string[]>> = {
-  "tools/e2e/external-gateway-health-workflow-boundary": [
-    "readExternalGatewayHealthHelper",
-    "readExternalGatewayHealthWorkflow",
-  ],
   "test/helpers/e2e-workflow-contract": ["readWorkflow", "readYaml"],
   "test/e2e/registry/registry": ["getTarget", "listTargets", "requireTargets"],
   "test/e2e/registry/expected-states": [
