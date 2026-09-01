@@ -85,9 +85,9 @@ Read [Review and Merge](references/review-and-merge.md) before reviewing, approv
 
 Observe automatic push runs and replacement attempts that the workflow starts. Never use `gh run rerun`, `gh workflow run .github/workflows/e2e.yaml`, or local live E2E to duplicate an automatic run.
 
-Ordinary first-time-contributor workflow approval is not manual E2E dispatch. For
-secret-bearing or hardware E2E, follow
-[Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) only after an explicit maintainer request.
+Approving an ordinary workflow for a first-time contributor does not dispatch manual E2E.
+Dispatch secret-bearing or hardware E2E through
+[Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) only after a maintainer requests it.
 
 Never weaken, skip, delete, relabel, or narrow coverage to make a failure disappear. Do not freeze `main`, block unrelated merges, or ask other maintainers to wait.
 

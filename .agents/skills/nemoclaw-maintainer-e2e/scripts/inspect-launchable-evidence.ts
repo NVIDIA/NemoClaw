@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 
 const SHA = /^[0-9a-f]{40}$/;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
-const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const REPOSITORY = "NVIDIA/NemoClaw";
 const SENTINEL = "NEMOCLAW_FULL_E2E_PASSED";
 const WORKFLOW = ".github/workflows/e2e.yaml";
 const JOB = "Exact staging Brev Launchable";
@@ -41,13 +41,12 @@ export interface ArtifactFiles {
   "cleanup.json"?: string;
 }
 export interface EvidenceReader {
-  listRuns(repo: string): WorkflowRun[];
-  listJobs(repo: string, runId: number, attempt: number): WorkflowJob[];
-  readArtifact(repo: string, runId: number, attempt: number, name: string): ArtifactFiles;
+  listRuns(): WorkflowRun[];
+  listJobs(runId: number, attempt: number): WorkflowJob[];
+  readArtifact(runId: number, attempt: number, name: string): ArtifactFiles;
 }
 export interface Options {
   candidate: string;
-  repo: string;
 }
 export interface Selection {
   run: WorkflowRun;
@@ -94,20 +93,17 @@ function integer(value: unknown, label: string): number {
 }
 
 export function parseOptions(args: string[]): Options {
-  let candidate = "",
-    repo = "NVIDIA/NemoClaw";
+  let candidate = "";
   for (let i = 0; i < args.length; i += 1) {
     const option = args[i],
       value = args[i + 1];
-    if (option !== "--candidate" && option !== "--repo") fail(`unknown option: ${option}`);
+    if (option !== "--candidate") fail(`unknown option: ${option}`);
     if (!value || value.startsWith("--")) fail(`${option} requires a value`);
-    if (option === "--candidate") candidate = value;
-    else repo = value;
+    candidate = value;
     i += 1;
   }
   if (!SHA.test(candidate)) fail("--candidate must be a lowercase 40-character SHA");
-  if (!REPO.test(repo)) fail("--repo must be OWNER/REPO");
-  return { candidate, repo };
+  return { candidate };
 }
 export function selectNewestSuccessfulJob(
   candidate: string,
@@ -212,17 +208,15 @@ export function validateLaunchableEvidence(
   };
 }
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
-  const selection = selectNewestSuccessfulJob(
-    options.candidate,
-    reader.listRuns(options.repo),
-    (run) => reader.listJobs(options.repo, run.id, run.run_attempt),
+  const selection = selectNewestSuccessfulJob(options.candidate, reader.listRuns(), (run) =>
+    reader.listJobs(run.id, run.run_attempt),
   );
   const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`;
   return validateLaunchableEvidence(
     options.candidate,
     selection,
     artifactName,
-    reader.readArtifact(options.repo, selection.run.id, selection.run.run_attempt, artifactName),
+    reader.readArtifact(selection.run.id, selection.run.run_attempt, artifactName),
   );
 }
 function gh(args: string[]): unknown {
@@ -230,35 +224,43 @@ function gh(args: string[]): unknown {
     execFileSync("gh", args, { encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 }),
   );
 }
-export function artifactDownloadArgs(
-  repo: string,
-  runId: number,
-  name: string,
-  directory: string,
-): string[] {
-  return ["run", "download", String(runId), "--name", name, "--dir", directory, "--repo", repo];
+export function artifactDownloadArgs(runId: number, name: string, directory: string): string[] {
+  return [
+    "run",
+    "download",
+    String(runId),
+    "--name",
+    name,
+    "--dir",
+    directory,
+    "--repo",
+    REPOSITORY,
+  ];
 }
 
 export function createGitHubReader(): EvidenceReader {
   return {
-    listRuns(repo) {
+    listRuns() {
       const response = record(
-        gh(["api", `repos/${repo}/actions/workflows/e2e.yaml/runs?per_page=100`]),
+        gh(["api", `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100`]),
         "runs response",
       );
       return Array.isArray(response.workflow_runs) ? (response.workflow_runs as WorkflowRun[]) : [];
     },
-    listJobs(repo, runId, attempt) {
+    listJobs(runId, attempt) {
       const response = record(
-        gh(["api", `repos/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`]),
+        gh([
+          "api",
+          `repos/${REPOSITORY}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
+        ]),
         "jobs response",
       );
       return Array.isArray(response.jobs) ? (response.jobs as WorkflowJob[]) : [];
     },
-    readArtifact(repo, runId, attempt, name) {
+    readArtifact(runId, _attempt, name) {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-launchable-evidence-"));
       try {
-        execFileSync("gh", artifactDownloadArgs(repo, runId, name, directory), {
+        execFileSync("gh", artifactDownloadArgs(runId, name, directory), {
           timeout: 120_000,
         });
         const result: ArtifactFiles = {};

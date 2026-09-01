@@ -71,14 +71,12 @@ const reader = (
   artifact: ArtifactFiles = files(),
 ): EvidenceReader => ({
   listRuns: () => runs,
-  listJobs: (_repo, id) => jobs[id] ?? [],
+  listJobs: (id) => jobs[id] ?? [],
   readArtifact: () => artifact,
 });
 describe("Launchable evidence inspection", () => {
   it("returns a versioned receipt from candidate-bound successful evidence (#10798)", () =>
-    expect(
-      inspectLaunchableEvidence({ candidate: SHA, repo: "NVIDIA/NemoClaw" }, reader()),
-    ).toMatchObject({
+    expect(inspectLaunchableEvidence({ candidate: SHA }, reader())).toMatchObject({
       version: 1,
       candidate: { sha: SHA },
       run: { id: 10, attempt: 2 },
@@ -88,29 +86,33 @@ describe("Launchable evidence inspection", () => {
       fullE2e: { status: "passed" },
       cleanup: { status: "ABSENT" },
     }));
-  it("rejects an invalid candidate before reading GitHub (#10798)", () =>
+  it("rejects invalid options before reading GitHub (#10798)", () => {
     expect(() => parseOptions(["--candidate", "A".repeat(40)])).toThrow(
       "lowercase 40-character SHA",
-    ));
+    );
+    expect(() => parseOptions(["--candidate", SHA, "--repo", "attacker/repo"])).toThrow(
+      "unknown option: --repo",
+    );
+  });
   it.each([
     ["wrong candidate", run(10, "2026-06-01T00:00:00Z", { head_sha: IMAGE_SHA })],
     ["wrong run", run(10, "2026-06-01T00:00:00Z", { path: ".github/workflows/ci.yaml" })],
   ])("rejects %s evidence (#10798)", (_label, value) =>
-    expect(() =>
-      inspectLaunchableEvidence({ candidate: SHA, repo: "NVIDIA/NemoClaw" }, reader([value])),
-    ).toThrow("no successful"),
+    expect(() => inspectLaunchableEvidence({ candidate: SHA }, reader([value]))).toThrow(
+      "no successful",
+    ),
   );
   it("rejects non-success jobs (#10798)", () =>
     expect(() =>
       inspectLaunchableEvidence(
-        { candidate: SHA, repo: "NVIDIA/NemoClaw" },
+        { candidate: SHA },
         reader([run()], { 10: [job(20, { conclusion: "failure" })] }),
       ),
     ).toThrow("no successful"));
   it("rejects a mismatched workspace (#10798)", () =>
     expect(() =>
       inspectLaunchableEvidence(
-        { candidate: SHA, repo: "NVIDIA/NemoClaw" },
+        { candidate: SHA },
         reader(
           undefined,
           undefined,
@@ -130,10 +132,7 @@ describe("Launchable evidence inspection", () => {
     ["missing file", { "cleanup.json": undefined }],
   ])("rejects %s (#10798)", (_label, change) =>
     expect(() =>
-      inspectLaunchableEvidence(
-        { candidate: SHA, repo: "NVIDIA/NemoClaw" },
-        reader(undefined, undefined, files(change)),
-      ),
+      inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, files(change))),
     ).toThrow(),
   );
   it("selects the newest successful job and exact artifact (#10798)", () => {
@@ -142,18 +141,15 @@ describe("Launchable evidence inspection", () => {
       11: [job(21)],
     });
     boundary.readArtifact = vi.fn(() => files());
-    expect(
-      inspectLaunchableEvidence({ candidate: SHA, repo: "NVIDIA/NemoClaw" }, boundary).run.id,
-    ).toBe(11);
+    expect(inspectLaunchableEvidence({ candidate: SHA }, boundary).run.id).toBe(11);
     expect(boundary.readArtifact).toHaveBeenCalledWith(
-      "NVIDIA/NemoClaw",
       11,
       2,
       `staging-brev-launchable-${SHA}-11-2`,
     );
   });
   it("uses only supported gh run download options (#10798)", () => {
-    expect(artifactDownloadArgs("NVIDIA/NemoClaw", 10, "artifact", "/tmp/output")).toEqual([
+    expect(artifactDownloadArgs(10, "artifact", "/tmp/output")).toEqual([
       "run",
       "download",
       "10",

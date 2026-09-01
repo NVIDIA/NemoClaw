@@ -51,7 +51,7 @@ Read current code, tests, workflows, and active guidance before editing. Load a 
 
 Prefer a neutral or negative total line delta. Possible future reuse is not enough to add a mechanism. Preserve semantic regression coverage. Use runtime or E2E evidence only when a real boundary owns the behavior.
 
-For live E2E evidence, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for local execution. Dispatch on GitHub only when a maintainer explicitly requests it.
+For live E2E evidence, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for local execution.
 
 ## Self-review
 

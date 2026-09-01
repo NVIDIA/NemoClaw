@@ -50,11 +50,11 @@ When one or more checks ran without failure but another required check did not r
 
 ## Resolve the Candidate and Image Evidence
 
-Record the expected commit, then follow
+Record the expected commit. Then follow
 [Validate Existing Launchable Evidence](../nemoclaw-maintainer-e2e/references/launchable-evidence.md)
-to select and validate candidate-bound `Staging Brev Launchable` evidence. Stop unless the
-inspection returns successful evidence for the expected commit. Use the returned boot image and
-producer identity for the web journey. Do not substitute a mutable image-family URI.
+to select and validate `Staging Brev Launchable` evidence for that commit. Stop unless the
+inspection succeeds. Use the returned boot image and producer for the web journey. Do not
+substitute a mutable image URI.
 
 ## Validate the Web Journey
 

@@ -146,8 +146,8 @@ URLs, PR state, commit ranges, review state, check state, and image identities i
 
 ### 3. Present General E2E and Ask for a Decision
 
-Follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) to inspect the newest
-completed or active full run and present its canonical release-context report for the candidate.
+Follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) to inspect the newest completed or
+active full run. Present its release context for the candidate.
 
 Offer exactly these three choices:
 

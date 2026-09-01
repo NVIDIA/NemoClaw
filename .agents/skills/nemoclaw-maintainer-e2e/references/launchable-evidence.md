@@ -4,11 +4,11 @@
 # Validate Existing Launchable Evidence
 
 Use this read-only procedure when another workflow needs to consume an existing
-`Staging Brev Launchable` result. Do not use it to dispatch a run.
+`Staging Brev Launchable` result.
 
 ## Inspect the Result
 
-Run the read-only inspector with the expected lowercase 40-character candidate SHA:
+Run the inspector with a lowercase 40-character candidate SHA:
 
 ```bash
 node --experimental-strip-types --no-warnings \
@@ -16,8 +16,8 @@ node --experimental-strip-types --no-warnings \
   --candidate <candidate-sha>
 ```
 
-Use `--repo OWNER/REPO` only when you inspect another repository. Run the inspector
-once. It selects the newest eligible job, downloads its artifact, validates all
+The inspector reads only `NVIDIA/NemoClaw`; other repositories and forks are not supported.
+Run it once. It selects the newest eligible job, downloads its artifact, validates all
 bindings and cleanup evidence, and emits bounded handoff JSON.
 
 Accept the evidence only when the command exits zero. Use its JSON as the handoff.
