@@ -403,6 +403,34 @@ export async function verifySelectedSandboxBridgeReachability(
   });
 }
 
+async function verifyActivatedManagedCreateBeforeEffects(input: {
+  readonly sandboxId: string | null;
+  readonly createAttemptNonce: string;
+  readonly route: SelectedDockerGpuRoute;
+  readonly flow: SandboxGpuCreateFlowInput;
+  readonly lifecycle: ManagedBootstrapRuntimeCreateLifecycle;
+  readonly deferPostCreateEffects: boolean;
+  readonly waitForCreatedSandboxPublication: (sandboxId: string) => void;
+  readonly revalidatePostCreateEffect: (operation: string) => void;
+}): Promise<void> {
+  if (!input.sandboxId) {
+    throw new Error("Managed bootstrap create returned without one exact sandbox identity.");
+  }
+  input.waitForCreatedSandboxPublication(input.sandboxId);
+  await verifyCreatedSandboxBeforeEffects(
+    input.sandboxId,
+    input.createAttemptNonce,
+    input.route,
+    input.flow,
+  );
+  if (input.deferPostCreateEffects) {
+    input.revalidatePostCreateEffect(
+      `activate managed sandbox network for '${input.flow.sandboxName}'`,
+    );
+    await input.lifecycle.prepareNetwork();
+  }
+}
+
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
@@ -729,6 +757,7 @@ export function createSandboxGpuCreateAttemptRunner(
       );
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let resumedSandboxId: string | null = null;
+    let managedCreatedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;
     let createdSandboxVerified = false;
     const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
@@ -846,15 +875,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 { cause: error },
               );
             }
-            waitForCreatedSandboxPublication(sandboxId);
-            await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
-            createdSandboxVerified = true;
-            if (deferPostCreateEffects) {
-              revalidatePostCreateEffect(
-                `activate managed sandbox network for '${input.sandboxName}'`,
-              );
-              await managedLifecycle.prepareNetwork();
-            }
+            managedCreatedSandboxId = sandboxId;
             managedIncompleteCreateRecovered = createFailure?.kind === "sandbox_create_incomplete";
             return {
               value: result,
@@ -870,6 +891,17 @@ export function createSandboxGpuCreateAttemptRunner(
             };
           },
         );
+        await verifyActivatedManagedCreateBeforeEffects({
+          sandboxId: managedCreatedSandboxId,
+          createAttemptNonce: createAttemptNonce!,
+          route,
+          flow: input,
+          lifecycle: managedLifecycle,
+          deferPostCreateEffects,
+          waitForCreatedSandboxPublication,
+          revalidatePostCreateEffect,
+        });
+        createdSandboxVerified = true;
       } catch (error) {
         if (!(error instanceof ManagedBootstrapCreateStreamFailure)) throw error;
         createResult = error.result;
