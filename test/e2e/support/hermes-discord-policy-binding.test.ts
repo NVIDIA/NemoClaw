@@ -34,6 +34,25 @@ function runBinding(policyFile: string, protocol = "websocket") {
   );
 }
 
+function runBinaryAssertion(policyFile: string) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--disable-warning=DEP0205",
+      "--import",
+      "tsx",
+      HELPER,
+      "--assert-binaries",
+      policyFile,
+      "host.docker.internal",
+      "43117",
+      "websocket",
+      "/opt/hermes/.venv/bin/python",
+    ],
+    { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
+  );
+}
+
 describe("Hermes Discord E2E policy binding", () => {
   beforeAll(async () => {
     const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
@@ -151,5 +170,60 @@ describe("Hermes Discord E2E policy binding", () => {
     expect(endpoints[1]).toHaveProperty("credential_binding", {
       provider: "e2e-hermes-discord-discord-bridge",
     });
+  });
+
+  it("rejects generic Python binaries in the Hermes fake Discord endpoint policy", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-discord-policy-"));
+    tempDirs.push(tempDir);
+    const policyFile = path.join(tempDir, "policy.yaml");
+    fs.writeFileSync(
+      policyFile,
+      [
+        "version: 1",
+        "network_policies:",
+        "  discord_gateway:",
+        "    endpoints:",
+        "      - host: host.docker.internal",
+        "        port: 43117",
+        "        protocol: websocket",
+        "    binaries:",
+        "      - path: /opt/hermes/.venv/bin/python",
+        "      - path: /usr/bin/python3",
+        "      - path: /usr/local/bin/python3",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runBinaryAssertion(policyFile);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("/usr/bin/python3");
+    expect(result.stderr).toContain("/usr/local/bin/python3");
+  });
+
+  it("accepts only the Hermes venv interpreter for the fake Discord endpoint", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-discord-policy-"));
+    tempDirs.push(tempDir);
+    const policyFile = path.join(tempDir, "policy.yaml");
+    fs.writeFileSync(
+      policyFile,
+      [
+        "version: 1",
+        "network_policies:",
+        "  discord_gateway:",
+        "    endpoints:",
+        "      - host: host.docker.internal",
+        "        port: 43117",
+        "        protocol: websocket",
+        "    binaries:",
+        "      - path: /opt/hermes/.venv/bin/python",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runBinaryAssertion(policyFile);
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
   });
 });
