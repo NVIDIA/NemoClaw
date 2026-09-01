@@ -12,6 +12,9 @@ type DockerPortBinding = {
 };
 
 type DockerInspectRecord = {
+  Config?: {
+    Env?: unknown;
+  };
   Name?: unknown;
   HostConfig?: {
     CapDrop?: unknown;
@@ -80,6 +83,22 @@ function portBindings(record: DockerInspectRecord): Record<string, DockerPortBin
     : {};
 }
 
+const CREDENTIAL_ENVIRONMENT_NAME =
+  /(?:^|_)(?:API_?KEY|CREDENTIALS?|PASSWORDS?|SECRETS?|TOKENS?)(?:_|$)/u;
+
+function environmentEntries(record: DockerInspectRecord): string[] {
+  const entries = record.Config?.Env;
+  expect(
+    Array.isArray(entries) && entries.every((entry) => typeof entry === "string"),
+    "fake API proxy environment inspection",
+  ).toBe(true);
+  return entries as string[];
+}
+
+function environmentName(entry: string): string {
+  return entry.split("=", 1)[0]!;
+}
+
 function publishedBinding(
   bindings: Record<string, DockerPortBinding[] | null>,
   containerPort: number,
@@ -122,6 +141,17 @@ export async function assertFakeApiDockerTopologyProof(options: {
   const records = parseRecordArray(inspect.stdout, "fake API Docker inspection", 2);
   const apiRecord = inspectRecord(records, apiContainer);
   const proxyRecord = inspectRecord(records, proxyContainer);
+  const proxyEnvironment = environmentEntries(proxyRecord);
+  expect(
+    proxyEnvironment.some((entry) => CREDENTIAL_ENVIRONMENT_NAME.test(environmentName(entry))),
+    "fake API proxy credential environment names",
+  ).toBe(false);
+  expect(
+    proxyEnvironment.some((entry) =>
+      options.redactionValues.some((value) => value.length > 0 && entry.includes(value)),
+    ),
+    "fake API proxy redaction values",
+  ).toBe(false);
   const apiNetworks = networkNames(apiRecord);
   expect(apiNetworks, "credential-bearing fake API network attachments").toHaveLength(1);
   const internalNetwork = apiNetworks[0]!;

@@ -97,6 +97,7 @@ function fakeDockerInspect(
   options: {
     apiPublished: boolean;
     proxyContainerPorts: readonly number[];
+    proxyEnvironment: readonly string[];
     publishedAddress: string;
   },
 ): string {
@@ -114,6 +115,9 @@ function fakeDockerInspect(
       },
     },
     {
+      Config: {
+        Env: [...optionValues(proxyRun, "-e"), ...options.proxyEnvironment],
+      },
       Name: "/" + proxyContainer,
       HostConfig: {
         CapDrop: ["ALL"],
@@ -133,6 +137,7 @@ function fakeDockerHost(
   options: {
     apiPublished?: boolean;
     proxyContainerPorts?: readonly number[];
+    proxyEnvironment?: readonly string[];
     publishedAddress?: string;
     networkInspect?: string;
     proxyRunning?: boolean;
@@ -192,6 +197,7 @@ function fakeDockerHost(
                 fakeDockerInspect(calls, {
                   apiPublished: options.apiPublished === true,
                   proxyContainerPorts,
+                  proxyEnvironment: options.proxyEnvironment ?? [],
                   publishedAddress,
                 }),
               )
@@ -330,6 +336,22 @@ async function tcpRequest(host: string, port: number, payload: string): Promise<
 describe("messaging provider installed-runtime proofs", () => {
   it("rejects Docker state that publishes the credential-bearing fake API", async () => {
     const { host } = fakeDockerHost({ apiPublished: true });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
+        /Docker topology did not preserve isolation/u,
+      );
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it.each([
+    ["credential value", "PROXY_FIXTURE_VALUE=fixture-discord-token"],
+    ["credential name", "FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN=not-a-redaction-value"],
+  ])("rejects Docker state that exposes a %s through the fake API proxy", async (_case, leak) => {
+    const { host } = fakeDockerHost({ proxyEnvironment: [leak] });
     const cleanup: CleanupAction[] = [];
 
     try {

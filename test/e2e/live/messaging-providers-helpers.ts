@@ -791,6 +791,9 @@ async function requireFakeApiProxyReady(
 }
 
 type DockerContainerInspect = {
+  Config?: {
+    Env?: unknown;
+  };
   Name?: unknown;
   HostConfig?: {
     CapDrop?: unknown;
@@ -836,6 +839,25 @@ function stringValues(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+const CREDENTIAL_ENVIRONMENT_NAME =
+  /(?:^|_)(?:API_?KEY|CREDENTIALS?|PASSWORDS?|SECRETS?|TOKENS?)(?:_|$)/u;
+
+function environmentName(entry: string): string {
+  return entry.split("=", 1)[0]!;
+}
+
+function environmentContainsCredential(entries: string[], redactionValues: string[]): boolean {
+  return entries.some(
+    (entry) =>
+      CREDENTIAL_ENVIRONMENT_NAME.test(environmentName(entry)) ||
+      redactionValues.some((value) => value.length > 0 && entry.includes(value)),
+  );
 }
 
 async function requireFakeApiDockerTopology(
@@ -891,6 +913,9 @@ async function requireFakeApiDockerTopology(
   const observedContainerPorts = proxyBindings.map(({ containerPort }) => containerPort).sort();
   const proxySecurityOptions = stringValues(proxy?.HostConfig?.SecurityOpt);
   const proxyCapabilityDrops = stringValues(proxy?.HostConfig?.CapDrop);
+  const inspectedProxyEnvironment = proxy?.Config?.Env;
+  const proxyEnvironmentValid = isStringArray(inspectedProxyEnvironment);
+  const proxyEnvironment = proxyEnvironmentValid ? inspectedProxyEnvironment : [];
   const networkDriver =
     networkRecord !== null &&
     typeof networkRecord === "object" &&
@@ -917,6 +942,8 @@ async function requireFakeApiDockerTopology(
     proxy?.HostConfig?.ReadonlyRootfs !== true ||
     !proxyCapabilityDrops.includes("ALL") ||
     !proxySecurityOptions.includes("no-new-privileges") ||
+    !proxyEnvironmentValid ||
+    environmentContainsCredential(proxyEnvironment, options.redactionValues) ||
     proxy?.HostConfig?.PidsLimit !== 32
   ) {
     throw new Error(`fake ${options.kind} API Docker topology did not preserve isolation`);
