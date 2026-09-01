@@ -48,6 +48,22 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
+  it("continues security review after one boundary lacks trust evidence", () => {
+    const securityPrompt = ADVISOR_SPECIALISTS.find(
+      ({ interest }) => interest === "security-built-in-quality",
+    )?.prompt;
+
+    expect(securityPrompt).toContain(
+      "Stop evaluating the affected boundary or property when required trust evidence is missing",
+    );
+    expect(securityPrompt).toContain(
+      "Record the evidence gap and continue evaluating other applicable security properties",
+    );
+    expect(securityPrompt).toContain(
+      "one rejecting boundary does not end analysis of later affected boundaries",
+    );
+  });
+
   it("writes readable diff evidence in the prepared advisor context", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-context-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
