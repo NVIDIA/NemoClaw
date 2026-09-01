@@ -544,7 +544,7 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     },
   );
 
-  it("runs every service-user execution proof in a bounded systemd cgroup (#10663)", () => {
+  it("runs the service-user execution proof in a bounded systemd cgroup (#10663)", () => {
     const fixture = proofFixture(0o755);
 
     proveOllamaSystemdServiceExecutable(fixture.options);

@@ -73,12 +73,27 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
     ) {
       return success("997\n");
     }
-    const separator = argv.indexOf("--");
+    const sudoPrefix = argv[1] === "-n" ? ["/usr/bin/sudo", "-n"] : ["/usr/bin/sudo"];
+    const executionProof = [
+      ...sudoPrefix,
+      "/usr/bin/env",
+      "LC_ALL=C",
+      "/usr/bin/systemd-run",
+      "--wait",
+      "--pipe",
+      "--collect",
+      "--service-type=exec",
+      "--uid=ollama",
+      "--property=KillMode=control-group",
+      "--property=RuntimeMaxSec=15s",
+      "--property=TimeoutStopSec=250ms",
+      "--property=SendSIGKILL=yes",
+      executablePath,
+      "--version",
+    ];
     if (
-      separator >= 0 &&
-      argv.length === separator + 3 &&
-      argv[separator + 1] === executablePath &&
-      argv[separator + 2] === "--version"
+      argv.length === executionProof.length &&
+      argv.every((value, index) => value === executionProof[index])
     ) {
       return success("ollama version is 0.11.10\n");
     }
