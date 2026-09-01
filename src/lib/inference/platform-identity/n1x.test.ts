@@ -7,6 +7,7 @@ import {
   collectN1xIdentity,
   isN1xFastOsRelease,
   isN1xPciDisplayDevice,
+  parseTrustedFastOsPlatform,
   isTrustedN1xFastOsMarker,
 } from "./n1x";
 
@@ -56,6 +57,7 @@ describe("N1x identity", () => {
     expect(n1xFixture()).toEqual({
       candidate: true,
       fastOsMarker: true,
+      fastOsPlatform: "n1x",
       pciGpu: true,
       qualified: true,
     });
@@ -63,7 +65,13 @@ describe("N1x identity", () => {
       n1xFixture({
         readFileDescriptor: () => 'NAME="N1x FASTOS"\nVERSION="99.1.2"\n',
       }),
-    ).toEqual({ candidate: true, fastOsMarker: true, pciGpu: true, qualified: true });
+    ).toEqual({
+      candidate: true,
+      fastOsMarker: true,
+      fastOsPlatform: "n1x",
+      pciGpu: true,
+      qualified: true,
+    });
   });
 
   it.each([
@@ -89,6 +97,18 @@ describe("N1x identity", () => {
 
   it("treats non-identity marker lines as inert text (#8574)", () => {
     expect(isN1xFastOsRelease('NAME="N1x FASTOS"\nPAYLOAD="$(touch /tmp/nope)"\n')).toBe(true);
+  });
+
+  it("recognizes the exact trusted DGX Spark FastOS marker without treating it as N1x (#10717)", () => {
+    const contents = 'NAME="DGX SPARK FASTOS"\nVERSION="1.23.0"\n';
+    expect(parseTrustedFastOsPlatform(contents)).toBe("spark");
+    expect(isN1xFastOsRelease(contents)).toBe(false);
+    expect(n1xFixture({ readFileDescriptor: () => contents })).toMatchObject({
+      candidate: true,
+      fastOsMarker: false,
+      fastOsPlatform: "spark",
+      qualified: false,
+    });
   });
 
   it("requires the exact N1x NVIDIA display-class PCI identity (#8574)", () => {
@@ -155,6 +175,12 @@ describe("N1x identity", () => {
           throw Object.assign(new Error("PCI identity unavailable"), { code: "EIO" });
         },
       }),
-    ).toEqual({ candidate: true, fastOsMarker: true, pciGpu: undefined, qualified: false });
+    ).toEqual({
+      candidate: true,
+      fastOsMarker: true,
+      fastOsPlatform: "n1x",
+      pciGpu: undefined,
+      qualified: false,
+    });
   });
 });
