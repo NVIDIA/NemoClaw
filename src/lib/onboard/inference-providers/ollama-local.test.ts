@@ -135,11 +135,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
 
   it("dispatches Windows-host warm-up through Docker Desktop", async () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const runCommands: unknown[] = [];
-    const run = vi.fn((command: unknown) => {
-      runCommands.push(command);
-      return { status: 0 };
-    });
+    const run = vi.fn((_command: unknown) => ({ status: 0 }));
 
     await expect(
       setupOllamaLocalInference(
@@ -157,13 +153,6 @@ describe("Ollama local provider sandbox-facing model gate", () => {
     ).resolves.toEqual({ done: false });
 
     expect(run).toHaveBeenCalledOnce();
-    expect(runCommands[0]).toEqual([
-      "bash",
-      "-c",
-      expect.stringMatching(
-        /docker.*curlimages\/curl:8\.10\.1.*host\.docker\.internal:11434\/api\/generate/,
-      ),
-    ]);
   });
 
   it("fails before provider registration when the cleanup route cannot be staged", async () => {

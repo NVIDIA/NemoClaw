@@ -47,8 +47,9 @@ function reportRecovery(
     }
     proc.stderr.write(
       `  Ollama warm-up for '${model}' at ${result.endpoint} ${describeWarmFailure(result.reason)} ` +
-        `(${result.detail}). Repair that Ollama route and rerun this command; continuing to ` +
-        `OpenClaw dispatch.\n`,
+        `(${result.detail}). OpenClaw dispatch will continue. To retry the warm-up, restore ` +
+        `Ollama access to ${result.endpoint} and confirm that it serves '${model}', then rerun ` +
+        `this command.\n`,
     );
     return;
   }
