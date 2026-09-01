@@ -17,12 +17,12 @@ It also broadens Deferred N1x detection and gives N1x managed vLLM a dedicated s
   `destroy --force` can continue only for retained OpenClaw Mcporter entries, while Hermes and ordinary MCP mutations remain fail closed.
   Related change: [PR #10483](https://github.com/NVIDIA/NemoClaw/pull/10483).
 - Rebuild now stops before deleting the original sandbox when any declared state directory or file cannot be preserved, including with `--force`.
-  Incomplete snapshots remain available for bounded manual recovery but are excluded from normal list and restore selection, and a failed nested onboarding result no longer proceeds to restore or report success.
+  When snapshot cleanup fails, NemoClaw retains the incomplete snapshot outside normal list and restore selection. Operators must repair the original state and rerun the operation; they must not restore, copy, share, or edit the retained snapshot. A failed nested onboarding result no longer proceeds to restore or report success.
   Related changes: [PR #10686](https://github.com/NVIDIA/NemoClaw/pull/10686) and [PR #10590](https://github.com/NVIDIA/NemoClaw/pull/10590).
 - Fresh onboarding now ends the OpenShell create handoff after receiving a validated durable sandbox ID, then settles and verifies identity before post-create effects.
   This prevents affected WSL2 ARM OpenClaw sandboxes from moving from Ready to Error while publication metadata is still settling.
   Related change: [PR #10789](https://github.com/NVIDIA/NemoClaw/pull/10789).
-- Hermes stopped-sandbox recovery reuses verified lifecycle and inference state to avoid redundant currentness work while preserving rollback and final readiness qualification.
+- Hermes stopped-sandbox recovery reuses verified lifecycle and inference state. It still rolls back failures and performs final readiness qualification.
   Hermes dashboards behind a reverse proxy also accept the hostname from a validated HTTPS `CHAT_UI_URL` for HTTP and WebSocket requests while remaining bound to loopback.
   Related changes: [PR #10641](https://github.com/NVIDIA/NemoClaw/pull/10641) and [PR #10687](https://github.com/NVIDIA/NemoClaw/pull/10687).
 - Inference status now queries the selected gateway instead of implicitly using the default gateway, and stalled Hugging Face model downloads abort within a bounded deadline.
