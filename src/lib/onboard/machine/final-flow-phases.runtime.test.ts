@@ -63,7 +63,6 @@ describe("final onboard flow runtime boundary", () => {
         "policies",
         "disarm",
         "set-default",
-        "agent-forward",
         "verify",
       ]);
       expect(harness.getSession()).toMatchObject({
@@ -127,7 +126,6 @@ describe("final onboard flow runtime boundary", () => {
         "policies",
         "disarm",
         "set-default",
-        "agent-forward",
         "verify",
       ]);
       expect(harness.getSession()).toMatchObject({
@@ -232,7 +230,6 @@ describe("final onboard flow runtime boundary", () => {
         "policies",
         "disarm",
         "set-default",
-        "agent-forward",
         "verify",
       ]);
       expect(harness.getSession()).toMatchObject({
@@ -306,7 +303,6 @@ describe("final onboard flow runtime boundary", () => {
       "policies",
       "disarm",
       "set-default",
-      "agent-forward",
       "verify:slack,discord",
     ]);
   });
@@ -409,7 +405,6 @@ describe("final onboard flow runtime boundary", () => {
       "policies",
       "disarm",
       "set-default",
-      "agent-forward",
       "verify",
     ]);
     expect(printDashboard).not.toHaveBeenCalled();

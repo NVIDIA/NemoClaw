@@ -107,6 +107,7 @@ export async function ensureAgentDashboardForward(options: {
         : `http://127.0.0.1:${agentDashboardPort}`;
     await beforeForwardPort?.(agentDashboardPort);
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
+      allowPortReallocation: false,
       ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
     });
     if (!usesFixedApiPort) {

@@ -28,7 +28,9 @@ describe("ensureAgentDashboardForward", () => {
       }),
     ).toBe(18789);
 
-    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {});
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
+      allowPortReallocation: false,
+    });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
       allowPortReallocation: false,
     });
@@ -52,7 +54,9 @@ describe("ensureAgentDashboardForward", () => {
       }),
     ).toBe(18789);
 
-    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {});
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
+      allowPortReallocation: false,
+    });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8643", {
       allowPortReallocation: false,
     });
@@ -105,7 +109,9 @@ describe("ensureAgentDashboardForward", () => {
       }),
     ).toBe(9120);
 
-    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:9120", {});
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:9120", {
+      allowPortReallocation: false,
+    });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
       allowPortReallocation: false,
     });
@@ -141,7 +147,7 @@ describe("ensureAgentDashboardForward", () => {
       1,
       "hm",
       "https://hermes.example.test:9120/ui",
-      {},
+      { allowPortReallocation: false },
     );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
   });
@@ -166,7 +172,11 @@ describe("ensureAgentDashboardForward", () => {
       }),
     ).toBe(8647);
 
-    expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8647", {});
+    expect(ensureDashboardForward).toHaveBeenCalledWith(
+      "api-agent",
+      "http://127.0.0.1:8647",
+      { allowPortReallocation: false },
+    );
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "api-agent",
       "http://127.0.0.1:8642",
@@ -201,7 +211,7 @@ describe("ensureAgentDashboardForward", () => {
       1,
       "legacy-hermes",
       "http://127.0.0.1:8642",
-      {},
+      { allowPortReallocation: false },
     );
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(
       2,
