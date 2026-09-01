@@ -68,7 +68,6 @@ network_policies:
         request_body_credential_rewrite: true
         credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-bridge }
         rules:
-          - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
 `;
 
@@ -212,6 +211,20 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+`;
+
+    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+      app: false,
+      bot: false,
+    });
+  });
+
+  it("treats a malformed Slack endpoint as missing credential evidence", () => {
+    const policy = `
+network_policies:
+  slack:
+    endpoints:
+      - null
 `;
 
     expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
