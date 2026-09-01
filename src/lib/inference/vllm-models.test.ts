@@ -200,23 +200,20 @@ describe("vllm model registry", () => {
     expect(DEFAULT_VLLM_MODEL.envValue).toBe("qwen3.6-27b");
   });
 
-  it("resolves a model by its env slug (case-insensitive)", () => {
-    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
-    expect(deepseek).toBeDefined();
+  it.each(
+    VLLM_MODELS.flatMap((model) =>
+      [
+        ["environment", model.envValue],
+        ["Hugging Face", model.id],
+        ["served-model", model.servedModelId ?? model.id],
+      ].map(([aliasType, alias]) => ({ aliasType, alias, model, envValue: model.envValue })),
+    ),
+  )("resolves the $aliasType alias for $envValue", ({ model, alias }) => {
     expect(
       selectVllmModelFromEnv({
-        NEMOCLAW_VLLM_MODEL: "DeepSeek-R1-Distill-70B",
+        NEMOCLAW_VLLM_MODEL: alias.toUpperCase(),
       } as NodeJS.ProcessEnv),
-    ).toEqual(deepseek);
-  });
-
-  it("resolves a model by its full Hugging Face id", () => {
-    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
-    expect(
-      selectVllmModelFromEnv({
-        NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
-      } as NodeJS.ProcessEnv),
-    ).toEqual(deepseek);
+    ).toEqual(model);
   });
 
   it("registers DeepSeek V4 Flash as a managed-vLLM override", () => {
