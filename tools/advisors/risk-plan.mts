@@ -46,7 +46,6 @@ const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/status-snapshot.ts",
   "src/lib/onboard/docker-driver-sandbox-recovery.ts",
   "src/lib/onboard/docker-startup-command-agent.ts",
-  "src/lib/onboard/sandbox-create-step.ts",
   "tools/e2e/onboard-timeout-contract.mts",
 ]);
 export const GATEWAY_TOPOLOGY_FILES = [

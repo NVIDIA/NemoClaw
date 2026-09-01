@@ -752,7 +752,6 @@ describe("deterministic PR risk plan", () => {
     "src/lib/actions/sandbox/status-snapshot.ts",
     "src/lib/onboard/docker-driver-sandbox-recovery.ts",
     "src/lib/onboard/docker-startup-command-agent.ts",
-    "src/lib/onboard/sandbox-create-step.ts",
   ])("selects post-reboot recovery for Docker delivery changes in %s (#7824)", (changedFile) => {
     const result = plan(changedFile);
     const adjacentStatusFile = plan("src/lib/actions/sandbox/status-text.ts");
