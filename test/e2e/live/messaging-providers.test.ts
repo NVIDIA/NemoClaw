@@ -14,6 +14,7 @@ import fs from "node:fs";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
+import { assertFakeApiDockerTopologyProof } from "./fake-api-docker-topology-proof.ts";
 import {
   accountBool,
   accountString,
@@ -880,6 +881,14 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
         FAKE_SLACK_API_EXPECTED_BOT_TOKEN: state.tokens.slackBot,
         FAKE_SLACK_API_EXPECTED_APP_TOKEN: state.tokens.slackApp,
       },
+      env: state.env,
+      redactionValues,
+    });
+    await assertFakeApiDockerTopologyProof({
+      host,
+      kind: "slack",
+      containerPrefix: "nemoclaw-fake-slack",
+      api: fakeSlack,
       env: state.env,
       redactionValues,
     });

@@ -266,7 +266,7 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("returns distinct Slack REST and websocket ports from independently observed Docker state", async () => {
+  it("returns distinct Slack REST and websocket ports from accepted Docker state", async () => {
     const { host } = fakeDockerHost({
       proxyContainerPorts: [FAKE_API_PROXY_READINESS_PORT, 8080, 8081],
     });
