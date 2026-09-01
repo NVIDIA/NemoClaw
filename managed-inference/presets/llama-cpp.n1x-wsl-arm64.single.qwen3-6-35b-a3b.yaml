@@ -5,29 +5,39 @@ apiVersion: nemoclaw.nvidia.com/managed-inference/v1
 kind: ServingPreset
 
 metadata:
-  id: vllm.n1x.single.qwen3-6-35b-a3b-nvfp4
-  displayName: Qwen3.6 35B-A3B NVFP4 on one N1x
+  id: llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b
+  displayName: Qwen 3.6 35B-A3B on N1x WSL
   supportState: experimental
   validation:
     level: schema
     evidence: managed-inference-catalog-compiler-v1
 
 spec:
-  selection: automatic
-  priority: 550
+  selection: explicit-only
+  priority: 470
 
   requirements:
     all:
       - readiness:
           scope: everyNode
-          kind: qualification
-          id: host.platform.n1x
-          status: qualified
+          kind: capability
+          id: host.platform.supported
+          state: present
       - readiness:
           scope: everyNode
           kind: capability
-          id: host.platform.n1x
+          id: host.platform.wsl_docker_desktop
           state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.wsl_gpu_passthrough
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: qualification
+          id: host.platform.n1x_wsl
+          status: qualified
       - readiness:
           scope: everyNode
           kind: capability
@@ -80,10 +90,24 @@ spec:
       - readiness:
           scope: everyNode
           kind: observation
+          id: host.os.wsl
+          comparison:
+            operator: equals
+            value: true
+      - readiness:
+          scope: everyNode
+          kind: observation
           id: host.docker.runtime
           comparison:
             operator: equals
-            value: docker
+            value: docker-desktop
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.docker.memory_bytes
+          comparison:
+            operator: at-least
+            value: 50331648000
       - readiness:
           scope: everyNode
           kind: observation
@@ -94,13 +118,18 @@ spec:
       - readiness:
           scope: everyNode
           kind: observation
+          id: host.gpu.memory_total_bytes
+          comparison:
+            operator: at-least
+            value: 50331648000
+      - readiness:
+          scope: everyNode
+          kind: observation
           id: host.gpu.driver_version
           comparison:
             operator: version-at-least
             value: 580.65.06
 
   plan:
-    backend: vllm
-    platform: n1x
-    interactive: true
-    recipeRef: vllm.qwen3-6-35b-a3b-nvfp4.n1x-single.v1
+    backend: install-llama-cpp
+    recipeRef: llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
