@@ -366,7 +366,7 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("reserves a final restore after every bounded recovery submission races", () => {
+  it("restores the latest external policy after each bounded recovery submission races an external edit", () => {
     let activeVersion = 1;
     let concurrentRevision = livePolicy;
     let writes = 0;
