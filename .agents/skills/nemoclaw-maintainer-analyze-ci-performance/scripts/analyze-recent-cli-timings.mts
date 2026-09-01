@@ -8,6 +8,10 @@ import { pathToFileURL } from "node:url";
 import { quantile, round } from "./statistics.mts";
 import { projectDiagnostic, runGithub, runShell } from "./runtime.mts";
 
+export function reportCleanupFailure(analysisError: unknown, cleanupError: Error): void {
+  if (analysisError === undefined) throw cleanupError;
+}
+
 export async function analyzeRecentCliTimings(input: {
   workdir: string;
   repo?: string;
@@ -61,9 +65,12 @@ export async function analyzeRecentCliTimings(input: {
     throw new Error("top must be an integer from 1 through 50");
   if (!Number.isFinite(ratio) || ratio < 0.5 || ratio > 1)
     throw new Error("minSampleRatio must be from 0.5 through 1");
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const project = async (value, maxCharacters, clipMode = "tail") =>
-    projectDiagnostic(String(value), maxCharacters, clipMode);
+  const quote = (value: unknown) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  const project = async (
+    value: unknown,
+    maxCharacters: number,
+    clipMode: "head" | "tail" = "tail",
+  ) => projectDiagnostic(String(value), maxCharacters, clipMode);
   const accessFailures = [
     "authentication",
     "authorization",
@@ -74,7 +81,7 @@ export async function analyzeRecentCliTimings(input: {
     "resource not accessible",
     "sso",
   ];
-  const run = async (command, timeoutMs = 120000) => {
+  const run = async (command: string, timeoutMs = 120000) => {
     const result = await runShell(command, input.workdir, timeoutMs);
     const detail = (result.stderr + "\n" + result.stdout).toLowerCase();
     if (result.exitCode !== 0 && accessFailures.some((value) => detail.includes(value)))
@@ -192,6 +199,7 @@ export async function analyzeRecentCliTimings(input: {
   const maximumSuites = 5_000;
   const maximumAssertions = 100_000;
   const maximumLabels = 2_000;
+  let analysisError: unknown;
   try {
     for (const artifact of artifacts) {
       const archive = root + "/" + artifact.runId + ".zip";
@@ -226,7 +234,7 @@ export async function analyzeRecentCliTimings(input: {
       const parts = checked.stdout.trim().split(/\s+/, 3);
       const archiveState = parts[0];
       if (checked.exitCode !== 0 || archiveState !== "ok") {
-        const details = {
+        const details: Record<string, string> = {
           "compressed-size": "Artifact compressed size is invalid or differs from its metadata",
           entries: "Artifact contains more than 100 entries",
           expanded: "Artifact declares more than 100,000,000 expanded bytes",
@@ -431,12 +439,18 @@ export async function analyzeRecentCliTimings(input: {
       slowTests,
       slowFiles,
     };
+  } catch (error) {
+    analysisError = error;
+    throw error;
   } finally {
     const cleanup = await run("rm -rf -- " + quote(root), 30_000);
     if (cleanup.exitCode !== 0)
-      throw new Error(
-        "Could not remove private temporary directory: " +
-          (await project(cleanup.stderr || cleanup.stdout, 1_000)),
+      reportCleanupFailure(
+        analysisError,
+        new Error(
+          "Could not remove private temporary directory: " +
+            (await project(cleanup.stderr || cleanup.stdout, 1_000)),
+        ),
       );
   }
 }

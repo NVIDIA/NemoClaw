@@ -286,19 +286,41 @@ export async function analyzeBaseImagePublicationTimings(input: {
     observations.push(
       ...(await Promise.all(
         batch.map(async (run) => {
-          const data = parse(
-            await gh([
-              "api",
-              "/repos/" + repo + "/actions/runs/" + run.id + "/jobs?per_page=100",
-              "--jq",
-              '{jobs:[.jobs[]|select(.name=="base-image-publication" or .name=="generate-matrix")|{name,status,conclusion,startedAt:.started_at,completedAt:.completed_at,steps:[.steps[]|{name,startedAt:.started_at,completedAt:.completed_at}]}]}',
-            ]),
-            "workflow job",
-          );
+          const jobs = [];
+          let observed = 0;
+          let totalCount: number | null = null;
+          for (let page = 1; page <= 10; page += 1) {
+            const data = parse(
+              await gh([
+                "api",
+                "/repos/" + repo + "/actions/runs/" + run.id + "/jobs?per_page=100&page=" + page,
+                "--jq",
+                '{totalCount:.total_count,pageJobs:(.jobs|length),jobs:[.jobs[]|select(.name=="base-image-publication" or .name=="generate-matrix")|{name,status,conclusion,startedAt:.started_at,completedAt:.completed_at,steps:[.steps[]|{name,startedAt:.started_at,completedAt:.completed_at}]}]}',
+              ]),
+              "workflow job",
+            );
+            if (
+              !Number.isSafeInteger(data.totalCount) ||
+              data.totalCount < 0 ||
+              !Number.isSafeInteger(data.pageJobs) ||
+              data.pageJobs < 0 ||
+              data.pageJobs > 100 ||
+              !Array.isArray(data.jobs)
+            )
+              throw new Error("GitHub workflow job response is invalid");
+            if (totalCount !== null && data.totalCount !== totalCount)
+              throw new Error("GitHub workflow job count changed during pagination");
+            totalCount = data.totalCount;
+            observed += data.pageJobs;
+            jobs.push(...data.jobs);
+            if (observed >= totalCount) break;
+            if (page === 10)
+              throw new Error("GitHub workflow job data exceeded the 1,000-job pagination bound");
+          }
           return {
             ...run,
-            publication: data.jobs.find((job) => job.name === "base-image-publication") ?? null,
-            matrix: data.jobs.find((job) => job.name === "generate-matrix") ?? null,
+            publication: jobs.find((job) => job.name === "base-image-publication") ?? null,
+            matrix: jobs.find((job) => job.name === "generate-matrix") ?? null,
           };
         }),
       )),

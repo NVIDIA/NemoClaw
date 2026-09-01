@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
+import { reportCleanupFailure } from "../../../.agents/skills/nemoclaw-maintainer-analyze-ci-performance/scripts/analyze-recent-cli-timings.mts";
 import { readBoundedJsonFile } from "../../../.agents/skills/nemoclaw-maintainer-analyze-ci-performance/scripts/runtime.mts";
 import { quantile } from "../../../.agents/skills/nemoclaw-maintainer-analyze-ci-performance/scripts/statistics.mts";
 
@@ -125,7 +126,7 @@ describe("CI performance analysis", () => {
     const directory = await fixtureDirectory();
     const bin = await installMockGh(
       directory,
-      `const a=process.argv.slice(2); const joined=a.join(" "); if(joined.includes("e2e.yaml")) process.stdout.write(JSON.stringify([{id:1,sha:"same",createdAt:"2026-01-02T00:00:00Z"},{id:2,sha:"reuse",createdAt:"2026-01-01T00:00:00Z"}])); else if(joined.includes("base-image.yaml")) process.stdout.write(JSON.stringify(["same"])); else {const id=joined.split("/runs/")[1].split("/jobs")[0]; const start=id==="1"?"00:00:10":"00:00:20"; process.stdout.write(JSON.stringify({jobs:[{name:"base-image-publication",status:"completed",conclusion:"success",startedAt:"2026-01-02T"+start+"Z",completedAt:"2026-01-02T00:01:00Z",steps:[{name:"Verify applicable base-image publication",startedAt:"2026-01-02T00:00:30Z",completedAt:"2026-01-02T00:00:40Z"}]},{name:"generate-matrix",status:"completed",conclusion:"success",startedAt:"2026-01-02T00:01:05Z",completedAt:"2026-01-02T00:01:10Z",steps:[]}]}));}`,
+      `const a=process.argv.slice(2); const joined=a.join(" "); if(joined.includes("e2e.yaml")) process.stdout.write(JSON.stringify([{id:1,sha:"same",createdAt:"2026-01-02T00:00:00Z"},{id:2,sha:"reuse",createdAt:"2026-01-01T00:00:00Z"}])); else if(joined.includes("base-image.yaml")) process.stdout.write(JSON.stringify(["same"])); else {const id=joined.split("/runs/")[1].split("/jobs")[0]; const start=id==="1"?"00:00:10":"00:00:20"; if(!joined.includes("page=1")){process.stdout.write(JSON.stringify({totalCount:2,pageJobs:0,jobs:[]}));return;} process.stdout.write(JSON.stringify({totalCount:2,pageJobs:2,jobs:[{name:"base-image-publication",status:"completed",conclusion:"success",startedAt:"2026-01-02T"+start+"Z",completedAt:"2026-01-02T00:01:00Z",steps:[{name:"Verify applicable base-image publication",startedAt:"2026-01-02T00:00:30Z",completedAt:"2026-01-02T00:00:40Z"}]},{name:"generate-matrix",status:"completed",conclusion:"success",startedAt:"2026-01-02T00:01:05Z",completedAt:"2026-01-02T00:01:10Z",steps:[]}]}));}`,
     );
     const result = await runAnalyzer(
       `${skillRoot}/scripts/analyze-base-image-publication-timings.mts`,
@@ -140,6 +141,43 @@ describe("CI performance analysis", () => {
     expect(output.sameCommitPublication).toMatchObject({ selectedRuns: 1, successfulJobs: 1 });
     expect(output.reusePriorPublication).toMatchObject({ selectedRuns: 1, successfulJobs: 1 });
     expect(output.combined.jobExecution.n).toBe(2);
+  });
+
+  test("reads workflow jobs after the first 100 through bounded pagination", async () => {
+    const directory = await fixtureDirectory();
+    const secondPage = path.join(directory, "second-page");
+    const bin = await installMockGh(
+      directory,
+      `const fs=require("node:fs"); const a=process.argv.slice(2); const joined=a.join(" "); if(joined.includes("e2e.yaml")) process.stdout.write(JSON.stringify([{id:1,sha:"same",createdAt:"2026-01-02T00:00:00Z"}])); else if(joined.includes("base-image.yaml")) process.stdout.write(JSON.stringify(["same"])); else {if(joined.includes("&page=1")) process.stdout.write(JSON.stringify({totalCount:102,pageJobs:100,jobs:[]})); else if(joined.includes("page=2")){fs.writeFileSync(process.env.SECOND_PAGE,"requested");process.stdout.write(JSON.stringify({totalCount:102,pageJobs:2,jobs:[{name:"base-image-publication",status:"completed",conclusion:"success",startedAt:"2026-01-02T00:00:10Z",completedAt:"2026-01-02T00:01:00Z",steps:[]},{name:"generate-matrix",status:"completed",conclusion:"success",startedAt:"2026-01-02T00:01:05Z",completedAt:"2026-01-02T00:01:10Z",steps:[]}]}));} else {process.stderr.write("unexpected page");process.exit(1);}}`,
+    );
+    const result = await runAnalyzer(
+      `${skillRoot}/scripts/analyze-base-image-publication-timings.mts`,
+      ["--workdir", process.cwd(), "--max-per-stratum", "30"],
+      {
+        ...process.env,
+        PATH: bin + path.delimiter + process.env.PATH,
+        SECOND_PAGE: secondPage,
+      },
+    );
+    expect(JSON.parse(result.stdout).sameCommitPublication).toMatchObject({
+      selectedRuns: 1,
+      successfulJobs: 1,
+      jobExecution: { n: 1 },
+      boundaryToMatrixStart: { n: 1 },
+    });
+    await expect(stat(secondPage)).resolves.toMatchObject({ size: 9 });
+  });
+
+  test("preserves analysis failure when cleanup also fails", () => {
+    expect(() =>
+      reportCleanupFailure(new Error("analysis failed"), new Error("cleanup failed")),
+    ).not.toThrow();
+  });
+
+  test("reports cleanup failure after successful analysis", () => {
+    expect(() => reportCleanupFailure(undefined, new Error("cleanup failed"))).toThrow(
+      "cleanup failed",
+    );
   });
 
   test("rejects invalid input before invoking gh", async () => {
