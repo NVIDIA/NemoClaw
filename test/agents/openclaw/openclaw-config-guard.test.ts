@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { openRegularFileNoFollow } from "../../../src/lib/adapters/fs/regular-file";
 
 const GUARD_PATH = path.resolve("scripts/openclaw-config-guard.py");
 const fixtures: string[] = [];
@@ -328,10 +329,10 @@ describe("openclaw-config-guard", () => {
       `${JSON.stringify({ gateway: { port: 19001 }, agents: { defaults: { model: "nvidia/test" } } }, null, 2)}\n`,
     );
     const replacementDigest = createHash("sha256").update(replacement).digest("hex");
-    const oldConfigInode = fs.statSync(configPath).ino;
-    const oldHashInode = fs.statSync(hashPath).ino;
-    const staleConfigFd = fs.openSync(configPath, "r+"); // codeql[js/file-system-race] Intentional stale-descriptor test.
-    const staleHashFd = fs.openSync(hashPath, "r+"); // codeql[js/file-system-race] Intentional stale-descriptor test.
+    const staleConfigFd = fs.openSync(configPath, "r+");
+    const staleHashFd = fs.openSync(hashPath, "r+");
+    const oldConfigInode = fs.fstatSync(staleConfigFd).ino;
+    const oldHashInode = fs.fstatSync(staleHashFd).ino;
 
     try {
       const result = runGuard("write-config", configDir, "none", {}, expected, replacement);
@@ -345,23 +346,30 @@ describe("openclaw-config-guard", () => {
       });
       expect(mode(root)).toBe(0o755);
       expect(mode(configDir)).toBe(0o2770);
-      expect(mode(configPath)).toBe(0o660);
-      expect(mode(hashPath)).toBe(0o660);
-      expect(fs.statSync(configPath).ino).not.toBe(oldConfigInode);
-      expect(fs.statSync(hashPath).ino).not.toBe(oldHashInode);
-      // codeql[js/file-system-race] The path must resolve to the replacement inode.
-      expect(fs.readFileSync(configPath)).toEqual(replacement);
-      // codeql[js/file-system-race] The path must resolve to the replacement inode.
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${replacementDigest}  openclaw.json\n`);
+      const currentConfig = openRegularFileNoFollow(configPath);
+      const currentHash = openRegularFileNoFollow(hashPath);
+      try {
+        expect(currentConfig.stat().mode & 0o777).toBe(0o660);
+        expect(currentHash.stat().mode & 0o777).toBe(0o660);
+        expect(currentConfig.stat().ino).not.toBe(oldConfigInode);
+        expect(currentHash.stat().ino).not.toBe(oldHashInode);
+        expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(
+          `${replacementDigest}  openclaw.json\n`,
+        );
 
-      fs.writeSync(staleConfigFd, Buffer.from("STALE!!"), 0, 7, 0);
-      fs.writeSync(staleHashFd, Buffer.from("STALE!!"), 0, 7, 0);
-      fs.fsyncSync(staleConfigFd);
-      fs.fsyncSync(staleHashFd);
-      // codeql[js/file-system-race] Deliberately compare the live path with stale descriptors.
-      expect(fs.readFileSync(configPath)).toEqual(replacement);
-      // codeql[js/file-system-race] Deliberately compare the live path with stale descriptors.
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${replacementDigest}  openclaw.json\n`);
+        fs.writeSync(staleConfigFd, Buffer.from("STALE!!"), 0, 7, 0);
+        fs.writeSync(staleHashFd, Buffer.from("STALE!!"), 0, 7, 0);
+        fs.fsyncSync(staleConfigFd);
+        fs.fsyncSync(staleHashFd);
+        expect(currentConfig.readBytes(1024 * 1024)).toEqual(replacement);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(
+          `${replacementDigest}  openclaw.json\n`,
+        );
+      } finally {
+        currentConfig.close();
+        currentHash.close();
+      }
     } finally {
       fs.closeSync(staleConfigFd);
       fs.closeSync(staleHashFd);
@@ -677,10 +685,10 @@ describe("openclaw-config-guard", () => {
     const config = fs.readFileSync(configPath);
     const digest = createHash("sha256").update(config).digest("hex");
     fs.writeFileSync(hashPath, `${"0".repeat(64)}  openclaw.json\n`, { mode: 0o660 });
-    const oldConfigInode = fs.statSync(configPath).ino;
-    const oldHashInode = fs.statSync(hashPath).ino;
-    const staleConfig = fs.openSync(configPath, "r+"); // codeql[js/file-system-race] Intentional stale-descriptor test.
-    const staleHash = fs.openSync(hashPath, "r+"); // codeql[js/file-system-race] Intentional stale-descriptor test.
+    const staleConfig = fs.openSync(configPath, "r+");
+    const staleHash = fs.openSync(hashPath, "r+");
+    const oldConfigInode = fs.fstatSync(staleConfig).ino;
+    const oldHashInode = fs.fstatSync(staleHash).ino;
 
     try {
       const sealed = runGuard("seal-restart", configDir);
@@ -691,22 +699,29 @@ describe("openclaw-config-guard", () => {
       });
       expect(mode(root)).toBe(0o1775);
       expect(mode(configDir)).toBe(0o755);
-      expect(mode(configPath)).toBe(0o444);
-      expect(mode(hashPath)).toBe(0o444);
-      expect(fs.statSync(configPath).ino).not.toBe(oldConfigInode);
-      expect(fs.statSync(hashPath).ino).not.toBe(oldHashInode);
-      // codeql[js/file-system-race] Validate the newly sealed live inode.
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${digest}  openclaw.json\n`);
+      const currentConfig = openRegularFileNoFollow(configPath);
+      const currentHash = openRegularFileNoFollow(hashPath);
+      let sealedConfigInode = -1;
+      let sealedHashInode = -1;
+      try {
+        const currentConfigStat = currentConfig.stat();
+        const currentHashStat = currentHash.stat();
+        expect(currentConfigStat.mode & 0o777).toBe(0o444);
+        expect(currentHashStat.mode & 0o777).toBe(0o444);
+        expect(currentConfigStat.ino).not.toBe(oldConfigInode);
+        expect(currentHashStat.ino).not.toBe(oldHashInode);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${digest}  openclaw.json\n`);
 
-      fs.writeSync(staleConfig, Buffer.from("STALE!!"), 0, 7, 0);
-      fs.writeSync(staleHash, Buffer.from("STALE!!"), 0, 7, 0);
-      // codeql[js/file-system-race] Deliberately compare the live path with stale descriptors.
-      expect(fs.readFileSync(configPath)).toEqual(config);
-      // codeql[js/file-system-race] Deliberately compare the live path with stale descriptors.
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${digest}  openclaw.json\n`);
-
-      const sealedConfigInode = fs.statSync(configPath).ino;
-      const sealedHashInode = fs.statSync(hashPath).ino;
+        fs.writeSync(staleConfig, Buffer.from("STALE!!"), 0, 7, 0);
+        fs.writeSync(staleHash, Buffer.from("STALE!!"), 0, 7, 0);
+        expect(currentConfig.readBytes(1024 * 1024)).toEqual(config);
+        expect(currentHash.readUtf8(1024 * 1024)).toBe(`${digest}  openclaw.json\n`);
+        sealedConfigInode = currentConfigStat.ino;
+        sealedHashInode = currentHashStat.ino;
+      } finally {
+        currentConfig.close();
+        currentHash.close();
+      }
       const unsealed = runGuard("unseal-restart", configDir);
       expect(unsealed.status, JSON.stringify(unsealed.lines)).toBe(0);
       expect(unsealed.lines.at(-1)).toMatchObject({

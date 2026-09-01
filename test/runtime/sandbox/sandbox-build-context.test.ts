@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { dockerSpawn, dockerSpawnSync } from "../../../src/lib/adapters/docker/exec";
+import { openRegularFileNoFollow } from "../../../src/lib/adapters/fs/regular-file";
 import { createAgentSandbox } from "../../../src/lib/agent/base-image";
 import type { AgentDefinition } from "../../../src/lib/agent/defs";
 import { isWsl } from "../../../src/lib/platform";
@@ -470,10 +471,17 @@ describe("sandbox build context staging", () => {
         "reviewed-runtime-bundle",
         relativePath,
       );
-      expect(fs.lstatSync(stagedPath).isFile(), relativePath).toBe(true);
-      // codeql[js/file-system-race] Test-owned, quiescent fixture paths.
-      expect(fs.readFileSync(stagedPath), relativePath).toEqual(fs.readFileSync(sourcePath));
-      expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
+      const staged = openRegularFileNoFollow(stagedPath);
+      const source = openRegularFileNoFollow(sourcePath);
+      try {
+        expect(staged.readBytes(16 * 1024 * 1024), relativePath).toEqual(
+          source.readBytes(16 * 1024 * 1024),
+        );
+        expect((staged.stat().mode & 0o777).toString(8), relativePath).toBe("644");
+      } finally {
+        staged.close();
+        source.close();
+      }
     }
   }
 
