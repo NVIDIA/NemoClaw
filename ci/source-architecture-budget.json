@@ -49,7 +49,7 @@
       "src/lib/actions/uninstall/run-plan.ts": 25,
       "src/lib/inference/local.ts": 22,
       "src/lib/inference/onboard-probes.ts": 21,
-      "src/lib/inference/vllm.ts": 21,
+      "src/lib/inference/vllm.ts": 20,
       "src/lib/onboard.ts": 193,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/policy/index.ts": 23,
