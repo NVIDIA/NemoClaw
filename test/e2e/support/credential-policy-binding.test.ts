@@ -9,9 +9,9 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
+import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/credential-policy-boundary-build.ts";
 
-const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
+const HELPER = path.resolve(import.meta.dirname, "../fixtures/credential-policy-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
@@ -25,7 +25,7 @@ function runBinding(policyFile: string, protocol = "websocket") {
       "tsx",
       HELPER,
       policyFile,
-      "e2e-hermes-discord-discord-bridge",
+      "e2e-messaging-bridge",
       "host.docker.internal",
       "43117",
       protocol,
@@ -34,7 +34,7 @@ function runBinding(policyFile: string, protocol = "websocket") {
   );
 }
 
-describe("Hermes Discord E2E policy binding", () => {
+describe("credential-bound E2E policy endpoint", () => {
   beforeAll(async () => {
     const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
       encoding: "utf8",
@@ -50,8 +50,8 @@ describe("Hermes Discord E2E policy binding", () => {
     }
   });
 
-  it("strips OpenShell revision metadata before binding the fake Gateway endpoint", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-discord-policy-"));
+  it("strips OpenShell revision metadata before binding the requested endpoint", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-policy-"));
     tempDirs.push(tempDir);
     const policyFile = path.join(tempDir, "policy.yaml");
     fs.writeFileSync(
@@ -61,7 +61,7 @@ describe("Hermes Discord E2E policy binding", () => {
         "---",
         "version: 1",
         "network_policies:",
-        "  discord_gateway:",
+        "  fake:",
         "    endpoints:",
         "      - host: host.docker.internal",
         "        port: 43117",
@@ -79,13 +79,13 @@ describe("Hermes Discord E2E policy binding", () => {
     expect(YAML.parse(fs.readFileSync(policyFile, "utf8"))).toEqual({
       version: 1,
       network_policies: {
-        discord_gateway: {
+        fake: {
           endpoints: [
             {
               host: "host.docker.internal",
               port: 43117,
               protocol: "websocket",
-              credential_binding: { provider: "e2e-hermes-discord-discord-bridge" },
+              credential_binding: { provider: "e2e-messaging-bridge" },
             },
             { host: "discord.com", port: 443 },
           ],
@@ -109,7 +109,7 @@ describe("Hermes Discord E2E policy binding", () => {
         "tsx",
         HELPER,
         policyFile,
-        "e2e-hermes-discord-discord-bridge",
+        "e2e-messaging-bridge",
         "host.docker.internal",
         "43117",
       ],
@@ -120,36 +120,40 @@ describe("Hermes Discord E2E policy binding", () => {
     expect(result.stderr).toContain("<protocol>");
   });
 
-  it("binds only the requested protocol when a fake host and port are shared", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
-    tempDirs.push(tempDir);
-    const policyFile = path.join(tempDir, "policy.yaml");
-    fs.writeFileSync(
-      policyFile,
-      [
-        "version: 1",
-        "network_policies:",
-        "  fake:",
-        "    endpoints:",
-        "      - host: host.docker.internal",
-        "        port: 43117",
-        "        protocol: rest",
-        "      - host: host.docker.internal",
-        "        port: 43117",
-        "        protocol: websocket",
-        "",
-      ].join("\n"),
-    );
+  it.each(["rest", "websocket"] as const)(
+    "binds only the requested %s protocol when a fake host and port are shared",
+    (protocol) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
+      tempDirs.push(tempDir);
+      const policyFile = path.join(tempDir, "policy.yaml");
+      fs.writeFileSync(
+        policyFile,
+        [
+          "version: 1",
+          "network_policies:",
+          "  fake:",
+          "    endpoints:",
+          "      - host: host.docker.internal",
+          "        port: 43117",
+          "        protocol: rest",
+          "      - host: host.docker.internal",
+          "        port: 43117",
+          "        protocol: websocket",
+          "",
+        ].join("\n"),
+      );
 
-    const result = runBinding(policyFile, "websocket");
-    const endpoints = YAML.parse(fs.readFileSync(policyFile, "utf8")).network_policies.fake
-      .endpoints as Array<Record<string, unknown>>;
+      const result = runBinding(policyFile, protocol);
+      const endpoints = YAML.parse(fs.readFileSync(policyFile, "utf8")).network_policies.fake
+        .endpoints as Array<Record<string, unknown>>;
 
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
-    expect(endpoints[0]).not.toHaveProperty("credential_binding");
-    expect(endpoints[1]).toHaveProperty("credential_binding", {
-      provider: "e2e-hermes-discord-discord-bridge",
-    });
-  });
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      const requestedIndex = protocol === "rest" ? 0 : 1;
+      expect(endpoints[requestedIndex]).toHaveProperty("credential_binding", {
+        provider: "e2e-messaging-bridge",
+      });
+      expect(endpoints[1 - requestedIndex]).not.toHaveProperty("credential_binding");
+    },
+  );
 });

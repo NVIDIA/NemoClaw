@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
@@ -19,6 +18,7 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import {
+  applyCredentialBoundFakePolicy,
   assertDiscordGatewayCapture,
   precleanMessagingResources,
   type FakeDockerApi,
@@ -101,75 +101,6 @@ async function startHermesFakeDiscordGateway(
     env,
     redactionValues,
   });
-}
-
-async function applyHermesFakeDiscordPolicy(options: {
-  host: HostCliClient;
-  sandboxName: string;
-  api: FakeDockerApi;
-  env: NodeJS.ProcessEnv;
-  redactions: string[];
-}): Promise<void> {
-  const result = await options.host.command(
-    options.host.openshellCommandPath,
-    [
-      "policy",
-      "update",
-      options.sandboxName,
-      "--add-endpoint",
-      `${FAKE_DISCORD_HOST}:${options.api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `${FAKE_DISCORD_HOST}:${options.api.port}:GET:/**`,
-      "--add-allow",
-      `${FAKE_DISCORD_HOST}:${options.api.port}:WEBSOCKET_TEXT:/**`,
-      "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--binary",
-      "/usr/local/bin/python3",
-      "--binary",
-      "/usr/bin/python3",
-      "--binary",
-      "/opt/hermes/.venv/bin/python",
-      "--wait",
-    ],
-    {
-      artifactName: "apply-hermes-fake-discord-gateway-policy",
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(result, "apply Hermes fake Discord Gateway policy");
-
-  const binding = await options.host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      "bind-hermes-fake-discord-policy",
-      options.host.openshellCommandPath,
-      options.sandboxName,
-      `${options.sandboxName}-discord-bridge`,
-      FAKE_DISCORD_HOST,
-      String(options.api.port),
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
-    ],
-    {
-      artifactName: "bind-hermes-fake-discord-gateway-credential",
-      cwd: REPO_ROOT,
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binding, "bind Hermes fake Discord Gateway credential");
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
@@ -593,12 +524,18 @@ PY`,
       DISCORD_TOKEN,
       redactionValues,
     );
-    await applyHermesFakeDiscordPolicy({
+    await applyCredentialBoundFakePolicy({
       host,
       sandboxName: SANDBOX_NAME,
       api: fakeGateway,
+      protocol: "websocket",
+      rewrite: "websocket-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-discord-bridge`,
       env,
       redactions: redactionValues,
+      artifactName: "apply-hermes-fake-discord-gateway-policy",
+      policyHost: FAKE_DISCORD_HOST,
+      binaries: ["/usr/local/bin/python3", "/usr/bin/python3", "/opt/hermes/.venv/bin/python"],
     });
 
     const nativeGateway = await runHermesPythonDiscordGatewayProof(

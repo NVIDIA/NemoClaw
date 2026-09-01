@@ -34,19 +34,6 @@ export const REBUILD_TIMEOUT_MS = 25 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
 export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
-export const MESSAGING_PROVIDER_SCENARIOS = {
-  prepare: "given messaging credentials, cleanup leaves a fresh host for installation",
-  install: "when all channels are installed, the OpenClaw sandbox becomes ready",
-  whatsappRebuild:
-    "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
-  credentialIsolation:
-    "when providers are installed, the sandbox exposes placeholders without raw credentials",
-  policyRewrites: "when provider routes are probed, Telegram and Discord rewrites remain scoped",
-  installedRuntimeSends:
-    "when installed runtimes send, rewritten credentials reach only isolated fake APIs",
-  gatewayHealth:
-    "when gateway health and optional live sends run, provider contracts remain healthy",
-} as const;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const FAKE_API_PROXY_SOURCE = String.raw`
@@ -1037,44 +1024,44 @@ export async function startFakeDockerApi(
   };
 }
 
-export async function applyRestRewritePolicy(
-  host: HostCliClient,
-  api: FakeDockerApi,
-  env: NodeJS.ProcessEnv,
-  redactionValues: string[],
-  providerName?: string,
-): Promise<void> {
-  const result = await runHost(
-    host,
-    "openshell",
-    [
-      "policy",
-      "update",
-      SANDBOX_NAME,
-      "--add-endpoint",
-      `host.openshell.internal:${api.port}:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:POST:/**`,
-      "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--wait",
-    ],
-    {
-      artifactName: `apply-${api.kind}-rest-policy`,
-      env,
-      redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(result, `apply ${api.kind} fake REST policy`);
-  if (!providerName) return;
+export async function applyCredentialBoundFakePolicy(options: {
+  host: HostCliClient;
+  sandboxName: string;
+  api: FakeDockerApi;
+  protocol: "rest" | "websocket";
+  rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
+  providerName: string;
+  env: NodeJS.ProcessEnv;
+  redactions: string[];
+  artifactName: string;
+  policyHost?: string;
+  binaries?: readonly string[];
+}): Promise<void> {
+  const policyHost = options.policyHost ?? "host.openshell.internal";
+  const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
+  const args = [
+    "policy",
+    "update",
+    options.sandboxName,
+    "--add-endpoint",
+    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+  ];
+  for (const method of methods) {
+    args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
+  }
+  const binaries = ["/usr/local/bin/node", "/usr/bin/node", ...(options.binaries ?? [])];
+  for (const binary of new Set(binaries)) args.push("--binary", binary);
+  args.push("--wait");
+  const result = await runHost(options.host, options.host.openshellCommandPath, args, {
+    artifactName: options.artifactName,
+    env: options.env,
+    redactionValues: options.redactions,
+    timeoutMs: 120_000,
+  });
+  expectExitZero(result, options.artifactName);
 
   const binding = await runHost(
-    host,
+    options.host,
     "bash",
     [
       "-lc",
@@ -1082,24 +1069,26 @@ export async function applyRestRewritePolicy(
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
+node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
 "$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${api.kind}-rest-policy`,
-      host.openshellCommandPath,
-      SANDBOX_NAME,
-      providerName,
-      api.port,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      `bind-fake-${options.protocol}-policy`,
+      options.host.openshellCommandPath,
+      options.sandboxName,
+      options.providerName,
+      policyHost,
+      String(options.api.port),
+      options.protocol,
+      path.join(REPO_ROOT, "test/e2e/fixtures/credential-policy-binding.ts"),
     ],
     {
-      artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
+      artifactName: `${options.artifactName}-credential-binding`,
       cwd: REPO_ROOT,
-      env,
-      redactionValues,
+      env: options.env,
+      redactionValues: options.redactions,
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
+  expectExitZero(binding, `${options.artifactName} credential binding`);
 }
 
 function readJsonLines(file: string): Record<string, unknown>[] {

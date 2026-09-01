@@ -20,7 +20,7 @@ const policyBoundary = (
 ) as typeof policyBoundaryModule;
 const { parseOpenShellPolicy } = policyBoundary;
 
-export function bindHermesDiscordPolicyEndpoint(
+export function bindCredentialPolicyEndpoint(
   policyFile: string,
   providerName: string,
   host: string,
@@ -39,13 +39,9 @@ export function bindHermesDiscordPolicyEndpoint(
       return false;
     }
     const value = candidate as { host?: unknown; port?: unknown; protocol?: unknown };
-    return (
-      value.host === host &&
-      value.port === port &&
-      value.protocol === protocol
-    );
+    return value.host === host && value.port === port && value.protocol === protocol;
   }) as Record<string, unknown> | undefined;
-  if (!endpoint) throw new Error("fake Discord endpoint is missing from the base policy");
+  if (!endpoint) throw new Error("credential-bound endpoint is missing from the base policy");
 
   endpoint.credential_binding = { provider: providerName };
   fs.writeFileSync(policyFile, YAML.stringify(policy));
@@ -56,10 +52,10 @@ function main(): void {
   const [policyFile, providerName, host, rawPort, protocol] = process.argv.slice(2);
   if (!policyFile || !providerName || !host || !rawPort || !protocol) {
     throw new Error(
-      "usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port> <protocol>",
+      "usage: credential-policy-binding <policy-file> <provider> <host> <port> <protocol>",
     );
   }
-  bindHermesDiscordPolicyEndpoint(policyFile, providerName, host, Number(rawPort), protocol);
+  bindCredentialPolicyEndpoint(policyFile, providerName, host, Number(rawPort), protocol);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

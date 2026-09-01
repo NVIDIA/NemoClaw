@@ -17,7 +17,7 @@ import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receip
 import {
   accountBool,
   accountString,
-  applyRestRewritePolicy,
+  applyCredentialBoundFakePolicy,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -30,7 +30,6 @@ import {
   isUnresolvedPlaceholderRejection,
   LIVE_TIMEOUT_MS,
   lastJsonLine,
-  MESSAGING_PROVIDER_SCENARIOS,
   messagingEnv,
   nonEmpty,
   outputText,
@@ -64,13 +63,13 @@ test(
     ...testTimeoutOptions(LIVE_TIMEOUT_MS),
     meta: {
       e2ePhases: [
-        MESSAGING_PROVIDER_SCENARIOS.prepare,
-        MESSAGING_PROVIDER_SCENARIOS.install,
-        MESSAGING_PROVIDER_SCENARIOS.whatsappRebuild,
-        MESSAGING_PROVIDER_SCENARIOS.credentialIsolation,
-        MESSAGING_PROVIDER_SCENARIOS.policyRewrites,
-        MESSAGING_PROVIDER_SCENARIOS.installedRuntimeSends,
-        MESSAGING_PROVIDER_SCENARIOS.gatewayHealth,
+        "given messaging credentials, cleanup leaves a fresh host for installation",
+        "when all channels are installed, the OpenClaw sandbox becomes ready",
+        "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
+        "when providers are installed, the sandbox exposes placeholders without raw credentials",
+        "when provider routes are probed, Telegram and Discord rewrites remain scoped",
+        "when installed runtimes send, rewritten credentials reach only isolated fake APIs",
+        "when gateway health and optional live sends run, provider contracts remain healthy",
       ],
     },
   },
@@ -656,9 +655,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M6h: OpenClaw channels list reports WhatsApp plugin installed",
     );
 
-    progress.phase(
-      "when provider routes are probed, Telegram and Discord rewrites remain scoped",
-    );
+    progress.phase("when provider routes are probed, Telegram and Discord rewrites remain scoped");
     // Probe the allowed Telegram bot API path (/bot<token>/**). The bare root
     // path is blocked by the Telegram egress policy by design (asserted by M14),
     // so probing it would conflate a correct policy denial with unreachability
@@ -887,13 +884,17 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(
+    await applyCredentialBoundFakePolicy({
       host,
-      fakeSlack,
-      state.env,
-      redactionValues,
-      `${SANDBOX_NAME}-slack-bridge`,
-    );
+      sandboxName: SANDBOX_NAME,
+      api: fakeSlack,
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-slack-bridge`,
+      env: state.env,
+      redactions: redactionValues,
+      artifactName: "apply-slack-rest-policy",
+    });
     expect(
       fakeSlack.alternatePort,
       "fake Slack API must publish an independent app-token port",
@@ -902,13 +903,17 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       ...fakeSlack,
       port: fakeSlack.alternatePort!,
     };
-    await applyRestRewritePolicy(
+    await applyCredentialBoundFakePolicy({
       host,
-      fakeSlackApp,
-      state.env,
-      redactionValues,
-      `${SANDBOX_NAME}-slack-app`,
-    );
+      sandboxName: SANDBOX_NAME,
+      api: fakeSlackApp,
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-slack-app`,
+      env: state.env,
+      redactions: redactionValues,
+      artifactName: "apply-slack-app-rest-policy",
+    });
 
     const slackBotPlaceholder = await sandboxOutput(
       sandbox,
@@ -1055,13 +1060,17 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(
+    await applyCredentialBoundFakePolicy({
       host,
-      fakeTelegram,
-      state.env,
-      redactionValues,
-      `${SANDBOX_NAME}-telegram-bridge`,
-    );
+      sandboxName: SANDBOX_NAME,
+      api: fakeTelegram,
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-telegram-bridge`,
+      env: state.env,
+      redactions: redactionValues,
+      artifactName: "apply-telegram-rest-policy",
+    });
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
     const installedTelegramProof = await runInstalledTelegramRuntimeProof(
@@ -1112,13 +1121,17 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(
+    await applyCredentialBoundFakePolicy({
       host,
-      fakeWechat,
-      state.env,
-      redactionValues,
-      `${SANDBOX_NAME}-wechat-bridge`,
-    );
+      sandboxName: SANDBOX_NAME,
+      api: fakeWechat,
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-wechat-bridge`,
+      env: state.env,
+      redactions: redactionValues,
+      artifactName: "apply-wechat-rest-policy",
+    });
     const installedWechatProof = await runInstalledWechatRuntimeProof(
       sandbox,
       fakeWechat,
