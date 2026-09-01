@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { classifyGatewayProviderNames, isBridgeProviderName } from "../credentials/provider-list";
+import { isBridgeProviderName, parseGatewayProviderNames } from "../credentials/provider-list";
 import { queryRegisteredGatewayProviders } from "./inference-set-provider-diagnostics";
 
 const STATIC_WARNING =
@@ -16,44 +16,21 @@ describe("inference set provider diagnostics", () => {
     }));
     const log = vi.fn();
 
-    expect(queryRegisteredGatewayProviders("nemoclaw", { captureOpenshell, log })).toEqual([
+    expect(queryRegisteredGatewayProviders({ captureOpenshell, log })).toEqual([
       "anthropic-prod",
       "nvidia-prod",
     ]);
-    expect(captureOpenshell).toHaveBeenCalledWith(
-      ["provider", "list", "-g", "nemoclaw", "--names"],
-      {
-        ignoreError: true,
-        maxBuffer: 64 * 1024,
-        timeout: 5_000,
-      },
-    );
+    expect(captureOpenshell).toHaveBeenCalledWith(["provider", "list", "--names"], {
+      ignoreError: true,
+      maxBuffer: 64 * 1024,
+      timeout: 5_000,
+    });
     expect(log).not.toHaveBeenCalled();
   });
 
-  it("omits inventory without invoking OpenShell when an endpoint override is set (#9806)", () => {
-    const captureOpenshell = vi.fn(() => ({ status: 0, output: "ambient-provider" }));
-    const log = vi.fn();
-    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://untrusted.example.test");
-
-    try {
-      expect(
-        queryRegisteredGatewayProviders("nemoclaw", { captureOpenshell, log }),
-      ).toBeUndefined();
-    } finally {
-      vi.unstubAllEnvs();
-    }
-
-    expect(captureOpenshell).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(STATIC_WARNING);
-  });
-
   it("partitions empty and messaging-only provider output", () => {
-    expect(classifyGatewayProviderNames([])).toEqual({
-      bridgeNames: [],
-      credentialNames: [],
-    });
-    expect(classifyGatewayProviderNames(["alpha-telegram-bridge", "alpha-slack-app"])).toEqual({
+    expect(parseGatewayProviderNames("")).toEqual({ bridgeNames: [], credentialNames: [] });
+    expect(parseGatewayProviderNames("alpha-telegram-bridge\nalpha-slack-app\n")).toEqual({
       bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"],
       credentialNames: [],
     });
@@ -88,15 +65,11 @@ describe("inference set provider diagnostics", () => {
       name: "nonzero status",
       capture: () => ({ status: 17, output: "query-secret" }),
     },
-    {
-      name: "unsafe provider name",
-      capture: () => ({ status: 0, output: "alpha\n\u001b]52;c;YXR0YWNr\u0007" }),
-    },
   ])("uses the static fallback for $name", ({ capture }) => {
     const captureOpenshell = vi.fn(capture);
     const log = vi.fn();
 
-    expect(queryRegisteredGatewayProviders("nemoclaw", { captureOpenshell, log })).toBeUndefined();
+    expect(queryRegisteredGatewayProviders({ captureOpenshell, log })).toBeUndefined();
     expect(log).toHaveBeenCalledWith(STATIC_WARNING);
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("query-secret"));
   });

@@ -18,3 +18,15 @@ export function classifyGatewayProviderNames(names: readonly string[]): {
     credentialNames: names.filter((name) => !isBridgeProviderName(name)).sort(),
   };
 }
+
+export function parseGatewayProviderNames(output: unknown): {
+  bridgeNames: string[];
+  credentialNames: string[];
+} {
+  return classifyGatewayProviderNames(
+    String(output ?? "")
+      .split("\n")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
+}
