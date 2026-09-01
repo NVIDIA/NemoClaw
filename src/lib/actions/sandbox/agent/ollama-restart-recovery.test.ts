@@ -186,7 +186,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: true, reason: "timeout" });
+    ).toEqual({
+      kind: "warmed",
+      ok: false,
+      timedOut: true,
+      reason: "timeout",
+      endpoint: "http://127.0.0.1:11434",
+      detail: "warm-up exceeded 300 seconds",
+    });
   });
 
   it("does not treat an exit-zero Ollama error body as a successful warm-up", () => {
@@ -203,7 +210,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "ollama-error" });
+    ).toMatchObject({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "ollama-error",
+      endpoint: "http://127.0.0.1:11434",
+      detail: expect.stringContaining("model not found"),
+    });
   });
 
   it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", () => {
@@ -249,7 +263,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "ollama-error" });
+    ).toMatchObject({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "ollama-error",
+      endpoint: "http://127.0.0.1:11434",
+      detail: expect.stringContaining("runner stopped unexpectedly"),
+    });
   });
 
   it("accepts a completed thinking-only response from a thinking model", () => {
@@ -282,7 +303,13 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           runCaptureExImpl: () => ({ stdout, exitCode: 0, timedOut: false }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "invalid-response" });
+    ).toMatchObject({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "invalid-response",
+      endpoint: "http://127.0.0.1:11434",
+    });
   });
 
   it("reports a non-zero warm command exit", () => {
@@ -294,7 +321,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           runCaptureExImpl: () => ({ stdout: "", exitCode: 7, timedOut: false }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "command-failed" });
+    ).toEqual({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "command-failed",
+      endpoint: "http://127.0.0.1:11434",
+      detail: "warm-up exited 7",
+    });
   });
 
   it("reports a warm process spawn failure without throwing", () => {
@@ -307,6 +341,13 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
 
     expect(
       maybeWarmOllamaAfterDaemonRestart({ provider: "ollama-local", model: "qwen3.6:35b" }, deps),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "spawn-failed" });
+    ).toEqual({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "spawn-failed",
+      endpoint: "http://127.0.0.1:11434",
+      detail: "spawn failed",
+    });
   });
 });

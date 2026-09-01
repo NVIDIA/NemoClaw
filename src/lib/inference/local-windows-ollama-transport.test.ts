@@ -189,11 +189,11 @@ describe("Windows-host Ollama transport", () => {
       "-sS",
       "--max-time",
       "120",
-      "http://host.docker.internal:11434/api/generate",
       "-H",
       "Content-Type: application/json",
       "-d",
       expect.stringContaining('"model":"qwen3.5:9b"'),
+      "http://host.docker.internal:11434/api/generate",
     ]);
   });
 
@@ -265,7 +265,13 @@ describe("Windows-host Ollama transport", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
     expect(capture).toHaveBeenCalledOnce();
     expect(capture.mock.calls[0]?.[0]).toEqual(
-      expect.arrayContaining(["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        CONTAINER_REACHABILITY_IMAGE,
+        "http://host.docker.internal:11434/api/ps",
+      ]),
     );
   });
 
@@ -281,7 +287,13 @@ describe("Windows-host Ollama transport", () => {
     });
     expect(capture).toHaveBeenCalledOnce();
     expect(capture.mock.calls[0]?.[0]).toEqual(
-      expect.arrayContaining(["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        CONTAINER_REACHABILITY_IMAGE,
+        "http://host.docker.internal:11434/api/show",
+      ]),
     );
   });
 
@@ -303,7 +315,13 @@ describe("Windows-host Ollama transport", () => {
       message: expect.stringContaining("cannot verify the required 64000-token window"),
     });
     expect(capture.mock.calls[0]?.[0]).toEqual(
-      expect.arrayContaining(["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        CONTAINER_REACHABILITY_IMAGE,
+        "http://host.docker.internal:11434/api/ps",
+      ]),
     );
   });
 });

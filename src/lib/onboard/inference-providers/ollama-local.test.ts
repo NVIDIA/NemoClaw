@@ -193,4 +193,28 @@ describe("Ollama local provider sandbox-facing model gate", () => {
     expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
     expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
   });
+
+  it("restores the prior cleanup route when route application throws", async () => {
+    const rollbackPersistedOllamaHost = vi.fn();
+    const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          applyLocalInferenceRoute: async () => {
+            throw new Error("route application failed");
+          },
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost,
+          },
+        }),
+      ),
+    ).rejects.toThrow("route application failed");
+
+    expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
+    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
+  });
 });

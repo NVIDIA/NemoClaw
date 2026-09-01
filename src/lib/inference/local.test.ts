@@ -1224,7 +1224,7 @@ describe("local inference helpers", () => {
     const probe1 = getOllamaProbeCommand("qwen3.5:9b", 30, "5m");
     expect(probe1).toContain("--max-time");
     expect(probe1).toContain("30");
-    const payload1 = probe1[probe1.length - 1];
+    const payload1 = probe1[probe1.indexOf("-d") + 1];
     expect(payload1).toMatch(/"keep_alive":"5m"/);
   });
 
@@ -1235,7 +1235,7 @@ describe("local inference helpers", () => {
     expect(command).toContain("--max-time");
     expect(command).toContain("120");
     expect(command).toContain("http://127.0.0.1:11434/api/generate");
-    const payload = command[command.length - 1];
+    const payload = command[command.indexOf("-d") + 1];
     expect(payload).toMatch(/"model":"nemotron-3-nano:30b"/);
   });
 

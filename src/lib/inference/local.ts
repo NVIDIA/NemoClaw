@@ -1907,27 +1907,19 @@ export function getOllamaProbeCommand(
   });
   const host = getResolvedOllamaHost();
   const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
-  buildValidatedCurlCommandArgs([
-    "-sS",
-    "--max-time",
-    String(timeoutSeconds),
-    "-H",
-    "Content-Type: application/json",
-    "-d",
-    payload,
-    endpoint,
-  ]);
-  const curlArgs = [
-    "-sS",
-    "--max-time",
-    String(timeoutSeconds),
-    endpoint,
-    "-H",
-    "Content-Type: application/json",
-    "-d",
-    payload,
-  ];
-  return getOllamaApiCommand(curlArgs, host);
+  return getOllamaApiCommand(
+    buildValidatedCurlCommandArgs([
+      "-sS",
+      "--max-time",
+      String(timeoutSeconds),
+      "-H",
+      "Content-Type: application/json",
+      "-d",
+      payload,
+      endpoint,
+    ]),
+    host,
+  );
 }
 
 export function validateOllamaModel(

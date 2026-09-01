@@ -55,11 +55,16 @@ describe("runOllamaRestartRecovery", () => {
       ok: false,
       timedOut: true,
       reason: "timeout",
+      endpoint: "http://host.docker.internal:11434",
+      detail: "curl timed out after 300 seconds",
     }));
 
     const stderr = writes.join("");
     expect(stderr).toContain("Checking Ollama model readiness after daemon restart");
-    expect(stderr).toContain("Ollama warm-up for 'qwen3.6:35b' timed out");
+    expect(stderr).toContain("Ollama warm-up for 'qwen3.6:35b'");
+    expect(stderr).toContain("timed out");
+    expect(stderr).toContain("at http://host.docker.internal:11434");
+    expect(stderr).toContain("Repair that Ollama route and rerun this command");
     expect(stderr).toContain("continuing to OpenClaw dispatch");
   });
 
@@ -76,9 +81,14 @@ describe("runOllamaRestartRecovery", () => {
       ok: false,
       timedOut: false,
       reason,
+      endpoint: "http://host.docker.internal:11434",
+      detail: "bounded failure detail",
     }));
 
-    expect(writes.join("")).toContain(message);
+    const stderr = writes.join("");
+    expect(stderr).toContain(message);
+    expect(stderr).toContain("http://host.docker.internal:11434");
+    expect(stderr).toContain("Repair that Ollama route and rerun this command");
   });
 
   it.each([

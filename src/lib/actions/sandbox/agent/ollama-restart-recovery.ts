@@ -68,6 +68,8 @@ export type OllamaRestartRecoveryResult =
       ok: false;
       timedOut: boolean;
       reason: OllamaRestartRecoveryFailureReason;
+      endpoint: string;
+      detail: string;
     };
 
 export const OLLAMA_LOCAL_PROVIDER = "ollama-local";
@@ -188,6 +190,13 @@ function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-
   }
 }
 
+function boundedWarmFailureDetail(value: unknown, fallback: string): string {
+  const detail = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (detail || fallback).slice(0, 300);
+}
+
 /**
  * Warm a registered local Ollama model only when `/api/ps` proves that the
  * daemon is reachable and the selected model is no longer loaded.
@@ -207,6 +216,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
 
   const getOllamaHost = deps.getOllamaHost ?? getResolvedOllamaHost;
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
+  const rawEndpoint = `http://${rawHost}:${OLLAMA_PORT}`;
   const probe = deps.probeRuntimeModelStatus ?? probeOllamaRuntimeModelStatus;
   const rawCapture = createOllamaApiCapture(deps.runCaptureImpl, rawHost);
   let status: OllamaRuntimeModelStatus;
@@ -226,10 +236,30 @@ export function maybeWarmOllamaAfterDaemonRestart(
   try {
     const result = captureEx(buildWarmCommand(model, rawHost));
     if (result.timedOut) {
-      return { kind: "warmed", ok: false, timedOut: true, reason: "timeout" };
+      return {
+        kind: "warmed",
+        ok: false,
+        timedOut: true,
+        reason: "timeout",
+        endpoint: rawEndpoint,
+        detail: boundedWarmFailureDetail(
+          result.stderr,
+          `warm-up exceeded ${OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS} seconds`,
+        ),
+      };
     }
     if (result.exitCode !== 0) {
-      return { kind: "warmed", ok: false, timedOut: false, reason: "command-failed" };
+      return {
+        kind: "warmed",
+        ok: false,
+        timedOut: false,
+        reason: "command-failed",
+        endpoint: rawEndpoint,
+        detail: boundedWarmFailureDetail(
+          result.stderr || result.stdout,
+          `warm-up exited ${String(result.exitCode)}`,
+        ),
+      };
     }
     const response = validateWarmResponse(result.stdout);
     // An Ollama error can mean a broken runner or a daemon that simply does not
@@ -250,10 +280,27 @@ export function maybeWarmOllamaAfterDaemonRestart(
       }
     }
     if (response !== "ok") {
-      return { kind: "warmed", ok: false, timedOut: false, reason: response };
+      return {
+        kind: "warmed",
+        ok: false,
+        timedOut: false,
+        reason: response,
+        endpoint: rawEndpoint,
+        detail: boundedWarmFailureDetail(result.stdout, `Ollama returned ${response}`),
+      };
     }
     return { kind: "warmed", ok: true, timedOut: false };
-  } catch {
-    return { kind: "warmed", ok: false, timedOut: false, reason: "spawn-failed" };
+  } catch (error) {
+    return {
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "spawn-failed",
+      endpoint: rawEndpoint,
+      detail: boundedWarmFailureDetail(
+        error instanceof Error ? error.message : error,
+        "warm-up process could not start",
+      ),
+    };
   }
 }
