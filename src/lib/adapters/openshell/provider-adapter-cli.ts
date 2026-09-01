@@ -53,7 +53,8 @@ export type CliOpenShellProviderAdapterDeps = Readonly<{
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/u;
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
-const ATTACHED_TO_SANDBOX_RE = /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^".\n]+)/iu;
+const ATTACHED_TO_SANDBOX_RE =
+  /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
 const TOLERATED_DETACH_OUTPUT_RE =
   /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/iu;
 

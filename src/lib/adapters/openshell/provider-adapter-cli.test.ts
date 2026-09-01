@@ -568,6 +568,7 @@ describe("CLI OpenShell provider adapter", () => {
   it.each([
     "provider is attached to sandbox(es): alpha, invalid/name",
     "provider is attached to sandbox(es): --gateway, invalid/name",
+    "provider is attached to sandbox(es): team.alpha",
     "provider is attached to sandbox(es):",
   ])("does not return unvalidated attachment targets from %s (#9806)", async (diagnostic) => {
     const adapter = createCliOpenShellProviderAdapter({

@@ -540,7 +540,7 @@ describe("credential actions use typed OpenShell provider results", () => {
         kind: "command",
         reason: "attached",
         message: "provider remains attached",
-        attachedSandboxes: ["alpha", "invalid/name"],
+        attachedSandboxes: ["alpha", "team.alpha"],
       },
     });
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>();
