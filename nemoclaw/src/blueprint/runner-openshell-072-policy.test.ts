@@ -238,6 +238,22 @@ describe("blueprint policy convenience", () => {
     );
   });
 
+  it("rejects literal credentials before creating a blueprint policy handoff", async () => {
+    livePolicy.process = {
+      environment: { SERVICE_API_KEY: "opaque-live-policy-credential" },
+    };
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      "Cannot prepare the blueprint policy update because the live OpenShell policy contains a literal credential value.",
+    );
+    expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
+    expect(
+      mockExeca.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "policy" && args[1] === "set",
+      ),
+    ).toBe(false);
+  });
+
   it("surfaces a failed OpenShell policy write", async () => {
     const implementation = mockExeca.getMockImplementation();
     expect(implementation).toBeDefined();

@@ -7,24 +7,31 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getSandboxPolicy: vi.fn(),
+  captureRecordedSandboxBasePolicy: vi.fn(),
   secureTempFile: vi.fn(),
 }));
 
-vi.mock("./policy-get", () => ({ getSandboxPolicy: mocks.getSandboxPolicy }));
+vi.mock("../../policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../policy")>()),
+  captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
+}));
 vi.mock("../../onboard/temp-files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
   secureTempFile: mocks.secureTempFile,
 }));
 
-import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
+import {
+  type RebuildBackupPhaseInput,
+  runRebuildBackupPhase,
+  writeRebuildPolicyHandoff,
+} from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
-  mocks.getSandboxPolicy.mockReset().mockReturnValue({
-    yaml: "version: 1\nnetwork_policies: {}\n",
-  });
+  mocks.captureRecordedSandboxBasePolicy
+    .mockReset()
+    .mockReturnValue("version: 1\nnetwork_policies: {}\n");
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -45,9 +52,9 @@ describe("rebuild policy handoff", () => {
     temporaryDirectories.push(directory);
     const policyPath = path.join(directory, "policy.yaml");
     mocks.secureTempFile.mockReturnValue(policyPath);
-    mocks.getSandboxPolicy.mockReturnValue({
-      yaml: "version: 1\nnetwork_policies:\n  host_changed: {}\n",
-    });
+    mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
+      "version: 1\nnetwork_policies:\n  host_changed: {}\n",
+    );
     const result = runRebuildBackupPhase(
       {
         sandboxName: "alpha",
@@ -69,14 +76,15 @@ describe("rebuild policy handoff", () => {
     expect(fs.readFileSync(policyPath, "utf8")).toContain("host_changed");
     expect(fs.statSync(policyPath).mode & 0o777).toBe(0o600);
     expect(result).not.toHaveProperty("policyPresets");
-    expect(mocks.getSandboxPolicy).toHaveBeenCalledWith("alpha", {
-      recordedGatewayOperation: "capture the live policy before sandbox replacement",
-    });
+    expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledWith(
+      "alpha",
+      "capture the live policy before sandbox replacement",
+    );
   });
 
   it("rejects a literal credential before creating a rebuild policy handoff", () => {
-    mocks.getSandboxPolicy.mockReturnValue({
-      yaml: [
+    mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
+      [
         "version: 1",
         "network_policies: {}",
         "process:",
@@ -84,7 +92,7 @@ describe("rebuild policy handoff", () => {
         "    SERVICE_API_KEY: opaque-live-policy-credential",
         "",
       ].join("\n"),
-    });
+    );
     const backup = vi.fn(() => null);
 
     expect(() =>
@@ -130,6 +138,66 @@ describe("rebuild policy handoff", () => {
         vi.fn(() => null),
       ),
     ).toThrow(/will not reconstruct policy from NemoClaw state/);
+  });
+
+  it("routes an unsafe stale handoff to supported destroy and fresh-onboard recovery", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unsafe-recovery-"));
+    temporaryDirectories.push(backupPath);
+    const preparedRecoveryManifest = writeRebuildPolicyHandoff(
+      {
+        version: 1,
+        sandboxName: "alpha",
+        timestamp: "2026-09-01T00-00-00-000Z",
+        agentType: "openclaw",
+        agentVersion: null,
+        expectedVersion: null,
+        stateDirs: [],
+        failedBackupDirs: [],
+        stateFiles: [],
+        dir: "/sandbox/.openclaw",
+        backupPath,
+        blueprintDigest: "digest",
+      },
+      [
+        "version: 1",
+        "network_policies: {}",
+        "process:",
+        "  environment:",
+        "    SERVICE_API_KEY: opaque-retained-credential",
+        "",
+      ].join("\n"),
+    );
+
+    let refusal: Error | null = null;
+    try {
+      runRebuildBackupPhase(
+        {
+          sandboxName: "alpha",
+          sandboxEntry: { name: "alpha" },
+          staleRecovery: true,
+          preparedRecoveryManifest,
+          messagingPlan: null,
+          webSearchConfig: null,
+          log: vi.fn(),
+          bail: (message): never => {
+            throw new Error(message);
+          },
+          relockShieldsIfNeeded: vi.fn(() => true),
+        },
+        vi.fn(),
+      );
+    } catch (error) {
+      refusal = error as Error;
+    }
+
+    expect(refusal?.message).toContain("nemoclaw alpha destroy --force");
+    expect(refusal?.message).toContain(
+      "create a fresh sandbox under a new name with `nemoclaw onboard`",
+    );
+    expect(refusal?.message).toContain("Do not discard the handoff and retry rebuild");
+    expect(
+      fs.existsSync(path.join(backupPath, preparedRecoveryManifest.rebuildPolicyHandoff!.file)),
+    ).toBe(true);
   });
 });
 
@@ -230,5 +298,4 @@ describe("rebuild backup safety", () => {
     );
     expect(backup).toHaveBeenCalledOnce();
   });
-
 });

@@ -1050,6 +1050,29 @@ describe("launchSandbox", () => {
     expect(mocks.execSandbox).not.toHaveBeenCalled();
   });
 
+  it("does not launch after final validation rejects changed registry state", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "config",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({
+      kind: "validation-failed",
+      category: "config",
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      "Launch readiness final validation failed due to config",
+    );
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "gateway unreachable",

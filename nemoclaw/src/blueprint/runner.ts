@@ -34,6 +34,7 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { stripCredentials } from "../security/credential-filter.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellGatewayEndpointBoundary from "../shared/openshell-gateway-endpoint-boundary.cjs";
 import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-external-target-boundary.cjs";
@@ -620,6 +621,15 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
   return YAML.stringify(output);
 }
 
+function assertBlueprintPolicyHandoffCredentialFree(policySource: string): void {
+  const policy = parseOpenShellPolicy(policySource).policy;
+  if (!isDeepStrictEqual(stripCredentials(policy), policy)) {
+    throw new Error(
+      "Cannot prepare the blueprint policy update because the live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry.",
+    );
+  }
+}
+
 function blueprintBasePoliciesMatch(left: string, right: string): boolean {
   return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
 }
@@ -906,7 +916,9 @@ async function applyBlueprintPolicyAdditions(
       continue;
     }
 
-    writeFileSync(policyPath, mergePolicyAdditions(latestPolicySource, additions), {
+    const mergedPolicySource = mergePolicyAdditions(latestPolicySource, additions);
+    assertBlueprintPolicyHandoffCredentialFree(mergedPolicySource);
+    writeFileSync(policyPath, mergedPolicySource, {
       encoding: "utf-8",
       mode: 0o600,
     });

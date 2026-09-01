@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   ensureSandboxGatewaySelected: vi.fn(),
   getBridgeAdapter: vi.fn(),
   getSandboxAgent: vi.fn(),
-  getSandboxPolicy: vi.fn(),
+  captureRecordedSandboxBasePolicy: vi.fn(),
   getSandboxOrThrow: vi.fn(),
   inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
@@ -60,8 +60,9 @@ vi.mock("./mcp-bridge-policy", () => ({
   removeGeneratedPolicy: mocks.removeGeneratedPolicy,
 }));
 
-vi.mock("./policy-get", () => ({
-  getSandboxPolicy: mocks.getSandboxPolicy,
+vi.mock("../../policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../policy")>()),
+  captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
 }));
 
 vi.mock("./mcp-bridge-restart", () => ({
@@ -113,10 +114,9 @@ describe("MCP adapter teardown rollback", () => {
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
     mocks.getSandboxAgent.mockReset().mockReturnValue("hermes");
-    mocks.getSandboxPolicy.mockReset().mockReturnValue({
-      raw: "",
-      yaml: "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
-    });
+    mocks.captureRecordedSandboxBasePolicy
+      .mockReset()
+      .mockReturnValue("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n");
     mocks.getSandboxOrThrow.mockReset().mockReturnValue(sandbox);
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");

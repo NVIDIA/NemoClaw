@@ -13,10 +13,10 @@ import {
   readRebuildPolicyHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
+import { captureRecordedSandboxBasePolicy } from "../../policy";
+import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import * as policyGet from "./policy-get";
-import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 
 export { clearRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
 
@@ -58,9 +58,10 @@ export function captureRebuildPolicySource(
   sandboxName: string,
   policySourcePath?: string,
 ): string | null {
-  const policy = policyGet.getSandboxPolicy(sandboxName, {
-    recordedGatewayOperation: "capture the live policy before sandbox replacement",
-  }).yaml;
+  const policy = captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "capture the live policy before sandbox replacement",
+  );
   if (!policy) return null;
   if (!isSandboxPolicyCredentialFree(policy)) {
     throw new Error(
@@ -129,7 +130,7 @@ export function runRebuildBackupPhase(
   const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
   if (retainedPolicy && !isSandboxPolicyCredentialFree(retainedPolicy)) {
     return input.bail(
-      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, discard the unsafe recovery handoff, then retry the rebuild.`,
+      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Keep the backup for manual data recovery. Retire the failed rebuild state with \`nemoclaw ${input.sandboxName} destroy --force\`, then create a fresh sandbox under a new name with \`nemoclaw onboard\`. Do not discard the handoff and retry rebuild.`,
     );
   }
   const policySourcePath =

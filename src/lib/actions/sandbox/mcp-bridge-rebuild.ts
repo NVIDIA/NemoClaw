@@ -45,7 +45,6 @@ import {
   setBridgeState,
 } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
-import { getSandboxPolicy } from "./policy-get";
 
 export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
@@ -82,9 +81,10 @@ function assertMcpTeardownPolicyUnchanged(
   sandboxName: string,
   expectedTeardownPolicy: string,
 ): void {
-  const currentPolicy = getSandboxPolicy(sandboxName, {
-    recordedGatewayOperation: "verify the live policy before MCP teardown",
-  }).yaml;
+  const currentPolicy = policies.captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "verify the live policy before MCP teardown",
+  );
   if (!currentPolicy || !policyDocumentsMatch(currentPolicy, expectedTeardownPolicy)) {
     throw new McpBridgeError(
       `OpenShell policy changed while preparing MCP teardown for sandbox '${sandboxName}'. Refusing sandbox deletion.`,
@@ -180,9 +180,10 @@ export async function prepareMcpBridgesForRebuild(
   // mutations so the replacement receives the complete operator-owned
   // document, including the MCP rules that must be removed temporarily from
   // the still-running source sandbox before provider detach.
-  const policyHandoff = getSandboxPolicy(sandboxName, {
-    recordedGatewayOperation: "capture the live policy before MCP teardown",
-  }).yaml;
+  const policyHandoff = policies.captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "capture the live policy before MCP teardown",
+  );
   if (!policyHandoff) {
     throw new McpBridgeError(
       `Could not capture the live OpenShell policy before MCP teardown for sandbox '${sandboxName}'.`,

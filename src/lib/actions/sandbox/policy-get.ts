@@ -11,7 +11,6 @@ import {
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { captureRecordedSandboxBasePolicy } from "../../policy/index";
 import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 
 export interface PolicyGetResult {
@@ -19,34 +18,12 @@ export interface PolicyGetResult {
   yaml: string;
 }
 
-export interface RecordedGatewayPolicyGetOptions {
-  recordedGatewayOperation: string;
-}
-
 /** Read the round-trippable OpenShell base policy and strip its metadata header. */
 export function getSandboxPolicy(
   sandboxName: string,
-  options: RecordedGatewayPolicyGetOptions,
-): PolicyGetResult;
-export function getSandboxPolicy(
-  sandboxName: string,
-  readPolicy?: CliOpenShellSandboxPolicyRead,
-): Promise<PolicyGetResult>;
-export function getSandboxPolicy(
-  sandboxName: string,
-  readerOrOptions:
-    | CliOpenShellSandboxPolicyRead
-    | RecordedGatewayPolicyGetOptions = readCliOpenShellSandboxPolicy,
-): PolicyGetResult | Promise<PolicyGetResult> {
-  if (typeof readerOrOptions !== "function") {
-    const yaml = captureRecordedSandboxBasePolicy(
-      sandboxName,
-      readerOrOptions.recordedGatewayOperation,
-    );
-    return { raw: yaml, yaml };
-  }
-
-  return readSandboxPolicy(sandboxName, readerOrOptions);
+  readPolicy: CliOpenShellSandboxPolicyRead = readCliOpenShellSandboxPolicy,
+): Promise<PolicyGetResult> {
+  return readSandboxPolicy(sandboxName, readPolicy);
 }
 
 async function readSandboxPolicy(

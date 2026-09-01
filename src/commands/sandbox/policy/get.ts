@@ -12,7 +12,7 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Export the sandbox base policy with literal credentials redacted";
   static description =
-    "Retrieve the OpenShell base policy for a sandbox with literal credentials redacted. By default, strips the OpenShell metadata header and outputs YAML suitable for review and editing. Replace any redaction markers with supported credential bindings before policy set. Use --raw to retain the OpenShell metadata header.";
+    "Retrieve the OpenShell base policy for a sandbox with literal credentials redacted. By default, strips the OpenShell metadata header and outputs YAML suitable for review and editing. Replace redaction markers with supported credential bindings. Apply the edited file with `openshell policy set --policy <policy-file> --wait <sandbox-name>`. Use --raw to retain the OpenShell metadata header.";
   static usage = ["<name> [--raw]"];
   static examples = [
     "<%= config.bin %> sandbox policy get alpha",
