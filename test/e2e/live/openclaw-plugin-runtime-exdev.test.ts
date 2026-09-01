@@ -24,6 +24,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
+import { assertOpenShellGatewayStopResult } from "./openshell-gateway-stop.ts";
 import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
@@ -113,11 +114,12 @@ async function stopOpenShellGatewayBeforeInstall(
 ): Promise<void> {
   const openshellPath = resolveOpenshell();
   if (!openshellPath) return;
-  await host.command(openshellPath, ["gateway", "stop", "-g", "nemoclaw"], {
+  const stop = await host.command(openshellPath, ["gateway", "stop", "-g", "nemoclaw"], {
     artifactName: "stop-openshell-gateway-before-install",
     env,
     timeoutMs: 60_000,
   });
+  assertOpenShellGatewayStopResult(stop);
 }
 
 type CustomPluginBuildContext = {
