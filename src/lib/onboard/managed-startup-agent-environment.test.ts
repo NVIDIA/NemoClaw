@@ -36,6 +36,11 @@ const UNSUPPORTED_AGENT_RUNTIME_UNSETS = [
   "NEMOCLAW_DASHBOARD_BIND",
   "NEMOCLAW_MINIMAL_BOOTSTRAP",
 ] as const;
+const HERMES_FIXED_RUNTIME_NAMES = [
+  "HERMES_BUNDLED_PLUGINS",
+  "HERMES_HOME",
+  "HERMES_LAZY_INSTALL_TARGET",
+] as const;
 
 function messagingPlan(agent: "openclaw" | "hermes"): ManagedStartupJsonObject {
   return {
@@ -506,6 +511,9 @@ describe("managed startup agent environment", () => {
     ).toEqual(["nous-audio", "nous-browser", "nous-code", "nous-image", "nous-web"]);
     expect(result.runtimeEnvironment).toEqual({
       CHAT_UI_URL: "http://127.0.0.1:19189",
+      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+      HERMES_HOME: "/sandbox/.hermes",
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       HTTP_PROXY: "http://proxy.example.test:8080",
       HTTPS_PROXY: "http://proxy.example.test:3128",
       NO_PROXY: "127.0.0.1,localhost",
@@ -870,9 +878,12 @@ describe("managed startup agent environment", () => {
     (agent) => {
       const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent]());
       expect(representedLegacyInputs(result)).toEqual(
-        MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent]
-          .map((affordance) => affordance.input)
-          .sort(),
+        [
+          ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(
+            (affordance) => affordance.input,
+          ),
+          ...(agent === "hermes" ? HERMES_FIXED_RUNTIME_NAMES : []),
+        ].sort(),
       );
       const messagingActions = result.actions.filter(
         (action) => action.kind === "apply-messaging-plan",

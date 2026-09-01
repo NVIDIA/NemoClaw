@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -46,7 +47,7 @@ const OPENCLAW_WORKSPACE_PATH = "/sandbox/.openclaw/workspace";
 const MARKER_FILE = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker.txt`;
 const SNAPSHOT_NAME = "lifecycle";
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
-const LIVE_TIMEOUT_MS = 36 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(36 * 60_000);
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
 const OPENCLAW_MAIN_SESSION_STORE = "/sandbox/.openclaw/agents/main/sessions/sessions.json";
@@ -307,7 +308,7 @@ test(
       cwd: REPO_ROOT,
       env: commandEnv(inferenceConfig),
       redactionValues: [INFERENCE_API_KEY],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 
@@ -385,7 +386,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
         artifactName: "phase-4-fresh-onboard-source",
         env: commandEnv(inferenceConfig),
         redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: 20 * 60_000,
+        timeoutMs: execTimeout(20 * 60_000),
       },
     );
     expect(freshOnboard.exitCode, resultText(freshOnboard)).toBe(0);

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -29,7 +30,7 @@ const SKILL_ID = "openclaw-skill-cli-fixture";
 const SKILL_DESCRIPTION = "E2E fixture proving openclaw skills install + list roundtrip";
 const REMOTE_SKILL_DIR = `/tmp/${SKILL_ID}`;
 const EXPECTED_WORKSPACE_SKILL_PATH = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
-const INSTALL_TIMEOUT_MS = 45 * 60_000;
+const INSTALL_TIMEOUT_MS = execTimeout(45 * 60_000);
 const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
 validateSandboxName(SANDBOX_NAME);
 
@@ -116,7 +117,7 @@ async function expectSandboxShellZero(
 }
 
 test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtrip uses workspace path", {
-  timeout: INSTALL_TIMEOUT_MS + 10 * 60_000,
+  timeout: testTimeout(INSTALL_TIMEOUT_MS + 10 * 60_000),
   meta: {
     e2ePhases: [
       "confirm built CLI Docker and hosted inference",

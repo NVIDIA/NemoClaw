@@ -3,6 +3,7 @@
 
 import { randomBytes } from "node:crypto";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -29,7 +30,8 @@ import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-policy-order";
 validateSandboxName(SANDBOX_NAME);
-const ONBOARD_TIMEOUT_MS = 40 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(40 * 60_000);
+const ONBOARD_TIMEOUT_MS = execTimeout(35 * 60_000);
 const MODEL = "test-model";
 // A Docker network namespace cannot reach host loopback directly; bind the
 // fake endpoint on all interfaces and advertise the OpenShell host alias so
@@ -54,7 +56,7 @@ const ORDERED_STEP_MARKERS = [
 test(
   "interactive onboard wizard reaches Policy presets in step order (#6042)",
   {
-    timeout: ONBOARD_TIMEOUT_MS,
+    timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "start the local compatible-endpoint fake server",
@@ -133,7 +135,7 @@ test(
         // confirms the Balanced defaults.
         { trigger: "Presets  (", response: "\r" },
       ],
-      timeoutMs: ONBOARD_TIMEOUT_MS - 5 * 60_000,
+      timeoutMs: ONBOARD_TIMEOUT_MS,
     });
     await artifacts.writeText("onboard-transcript.txt", result.output);
 

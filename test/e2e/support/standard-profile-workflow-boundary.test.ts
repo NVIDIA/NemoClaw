@@ -19,6 +19,21 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("reserves cold-build time without changing managed-image target timeouts", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { "timeout-minutes"?: string; with?: Record<string, string> }>;
+    };
+    workflow.jobs.live!["timeout-minutes"] = "${{ matrix.timeout_minutes }}";
+    workflow.jobs["catalogue-standard"]!.with!.timeout_minutes = "${{ matrix.timeout_minutes }}";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "live E2E must reserve the cold-build timeout only for local Dockerfiles",
+        "catalogue-standard must pass timeout_minutes from the catalogue matrix",
+      ]),
+    );
+  });
+
   it("rejects a cloudflared PATH shortcut before package verification", () => {
     const profile = YAML.parse(
       fs.readFileSync(

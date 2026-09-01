@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -386,6 +387,47 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
         applicationRuntime,
       ),
     ).toBe(script);
+  });
+
+  it("serializes the fixed Hermes paths into the validated supervisor environment", () => {
+    const mapped = mapManagedStartupProfileToAgentEnvironment(
+      managedStartupE2eProfile("hermes"),
+    );
+    const script = serializeManagedStartupRuntimeEnvironment(
+      mapped.runtimeEnvironment,
+      false,
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
+    const validator = path.join(
+      process.cwd(),
+      "agents",
+      "hermes",
+      "validate-env-secret-boundary.py",
+    );
+    const validated = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `${script}exec python3 -I "$1" runtime-env`,
+        "hermes-managed-supervisor-environment",
+        validator,
+      ],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH ?? "" },
+        timeout: 5000,
+      },
+    );
+
+    expect(script.match(/^export HERMES_.*$/gmu)).toEqual([
+      "export HERMES_BUNDLED_PLUGINS='/opt/hermes/plugins'",
+      "export HERMES_HOME='/sandbox/.hermes'",
+      "export HERMES_LAZY_INSTALL_TARGET='/sandbox/.hermes/lazy-packages'",
+    ]);
+    expect(validated.status, validated.stderr).toBe(0);
   });
 
   it("serializes OpenClaw reasoning into the managed runtime handoff", () => {

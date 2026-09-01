@@ -9,10 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateHermesGpuStartupWorkflowBoundary } from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
-import {
-  HERMES_TIMEOUT_CONTRACTS,
-  HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
-} from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { HERMES_TIMEOUT_CONTRACTS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readRepoText, readWorkflow } from "../../helpers/e2e-workflow-contract";
 
@@ -183,32 +180,31 @@ describe("Hermes GPU boundary", () => {
   const hermesTimeoutBoundaries = HERMES_TIMEOUT_CONTRACTS.map(
     ({ innerTest, innerTimeoutMinutes, jobName, jobTimeoutMinutes }) => ({
       jobName,
-      maximumTimeoutMinutes: innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
-      message: `${jobName} timeout must be between ${jobTimeoutMinutes} and ${innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with 15-30 minutes of job headroom`,
-      minimumTimeoutMinutes: jobTimeoutMinutes,
+      managedTimeoutMinutes: jobTimeoutMinutes,
+      message: `${jobName} timeout must preserve the ${jobTimeoutMinutes}-minute managed-image budget and reserve 120 minutes for a local Dockerfile to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with 15-30 minutes of managed-image job headroom`,
     }),
   );
 
-  it.each(hermesTimeoutBoundaries)("requires 15-30 minutes of outer headroom for $jobName", ({
-    jobName,
-    maximumTimeoutMinutes,
-    message,
-    minimumTimeoutMinutes,
-  }) => {
-    const insufficient = wfErrors((workflow) => {
-      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
-    }, validateE2eWorkflowBoundary);
-    const additional = wfErrors((workflow) => {
-      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
-    }, validateE2eWorkflowBoundary);
-    const excessive = wfErrors((workflow) => {
-      workflow.jobs[jobName]["timeout-minutes"] = maximumTimeoutMinutes + 1;
-    }, validateE2eWorkflowBoundary);
+  it.each(hermesTimeoutBoundaries)(
+    "preserves managed headroom and adds local-build time for $jobName",
+    ({ jobName, managedTimeoutMinutes, message }) => {
+      const managedOnly = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] = managedTimeoutMinutes;
+      }, validateE2eWorkflowBoundary);
+      const shortLocal = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] =
+          `\${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 119 || ${managedTimeoutMinutes} }}`;
+      }, validateE2eWorkflowBoundary);
+      const changedManaged = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] =
+          `\${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || ${managedTimeoutMinutes + 1} }}`;
+      }, validateE2eWorkflowBoundary);
 
-    expect(insufficient).toContain(message);
-    expect(additional).toEqual([]);
-    expect(excessive).toContain(message);
-  });
+      expect(managedOnly).toContain(message);
+      expect(shortLocal).toContain(message);
+      expect(changedManaged).toContain(message);
+    },
+  );
 
   it("rejects unconditional live secret in hermes-e2e mock run step", () => {
     const errors = wfErrors((workflow) => {

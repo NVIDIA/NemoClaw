@@ -5,6 +5,7 @@ import {
   buildMcpCredentialDetachedCommand,
   buildMcpCredentialRevisionObservationCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -322,7 +323,7 @@ async function runFreshRequest(
 }
 
 test("openshell-credential-generation-window", {
-  timeout: 60 * 60_000,
+  timeout: testTimeout(60 * 60_000),
   meta: {
     e2ePhases: [
       "start endpoints and onboard the credential-window sandbox",
@@ -397,7 +398,7 @@ test("openshell-credential-generation-window", {
         NEMOCLAW_RECREATE_SANDBOX: "1",
       },
       redactionValues: [COMPATIBLE_KEY, ...allSecrets],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     },
   );
   expectExitZero(onboard, "onboard credential-window sandbox");

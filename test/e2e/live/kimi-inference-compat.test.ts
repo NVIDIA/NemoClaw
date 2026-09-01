@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -25,7 +26,7 @@ import {
   startKimiUpstream,
 } from "./kimi-inference-compat-helpers.ts";
 
-const TIMEOUT_MS = 40 * 60_000;
+const TIMEOUT_MS = testTimeout(40 * 60_000);
 
 test("Kimi-compatible endpoint config enables plugin wiring and managed inference route", {
   timeout: TIMEOUT_MS,
@@ -93,7 +94,7 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
       cwd: REPO_ROOT,
       env: kimiOnboardEnv(fake, mode, apiKey),
       redactionValues: ["test-kimi-key", apiKey ?? ""],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     },
   );
   expect(onboard.exitCode, resultText(onboard)).toBe(0);

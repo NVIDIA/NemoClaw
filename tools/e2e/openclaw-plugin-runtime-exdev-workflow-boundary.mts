@@ -6,6 +6,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
+import {
+  ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS,
+  ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS,
+} from "./onboard-timeout-contract.mts";
 import { PREPARE_E2E_ACTION } from "./prepare-e2e-workflow-boundary.mts";
 import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
@@ -18,7 +22,7 @@ const DOCKER_HUB_CLEANUP_ACTION =
 const JOB_CONTRACTS = [
   {
     jobName: "openclaw-plugin-runtime-exdev",
-    timeoutMinutes: 85,
+    timeoutMinutes: 120,
     artifactId: "openclaw-plugin-runtime-exdev",
     sandboxName: "e2e-oc-exdev",
     selector: "current-lifecycle",
@@ -138,9 +142,11 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
       E2E_TARGET_ID: artifactId,
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+      NEMOCLAW_EXEC_TIMEOUT: String(ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS),
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_RUN_LIVE_E2E: "1",
       NEMOCLAW_SANDBOX_NAME: sandboxName,
+      NEMOCLAW_TEST_TIMEOUT: String(ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS),
       OPENSHELL_GATEWAY: "nemoclaw",
     };
     for (const [name, value] of Object.entries(expectedEnv)) {

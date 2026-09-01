@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
 import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
+import { localDockerfileWorkflowTimeoutContract } from "./onboard-timeout-contract.mts";
 
 /**
  * SOURCE_OF_TRUTH_REVIEW
@@ -129,8 +130,10 @@ export function validateHermesGpuStartupWorkflow(
   ) {
     errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
   }
-  if (job["timeout-minutes"] !== 90) {
-    errors.push(`${JOB_NAME} requires a 90 minute timeout`);
+  if (job["timeout-minutes"] !== localDockerfileWorkflowTimeoutContract(90).targetTimeout) {
+    errors.push(
+      `${JOB_NAME} requires 90 managed-image minutes and 120 local-Dockerfile minutes`,
+    );
   }
   const strategy = asRecord(job.strategy);
   const matrix = asRecord(strategy.matrix);

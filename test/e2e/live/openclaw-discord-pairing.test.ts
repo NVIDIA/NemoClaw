@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertDiscordGatewayCapture } from "./messaging-providers-helpers.ts";
 import {
@@ -31,7 +32,7 @@ import {
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-disc-pair";
 const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN ?? "test-fake-discord-pairing-e2e";
-const LIVE_TIMEOUT_MS = 55 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(55 * 60_000);
 
 test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   timeout: LIVE_TIMEOUT_MS,

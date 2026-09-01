@@ -72,6 +72,19 @@ describe("E2E fixture primitives", () => {
     expect(resolveSandboxPrebuildEnabled(environment, true)).toBe(true);
   });
 
+  it("leaves an explicitly empty historical workload source unchanged", () => {
+    const historical = {
+      E2E_TARGET_ID: "openshell-gateway-upgrade",
+      E2E_WORKLOAD_SOURCE: "",
+      NEMOCLAW_SANDBOX_PREBUILD: "0",
+      VITEST: "true",
+    };
+
+    expect(resolveLiveE2eWorkloadSourceEnv(historical)).toBe(historical);
+    expect(historical).not.toHaveProperty("NEMOCLAW_FROM_DOCKERFILE");
+    expect(resolveSandboxPrebuildEnabled(historical, true)).toBe(false);
+  });
+
   it("forces local BuildKit when the candidate Dockerfile is already selected", () => {
     const environment = resolveLiveE2eWorkloadSourceEnv({
       E2E_TARGET_ID: "ubuntu-repo-cloud-hermes",
@@ -162,10 +175,16 @@ describe("E2E fixture primitives", () => {
 
       expect(shellResult.exitCode).toBe(0);
 
-      expect(allowlistedFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
-      expect(shellEvidenceFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
+      expect(
+        allowlistedFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).toBe(true);
+      expect(
+        shellEvidenceFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(path.join(artifactParent, targetId, targetId, "run-plan.json"))).toBe(
         false,
       );

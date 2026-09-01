@@ -9,6 +9,8 @@ import { isDeepStrictEqual } from "node:util";
 
 import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
 import {
+  ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS,
+  ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
@@ -1752,12 +1754,27 @@ export function catalogueMatrix(
     }));
 }
 
+export function applyLocalDockerfileTimeoutEnvironment(
+  environment: NodeJS.ProcessEnv,
+): void {
+  if (environment.E2E_WORKLOAD_SOURCE !== "local-dockerfile") return;
+  const setMinimumTimeout = (name: string, minimum: number): void => {
+    const configured = Number(environment[name]);
+    environment[name] = String(
+      Number.isFinite(configured) && configured > 0 ? Math.max(configured, minimum) : minimum,
+    );
+  };
+  setMinimumTimeout("NEMOCLAW_EXEC_TIMEOUT", ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS);
+  setMinimumTimeout("NEMOCLAW_TEST_TIMEOUT", ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS);
+}
+
 export async function runCatalogueTarget(id: string, testFile: string): Promise<number> {
   const entry = catalogueTarget(id);
   if (entry.testFile !== testFile) {
     throw new Error(`E2E target ${id} does not own test file ${testFile}`);
   }
   Object.assign(process.env, entry.environment);
+  applyLocalDockerfileTimeoutEnvironment(process.env);
   if (entry.exposeCliBin) {
     process.env.NEMOCLAW_CLI_BIN = path.join(process.cwd(), "bin", "nemoclaw.js");
   }

@@ -7,8 +7,12 @@ import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onb
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import {
+  localDockerfileWorkflowTimeoutContract,
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+  ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS,
+  ONBOARD_LOCAL_DOCKERFILE_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
   ONBOARD_POST_REBOOT_GATEWAY_RECONNECT_BUDGET_MS,
   ONBOARD_POST_REBOOT_PREPARATION_BUDGET_MS,
@@ -22,6 +26,7 @@ import {
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
+  applyLocalDockerfileTimeoutEnvironment,
   catalogueTarget,
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
@@ -36,15 +41,13 @@ const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
 const jobHeadroomMs = 20 * MINUTE_MS;
 const workflowFinalizationHeadroomMs = 10 * MINUTE_MS;
-const preparationOperationCeilingMs =
-  MINUTE_MS + 30_000 + 30_000 + 10 * MINUTE_MS + 2 * MINUTE_MS;
+const preparationOperationCeilingMs = MINUTE_MS + 30_000 + 30_000 + 10 * MINUTE_MS + 2 * MINUTE_MS;
 const dockerRecoveryOperationCeilingMs = 3 * 15_000;
 const gatewayRestartOperationCeilingMs =
   30_000 + 30_000 + MINUTE_MS + 30_000 + MINUTE_MS + 35_000 + 2 * MINUTE_MS;
 const gatewayReconnectOperationCeilingMs = 60 * 30_000 + 59 * 5_000 + 30_000;
 const sandboxReadinessOperationCeilingMs = 30 * 30_000 + 29 * 5_000;
-const statusValidationOperationCeilingMs =
-  5 * MINUTE_MS + MINUTE_MS + 15_000 + 2 * MINUTE_MS;
+const statusValidationOperationCeilingMs = 5 * MINUTE_MS + MINUTE_MS + 15_000 + 2 * MINUTE_MS;
 
 describe("onboard final-handoff timeout contract", () => {
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {
@@ -182,6 +185,68 @@ describe("onboard final-handoff timeout contract", () => {
       targetTimeoutMinutes: 45,
     });
     expect(liveTargetTimeoutContract(undefined)).toEqual({ targetTimeoutMinutes: 45 });
+    expect(liveTargetTimeoutContract(undefined, "local-dockerfile")).toEqual({
+      commandTimeoutMs: 100 * MINUTE_MS,
+      testTimeoutMs: 110 * MINUTE_MS,
+      targetTimeoutMinutes: 120,
+    });
+    expect(liveTargetTimeoutContract("post-reboot-recovery", "local-dockerfile")).toEqual({
+      commandTimeoutMs: 100 * MINUTE_MS,
+      testTimeoutMs: 140 * MINUTE_MS,
+      targetTimeoutMinutes: 160,
+    });
+  });
+
+  it("publishes local cold-build minima without shortening larger caller budgets", () => {
+    const local = {
+      E2E_WORKLOAD_SOURCE: "local-dockerfile",
+      NEMOCLAW_EXEC_TIMEOUT: String(120 * MINUTE_MS),
+      NEMOCLAW_TEST_TIMEOUT: "invalid",
+    };
+    const managed = { E2E_WORKLOAD_SOURCE: "managed-image" };
+
+    applyLocalDockerfileTimeoutEnvironment(local);
+    applyLocalDockerfileTimeoutEnvironment(managed);
+
+    expect({ local, managed }).toEqual({
+      local: {
+        E2E_WORKLOAD_SOURCE: "local-dockerfile",
+        NEMOCLAW_EXEC_TIMEOUT: String(120 * MINUTE_MS),
+        NEMOCLAW_TEST_TIMEOUT: String(110 * MINUTE_MS),
+      },
+      managed: { E2E_WORKLOAD_SOURCE: "managed-image" },
+    });
+  });
+
+  it("renders the reviewed local-Dockerfile workflow values from the shared contract", () => {
+    expect(localDockerfileWorkflowTimeoutContract(70)).toEqual({
+      commandTimeoutEnvironment: `\${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '${ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS}' || '' }}`,
+      testTimeoutEnvironment: `\${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '${ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS}' || '' }}`,
+      targetTimeout: `\${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && ${ONBOARD_LOCAL_DOCKERFILE_TARGET_TIMEOUT_MINUTES} || 70 }}`,
+    });
+  });
+
+  it("rejects retained jobs that raise managed-image budgets or omit local minima", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, string>;
+          "timeout-minutes": string | number;
+        }
+      >;
+    };
+    workflow.jobs["cloud-onboard"]!["timeout-minutes"] = 120;
+    workflow.jobs["cloud-onboard"]!.env.NEMOCLAW_EXEC_TIMEOUT = "6000000";
+    delete workflow.jobs["cloud-onboard"]!.env.NEMOCLAW_TEST_TIMEOUT;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "cloud-onboard must reserve 120 job minutes only for local Dockerfiles and preserve its 70-minute managed-image budget",
+        "cloud-onboard must publish the 100-minute local-Dockerfile command minimum",
+        "cloud-onboard must publish the 110-minute local-Dockerfile test minimum",
+      ]),
+    );
   });
 
   it("derives the registry job timeout from its test and post-test headroom", () => {

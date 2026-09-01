@@ -4,6 +4,7 @@
 import fs from "node:fs";
 
 import YAML from "yaml";
+import { localDockerfileWorkflowTimeoutContract } from "./onboard-timeout-contract.mts";
 import {
   OPENSHELL_DEV_ARTIFACT_DIRECTORY,
   OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
@@ -162,6 +163,7 @@ function validateJobIdentity(
   const env = asRecord(job.env);
   const strategy = asRecord(job.strategy);
   const matrix = asRecord(strategy.matrix);
+  const timeoutContract = localDockerfileWorkflowTimeoutContract(90);
   requireEqual(errors, env.E2E_JOB, "1", `${jobName} must declare E2E_JOB=1`);
   requireEqual(
     errors,
@@ -184,8 +186,20 @@ function validateJobIdentity(
   requireEqual(
     errors,
     job["timeout-minutes"],
-    90,
-    `${jobName} must bound each shard to 90 minutes`,
+    timeoutContract.targetTimeout,
+    `${jobName} must preserve 90 managed-image minutes and reserve 120 local-Dockerfile minutes`,
+  );
+  requireEqual(
+    errors,
+    env.NEMOCLAW_EXEC_TIMEOUT,
+    timeoutContract.commandTimeoutEnvironment,
+    `${jobName} must publish the 100-minute local-Dockerfile command minimum`,
+  );
+  requireEqual(
+    errors,
+    env.NEMOCLAW_TEST_TIMEOUT,
+    timeoutContract.testTimeoutEnvironment,
+    `${jobName} must publish the 110-minute local-Dockerfile test minimum`,
   );
   requireEqual(errors, strategy["fail-fast"], false, `${jobName} shards must not fail fast`);
   requireEqual(
@@ -863,11 +877,12 @@ function validateCredentialWindowJob(
     "ubuntu-latest",
     `${CREDENTIAL_WINDOW_JOB} must use its independent standard runner`,
   );
+  const timeoutContract = localDockerfileWorkflowTimeoutContract(90);
   requireEqual(
     errors,
     job["timeout-minutes"],
-    90,
-    `${CREDENTIAL_WINDOW_JOB} must retain its bounded 90-minute budget`,
+    timeoutContract.targetTimeout,
+    `${CREDENTIAL_WINDOW_JOB} must preserve 90 managed-image minutes and reserve 120 local-Dockerfile minutes`,
   );
   requireEqual(
     errors,
@@ -883,6 +898,8 @@ function validateCredentialWindowJob(
     E2E_MANAGED_IMAGE_COHORT_RECEIPT:
       "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
     E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
+    NEMOCLAW_EXEC_TIMEOUT: timeoutContract.commandTimeoutEnvironment,
+    NEMOCLAW_TEST_TIMEOUT: timeoutContract.testTimeoutEnvironment,
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",

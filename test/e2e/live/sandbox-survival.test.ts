@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -179,7 +180,7 @@ async function expectSandboxExecAlive(
 test(
   "sandbox survives gateway restart with registry, state, SSH, and live inference intact",
   {
-    timeout: 30 * 60_000,
+    timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
         "confirm Docker and inference prerequisites",
@@ -333,7 +334,7 @@ test(
       cwd: REPO_ROOT,
       env: installEnv(hosted.env),
       redactionValues: [apiKey],
-      timeoutMs: 20 * 60_000,
+      timeoutMs: execTimeout(20 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 

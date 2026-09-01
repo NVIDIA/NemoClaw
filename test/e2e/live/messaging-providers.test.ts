@@ -11,7 +11,7 @@
 
 import fs from "node:fs";
 
-import { testTimeoutOptions } from "../../helpers/timeouts";
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import {

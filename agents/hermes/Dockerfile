@@ -438,7 +438,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=521756ea979d58df44d52b7fc1c2f062a11db397835b925f15bc0265e33e48ea
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=bd57c76c87a4e42ab98687b5a80e765c6f239363d18458c4bcec6de0764eeba6
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -662,7 +662,7 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-previe
 # `sqlite3.OperationalError: unable to open database file` (#8301). Inserting
 # PRAGMA temp_store=MEMORY before PRAGMA foreign_keys=ON ensures FK processing
 # uses in-memory storage. Docker execution permits the file-based storage path.
-ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=2db46b6cd358f4d181999bbddbc0d35d035a67ee1092adb2e2c16a894c695e13
+ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=d583ad1095ec3baf25f1721f88795f5d9916b3ac8840172144037e4061c5dc24
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
@@ -1425,28 +1425,42 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && chmod 3770 /sandbox/.hermes \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"
 
-# Prove the cron execution ledger contract across the real image identities.
-# Hermes' gateway-side scheduler creates the live WAL-backed database in the
-# writable runtime boundary, sandbox reads and online-copies it before
-# atomically restoring a sandbox-owned replacement, and gateway then reopens
-# that replacement through the upstream ledger API.
+# Prove the session and cron ledger contracts across the real image identities.
+# Gateway creates state.db plus its WAL/SHM sidecars in the writable runtime
+# boundary; the patched SessionDB normalizes only those fixed files to 0660, so
+# sandbox can list and append a session. The scheduler then creates its separate
+# WAL-backed ledger, sandbox online-copies it, and gateway reopens the restored
+# replacement. Keep both sequences in one RUN to stay below Docker's layer cap.
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
+    && test "$(readlink /sandbox/.hermes/state.db)" = "runtime/state.db" \
+    && test ! -e /sandbox/.hermes/runtime/state.db \
+    && umask 0007 \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py session-state-create \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/state.db)" = "gateway:sandbox 660" \
+    && rm -f /sandbox/.hermes/runtime/state.db-wal /sandbox/.hermes/runtime/state.db-shm \
+    && umask 0007 \
+    && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py session-state-reopen \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/state.db)" = "gateway:sandbox 660" \
+    && rm -f /sandbox/.hermes/runtime/state.db \
+        /sandbox/.hermes/runtime/state.db-wal \
+        /sandbox/.hermes/runtime/state.db-shm \
+    && test ! -e /sandbox/.hermes/runtime/state.db \
+    && test ! -L /sandbox/.hermes/runtime/state.db \
     && test ! -e /sandbox/.hermes/cron/executions.db \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py cron-create
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "gateway:sandbox 640" \
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-create \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "gateway:sandbox 640" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py cron-backup
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-backup \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py cron-reopen
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-reopen \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "sandbox:sandbox 660" \
     && rm -f /sandbox/.hermes/runtime/cron-executions.db \
         /sandbox/.hermes/runtime/cron-executions.db-wal \
         /sandbox/.hermes/runtime/cron-executions.db-shm
@@ -1458,19 +1472,16 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime/cron-executions.db)" = "
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 2770" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py discord-create
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "gateway:sandbox 660" \
+        /opt/nemoclaw-hermes-config/image-build-probes.py discord-create \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "gateway:sandbox 660" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
+        /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
     && umask 0007 \
     && HERMES_HOME=/sandbox/.hermes /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py discord-reopen
-
-RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
+        /opt/nemoclaw-hermes-config/image-build-probes.py discord-reopen \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/gateway/discord_message_recovery.db)" = "sandbox:sandbox 660" \
     && rm -f /sandbox/.hermes/gateway/discord_message_recovery.db \
         /sandbox/.hermes/gateway/discord_message_recovery.db-wal \
         /sandbox/.hermes/gateway/discord_message_recovery.db-shm \
@@ -1555,6 +1566,9 @@ RUN check_metadata() { \
     && check_absent /run/nemoclaw/hermes-bundled-plugins-only \
     && check_absent /tmp/nemoclaw-sandbox-lazy-pth-executed \
     && check_absent /sandbox/.hermes/managed-policy.json \
+    && check_absent /sandbox/.hermes/runtime/state.db \
+    && check_absent /sandbox/.hermes/runtime/state.db-wal \
+    && check_absent /sandbox/.hermes/runtime/state.db-shm \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \

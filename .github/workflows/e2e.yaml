@@ -2666,7 +2666,7 @@ jobs:
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout_minutes }}
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
@@ -2979,7 +2979,7 @@ jobs:
       checkout_sha: ${{ inputs.checkout_sha }}
       workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
+      timeout_minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
@@ -3021,7 +3021,7 @@ jobs:
       checkout_sha: ${{ inputs.checkout_sha }}
       workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
+      timeout_minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
@@ -3064,7 +3064,7 @@ jobs:
       checkout_sha: ${{ inputs.checkout_sha }}
       workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
+      timeout_minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
@@ -3107,7 +3107,7 @@ jobs:
       checkout_sha: ${{ inputs.checkout_sha }}
       workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
+      timeout_minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
@@ -3150,7 +3150,7 @@ jobs:
       checkout_sha: ${{ inputs.checkout_sha }}
       workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
+      timeout_minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
@@ -3321,7 +3321,7 @@ jobs:
       contents: read
     # Keep each destructive agent lifecycle on a fresh runner. This bounds the
     # blast radius of runner loss and gives every adapter independent evidence.
-    timeout-minutes: 90
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -3340,6 +3340,8 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
       E2E_OBSERVABLE_OUTCOME: "Stable OpenShell MCP bridge reaches tools and inference"
@@ -3670,11 +3672,13 @@ jobs:
     # Keep the credential-generation lifecycle on a fresh runner so it can
     # execute in parallel with, and fail independently from, the Deep Agents
     # MCP lifecycle without sharing destructive sandbox state.
-    timeout-minutes: 90
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || 90 }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -3831,7 +3835,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 90
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -3850,6 +3854,8 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge-dev"
       E2E_OBSERVABLE_OUTCOME: "Development OpenShell MCP bridge reaches tools and inference"
@@ -5016,11 +5022,13 @@ jobs:
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
-    timeout-minutes: 85
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || 85 }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-e2e"
       E2E_AGENT_RUNTIME: "hermes"
@@ -5109,7 +5117,7 @@ jobs:
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-gpu-startup') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 90
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || 90 }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -5131,6 +5139,8 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
       E2E_AGENT_RUNTIME: "hermes"
@@ -5433,11 +5443,13 @@ jobs:
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'cloud-onboard') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || 70 }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "cloud-onboard"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -5564,11 +5576,13 @@ jobs:
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'messaging-providers') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && 120 || 90 }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "messaging-providers"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -5638,9 +5652,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Two bounded 25-minute onboarding operations plus the 15-minute Vitest
-    # buffer need 65 minutes; allow 20 more for setup and teardown.
-    timeout-minutes: 85
+    # This lane always builds the current checkout locally, so it uses the same
+    # cold-build command, test, and job minima as local-Dockerfile PR E2E.
+    timeout-minutes: 120
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
@@ -5648,6 +5662,8 @@ jobs:
       E2E_OBSERVABLE_OUTCOME: "OpenClaw installs the custom plugin across devices; plugin behavior survives restart and recreation"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; current package; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
+      NEMOCLAW_EXEC_TIMEOUT: "6000000"
+      NEMOCLAW_TEST_TIMEOUT: "6600000"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"

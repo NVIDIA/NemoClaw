@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -54,7 +55,7 @@ import {
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
 
-const TIMEOUT_MS = 45 * 60_000;
+const TIMEOUT_MS = testTimeout(45 * 60_000);
 const MOCK_BASELINE_API_KEY = "hermes-inference-switch-baseline-credential";
 const MOCK_BASELINE_MODEL = "hermes-inference-switch-baseline-model";
 const HERMES_DASHBOARD_INTERNAL_PORT =

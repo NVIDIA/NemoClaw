@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { dockerfileInstructions } from "../../../src/lib/onboard/dockerfile-tool-disclosure-contract";
 
 const root = path.join(import.meta.dirname, "../../..");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
@@ -27,10 +28,37 @@ const commands = [
   "langfuse-credentials",
   "neutral-platform-inertness",
   "profile-policy",
+  "session-delete",
   "session-preview",
+  "session-state-create",
+  "session-state-reopen",
 ] as const;
 
 describe("Hermes image build probes", () => {
+  it("keeps cross-identity ledger probes consolidated below the Docker layer-depth ceiling", () => {
+    const runInstructions = dockerfileInstructions(dockerfile).filter(({ text }) =>
+      text.startsWith("RUN "),
+    );
+    const layersFor = (family: "cron" | "discord") =>
+      runInstructions.filter(({ text }) => text.includes(`${imageProbePath} ${family}-`));
+    const sessionStateLayers = runInstructions.filter(({ text }) =>
+      text.includes(`${imageProbePath} session-state-`),
+    );
+
+    expect({
+      cron: layersFor("cron").length,
+      discord: layersFor("discord").length,
+      sessionState: sessionStateLayers.length,
+    }).toEqual({ cron: 2, discord: 2, sessionState: 1 });
+    expect(sessionStateLayers[0]?.start).toBe(
+      layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-create`))?.start,
+    );
+    expect(sessionStateLayers[0]?.text).toContain(
+      "rm -f /sandbox/.hermes/runtime/state.db",
+    );
+    expect(dockerfile).toContain("check_absent /sandbox/.hermes/runtime/state.db");
+  });
+
   it.each(commands)(
     "uses a checked-in probe runner instead of builder-dependent heredocs [case %#] (#7981)",
     (command) => {

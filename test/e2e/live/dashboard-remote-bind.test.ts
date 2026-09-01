@@ -3,6 +3,7 @@
 
 import os from "node:os";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -19,7 +20,7 @@ import { parseJsonFromText } from "./json-envelope.ts";
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-bind";
-const TEST_TIMEOUT_MS = 50 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(50 * 60_000);
 
 function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return buildDashboardRemoteBindEnv(SANDBOX_NAME, extra);
@@ -157,7 +158,7 @@ runDashboardRemoteBindTest(
         NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
       }),
       redactionValues,
-      timeoutMs: 25 * 60_000,
+      timeoutMs: execTimeout(25 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 

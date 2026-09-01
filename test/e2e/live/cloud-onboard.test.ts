@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -112,7 +113,7 @@ function publicInstallRef(): string {
 }
 
 test("cloud onboard: public installer creates healthy sandbox with security checks", {
-  timeout: LIVE_TIMEOUT_MS,
+  timeout: testTimeout(LIVE_TIMEOUT_MS),
   meta: {
     e2ePhases: [
       "check cloud onboarding prerequisites",
@@ -218,7 +219,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
         NEMOCLAW_REASONING: "true",
       }),
       redactionValues,
-      timeoutMs: 25 * 60_000,
+      timeoutMs: execTimeout(25 * 60_000),
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);

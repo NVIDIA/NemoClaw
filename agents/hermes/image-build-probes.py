@@ -208,6 +208,75 @@ def verify_session_delete() -> None:
     assert not any(r["id"] == session_id for r in rows), "session still present after delete"
 
 
+_SESSION_STATE_PROBE_ID = "nemoclaw-cross-uid-session-probe"
+_SESSION_STATE_DIRECTORY = Path("/sandbox/.hermes/runtime")
+_SESSION_STATE_NAMES = ("state.db", "state.db-wal", "state.db-shm")
+
+
+def _verify_session_state_metadata(expected_owners: dict[str, str]) -> None:
+    import grp
+    import pwd
+    import stat
+
+    assert set(expected_owners) == set(_SESSION_STATE_NAMES), expected_owners
+    for name in _SESSION_STATE_NAMES:
+        path = _SESSION_STATE_DIRECTORY / name
+        metadata = path.lstat()
+        assert stat.S_ISREG(metadata.st_mode), (path, metadata)
+        assert metadata.st_nlink == 1, (path, metadata.st_nlink)
+        assert pwd.getpwuid(metadata.st_uid).pw_name == expected_owners[name], (
+            path,
+            metadata.st_uid,
+        )
+        assert grp.getgrgid(metadata.st_gid).gr_name == "sandbox", (path, metadata.st_gid)
+        assert stat.S_IMODE(metadata.st_mode) == 0o660, (path, oct(metadata.st_mode))
+
+
+def verify_session_state_create() -> None:
+    from hermes_state import SessionDB
+
+    db = SessionDB()
+    try:
+        db.create_session(_SESSION_STATE_PROBE_ID, "gateway")
+        db.append_message(_SESSION_STATE_PROBE_ID, "user", "gateway-created")
+        rows = db.list_sessions_rich(limit=10)
+        assert any(row["id"] == _SESSION_STATE_PROBE_ID for row in rows), rows
+        _verify_session_state_metadata(
+            {name: "gateway" for name in _SESSION_STATE_NAMES}
+        )
+    finally:
+        db.close()
+
+
+def verify_session_state_reopen() -> None:
+    from hermes_state import SessionDB
+
+    db = SessionDB()
+    try:
+        rows = db.list_sessions_rich(limit=10)
+        assert any(row["id"] == _SESSION_STATE_PROBE_ID for row in rows), rows
+        db.append_message(_SESSION_STATE_PROBE_ID, "assistant", "sandbox-appended")
+        messages = db.get_messages(_SESSION_STATE_PROBE_ID)
+        assert [message["content"] for message in messages[-2:]] == [
+            "gateway-created",
+            "sandbox-appended",
+        ], messages
+        _verify_session_state_metadata(
+            {
+                "state.db": "gateway",
+                "state.db-wal": "sandbox",
+                "state.db-shm": "sandbox",
+            }
+        )
+        assert db.delete_session(_SESSION_STATE_PROBE_ID)
+        assert not any(
+            row["id"] == _SESSION_STATE_PROBE_ID
+            for row in db.list_sessions_rich(limit=10)
+        )
+    finally:
+        db.close()
+
+
 def verify_discord_recovery_source() -> None:
     source = Path("/opt/hermes/plugins/platforms/discord/recovery.py").read_text(
         encoding="utf-8"
@@ -435,6 +504,8 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "profile-policy": verify_profile_policy,
     "session-delete": verify_session_delete,
     "session-preview": verify_session_preview,
+    "session-state-create": verify_session_state_create,
+    "session-state-reopen": verify_session_state_reopen,
 }
 
 

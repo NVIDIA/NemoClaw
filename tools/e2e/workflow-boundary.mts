@@ -22,6 +22,7 @@ import {
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
   HERMES_TIMEOUT_HEADROOM_MINUTES,
 } from "./hermes-timeout-contract.mts";
+import { localDockerfileWorkflowTimeoutContract } from "./onboard-timeout-contract.mts";
 import { validateLlamaCppDgxSparkQualificationWorkflow } from "./llama-cpp-dgx-spark-qualification-workflow-boundary.mts";
 import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
@@ -1720,16 +1721,42 @@ function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): 
     jobName,
     jobTimeoutMinutes,
   } of HERMES_TIMEOUT_CONTRACTS) {
-    const actualJobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
-    const maximumJobTimeoutMinutes = innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES;
+    const actualJobTimeout = asRecord(jobs[jobName])["timeout-minutes"];
     if (
-      !Number.isInteger(actualJobTimeoutMinutes) ||
-      (actualJobTimeoutMinutes as number) < jobTimeoutMinutes ||
-      (actualJobTimeoutMinutes as number) > maximumJobTimeoutMinutes
+      actualJobTimeout !== localDockerfileWorkflowTimeoutContract(jobTimeoutMinutes).targetTimeout
     ) {
       errors.push(
-        `${jobName} timeout must be between ${jobTimeoutMinutes} and ${maximumJobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with ${HERMES_TIMEOUT_HEADROOM_MINUTES}-${HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes of job headroom`,
+        `${jobName} timeout must preserve the ${jobTimeoutMinutes}-minute managed-image budget and reserve 120 minutes for a local Dockerfile to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with ${HERMES_TIMEOUT_HEADROOM_MINUTES}-${HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes of managed-image job headroom`,
       );
+    }
+  }
+}
+
+const RETAINED_LOCAL_DOCKERFILE_TIMEOUTS = [
+  { jobName: "mcp-bridge", managedTargetTimeoutMinutes: 90 },
+  { jobName: "mcp-bridge-dev", managedTargetTimeoutMinutes: 90 },
+  { jobName: "openshell-credential-generation-window", managedTargetTimeoutMinutes: 90 },
+  { jobName: "hermes-e2e", managedTargetTimeoutMinutes: 85 },
+  { jobName: "hermes-gpu-startup", managedTargetTimeoutMinutes: 90 },
+  { jobName: "cloud-onboard", managedTargetTimeoutMinutes: 70 },
+  { jobName: "messaging-providers", managedTargetTimeoutMinutes: 90 },
+] as const;
+
+function validateRetainedLocalDockerfileTimeouts(errors: string[], jobs: WorkflowRecord): void {
+  for (const { jobName, managedTargetTimeoutMinutes } of RETAINED_LOCAL_DOCKERFILE_TIMEOUTS) {
+    const job = asRecord(jobs[jobName]);
+    const env = asRecord(job.env);
+    const expected = localDockerfileWorkflowTimeoutContract(managedTargetTimeoutMinutes);
+    if (job["timeout-minutes"] !== expected.targetTimeout) {
+      errors.push(
+        `${jobName} must reserve 120 job minutes only for local Dockerfiles and preserve its ${managedTargetTimeoutMinutes}-minute managed-image budget`,
+      );
+    }
+    if (env.NEMOCLAW_EXEC_TIMEOUT !== expected.commandTimeoutEnvironment) {
+      errors.push(`${jobName} must publish the 100-minute local-Dockerfile command minimum`);
+    }
+    if (env.NEMOCLAW_TEST_TIMEOUT !== expected.testTimeoutEnvironment) {
+      errors.push(`${jobName} must publish the 110-minute local-Dockerfile test minimum`);
     }
   }
 }
@@ -2860,7 +2887,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
-  if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
+  if (
+    liveTargets["timeout-minutes"] !==
+    "${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}"
+  ) {
     errors.push("live job timeout must come from the typed target matrix");
   }
   if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
@@ -3200,6 +3230,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateStagingBrevLaunchableIdentityJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
+  validateRetainedLocalDockerfileTimeouts(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
 

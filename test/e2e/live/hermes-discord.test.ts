@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
@@ -40,7 +41,7 @@ const DISCORD_SERVER_IDS = process.env.DISCORD_SERVER_IDS ?? "149159099275359059
 const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222676";
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const FAKE_DISCORD_HOST = "host.docker.internal";
+const FAKE_DISCORD_HOST = "host.openshell.internal";
 const HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE = hermesDiscordHttpProxyWebSocketUrl(
   "{host}",
   "{port}",
@@ -267,7 +268,7 @@ results = []
 
 async def main():
     port = int(os.environ["FAKE_DISCORD_GATEWAY_CLIENT_PORT"])
-    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.docker.internal")
+    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.openshell.internal")
     token = read_env_token()
     client = discord.Client(intents=discord.Intents.none())
     setup = getattr(client, "_async_setup_hook", None)
@@ -389,7 +390,7 @@ async function rawTokenSurfaceProbe(
 }
 
 test("hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite", {
-  timeout: HERMES_DISCORD_TEST_TIMEOUT_MS,
+  timeout: testTimeout(HERMES_DISCORD_TEST_TIMEOUT_MS),
   meta: {
     e2ePhases: [
       "prepare clean Hermes Discord runner",
@@ -464,7 +465,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, and native ga
     cwd: REPO_ROOT,
     env,
     redactionValues,
-    timeoutMs: 60 * 60_000,
+    timeoutMs: execTimeout(60 * 60_000),
   });
   expectExitZero(install, "install.sh --non-interactive with Hermes Discord");
 

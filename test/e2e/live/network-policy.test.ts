@@ -15,6 +15,7 @@ import path from "node:path";
 
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import { listPresets } from "../../../src/lib/policy/index.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -47,8 +48,8 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
 const SUPPRESSION_SANDBOX_NAME =
   process.env.NEMOCLAW_NETWORK_POLICY_SUPPRESSION_SANDBOX_NAME ?? "e2e-net-suppress";
 
-const TEST_TIMEOUT_MS = 65 * 60_000;
-const ONBOARD_TIMEOUT_MS = 15 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(65 * 60_000);
+const ONBOARD_TIMEOUT_MS = execTimeout(15 * 60_000);
 const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
 const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =

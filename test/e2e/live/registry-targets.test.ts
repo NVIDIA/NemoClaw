@@ -67,7 +67,10 @@ const REGISTRY_TARGET_PHASES = [
 
 for (const [targetIndex, target] of listTargets().entries()) {
   const support = liveTargetSupport(target);
-  const timeoutContract = liveTargetTimeoutContract(target.environment?.lifecycle);
+  const timeoutContract = liveTargetTimeoutContract(
+    target.environment?.lifecycle,
+    process.env.E2E_WORKLOAD_SOURCE,
+  );
   if (!support.supported) {
     if (SELECTED_TARGET_ID === target.id) {
       console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);

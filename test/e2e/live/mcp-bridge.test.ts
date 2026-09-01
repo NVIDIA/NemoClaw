@@ -12,6 +12,7 @@ import {
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -145,7 +146,7 @@ async function onboardAgent(
       sandboxName: options.sandboxName,
     }),
     redactionValues: [COMPATIBLE_KEY],
-    timeoutMs: 20 * 60_000,
+    timeoutMs: execTimeout(20 * 60_000),
   };
   const result = await retryOpenClawBaselineScopeOnboardFailure({
     agent: options.agent,
@@ -702,7 +703,7 @@ async function rebuildWithoutMcpHostSecret(
 }
 
 test("mcp-bridge", {
-  timeout: 45 * 60_000,
+  timeout: testTimeout(45 * 60_000),
   meta: { e2ePhases: MCP_BRIDGE_PHASES.openclaw },
 }, async ({ artifacts, cleanup, host, progress, sandbox }) => {
   await artifacts.writeJson("scenario.json", {
@@ -1072,7 +1073,7 @@ test("mcp-bridge", {
 mcpBridgeShardTest("hermes")(
   "mcp-bridge-hermes",
   {
-    timeout: 45 * 60_000,
+    timeout: testTimeout(45 * 60_000),
     meta: { e2ePhases: MCP_BRIDGE_PHASES.hermes },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
@@ -1316,7 +1317,7 @@ mcpBridgeShardTest("hermes")(
 mcpBridgeShardTest("deepagents")(
   "mcp-bridge-deepagents",
   {
-    timeout: 45 * 60_000,
+    timeout: testTimeout(45 * 60_000),
     meta: { e2ePhases: MCP_BRIDGE_PHASES.deepagents },
   },
   async ({ artifacts, cleanup, host, lifecycle, progress, sandbox }) => {

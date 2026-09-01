@@ -28,6 +28,8 @@ const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
+const LOCAL_DOCKERFILE_TIMEOUT =
+  "${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}";
 const guardedCallerSecret = (name: string): string =>
   `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
@@ -122,6 +124,9 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
 
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
+  if (record(jobs.live)["timeout-minutes"] !== LOCAL_DOCKERFILE_TIMEOUT) {
+    errors.push("live E2E must reserve the cold-build timeout only for local Dockerfiles");
+  }
   for (const profile of E2E_EXECUTION_PROFILES) {
     const contract = PROFILE_JOBS[profile];
     const job = record(jobs[contract.job]);
@@ -174,7 +179,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       checkout_sha: "${{ inputs.checkout_sha }}",
       workflow_sha: "${{ inputs.workflow_sha }}",
       test_file: "${{ matrix.test_file }}",
-      timeout_minutes: "${{ matrix.timeout_minutes }}",
+      timeout_minutes: LOCAL_DOCKERFILE_TIMEOUT,
       install_mode: "${{ matrix.install_mode }}",
       install_non_interactive: "${{ matrix.install_non_interactive }}",
       restore_cli: "${{ matrix.restore_cli }}",

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -207,7 +208,7 @@ async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promis
 test(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
   {
-    timeout: HERMES_E2E_TEST_TIMEOUT_MS,
+    timeout: testTimeout(HERMES_E2E_TEST_TIMEOUT_MS),
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
   async ({ artifacts, cleanup, host, inference, progress, sandbox }) => {
@@ -313,7 +314,7 @@ test(
       cwd: REPO_ROOT,
       env,
       redactionValues,
-      timeoutMs: 60 * 60_000,
+      timeoutMs: execTimeout(60 * 60_000),
     });
     await (install.exitCode === 0
       ? Promise.resolve()
