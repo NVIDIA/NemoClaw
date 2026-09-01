@@ -5,12 +5,11 @@ import fs from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
-import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   cleanupWhenOpenShellAvailable,
   registerSandboxCleanupUnlessKept,
 } from "../fixtures/cleanup-resources.ts";
-import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
+import type { SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -22,7 +21,6 @@ import {
   assertDiscordGatewayCapture,
   precleanMessagingResources,
   registerRetainedSandboxPolicyRestore,
-  type FakeDockerApi,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
 import {
@@ -82,25 +80,6 @@ function redactions(apiKey: string): string[] {
 
 function normalizedCsv(value: string): string {
   return value.replace(/\s+/g, "");
-}
-
-async function startHermesFakeDiscordGateway(
-  host: HostCliClient,
-  cleanup: CleanupRegistry,
-  env: NodeJS.ProcessEnv,
-  token: string,
-  redactionValues: string[],
-): Promise<FakeDockerApi> {
-  return startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
-    kind: "discord-gateway",
-    imageScript: "fake-discord-gateway.cjs",
-    containerPrefix: "nemoclaw-fake-discord-hermes",
-    portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
-    env,
-    redactionValues,
-  });
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
@@ -517,13 +496,16 @@ PY`,
     expect(envProbe.stdout.trim()).toBe("OK");
 
     progress.phase("exercise native Discord gateway rewrite");
-    const fakeGateway = await startHermesFakeDiscordGateway(
-      host,
-      cleanup,
+    const fakeGateway = await startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
+      kind: "discord-gateway",
+      imageScript: "fake-discord-gateway.cjs",
+      containerPrefix: "nemoclaw-fake-discord-hermes",
+      portEnv: "FAKE_DISCORD_GATEWAY_PORT",
+      captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+      expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: DISCORD_TOKEN },
       env,
-      DISCORD_TOKEN,
       redactionValues,
-    );
+    });
     await registerRetainedSandboxPolicyRestore(cleanup, sandbox, {
       keepSandbox,
       sandboxName: SANDBOX_NAME,

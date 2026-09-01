@@ -7,6 +7,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   applyCredentialBoundFakePolicy,
   precleanMessagingResources,
+  startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
 import {
   approveAndAssertPairing,
@@ -16,7 +17,6 @@ import {
   PAIRING_USER,
   pairingEnv,
   pairingRedactions,
-  startFakeSlackApi,
   writePairingArtifacts,
 } from "./openclaw-pairing-helpers.ts";
 import {
@@ -160,22 +160,34 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
 
   progress.phase("route Slack API and websocket traffic through managed policies");
-  const fakeSlackRest = await startFakeSlackApi(
-    host,
-    cleanup,
+  const fakeSlackRest = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+    kind: "slack",
+    imageScript: "fake-slack-api.cjs",
+    containerPrefix: "nemoclaw-fake-slack-pairing",
+    portEnv: "FAKE_SLACK_API_PORT",
+    captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+    expectedEnv: {
+      FAKE_SLACK_API_EXPECTED_BOT_TOKEN: SLACK_BOT_TOKEN,
+      FAKE_SLACK_API_EXPECTED_APP_TOKEN: SLACK_APP_TOKEN,
+      FAKE_SLACK_API_SOCKET_USER_ID: PAIRING_USER.slack,
+    },
     env,
-    SLACK_BOT_TOKEN,
-    SLACK_APP_TOKEN,
-    redactions,
-  );
-  const fakeSlackWebSocket = await startFakeSlackApi(
-    host,
-    cleanup,
+    redactionValues: redactions,
+  });
+  const fakeSlackWebSocket = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+    kind: "slack",
+    imageScript: "fake-slack-api.cjs",
+    containerPrefix: "nemoclaw-fake-slack-pairing",
+    portEnv: "FAKE_SLACK_API_PORT",
+    captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+    expectedEnv: {
+      FAKE_SLACK_API_EXPECTED_BOT_TOKEN: SLACK_BOT_TOKEN,
+      FAKE_SLACK_API_EXPECTED_APP_TOKEN: SLACK_APP_TOKEN,
+      FAKE_SLACK_API_SOCKET_USER_ID: PAIRING_USER.slack,
+    },
     env,
-    SLACK_BOT_TOKEN,
-    SLACK_APP_TOKEN,
-    redactions,
-  );
+    redactionValues: redactions,
+  });
   await applyCredentialBoundFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,

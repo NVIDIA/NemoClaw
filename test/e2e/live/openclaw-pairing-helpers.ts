@@ -4,17 +4,11 @@
 import path from "node:path";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import {
-  type FakeDockerApi,
-  runDiscordGatewayClient,
-  startFakeDockerApi,
-} from "./messaging-providers-helpers.ts";
+import { runDiscordGatewayClient } from "./messaging-providers-helpers.ts";
 import {
   expectExitZero,
   phase6Env,
@@ -68,49 +62,6 @@ export function pairingRedactions(options: {
   return [options.apiKey, options.slackBot, options.slackApp, options.discordToken].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-}
-
-export async function startFakeDiscordGateway(
-  host: HostCliClient,
-  cleanup: CleanupRegistry,
-  env: NodeJS.ProcessEnv,
-  token: string,
-  redactions: string[],
-): Promise<FakeDockerApi> {
-  return startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-    kind: "discord-gateway",
-    imageScript: "fake-discord-gateway.cjs",
-    containerPrefix: "nemoclaw-fake-discord-pairing",
-    portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
-    env,
-    redactionValues: redactions,
-  });
-}
-
-export async function startFakeSlackApi(
-  host: HostCliClient,
-  cleanup: CleanupRegistry,
-  env: NodeJS.ProcessEnv,
-  botToken: string,
-  appToken: string,
-  redactions: string[],
-): Promise<FakeDockerApi> {
-  return startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-    kind: "slack",
-    imageScript: "fake-slack-api.cjs",
-    containerPrefix: "nemoclaw-fake-slack-pairing",
-    portEnv: "FAKE_SLACK_API_PORT",
-    captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-    expectedEnv: {
-      FAKE_SLACK_API_EXPECTED_BOT_TOKEN: botToken,
-      FAKE_SLACK_API_EXPECTED_APP_TOKEN: appToken,
-      FAKE_SLACK_API_SOCKET_USER_ID: PAIRING_USER.slack,
-    },
-    env,
-    redactionValues: redactions,
-  });
 }
 
 export async function assertOpenClawStateRoot(

@@ -6,6 +6,7 @@ import {
   applyCredentialBoundFakePolicy,
   assertDiscordGatewayCapture,
   precleanMessagingResources,
+  startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
 import {
   approveAndAssertPairing,
@@ -17,7 +18,6 @@ import {
   pairingEnv,
   pairingRedactions,
   runDiscordGatewayProof,
-  startFakeDiscordGateway,
   writePairingArtifacts,
 } from "./openclaw-pairing-helpers.ts";
 import {
@@ -138,7 +138,16 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "discord", redactions);
 
   progress.phase("route Discord Gateway traffic through the managed policy");
-  const fakeGateway = await startFakeDiscordGateway(host, cleanup, env, DISCORD_TOKEN, redactions);
+  const fakeGateway = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+    kind: "discord-gateway",
+    imageScript: "fake-discord-gateway.cjs",
+    containerPrefix: "nemoclaw-fake-discord-pairing",
+    portEnv: "FAKE_DISCORD_GATEWAY_PORT",
+    captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: DISCORD_TOKEN },
+    env,
+    redactionValues: redactions,
+  });
   await applyCredentialBoundFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
