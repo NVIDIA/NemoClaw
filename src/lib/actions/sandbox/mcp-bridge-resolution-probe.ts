@@ -248,9 +248,12 @@ function markerValue(stdout: string, marker: string): ProbeMarkerValue | undefin
   return { index: matches[0].index, value: Number(matches[0][1]) };
 }
 
+export const MCP_CONNECT_403_POLICY_DETAIL =
+  "OpenShell denied the probe connection (CONNECT 403); check the generated MCP policy";
+
 function transportDetail(curlExit: number, stderr: string): string | undefined {
   if (curlExit === 56 && /CONNECT tunnel failed,\s*response 403/i.test(stderr)) {
-    return "OpenShell denied the probe connection (CONNECT 403); check the generated MCP policy";
+    return MCP_CONNECT_403_POLICY_DETAIL;
   }
   if (curlExit === 56 && /CONNECT tunnel failed,\s*response 503/i.test(stderr)) {
     return "OpenShell denied the probe before TLS setup (CONNECT 503); check gateway ephemeral CA initialization and TLS termination readiness";

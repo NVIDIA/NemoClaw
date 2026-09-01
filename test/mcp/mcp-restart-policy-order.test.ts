@@ -163,12 +163,18 @@ operationPromise.then(
     },
   );
 
-  it("compares bounded provider revision observations on the host during restart", () => {
+  it("persists each validated public pin set during all-server restart (#10464)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-revision-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.MCP_TOKEN = "host-only-secret";
+process.env.SECOND_MCP_TOKEN = "second-host-only-secret";
 const registry = require("./src/lib/state/registry.js");
+const dns = require("node:dns/promises");
+dns.lookup = async (hostname) => [{
+  address: hostname === "mcp.refresh.test" ? "1.1.1.1" : "9.9.9.9",
+  family: 4,
+}];
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
@@ -176,22 +182,38 @@ const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
-let resourceVersion = 1;
 let registeredProviderGets = 0;
 const observations = [];
 const proofScripts = [];
 const providerCalls = [];
-const entry = {
-  server: "example",
-  agent: "openclaw",
-  adapter: "mcporter",
-  url: "https://8.8.8.8/mcp",
-  env: ["MCP_TOKEN"],
-  providerName: "alpha-mcp-example",
-  providerId: "11111111-2222-4333-8444-555555555555",
-  policyName: "mcp-bridge-example",
-  addedAt: "2026-06-01T00:00:00.000Z",
+const policyContents = [];
+const entries = {
+  example: {
+    server: "example",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://mcp.refresh.test/mcp",
+    env: ["MCP_TOKEN"],
+    allowedIps: ["8.8.8.8"],
+    providerName: "alpha-mcp-example",
+    providerId: "11111111-2222-4333-8444-555555555555",
+    policyName: "mcp-bridge-example",
+    addedAt: "2026-06-01T00:00:00.000Z",
+  },
+  second: {
+    server: "second",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://mcp.second.test/mcp",
+    env: ["SECOND_MCP_TOKEN"],
+    allowedIps: ["4.4.4.4"],
+    providerName: "alpha-mcp-second",
+    providerId: "22222222-3333-4444-8555-666666666666",
+    policyName: "mcp-bridge-second",
+    addedAt: "2026-06-01T00:00:00.000Z",
+  },
 };
+const resourceVersions = new Map(Object.values(entries).map((entry) => [entry.providerName, 1]));
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -215,21 +237,25 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         stderr: "",
       };
     }
+    const entry = Object.values(entries).find((candidate) => candidate.providerName === args[2]);
+    if (!entry) return { status: 1, stdout: "", stderr: "NotFound: provider" };
     return {
       status: 0,
-      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\n",
+      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersions.get(entry.providerName) + "\nCredential keys: " + entry.env[0] + "\n",
       stderr: "",
     };
   }
   if (args[0] === "provider" && args[1] === "update") {
     providerCalls.push(command);
-    resourceVersion += 1;
+    resourceVersions.set(args[2], (resourceVersions.get(args[2]) || 0) + 1);
     return { status: 0, stdout: "Updated provider", stderr: "" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + entry.providerName + " nemoclaw-mcp-v1 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + Object.values(entries)
+        .map((entry) => entry.providerName + " nemoclaw-mcp-v1 1 0")
+        .join("\n") + "\n",
       stderr: "",
     };
   }
@@ -239,13 +265,19 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   return { status: 0, stdout: "", stderr: "" };
 };
 policies.getPresetContentGatewayState = () => "match";
-policies.applyPresetContent = () => true;
+policies.applyPresetContent = (_sandbox, _name, content) => {
+  policyContents.push(content);
+  return true;
+};
 processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
   const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
   proofScripts.push(proof);
   if (proof.includes("printf '%s\\n' absent")) {
-    const observation = "v" + resourceVersion;
+    const entry = Object.values(entries)
+      .sort((left, right) => right.env[0].length - left.env[0].length)
+      .find((candidate) => proof.includes(candidate.env[0]));
+    const observation = "v" + resourceVersions.get(entry.providerName);
     observations.push(observation);
     return { status: 0, stdout: observation, stderr: "" };
   }
@@ -261,13 +293,21 @@ registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
   gatewayName: "nemoclaw",
-  mcp: { bridges: { example: entry } },
+  mcp: { bridges: entries },
 });
 registry.addExtraProvider("foreign-registered");
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
-bridge.restartMcpBridge("alpha", "example").then(
-  () => process.stdout.write(JSON.stringify({ observations, proofScripts, providerCalls, registeredProviderGets })),
+bridge.restartMcpBridge("alpha").then(
+  () => process.stdout.write(JSON.stringify({
+    observations,
+    proofScripts,
+    providerCalls,
+    policyContents,
+    registeredProviderGets,
+    refreshedPins: Object.fromEntries(Object.entries(registry.getSandbox("alpha").mcp.bridges)
+      .map(([server, entry]) => [server, entry.allowedIps])),
+  })),
   (error) => { console.error(error); process.exit(1); },
 );
 `;
@@ -284,15 +324,38 @@ bridge.restartMcpBridge("alpha", "example").then(
       observations: string[];
       proofScripts: string[];
       providerCalls: string[];
+      policyContents: string[];
       registeredProviderGets: number;
+      refreshedPins: Record<string, string[]>;
     };
-    expect(payload.observations).toEqual(["v1", "v3", "v3", "v3", "v3", "v3"]);
+    expect(payload.observations).toEqual([
+      "v1",
+      "v3",
+      "v3",
+      "v3",
+      "v3",
+      "v3",
+      "v1",
+      "v3",
+      "v3",
+      "v3",
+      "v3",
+      "v3",
+    ]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
       "provider update alpha-mcp-example",
+      "provider update alpha-mcp-second --credential SECOND_MCP_TOKEN",
+      "provider update alpha-mcp-second",
     ]);
     expect(payload.registeredProviderGets).toBe(1);
-    expect(payload.proofScripts).toHaveLength(6);
+    expect(payload.refreshedPins).toEqual({ example: ["1.1.1.1"], second: ["9.9.9.9"] });
+    expect(payload.policyContents).toHaveLength(4);
+    expect(payload.policyContents.join("\n")).toContain("- 1.1.1.1");
+    expect(payload.policyContents.join("\n")).toContain("- 9.9.9.9");
+    expect(payload.policyContents.join("\n")).not.toContain("- 8.8.8.8");
+    expect(payload.policyContents.join("\n")).not.toContain("- 4.4.4.4");
+    expect(payload.proofScripts).toHaveLength(12);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
 });

@@ -33,6 +33,8 @@ afterEach(() => {
 // warnings are exercised end-to-end.
 const harnessPreludeTemplate = String.raw`
 const registry = require("./src/lib/state/registry.js");
+const dns = require("node:dns/promises");
+dns.lookup = async () => [{ address: "8.8.8.8", family: 4 }];
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const policies = require("./src/lib/policy/index.js");
@@ -89,6 +91,8 @@ policies.getPresetContentGatewayState = () => activePolicyState;
 const executedSandboxCommands = [];
 let providerCredentialObservation = "v11";
 let credentialObservationCount = 0;
+let probeCurlExit = 0;
+let probeStderr = "";
 processRecovery.executeSandboxExecCommand = () => {
   credentialObservationCount += 1;
   return {
@@ -108,11 +112,11 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
         resultMarker,
         "",
         "NEMOCLAW_MCP_PROBE_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
-        "NEMOCLAW_MCP_PROBE_CURL_EXIT=" + resultMarker + ":0",
+        "NEMOCLAW_MCP_PROBE_CURL_EXIT=" + resultMarker + ":" + probeCurlExit,
         "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
         "NEMOCLAW_MCP_CONTROL_CURL_EXIT=" + resultMarker + ":0",
       ].join("\n"),
-      stderr: "",
+      stderr: probeStderr,
     };
   }
   if (command.includes("mcp-tool-discovery-runtime")) {
@@ -224,6 +228,51 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       ),
     ).toBe(true);
     expect(payload.exitCode).toBe(0);
+  });
+
+  it("reports public pin drift and diagnoses only the matching CONNECT 403 (#10464)", () => {
+    const home = createTempHome("nemoclaw-mcp-public-pin-drift-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  dns.lookup = async () => [{ address: "1.1.1.1", family: 4 }];
+  probeCurlExit = 56;
+  probeStderr = "curl: (56) CONNECT tunnel failed, response 403";
+  const [drifted] = await bridge.statusMcpBridge("alpha", "github", {
+    probeCredentialResolution: true,
+  });
+  dns.lookup = async () => [{ address: "8.8.8.8", family: 4 }];
+  const [matched] = await bridge.statusMcpBridge("alpha", "github", {
+    probeCredentialResolution: true,
+  });
+  process.stdout.write(JSON.stringify({ drifted, matched }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      drifted: {
+        publicTarget?: { recordedPins: string[]; currentPins?: string[]; state: string };
+        warnings: string[];
+        provider: { credentialResolution?: { detail?: string } };
+      };
+      matched: { provider: { credentialResolution?: { detail?: string } } };
+    };
+
+    expect(payload.drifted.publicTarget).toEqual({
+      host: "api.githubcopilot.com",
+      recordedPins: ["8.8.8.8"],
+      currentPins: ["1.1.1.1"],
+      state: "drift",
+      detail: "Current public DNS answers differ from the recorded pins.",
+    });
+    expect(payload.drifted.warnings).toContain(
+      "Public DNS answers differ from the recorded pins. Run mcp restart to refresh validated public pins.",
+    );
+    expect(payload.drifted.provider.credentialResolution?.detail).toContain(
+      "current public DNS answers 1.1.1.1 do not match recorded pins 8.8.8.8",
+    );
+    expect(payload.matched.provider.credentialResolution?.detail).toBe(
+      "OpenShell denied the probe connection (CONNECT 403); check the generated MCP policy",
+    );
   });
 
   it("sends the observed revision and rejects canonical probe authority (#10079)", () => {

@@ -356,9 +356,17 @@ See [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for t
 
 ## DNS Pins Drift
 
-If `mcp status <server>` reports `private address pins: drift`, review the endpoint address change before updating access.
-Status, restart, rebuild, and restore do not add the new addresses.
+If `mcp status <server>` reports `public address pins: drift`, restart the server to validate, apply, and record the current public answers:
 
+```bash
+$$nemoclaw <sandbox> mcp restart <server>
+```
+
+If status reports `public address pins: unresolved`, DNS is unavailable and the recorded pins remain unchanged.
+Retry status after DNS recovers.
+
+If status reports `private address pins: drift`, review the endpoint address change before updating access.
+Status, restart, rebuild, and restore do not add new trusted-private addresses.
 Remove and re-add the server with the same trusted host to perform a new preflight and record new pins:
 
 ```bash
@@ -374,8 +382,8 @@ unset LOCAL_MCP_TOKEN
 A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
 Do not add a provider's complete address range or broaden the policy to bypass the denial.
 
-Cloudflare Quick Tunnels rotate public edge addresses and are not durable for address pinning.
-A named tunnel can keep one hostname while its resolved addresses still change.
+Cloudflare Quick Tunnels and named tunnels can rotate public edge addresses while keeping one hostname.
+A managed MCP server can require another restart after each public address change.
 Use stable private DNS and a routed private HTTPS endpoint for a host-local MCP server.
 
 If status reports matching pins but the request still receives `CONNECT 403`, inspect the OpenShell policy and audit logs.

@@ -48,6 +48,13 @@ export interface McpBridgeStatus {
     state: "match" | "drift" | "unresolved";
     detail?: string;
   };
+  publicTarget?: {
+    host: string;
+    recordedPins: string[];
+    currentPins?: string[];
+    state: "match" | "drift" | "unresolved";
+    detail?: string;
+  };
   env: {
     names: string[];
     missing: string[];

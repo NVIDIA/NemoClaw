@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { isTrustedPrivateEndpointCapability } from "../../security/trusted-private-endpoint";
 import { addMcpBridge, normalizeMcpServerUrl } from "./mcp-bridge";
 import {
+  inspectMcpRecordedPublicTargetPins,
   inspectMcpRecordedTargetPins,
   preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-url-validation";
@@ -287,6 +288,30 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           requireTrustedPrivateEndpoint: true,
         }),
       ).rejects.toThrow(/is unused/);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("reports recorded public pins as match, drift, or unresolved without mutation (#10464)", async () => {
+    const lookup = vi.spyOn(dns, "lookup");
+    const recordedPins = ["8.8.8.8"];
+    try {
+      lookup.mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never);
+      await expect(
+        inspectMcpRecordedPublicTargetPins(new URL("https://mcp.public.example/mcp"), recordedPins),
+      ).resolves.toMatchObject({ state: "match", currentAddresses: ["8.8.8.8"] });
+
+      lookup.mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never);
+      await expect(
+        inspectMcpRecordedPublicTargetPins(new URL("https://mcp.public.example/mcp"), recordedPins),
+      ).resolves.toMatchObject({ state: "drift", currentAddresses: ["1.1.1.1"] });
+
+      lookup.mockRejectedValueOnce(new Error("resolver unavailable"));
+      await expect(
+        inspectMcpRecordedPublicTargetPins(new URL("https://mcp.public.example/mcp"), recordedPins),
+      ).resolves.toMatchObject({ state: "unresolved" });
+      expect(recordedPins).toEqual(["8.8.8.8"]);
     } finally {
       lookup.mockRestore();
     }

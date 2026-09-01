@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getSandboxOrThrow: vi.fn(),
   inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
+  preflightMcpEntryTargets: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
   registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
   restoreExistingMcpBridgeRuntime: vi.fn(),
@@ -43,7 +44,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
   detachProvider: vi.fn(),
   inspectMcpProvider: mocks.inspectMcpProvider,
-  preflightMcpEntryTargets: vi.fn(),
+  preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
   waitForDetachedMcpCredential: vi.fn(),
 }));
 
@@ -56,7 +57,9 @@ vi.mock("./mcp-bridge-destroy-preflight", () => ({
 vi.mock("./mcp-bridge-policy", () => ({
   assertGeneratedPolicyMutationSafe: vi.fn(),
   assertGeneratedPolicyRegistrationMutationSafe: vi.fn(),
+  assertMcpBridgePolicyTarget: vi.fn(),
   buildMcpBridgePolicyKey: vi.fn(() => "mcp_bridge_github"),
+  buildMcpBridgePolicyYaml: vi.fn(() => "network_policies:\n  mcp_bridge_github: {}\n"),
   removeGeneratedPolicy: mocks.removeGeneratedPolicy,
 }));
 
@@ -120,6 +123,9 @@ describe("MCP adapter teardown rollback", () => {
     mocks.getSandboxOrThrow.mockReset().mockReturnValue(sandbox);
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
+    mocks.preflightMcpEntryTargets
+      .mockReset()
+      .mockResolvedValue(new Map([[entry.server, { addresses: ["8.8.8.8"] }]]));
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });

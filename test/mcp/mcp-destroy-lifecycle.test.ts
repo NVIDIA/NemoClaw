@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import YAML from "yaml";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
@@ -1259,6 +1260,76 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     ).toBe(false);
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
+    expect(testState.policyApplyCalls).toBe(0);
+  });
+
+  it("refreshes only public rebuild pins in the complete policy handoff (#10464)", async () => {
+    const publicEntry: McpBridgeEntry = {
+      ...bridgeEntries.github,
+      url: "https://mcp.public.test/github",
+      allowedIps: ["8.8.8.8"],
+    };
+    const privateEntry: McpBridgeEntry = {
+      ...bridgeEntries.slack,
+      server: "private",
+      url: "https://10.20.30.40/private",
+      trustedPrivateHost: "10.20.30.40",
+      allowedIps: ["10.20.30.40"],
+      policyName: "mcp-bridge-private",
+    };
+    let publicAddress = "1.1.1.1";
+    testState.resolveHostAddresses.mockImplementation(async (host: string) => [
+      { address: host === "mcp.public.test" ? publicAddress : host },
+    ]);
+    const userPolicy = "version: 1\nnetwork_policies:\n  operator_owned: { keep: true }\n";
+    const sourcePolicy = `${userPolicy}  mcp_bridge_github: { edited: true }\n  mcp_bridge_private: { edited: true }\n`;
+    testState.getSandboxPolicy.mockImplementation(() => ({
+      raw: "",
+      yaml: testState.removedPolicyKeys.size === 0 ? sourcePolicy : userPolicy,
+    }));
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: publicEntry, private: privateEntry } },
+    });
+    const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
+    const handoff = YAML.parse(preparation.policyHandoff ?? "") as {
+      network_policies: Record<string, { endpoints?: Array<{ allowed_ips?: string[] }> }>;
+    };
+    expect(preparation.entries.find((entry) => entry.server === "github")?.allowedIps).toEqual([
+      "1.1.1.1",
+    ]);
+    expect(handoff.network_policies.operator_owned).toEqual({ keep: true });
+    expect(handoff.network_policies.mcp_bridge_github.endpoints?.[0]?.allowed_ips).toEqual([
+      "1.1.1.1",
+    ]);
+    expect(handoff.network_policies.mcp_bridge_private.endpoints?.[0]?.allowed_ips).toEqual([
+      "10.20.30.40",
+    ]);
+    publicAddress = "1.1.1.2";
+    await expect(preparation.revalidateBeforeDelete?.()).rejects.toThrow(
+      /Public MCP target 'github' changed after rebuild preflight/u,
+    );
+    expect(testState.runOpenshell).not.toHaveBeenCalled();
+  });
+  it("does not persist a later DNS answer when rebuild restore did not apply policy (#10464)", async () => {
+    const entry: McpBridgeEntry = {
+      ...bridgeEntries.github,
+      url: "https://mcp.public.test/github",
+      allowedIps: ["1.1.1.1"],
+    };
+    testState.resolveHostAddresses.mockResolvedValue([{ address: "1.1.1.2" }]);
+    testState.attachedProviders.delete("alpha-mcp-github");
+    testState.adapterRegistered = false;
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: entry } },
+    });
+    await bridge.restoreMcpBridgesAfterRebuild("alpha", [entry]);
+    expect(registry.getSandbox("alpha")?.mcp?.bridges.github.allowedIps).toEqual(["1.1.1.1"]);
     expect(testState.policyApplyCalls).toBe(0);
   });
 
