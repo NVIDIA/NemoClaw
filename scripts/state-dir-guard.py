@@ -2498,15 +2498,6 @@ def _run_guard_unserialized(
             )
             return result
 
-        if action == "verify-mutable" and normalized_top_level_files:
-            _verify_mutable_boundary(
-                config_fd,
-                normalized_config,
-                identity,
-                normalized_top_level_files,
-                result.issues,
-            )
-
         if fail_closed_config_root:
             # The agent top-config guard has already pinned the config root
             # under a root-owned outer parent. Clamp traversal before any

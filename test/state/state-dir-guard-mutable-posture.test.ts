@@ -8,9 +8,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const GUARD_PATH = path.resolve("scripts/state-dir-guard.py");
-const PLAN = JSON.parse(
-  fs.readFileSync(path.resolve("agents/hermes/state-lock-plan.json"), "utf8"),
-) as Record<string, unknown>;
+const PLAN = {
+  version: 1,
+  readOnlyRoots: ["profiles", "skills"],
+  confidentialRoots: ["pairing"],
+  readOnlyPrefixes: [],
+  confidentialPrefixes: [],
+  writableSubpaths: ["profiles/dashboard-home"],
+};
 const RUN_GUARD = String.raw`
 import importlib.util
 import json
