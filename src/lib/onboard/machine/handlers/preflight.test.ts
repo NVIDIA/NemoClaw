@@ -406,33 +406,35 @@ describe("handlePreflightState", () => {
     );
   });
 
-  it("rejects a cached resume when host collection exceeds the freshness window (#7411)", async () => {
+  it("closes the cached resume host collection before the gateway wait (#10670)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
-    let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
-    const detectGpu = vi.fn(() => ({ type: "nvidia" }) as Gpu);
-    const bridge = vi.fn();
+    const startedAt = Date.parse("2026-08-07T12:00:00.000Z");
+    let currentTime = startedAt;
+    const stamps: { observedAt?: string; collectedAt?: string }[] = [];
     const harness = createDeps({
       now: () => new Date(currentTime),
       assessHost: () => {
         currentTime += 30_001;
         return { cdiNvidiaGpuSpecMissing: false };
       },
-      assertOnboardHostReadiness: (_host, _gpu, options) => {
-        expect(options.observedAt).toBe("2026-08-07T12:00:00.000Z");
-        const age = currentTime - Date.parse(options.observedAt as string);
-        expect(age).toBeGreaterThan(30_000);
-        throw new Error("host observations are stale");
+      assertGatewayReadiness: async () => {
+        currentTime += 45_000;
       },
-      detectGpu,
-      assertDockerBridgeAndContainerDnsHealthy: bridge,
+      assertOnboardHostReadiness: (_host, _gpu, options) => {
+        stamps.push({ observedAt: options.observedAt, collectedAt: options.collectedAt });
+      },
     });
 
-    await expect(
-      handlePreflightState({ ...baseOptions(harness.deps, session), resume: true }),
-    ).rejects.toThrow("host observations are stale");
-    expect(detectGpu).not.toHaveBeenCalled();
-    expect(bridge).not.toHaveBeenCalled();
+    await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true });
+
+    const [first] = stamps;
+    expect(first?.observedAt).toBe("2026-08-07T12:00:00.000Z");
+    // The host probes ran for longer than the reuse window. Their duration is
+    // provenance, not age: `collectedAt` closes the collection after them.
+    expect(Date.parse(first?.collectedAt ?? "")).toBe(startedAt + 30_001);
+    // The gateway wait falls after that stamp, so the window still charges it.
+    expect(currentTime - Date.parse(first?.collectedAt ?? "")).toBeGreaterThanOrEqual(45_000);
   });
 
   it("restores saved sandbox GPU intent only when resume has no explicit override", async () => {

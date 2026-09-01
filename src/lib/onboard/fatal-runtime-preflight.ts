@@ -23,7 +23,7 @@ import {
   evaluateOnboardReadinessAdmission,
 } from "../readiness/onboard-admission";
 import { composeSystemReadinessReport } from "../readiness/system";
-import type { SystemReadinessReport } from "../readiness/types";
+import type { ReadinessEvidence, SystemReadinessReport } from "../readiness/types";
 import { assertDockerBridgeAndContainerDnsHealthy } from "./bridge-dns-preflight";
 import {
   isLinuxDockerDriverGatewayEnabled,
@@ -122,7 +122,15 @@ export interface OnboardHostReadinessOptions {
   /** Print warning-severity host advisories before returning an admitted report. */
   presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
+  /** When the caller began observing the host, before it ran its own probes. Provenance only. */
   observedAt?: string;
+  /**
+   * When the caller's own host and GPU probes finished. The reuse window runs
+   * from here, so a delay between those probes and this gate — the resume
+   * path's gateway collection, for example — is still charged against it,
+   * while the probes' own duration is not (#10670).
+   */
+  collectedAt?: string;
   now?: () => Date;
 }
 
@@ -143,27 +151,23 @@ function printReadinessFailure(
   }
 }
 
-// The projection records why it could not evaluate the host, but the capability
-// list alone cannot say so: the collapse files its reason as evidence and as a
-// warning-severity `host.probe.inconclusive` finding, and admission reports only
-// blocking findings. Name the reason the same way the gateway gate already does,
-// so an unconfirmed capability list is never the whole message (#10670).
+// An inconclusive host projection records its cause as evidence and as a
+// warning finding. Admission reports only blocking findings, so neither reaches
+// the operator. Print the actionable evidence too, and the capability list
+// always carries its cause (#10670).
 const ACTIONABLE_HOST_EVIDENCE_IDS = new Set(["host.probe.failure", "host.probe.stale"]);
+const ACTIONABLE_GATEWAY_EVIDENCE_IDS = new Set([
+  "gateway.attachment.failure",
+  "gateway.port.conflict",
+  "gateway.probe.failure",
+  "gateway.probe.stale",
+]);
 
-function printHostReadinessEvidence(report: Pick<SystemReadinessReport, "evidence">): void {
-  for (const entry of report.evidence) {
-    if (ACTIONABLE_HOST_EVIDENCE_IDS.has(entry.id)) console.error(`  ${entry.summary}`);
-  }
-}
-
-function printGatewayReadinessEvidence(gateway: GatewayReadinessProjection): void {
-  const actionableEvidenceIds = new Set([
-    "gateway.attachment.failure",
-    "gateway.port.conflict",
-    "gateway.probe.failure",
-    "gateway.probe.stale",
-  ]);
-  for (const entry of gateway.evidence) {
+function printReadinessEvidence(
+  evidence: readonly ReadinessEvidence[],
+  actionableEvidenceIds: ReadonlySet<string>,
+): void {
+  for (const entry of evidence) {
     if (actionableEvidenceIds.has(entry.id)) console.error(`  ${entry.summary}`);
   }
 }
@@ -210,7 +214,7 @@ export function assertOnboardSystemReadiness(
     printJetsonNvidiaRuntimeUnavailableError();
   } else {
     printReadinessFailure(readinessReport, admission.findingIds, admission.capabilityIds);
-    printHostReadinessEvidence(readinessReport);
+    printReadinessEvidence(readinessReport.evidence, ACTIONABLE_HOST_EVIDENCE_IDS);
   }
   printRemediationActions(
     jetsonRuntimeMissing
@@ -229,7 +233,7 @@ export function assertOnboardGatewayReadiness(
   const admission = evaluateOnboardGatewayReadinessAdmission(gateway);
   if (admission.admitted) return;
   printReadinessFailure(gateway, admission.findingIds, admission.capabilityIds);
-  printGatewayReadinessEvidence(gateway);
+  printReadinessEvidence(gateway.evidence, ACTIONABLE_GATEWAY_EVIDENCE_IDS);
   exitProcess(1);
   throw new Error("Onboarding continued after an unsafe gateway readiness result.");
 }
@@ -448,15 +452,17 @@ export function assertOnboardHostReadiness(
     wslDockerDesktopGpuProofPassed: options.wslDockerDesktopGpuProofPassed,
     now,
   });
-  // `observedAt` records when the caller began observing the host, before the
-  // assessment it passes in here had run. It is provenance only. Driving the
-  // collection clock with it also stamped `completedAt`, so the reuse window
-  // measured the assessment's own duration and a host slower than the window
-  // aged out facts that had just been gathered successfully. Keep the window
-  // anchored to collection completion, as #9325 established (#10670).
-  const snapshot = options.observedAt
-    ? { ...collected, observedAt: options.observedAt }
-    : collected;
+  // Driving the collection clock with `observedAt` also stamped `completedAt`,
+  // so the reuse window measured the caller's own probe duration and a host
+  // slower than the window aged out facts it had just gathered successfully.
+  // The window is anchored to collection completion, as #9325 established.
+  // `collectedAt` is when the caller's probes finished, so any later delay
+  // before this gate is still charged; `observedAt` is provenance (#10670).
+  const snapshot = {
+    ...collected,
+    ...(options.observedAt === undefined ? {} : { observedAt: options.observedAt }),
+    ...(options.collectedAt === undefined ? {} : { completedAt: options.collectedAt }),
+  };
   const readinessReport = projectHostReadiness(snapshot, { ...getBuildIdentity(), now });
   return assertOnboardSystemReadiness(readinessReport, host, options);
 }
@@ -567,9 +573,10 @@ export function runFatalOnboardRuntimePreflight(
   const assess = context.assessHost ?? assessHost;
   const detect = context.detectGpu ?? detectGpu;
   const now = context.now ?? (() => new Date());
-  let observedAt = now().toISOString();
-  let host = assess();
-  let gpu = detect({ proveArm64WslDockerDesktopGpu: null });
+  const observedAt = now().toISOString();
+  const host = assess();
+  const gpu = detect({ proveArm64WslDockerDesktopGpu: null });
+  const collectedAt = now().toISOString();
   let sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
     flag: resolveSandboxGpuFlagFromOptions(options),
     device: options.sandboxGpuDevice ?? null,
@@ -584,6 +591,7 @@ export function runFatalOnboardRuntimePreflight(
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     exitProcess,
     observedAt,
+    collectedAt,
     now,
   });
   let result = { gpu, host, readinessReport, sandboxGpuConfig };

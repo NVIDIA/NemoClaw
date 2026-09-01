@@ -431,6 +431,31 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(report.provenance.observedAt).toBe(observedAt);
   });
 
+  it("charges a delay between host collection and the gate (#10670)", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const collectedAt = "2026-08-31T12:00:00.000Z";
+    const gatedAt = new Date(Date.parse(collectedAt) + 45_000);
+
+    expect(() =>
+      assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+        explicitlyOptedOutGpuPassthrough: true,
+        observedAt: "2026-08-31T11:59:30.000Z",
+        collectedAt,
+        now: () => gatedAt,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    expect(exit).toHaveBeenCalledWith(1);
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain(
+      "exceeded their safe reuse window: 45000ms old against a 30000ms window",
+    );
+  });
+
   it("names the host evidence behind an unconfirmed capability list (#10670)", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exit = vi.fn((_code: number): never => {
