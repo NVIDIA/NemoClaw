@@ -76,27 +76,3 @@ export function namedOpenShellGateway(gatewayName: string): OpenShellGatewayTarg
 export function selectedOpenShellGateway(): OpenShellGatewayTarget {
   return { kind: "selected" };
 }
-
-// sourceOfTruth: nemoclaw/src/shared/openshell-observation-boundary.cts
-// generatedBoundary: build:cli emits this typed capability before compiling
-// the root adapter surface.
-export {
-  EXTERNAL_OPENSHELL_RELEASE,
-  observeExternalOpenShellGatewayHealth,
-} from "../../../../nemoclaw/dist/shared/openshell-observation-boundary.cjs";
-
-export {
-  createOpenShellSdkGatewayHealthObserver,
-  sdkOpenShellGatewayHealthObserver,
-} from "../../../../nemoclaw/dist/shared/openshell-gateway-health-sdk.js";
-
-export type {
-  ExternalOpenShellGatewayResult,
-  ExternalOpenShellGatewayStatus,
-  ObserveOpenShellGatewayHealthRequest,
-  OpenShellGatewayHealthError,
-  OpenShellGatewayHealthObservation,
-  OpenShellGatewayHealthObserver,
-  OpenShellGatewayHealthResult,
-  OpenShellGatewayHealthStatus,
-} from "../../../../nemoclaw/dist/shared/openshell-observation-boundary.cjs";

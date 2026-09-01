@@ -303,14 +303,6 @@ describe("packaged Blueprint Runner external target", () => {
           "blueprint",
           "runner.js",
         );
-        const installedRootObserver = path.join(
-          installedPackage,
-          "dist",
-          "lib",
-          "adapters",
-          "openshell",
-          "sandbox-observer.js",
-        );
         const installedSharedSdkObserver = path.join(
           installedPackage,
           "nemoclaw",
@@ -332,7 +324,6 @@ describe("packaged Blueprint Runner external target", () => {
           "nemoclaw-blueprint-runner",
         );
         expect(fs.existsSync(installedRunner)).toBe(true);
-        expect(fs.existsSync(installedRootObserver)).toBe(true);
         expect(fs.existsSync(installedSharedSdkObserver)).toBe(true);
         expect(fs.existsSync(installedRuntimeSdkObserver)).toBe(false);
         expect(fs.existsSync(path.join(installedPackage, "nemoclaw", "src"))).toBe(false);

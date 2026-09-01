@@ -3,10 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { redactForLog } from "./security/redact.js";
-import {
-  sdkOpenShellGatewayHealthObserver,
-  type OpenShellGatewayHealthObserver,
-} from "./adapters/openshell/sandbox-observer.js";
+import { sdkOpenShellGatewayHealthObserver } from "../../nemoclaw/dist/shared/openshell-gateway-health-sdk.js";
+import type { OpenShellGatewayHealthObserver } from "../../nemoclaw/dist/shared/openshell-observation-boundary.cjs";
 
 const RUNNER_MODULE = "../nemoclaw/blueprint/runner.js";
 const MAX_DIAGNOSTIC_CHARACTERS = 1_024;
