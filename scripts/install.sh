@@ -1699,7 +1699,7 @@ macos_openshell_homebrew_gateway_service_installed() {
 collapse_duplicate_slashes() {
   local value="${1:-}"
   while [[ "$value" == *//* ]]; do
-    value="${value//\/\//\/}"
+    value="${value//\/\///}"
   done
   printf '%s\n' "$value"
 }
@@ -3256,7 +3256,7 @@ trusted_macos_openshell_gateway_process() {
   local gateway_name gateway_command gateway_exe gateway_lsof_output
   local process_generation_before process_generation_after
   local observation_diagnostics_file observation_status observation_valid
-  local user_bin_home brew_prefix trusted_brew_gateway
+  local brew_prefix trusted_brew_gateway
   command_exists ps || return 1
   command_exists lsof || return 1
 
@@ -3316,18 +3316,11 @@ trusted_macos_openshell_gateway_process() {
     return 1
   fi
 
-  user_bin_home="${XDG_BIN_HOME:-${HOME%/}/.local/bin}"
-  if [ "${user_bin_home#/}" = "$user_bin_home" ]; then
-    user_bin_home="${HOME%/}/.local/bin"
-  fi
-  user_bin_home="$(collapse_duplicate_slashes "${user_bin_home%/}")"
   gateway_exe="$(collapse_duplicate_slashes "$gateway_exe")"
-  case "$gateway_exe" in
-    "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
-      printf '%s\n' "$process_generation_before"
-      return 0
-      ;;
-  esac
+  if trusted_openshell_gateway_bin_for_service "$gateway_exe"; then
+    printf '%s\n' "$process_generation_before"
+    return 0
+  fi
 
   command_exists brew || return 1
   brew_prefix="$(brew --prefix 2>/dev/null || true)"
