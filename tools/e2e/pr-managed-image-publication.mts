@@ -344,7 +344,7 @@ export async function resolvePrManagedImageCatalog(
       additionalRepository: input.candidateRepository,
     }),
   downloadArtifact: (identity: BoundArtifactIdentity) => Promise<Buffer> = (identity) =>
-    downloadBoundArtifact(identity, input.token),
+    downloadBoundArtifact(identity, input.token, { log: console.error }),
 ): Promise<PrManagedImageSelection> {
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");
