@@ -1198,6 +1198,9 @@ describe("managed inference resolver", () => {
     ).toMatchObject({
       outcome: "selected",
       preset: { metadata: { id: N1X_VLLM_PRESET_ID } },
+      recipe: {
+        metadata: { id: "vllm.qwen3-6-35b-a3b-nvfp4.n1x-single.v1" },
+      },
     });
   });
 

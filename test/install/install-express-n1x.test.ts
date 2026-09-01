@@ -214,11 +214,16 @@ exec 9<&-
     expect(result.result.status, result.output).toBe(0);
   });
 
-  it("accepts only the NVIDIA display PCI identity (#8574)", () => {
+  it("accepts an NVIDIA display device without pinning its PCI device ID (#10076)", () => {
     const result = runInstallerSourced(`
-n1x_pci_identity_is_valid 0x10DE 0x2E2A 0x030000
-if n1x_pci_identity_is_valid 0x10de 0x2e2b 0x030000; then exit 9; fi
-if n1x_pci_identity_is_valid 0x10de 0x2e2a 0x020000; then exit 10; fi
+test_pci_root="$HOME/n1x-pci"
+mkdir -p "$test_pci_root/000f:01:00.0"
+printf '0x10de\n' >"$test_pci_root/000f:01:00.0/vendor"
+printf '0x030000\n' >"$test_pci_root/000f:01:00.0/class"
+n1x_pci_devices_path() { printf "%s" "$test_pci_root"; }
+n1x_has_pci_gpu || exit 8
+if n1x_pci_identity_is_valid 0x1234 0x030000; then exit 9; fi
+if n1x_pci_identity_is_valid 0x10de 0x020000; then exit 10; fi
 `);
 
     expect(result.result.status, result.output).toBe(0);

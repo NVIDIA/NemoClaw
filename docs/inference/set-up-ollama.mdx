@@ -155,6 +155,9 @@ NemoClaw lists installed models or offers starter models when none are installed
 For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
 The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
 
+Among installed models that fit, NemoClaw selects the registry-known model with the highest approximate VRAM requirement.
+Unregistered tags follow registry-known tags and retain Ollama's list order.
+
 The starter list includes `qwen3.6:35b` and selects it by default when current GPU memory can accommodate it.
 When another GPU workload consumes most of the available memory, NemoClaw selects the largest starter model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
