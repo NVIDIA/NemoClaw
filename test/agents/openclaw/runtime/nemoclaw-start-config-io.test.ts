@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
 const START_SCRIPT = path.join(
@@ -247,70 +247,62 @@ describe("root OpenClaw config I/O authority", () => {
     }
   });
 
-  it("rejects a mutable-directory replacement race before any writer runs", () => {
+  it("rejects a mutable-directory replacement race before any writer runs", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-writer-race-"));
     const configDir = path.join(root, ".openclaw");
     const racedDir = path.join(root, ".openclaw-raced");
-    const helper = path.join(root, "normalizer-race.py");
-    const script = path.join(root, "run.sh");
+    const checkpoint = path.join(configDir, "000-checkpoint");
+    const normalizer = path.join(
+      import.meta.dirname,
+      "../../../..",
+      "scripts",
+      "lib",
+      "normalize_mutable_config_perms.py",
+    );
     fs.mkdirSync(configDir, { mode: 0o700 });
     fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n", { mode: 0o600 });
     fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n", { mode: 0o600 });
-    const normalizerSource = fs.readFileSync(
-      path.join(
-        import.meta.dirname,
-        "../../../..",
-        "scripts",
-        "lib",
-        "normalize_mutable_config_perms.py",
-      ),
-      "utf-8",
+    fs.writeFileSync(checkpoint, "checkpoint\n", { mode: 0o600 });
+    Array.from({ length: 64 }, (_, directoryIndex) => {
+      const directory = path.join(configDir, `100-bulk-${String(directoryIndex).padStart(3, "0")}`);
+      fs.mkdirSync(directory, { mode: 0o700 });
+      Array.from({ length: 64 }, (_, fileIndex) =>
+        path.join(directory, `entry-${String(fileIndex).padStart(3, "0")}`),
+      ).forEach((file) => fs.writeFileSync(file, "fixture\n", { mode: 0o600 }));
+    });
+
+    const child = spawn(
+      "/usr/bin/python3",
+      [normalizer, configDir, String(process.getuid?.()), String(process.getgid?.())],
+      { stdio: ["ignore", "ignore", "pipe"], timeout: 20_000, killSignal: "SIGKILL" },
     );
-    const needle =
-      "        root_fd = os.open(config_dir, directory_flags())\n" +
-      "        root_metadata = os.fstat(root_fd)\n";
-    expect(normalizerSource.split(needle)).toHaveLength(2);
-    fs.writeFileSync(
-      helper,
-      normalizerSource.replace(
-        needle,
-        [
-          needle.trimEnd(),
-          "        os.rename(config_dir, config_dir + '-raced')",
-          "        os.mkdir(config_dir, 0o700)",
-          "        with open(os.path.join(config_dir, 'replacement'), 'w', encoding='utf-8') as replacement:",
-          "            replacement.write('untouched\\n')",
-          "",
-        ].join("\n"),
-      ),
-    );
-    const resolve = extractShellFunctionFromSource(src, "resolve_mutable_config_normalizer");
-    const normalize = extractShellFunctionFromSource(
-      src,
-      "normalize_mutable_config_perms",
-    ).replaceAll("/sandbox/.openclaw", configDir);
-    fs.writeFileSync(
-      script,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=${JSON.stringify(helper)}`,
-        resolve,
-        normalize,
-        "normalize_mutable_config_perms",
-      ].join("\n"),
-      { mode: 0o700 },
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
+    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code, signal) => resolve({ code, signal }));
+      },
     );
     try {
-      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("descriptor-safe repair detected an unsafe link, race");
+      await vi.waitFor(() => expect(fs.statSync(checkpoint).mode & 0o777).toBe(0o660), {
+        interval: 1,
+        timeout: 10_000,
+      });
+      fs.renameSync(configDir, racedDir);
+      fs.mkdirSync(configDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(configDir, "replacement"), "untouched\n", { mode: 0o600 });
+
+      const result = await exit;
+      expect(result.code, stderr).not.toBe(0);
+      expect(result.signal, stderr).toBeNull();
       expect(fs.readFileSync(path.join(configDir, "replacement"), "utf-8")).toBe("untouched\n");
       expect(fs.existsSync(racedDir)).toBe(true);
     } finally {
+      child.kill("SIGKILL");
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 describe("runtime CORS origin override (#719)", () => {

@@ -142,21 +142,51 @@ describe("removed immutability migration boundary", () => {
   it("reports provider ownership but globally blocks retained provider authority", () => {
     const root = stateDir();
     const transactionId = "c".repeat(64);
-    const recordPath = path.join("runtime-provider-lifecycle", transactionId, "prepared.json");
-    const target = touch(root, recordPath);
+    const transactionDir = path.join(root, "runtime-provider-lifecycle", transactionId);
+    const target = touch(
+      root,
+      path.join("runtime-provider-lifecycle", transactionId, "prepared.json"),
+    );
     fs.writeFileSync(
       target,
       `${JSON.stringify({ schemaVersion: 1, sandboxName: "alpha", phase: "prepared" })}\n`,
     );
 
-    expect(inspectRemovedImmutabilityMigration("alpha", root).recoveryArtifacts).toContain(target);
-    expect(inspectRemovedImmutabilityMigration("beta", root).recoveryArtifacts).toContain(target);
+    expect(inspectRemovedImmutabilityMigration("alpha", root).recoveryArtifacts).toEqual([
+      transactionDir,
+    ]);
+    expect(inspectRemovedImmutabilityMigration("beta", root).recoveryArtifacts).toEqual([
+      transactionDir,
+    ]);
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
       /older detached process/u,
     );
-    expect(() => enforceRemovedImmutabilityMigrationBoundary("beta", { stateDir: root })).toThrow(
-      /different requested sandbox name does not make/u,
-    );
+    let blockedMessage = "";
+    try {
+      enforceRemovedImmutabilityMigrationBoundary("beta", { stateDir: root });
+    } catch (error) {
+      blockedMessage = error instanceof Error ? error.message : String(error);
+    }
+    expect(blockedMessage).toContain(`Active NemoClaw state directory: ${JSON.stringify(root)}`);
+    expect(blockedMessage).toContain(JSON.stringify(transactionDir));
+    expect(blockedMessage).toMatch(/Reboot the host.*whole transaction directory/u);
+    expect(blockedMessage).toMatch(/different requested sandbox name does not make/u);
+
+    const quarantineRoot = stateDir();
+    const backupDir = path.join(quarantineRoot, `${transactionId}.backup`);
+    const quarantinedDir = path.join(quarantineRoot, transactionId);
+    fs.cpSync(transactionDir, backupDir, { recursive: true });
+    expect(() =>
+      enforceRemovedImmutabilityMigrationBoundary("replacement", { stateDir: root }),
+    ).toThrow(/different requested sandbox name does not make/u);
+    fs.renameSync(transactionDir, quarantinedDir);
+
+    expect(fs.existsSync(path.join(backupDir, "prepared.json"))).toBe(true);
+    expect(fs.existsSync(path.join(quarantinedDir, "prepared.json"))).toBe(true);
+    expect(enforceRemovedImmutabilityMigrationBoundary("beta", { stateDir: root })).toEqual({
+      stateRecord: null,
+      recoveryArtifacts: [],
+    });
   });
 
   it("announces an unattributed provider intent without assigning it to a new name", () => {
@@ -180,17 +210,19 @@ describe("removed immutability migration boundary", () => {
     "preserves malformed provider authority and blocks requested name %s",
     (sandboxName) => {
       const root = stateDir();
+      const transactionDir = path.join(root, "runtime-provider-lifecycle", "e".repeat(64));
       const malformed = touch(
         root,
         path.join("runtime-provider-lifecycle", "e".repeat(64), "prepared.json"),
       );
 
+      expect(fs.existsSync(malformed)).toBe(true);
       expect(inspectRemovedImmutabilityMigration(sandboxName, root).recoveryArtifacts).toContain(
-        malformed,
+        transactionDir,
       );
       expect(() =>
         enforceRemovedImmutabilityMigrationBoundary(sandboxName, { stateDir: root }),
-      ).toThrow(/resolve them outside NemoClaw before any sandbox mutation/u);
+      ).toThrow(/Reboot the host.*quarantine directory outside/u);
     },
   );
 

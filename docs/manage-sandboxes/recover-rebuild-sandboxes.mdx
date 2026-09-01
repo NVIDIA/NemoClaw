@@ -20,7 +20,16 @@ Shields has been retired from NemoClaw. The current CLI has no Shields commands,
 
 If the sandbox has only an inert legacy state record, create a trusted snapshot or backup. Then rebuild the affected sandbox before running further mutations.
 
-If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. Stop every older NemoClaw process or reboot the host, preserve the artifacts for recovery review, and resolve them outside NemoClaw before continuing. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe. A notice-only provider intent recorded before mutation authority was granted is preserved for review but does not by itself block lifecycle operations.
+If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe. A notice-only provider intent recorded before mutation authority was granted is preserved for review but does not by itself block lifecycle operations.
+
+Use the active state directory and exact blocking paths printed in the error as the complete quarantine inventory. A provider path can name a whole lifecycle transaction directory; treat the whole printed path as one unit.
+
+1. Record the active state directory and every printed blocking path.
+2. Reboot the host. Before continuing, ensure that no older NemoClaw binary restarts. Stopping selected processes without a reboot is not sufficient authority-stop proof.
+3. Create trusted backup storage and a quarantine directory outside the printed active state directory. Back up each listed path, then move the original whole path into that outside quarantine. Do not delete, edit, or interpret any artifact, and do not move only selected files from a printed transaction directory.
+4. Confirm that none of the printed paths remains in the active state directory. Only then retry the current-version rebuild or recreate flow. For recreation, use the [manual transfer workflow](../state-and-backups/transfer-state-manually) to copy only trusted user data.
+
+If you cannot complete the reboot, backup, or full quarantine, leave every artifact untouched. NemoClaw continues to block ordinary mutations while any listed path remains in active state.
 
 Do not use cross-sandbox snapshot restore from the legacy sandbox because that flow preserves the source image. The current CLI deliberately does not interpret, resume, or delete ambiguous legacy recovery state.
 

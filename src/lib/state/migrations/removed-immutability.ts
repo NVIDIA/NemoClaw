@@ -116,14 +116,18 @@ function inspectLegacyProviderLedger(stateDir: string): LegacyProviderLedgerInsp
   const artifactsBySandbox = new Map<string, string[]>();
   const ambiguousArtifacts: string[] = [];
   const noticeArtifacts: string[] = [];
-  const recordArtifact = (recordPath: string, mustBeLifecycleRecord: boolean): void => {
+  const recordArtifact = (
+    recordPath: string,
+    mustBeLifecycleRecord: boolean,
+    quarantineUnit = recordPath,
+  ): void => {
     const inspected = legacyProviderRecordSandbox(recordPath, mustBeLifecycleRecord);
     if (inspected.sandboxName) {
       const artifacts = artifactsBySandbox.get(inspected.sandboxName) ?? [];
-      artifacts.push(recordPath);
+      artifacts.push(quarantineUnit);
       artifactsBySandbox.set(inspected.sandboxName, artifacts);
     } else if (inspected.ambiguous) {
-      ambiguousArtifacts.push(recordPath);
+      ambiguousArtifacts.push(quarantineUnit);
     }
   };
 
@@ -184,7 +188,7 @@ function inspectLegacyProviderLedger(stateDir: string): LegacyProviderLedgerInsp
     for (const transactionEntry of transactionEntries) {
       if (!LEGACY_PROVIDER_RECORD_NAMES.has(transactionEntry)) continue;
       lifecycleRecords += 1;
-      recordArtifact(path.join(entryPath, transactionEntry), true);
+      recordArtifact(path.join(entryPath, transactionEntry), true, entryPath);
     }
     if (lifecycleRecords === 0) {
       const preAuthorityOnly = transactionEntries.every(
@@ -332,16 +336,19 @@ export function enforceRemovedImmutabilityMigrationBoundary(
     readonly stateDir?: string;
   } = {},
 ): RemovedImmutabilityMigrationInspection {
-  const inspection = inspectRemovedImmutabilityMigrationState(sandboxName, options.stateDir);
+  const activeStateDir = path.resolve(options.stateDir ?? resolveNemoclawStateDir());
+  const inspection = inspectRemovedImmutabilityMigrationState(sandboxName, activeStateDir);
   if (inspection.recoveryArtifacts.length > 0) {
     const artifacts = inspection.recoveryArtifacts
-      .map((artifact) => path.relative(options.stateDir ?? resolveNemoclawStateDir(), artifact))
+      .map((artifact) => JSON.stringify(path.resolve(artifact)))
       .join(", ");
     throw new Error(
       [
-        `Sandbox '${sandboxName}' still has recovery artifacts from the removed Shields feature: ${artifacts}.`,
+        `Sandbox '${sandboxName}' still has recovery artifacts from the removed Shields feature. Active NemoClaw state directory: ${JSON.stringify(activeStateDir)}. Blocking paths to quarantine: ${artifacts}.`,
         "NemoClaw will not interpret or delete them because an older detached process may still hold mutation authority.",
-        "Stop any older NemoClaw process (or reboot the host), preserve the listed artifacts for recovery review, and resolve them outside NemoClaw before any sandbox mutation. A different requested sandbox name does not make unresolved legacy authority safe.",
+        "Reboot the host before any older NemoClaw binary can restart; stopping processes without a reboot is not sufficient authority-stop proof.",
+        `After reboot, back up each listed blocking path, then move the original whole path into a quarantine directory outside ${JSON.stringify(activeStateDir)} without deleting, editing, or interpreting its contents. A printed provider path can be a whole transaction directory; move that whole directory.`,
+        "If reboot or complete quarantine cannot be completed, leave every blocking path untouched and do not mutate any sandbox. A different requested sandbox name does not make unresolved legacy authority safe. Only after every listed path is outside the active state directory may you retry rebuild or recreate.",
       ].join(" "),
     );
   }
