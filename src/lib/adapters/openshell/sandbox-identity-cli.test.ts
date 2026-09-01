@@ -50,7 +50,9 @@ describe("CLI OpenShell sandbox identity inspector", () => {
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
     vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
-    const capture = vi.fn(() => captured(0, "ID: sandbox-alpha\n"));
+    const capture = vi.fn((_args: string[], _options: Record<string, unknown>) =>
+      captured(0, "ID: sandbox-alpha\n"),
+    );
     const inspect = createSyncCliOpenShellSandboxIdentityInspector({ capture });
 
     const result = inspect({

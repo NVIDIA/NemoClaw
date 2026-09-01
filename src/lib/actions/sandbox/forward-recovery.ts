@@ -3,11 +3,19 @@
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
+  buildSelectedOpenShellSubprocessEnv,
+  withSelectedOpenShellCommandOptions,
+} from "../../adapters/openshell/command-argv";
+import {
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
 import { isLegacySandboxForwardListed } from "../../adapters/openshell/forward-service-migration";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  type OpenShellRuntimeSelection,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
@@ -129,27 +137,41 @@ type SandboxForwardRecoveryOptions = {
   afterSuccess?: () => boolean;
   beforeStart?: () => boolean;
   isWsl?: boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
 
 function retireLegacyForwardServiceMigration(
   sandboxName: string,
   gatewayName: string,
   ports: readonly number[],
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): number {
   return retireProductionLegacySandboxForwards(sandboxName, gatewayName, ports, {
     capture: (gatewayName) =>
-      captureOpenshell(["forward", "list", "--gateway", gatewayName], {
-        ignoreError: true,
-        includeStreams: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      }),
+      captureOpenshell(
+        ["forward", "list", "--gateway", gatewayName],
+        withSelectedOpenShellCommandOptions(
+          {
+            ignoreError: true,
+            includeStreams: true,
+            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+          },
+          runtimeSelection,
+        ),
+      ),
     isReachable: isLocalForwardReachable,
     run: (gatewayName, sandboxName, port) =>
-      runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
-        ignoreError: true,
-        stdio: "ignore",
-        timeout: 30_000,
-      }),
+      runOpenshell(
+        ["forward", "stop", String(port), sandboxName, "--gateway", gatewayName],
+        withSelectedOpenShellCommandOptions(
+          {
+            ignoreError: true,
+            stdio: "ignore",
+            timeout: 30_000,
+          },
+          runtimeSelection,
+        ),
+      ),
   });
 }
 
@@ -309,13 +331,14 @@ export function ensureSandboxPortForward(
       (!remoteBindRequested ||
         registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true) &&
       (options.beforeStart?.() ?? true),
+    runtimeSelection: options.runtimeSelection,
   });
 }
 
 /** Probe local reachability for a registered sandbox port without claiming process ownership. */
 export function isSandboxForwardHealthy(
   sandboxName: string,
-  options: { isWsl?: boolean } = {},
+  options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
 ): SandboxForwardHealth {
   const allInterfaceBindRequired =
     isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) ||
@@ -324,6 +347,7 @@ export function isSandboxForwardHealthy(
     sandboxName,
     resolveSandboxDashboardPort(sandboxName),
     allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+    options.runtimeSelection,
   );
 }
 
@@ -331,16 +355,23 @@ export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
   _expectedBind?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
   if (!isLocalForwardReachable(port)) return false;
-  const gatewayName = resolveSandboxGatewayName(sandbox);
-  const listed = captureOpenshell(["forward", "list", "--gateway", gatewayName], {
-    ignoreError: true,
-    includeStreams: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
+  const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
+  const listed = captureOpenshell(
+    ["forward", "list", "--gateway", gatewayName],
+    withSelectedOpenShellCommandOptions(
+      {
+        ignoreError: true,
+        includeStreams: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      },
+      runtimeSelection,
+    ),
+  );
   if (
     !listed.error &&
     !listed.signal &&
@@ -360,6 +391,7 @@ export function ensureSandboxPortForwardForPort(
     forwardTarget?: string;
     expectedBind?: string;
     beforeStart?: () => boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): boolean {
   const {
@@ -367,6 +399,7 @@ export function ensureSandboxPortForwardForPort(
     forwardTarget = String(port),
     expectedBind,
     beforeStart = () => true,
+    runtimeSelection,
   } = options;
   const acceptSuccessfulForward = () => {
     let accepted = false;
@@ -377,14 +410,19 @@ export function ensureSandboxPortForwardForPort(
     }
     return accepted;
   };
-  const forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+  const forwardHealth = isSandboxPortForwardHealthy(
+    sandboxName,
+    port,
+    expectedBind,
+    runtimeSelection,
+  );
   if (forwardHealth === true) return acceptSuccessfulForward();
   if (!beforeStart()) return false;
   try {
     const sandbox = registry.getSandbox(sandboxName);
     if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered`);
-    const gatewayName = resolveSandboxGatewayName(sandbox);
-    retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port]);
+    const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
+    retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port], runtimeSelection);
     const executable = resolveOpenshell();
     if (!executable) throw new Error("OpenShell is unavailable");
     launchForwardService(
@@ -395,6 +433,9 @@ export function ensureSandboxPortForwardForPort(
         port,
         expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
       ),
+      runtimeSelection
+        ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
+        : {},
     );
     return acceptSuccessfulForward();
   } catch (error) {
@@ -407,10 +448,15 @@ export function ensureSandboxPortForwardForPort(
   }
 }
 
-export function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
+export function ensureHermesDashboardPortForwardIfEnabled(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean | null {
   return ensureHermesDashboardPortForward(sandboxName, {
-    isPortForwardHealthy: isSandboxPortForwardHealthy,
-    ensurePortForward: ensureSandboxPortForwardForPort,
+    isPortForwardHealthy: (name, port) =>
+      isSandboxPortForwardHealthy(name, port, undefined, runtimeSelection),
+    ensurePortForward: (name, port) =>
+      ensureSandboxPortForwardForPort(name, port, { runtimeSelection }),
   });
 }
 
@@ -423,19 +469,25 @@ function getSandboxMessagingHostForward(
   return getActiveMessagingHostForward(plan);
 }
 
-export function ensureMessagingHostForwardHealthy(sandboxName: string): boolean | null {
+export function ensureMessagingHostForwardHealthy(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean | null {
   const forward = getSandboxMessagingHostForward(sandboxName);
   if (!forward) return null;
-  const health = isSandboxPortForwardHealthy(sandboxName, forward.port);
+  const health = isSandboxPortForwardHealthy(sandboxName, forward.port, undefined, runtimeSelection);
   if (health === true) return true;
-  return ensureSandboxPortForwardForPort(sandboxName, forward.port);
+  return ensureSandboxPortForwardForPort(sandboxName, forward.port, { runtimeSelection });
 }
 
 export function recoverMessagingHostForward(
   sandboxName: string,
-  { quiet }: { quiet: boolean },
+  {
+    quiet,
+    runtimeSelection,
+  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
-  const recovered = ensureMessagingHostForwardHealthy(sandboxName);
+  const recovered = ensureMessagingHostForwardHealthy(sandboxName, runtimeSelection);
   if (!quiet && recovered === false) {
     console.error("  Messaging webhook port forward could not be re-established.");
   }
@@ -485,6 +537,7 @@ function resolveDeclaredAgentForwardPorts(
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
   primaryPort: number,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (!agent) return null;
@@ -499,9 +552,9 @@ export function ensureDeclaredAgentForwardPortsHealthy(
   if (ports.length === 0) return null;
   let allHealthy = true;
   for (const port of ports) {
-    const health = isSandboxPortForwardHealthy(sandboxName, port);
+    const health = isSandboxPortForwardHealthy(sandboxName, port, undefined, runtimeSelection);
     if (health === true) continue;
-    if (!ensureSandboxPortForwardForPort(sandboxName, port)) {
+    if (!ensureSandboxPortForwardForPort(sandboxName, port, { runtimeSelection })) {
       allHealthy = false;
     }
   }
@@ -569,9 +622,16 @@ export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] 
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
-  { quiet }: { quiet: boolean },
+  {
+    quiet,
+    runtimeSelection,
+  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
-  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort);
+  const recovered = ensureDeclaredAgentForwardPortsHealthy(
+    sandboxName,
+    recoveryPort,
+    runtimeSelection,
+  );
   if (!quiet && recovered === false) {
     console.error("  One or more agent-declared port forwards could not be re-established.");
   }

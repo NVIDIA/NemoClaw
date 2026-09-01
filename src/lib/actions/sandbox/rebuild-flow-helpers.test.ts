@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
@@ -65,20 +66,30 @@ function makeBail(): (msg: string, code?: number) => never {
 }
 
 describe("rebuild target gateway preflight", () => {
-  const priorGateway = process.env.OPENSHELL_GATEWAY;
+  const priorOpenShellEnv = {
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY,
+    OPENSHELL_GATEWAY_ENDPOINT: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+    OPENSHELL_LOCAL_TLS_DIR: process.env.OPENSHELL_LOCAL_TLS_DIR,
+    OPENSHELL_TOKEN: process.env.OPENSHELL_TOKEN,
+    OPENSHELL_WORKSPACE: process.env.OPENSHELL_WORKSPACE,
+  };
 
   afterEach(() => {
     vi.restoreAllMocks();
-    switch (priorGateway) {
-      case undefined:
-        delete process.env.OPENSHELL_GATEWAY;
-        break;
-      default:
-        process.env.OPENSHELL_GATEWAY = priorGateway;
-    }
+    restoreEnvBulk(priorOpenShellEnv);
   });
 
   it("health-checks and pins the sandbox's persisted gateway", async () => {
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
       before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
@@ -92,11 +103,54 @@ describe("rebuild target gateway preflight", () => {
         { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
         () => undefined,
         makeBail(),
+        runtimeSelection,
+      ),
+    ).resolves.toBe(true);
+
+    expect(recover).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      runtimeSelection,
+    });
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("default");
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/authority/tls");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(process.env.OPENSHELL_TOKEN).toBeUndefined();
+  });
+
+  it("keeps non-MCP ambient selectors while pinning the recorded gateway (#10514)", async () => {
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
+      after: {
+        state: "healthy_named",
+        status: "",
+        gatewayInfo: "",
+        activeGateway: "nemoclaw-19080",
+      },
+      attempted: true,
+    });
+
+    await expect(
+      ensureRebuildTargetGatewaySelected(
+        "alpha",
+        { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
+        vi.fn(),
+        makeBail(),
       ),
     ).resolves.toBe(true);
 
     expect(recover).toHaveBeenCalledWith({ gatewayName: "nemoclaw-19080" });
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBe("https://hostile.invalid");
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/hostile/tls");
+    expect(process.env.OPENSHELL_TOKEN).toBe("hostile-token");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("hostile-workspace");
   });
 
   it("fails closed when the target gateway cannot become healthy", async () => {
@@ -844,7 +898,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
     expect(probeSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).toHaveBeenCalledWith("alpha");
+    expect(probeSpy).toHaveBeenCalledWith("alpha", undefined);
 
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
