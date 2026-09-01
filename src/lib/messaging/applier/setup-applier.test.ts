@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
@@ -82,6 +83,10 @@ const ALL_CHANNELS = createBuiltInChannelManifestRegistry()
   .listAvailable({ agent: "hermes" })
   .map((manifest) => manifest.id);
 const E2E_STOP_START_CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
+
+function cliProviderAdapter(runOpenshell: MessagingOpenShellRunner) {
+  return createCliOpenShellProviderAdapter({ run: runOpenshell as never });
+}
 
 async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
@@ -439,7 +444,7 @@ describe("MessagingSetupApplier", () => {
         SLACK_BOT_TOKEN: "xoxb-slack-token",
         SLACK_APP_TOKEN: "xapp-slack-token",
       },
-      runOpenshell,
+      providerAdapter: cliProviderAdapter(runOpenshell),
     });
 
     expect(calls.map((call) => call.args)).toEqual([
@@ -511,7 +516,7 @@ describe("MessagingSetupApplier", () => {
     await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
-        runOpenshell,
+        providerAdapter: cliProviderAdapter(runOpenshell),
       }),
     ).rejects.toThrow(/does not match the required endpointless credential binding/);
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
@@ -526,7 +531,7 @@ describe("MessagingSetupApplier", () => {
     await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: {},
-        runOpenshell: (args) => {
+        providerAdapter: cliProviderAdapter((args) => {
           calls.push(args.join(" "));
           switch (`${args[1]} ${args[2]}`) {
             case "profile import":
@@ -549,7 +554,7 @@ describe("MessagingSetupApplier", () => {
                   "Name: demo-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
               };
           }
-        },
+        }),
       }),
     ).rejects.toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
@@ -578,7 +583,7 @@ describe("MessagingSetupApplier", () => {
     try {
       await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "tokensecretvalue" },
-        runOpenshell,
+        providerAdapter: cliProviderAdapter(runOpenshell),
       });
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
@@ -596,12 +601,12 @@ describe("MessagingSetupApplier", () => {
     await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
-        runOpenshell: (args) => {
+        providerAdapter: cliProviderAdapter((args) => {
           calls.push(args.join(" "));
           return args[1] === "profile"
             ? EXACT_MESSAGING_PROFILE
             : { status: 1, stderr: "gateway unavailable" };
-        },
+        }),
       }),
     ).rejects.toThrow("Could not inspect messaging provider 'demo-telegram-bridge'.");
     expect(calls.some((command) => command.startsWith("provider create"))).toBe(false);
@@ -615,7 +620,7 @@ describe("MessagingSetupApplier", () => {
     await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
-        runOpenshell: (args) => {
+        providerAdapter: cliProviderAdapter((args) => {
           switch (args[1]) {
             case "profile":
               return EXACT_MESSAGING_PROFILE;
@@ -624,7 +629,7 @@ describe("MessagingSetupApplier", () => {
             default:
               return { status: null, stderr: "transport closed" };
           }
-        },
+        }),
       }),
     ).rejects.toThrow("Failed to create messaging provider 'demo-telegram-bridge'");
   });
@@ -638,7 +643,7 @@ describe("MessagingSetupApplier", () => {
     await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
-        runOpenshell: (args) => {
+        providerAdapter: cliProviderAdapter((args) => {
           switch (args[1]) {
             case "profile":
               return EXACT_MESSAGING_PROFILE;
@@ -654,7 +659,7 @@ describe("MessagingSetupApplier", () => {
                       "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
                   };
           }
-        },
+        }),
       }),
     ).rejects.toThrow(
       "OpenShell did not confirm messaging provider 'demo-telegram-bridge' after create.",
@@ -670,7 +675,7 @@ describe("MessagingSetupApplier", () => {
     await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
-        runOpenshell: (args) => {
+        providerAdapter: cliProviderAdapter((args) => {
           calls.push(args.join(" "));
           return args[1] === "profile"
             ? EXACT_MESSAGING_PROFILE
@@ -678,7 +683,7 @@ describe("MessagingSetupApplier", () => {
                 status: 1,
                 stderr: 'Error: status: Unavailable, message: "provider not found"',
               };
-        },
+        }),
       }),
     ).rejects.toThrow(/Could not inspect messaging provider/u);
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
@@ -881,7 +886,7 @@ describe("MessagingSetupApplier", () => {
 
     const credentialResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: ALL_CHANNEL_ENV,
-      runOpenshell: (args) => {
+      providerAdapter: cliProviderAdapter((args) => {
         switch (args[1]) {
           case "profile":
             return EXACT_MESSAGING_PROFILE;
@@ -899,7 +904,7 @@ describe("MessagingSetupApplier", () => {
             providers.set(String(args[3]), String(args[7]));
         }
         return { status: 0 };
-      },
+      }),
     });
     const policyResult = MessagingSetupApplier.applyPolicyAtOpenShell(plan, {
       applyPresets: (_sandboxName, presetNames, context) => {
@@ -1029,7 +1034,7 @@ describe("MessagingSetupApplier", () => {
         SLACK_BOT_TOKEN: "xoxb-slack-token",
         SLACK_APP_TOKEN: "xapp-slack-token",
       },
-      runOpenshell: (args) => {
+      providerAdapter: cliProviderAdapter((args) => {
         providerCalls.push([...args]);
         switch (args[1]) {
           case "profile":
@@ -1048,7 +1053,7 @@ describe("MessagingSetupApplier", () => {
             providers.set(String(args[3]), String(args[7]));
         }
         return { status: 0 };
-      },
+      }),
     });
     expect(providerCalls.some((args) => args.includes("demo-telegram-bridge"))).toBe(false);
     expect(credentialResult.providerNames).toEqual(["demo-slack-bridge", "demo-slack-app"]);

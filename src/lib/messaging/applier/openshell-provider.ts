@@ -6,7 +6,6 @@ import type {
   OpenShellProviderError,
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/provider-adapter";
-import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { matchesGatewayCredentialFamilyProviderBinding } from "../../onboard/gateway-provider-metadata";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
@@ -31,7 +30,7 @@ export async function applyCredentialsAtOpenShell(
   options: MessagingCredentialApplyOptions,
 ): Promise<MessagingCredentialApplyResult> {
   const env = options.env ?? process.env;
-  const adapter = providerAdapter(options);
+  const adapter = options.providerAdapter;
   const target = selectedOpenShellGateway();
   const upserted: MessagingCredentialApplyEntry[] = [];
   const reused: MessagingCredentialReuseEntry[] = [];
@@ -158,63 +157,6 @@ function toMissingEntry(binding: MessagingCredentialBindingLike): MessagingMissi
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter(Boolean))];
-}
-
-function legacyOutputText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Buffer.isBuffer(value)) return value.toString("utf8");
-  return "";
-}
-
-function legacyOutputStreams(result: {
-  readonly output?: unknown;
-  readonly stdout?: unknown;
-  readonly stderr?: unknown;
-}): { readonly stdout?: string; readonly stderr?: string } {
-  const outputStdout = Array.isArray(result.output)
-    ? legacyOutputText(result.output[1])
-    : legacyOutputText(result.output);
-  const outputStderr = Array.isArray(result.output) ? legacyOutputText(result.output[2]) : "";
-  const stdout = legacyOutputText(result.stdout) || outputStdout;
-  const stderr = legacyOutputText(result.stderr) || outputStderr;
-  return {
-    ...(stdout ? { stdout } : {}),
-    ...(stderr ? { stderr } : {}),
-  };
-}
-
-function providerAdapter(options: MessagingCredentialApplyOptions): OpenShellProviderAdapter {
-  if (options.providerAdapter) return options.providerAdapter;
-  return createCliOpenShellProviderAdapter({
-    run: (args, runOptions) => {
-      const { env: rawEnv, ...safeRunOptions } = runOptions;
-      const env = rawEnv
-        ? Object.fromEntries(
-            Object.entries(rawEnv).filter(
-              (entry): entry is [string, string] => entry[1] !== undefined,
-            ),
-          )
-        : undefined;
-      let result;
-      try {
-        result = options.runOpenshell(args, {
-          ...safeRunOptions,
-          ...(env ? { env } : {}),
-        });
-      } catch {
-        return {
-          status: null,
-          error: new Error("The OpenShell provider runner failed."),
-        };
-      }
-      const streams = legacyOutputStreams(result);
-      return {
-        status: result.status ?? null,
-        ...streams,
-        ...(result.error instanceof Error ? { error: result.error } : {}),
-      };
-    },
-  });
 }
 
 function profileFailure(error: OpenShellProviderError): Error {

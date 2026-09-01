@@ -71,16 +71,7 @@ export type MessagingOpenShellRunner = (
 ) => MessagingOpenShellRunResult;
 
 export type MessagingCredentialApplyOptions = MessagingSetupEnvOptions &
-  (
-    | Readonly<{
-        providerAdapter: OpenShellProviderAdapter;
-        runOpenshell?: never;
-      }>
-    | Readonly<{
-        providerAdapter?: never;
-        runOpenshell: MessagingOpenShellRunner;
-      }>
-  );
+  Readonly<{ providerAdapter: OpenShellProviderAdapter }>;
 
 export interface MessagingCredentialApplyResult {
   readonly upserted: readonly {
