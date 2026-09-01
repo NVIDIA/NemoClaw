@@ -76,6 +76,7 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -255,6 +256,8 @@ COPY --from=hermes-npm-patch-payload / /
 # The immutable selected base owns the reviewed Hindsight and agent-browser
 # patches and the sandbox user's npm cache. Verify that inherited boundary
 # without adding a second network-capable install owner in the final image.
+# Apply the dashboard Host guard when the published 0.20.6 base predates that
+# source fix, then verify the exact accepted-host contract.
 RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fq 'outcome = install_specs(missing, timeout=120)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
@@ -275,7 +278,18 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
     )" \
     && test "$agent_browser_version" = 'agent-browser 0.26.0' \
     && rm -f /tmp/nemoclaw-agent-browser-userconfig \
-        /tmp/nemoclaw-agent-browser-globalconfig
+        /tmp/nemoclaw-agent-browser-globalconfig \
+    && if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+    fi \
+    && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"' /opt/hermes/hermes_cli/web_server.py \
+    && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \
+    && rm /scripts/hermes-dashboard-external-host.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the

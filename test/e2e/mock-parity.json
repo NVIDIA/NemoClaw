@@ -16,7 +16,9 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
-        "src/lib/onboard/sandbox-prebuild.test.ts"
+        "src/lib/onboard/sandbox-prebuild.test.ts",
+        "test/agents/hermes/hermes-start.test.ts",
+        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
       ]
     },
     {
