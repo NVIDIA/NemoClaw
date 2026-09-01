@@ -1714,9 +1714,10 @@ export function selectDefaultOllamaModel(
   if (pool === null) {
     return largestFittableOllamaModelTag(gpu);
   }
-  return pool.includes(DEFAULT_OLLAMA_MODEL) && modelFitsAvailableMemory(DEFAULT_OLLAMA_MODEL, gpu)
-    ? DEFAULT_OLLAMA_MODEL
-    : pool[0];
+  // `ollama list`/`/api/tags` order reflects install/pull order, not size,
+  // so use the registry's largest-first order. Keep Ollama's list order when
+  // every installed tag is unregistered.
+  return OLLAMA_MODEL_REGISTRY.find((entry) => pool.includes(entry.tag))?.tag ?? pool[0];
 }
 
 export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
