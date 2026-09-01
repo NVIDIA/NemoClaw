@@ -14,6 +14,7 @@ import {
   type CliOpenShellSandboxPolicyRead,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import * as openshellResolveModule from "../../adapters/openshell/resolve";
+import * as registry from "../../state/registry";
 import { getSandboxPolicy } from "./policy-get";
 
 type FakeOpenShell = {
@@ -159,6 +160,35 @@ describe("getSandboxPolicy", () => {
     });
     expect(readPolicy).toHaveBeenCalledWith({
       target: { kind: "selected" },
+      sandboxName: "alpha",
+      scope: "base",
+    });
+  });
+
+  it("reads a registered sandbox from its owning gateway instead of the selected sibling", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw-8091",
+      gatewayPort: 8091,
+    } as never);
+    const readPolicy: CliOpenShellSandboxPolicyRead = vi.fn(async () => ({
+      result: {
+        ok: true as const,
+        value: {
+          scope: "base" as const,
+          document: "version: 1\nnetwork_policies: {}",
+          reportedRevision: 7,
+          appliedRevision: 7,
+        },
+      },
+      displayOutput: "Version: 7\nActive: 7\n---\nversion: 1\nnetwork_policies: {}",
+    }));
+
+    await expect(getSandboxPolicy("alpha", readPolicy)).resolves.toMatchObject({
+      yaml: "version: 1\nnetwork_policies: {}",
+    });
+    expect(readPolicy).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
       sandboxName: "alpha",
       scope: "base",
     });

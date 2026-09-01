@@ -981,6 +981,10 @@ export async function ensureLiveSandboxOrExit(
     selectOwningGateway,
   });
   if (lookup.state === "present") {
+    if (lookup.policyObservationError) {
+      console.error(lookup.output);
+      exit(1);
+    }
     const phase = lookup.phase ?? null;
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
       // Don't steer toward rebuild when the host Docker daemon is down: the

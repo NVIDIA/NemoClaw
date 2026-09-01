@@ -5,8 +5,12 @@ import {
   type CliOpenShellSandboxPolicyRead,
   readCliOpenShellSandboxPolicy,
 } from "../../adapters/openshell/sandbox-policy-cli";
-import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../../adapters/openshell/sandbox-observer";
 import { captureRecordedSandboxBasePolicy } from "../../policy/index";
+import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 
 export interface PolicyGetResult {
   raw: string;
@@ -46,8 +50,11 @@ async function readSandboxPolicy(
   sandboxName: string,
   readPolicy: CliOpenShellSandboxPolicyRead,
 ): Promise<PolicyGetResult> {
+  const recordedGatewayName = getKnownSandboxTargetGatewayName(sandboxName);
   const read = await readPolicy({
-    target: selectedOpenShellGateway(),
+    target: recordedGatewayName
+      ? namedOpenShellGateway(recordedGatewayName)
+      : selectedOpenShellGateway(),
     sandboxName,
     scope: "base",
   });
