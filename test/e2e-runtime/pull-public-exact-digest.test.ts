@@ -12,7 +12,14 @@ const repoRoot = path.resolve(import.meta.dirname, "../..");
 const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh");
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
 
-type Scenario = "exhausted" | "near-match" | "success" | "terminal" | "transient-then-success";
+type Scenario =
+  | "anonymous-denied-exhausted"
+  | "anonymous-denied-then-success"
+  | "exhausted"
+  | "near-match"
+  | "success"
+  | "terminal"
+  | "transient-then-success";
 
 function runPuller(scenario: Scenario, candidateReference = reference) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-pull-"));
@@ -34,8 +41,12 @@ printf '%s\n' "$count" >"$COUNT_FILE"
 printf '%s\n' "$DOCKER_CONFIG" >>"$CONFIG_LOG"
 [ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
 [ "$*" = "pull --platform linux/amd64 $EXPECTED_REFERENCE" ] || exit 90
-if [ "$SCENARIO" = "terminal" ]; then
+if [ "$SCENARIO" = "anonymous-denied-exhausted" ] || { [ "$SCENARIO" = "anonymous-denied-then-success" ] && [ "$count" -eq 1 ]; }; then
   echo "denied: permission_denied" >&2
+  exit 44
+fi
+if [ "$SCENARIO" = "terminal" ]; then
+  echo "unexpected Docker daemon failure" >&2
   exit 41
 fi
 if [ "$SCENARIO" = "near-match" ]; then
@@ -109,9 +120,26 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual(["2"]);
     expect(new Set(result.configs).size).toBe(1);
     expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr).toContain("outcome=transient-external attempt=1/5 retry-in=2s");
+    expect(result.stderr).toContain(
+      "outcome=transient-external attempt=1/5 failure=not-found retry-in=2s",
+    );
     expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
     expect(result.stdout + result.stderr).not.toContain(`${reference}: not found`);
+  });
+
+  it("retries the exact transient anonymous GHCR denial", () => {
+    const result = runPuller("anonymous-denied-then-success");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.count).toBe(2);
+    expect(result.sleeps).toEqual(["2"]);
+    expect(new Set(result.configs).size).toBe(1);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr).toContain(
+      "outcome=transient-external attempt=1/5 failure=anonymous-denied retry-in=2s",
+    );
+    expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
+    expect(result.stdout + result.stderr).not.toContain("permission_denied");
   });
 
   it("does not retry a non-exact Docker error", () => {
@@ -122,7 +150,7 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual([]);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=41");
-    expect(result.stderr).not.toContain("permission_denied");
+    expect(result.stderr).not.toContain("unexpected Docker daemon failure");
   });
 
   it("does not retry a near-match Docker not-found error", () => {
@@ -144,6 +172,18 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual(["2", "4", "8", "16"]);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stderr).toContain("outcome=exhausted attempt=5/5 failure=not-found");
+  });
+
+  it("fails after the bounded anonymous-denied retry schedule is exhausted", () => {
+    const result = runPuller("anonymous-denied-exhausted");
+
+    expect(result.status).toBe(44);
+    expect(result.count).toBe(5);
+    expect(result.sleeps).toEqual(["2", "4", "8", "16"]);
+    expect(new Set(result.configs).size).toBe(1);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr).toContain("outcome=exhausted attempt=5/5 failure=anonymous-denied");
+    expect(result.stderr).not.toContain("permission_denied");
   });
 
   it("rejects a mutable or non-GHCR reference before Docker runs", () => {
