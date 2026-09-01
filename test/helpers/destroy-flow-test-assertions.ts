@@ -182,7 +182,10 @@ export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
 }
 
 export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
-  expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+  // The live preparation is force-aware since #10469: `--force` may keep a
+  // retained-volume adapter entry that cannot be scrubbed. These flows are all
+  // plain destroys, so the flag must be threaded through as false.
+  expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", { force: false });
   expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
     (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
