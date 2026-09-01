@@ -70,7 +70,7 @@ for (const port of ports) {
 }
 `;
 
-// Leave ample headroom beneath OpenShell's strict per-argument ceiling.
+// Keep each encoded chunk below OpenShell's 32 KiB argument limit.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
 const SANDBOX_SHELL_BOOTSTRAP = `set -eu; printf '%s' "$@" | base64 -d | sh`;
 
