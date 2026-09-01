@@ -1390,9 +1390,9 @@ export function actionExternalOpenShellTargetPlan(
 ): ExternalOpenShellTargetRunPlan {
   const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "planning");
 
+  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(target, compatibility);
   const rid = emitRunId();
   progress(10, "Validating external OpenShell target");
-  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(target, compatibility);
   const plan: ExternalOpenShellTargetRunPlan = {
     run_id: rid,
     openshell_target: targetPlan,
@@ -1443,12 +1443,12 @@ export async function actionExternalOpenShellTargetStatus(
 ): Promise<ExternalOpenShellTargetStatus> {
   const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "status");
 
-  const rid = emitRunId();
-  progress(10, "Validating external OpenShell target");
   const observation = await withExternalOpenShellTargetCa(
     target,
     compatibility,
     async (target, caContents) => {
+      const rid = emitRunId();
+      progress(10, "Validating external OpenShell target");
       const observed = await observeExternalOpenShellGatewayHealth(observer, {
         target,
         caBundle: caContents,

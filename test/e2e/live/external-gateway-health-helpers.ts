@@ -11,7 +11,6 @@ import YAML from "yaml";
 import { getDockerDriverGatewayLocalTlsBundle } from "../../../dist/lib/onboard/docker-driver-gateway-local-tls";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import { expect } from "../fixtures/e2e-test.ts";
 import {
   externalGatewayHealthProcessStopped,
   stopExternalGatewayHealthGateway,
@@ -157,11 +156,11 @@ function requireProbeSuccess(result: ShellProbeResult, operation: string): void 
   throw new Error(`${operation} failed. See the redacted E2E artifacts.`);
 }
 
-async function runBlueprintRunnerHealth(
+export async function runPackagedBlueprintRunnerStatus(
   shellProbe: ShellProbe,
-  blueprintRoot: string,
-  privateStateRoot: string,
+  prepared: PreparedExternalGatewayHealthScenario,
 ): Promise<Record<string, unknown>> {
+  const { blueprintRoot, privateStateRoot } = prepared;
   const result = await shellProbe.run(
     trustedShellCommand({
       command: process.execPath,
@@ -180,13 +179,20 @@ async function runBlueprintRunnerHealth(
   return parseRunnerStatus(result.stdout);
 }
 
-export async function runExternalGatewayHealthScenario({
+export type PreparedExternalGatewayHealthScenario = Readonly<{
+  authenticationPath: string;
+  blueprintRoot: string;
+  expectedRelease: string;
+  privateStateRoot: string;
+}>;
+
+export async function startPreparedExternalTlsGateway({
   artifacts,
   cleanup,
   progress,
   shellProbe,
   skip,
-}: ScenarioFixtures): Promise<void> {
+}: ScenarioFixtures): Promise<PreparedExternalGatewayHealthScenario> {
   const gatewayBin = resolveGatewayBin();
   if (!gatewayBin) skip("openshell-gateway 0.0.106 is required");
 
@@ -258,7 +264,7 @@ export async function runExternalGatewayHealthScenario({
   progress.phase("launch a TLS gateway without client-certificate authentication");
   let gatewayOutput = "";
   const gateway = spawnObservedChild(gatewayBin!, [], {
-    activityLabel: "command: external-gateway-health",
+    activityLabel: "command: start-external-gateway-health",
     progress,
     spawn: {
       env: {
@@ -275,55 +281,39 @@ export async function runExternalGatewayHealthScenario({
   gateway.stderr?.on("data", (chunk: Buffer) => {
     gatewayOutput += chunk.toString("utf8");
   });
+  cleanup.add("write external gateway health log", async () => {
+    await artifacts.writeText("external-gateway.log", gatewayOutput);
+  });
   cleanup.add("stop external gateway health gateway", () =>
     stopExternalGatewayHealthGateway(gateway),
   );
 
-  try {
-    const blueprintRoot = path.join(stateDir, "blueprint");
-    const authenticationPath = path.join(stateDir, "authentication");
-    fs.mkdirSync(blueprintRoot);
-    expect(fs.existsSync(authenticationPath)).toBe(false);
-    fs.writeFileSync(
-      path.join(blueprintRoot, "blueprint.yaml"),
-      YAML.stringify({
-        version: "1.0.0",
-        min_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
-        max_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
-        openshell_target: {
-          endpoint: `https://${address}:${String(port)}`,
-          workspace: "default",
-          expected_release: OPENSHELL_V0106_QUALIFICATION.version,
-          lifecycle: "external",
-          trust: { ca_file: tls.caPath },
-          authentication: { credential_file: authenticationPath },
-        },
-      }),
-      { mode: 0o600 },
-    );
+  const blueprintRoot = path.join(stateDir, "blueprint");
+  const authenticationPath = path.join(stateDir, "authentication");
+  fs.mkdirSync(blueprintRoot);
+  fs.writeFileSync(
+    path.join(blueprintRoot, "blueprint.yaml"),
+    YAML.stringify({
+      version: "1.0.0",
+      min_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
+      max_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
+      openshell_target: {
+        endpoint: `https://${address}:${String(port)}`,
+        workspace: "default",
+        expected_release: OPENSHELL_V0106_QUALIFICATION.version,
+        lifecycle: "external",
+        trust: { ca_file: tls.caPath },
+        authentication: { credential_file: authenticationPath },
+      },
+    }),
+    { mode: 0o600 },
+  );
 
-    progress.phase("observe public health through the exact Blueprint Runner artifact");
-    await waitForGatewayPort({
-      address,
-      artifacts,
-      gateway,
-      port,
-    });
-    const status = await runBlueprintRunnerHealth(shellProbe, blueprintRoot, stateDir);
-    expect(fs.existsSync(authenticationPath)).toBe(false);
-    expect(status.compatibility).toBe("compatible");
-    expect(status.gateway).toEqual({
-      release: OPENSHELL_V0106_QUALIFICATION.version,
-      status: "healthy",
-    });
-    await artifacts.writeJson("external-gateway-health.json", {
-      expectedRelease: OPENSHELL_V0106_QUALIFICATION.version,
-      reportedRelease: OPENSHELL_V0106_QUALIFICATION.version,
-      runner: "dist/lib/blueprint-runner.js",
-      status: "healthy",
-      transport: "https-explicit-ca",
-    });
-  } finally {
-    await artifacts.writeText("external-gateway.log", gatewayOutput);
-  }
+  await waitForGatewayPort({ address, artifacts, gateway, port });
+  return {
+    authenticationPath,
+    blueprintRoot,
+    expectedRelease: OPENSHELL_V0106_QUALIFICATION.version,
+    privateStateRoot: stateDir,
+  };
 }

@@ -414,5 +414,23 @@ describe("Blueprint Runner external OpenShell target", () => {
     ).toHaveBeenCalledOnce();
     expect(mockExeca).not.toHaveBeenCalled();
     expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+    expect(stdoutCapture.text()).not.toContain("RUN_ID:");
+    expect(stdoutCapture.text()).not.toContain("PROGRESS:");
+  });
+
+  it.each([
+    ["invalid", "external OpenShell target CA file must contain one certificate"],
+    ["unreadable", "external OpenShell target CA file cannot be read"],
+  ])("emits no run or progress output when the CA file is %s", async (_condition, message) => {
+    seedExternalTarget();
+    externalTargetBoundaryMocks.withExternalOpenShellTargetCa.mockRejectedValueOnce(
+      new Error(message),
+    );
+
+    await expect(runMain(["status", "--external-target"])).rejects.toThrow(message);
+
+    expect(observeHealth).not.toHaveBeenCalled();
+    expect(stdoutCapture.text()).not.toContain("RUN_ID:");
+    expect(stdoutCapture.text()).not.toContain("PROGRESS:");
   });
 });

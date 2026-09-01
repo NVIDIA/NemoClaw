@@ -7,20 +7,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { type CompositeAction, readYaml } from "../../helpers/e2e-workflow-contract";
 
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 const PAYLOAD_SHA256 = "b".repeat(64);
+const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
+const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 
 function runIdentityValidation(overrides: Record<string, unknown> = {}, consumerAttempt = "1") {
-  const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const workflowSha = "d".repeat(40);
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-identity-"));
   try {
     const outputPath = path.join(outputDirectory, "github-output");
-    const result = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
+    const result = spawnSync(IDENTITY_SCRIPT, [], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -351,9 +351,8 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   );
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
-  const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const githubOutput = path.join(root, "github-output");
-  const identityResult = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
+  const identityResult = spawnSync(IDENTITY_SCRIPT, [], {
     cwd: workspace,
     encoding: "utf8",
     env: {
@@ -387,7 +386,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
           return [line.slice(0, separator), line.slice(separator + 1)];
         }),
     );
-    return spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
+    return spawnSync(RESTORE_SCRIPT, [], {
       cwd: workspace,
       encoding: "utf8",
       env: {
