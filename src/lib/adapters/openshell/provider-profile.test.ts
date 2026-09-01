@@ -100,7 +100,10 @@ describe("OpenShell endpointless provider profiles", () => {
       .mockReturnValueOnce({ status: 0 });
 
     expect(ensureProfile(runOpenshell)).toEqual({ ok: true });
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+      ["provider", "profile", "import", "--file", PROFILE_PATH],
+    ]);
   });
 
   it("imports after OpenShell wraps the missing-profile message (#10155)", () => {
@@ -114,7 +117,10 @@ describe("OpenShell endpointless provider profiles", () => {
       .mockReturnValueOnce({ status: 0 });
 
     expect(ensureProfile(runOpenshell)).toEqual({ ok: true });
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+      ["provider", "profile", "import", "--file", PROFILE_PATH],
+    ]);
   });
 
   it("does not import after an unrelated structured not-found response (#10155)", () => {

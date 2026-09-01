@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { redactFull } from "../../security/redact";
 import {
@@ -21,7 +22,11 @@ import {
   type OpenShellProviderResult,
 } from "./provider-adapter";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
-import { ensureEndpointlessProviderProfile as reconcileEndpointlessProviderProfile } from "./provider-profile";
+import {
+  ensureEndpointlessProviderProfile as reconcileEndpointlessProviderProfile,
+  exportedProviderProfileMatchesContract,
+  parseCheckedInProviderProfileContract,
+} from "./provider-profile";
 
 export type CapturedProviderCommandResult = Readonly<{
   status: number | null;
@@ -44,6 +49,7 @@ export type RunProviderCommand = (
 export type CliOpenShellProviderAdapterDeps = Readonly<{
   run?: RunProviderCommand;
   defaultTimeoutMs?: number;
+  readProfileFile?: (profilePath: string) => string;
 }>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/u;
@@ -271,15 +277,51 @@ export function createCliOpenShellProviderAdapter(
   const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async (
     request: ImportOpenShellProviderProfileRequest,
   ) => {
+    const readProfileFile =
+      deps.readProfileFile ?? ((file: string) => fs.readFileSync(file, "utf8"));
+    const contract = (() => {
+      try {
+        return parseCheckedInProviderProfileContract(readProfileFile(request.profilePath));
+      } catch {
+        // Report a fixed validation error below; never return host filesystem diagnostics.
+        return null;
+      }
+    })();
+    if (!contract) {
+      return failure({
+        kind: "validation",
+        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
+      });
+    }
     const result = invoke(
       ["provider", "profile", "import", "--file", request.profilePath],
       request,
     );
     const error = commandError(result);
-    if (error?.kind === "command" && error.reason === "already_exists") {
-      return success({ state: "already_present" });
+    const state =
+      error?.kind === "command" && error.reason === "already_exists"
+        ? "already_present"
+        : "imported";
+    if (error && state !== "already_present") return failure(error);
+
+    const exported = invoke(
+      ["provider", "profile", "export", contract.profileId, "--output", "json"],
+      request,
+      undefined,
+      2,
+      true,
+    );
+    const exportError = commandError(exported);
+    if (exportError) return failure(exportError);
+    if (!exportedProviderProfileMatchesContract(bufferOrStringToText(exported.stdout), contract)) {
+      return failure({
+        kind: "command",
+        reason: "profile_incompatible",
+        message:
+          "The OpenShell provider profile does not match the checked-in credential boundary.",
+      });
     }
-    return error ? failure(error) : success({ state: "imported" });
+    return success({ state });
   };
 
   const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =

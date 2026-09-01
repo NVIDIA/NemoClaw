@@ -96,6 +96,12 @@ async function ensureBundledProviderProfile(
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   if (result.ok) return null;
+  if (result.error.kind === "command" && result.error.reason === "profile_incompatible") {
+    return fail([
+      `  OpenShell provider profile '${type}' does not match NemoClaw's checked-in credential boundary.`,
+      "  Remove the conflicting provider profile, then retry this command.",
+    ]);
+  }
   return fail([
     `  Could not import bundled provider profile '${type}'.`,
     "  Update OpenShell with scripts/install-openshell.sh and retry.",

@@ -128,6 +128,36 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
+  it("does not create a provider from an incompatible bundled profile (#9806)", async () => {
+    vi.stubEnv("TAVILY_API_KEY", "host-only-value");
+    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "The OpenShell provider profile does not match the checked-in boundary.",
+      },
+    });
+    const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "tavily-prod",
+        type: "tavily",
+        credentials: ["TAVILY_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  OpenShell provider profile 'tavily' does not match NemoClaw's checked-in credential boundary.",
+    );
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
     const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({
       ok: true,
