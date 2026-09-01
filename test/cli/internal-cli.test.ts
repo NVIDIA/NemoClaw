@@ -44,11 +44,9 @@ describe("internal oclif namespace", () => {
     expect(result.stdout).toContain("--delete-models");
     expect(result.stdout).toContain("--keep-openshell");
     expect(result.stdout).toContain("--yes");
+  });
 
-    // The preview must name the gateway the selected port resolves to. It
-    // already scopes the state root to that port, so a default-port gateway
-    // name would preview destroying a different environment's gateway and
-    // Docker volume than `run-plan` removes.
+  it("names only port-specific gateway resources when the gateway port is non-default (#10763)", () => {
     const preview = spawnSync(process.execPath, [CLI, "internal", "uninstall", "plan", "--json"], {
       encoding: "utf-8",
       env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "8091" },
@@ -68,6 +66,14 @@ describe("internal oclif namespace", () => {
     expect(actions).toContainEqual({
       kind: "delete-docker-volume",
       name: "openshell-cluster-nemoclaw-8091",
+    });
+    expect(actions).not.toContainEqual({
+      kind: "destroy-openshell-gateway",
+      name: "nemoclaw",
+    });
+    expect(actions).not.toContainEqual({
+      kind: "delete-docker-volume",
+      name: "openshell-cluster-nemoclaw",
     });
   });
 
