@@ -388,6 +388,7 @@ describe("Hugging Face model acquisition", () => {
 
     // Then output stops entirely for the full stall window.
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
     cleanupProc.emit("exit", 0);
     proc.emit("exit", 137);
 
@@ -470,7 +471,10 @@ describe("Hugging Face model acquisition", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(10_000);
+    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(cleanupProc.kill).toHaveBeenCalledWith("SIGKILL");
     expect(cleanupProc.unref).toHaveBeenCalledOnce();
     await expect(resultPromise).resolves.toEqual({
