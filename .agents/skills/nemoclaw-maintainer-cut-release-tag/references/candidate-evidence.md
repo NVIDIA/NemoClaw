@@ -370,7 +370,7 @@ Record these values:
 
 Skip unless the maintainer cites Launchable evidence in the E2E decision. Follow
 [Validate Existing Launchable Evidence](../../nemoclaw-maintainer-e2e/references/launchable-evidence.md)
-and record its handoff in the release brief. Launchable evidence remains operational
+and record its canonical handoff in the release brief. Launchable evidence remains operational
 context, not a tag gate.
 
 If the base-image aggregate is missing or failed, repair or rerun the affected publisher workflow
