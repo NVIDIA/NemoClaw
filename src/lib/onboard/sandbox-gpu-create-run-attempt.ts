@@ -45,6 +45,7 @@ import {
 import { printSandboxCreateFailureDiagnostics } from "./sandbox-create-failure";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import type {
+  CreatedSandboxIdentity,
   SandboxGpuCreateFlowDeps,
   SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
@@ -68,6 +69,7 @@ export type SandboxGpuCreateAttemptState = {
   allowUnbuiltCompatibilitySource: boolean;
   nativeRuntimeSnapshot: NativeRuntimeSnapshot | null;
   portableLifecycleGeneration: string | null;
+  verifiedCreatedSandboxIdentity: CreatedSandboxIdentity | null;
 };
 
 // A runtime-managed container replacement can briefly observe the original
@@ -278,14 +280,47 @@ async function verifyCreatedSandboxBeforeEffects(
   createAttemptNonce: string,
   route: SelectedDockerGpuRoute,
   input: SandboxGpuCreateFlowInput,
-): Promise<void> {
-  if (!input.verifyCreatedSandboxBeforeEffects) return;
-  await input.verifyCreatedSandboxBeforeEffects({
+): Promise<CreatedSandboxIdentity> {
+  const identity = {
     sandboxId,
     liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
     createAttemptNonce,
     route,
-  });
+  };
+  await input.verifyCreatedSandboxBeforeEffects?.(identity);
+  return identity;
+}
+
+export function persistRetainedSandboxRecoveryOrBlock(options: {
+  readonly persist: NonNullable<SandboxGpuCreateFlowInput["persistRetainedSandboxRecovery"]>;
+  readonly message: string;
+  readonly createAttemptNonce: string;
+  readonly sandboxIdentityFingerprint?: string;
+  readonly persistenceFailureDiagnostic?: string;
+  readonly persistenceFailureMessage?: string;
+}): void {
+  const { persist, message, createAttemptNonce, sandboxIdentityFingerprint } = options;
+  let persistenceFailure: unknown = null;
+  try {
+    if (!persist(message, sandboxIdentityFingerprint, createAttemptNonce)) {
+      persistenceFailure = new Error(
+        "The retained sandbox recovery writer did not confirm durable persistence.",
+      );
+    }
+  } catch (error) {
+    persistenceFailure = error;
+  }
+  console.error(`  ${message}`);
+  if (!persistenceFailure) return;
+  console.error(
+    options.persistenceFailureDiagnostic ??
+      "  NemoClaw could not save this create-attempt evidence. The recovery-only session remains blocked until its durable recovery record can be saved.",
+  );
+  throw new Error(
+    options.persistenceFailureMessage ??
+      "NemoClaw could not save the retained sandbox recovery record; the recovery-only session remains blocked.",
+    { cause: persistenceFailure },
+  );
 }
 
 function persistCreateAttemptRecovery(options: {
@@ -308,26 +343,12 @@ function persistCreateAttemptRecovery(options: {
       ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. `
       : "") +
     detail;
-  let persistenceFailure: unknown = null;
-  try {
-    if (!persist(message, sandboxIdentityFingerprint, createAttemptNonce)) {
-      persistenceFailure = new Error(
-        "The retained sandbox recovery writer did not confirm durable persistence.",
-      );
-    }
-  } catch (error) {
-    persistenceFailure = error;
-  }
-  console.error(`  ${message}`);
-  if (persistenceFailure) {
-    console.error(
-      "  NemoClaw could not save this create-attempt evidence. The recovery-only session remains blocked until its durable recovery record can be saved.",
-    );
-    throw new Error(
-      "NemoClaw could not save the retained sandbox recovery record; the recovery-only session remains blocked.",
-      { cause: persistenceFailure },
-    );
-  }
+  persistRetainedSandboxRecoveryOrBlock({
+    persist,
+    message,
+    createAttemptNonce,
+    ...(sandboxIdentityFingerprint ? { sandboxIdentityFingerprint } : {}),
+  });
 }
 
 function persistIdentitySettlementRecoveryEvidence(options: {
@@ -624,6 +645,7 @@ export function createSandboxGpuCreateAttemptRunner(
     allowUnbuiltCompatibilitySource: false,
     nativeRuntimeSnapshot: null,
     portableLifecycleGeneration: null,
+    verifiedCreatedSandboxIdentity: null,
   };
   const revalidatePostCreateEffect = (operation: string): void => {
     if (!input.verifyCreatedSandboxBeforeEffects) return;
@@ -900,7 +922,7 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       resumedSandboxId = identity.sandboxId;
       verifiedCreatedSandboxId = identity.sandboxId;
-      await verifyCreatedSandboxBeforeEffects(
+      state.verifiedCreatedSandboxIdentity = await verifyCreatedSandboxBeforeEffects(
         identity.sandboxId,
         createAttemptNonce!,
         route,
@@ -981,7 +1003,12 @@ export function createSandboxGpuCreateAttemptRunner(
             }
             waitForCreatedSandboxPublication(sandboxId);
             verifiedCreatedSandboxId = sandboxId;
-            await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
+            state.verifiedCreatedSandboxIdentity = await verifyCreatedSandboxBeforeEffects(
+              sandboxId,
+              createAttemptNonce!,
+              route,
+              input,
+            );
             createdSandboxVerified = true;
             if (deferPostCreateEffects) {
               revalidatePostCreateEffect(
@@ -1089,10 +1116,8 @@ export function createSandboxGpuCreateAttemptRunner(
             createArgs: input.prebuild.createArgs,
           },
           {
-            classifyCreateFailure: classifySandboxCreateFailure,
             printCreateFailureDiagnostics,
             printRecoveryHints: printSandboxCreateRecoveryHints,
-            warn: (message) => console.warn(message),
             error: (message) => console.error(message),
             exitProcess: (code) => process.exit(code),
           },
@@ -1115,7 +1140,12 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       waitForCreatedSandboxPublication(sandboxId);
       verifiedCreatedSandboxId = sandboxId;
-      await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
+      state.verifiedCreatedSandboxIdentity = await verifyCreatedSandboxBeforeEffects(
+        sandboxId,
+        createAttemptNonce!,
+        route,
+        input,
+      );
       createdSandboxVerified = true;
     }
     if (deferPostCreateEffects) {

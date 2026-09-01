@@ -19,10 +19,8 @@ function createFailureDeps(
   overrides: Partial<SandboxCreateFailureReportDeps> = {},
 ): SandboxCreateFailureReportDeps {
   return {
-    classifyCreateFailure: vi.fn(() => ({ kind: "unknown" })),
     printCreateFailureDiagnostics: vi.fn(),
     printRecoveryHints: vi.fn(),
-    warn: vi.fn(),
     error: vi.fn(),
     exitProcess: vi.fn((code: number): never => {
       throw new ExitSignal(code);
@@ -45,19 +43,6 @@ function createFailureOptions(
 }
 
 describe("reportSandboxCreateFailure", () => {
-  it("warns and returns (does not exit) when the create is merely incomplete", () => {
-    const deps = createFailureDeps({
-      classifyCreateFailure: vi.fn(() => ({ kind: "sandbox_create_incomplete" })),
-    });
-    expect(() => reportSandboxCreateFailure(createFailureOptions(), deps)).not.toThrow();
-    expect(deps.warn).toHaveBeenCalledWith(
-      "  Create stream exited with code 3 after sandbox was created.",
-    );
-    expect(deps.printCreateFailureDiagnostics).not.toHaveBeenCalled();
-    expect(deps.printRecoveryHints).not.toHaveBeenCalled();
-    expect(deps.exitProcess).not.toHaveBeenCalled();
-  });
-
   it("prints diagnostics + recovery hints and exits with the create status on a hard failure", () => {
     const deps = createFailureDeps();
     expect(() =>
@@ -73,7 +58,6 @@ describe("reportSandboxCreateFailure", () => {
       createArgs: ["sandbox", "create", "alpha"],
     });
     expect(deps.exitProcess).toHaveBeenCalledWith(42);
-    expect(deps.warn).not.toHaveBeenCalled();
   });
 
   it("redacts create output before classification and echoing", () => {
@@ -85,9 +69,6 @@ describe("reportSandboxCreateFailure", () => {
         withOutput,
       ),
     ).toThrow(ExitSignal);
-    expect(withOutput.classifyCreateFailure).toHaveBeenCalledWith(
-      "failed with Authorization: Bearer secr********",
-    );
     expect(withOutput.error).toHaveBeenCalledWith("failed with Authorization: Bearer secr********");
     expect(withOutput.error).not.toHaveBeenCalledWith(
       "failed with Authorization: Bearer secret-token",

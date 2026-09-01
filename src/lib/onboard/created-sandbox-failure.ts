@@ -16,10 +16,8 @@ export type SandboxCreateFailureReportOptions = {
 };
 
 export type SandboxCreateFailureReportDeps = {
-  classifyCreateFailure(output: string): { kind: string };
   printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
   printRecoveryHints(output: string, options: { createArgs: readonly string[] }): void;
-  warn(message: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
 };
@@ -28,29 +26,12 @@ export function redactCreatedSandboxFailureDiagnostic(value: string, limit: numb
   return redactFullWithUrls(value).replace(/\s+/gu, " ").trim().slice(0, limit);
 }
 
-/**
- * Report a non-zero sandbox create-stream exit. A mere "create incomplete"
- * (the sandbox exists in the gateway but the stream exited non-zero, e.g. SSH
- * 255) warns and returns so the caller can fall through to the ready-wait loop;
- * any other failure prints diagnostics + recovery hints and exits.
- */
+/** Report a hard sandbox create-stream failure with diagnostics and recovery hints. */
 export function reportSandboxCreateFailure(
   options: SandboxCreateFailureReportOptions,
   deps: SandboxCreateFailureReportDeps,
 ): void {
   const redactedCreateOutput = redact(options.createOutput);
-  const failure = deps.classifyCreateFailure(redactedCreateOutput);
-  if (failure.kind === "sandbox_create_incomplete") {
-    // The sandbox was created in the gateway but the create stream exited
-    // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
-    // loop — the sandbox may still reach Ready on its own.
-    deps.warn("");
-    deps.warn(
-      `  Create stream exited with code ${options.createStatus} after sandbox was created.`,
-    );
-    deps.warn("  Checking whether the sandbox reaches Ready state...");
-    return;
-  }
   deps.error("");
   deps.error(`  Sandbox creation failed (exit ${options.createStatus}).`);
   if (options.createOutput) {

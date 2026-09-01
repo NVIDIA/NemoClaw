@@ -8,6 +8,7 @@ import os from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { completeOrdinaryOnboardSandboxCreation } from "../../src/lib/onboard/created-sandbox-finalization";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 describe("sandboxName command hardening in onboard.js", () => {
@@ -28,7 +29,56 @@ describe("sandboxName command hardening in onboard.js", () => {
     ).rejects.toThrow(/Invalid sandbox name/);
   });
 
-  it("runs setup-dns-proxy.sh through the argv helper instead of bash -c interpolation", () => {
+  it("passes DNS proxy gateway values as one literal argument", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dns-literal-"));
+    const argsFile = path.join(tmpDir, "dns-args.txt");
+    const sideEffectFile = path.join(tmpDir, "shell-expanded");
+    const gatewayName = `nemoclaw; touch ${sideEffectFile}; #`;
+    fs.writeFileSync(
+      path.join(tmpDir, "setup-dns-proxy.sh"),
+      '#!/usr/bin/env bash\nset -eu\nprintf \'%s\\n\' "$1" "$2" > "$NEMOCLAW_DNS_ARGS_FILE"\n',
+    );
+
+    try {
+      completeOrdinaryOnboardSandboxCreation(
+        {
+          sandboxName: "my-assistant",
+          sandboxWasLiveDefault: false,
+          gatewayPort: 8080,
+          runtimeFields: { openshellDriver: "kubernetes" },
+          messagingProviders: [],
+          liveExists: true,
+        } as never,
+        {
+          setDefault: () => undefined,
+          runFile: (command: string, args: string[]) =>
+            spawnSync(command, args, {
+              encoding: "utf-8",
+              env: { ...process.env, NEMOCLAW_DNS_ARGS_FILE: argsFile },
+            }),
+          scriptsDir: tmpDir,
+          gatewayName,
+          providerExistsInGateway: () => true,
+          armCancelRollback: () => undefined,
+          markCancellationRecovery: () => undefined,
+          dockerInfoFormat: () => "",
+          runCapture: () => "",
+          revalidateSandboxIdentity: () => undefined,
+          applyVmDnsMonkeypatch: () => undefined,
+        } as never,
+      );
+
+      expect(fs.readFileSync(argsFile, "utf-8").trim().split("\n")).toEqual([
+        gatewayName,
+        "my-assistant",
+      ]);
+      expect(fs.existsSync(sideEffectFile)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("scopes created sandbox probes to the owning gateway", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dns-argv-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -183,18 +233,6 @@ try {
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       expect(payloadLine).toBeTruthy();
       const payload = JSON.parse(payloadLine!);
-      const dnsCommand = payload.commands.find(
-        (entry: { type: string; args: string[] }) =>
-          entry.type === "runFile" && entry.args[0]?.endsWith("setup-dns-proxy.sh"),
-      );
-      expect(dnsCommand).toBeTruthy();
-      expect(dnsCommand.file).toBe("bash");
-      expect(dnsCommand.args).toEqual([
-        expect.stringMatching(/setup-dns-proxy\.sh$/),
-        "nemoclaw",
-        "my-assistant",
-      ]);
-      expect(dnsCommand.command).not.toContain("bash -c");
       expect(
         payload.commands.some((entry: { command: string }) =>
           entry.command.includes("sandbox get -g nemoclaw my-assistant"),

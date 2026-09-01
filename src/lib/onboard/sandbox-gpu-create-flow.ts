@@ -55,7 +55,10 @@ import type {
   RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
-import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
+import {
+  createSandboxGpuCreateAttemptRunner,
+  persistRetainedSandboxRecoveryOrBlock,
+} from "./sandbox-gpu-create-run-attempt";
 import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
@@ -578,33 +581,18 @@ export async function runSandboxGpuCreateFlow(
           `APF sandbox '${input.sandboxName}' may have been retained after native GPU fallback stopped. ` +
           `Gateway '${input.gatewayName}'. ${identityGuidance} ` +
           "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
-        console.error(`  ${message}`);
-        let persisted: boolean;
-        try {
-          persisted = evidence.liveIdentityFingerprint
-            ? persistRetainedSandboxRecovery(
-                message,
-                evidence.liveIdentityFingerprint,
-                evidence.createAttemptNonce,
-              )
-            : persistRetainedSandboxRecovery(message, undefined, evidence.createAttemptNonce);
-        } catch (error) {
-          console.error(
+        persistRetainedSandboxRecoveryOrBlock({
+          persist: persistRetainedSandboxRecovery,
+          message,
+          createAttemptNonce: evidence.createAttemptNonce,
+          ...(evidence.liveIdentityFingerprint
+            ? { sandboxIdentityFingerprint: evidence.liveIdentityFingerprint }
+            : {}),
+          persistenceFailureDiagnostic:
             "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
-          );
-          throw new Error(
+          persistenceFailureMessage:
             "The APF recovery-only session remains blocked until its durable recovery record can be saved.",
-            { cause: error },
-          );
-        }
-        if (!persisted) {
-          console.error(
-            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
-          );
-          throw new Error(
-            "The APF recovery-only session remains blocked until its durable recovery record can be saved.",
-          );
-        }
+        });
       }
     }
     process.exit(1);
@@ -635,7 +623,26 @@ export async function runSandboxGpuCreateFlow(
         0,
         500,
       );
-      console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+      const identity = attemptRunner.state.verifiedCreatedSandboxIdentity;
+      const persist = input.persistRetainedSandboxRecovery;
+      if (!identity || !persist) {
+        throw new Error(
+          `Portable demo lifecycle setup failed after sandbox creation without exact durable recovery authority: ${detail}`,
+        );
+      }
+      const message =
+        `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${identity.createAttemptNonce}. ` +
+        `Durable sandbox identity fingerprint: ${identity.liveIdentityFingerprint}. ` +
+        `Portable lifecycle receipt setup did not complete for sandbox '${input.sandboxName}' on gateway '${input.gatewayName}'. ` +
+        "NemoClaw stopped before registry publication and success output. " +
+        `Run the retained identity-bound destroy action for sandbox '${input.sandboxName}'; stop if destroy cannot prove that identity.`;
+      persistRetainedSandboxRecoveryOrBlock({
+        persist,
+        message,
+        createAttemptNonce: identity.createAttemptNonce,
+        sandboxIdentityFingerprint: identity.liveIdentityFingerprint,
+      });
+      throw new Error(`Portable demo lifecycle setup did not complete: ${detail}`);
     }
   }
 

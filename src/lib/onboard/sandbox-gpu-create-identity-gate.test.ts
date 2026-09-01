@@ -94,6 +94,16 @@ function createAttemptNonce(args: readonly string[]): string {
   return (args[labelIndex + 1] ?? "").slice(NEMOCLAW_CREATE_ATTEMPT_LABEL.length + 1);
 }
 
+const durableRecoveryWriterFailures = [
+  ["returns false", () => false],
+  [
+    "throws",
+    () => {
+      throw new Error("durable writer failed");
+    },
+  ],
+] as const;
+
 function expectNoSandboxDelete(deps: ReturnType<typeof createGpuFlowDeps>): void {
   expect(
     vi
@@ -349,15 +359,7 @@ describe("created sandbox identity gate", () => {
     expect(recoveryOutput).not.toContain("After OpenShell confirms the sandbox is absent");
   });
 
-  it.each([
-    ["returns false", () => false],
-    [
-      "throws",
-      () => {
-        throw new Error("durable writer failed");
-      },
-    ],
-  ])(
+  it.each(durableRecoveryWriterFailures)(
     "blocks committed-readiness recovery when durable persistence %s (#9211)",
     async (_name, writer) => {
       const { deps, error, input, patch } = createCommittedReadinessPersistenceFixture();
@@ -432,6 +434,7 @@ describe("created sandbox identity gate", () => {
       ["sandbox", "get", "-g", gatewayName, "alpha"],
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
     expect(events).toEqual([
       "verify-created",
       "revalidate:activate managed sandbox network for 'alpha'",
@@ -447,6 +450,43 @@ describe("created sandbox identity gate", () => {
       "revalidate:record portable lifecycle for sandbox 'alpha'",
       "portable-lifecycle",
     ]);
+  });
+
+  it("retains exact recovery when portable lifecycle setup fails after resume (#8441)", async () => {
+    const sandboxId = "alpha-sandbox-id";
+    const createAttemptNonce = "a".repeat(62);
+    const liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint,
+      createAttemptNonce,
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const deps = createGpuFlowDeps(sandboxId);
+    deps.installPortableDemoLifecycle = vi.fn(() => {
+      throw new Error("Authorization: Bearer portable-secret");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "Portable demo lifecycle setup did not complete: Authorization: Bearer <REDACTED>",
+    );
+
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("Run the retained identity-bound destroy action for sandbox 'alpha'"),
+      liveIdentityFingerprint,
+      createAttemptNonce,
+    );
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expectNoSandboxDelete(deps);
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain(
+      "portable-secret",
+    );
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+      "Sandbox 'alpha' created",
+    );
   });
 
   it("refuses a changed live identity before resumed effects (#9833)", async () => {
@@ -1202,34 +1242,29 @@ describe("created sandbox identity gate", () => {
     expectNoSandboxDelete(deps);
   });
 
-  it.each([
-    ["returns false", () => false],
-    [
-      "throws",
-      () => {
-        throw new Error("durable writer failed");
-      },
-    ],
-  ])("blocks APF fallback when durable recovery persistence %s (#9833)", async (_name, writer) => {
-    const { deps, input, readNonce } = createApfFallbackRecoveryFixture();
-    const persist = vi.fn(writer);
-    input.persistRetainedSandboxRecovery = persist;
-    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit:1");
-    });
+  it.each(durableRecoveryWriterFailures)(
+    "blocks APF fallback when durable recovery persistence %s (#9833)",
+    async (_name, writer) => {
+      const { deps, input, readNonce } = createApfFallbackRecoveryFixture();
+      const persist = vi.fn(writer);
+      input.persistRetainedSandboxRecovery = persist;
+      const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit:1");
+      });
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "The APF recovery-only session remains blocked until its durable recovery record can be saved.",
-    );
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+        "The APF recovery-only session remains blocked until its durable recovery record can be saved.",
+      );
 
-    expect(persist).toHaveBeenCalledOnce();
-    expect(exit).not.toHaveBeenCalled();
-    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${readNonce()}`);
-    expect(output).toContain("APF recovery is blocked because NemoClaw could not save");
-    expectNoSandboxDelete(deps);
-    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
-  });
+      expect(persist).toHaveBeenCalledOnce();
+      expect(exit).not.toHaveBeenCalled();
+      const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${readNonce()}`);
+      expect(output).toContain("APF recovery is blocked because NemoClaw could not save");
+      expectNoSandboxDelete(deps);
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    },
+  );
 
   it("stops before a runtime patch when the durable checkpoint drifts (#9833)", async () => {
     let nonce = "";
