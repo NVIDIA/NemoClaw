@@ -6,7 +6,11 @@ import fs from "node:fs";
 
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import { parseGatewayInference, planInferenceRouteReconcile } from "../../inference/config";
+import {
+  buildGatewayInferenceGetArgs,
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+} from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -45,7 +49,6 @@ import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
 } from "../../state/registry-messaging";
-import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
 import {
   runPortableOpenClawPairingApproval,
   runPortableOpenClawPairingRequestProducer,

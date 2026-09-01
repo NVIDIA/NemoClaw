@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,7 +12,6 @@ import {
   prepareAdvisorSandboxInputs,
   runAdvisorSandboxAsync,
   startAdvisorOpenShellInference,
-  writeUnavailableAdvisorArtifacts,
 } from "./openshell.mts";
 export type AdvisorSpecialistLifecycle = {
   prepare: (env: NodeJS.ProcessEnv) => Promise<void>;
@@ -24,7 +24,6 @@ export type AdvisorSpecialistLifecycle = {
   ) => void | { cancel: () => void | Promise<void>; completion: Promise<void> };
   download: (env: NodeJS.ProcessEnv) => void;
   remove: (env: NodeJS.ProcessEnv) => void;
-  unavailable?: (env: NodeJS.ProcessEnv, error: unknown) => void;
 };
 const SECRET_NAME = /(auth|credential|key|password|secret|token)/iu;
 const SECRET_VALUE =
@@ -51,12 +50,6 @@ export const defaultAdvisorSpecialistLifecycle: AdvisorSpecialistLifecycle = {
   run: runAdvisorSandboxAsync,
   download: downloadAdvisorArtifacts,
   remove: deleteAdvisorSandbox,
-  unavailable: (env, error) =>
-    writeUnavailableAdvisorArtifacts({
-      ...env,
-      PR_REVIEW_ADVISOR_UNAVAILABLE_REASON:
-        env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON ?? diagnostic(error),
-    }),
 };
 function failure(stage: string, env: NodeJS.ProcessEnv, cause: unknown): Error {
   const detail = diagnostic(cause);
@@ -68,13 +61,16 @@ function failure(stage: string, env: NodeJS.ProcessEnv, cause: unknown): Error {
 export async function runAdvisorSpecialist(input: {
   env: NodeJS.ProcessEnv;
   lifecycle?: AdvisorSpecialistLifecycle;
-  unavailableIsSuccess?: boolean;
   prepare?: boolean;
   validate?: () => void;
   setActiveCleanup?: (cleanup: (() => Promise<void>) | undefined) => void;
   cancelled?: () => boolean;
-}): Promise<"complete" | "unavailable" | "cancelled"> {
+}): Promise<"complete" | "cancelled"> {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
+  const env = {
+    ...input.env,
+    SANDBOX_NAME: `pr-adv-${randomBytes(9).toString("base64url")}`,
+  };
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]>;
   let sandbox = false;
   let execution: Exclude<ReturnType<AdvisorSpecialistLifecycle["run"]>, void> | undefined;
@@ -89,7 +85,7 @@ export async function runAdvisorSpecialist(input: {
           try {
             await execution.cancel();
           } catch (error) {
-            errors.push(failure("execution cleanup", input.env, error));
+            errors.push(failure("execution cleanup", env, error));
           } finally {
             settleCancellation?.();
             settleCancellation = undefined;
@@ -98,17 +94,17 @@ export async function runAdvisorSpecialist(input: {
         }
         if (sandbox) {
           try {
-            lifecycle.remove(input.env);
+            lifecycle.remove(env);
             sandbox = false;
           } catch (error) {
-            errors.push(failure("cleanup", input.env, error));
+            errors.push(failure("cleanup", env, error));
           }
         }
         try {
           await gateway?.stop?.();
           gateway = undefined;
         } catch (error) {
-          errors.push(failure("gateway cleanup", input.env, error));
+          errors.push(failure("gateway cleanup", env, error));
         }
         if (errors.length)
           throw new AggregateError(errors, errors.map((error) => error.message).join("; "), {
@@ -121,28 +117,23 @@ export async function runAdvisorSpecialist(input: {
       }));
   let primary: Error | undefined;
   let cleanupError: unknown;
-  let result: "complete" | "unavailable" | "cancelled" = "complete";
+  let result: "complete" | "cancelled" = "complete";
   try {
-    if (input.prepare !== false) await lifecycle.prepare(input.env);
+    if (input.prepare !== false) await lifecycle.prepare(env);
     if (input.cancelled?.()) result = "cancelled";
     stage = "configure";
-    if (result === "complete") gateway = lifecycle.startGateway(input.env);
+    if (result === "complete") gateway = lifecycle.startGateway(env);
     input.setActiveCleanup?.(cleanup);
-    try {
-      await gateway?.configure;
-      if (input.cancelled?.()) result = "cancelled";
-    } catch (error) {
-      lifecycle.unavailable?.(input.env, error);
-      if (input.unavailableIsSuccess) result = "unavailable";
-      else throw error;
-    }
+    await gateway?.configure;
+    if (input.cancelled?.()) result = "cancelled";
     if (result === "complete") {
       stage = "create";
+      // The cryptographically unique name is owned by this invocation before creation starts,
+      // so cleanup can reconcile a sandbox left by a partially failed create command.
       sandbox = true;
-      lifecycle.create(input.env);
+      lifecycle.create(env);
       stage = "run";
-      execution = lifecycle.run(input.env) || undefined;
-      input.setActiveCleanup?.(cleanup);
+      execution = lifecycle.run(env) || undefined;
       if (execution) {
         const cancellation = new Promise<"cancelled">(
           (resolve) => (settleCancellation = () => resolve("cancelled")),
@@ -159,15 +150,16 @@ export async function runAdvisorSpecialist(input: {
           if (settled.error) throw settled.error;
         }
       }
+      if (input.cancelled?.()) result = "cancelled";
       if (result === "complete") {
         stage = "download";
-        lifecycle.download(input.env);
+        lifecycle.download(env);
         stage = "validate";
         input.validate?.();
       }
     }
   } catch (error) {
-    primary = failure(stage, input.env, error);
+    primary = failure(stage, env, error);
   } finally {
     try {
       await cleanup();
@@ -238,10 +230,6 @@ export async function runAdvisorSpecialistCommand(
   if (command === "prepare") return lifecycle.prepare(env);
   if (command !== "analysis")
     throw new Error(`Unsupported specialist lifecycle command: ${command ?? "missing"}`);
-  if (env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0") {
-    lifecycle.unavailable?.(env, new Error("Advisor inference is unavailable"));
-    return;
-  }
   let received: NodeJS.Signals | undefined;
   let activeCleanup: (() => Promise<void>) | undefined;
   let cancellationFailure: unknown;
@@ -260,7 +248,8 @@ export async function runAdvisorSpecialistCommand(
       },
       cancelled: () => received !== undefined,
     });
-    if (result === "complete" && env.GITHUB_STEP_SUMMARY) publishSpecialistJobSummary(env);
+    if (result === "complete" && received === undefined && env.GITHUB_STEP_SUMMARY)
+      publishSpecialistJobSummary(env);
   } catch (error) {
     cancellationFailure ??= error;
     if (!received) throw error;

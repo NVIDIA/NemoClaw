@@ -1458,40 +1458,40 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       vi.unstubAllEnvs();
     }
   });
-
-  it("sanitizes raw traces before cleanup", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const cloudSteps = workflow.jobs["cloud-onboard"].steps!;
-    const sanitize = cloudSteps.find(
-      (step) => step.name === "Build trusted cloud-onboard timing summary",
-    )!;
-    sanitize.run = "cp -R raw-traces e2e-artifacts";
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
-    );
-  });
-
-  it("prevents the PR Review Advisor from writing to Actions or dispatching workflows", () => {
-    const workflow = readE2eOperationsWorkflow();
+  it.each(
+    (() => {
+      const run = "${{ github.run_id }}",
+        attempt = "${{ github.run_attempt }}",
+        temp = "${{ runner.temp }}",
+        matrix = "${{ matrix.advisor.artifact_name }}";
+      return [
+        [
+          `pr-review-advisor-context-${run}\n`,
+          `pr-review-advisor-context-${run}-${attempt}\n`,
+          false,
+        ],
+        [
+          `name: pr-review-advisor-context-${run}\n          path: ${temp}`,
+          `name: pr-review-advisor-context-${run}-${attempt}\n          path: ${temp}`,
+          false,
+        ],
+        ["overwrite: true", "overwrite: false", false],
+        [`${matrix}-${attempt}`, matrix, true],
+      ] as const;
+    })(),
+  )("rejects an unsafe Advisor rerun artifact mutation", (before, after, specialist) => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-operations-"));
     const advisorPath = join(directory, "advisor.yaml");
     try {
-      writeFileSync(advisorPath, "permissions: write-all\njobs:\n  advisor:\n    steps: []\n");
-      expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toContain(
-        "Unified advisor must not hold actions: write",
+      const source = readFileSync(
+        join(process.cwd(), ".github/workflows/pr-review-advisor.yaml"),
+        "utf8",
       );
-
-      writeFileSync(
-        advisorPath,
-        'permissions: read-all\njobs:\n  review-specialists:\n    env: { BASE_REF: target/base~1, HEAD_REF: HEAD~1 }\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
-      );
-      expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
-        expect.arrayContaining([
-          "Unified advisor must not hold actions: write",
-          "Unified advisor must not auto-dispatch workflows",
-          "Unified advisor specialists must retain target refs through execution",
-        ]),
+      writeFileSync(advisorPath, source.replace(before, after));
+      expect(validateE2eOperationsWorkflow(readE2eOperationsWorkflow(), advisorPath)).toContain(
+        specialist
+          ? "Unified advisor specialist artifacts must be unique per rerun attempt"
+          : "Unified advisor context artifact must survive failed-job and full reruns",
       );
     } finally {
       rmSync(directory, { force: true, recursive: true });

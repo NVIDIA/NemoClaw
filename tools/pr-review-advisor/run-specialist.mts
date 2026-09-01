@@ -104,7 +104,7 @@ async function main(): Promise<void> {
   delete process.env.GITHUB_TOKEN;
 
   const diffPath = path.join(
-    process.env.PR_REVIEW_ADVISOR_CONTEXT_DIR || "/pr-review-advisor-context/specialist",
+    process.env.PR_REVIEW_ADVISOR_CONTEXT_DIR || "/pr-workdir/.pr-review-advisor-context",
     SPECIALIST_DIFF_FILE_NAME,
   );
   const diffStat = fs.lstatSync(diffPath);
