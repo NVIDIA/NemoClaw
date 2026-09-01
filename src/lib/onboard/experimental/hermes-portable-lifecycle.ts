@@ -277,7 +277,7 @@ interface QualifiedHermesPortableLifecycle {
     readonly receipt: HermesPortableConfiguredReceipt;
   };
   readonly receipt: HermesPortableConfiguredReceipt;
-  readonly containerDeps: HermesPortableContainerDeps;
+  readonly containerDeps: HermesPortableLifecycleContainerDeps;
   readonly container: HermesPortableContainerInspection;
   readonly capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
   readonly rawCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
@@ -371,11 +371,16 @@ export function buildHermesPortableOpenShellCommandAuthority(
   };
 }
 
+type HermesPortableLifecycleContainerDeps = HermesPortableContainerDeps & {
+  readonly rawPodman?: HermesPortableContainerDeps["podman"];
+  readonly assertPodmanTransactionCurrent?: () => void;
+};
+
 function createContainerDeps(
   receipt: HermesPortableConfiguredReceipt,
   commandEnv: NodeJS.ProcessEnv,
   authorityDeps?: HermesPortablePodmanAuthorityDeps,
-): HermesPortableContainerDeps {
+): HermesPortableLifecycleContainerDeps {
   const authority = createHermesPortablePodmanCommandAuthority(
     receipt.podmanExecutableAuthority,
     receipt.socketAuthority,
@@ -383,15 +388,19 @@ function createContainerDeps(
     commandEnv,
     authorityDeps,
   );
+  const rawPodman: HermesPortableContainerDeps["podman"] = (args, timeoutMs) =>
+    authority.engine.capture(args, timeoutMs);
   return {
     podman: (args, timeoutMs): HermesPortablePodmanResult => {
       authority.assertTransactionCurrent();
       try {
-        return authority.engine.capture(args, timeoutMs);
+        return rawPodman(args, timeoutMs);
       } finally {
         authority.assertTransactionCurrent();
       }
     },
+    rawPodman,
+    assertPodmanTransactionCurrent: authority.assertTransactionCurrent,
     assertSocketAuthority: () => authority.engine.assertAuthority(),
   };
 }
@@ -602,7 +611,7 @@ function qualify(
     typeof deps.container === "function"
       ? deps.container(receipt)
       : (deps.container ?? createContainerDeps(receipt, commandEnv, deps.podmanAuthorityDeps));
-  const containerDeps: HermesPortableContainerDeps = {
+  const containerDeps: HermesPortableLifecycleContainerDeps = {
     ...baseContainerDeps,
     authenticatedHealth: createAuthenticatedHealthCapture(receipt, capture),
   };
@@ -795,12 +804,28 @@ function measuredHealthContainerDeps(
   timing: HermesPortableLifecycleTimingRecorder,
   authenticatedHealth: NonNullable<HermesPortableContainerDeps["authenticatedHealth"]>,
 ): HermesPortableContainerDeps {
+  const podman = qualified.containerDeps.rawPodman
+    ? (args: readonly string[], timeoutMs: number) => {
+        timing.measure("healthPollCurrentness", () =>
+          qualified.containerDeps.assertPodmanTransactionCurrent!(),
+        );
+        try {
+          return timing.measure("healthContainerCommand", () =>
+            qualified.containerDeps.rawPodman!(args, timeoutMs),
+          );
+        } finally {
+          timing.measure("healthPollCurrentness", () =>
+            qualified.containerDeps.assertPodmanTransactionCurrent!(),
+          );
+        }
+      }
+    : (args: readonly string[], timeoutMs: number) =>
+        timing.measure("healthContainerCommand", () =>
+          qualified.containerDeps.podman(args, timeoutMs),
+        );
   return {
     ...qualified.containerDeps,
-    podman: (args, timeoutMs) =>
-      timing.measure("healthContainerCommand", () =>
-        qualified.containerDeps.podman(args, timeoutMs),
-      ),
+    podman,
     ...(qualified.containerDeps.assertSocketAuthority
       ? {
           assertSocketAuthority: (authority, deps) =>
@@ -809,8 +834,7 @@ function measuredHealthContainerDeps(
             ),
         }
       : {}),
-    authenticatedHealth: (script, timeoutMs) =>
-      timing.measure("healthOpenShellCommand", () => authenticatedHealth(script, timeoutMs)),
+    authenticatedHealth,
   };
 }
 
@@ -819,15 +843,25 @@ function captureRetainedLifecycleCommand(
   timing: HermesPortableLifecycleTimingRecorder,
   args: readonly string[],
   timeoutMs: number,
+  commandStage?: "execReadyCommand" | "healthOpenShellCommand",
+  currentnessStage: "execReadyCurrentness" | "healthPollCurrentness" = "healthPollCurrentness",
 ): HermesPortableLifecycleCommandResult {
-  if (!qualified.hasTransactionAuthority) return qualified.capture(args, timeoutMs);
-  timing.increment("transactionCurrentness");
-  qualified.assertTransactionCurrent();
-  try {
-    return qualified.rawCapture(args, timeoutMs);
-  } finally {
+  if (!qualified.hasTransactionAuthority) {
+    return commandStage
+      ? timing.measure(commandStage, () => qualified.capture(args, timeoutMs))
+      : qualified.capture(args, timeoutMs);
+  }
+  const assertCurrent = () => {
     timing.increment("transactionCurrentness");
-    qualified.assertTransactionCurrent();
+    timing.measure(currentnessStage, qualified.assertTransactionCurrent);
+  };
+  assertCurrent();
+  try {
+    return commandStage
+      ? timing.measure(commandStage, () => qualified.rawCapture(args, timeoutMs))
+      : qualified.rawCapture(args, timeoutMs);
+  } finally {
+    assertCurrent();
   }
 }
 
@@ -915,7 +949,14 @@ export function recoverHermesPortableSandboxLifecycle(
     const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
       args,
       timeoutMs,
-    ) => captureRetainedLifecycleCommand(qualified, timing, args, timeoutMs);
+    ) =>
+      captureRetainedLifecycleCommand(
+        qualified,
+        timing,
+        args,
+        timeoutMs,
+        args.includes("python3") ? "healthOpenShellCommand" : undefined,
+      );
     const execReady = timing.measure("execReady", () =>
       waitFor(EXEC_READY_TIMEOUT_MS, deps, (remainingMs) => {
         timing.increment("execReadyAttempt");
@@ -924,11 +965,13 @@ export function recoverHermesPortableSandboxLifecycle(
             assertLifecycleTransactionCurrent(qualified, timing, true),
           );
         }
-        const result = timing.measure("execReadyCommand", () =>
-          capture(
-            openshellExecArgs(qualified.receipt, ["true"]),
-            Math.min(COMMAND_TIMEOUT_MS, remainingMs),
-          ),
+        const result = captureRetainedLifecycleCommand(
+          qualified,
+          timing,
+          openshellExecArgs(qualified.receipt, ["true"]),
+          Math.min(COMMAND_TIMEOUT_MS, remainingMs),
+          "execReadyCommand",
+          "execReadyCurrentness",
         );
         if (qualified.hasTransactionAuthority) {
           timing.measure("execReadyCurrentness", () =>
