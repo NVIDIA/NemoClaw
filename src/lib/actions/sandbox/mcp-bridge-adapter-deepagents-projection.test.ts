@@ -173,6 +173,57 @@ describe("Deep Agents managed MCP projection safety", () => {
       "Unsafe managed Deep Agents MCP projection path: non-regular file",
     );
     expect(racedSocket.configIsSocket).toBe(true);
+
+    const replacedAfterOpenWithSymlink = runDeepAgentsConfigCommand(
+      statusCommand,
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { swapAfterManagedOpen: "symlink" },
+    );
+    expect(replacedAfterOpenWithSymlink.status).toBe(2);
+    expect(replacedAfterOpenWithSymlink.stdout.trim()).toBe("");
+    expect(replacedAfterOpenWithSymlink.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    );
+    expect(replacedAfterOpenWithSymlink.configIsSymlink).toBe(true);
+    expect(replacedAfterOpenWithSymlink.managedSymlinkTargetText).toBe(
+      `${JSON.stringify(emptyProjection, null, 2)}\n`,
+    );
+
+    const replacedAfterOpenWithFifo = runDeepAgentsConfigCommand(
+      statusCommand,
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { swapAfterManagedOpen: "fifo" },
+    );
+    expect(replacedAfterOpenWithFifo.status).toBe(2);
+    expect(replacedAfterOpenWithFifo.stdout.trim()).toBe("");
+    expect(replacedAfterOpenWithFifo.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: FIFO",
+    );
+    expect(replacedAfterOpenWithFifo.configIsFifo).toBe(true);
+
+    const replacedWhileReadingWithSymlink = runDeepAgentsConfigCommand(
+      statusCommand,
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { swapOnManagedRead: "symlink" },
+    );
+    expect(replacedWhileReadingWithSymlink.status).toBe(2);
+    expect(replacedWhileReadingWithSymlink.stdout.trim()).toBe("");
+    expect(replacedWhileReadingWithSymlink.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    );
+    expect(replacedWhileReadingWithSymlink.configIsSymlink).toBe(true);
+    expect(replacedWhileReadingWithSymlink.managedSymlinkTargetText).toBe(
+      `${JSON.stringify(emptyProjection, null, 2)}\n`,
+    );
   });
 
   it("keeps the generic diagnostic for ordinary projection inspection failures (#10754)", () => {
