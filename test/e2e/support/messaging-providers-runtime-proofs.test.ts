@@ -266,8 +266,8 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("emits distinct isolated fake Slack REST and websocket proxy commands", async () => {
-    const { calls, host } = fakeDockerHost({
+  it("returns distinct Slack REST and websocket ports from independently observed Docker state", async () => {
+    const { host } = fakeDockerHost({
       proxyContainerPorts: [FAKE_API_PROXY_READINESS_PORT, 8080, 8081],
     });
     const cleanup: CleanupAction[] = [];
@@ -283,35 +283,6 @@ describe("messaging provider installed-runtime proofs", () => {
         redactionValues: [],
         env: {},
       });
-      const [apiRun, proxyRun] = calls.filter((args) => args[0] === "run") as [string[], string[]];
-      const network = optionValue(apiRun, "--network");
-      const proxyContainer = optionValue(proxyRun, "--name");
-
-      expect(apiRun).not.toContain("-p");
-      expect(network).not.toBe("bridge");
-      expect(optionValues(apiRun, "-e")).toContain("FAKE_SLACK_API_WEBSOCKET_PORT=8081");
-      expect(optionValues(proxyRun, "-p")).toEqual([
-        OPENSHELL_BRIDGE_ADDRESS + "::" + String(FAKE_API_PROXY_READINESS_PORT),
-        OPENSHELL_BRIDGE_ADDRESS + "::8080",
-        OPENSHELL_BRIDGE_ADDRESS + "::8081",
-      ]);
-      expect(optionValues(proxyRun.slice(0, proxyRun.indexOf("node")), "-e")).toEqual([
-        "NEMOCLAW_FAKE_API_UPSTREAM=" + optionValue(apiRun, "--name"),
-        "NEMOCLAW_FAKE_API_PROXY_PORTS=8080:8080,8081:8081",
-        "NEMOCLAW_FAKE_API_PROXY_READINESS_PORT=" + String(FAKE_API_PROXY_READINESS_PORT),
-      ]);
-      expect(proxyRun).toEqual(
-        expect.arrayContaining([
-          "--read-only",
-          "--cap-drop",
-          "ALL",
-          "--security-opt",
-          "no-new-privileges",
-          "--pids-limit",
-          "32",
-        ]),
-      );
-      expect(calls).toContainEqual(["network", "connect", network, proxyContainer]);
       expect(api.port).toBe("32100");
       expect(api.alternatePort).toBe("32101");
     } finally {
@@ -510,7 +481,8 @@ describe("messaging provider installed-runtime proofs", () => {
     }
 
     const runCalls = calls.filter((args) => args[0] === "run");
-    const proxyRun = runCalls[1]!;
+    expect(runCalls).toHaveLength(2);
+    const [apiRun, proxyRun] = runCalls as [string[], string[]];
     const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1]!;
     const stateDiagnostics = ["inspect", "--format", "{{json .State}}", proxyContainer];
     const logDiagnostics = ["logs", "--tail", "100", proxyContainer];
@@ -525,6 +497,8 @@ describe("messaging provider installed-runtime proofs", () => {
       (args) => JSON.stringify(args) === JSON.stringify(removeProxy),
     );
 
+    expect(apiRun).not.toContain("--rm");
+    expect(proxyRun).not.toContain("--rm");
     expect(calls).toContainEqual(stateDiagnostics);
     expect(calls).toContainEqual(logDiagnostics);
     expect(stateDiagnosticsIndex).toBeLessThan(removeProxyIndex);
