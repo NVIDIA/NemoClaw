@@ -184,8 +184,8 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(
         payload.commands.some(
           (entry: CommandEntry) =>
-            entry.command.includes("forward start --background 18789 my-assistant") ||
-            entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+            entry.command.includes("forward service my-assistant") &&
+            /--local (?:127\.0\.0\.1|0\.0\.0\.0):18789(?:\s|$)/u.test(entry.command),
         ),
         "expected dashboard forward (loopback or WSL 0.0.0.0)",
       );
@@ -702,8 +702,10 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
     assert.ok(
-      commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+      commands.some(
+        (entry: CommandEntry) =>
+          entry.command.includes("forward service my-assistant") &&
+          entry.command.includes("--local 0.0.0.0:18789"),
       ),
       "expected remote dashboard forward target",
     );
@@ -878,8 +880,8 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(
       payload.commands.some(
         (entry: CommandEntry) =>
-          entry.command.includes("forward start --background 19000 my-assistant") ||
-          entry.command.includes("forward start --background 0.0.0.0:19000 my-assistant"),
+          entry.command.includes("forward service my-assistant") &&
+          /--local (?:127\.0\.0\.1|0\.0\.0\.0):19000(?:\s|$)/u.test(entry.command),
       ),
       "expected dashboard forward for port 19000",
     );

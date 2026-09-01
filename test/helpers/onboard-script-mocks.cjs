@@ -778,7 +778,25 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       reachable: true,
       receipt: {},
     }),
-    ensure: () => ({ action: "started", receipt: {} }),
+    ensure: (authority, endpoint) => {
+      require(path.resolve(__dirname, "../../src/lib/runner.ts")).run([
+        "openshell",
+        "--gateway",
+        authority.gatewayName,
+        "--workspace",
+        "default",
+        "forward",
+        "service",
+        authority.sandboxName,
+        "--target-port",
+        String(endpoint.targetPort || endpoint.localPort),
+        "--target-host",
+        "127.0.0.1",
+        "--local",
+        `${endpoint.localHost}:${String(endpoint.localPort)}`,
+      ]);
+      return { action: "started", receipt: {} };
+    },
     stop: () => "absent",
     stopPort: () => "absent",
     stopAll: () => 0,
