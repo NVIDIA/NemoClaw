@@ -28,6 +28,7 @@ import {
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
 import {
+  getMcpPreparationRuntimeSelection,
   type McpRebuildPreparation,
   postRestoreCompleted,
   printMcpRestoreRecovery,
@@ -45,6 +46,7 @@ export {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
+export { getMcpPreparationRuntimeSelection } from "./rebuild-mcp-phase";
 
 const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
 
@@ -81,6 +83,7 @@ export interface RebuildPostRestorePhaseInput {
   messagingPlan: SandboxMessagingPlan | null;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
+  mcpRuntimeSelection?: McpRebuildPreparation["runtimeSelection"];
   restoreSucceeded: boolean;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   staleRecovery: boolean;
@@ -120,6 +123,7 @@ export async function runRebuildPostRestorePhase(
     messagingPlan,
     backupManifest,
     mcpEntries,
+    mcpRuntimeSelection,
     restoreSucceeded,
     hermesCronRestoreIdentity,
     staleRecovery,
@@ -170,7 +174,10 @@ export async function runRebuildPostRestorePhase(
       sandboxName,
       "openclaw doctor --fix",
       OPENCLAW_DOCTOR_TIMEOUT_MS,
-      { allowLocalDockerFallback: false },
+      {
+        allowLocalDockerFallback: false,
+        ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
+      },
     );
     log(`doctor --fix: exit=${doctorResult?.status ?? "unverified"}`);
     if (doctorResult === null) {
@@ -189,10 +196,15 @@ export async function runRebuildPostRestorePhase(
 
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
-    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
+    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
-      await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
+      await reapplyMessagingManifestAfterOpenClawDoctor(
+        sandboxName,
+        messagingPlan,
+        log,
+        mcpRuntimeSelection,
+      );
     } catch (error) {
       log(
         `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -205,7 +217,7 @@ export async function runRebuildPostRestorePhase(
     log("Restoring mutable OpenClaw config permissions after post-restore config writes");
     let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;
     try {
-      permRepair = shields.repairMutableConfigPerms(sandboxName);
+      permRepair = shields.repairMutableConfigPerms(sandboxName, mcpRuntimeSelection);
     } catch (error) {
       mutablePermsRepairUnverified = true;
       console.error(
@@ -237,6 +249,7 @@ export async function runRebuildPostRestorePhase(
     const finalizedMessagingPlan = finalizePendingMessagingRemovalsAfterRestore(
       effectiveMessagingPlan,
       log,
+      mcpRuntimeSelection,
     );
     if (finalizedMessagingPlan !== effectiveMessagingPlan && finalizedMessagingPlan) {
       if (
@@ -264,15 +277,22 @@ export async function runRebuildPostRestorePhase(
   const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
+    mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
   );
-  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
+  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
+    sandboxName,
+    mcpEntries,
+    mcpRuntimeSelection,
+  ));
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
-    if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
+    if (
+      !refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log, mcpRuntimeSelection)
+    ) {
       mutableConfigHashRefreshUnverified = true;
-    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log)) {
+    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)) {
       finalMutableConfigHashUnverified = true;
     }
   }
@@ -282,12 +302,14 @@ export async function runRebuildPostRestorePhase(
         targetAgentName,
         hermesGatewayRestartState,
         hermesCronRestoreIdentity,
+        mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
       )
     : {
         state: verifyHermesGatewayAfterStateRestore(
           sandboxName,
           targetAgentName,
           hermesGatewayRestartState,
+          mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
         ),
         replacementIdentity: undefined,
       };
@@ -363,14 +385,20 @@ export async function runRebuildPostRestorePhase(
     bail("Failed to re-apply shields lockdown.");
     return;
   }
-  if (!ensureMessagingHostForwardAfterRebuild(sandboxName, effectiveMessagingPlan)) {
+  if (
+    !ensureMessagingHostForwardAfterRebuild(
+      sandboxName,
+      effectiveMessagingPlan,
+      mcpRuntimeSelection,
+    )
+  ) {
     messagingHostForwardUnverified = true;
   }
   if (
     targetAgentName === "openclaw" &&
     !mcpBridgeRestoreUnverified &&
     !mutableConfigHashRefreshUnverified &&
-    !verifyFinalMutableOpenClawConfigHash(sandboxName, log)
+    !verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)
   ) {
     finalMutableConfigHashUnverified = true;
   }

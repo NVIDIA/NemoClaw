@@ -50,7 +50,11 @@ import {
   type RebuildRoutePreflightReceipt,
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
-import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
+import {
+  pinRebuildTargetGatewayForReadiness,
+  prepareRebuildTargetPreflights,
+  resolveRebuildMcpRuntimeSelection,
+} from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
   type RebuildSandboxExecutionOptions,
@@ -138,7 +142,6 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxName, bail)) return null;
-  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   // #6376: refuse a stuck MCP destroy transaction up front — before backup,
   // image prep, or the old-sandbox delete. The only MCP marker check used to
   // live inside the destroy phase, which runs AFTER the backup phase, so a
@@ -203,10 +206,15 @@ export async function runRebuildPreflightPhase(
     return null;
   }
   const agentName = getRebuildAgentDisplayName(sandboxName);
+  const mcpRuntimeSelection = resolveRebuildMcpRuntimeSelection(sandboxEntry, bail);
+  if (mcpRuntimeSelection) {
+    pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
+  }
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const versionCheck = await runRebuildGatewayIntentPreflight({
     checkGatewaySchema: () =>
       isDcodeRebuildAgent(rebuildAgent) ||
-      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail),
+      checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection),
     confirmIntent: () =>
       confirmRebuildIntent(
         sandboxName,
@@ -231,8 +239,13 @@ export async function runRebuildPreflightPhase(
     log,
     bail,
     deps: {
-      checkGatewaySchema: (name, scopedBail) =>
-        checkRebuildGatewaySchemaPreflight(name, expectedSandboxEntry, scopedBail),
+      checkGatewaySchema: (name, scopedBail, runtimeSelection) =>
+        checkRebuildGatewaySchemaPreflight(
+          name,
+          expectedSandboxEntry,
+          scopedBail,
+          runtimeSelection,
+        ),
       preflightCredentials: (_name, entry, scopedLog, scopedBail) =>
         preflightRebuildCredentials(entry, scopedLog, scopedBail),
       // Non-DCode rebuilds stay on the existing typed base-image preflight.
@@ -262,6 +275,7 @@ export async function runRebuildPreflightPhase(
         requestedDcodeAutoApprovalMode,
         requestedObservabilityEnabled,
         allowLegacyManagedImageRecovery,
+        mcpRuntimeSelection,
         // A validated prepared backup is the only path allowed to reconstruct
         // a missing gateway provider and route during recreate. The exact
         // endpoint, credential, image, and registry checks still run before
@@ -297,6 +311,7 @@ export async function runRebuildPreflightPhase(
           {
             resolutionHint: preparedTarget.recreateOptions.baseImageResolutionHint,
           },
+          preparedTarget.recreateOptions.runtimeSelection,
         );
         if (!imageReady) return null;
         if (!preparedTarget.recreateOptions.managedWorkloadRebuild) {

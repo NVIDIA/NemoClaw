@@ -149,6 +149,7 @@ describe("Hermes accepted replacement recovery", () => {
       window: { relocked: false, wasLocked: false },
       staleSandboxWasLocked: false,
       relock: relockShields,
+      bindRuntimeSelection: vi.fn(),
     });
     phaseMocks.runBackup.mockReturnValue({
       backupManifest: {
@@ -215,6 +216,91 @@ describe("Hermes accepted replacement recovery", () => {
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
     expect(console.log).toHaveBeenCalledWith(
       `  Backup is preserved at: ${recoveryBackupPath}`,
+    );
+  });
+
+  it("reuses one recorded MCP target while accepting and restoring a replacement (#10514)", async () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const preflightResult = await phaseMocks.runPreflight.getMockImplementation()!();
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...preflightResult,
+      sandboxEntry: {
+        name: "alpha",
+        mcp: { bridges: { github: { server: "github" } } },
+      },
+      recreateOptions: {
+        ...preflightResult.recreateOptions,
+        runtimeSelection,
+      },
+    });
+    phaseMocks.openRecreateJournal.mockImplementation((input) => ({
+      id: "journal-1",
+      acceptedTarget: true,
+      sourceConfirmedAbsent: true,
+      gatewayAuthority,
+      targetGeneration: "generation-1",
+      targetIntentFingerprint: "intent-1",
+      runtimeSelection: input.resolveRuntimeSelection(),
+      completeAcceptedTarget,
+      markDeleting: vi.fn(),
+      observeSourceForDelete: vi.fn(),
+      confirmDeleted: vi.fn(),
+    }));
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.runPostRestore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpRuntimeSelection: runtimeSelection,
+      }),
+    );
+  });
+
+  it("carries an interrupted MCP journal target into continued deletion (#10514)", async () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const preflightResult = await phaseMocks.runPreflight.getMockImplementation()!();
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...preflightResult,
+      sandboxEntry: {
+        name: "alpha",
+        mcp: { bridges: { github: { server: "github" } } },
+      },
+      recreateOptions: {
+        ...preflightResult.recreateOptions,
+        runtimeSelection,
+      },
+    });
+    phaseMocks.openRecreateJournal.mockReturnValue({
+      id: "journal-1",
+      acceptedTarget: false,
+      sourceConfirmedAbsent: false,
+      gatewayAuthority,
+      targetGeneration: "generation-1",
+      targetIntentFingerprint: "intent-1",
+      runtimeSelection,
+      completeAcceptedTarget,
+      markDeleting: vi.fn(),
+      observeSourceForDelete: vi.fn(),
+      confirmDeleted: vi.fn(),
+    });
+    phaseMocks.runDestroy.mockRejectedValue(new Error("stop after selected destroy input"));
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("stop after selected destroy input");
+
+    expect(phaseMocks.runDestroy).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeSelection }),
     );
   });
 

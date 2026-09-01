@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import * as shields from "../../shields";
 import { isShieldsTimerDeadlineExpired } from "../../state/mcp-lifecycle-lock/shields-timer-authority";
 
@@ -18,6 +19,7 @@ export interface BackupShieldsWindowOptions {
   shieldsUpCommand: string;
   deferAutoRestoreWhileOwnerAlive?: boolean;
   allowLegacyHermesProtocol?: boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 export function openBackupShieldsWindow(
@@ -102,6 +104,7 @@ export function relockBackupShieldsWindow(
       throwOnError: true,
       ...(options.allowLegacyHermesProtocol ? { allowLegacyHermesProtocol: true } : {}),
       ...(policySnapshotRecovery ? { policySnapshotRecovery } : {}),
+      ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
     });
     console.log(`  ${G}✓${R} Shields restored to UP`);
     window.relocked = true;

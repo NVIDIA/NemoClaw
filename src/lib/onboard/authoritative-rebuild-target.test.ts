@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   authoritativeRebuildSandboxFlowOptions,
   authoritativeRebuildRuntimePreflightOptions,
+  beginAuthoritativeRebuildRuntimeSelectionScope,
   type AuthoritativeRebuildTargetDeps,
   type AuthoritativeRebuildPreflightOptions,
   preflightAuthoritativeRebuildTarget,
@@ -153,6 +154,48 @@ describe("authoritative rebuild gateway binding", () => {
   });
 });
 
+describe("authoritative rebuild OpenShell runtime selection", () => {
+  it("replaces hostile ambient selectors for the inner onboard and restores them (#10514)", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "hostile-gateway",
+      OPENSHELL_GATEWAY_AUTH_TOKEN: "hostile-token",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://hostile.invalid",
+      OPENSHELL_LOCAL_TLS_DIR: "/hostile/tls",
+      OPENSHELL_WORKSPACE: "hostile-workspace",
+    };
+    const previous = { ...env };
+    const restore = beginAuthoritativeRebuildRuntimeSelectionScope(
+      {
+        authoritativeResumeConfig: true,
+        onboardLockAlreadyHeld: true,
+        recreateSandbox: true,
+        resume: true,
+        targetGatewayName: "nemoclaw-8081",
+        targetGatewayPort: 8081,
+        runtimeSelection: {
+          gatewayName: "nemoclaw-8081",
+          localTlsDir: "/authority/tls",
+          workspace: "default",
+        },
+      },
+      env,
+    );
+
+    expect(env).toMatchObject({
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "nemoclaw-8081",
+      OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+      OPENSHELL_WORKSPACE: "default",
+    });
+    expect(env.OPENSHELL_GATEWAY_AUTH_TOKEN).toBeUndefined();
+    expect(env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+
+    restore();
+    expect(env).toEqual(previous);
+  });
+});
+
 describe("prepared provider reconfiguration handoff", () => {
   const providerTarget = {
     sandboxName: "alpha",
@@ -291,28 +334,83 @@ describe("authoritative rebuild target preflight", () => {
     expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
   });
 
-  it("pins the requested gateway for route and forward checks, then restores it", async () => {
-    process.env.OPENSHELL_GATEWAY = "before";
-    const seen: string[] = [];
-    const checkPort = vi.fn();
+  it("replaces hostile selectors for every preflight check, then restores them (#10514)", async () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "hostile-gateway",
+      OPENSHELL_GATEWAY_AUTH_TOKEN: "hostile-auth-token",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://hostile.invalid",
+      OPENSHELL_LOCAL_TLS_DIR: "/hostile/tls",
+      OPENSHELL_TOKEN: "hostile-token",
+      OPENSHELL_WORKSPACE: "hostile-workspace",
+    };
+    const previous = { ...env };
+    const seen: NodeJS.ProcessEnv[] = [];
+    const record = (): void => {
+      seen.push({ ...env });
+    };
     await preflightAuthoritativeRebuildTarget(
-      target,
+      {
+        ...target,
+        runtimeSelection: {
+          gatewayName: "nemoclaw-12345",
+          localTlsDir: "/authority/tls",
+          workspace: "default",
+        },
+      },
       deps({
+        env,
+        resolveBaselinePolicy: vi.fn(() => {
+          record();
+          return {};
+        }),
+        bindGatewayAuthority: vi.fn(record),
+        runFatalRuntimePreflight: vi.fn(record),
+        ensureOpenshell: vi.fn(record),
+        assertGatewayReadiness: vi.fn(record),
         inferenceRouteState: vi.fn((): InferenceRouteState => {
-          seen.push(`route:${process.env.OPENSHELL_GATEWAY}`);
+          record();
           return "matched";
         }),
         captureForwardList: vi.fn(() => {
-          seen.push(`forward:${process.env.OPENSHELL_GATEWAY}`);
+          record();
           return "alpha 127.0.0.1 18789 42 active";
         }),
-        checkPort,
       }),
     );
 
-    expect(seen).toEqual(["route:nemoclaw-12345", "forward:nemoclaw-12345"]);
-    expect(checkPort).not.toHaveBeenCalled();
-    expect(process.env.OPENSHELL_GATEWAY).toBe("before");
+    const selectedEnv = {
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "nemoclaw-12345",
+      OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+      OPENSHELL_WORKSPACE: "default",
+    };
+    expect(seen).toEqual([
+      selectedEnv,
+      selectedEnv,
+      selectedEnv,
+      selectedEnv,
+      selectedEnv,
+      selectedEnv,
+      selectedEnv,
+    ]);
+    expect(env).toEqual(previous);
+  });
+
+  it("rejects a runtime selection for another authoritative gateway (#10514)", async () => {
+    const env: NodeJS.ProcessEnv = { OPENSHELL_GATEWAY: "before" };
+    const previous = { ...env };
+
+    await expect(
+      preflightAuthoritativeRebuildTarget(
+        {
+          ...target,
+          runtimeSelection: { gatewayName: "nemoclaw-9999", workspace: "default" },
+        },
+        deps({ env }),
+      ),
+    ).rejects.toThrow("does not match authoritative gateway 'nemoclaw-12345'");
+    expect(env).toEqual(previous);
   });
 
   it("rejects an exact provider/model route mismatch", async () => {
@@ -372,19 +470,33 @@ describe("authoritative rebuild target preflight", () => {
     ).rejects.toThrow("occupied by node (PID 99)");
   });
 
-  it("restores gateway scope when a fatal runtime check throws", async () => {
-    process.env.OPENSHELL_GATEWAY = "before";
+  it("restores the complete runtime scope when a fatal check throws (#10514)", async () => {
+    const env: NodeJS.ProcessEnv = {
+      OPENSHELL_GATEWAY: "before",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://before.invalid",
+      OPENSHELL_TOKEN: "before-token",
+      OPENSHELL_WORKSPACE: "before-workspace",
+    };
+    const previous = { ...env };
     await expect(
       preflightAuthoritativeRebuildTarget(
-        target,
+        {
+          ...target,
+          runtimeSelection: {
+            gatewayName: "nemoclaw-12345",
+            localTlsDir: "/authority/tls",
+            workspace: "default",
+          },
+        },
         deps({
+          env,
           runFatalRuntimePreflight: vi.fn(() => {
             throw new Error("fatal runtime gate");
           }),
         }),
       ),
     ).rejects.toThrow("fatal runtime gate");
-    expect(process.env.OPENSHELL_GATEWAY).toBe("before");
+    expect(env).toEqual(previous);
   });
 
   it("awaits async runtime readiness before OpenShell and route checks", async () => {

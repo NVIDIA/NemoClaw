@@ -23,6 +23,8 @@ import {
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
+  replaceOpenShellRuntimeSelectionEnv,
+  snapshotOpenShellEnv,
 } from "../../gateway-runtime-action";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
@@ -39,6 +41,7 @@ import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
@@ -48,6 +51,7 @@ import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-s
 import * as snapshotBackup from "./snapshot/backup-authority";
 
 export { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
+export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -135,9 +139,19 @@ export async function ensureRebuildTargetGatewaySelected(
   sb: RebuildSandboxEntry,
   log: (message: string) => void,
   bail: (message: string, code?: number) => never,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean> {
   const gatewayName = resolveSandboxGatewayName(sb);
-  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    bail(
+      `OpenShell runtime selection '${runtimeSelection.gatewayName}' does not match recorded gateway '${gatewayName}'`,
+    );
+    return false;
+  }
+  const recovery = await recoverNamedGatewayRuntime({
+    gatewayName,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  });
   if (!recovery.recovered || recovery.after.state !== "healthy_named") {
     console.error("");
     console.error(
@@ -150,7 +164,8 @@ export async function ensureRebuildTargetGatewaySelected(
     bail(`Could not select healthy gateway '${gatewayName}' for sandbox '${sandboxName}'`);
     return false;
   }
-  process.env.OPENSHELL_GATEWAY = gatewayName;
+  if (runtimeSelection) replaceOpenShellRuntimeSelectionEnv(process.env, runtimeSelection);
+  else process.env.OPENSHELL_GATEWAY = gatewayName;
   log(`Pinned rebuild subprocesses to target gateway '${gatewayName}'`);
   return true;
 }
@@ -476,8 +491,7 @@ export function backupSandboxStateForRebuild(
   );
   if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
-    const allStateDirsFailed =
-      backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
+    const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
     if (allStateDirsFailed && backup.backedUpFiles.length > 0) {
       const dirCount = backup.failedDirs.length;
       const fileCount = backup.backedUpFiles.length;
@@ -547,10 +561,11 @@ export function backupSandboxStateForRebuild(
 export function warnUnpreservedUserManagedFiles(
   sandboxName: string,
   log: (msg: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   let probe: userManagedFilesProbe.UserManagedFilesProbe;
   try {
-    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName);
+    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName, runtimeSelection);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log(`User-managed file probe errored: ${message}`);

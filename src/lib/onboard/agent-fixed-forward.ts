@@ -15,6 +15,7 @@ export interface AgentFixedForwardDeps {
   runOpenshell(args: string[], opts?: Record<string, unknown>): CommandResult;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
   openshellArgv(args: string[]): string[];
+  openshellSpawnEnv?: NodeJS.ProcessEnv;
   cliName(): string;
   sleep(seconds: number): void;
 }
@@ -42,6 +43,7 @@ export function ensureAgentFixedForward(
   stopForwardForSandbox(port);
   const startForward = buildDetachedForwardStartSpawn(
     deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
+    deps.openshellSpawnEnv,
   );
   const { ok, diagnostic } = runDetachedForwardStartWithRetries(
     (stdio) => {

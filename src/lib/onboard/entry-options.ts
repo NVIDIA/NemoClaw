@@ -3,6 +3,7 @@
 
 import { isNonInteractiveEnv } from "../core/non-interactive";
 import { getNameValidationGuidance } from "../name-validation";
+import { beginAuthoritativeRebuildRuntimeSelectionScope } from "./authoritative-rebuild-target";
 import { cliDisplayName } from "./branding";
 import {
   canonicalPlaceholderKeys,
@@ -10,6 +11,7 @@ import {
   parseExtraPlaceholderKeys,
 } from "./extra-placeholder-keys";
 import { RESERVED_SANDBOX_NAMES } from "./sandbox-agent";
+import type { OnboardOptions } from "./types";
 import {
   requireStationExpressResumeIntent,
   type StationExpressSessionLike,
@@ -73,11 +75,19 @@ interface DefaultRunEntryState {
 }
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
-type ResumableEntryOptions = NonInteractiveEntryOptions & {
-  resume?: boolean;
-  fresh?: boolean;
-  apfInterceptorRequested?: boolean | null;
-};
+type ResumableEntryOptions = Pick<
+  OnboardOptions,
+  | "apfInterceptorRequested"
+  | "authoritativeResumeConfig"
+  | "fresh"
+  | "nonInteractive"
+  | "onboardLockAlreadyHeld"
+  | "recreateSandbox"
+  | "resume"
+  | "runtimeSelection"
+  | "targetGatewayName"
+  | "targetGatewayPort"
+>;
 
 const PROVIDER_INTENT_ENV_KEYS = [
   "NEMOCLAW_PROVIDER",
@@ -255,7 +265,12 @@ export function wrapOnboard<Options extends ResumableEntryOptions>(
       options?.apfInterceptorRequested === true,
       process.env,
     );
-    await run(options);
+    const restoreRuntimeSelection = beginAuthoritativeRebuildRuntimeSelectionScope(options ?? {});
+    try {
+      await run(options);
+    } finally {
+      restoreRuntimeSelection();
+    }
   };
   return wrapStationExpressOnboard(
     withNonInteractiveEnvironment(guardProviderlessInput),

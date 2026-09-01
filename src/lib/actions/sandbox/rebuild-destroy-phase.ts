@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { G, R } from "../../cli/terminal-style";
 import { waitUntil } from "../../core/wait";
@@ -41,10 +43,13 @@ export interface RebuildDestroyPhaseInput {
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
   validateAfterMcpPreparation?: (
     preparation: McpRebuildPreparation,
   ) => Promise<RebuildDeleteValidationResult>;
-  validateAtDeleteEdge?: () => RebuildDeleteValidationResult;
+  validateAtDeleteEdge?: (
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ) => RebuildDeleteValidationResult;
   cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
@@ -79,6 +84,7 @@ interface RebuildDeleteAbsenceDeps {
   };
   now?: () => number;
   sleep?: (milliseconds: number) => void;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 const REBUILD_DELETE_ABSENCE_MAX_ATTEMPTS = 20;
@@ -124,6 +130,9 @@ export function waitForRebuildDeleteAbsence(
   log: RebuildLog,
   deps: RebuildDeleteAbsenceDeps = {},
 ): boolean {
+  if (deps.runtimeSelection && deps.runtimeSelection.gatewayName !== gatewayName) {
+    throw new Error("Rebuild delete gateway does not match the frozen OpenShell target.");
+  }
   const now = deps.now ?? Date.now;
   const deadlineMs = now() + OPENSHELL_PROBE_TIMEOUT_MS;
   const captureSandboxGet =
@@ -134,6 +143,12 @@ export function waitForRebuildDeleteAbsence(
         includeStderr: true,
         includeStreams: true,
         timeout: timeoutMs,
+        ...(deps.runtimeSelection
+          ? {
+              env: buildSelectedOpenShellSubprocessEnv(deps.runtimeSelection),
+              replaceEnv: true,
+            }
+          : {}),
       });
       return probe;
     });
@@ -180,12 +195,17 @@ function reconcileFailedSandboxDelete(
   sandboxName: string,
   sandboxEntry: RebuildSandboxEntry,
   log: RebuildLog,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): PostDeleteReconciliation {
   let gatewayName: string;
   try {
     gatewayName = resolveSandboxGatewayName(sandboxEntry);
   } catch {
     log("Post-delete reconciliation could not resolve the recorded sandbox gateway.");
+    return { state: "ambiguous", phase: null, status: null };
+  }
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    log("Post-delete reconciliation target does not match the frozen OpenShell target.");
     return { state: "ambiguous", phase: null, status: null };
   }
 
@@ -195,6 +215,12 @@ function reconcileFailedSandboxDelete(
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      ...(runtimeSelection
+        ? {
+            env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+            replaceEnv: true,
+          }
+        : {}),
     });
   } catch {
     log(`Post-delete reconciliation could not query recorded gateway '${gatewayName}'.`);
@@ -277,6 +303,7 @@ export async function runRebuildDestroyPhase(
         input.force === true,
         relockShieldsIfNeeded,
         bail,
+        ...(input.runtimeSelection ? [input.runtimeSelection] : []),
       );
       return preparation;
     },
@@ -285,7 +312,9 @@ export async function runRebuildDestroyPhase(
       // fingerprints match the registry. Probe afterward so a Deep Agents
       // user `.mcp.json` is not confused with the separate managed projection.
       // This can block on SSH, so it must finish before the final DCode check.
-      if (!staleRecovery) warnUnpreservedUserManagedFiles(sandboxName, log);
+      if (!staleRecovery) {
+        warnUnpreservedUserManagedFiles(sandboxName, log, preparation.runtimeSelection);
+      }
       if (validateAfterMcpPreparation) {
         let validation: RebuildDeleteValidationResult;
         try {
@@ -303,6 +332,7 @@ export async function runRebuildDestroyPhase(
           sandboxName,
           preparation.detachedProviderEntries,
           preparation.scrubbedAdapterEntries,
+          preparation.runtimeSelection,
         );
         relockShieldsIfNeeded(true);
         bail(
@@ -322,6 +352,27 @@ export async function runRebuildDestroyPhase(
   if (!mcpPreparation) return null;
   const rebuildDetachedMcpProviderEntries = mcpPreparation.detachedProviderEntries;
   const rebuildScrubbedMcpAdapterEntries = mcpPreparation.scrubbedAdapterEntries;
+  const rebuildMcpRuntimeSelection = input.runtimeSelection ?? mcpPreparation.runtimeSelection;
+  if (
+    rebuildMcpRuntimeSelection &&
+    rebuildMcpRuntimeSelection.gatewayName !== deleteTarget.gatewayName
+  ) {
+    const recordedGatewayName = rebuildMcpRuntimeSelection.gatewayName;
+    const observedGatewayName = deleteTarget.gatewayName;
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+      rebuildMcpRuntimeSelection,
+    );
+    relockShieldsIfNeeded(true);
+    bail(
+      mcpRecoveryFailure
+        ? `Rebuild delete target gateway '${observedGatewayName}' does not match recorded OpenShell gateway '${recordedGatewayName}'. NemoClaw did not delete the original sandbox. MCP provider recovery also failed: ${mcpRecoveryFailure}. Restore recorded gateway '${recordedGatewayName}', confirm it is healthy, then retry.`
+        : `Rebuild delete target gateway '${observedGatewayName}' does not match recorded OpenShell gateway '${recordedGatewayName}'. NemoClaw did not delete the original sandbox. Restore recorded gateway '${recordedGatewayName}', confirm it is healthy, then retry.`,
+    );
+    return null;
+  }
 
   // Exec-unavailable recovery deliberately made no MCP mutation during
   // preparation. Re-prove target, policy, provider, and registry state while
@@ -340,6 +391,7 @@ export async function runRebuildDestroyPhase(
         sandboxName,
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
+        rebuildMcpRuntimeSelection,
       );
       relockShieldsIfNeeded(true);
       const detail = error instanceof Error ? error.message : String(error);
@@ -359,6 +411,7 @@ export async function runRebuildDestroyPhase(
       sandboxName,
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
+      rebuildMcpRuntimeSelection,
     );
     relockShieldsIfNeeded(true);
     bail(
@@ -372,7 +425,7 @@ export async function runRebuildDestroyPhase(
   if (validateAtDeleteEdge) {
     let validation: RebuildDeleteValidationResult;
     try {
-      validation = validateAtDeleteEdge();
+      validation = validateAtDeleteEdge(rebuildMcpRuntimeSelection);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       log(`Unexpected delete-edge validation failure: ${redactFull(detail)}`);
@@ -386,6 +439,7 @@ export async function runRebuildDestroyPhase(
         sandboxName,
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
+        rebuildMcpRuntimeSelection,
       );
       relockShieldsIfNeeded(true);
       bail(
@@ -403,13 +457,14 @@ export async function runRebuildDestroyPhase(
   // running sandbox is left without its MCP wiring.
   let sourcePresence: RebuildRecreateSourcePresence;
   try {
-    sourcePresence = recreateJournal.observeSourceForDelete();
+    sourcePresence = recreateJournal.observeSourceForDelete(rebuildMcpRuntimeSelection);
     recreateJournal.markDeleting();
   } catch (error) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
+      rebuildMcpRuntimeSelection,
     );
     relockShieldsIfNeeded(true);
     const detail = error instanceof Error ? error.message : String(error);
@@ -431,12 +486,23 @@ export async function runRebuildDestroyPhase(
       : runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
           ignoreError: true,
           stdio: ["ignore", "pipe", "pipe"],
+          ...(rebuildMcpRuntimeSelection
+            ? {
+                env: buildSelectedOpenShellSubprocessEnv(rebuildMcpRuntimeSelection),
+                replaceEnv: true,
+              }
+            : {}),
         });
   const alreadyGone = deleteResult === null || getSandboxDeleteOutcome(deleteResult).alreadyGone;
   if (deleteResult) log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
   let deletionConfirmed = alreadyGone;
   if (deleteResult && deleteResult.status !== 0) {
-    const reconciledDelete = reconcileFailedSandboxDelete(sandboxName, input.sandboxEntry, log);
+    const reconciledDelete = reconcileFailedSandboxDelete(
+      sandboxName,
+      input.sandboxEntry,
+      log,
+      rebuildMcpRuntimeSelection,
+    );
     if (reconciledDelete.state === "deleted") {
       log("Delete returned nonzero, but exact post-delete state confirms sandbox removal.");
       deletionConfirmed = true;
@@ -449,6 +515,7 @@ export async function runRebuildDestroyPhase(
         sandboxName,
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
+        rebuildMcpRuntimeSelection,
       );
       if (mcpRecoveryFailure) {
         console.error(
@@ -484,7 +551,9 @@ export async function runRebuildDestroyPhase(
       return null;
     }
   }
-  deletionConfirmed ||= waitForRebuildDeleteAbsence(sandboxName, gatewayName, log);
+  deletionConfirmed ||= waitForRebuildDeleteAbsence(sandboxName, gatewayName, log, {
+    runtimeSelection: rebuildMcpRuntimeSelection,
+  });
   if (!deletionConfirmed) {
     console.error(
       "  Sandbox delete was accepted, but OpenShell did not confirm that the sandbox is absent.",
@@ -498,7 +567,7 @@ export async function runRebuildDestroyPhase(
     return null;
   }
   try {
-    recreateJournal.confirmDeleted();
+    recreateJournal.confirmDeleted(rebuildMcpRuntimeSelection);
   } catch (error) {
     console.error(
       "  Sandbox delete was accepted, but the replacement journal could not confirm absence.",

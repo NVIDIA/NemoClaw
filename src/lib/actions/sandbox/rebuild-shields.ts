@@ -6,10 +6,15 @@ import {
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
 } from "./backup-shields-window";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 
 export type RebuildShieldsWindow = BackupShieldsWindow;
 
-function rebuildShieldsWindowOptions(sandboxName: string, cliName: string) {
+function rebuildShieldsWindowOptions(
+  sandboxName: string,
+  cliName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
   return {
     operation: "rebuild backup",
     reason: "auto-unlock for rebuild",
@@ -24,6 +29,7 @@ function rebuildShieldsWindowOptions(sandboxName: string, cliName: string) {
     // Only the replacement flow may use this descriptor-safe compatibility
     // transition; ordinary backup-all keeps the strict current protocol.
     allowLegacyHermesProtocol: true,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   };
 }
 
@@ -39,11 +45,12 @@ export function relockRebuildShieldsWindow(
   window: RebuildShieldsWindow,
   sandboxStillExists: boolean,
   cliName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): boolean {
   return relockBackupShieldsWindow(
     sandboxName,
     window,
     sandboxStillExists,
-    rebuildShieldsWindowOptions(sandboxName, cliName),
+    rebuildShieldsWindowOptions(sandboxName, cliName, runtimeSelection),
   );
 }

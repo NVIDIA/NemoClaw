@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   ),
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
   prepareMcpForRebuild: vi.fn(),
+  resolveMcpPreparationRuntimeSelection: vi.fn(),
   reattachMcpAfterDeleteFailure: vi.fn(),
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   runOpenshell: vi.fn(
     (
       _args: string[],
+      _options?: Record<string, unknown>,
     ): {
       status: number | null;
       stdout: string;
@@ -69,6 +71,7 @@ vi.mock("./rebuild-flow-helpers", () => ({
 vi.mock("./rebuild-mcp-phase", () => ({
   prepareMcpForRebuild: mocks.prepareMcpForRebuild,
   reattachMcpAfterDeleteFailure: mocks.reattachMcpAfterDeleteFailure,
+  resolveMcpPreparationRuntimeSelection: mocks.resolveMcpPreparationRuntimeSelection,
 }));
 
 import { runRebuildDestroyPhase, waitForRebuildDeleteAbsence } from "./rebuild-destroy-phase";
@@ -283,8 +286,22 @@ describe("rebuild destroy phase", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
   });
 
-  it("pins deletion to the recorded gateway when ambient selection changes (#7062)", async () => {
+  it("pins deletion and the delete-edge user-file probe when ambient selection changes (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-29080");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      runtimeSelection,
+    });
     mocks.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "openclaw",
@@ -304,6 +321,7 @@ describe("rebuild destroy phase", () => {
       recreateJournal: stubRecreateJournal(),
       backupManifest: null,
       force: true,
+      runtimeSelection,
       log: vi.fn(),
       bail: vi.fn((message: string): never => {
         throw new Error(message);
@@ -314,8 +332,60 @@ describe("rebuild destroy phase", () => {
 
     expect(mocks.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw-19080", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.objectContaining({
+        ignoreError: true,
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-19080",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
     );
+    expect(mocks.warnUnpreservedUserManagedFiles).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Function),
+      runtimeSelection,
+    );
+    const deleteOptions = mocks.runOpenshell.mock.calls.find(
+      ([args]) => args[0] === "sandbox" && args[1] === "delete",
+    )?.[1] as { env?: Record<string, string> } | undefined;
+    expect(deleteOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-19080", "alpha"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-19080",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+  });
+
+  it("refuses deletion when the frozen OpenShell target does not match (#10514)", async () => {
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
+        backupManifest: null,
+        force: true,
+        runtimeSelection: { gatewayName: "nemoclaw-19080", workspace: "default" },
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow(
+      "Rebuild delete target gateway 'nemoclaw' does not match recorded OpenShell gateway 'nemoclaw-19080'. NemoClaw did not delete the original sandbox. Restore recorded gateway 'nemoclaw-19080', confirm it is healthy, then retry.",
+    );
+
+    expectNoSandboxDelete(mocks.runOpenshell);
   });
 
   it.each([
@@ -379,6 +449,7 @@ describe("rebuild destroy phase", () => {
         "alpha",
         [{ server: "github" }],
         [],
+        undefined,
       );
       expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
       expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -420,7 +491,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
@@ -429,11 +500,17 @@ describe("rebuild destroy phase", () => {
   it("retains read-only MCP ownership when sandbox deletion fails (#7062)", async () => {
     const revalidateBeforeDelete = vi.fn().mockResolvedValue(undefined);
     const entry = { server: "github" };
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
     mocks.prepareMcpForRebuild.mockResolvedValue({
       entries: [entry],
       detachedProviderEntries: [],
       scrubbedAdapterEntries: [],
       revalidateBeforeDelete,
+      runtimeSelection,
     });
     mocks.runOpenshell
       .mockReturnValueOnce({ status: 9, stdout: "", stderr: "delete failed" })
@@ -463,7 +540,12 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [],
+      [],
+      runtimeSelection,
+    );
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -472,7 +554,14 @@ describe("rebuild destroy phase", () => {
     expect(mocks.runOpenshell).toHaveBeenNthCalledWith(
       2,
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
-      expect.any(Object),
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
     );
   });
 
@@ -1022,6 +1111,7 @@ describe("rebuild destroy phase", () => {
       "alpha",
       [{ providerName: "nemoclaw-mcp-alpha-github" }],
       [{ server: "github" }],
+      undefined,
     );
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     expect(mocks.runOpenshell).not.toHaveBeenCalledWith(
