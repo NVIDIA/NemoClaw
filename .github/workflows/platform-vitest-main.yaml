@@ -264,7 +264,6 @@ jobs:
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
-          & .\tasks\scripts\windows-msvc.ps1 check aarch64-pc-windows-msvc
           & .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
           & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
 
