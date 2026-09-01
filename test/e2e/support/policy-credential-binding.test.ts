@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/policy-boundary-build.ts";
+import { createArtifactSink } from "../fixtures/artifacts.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/policy-credential-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
@@ -41,8 +41,27 @@ describe("E2E policy credential binding", () => {
       killSignal: "SIGKILL",
       timeout: 15_000,
     });
-    await requireSuccessfulPolicyBoundaryBuild(result);
-  });
+    switch (result.status) {
+      case 0:
+        return;
+      default: {
+        const diagnosticPath = await createArtifactSink("policy-credential-binding").writeText(
+          "policy-boundary-build.log",
+          [result.stderr, result.stdout, result.error?.message].filter(Boolean).join("\n"),
+        );
+        const reason = result.error
+          ? (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT"
+            ? "timed out"
+            : "failed to execute"
+          : result.signal
+            ? `terminated by ${result.signal}`
+            : `exited with status ${String(result.status)}`;
+        throw new Error(
+          `Policy boundary build ${reason}; see diagnostic artifact: ${diagnosticPath}`,
+        );
+      }
+    }
+  }, 20_000);
 
   afterEach(() => {
     for (const tempDir of tempDirs.splice(0)) {
