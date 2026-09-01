@@ -1358,8 +1358,9 @@ check_agent_and_inference_conflicts() {
     check_vllm_container_conflicts
   fi
 
-  inference_matches="$(awk -v self="$$" -v parent="$PPID" '
+  inference_matches="$(awk -v current_uid="$EUID" -v self="$$" -v parent="$PPID" '
     {
+      owner_uid=$1
       pid=$2
       ppid=$3
       comm=tolower($4)
@@ -1373,7 +1374,11 @@ check_agent_and_inference_conflicts() {
       docker_init=(comm == "docker-init" &&
                    args ~ /(^|[[:space:]])--[[:space:]]+([^[:space:]]*\/)?vllm([[:space:]]|$)/)
       if (comm == "vllm" || executable == "vllm" || python_module || docker_init) {
-        print "pid=" pid " process=" comm " stop_command=\047kill -- " pid "\047"
+        if (owner_uid == current_uid) {
+          print "pid=" pid " process=" comm " stop_command=\047kill -- " pid "\047"
+        } else {
+          print "pid=" pid " process=" comm " owner_uid=" owner_uid " action=ask_owner_or_host_administrator_to_stop"
+        }
       }
     }
   ' <<<"$processes")"

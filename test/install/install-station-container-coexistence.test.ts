@@ -33,7 +33,7 @@ function runStationPreparation(body: string, extraEnv: Record<string, string> = 
 }
 
 describe("DGX Station Docker container coexistence", () => {
-  it("allows another user's active agent through the process conflict check (#10649)", () => {
+  it("does not block an active agent owned by another user (#10649)", () => {
     const { result, output } = runStationPreparation(`
 ps() { printf '%s 1000 1 openshell openshell gateway\n' "$((EUID + 1))"; }
 ss() { :; }

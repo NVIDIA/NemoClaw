@@ -462,9 +462,9 @@ check_agent_and_inference_conflicts
     expect(active.output).toMatch(/vLLM inference workload is active: pid=998 process=vllm/);
     expect(active.output).toContain("pid=999 process=python3");
     expect(active.output).toContain("pid=1000 process=docker-init");
-    expect(active.output).toContain("stop_command='kill -- 998'");
-    expect(active.output).toContain("stop_command='kill -- 999'");
-    expect(active.output).toContain("stop_command='kill -- 1000'");
+    expect(active.output).toContain(`owner_uid=1001`);
+    expect(active.output).toContain("action=ask_owner_or_host_administrator_to_stop");
+    expect(active.output).not.toContain("stop_command='kill --");
     expect(active.output).not.toContain("first-sensitive-model");
     expect(active.output).not.toContain("second-sensitive-model");
     expect(active.output).not.toContain("third-sensitive-model");
@@ -483,7 +483,7 @@ check_network() { :; }
 check_failed_units() { :; }
 capture_docker_container_baseline() { printf 'DOCKER_BASELINE_CAPTURED\n'; }
 check_dgx_os_runtime_commands() { :; }
-ps() { printf '%s 999 1 python python -m vllm serve model\n' "$((EUID + 1))"; }
+ps() { printf '%s 999 1 python python -m vllm serve model\n' "$EUID"; }
 ss() { :; }
 run_check
 `,
