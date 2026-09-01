@@ -61,6 +61,10 @@ describe("rebuild post-restore phase", () => {
       reason: "agent does not use this contract",
       skipReason: "agent",
     } as never);
+    vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
+      verified: true,
+      errors: [],
+    });
     vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockImplementation(async () => {
       order.push("mcp");
       return true;
@@ -275,11 +279,30 @@ describe("rebuild post-restore phase", () => {
     agentName = "hermes";
     const args = input();
 
-    await runRebuildPostRestorePhase(args);
+    const verification = await runRebuildPostRestorePhase(args);
 
     expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
+    expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
+    expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
+  });
+
+  it("does not claim mutable Hermes posture without the exact sandbox proof", async () => {
+    agentName = "hermes";
+    vi.mocked(mutableConfigPerms.inspectMutableHermesConfigPerms).mockReturnValue({
+      verified: false,
+      errors: ["config.yaml remains read-only"],
+    });
+    const args = input();
+
+    const verification = await runRebuildPostRestorePhase(args);
+
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(verification).toEqual({ mutableConfigPermissionsVerified: false });
+    expect(args.log).toHaveBeenCalledWith(
+      "Hermes mutable config posture was not verified: config.yaml remains read-only",
+    );
   });
 
   it("keeps cron dispatch blocked through replacement health verification (#8472)", async () => {

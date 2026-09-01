@@ -7,7 +7,10 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import type * as sandboxVersion from "../../sandbox/version";
-import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
+import {
+  inspectMutableHermesConfigPerms,
+  repairMutableConfigPerms,
+} from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxExecCommand } from "./process-recovery";
@@ -151,7 +154,7 @@ export async function runRebuildPostRestorePhase(
   const agentDef = loadAgent(targetAgentName);
   const rebuiltAgentName = agentDef.displayName;
   let mutablePermsRepairUnverified = false;
-  let mutableConfigPermissionsVerified = targetAgentName !== "openclaw";
+  let mutableConfigPermissionsVerified = false;
   let mutableConfigHashRefreshUnverified = false;
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
@@ -280,6 +283,20 @@ export async function runRebuildPostRestorePhase(
       };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  if (
+    targetAgentName === "hermes" &&
+    (hermesGatewayRestoreState === "healthy" || hermesGatewayRestoreState === "recovered")
+  ) {
+    const mutableConfigVerification = inspectMutableHermesConfigPerms(sandboxName);
+    mutableConfigPermissionsVerified = mutableConfigVerification.verified;
+    if (mutableConfigPermissionsVerified) {
+      log("Verified the rebuilt Hermes mutable config posture");
+    } else {
+      log(
+        `Hermes mutable config posture was not verified: ${mutableConfigVerification.errors.join("; ")}`,
+      );
+    }
+  }
   if (hermesCronRestoreIdentity) {
     const replacementIdentity = hermesGatewayVerification.replacementIdentity;
     if (

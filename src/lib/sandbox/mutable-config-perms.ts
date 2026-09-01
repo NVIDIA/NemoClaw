@@ -11,6 +11,11 @@ export const MUTABLE_OPENCLAW_DIR_MODE = "2770";
 export const MUTABLE_OPENCLAW_FILE_MODE = "660";
 export const MUTABLE_OPENCLAW_OWNER = "sandbox:sandbox";
 
+export interface MutableHermesConfigVerification {
+  readonly verified: boolean;
+  readonly errors: readonly string[];
+}
+
 export type MutableConfigPermsInspection =
   | { applies: false; skipReason: "agent" | "unavailable"; reason: string }
   | {
@@ -148,6 +153,91 @@ const MUTABLE_CONFIG_NORMALIZER_WATCHDOG = [
   "--kill-after=5s",
   "15s",
 ] as const;
+const MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS = 20_000;
+const MUTABLE_HERMES_CONFIG_PROBE = String.raw`
+import os
+import stat
+import sys
+import uuid
+
+config_dir = os.path.normpath(sys.argv[1])
+config_paths = [os.path.normpath(value) for value in sys.argv[2:]]
+if not os.path.isabs(config_dir) or not config_paths:
+    raise RuntimeError("Hermes mutable config probe requires absolute paths")
+
+directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
+file_flags = os.O_WRONLY | os.O_APPEND | os.O_CLOEXEC | os.O_NOFOLLOW
+directory_fd = os.open(config_dir, directory_flags)
+try:
+    directory = os.fstat(directory_fd)
+    if not stat.S_ISDIR(directory.st_mode):
+        raise RuntimeError("Hermes config root is not a directory")
+    if directory.st_uid != os.geteuid() or directory.st_gid != os.getegid():
+        raise RuntimeError("Hermes config root is not owned by the sandbox identity")
+    if stat.S_IMODE(directory.st_mode) != 0o3770:
+        raise RuntimeError("Hermes config root does not have mode 3770")
+
+    for config_path in config_paths:
+        if os.path.dirname(config_path) != config_dir:
+            raise RuntimeError("Hermes config artifact escaped the config root")
+        descriptor = os.open(os.path.basename(config_path), file_flags, dir_fd=directory_fd)
+        try:
+            artifact = os.fstat(descriptor)
+            if not stat.S_ISREG(artifact.st_mode) or artifact.st_nlink != 1:
+                raise RuntimeError("Hermes config artifact is not a singly linked regular file")
+            if artifact.st_uid != os.geteuid() or artifact.st_gid != os.getegid():
+                raise RuntimeError("Hermes config artifact is not owned by the sandbox identity")
+            if stat.S_IMODE(artifact.st_mode) != 0o640:
+                raise RuntimeError("Hermes config artifact does not have mode 0640")
+        finally:
+            os.close(descriptor)
+
+    probe_name = ".nemoclaw-mutable-posture-" + uuid.uuid4().hex
+    created = False
+    try:
+        os.mkdir(probe_name, 0o700, dir_fd=directory_fd)
+        created = True
+    finally:
+        if created:
+            os.rmdir(probe_name, dir_fd=directory_fd)
+finally:
+    os.close(directory_fd)
+`;
+
+export function mutableHermesConfigProbeCommand(target: AgentConfigTarget): readonly string[] {
+  if (target.agentName !== "hermes") {
+    throw new Error(`agent ${target.agentName} does not use the mutable Hermes config contract`);
+  }
+  return [
+    "/usr/bin/setpriv",
+    "--reuid=sandbox",
+    "--regid=sandbox",
+    "--init-groups",
+    "--",
+    "/usr/bin/python3",
+    "-I",
+    "-c",
+    MUTABLE_HERMES_CONFIG_PROBE,
+    target.configDir,
+    target.configPath,
+    ...(target.sensitiveFiles ?? []),
+  ];
+}
+
+export function verifyMutableHermesConfigForTarget(
+  target: AgentConfigTarget,
+  executeProbe: (command: readonly string[]) => void,
+): MutableHermesConfigVerification {
+  try {
+    executeProbe(mutableHermesConfigProbeCommand(target));
+    return { verified: true, errors: [] };
+  } catch (error) {
+    return {
+      verified: false,
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
 
 function privilegedExecCapture(sandboxName: string, command: string[]): string {
   return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, command, false, true), {
@@ -206,5 +296,20 @@ export function repairMutableConfigPerms(sandboxName: string): MutableConfigRepa
     return repairMutableConfigPermsForTarget(target, () =>
       normalizeMutableOpenClawConfig(sandboxName, target.configDir),
     );
+  });
+}
+
+export function inspectMutableHermesConfigPerms(
+  sandboxName: string,
+): MutableHermesConfigVerification {
+  validateName(sandboxName, "sandbox name");
+  return withMcpLifecycleLockSync(sandboxName, () => {
+    const target = resolveAgentConfig(sandboxName);
+    return verifyMutableHermesConfigForTarget(target, (command) => {
+      dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, [...command], false, true), {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS,
+      });
+    });
   });
 }

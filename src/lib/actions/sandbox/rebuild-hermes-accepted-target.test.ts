@@ -236,6 +236,24 @@ describe("Hermes accepted replacement recovery", () => {
     expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
   });
 
+  it("retains removed Shields state when the rebuilt Hermes mutable posture is unverified", async () => {
+    phaseMocks.enforceRemovedImmutabilityMigrationBoundary.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+    phaseMocks.runPostRestore.mockResolvedValue({ mutableConfigPermissionsVerified: false });
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(bail).toHaveBeenCalledWith(
+      "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+    );
+    expect(phaseMocks.retireRemovedImmutabilityStateRecord).not.toHaveBeenCalled();
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+  });
+
   it("retires both the unused current policy handoff and the recovered transaction handoff", async () => {
     const currentManifest = {
       backupPath,
