@@ -655,7 +655,7 @@ describe("E2E workflow plan", () => {
     expect(targetIds).toEqual(expect.arrayContaining(["onboard-repair", "onboard-resume"]));
   });
 
-  it("uses one risk rule for catalogue targets and workflow jobs", () => {
+  it("selects the full messaging proof set for messaging runtime changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
       { changedFiles: ["src/lib/messaging/applier/agent-config.ts"] },
@@ -663,8 +663,15 @@ describe("E2E workflow plan", () => {
 
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("channels-add-remove");
     expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual(
-      expect.arrayContaining(["channels-stop-start-openclaw", "channels-stop-start-hermes"]),
+      expect.arrayContaining([
+        "channels-stop-start-openclaw",
+        "channels-stop-start-hermes",
+        "hermes-discord",
+        "openclaw-discord-pairing",
+        "openclaw-slack-pairing",
+      ]),
     );
+    expect(plan.selectedJobs).toContain("messaging-providers");
     expect(plan.selectedJobs).not.toContain("channels-stop-start");
   });
 

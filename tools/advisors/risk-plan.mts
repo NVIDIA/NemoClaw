@@ -21,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 20 as const;
+export const RISK_PLAN_VERSION = 21 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -104,6 +104,49 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
   "agents/hermes/start.sh",
   "src/lib/hermes-managed-route.ts",
 ]);
+const SHARED_MESSAGING_RUNTIME_E2E_JOB_IDS = [
+  "channels-add-remove",
+  "channels-stop-start",
+  "hermes-discord",
+  "messaging-providers",
+  "openclaw-discord-pairing",
+  "openclaw-slack-pairing",
+] as const;
+const HERMES_MESSAGING_RUNTIME_E2E_JOB_IDS = [
+  "channels-stop-start",
+  "hermes-discord",
+  "messaging-providers",
+] as const;
+const OPENCLAW_MESSAGING_RUNTIME_E2E_JOB_IDS = [
+  "channels-stop-start",
+  "messaging-providers",
+  "openclaw-discord-pairing",
+  "openclaw-slack-pairing",
+] as const;
+const MESSAGING_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/rebuild-backup-phase.ts",
+  "src/lib/actions/sandbox/rebuild-target-runtime.ts",
+  "src/lib/onboard/credential-provider-registration.ts",
+  "src/lib/onboard/extra-placeholder-keys.ts",
+  "src/lib/onboard/gateway-provider-metadata.ts",
+  "src/lib/onboard/messaging-policy-presets.ts",
+  "src/lib/onboard/messaging-prep.ts",
+  "src/lib/onboard/policy-preset-reconciliation.ts",
+  "src/lib/onboard/policy-selection.ts",
+  "src/lib/onboard/providers.ts",
+  "src/lib/onboard/sandbox-create-plan-materialization.ts",
+  "src/lib/onboard/sandbox-create/provider-publication.ts",
+  "src/lib/onboard/sandbox-messaging-preflight.ts",
+]);
+const MESSAGING_RUNTIME_PREFIXES = [
+  "src/lib/actions/sandbox/policy-channel",
+  "src/lib/messaging/",
+] as const;
+const HERMES_STARTUP_RUNTIME_FILES = new Set([
+  "agents/hermes/runtime-config-guard.py",
+  "agents/hermes/start.sh",
+]);
+const OPENCLAW_STARTUP_RUNTIME_FILES = new Set(["scripts/nemoclaw-start.sh"]);
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
@@ -339,6 +382,24 @@ export function focusedPrE2eJobsForChangedFiles(
         isRuntimeRelevant(file),
     ),
   );
+  const messagingRuntimeFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        (MESSAGING_RUNTIME_FILES.has(file) ||
+          MESSAGING_RUNTIME_PREFIXES.some((prefix) => file.startsWith(prefix))) &&
+        isRuntimeRelevant(file),
+    ),
+  );
+  const hermesMessagingRuntimeFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
+  const openClawMessagingRuntimeFiles = stableUnique(
+    changedFiles.filter(
+      (file) => OPENCLAW_STARTUP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
   return [
     ...(journaledRecreateResumeFiles.length > 0
       ? [
@@ -363,6 +424,18 @@ export function focusedPrE2eJobsForChangedFiles(
     ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesManagedPolicyFiles,
+    })),
+    ...SHARED_MESSAGING_RUNTIME_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: messagingRuntimeFiles,
+    })),
+    ...HERMES_MESSAGING_RUNTIME_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesMessagingRuntimeFiles,
+    })),
+    ...OPENCLAW_MESSAGING_RUNTIME_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: openClawMessagingRuntimeFiles,
     })),
   ].filter((selection) => selection.matchedFiles.length > 0);
 }
