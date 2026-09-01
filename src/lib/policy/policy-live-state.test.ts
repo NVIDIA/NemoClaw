@@ -273,7 +273,7 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("restores a later policy that removes the caller's credential rewrite invariant", () => {
+  it("restores a later policy after another external edit races recovery", () => {
     livePolicy = YAML.stringify({
       version: 1,
       network_policies: {
@@ -313,8 +313,12 @@ describe("live OpenShell policy mutations", () => {
             endpoints: [{ host: "concurrent.example.com", port: 443 }],
           })
         : delete concurrent.network_policies.fake.endpoints[0].request_body_credential_rewrite;
-      writes === 2 && delete concurrent.network_policies.fake.endpoints[0].credential_binding;
-      const raced = writes <= 2;
+      writes >= 2 && delete concurrent.network_policies.fake.endpoints[0].credential_binding;
+      writes === 3 &&
+        (concurrent.network_policies.latest_external_recovery_edit = {
+          endpoints: [{ host: "latest-recovery.example.com", port: 443 }],
+        });
+      const raced = writes <= 3;
       concurrentRevision = raced ? YAML.stringify(concurrent) : concurrentRevision;
       activeVersion += Number(raced);
       livePolicy = requested;
@@ -339,13 +343,19 @@ describe("live OpenShell policy mutations", () => {
         },
       }),
     ).toBe(false);
-    expect(writes).toBe(3);
+    expect(writes).toBe(4);
     expect(YAML.parse(livePolicy)).toEqual(YAML.parse(concurrentRevision));
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty(
+      "latest_external_recovery_edit",
+    );
     expect(YAML.parse(livePolicy).network_policies.fake.endpoints[0]).not.toHaveProperty(
       "credential_binding",
     );
     expect(YAML.parse(livePolicy).network_policies.fake.endpoints[0]).not.toHaveProperty(
       "request_body_credential_rewrite",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("openshell policy get live-policy"),
     );
   });
 

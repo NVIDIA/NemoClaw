@@ -907,6 +907,7 @@ function inspectPolicyDocumentReadback(
 }
 
 const POLICY_RECONCILE_ATTEMPTS = 5;
+const POLICY_RECOVERY_ATTEMPTS = 5;
 const MISSING_POLICY_VALUE = Symbol("missing-policy-value");
 type MergePolicyValue = PolicyValue | typeof MISSING_POLICY_VALUE;
 
@@ -1024,8 +1025,10 @@ export function setPolicyDocument(
   let requestedDocument = policyDocument;
   let recoveryOnly = false;
   let reconciliationAttempts = 0;
+  let recoveryAttempts = 0;
 
-  for (let attempt = 1; attempt <= POLICY_RECONCILE_ATTEMPTS + 2; attempt += 1) {
+  const submissionAttempts = POLICY_RECONCILE_ATTEMPTS + POLICY_RECOVERY_ATTEMPTS + 2;
+  for (let attempt = 1; attempt <= submissionAttempts; attempt += 1) {
     if (attempt > 1) {
       try {
         context = recheckPolicyMutationContext(sandboxName, operation, context);
@@ -1072,7 +1075,14 @@ export function setPolicyDocument(
     const concurrentRevision = observedVersion > originalVersion + 1;
 
     if (!concurrentRevision) {
-      if (requestedIsCurrent) return !recoveryOnly;
+      if (requestedIsCurrent) {
+        if (!recoveryOnly) return true;
+        console.error(
+          `  The latest external policy was restored for sandbox '${sandboxName}'. ` +
+            `Run \`openshell policy get ${sandboxName}\` to inspect the effective policy before you retry.`,
+        );
+        return false;
+      }
       if (outcome.kind === "ambiguous") {
         console.error(
           `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
@@ -1087,14 +1097,6 @@ export function setPolicyDocument(
       process.exit(status || 1);
     }
 
-    if (recoveryOnly) {
-      console.error(
-        `  Could not confirm restoration of the external policy for sandbox '${sandboxName}' because the policy changed again during recovery. Inspect the current policy before retrying.`,
-      );
-      if (options.nonFatal) return false;
-      process.exit(1);
-    }
-
     let externalDocument: string;
     try {
       externalDocument = requestedIsCurrent
@@ -1104,6 +1106,23 @@ export function setPolicyDocument(
             observedVersion - 1,
           )
         : observedDocument;
+      if (recoveryOnly) {
+        if (!requestedIsCurrent) {
+          console.error(
+            `  The external policy changed again while NemoClaw restored sandbox '${sandboxName}'. ` +
+              `The latest external policy remains active. Run \`openshell policy get ${sandboxName}\` to inspect the effective policy before you retry.`,
+          );
+          return false;
+        }
+        context = observed;
+        recoveryAttempts += 1;
+        requestedDocument = externalDocument;
+        console.error(
+          `  The external policy changed again while NemoClaw restored sandbox '${sandboxName}'. ` +
+            "The latest external revision is being restored.",
+        );
+        continue;
+      }
       const rebased = rebasePolicyDocumentOntoConcurrentEdit(
         originalDocument,
         requestedDocument,
@@ -1146,7 +1165,8 @@ export function setPolicyDocument(
   }
 
   console.error(
-    `  Could not confirm ${operation}: the current OpenShell policy remained unstable. Inspect the current policy before retrying.`,
+    `  Could not confirm ${operation}: the current OpenShell policy remained unstable after ${String(recoveryAttempts)} recovery attempt(s). ` +
+      `Run \`openshell policy get ${sandboxName}\` to inspect the effective policy before you retry.`,
   );
   if (options.nonFatal) return false;
   process.exit(1);
