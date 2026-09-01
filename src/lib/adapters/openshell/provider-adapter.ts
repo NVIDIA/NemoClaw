@@ -70,13 +70,6 @@ export type ImportOpenShellProviderProfileRequest = OpenShellProviderRequest &
     profilePath: string;
   }>;
 
-export type EnsureOpenShellEndpointlessProviderProfileRequest =
-  ImportOpenShellProviderProfileRequest &
-    Readonly<{
-      profileType: string;
-      inferenceCapable: boolean;
-    }>;
-
 export type InspectOpenShellProviderProfileRequest = OpenShellProviderRequest &
   Readonly<{
     profileType: string;
@@ -102,10 +95,6 @@ export interface OpenShellProviderAdapter {
 
   importProviderProfile(
     request: ImportOpenShellProviderProfileRequest,
-  ): Promise<OpenShellProviderMutationResult>;
-
-  ensureEndpointlessProviderProfile(
-    request: EnsureOpenShellEndpointlessProviderProfileRequest,
   ): Promise<OpenShellProviderMutationResult>;
 
   inspectProviderProfile(

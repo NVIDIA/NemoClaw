@@ -428,40 +428,6 @@ describe("CLI OpenShell provider adapter", () => {
     );
   });
 
-  it("reconciles an endpointless profile inside the CLI adapter (#9806)", async () => {
-    const run = vi
-      .fn()
-      .mockReturnValueOnce(captured(1, "", "provider profile not found"))
-      .mockReturnValueOnce(captured(0))
-      .mockReturnValueOnce(
-        captured(
-          0,
-          JSON.stringify({
-            id: "openai",
-            credentials: [],
-            endpoints: [],
-            binaries: [],
-            inference_capable: true,
-          }),
-        ),
-      );
-    const adapter = createCliOpenShellProviderAdapter({ run });
-
-    await expect(
-      adapter.ensureEndpointlessProviderProfile({
-        target: selectedOpenShellGateway(),
-        profileType: "openai",
-        profilePath: "/repo/provider-profiles/openai.yaml",
-        inferenceCapable: true,
-      }),
-    ).resolves.toEqual({ ok: true });
-    expect(run.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "profile", "export", "openai", "--output", "json"],
-      ["provider", "profile", "import", "--file", "/repo/provider-profiles/openai.yaml"],
-      ["provider", "profile", "export", "openai", "--output", "json"],
-    ]);
-  });
-
   it("returns a schema failure for an invalid provider profile (#9806)", async () => {
     const adapter = createCliOpenShellProviderAdapter({
       run: () => captured(0, "not-json"),

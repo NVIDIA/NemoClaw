@@ -32,8 +32,6 @@ function providerAdapter(
   const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
     ok: true,
   });
-  const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =
-    async () => ({ ok: true });
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async () => ({
     ok: true,
     value: { credentialKeys: [] },
@@ -48,7 +46,6 @@ function providerAdapter(
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
     importProviderProfile: vi.fn(importProviderProfile),
-    ensureEndpointlessProviderProfile: vi.fn(ensureEndpointlessProviderProfile),
     inspectProviderProfile: vi.fn(inspectProviderProfile),
     deleteProvider: vi.fn(deleteProvider),
     detachProvider: vi.fn(detachProvider),
@@ -97,62 +94,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       timeoutMs: 30_000,
     });
     expect(JSON.stringify(result)).not.toContain("credential-value");
-  });
-
-  it("reconciles the OpenAI profile through the injected provider adapter (#9806)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-    const adapter = providerAdapter();
-
-    const result = await runCredentialsAddAction(
-      {
-        provider: "openai-prod",
-        type: "openai",
-        credentials: ["OPENAI_API_KEY"],
-        configPairs: [],
-        fromExisting: false,
-      },
-      { providerAdapter: adapter },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(adapter.ensureEndpointlessProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "selected" },
-      profileType: "openai",
-      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
-      inferenceCapable: true,
-      timeoutMs: 30_000,
-    });
-    expect(adapter.createProvider).toHaveBeenCalledOnce();
-  });
-
-  it("does not create an OpenAI provider after incompatible profile reconciliation (#9806)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-    const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =
-      async () => ({
-        ok: false,
-        error: {
-          kind: "command",
-          reason: "profile_incompatible",
-          message: "The installed endpointless profile does not match.",
-        },
-      });
-    const adapter = providerAdapter({
-      ensureEndpointlessProviderProfile: vi.fn(ensureEndpointlessProviderProfile),
-    });
-
-    const result = await runCredentialsAddAction(
-      {
-        provider: "openai-prod",
-        type: "openai",
-        credentials: ["OPENAI_API_KEY"],
-        configPairs: [],
-        fromExisting: false,
-      },
-      { providerAdapter: adapter },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
   it("does not create a provider from an incompatible bundled profile (#9806)", async () => {

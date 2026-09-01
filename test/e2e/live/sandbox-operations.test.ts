@@ -168,82 +168,6 @@ async function resetCredentialProvider(
   return reset;
 }
 
-async function assertCredentialProviderAdapterLifecycle(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  cleanup: CleanupRegistry,
-  hosted: HostedInferenceConfig,
-): Promise<void> {
-  await resetCredentialProvider(host, "tc-sbx-14-clear-stale-credential-provider");
-  cleanup.add(`remove credential provider ${CREDENTIAL_PROVIDER}`, async () => {
-    await resetCredentialProvider(host, "cleanup-tc-sbx-14-credential-provider");
-  });
-
-  const add = await host.nemoclaw(
-    [
-      "credentials",
-      "add",
-      CREDENTIAL_PROVIDER,
-      "--type",
-      "tavily",
-      "--credential",
-      CREDENTIAL_ENV_NAME,
-    ],
-    {
-      artifactName: "tc-sbx-14-credentials-add",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        [CREDENTIAL_ENV_NAME]: CREDENTIAL_VALUE,
-      },
-      redactionValues: [CREDENTIAL_VALUE],
-      timeoutMs: 3 * 60_000,
-    },
-  );
-  expectExitZero(add, `nemoclaw credentials add ${CREDENTIAL_PROVIDER}`);
-  expect(resultText(add)).toContain(`Registered provider '${CREDENTIAL_PROVIDER}'`);
-  expect(resultText(add)).not.toContain(CREDENTIAL_VALUE);
-
-  const beforeRebuild = await host.nemoclaw(["credentials", "list"], {
-    artifactName: "tc-sbx-14-credentials-list-before-rebuild",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
-  expectExitZero(beforeRebuild, "nemoclaw credentials list before rebuild");
-  expect(resultText(beforeRebuild)).toContain(CREDENTIAL_PROVIDER);
-
-  const rebuild = await host.nemoclaw([SANDBOX_A, "rebuild", "--yes"], {
-    artifactName: "tc-sbx-14-rebuild-with-credential-provider",
-    env: {
-      ...buildAvailabilityProbeEnv(),
-      ...hosted.env,
-    },
-    redactionValues: [hosted.apiKey, CREDENTIAL_VALUE],
-    timeoutMs: 20 * 60_000,
-  });
-  expectExitZero(rebuild, `nemoclaw ${SANDBOX_A} rebuild --yes`);
-  expect(resultText(rebuild)).not.toContain(CREDENTIAL_VALUE);
-
-  await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "present", {
-    artifactName: "tc-sbx-14-provider-attached-after-rebuild",
-    env: buildAvailabilityProbeEnv(),
-  });
-
-  const reset = await resetCredentialProvider(host, "tc-sbx-14-credentials-reset-attached");
-  expect(resultText(reset)).toContain(`Removed provider '${CREDENTIAL_PROVIDER}'`);
-  await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "absent", {
-    artifactName: "tc-sbx-14-provider-detached-after-reset",
-    env: buildAvailabilityProbeEnv(),
-  });
-
-  const afterReset = await host.nemoclaw(["credentials", "list"], {
-    artifactName: "tc-sbx-14-credentials-list-after-reset",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
-  expectExitZero(afterReset, "nemoclaw credentials list after reset");
-  expect(resultText(afterReset)).not.toContain(CREDENTIAL_PROVIDER);
-}
-
 async function expectListed(host: HostCliClient, sandboxName: string, artifactName: string) {
   const list = await host.nemoclaw(["list"], {
     artifactName,
@@ -691,7 +615,7 @@ async function assertGatewayRecovery(
 }
 
 test(
-  "credentials reset detaches a rebuilt sandbox provider before deletion",
+  "credentials reset removes a provider attached during sandbox rebuild",
   {
     timeout: 45 * 60_000,
     meta: {
@@ -709,7 +633,7 @@ test(
       id: "sandbox-operations",
       boundary: "repo-cli-openshell-provider-sandbox-attachment",
       contracts: [
-        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, attaches on rebuild, and detaches before deletion",
+        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, attaches on rebuild, and removes the attachment and provider",
       ],
     });
 
@@ -721,12 +645,78 @@ test(
       timeoutMs: 5 * 60_000,
     });
     await host.cleanupSandbox(SANDBOX_A);
+    await resetCredentialProvider(host, "tc-sbx-14-clear-stale-credential-provider");
+    cleanup.add(`remove credential provider ${CREDENTIAL_PROVIDER}`, async () => {
+      await resetCredentialProvider(host, "cleanup-tc-sbx-14-credential-provider");
+    });
 
     progress.phase("onboard the credential lifecycle sandbox");
     await onboardSandbox(host, cleanup, SANDBOX_A, "tc-sbx-14-onboard-sandbox", hosted);
 
     progress.phase("add, attach, reset, and remove the credential provider");
-    await assertCredentialProviderAdapterLifecycle(host, sandbox, cleanup, hosted);
+    const add = await host.nemoclaw(
+      [
+        "credentials",
+        "add",
+        CREDENTIAL_PROVIDER,
+        "--type",
+        "tavily",
+        "--credential",
+        CREDENTIAL_ENV_NAME,
+      ],
+      {
+        artifactName: "tc-sbx-14-credentials-add",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          [CREDENTIAL_ENV_NAME]: CREDENTIAL_VALUE,
+        },
+        redactionValues: [CREDENTIAL_VALUE],
+        timeoutMs: 3 * 60_000,
+      },
+    );
+    expectExitZero(add, `nemoclaw credentials add ${CREDENTIAL_PROVIDER}`);
+    expect(resultText(add)).toContain(`Registered provider '${CREDENTIAL_PROVIDER}'`);
+    expect(resultText(add)).not.toContain(CREDENTIAL_VALUE);
+
+    const beforeRebuild = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-before-rebuild",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(beforeRebuild, "nemoclaw credentials list before rebuild");
+    expect(resultText(beforeRebuild)).toContain(CREDENTIAL_PROVIDER);
+
+    const rebuild = await host.nemoclaw([SANDBOX_A, "rebuild", "--yes"], {
+      artifactName: "tc-sbx-14-rebuild-with-credential-provider",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        ...hosted.env,
+      },
+      redactionValues: [hosted.apiKey, CREDENTIAL_VALUE],
+      timeoutMs: 20 * 60_000,
+    });
+    expectExitZero(rebuild, `nemoclaw ${SANDBOX_A} rebuild --yes`);
+    expect(resultText(rebuild)).not.toContain(CREDENTIAL_VALUE);
+
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "present", {
+      artifactName: "tc-sbx-14-provider-attached-after-rebuild",
+      env: buildAvailabilityProbeEnv(),
+    });
+
+    const reset = await resetCredentialProvider(host, "tc-sbx-14-credentials-reset-attached");
+    expect(resultText(reset)).toContain(`Removed provider '${CREDENTIAL_PROVIDER}'`);
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "absent", {
+      artifactName: "tc-sbx-14-provider-detached-after-reset",
+      env: buildAvailabilityProbeEnv(),
+    });
+
+    const afterReset = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-after-reset",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(afterReset, "nemoclaw credentials list after reset");
+    expect(resultText(afterReset)).not.toContain(CREDENTIAL_PROVIDER);
   },
 );
 

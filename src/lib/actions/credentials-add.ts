@@ -7,8 +7,10 @@ import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provide
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import {
   endpointlessProviderProfileFailureMessages,
+  ensureEndpointlessProviderProfile,
   OPENAI_GATEWAY_PROVIDER_TYPE,
 } from "../adapters/openshell/provider-profile";
+import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
@@ -116,21 +118,14 @@ async function ensureCredentialProviderProfile(
   if (type.toLowerCase() !== OPENAI_GATEWAY_PROVIDER_TYPE) {
     return ensureBundledProviderProfile(type, providerAdapter);
   }
-  const profile = await providerAdapter.ensureEndpointlessProviderProfile({
-    target: selectedOpenShellGateway(),
-    profileType: OPENAI_GATEWAY_PROVIDER_TYPE,
+  const profile = ensureEndpointlessProviderProfile({
+    profileId: OPENAI_GATEWAY_PROVIDER_TYPE,
     profilePath: bundledProviderProfilePath(OPENAI_GATEWAY_PROVIDER_TYPE),
     inferenceCapable: true,
-    timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    runOpenshell: runOpenshellProviderCommand,
   });
   if (profile.ok) return null;
-  const reason =
-    profile.error.kind === "command" && profile.error.reason === "profile_import_failed"
-      ? "import-failed"
-      : profile.error.kind === "command" && profile.error.reason === "profile_incompatible"
-        ? "incompatible"
-        : "export-failed";
-  return fail(endpointlessProviderProfileFailureMessages(reason));
+  return fail(endpointlessProviderProfileFailureMessages(profile.reason));
 }
 
 export async function runCredentialsAddAction(

@@ -13,7 +13,6 @@ import {
   type CreateOpenShellProviderRequest,
   type DeleteOpenShellProviderRequest,
   type DetachOpenShellProviderRequest,
-  type EnsureOpenShellEndpointlessProviderProfileRequest,
   type ImportOpenShellProviderProfileRequest,
   type InspectOpenShellProviderProfileRequest,
   type OpenShellProviderAdapter,
@@ -24,7 +23,6 @@ import {
 } from "./provider-adapter";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 import {
-  ensureEndpointlessProviderProfile as reconcileEndpointlessProviderProfile,
   exportedProviderProfileMatchesContract,
   parseCheckedInProviderProfileContract,
 } from "./provider-profile";
@@ -331,31 +329,6 @@ export function createCliOpenShellProviderAdapter(
     return mutationSuccess();
   };
 
-  const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =
-    async (request: EnsureOpenShellEndpointlessProviderProfileRequest) => {
-      const result = reconcileEndpointlessProviderProfile({
-        profileId: request.profileType,
-        inferenceCapable: request.inferenceCapable,
-        profilePath: request.profilePath,
-        runOpenshell: (args, options) =>
-          invoke(args, request, undefined, 2, options?.suppressOutput === true),
-      });
-      if (result.ok) return mutationSuccess();
-      const reason =
-        result.reason === "export-failed"
-          ? "profile_export_failed"
-          : result.reason === "import-failed"
-            ? "profile_import_failed"
-            : "profile_incompatible";
-      const message =
-        result.reason === "export-failed"
-          ? "OpenShell could not read the provider profile for validation."
-          : result.reason === "import-failed"
-            ? "OpenShell could not import the provider profile."
-            : "The existing OpenShell provider profile does not match the required contract.";
-      return failure({ kind: "command", reason, message });
-    };
-
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (
     request: InspectOpenShellProviderProfileRequest,
   ) => {
@@ -403,7 +376,6 @@ export function createCliOpenShellProviderAdapter(
     listProviders,
     createProvider,
     importProviderProfile,
-    ensureEndpointlessProviderProfile,
     inspectProviderProfile,
     deleteProvider,
     detachProvider,
