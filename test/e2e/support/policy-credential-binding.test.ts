@@ -188,7 +188,7 @@ describe("binds a credential to exactly one policy endpoint", () => {
     ).toThrow("must enable request_body_credential_rewrite");
   });
 
-  it("delegates the transformed policy and binding invariant to the production mutation owner", () => {
+  it("passes the credential-binding check to setPolicyDocument when the base policy contains the requested endpoint", () => {
     const basePolicy = endpointPolicy(["rest", "websocket"]);
     const context = {
       gatewayName: "nemoclaw",
