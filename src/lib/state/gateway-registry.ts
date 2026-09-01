@@ -6,10 +6,10 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
-import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
-import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
+import { GATEWAYS_SUBDIR, nemoclawStateRoot, resolveHome } from "./state-root";
 
 export { GATEWAYS_SUBDIR } from "./state-root";
 export {
@@ -251,4 +251,52 @@ export function listHostGatewayRegistryEntries(home: string): HostGatewayRegistr
     }
   }
   return result;
+}
+
+export interface ForeignGatewaySandbox {
+  gatewayName: string;
+  gatewayPort: number;
+  registryFile: string;
+  selectedGatewayName: string;
+  selectedGatewayPort: number;
+}
+
+/**
+ * Locate a sandbox registered under a gateway state root other than the selected
+ * one.
+ *
+ * Registry reads are pinned to the selected gateway's root, so a second
+ * gateway's sandbox reads as absent. Recovery stays gateway-scoped on purpose
+ * (#7105), so this only reports the owner and never adopts its row (#10656).
+ *
+ * Returns null when no other root claims the name, and also when any host
+ * registry is unreadable. `listHostGatewayRegistryEntries` fails closed on
+ * malformed JSON, a bad row, a symlinked root or a port mismatch, which is
+ * right for its allocating callers but wrong here: the sole caller is an
+ * already-failing diagnostic that must still exit cleanly rather than throw.
+ * That matches the read-only carve-out `safeListRegistryEntries` established.
+ */
+export function findForeignGatewaySandbox(
+  sandboxName: string,
+  selectedGatewayPort: number = GATEWAY_PORT,
+  home: string = resolveHome(),
+): ForeignGatewaySandbox | null {
+  let hostEntries: HostGatewayRegistryEntry[];
+  try {
+    hostEntries = listHostGatewayRegistryEntries(home);
+  } catch {
+    return null;
+  }
+  const owner = hostEntries.find(
+    (candidate) =>
+      candidate.entry.name === sandboxName && candidate.gatewayPort !== selectedGatewayPort,
+  );
+  if (!owner) return null;
+  return {
+    gatewayName: resolveGatewayName(owner.gatewayPort),
+    gatewayPort: owner.gatewayPort,
+    registryFile: owner.registryFile,
+    selectedGatewayName: resolveGatewayName(selectedGatewayPort),
+    selectedGatewayPort,
+  };
 }

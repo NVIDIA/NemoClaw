@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { listHostGatewayRegistryEntries } from "./gateway-registry";
+import { findForeignGatewaySandbox, listHostGatewayRegistryEntries } from "./gateway-registry";
 
 describe("host gateway registry index", () => {
   it.runIf(process.platform !== "win32")(
@@ -119,6 +119,68 @@ describe("host gateway registry index", () => {
       );
 
       expect(() => listHostGatewayRegistryEntries(home)).toThrow(/invalid sandbox row/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("foreign gateway sandbox lookup (#10656)", () => {
+  function twoGatewayHome(siblingRegistry: string): string {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-foreign-gateway-"));
+    const selected = path.join(home, ".nemoclaw");
+    const sibling = path.join(selected, "gateways", "8990");
+    fs.mkdirSync(sibling, { recursive: true });
+    fs.writeFileSync(
+      path.join(selected, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "healthy-b",
+        sandboxes: { "healthy-b": { name: "healthy-b" } },
+      }),
+    );
+    fs.writeFileSync(path.join(sibling, "sandboxes.json"), siblingRegistry);
+    return home;
+  }
+
+  const ownedBySibling = JSON.stringify({
+    defaultSandbox: "failure-a",
+    sandboxes: {
+      "failure-a": { name: "failure-a", gatewayName: "nemoclaw-8990", gatewayPort: 8990 },
+    },
+  });
+
+  it("names the gateway that owns a sandbox the selected root cannot see", () => {
+    const home = twoGatewayHome(ownedBySibling);
+    try {
+      expect(findForeignGatewaySandbox("failure-a", 8080, home)).toEqual({
+        gatewayName: "nemoclaw-8990",
+        gatewayPort: 8990,
+        registryFile: path.join(home, ".nemoclaw", "gateways", "8990", "sandboxes.json"),
+        selectedGatewayName: "nemoclaw",
+        selectedGatewayPort: 8080,
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports no owner for a sandbox the selected gateway already holds", () => {
+    const home = twoGatewayHome(ownedBySibling);
+    try {
+      expect(findForeignGatewaySandbox("healthy-b", 8080, home)).toBeNull();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // listHostGatewayRegistryEntries fails closed for its allocating callers. This
+  // caller is a diagnostic on an already-failing command, so a malformed sibling
+  // must degrade to "no owner" and let the caller exit cleanly, never throw.
+  it("degrades to no owner when a sibling registry is unreadable", () => {
+    const home = twoGatewayHome("{ not json");
+    try {
+      expect(() => listHostGatewayRegistryEntries(home)).toThrow();
+      expect(findForeignGatewaySandbox("failure-a", 8080, home)).toBeNull();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
