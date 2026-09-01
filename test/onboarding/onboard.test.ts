@@ -751,7 +751,9 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(
       payload.commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+        entry.command.includes("forward service my-assistant") &&
+        entry.command.includes("--target-port 18789") &&
+        entry.command.includes("--local 0.0.0.0:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );

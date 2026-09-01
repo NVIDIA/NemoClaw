@@ -32,6 +32,8 @@ const target = {
 function createProcessHarness(
   options: {
     ignoreChildSignal?: boolean;
+    ignoreProcessSigterm?: boolean;
+    replaceIdentityAfterSigterm?: boolean;
     neverReady?: boolean;
     unreachable?: boolean;
     unreadableMetadata?: boolean;
@@ -40,6 +42,7 @@ function createProcessHarness(
 ): {
   deps: ForwardServiceProcessDeps;
   calls: { args: readonly string[]; environment: NodeJS.ProcessEnv }[];
+  signals: NodeJS.Signals[];
   setReachable(value: boolean): void;
   replaceListenerWithForeign(): void;
   replaceIdentity(): void;
@@ -52,6 +55,7 @@ function createProcessHarness(
   let processIdentity: string | null = "linux:test-boot:100";
   let argv: readonly string[] | null = null;
   const calls: { args: readonly string[]; environment: NodeJS.ProcessEnv }[] = [];
+  const signals: NodeJS.Signals[] = [];
   const stopChild = options.ignoreChildSignal
     ? () => {}
     : () => {
@@ -68,10 +72,25 @@ function createProcessHarness(
     readProcessArgv: () => argv,
     readProcessIdentity: () => processIdentity,
     readProcessUid: () => uid,
-    signalProcess: () => {
-      alive = false;
-      ownsListener = false;
-      reachable = foreignListener;
+    signalProcess: (_pid, signal) => {
+      signals.push(signal);
+      const action =
+        signal === "SIGTERM" && options.replaceIdentityAfterSigterm
+          ? "replace-identity"
+          : signal === "SIGTERM" && options.ignoreProcessSigterm
+            ? "ignore"
+            : "stop";
+      switch (action) {
+        case "replace-identity":
+          processIdentity = "linux:test-boot:200";
+          return;
+        case "ignore":
+          return;
+        case "stop":
+          alive = false;
+          ownsListener = false;
+          reachable = foreignListener;
+      }
     },
     sleep: () => {},
     spawnDetached: (executable, args, environment, stderrFd) => {
@@ -99,6 +118,7 @@ function createProcessHarness(
   return {
     deps,
     calls,
+    signals,
     setReachable: (value) => {
       reachable = value;
     },
@@ -202,6 +222,31 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
       reachable: false,
       receipt: null,
     });
+    expect(harness.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("revalidates exact process identity before escalating an ignored SIGTERM", () => {
+    const harness = createProcessHarness({ ignoreProcessSigterm: true });
+    ensureForwardServiceProcess(target, lifecycleOptions(harness));
+
+    expect(
+      stopForwardServiceProcess(target, { ...lifecycleOptions(harness), stopTimeoutMs: 1 }),
+    ).toBe("stopped");
+    expect(harness.signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(inspectForwardServiceProcess(target, lifecycleOptions(harness))).toMatchObject({
+      disposition: "absent",
+      reachable: false,
+    });
+  });
+
+  it("refuses SIGKILL when process identity changes after SIGTERM", () => {
+    const harness = createProcessHarness({ replaceIdentityAfterSigterm: true });
+    ensureForwardServiceProcess(target, lifecycleOptions(harness));
+
+    expect(() =>
+      stopForwardServiceProcess(target, { ...lifecycleOptions(harness), stopTimeoutMs: 1 }),
+    ).toThrow(/identity changed after SIGTERM; refusing SIGKILL/u);
+    expect(harness.signals).toEqual(["SIGTERM"]);
   });
 
   it("refuses to signal a PID after process identity reuse", () => {

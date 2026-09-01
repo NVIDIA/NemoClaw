@@ -93,7 +93,7 @@ describe("CLI dispatch", () => {
       const shouldCleanupGateway = process.platform === "darwin";
       expect(openshellOutput).toContain("sandbox delete alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).toContain("forward stop 18789 alpha --gateway nemoclaw");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -488,7 +488,9 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain(
+      "forward stop 18789 alpha --gateway nemoclaw-8081",
+    );
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -553,7 +555,9 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain(
+      "forward stop 18789 alpha --gateway nemoclaw",
+    );
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -851,7 +855,7 @@ describe("CLI dispatch", () => {
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).toContain("forward stop 18789 alpha --gateway nemoclaw");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,

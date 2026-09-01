@@ -534,6 +534,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("restores a transition-missing forward before launch-readiness publication (#10423)", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -595,6 +596,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("restores an exact dead forward once before launch-readiness publication (#10423)", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -635,6 +637,7 @@ describe("Hermes Portable connect composition", () => {
     async (initialStatus, expectedMutations) => {
       const accepted = acceptedHermesReadiness();
       const harness = createConnectHarness({
+        useRealHermesPortableLaunchForwards: true,
         agentName: "hermes",
         sessionAgent: { name: "hermes" },
         registryEntry: accepted.entry,
@@ -673,6 +676,7 @@ describe("Hermes Portable connect composition", () => {
   it("does not report accepted readiness when forward recovery fails", async () => {
     const accepted = acceptedHermesReadiness();
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       registryEntry: accepted.entry,
@@ -709,6 +713,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("restores a recovered Ollama runtime when forward settlement fails", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -754,6 +759,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("restores prepared forwards when Ollama finalization fails", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -785,6 +791,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("reports forward restoration uncertainty after restoring Ollama", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -825,6 +832,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("stops before publication when the owning gateway forward list is malformed", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -855,6 +863,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("rejects a same-path executable generation change before forward mutation", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -883,6 +892,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("reports restoration uncertainty when executable identity changes after start", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -914,6 +924,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("restores the missing state when registry authority drifts after start", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
@@ -943,6 +954,7 @@ describe("Hermes Portable connect composition", () => {
 
   it("keeps direct interactive connect outside the probe-only forward recovery seam", async () => {
     const harness = createConnectHarness({
+      useRealHermesPortableLaunchForwards: true,
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },

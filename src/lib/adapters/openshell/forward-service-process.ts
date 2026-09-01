@@ -449,7 +449,34 @@ function stopForwardServiceProcessUnlocked(
   if (
     !waitForProcessExit(inspection.receipt, deps, options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS)
   ) {
-    throw new Error("OpenShell forward service process did not stop after SIGTERM");
+    if (!deps.processIsAlive(inspection.receipt.pid)) {
+      // The process exited at the timeout boundary after the final poll.
+    } else {
+      const killConfirmed = classifyForwardServiceReceipt(
+        inspection.receipt,
+        target,
+        processObservation(inspection.receipt, deps, true),
+      );
+      if (killConfirmed !== "owned") {
+        throw new Error(
+          "OpenShell forward service process identity changed after SIGTERM; refusing SIGKILL",
+        );
+      }
+      try {
+        deps.signalProcess(inspection.receipt.pid, "SIGKILL");
+      } catch (error) {
+        if (!hasErrorCode(error, "ESRCH")) throw error;
+      }
+      if (
+        !waitForProcessExit(
+          inspection.receipt,
+          deps,
+          options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+        )
+      ) {
+        throw new Error("OpenShell forward service process did not stop after SIGKILL");
+      }
+    }
   }
   const removed = removeForwardServiceReceipt(inspection.receipt, stateOptions(options));
   if (removed === "changed") {

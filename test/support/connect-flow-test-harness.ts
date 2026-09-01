@@ -155,6 +155,7 @@ export type ConnectHarnessOptions = {
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
   portablePairingSettlementResult?: PortablePairingSettlementResult;
+  useRealHermesPortableLaunchForwards?: boolean;
 };
 
 function throwSttyFailure(): never {
@@ -475,21 +476,23 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
-  vi.spyOn(processRecovery, "prepareHermesPortableLaunchForwards").mockImplementation(
-    (rawInput: unknown) => {
-      const input = rawInput as Parameters<PrepareHermesPortableLaunchForwards>[0];
-      for (let index = 0; index < 5; index += 1) input.deps.assertCurrent();
-      input.deps.captureCurrentList(
-        ["forward", "list", "--gateway", input.gatewayName],
-        input.probeTimeoutMs,
-      );
-      return {
-        result: { kind: "verified", restoredPorts: [] },
-        release: () => ({ kind: "verified", restoredPorts: [] }),
-        rollback: () => undefined,
-      };
-    },
-  );
+  if (options.useRealHermesPortableLaunchForwards !== true) {
+    vi.spyOn(processRecovery, "prepareHermesPortableLaunchForwards").mockImplementation(
+      (rawInput: unknown) => {
+        const input = rawInput as Parameters<PrepareHermesPortableLaunchForwards>[0];
+        for (let index = 0; index < 5; index += 1) input.deps.assertCurrent();
+        input.deps.captureCurrentList(
+          ["forward", "list", "--gateway", input.gatewayName],
+          input.probeTimeoutMs,
+        );
+        return {
+          result: { kind: "verified", restoredPorts: [] },
+          release: () => ({ kind: "verified", restoredPorts: [] }),
+          rollback: () => undefined,
+        };
+      },
+    );
+  }
   const recoverPortableDemoLifecycleSpy = vi
     .spyOn(gatewayState, "recoverPortableDemoSandboxLifecycleForConnect")
     .mockReturnValue(options.portableRecoveryResult ?? { kind: "not-installed" });
