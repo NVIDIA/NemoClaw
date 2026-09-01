@@ -9,11 +9,12 @@ import path from "node:path";
 import { describe, it } from "vitest";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
-type PreparedContextScenario = "create" | "custom-dockerfile";
+type PreparedContextScenario = "create" | "custom-dockerfile" | "cleanup-incomplete";
 
 type PreparedContextResult = {
   buildCtx: string;
   buildId: string;
+  buildCleanupListenerRegistered: boolean;
   cleanupCalls: number;
   commands: string[];
   errorMessage: string | null;
@@ -200,16 +201,19 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+const cleanupBuildCtx = () => {
+  cleanupCalls += 1;
+  if (scenario === "cleanup-incomplete") return false;
+  fs.rmSync(buildCtx, { recursive: true, force: true });
+  return true;
+};
+process.on("exit", cleanupBuildCtx);
 const preparedBuildContext = {
   buildCtx,
   stagedDockerfile: buildCtx + "/Dockerfile",
   buildId,
   origin: "generated",
-  cleanupBuildCtx: () => {
-    cleanupCalls += 1;
-    fs.rmSync(buildCtx, { recursive: true, force: true });
-    return true;
-  },
+  cleanupBuildCtx,
 };
 
 const { createSandbox } = require(${onboardPath});
@@ -251,6 +255,7 @@ const { createSandbox } = require(${onboardPath});
   console.log(JSON.stringify({
     buildCtx,
     buildId,
+    buildCleanupListenerRegistered: process.listeners("exit").includes(cleanupBuildCtx),
     cleanupCalls,
     commands,
     errorMessage,
@@ -305,6 +310,7 @@ describe("onboard prepared DCode build context", () => {
       assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
       assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
       assert.equal(result.cleanupCalls, 1);
+      assert.equal(result.buildCleanupListenerRegistered, false);
       assert.ok(
         result.commands.some((command) =>
           command.includes(`sandbox create --from ${result.buildCtx}/Dockerfile`),
@@ -317,6 +323,20 @@ describe("onboard prepared DCode build context", () => {
         ),
         "expected the prepared build ID to determine the registered image tag",
       );
+    },
+  );
+
+  it(
+    "retains exit cleanup ownership when build-context retirement is incomplete (#10652)",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const result = runPreparedContextScenario("cleanup-incomplete");
+
+      assert.equal(result.errorMessage, null);
+      assert.equal(result.cleanupCalls, 1);
+      assert.equal(result.buildCleanupListenerRegistered, true);
     },
   );
 

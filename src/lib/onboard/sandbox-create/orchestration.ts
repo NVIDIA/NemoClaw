@@ -2579,12 +2579,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     };
 
-    const cleanupBuildContext =
-      sandboxGpuCreateFlow.createSandboxBuildContextCleanup(legacyBuildContext);
-    const cleanupInitialCreateSource = sandboxGpuCreateFlow.createSandboxCreateSourceCleanup(
-      initialSandboxPolicy,
-      agentCreateInput.hermesPortableLifecycle,
-    );
+    let buildContextCleanupCompleted = false;
+    const cleanupBuildContext = (): boolean => {
+      if (buildContextCleanupCompleted || !legacyBuildContext?.cleanupBuildCtx) return true;
+      buildContextCleanupCompleted = legacyBuildContext.cleanupBuildCtx();
+      if (buildContextCleanupCompleted) {
+        process.removeListener("exit", legacyBuildContext.cleanupBuildCtx);
+      }
+      return buildContextCleanupCompleted;
+    };
+    let initialCreateSourceCleanupCompleted = false;
+    const cleanupInitialCreateSource = (): boolean => {
+      if (initialCreateSourceCleanupCompleted) return true;
+      initialCreateSourceCleanupCompleted = sandboxGpuCreateFlow.cleanupSandboxCreateSource(
+        initialSandboxPolicy.cleanup,
+        {
+          exactCleanup: initialSandboxPolicy.cleanupExact,
+          requireExact: agentCreateInput.hermesPortableLifecycle,
+        },
+      );
+      return initialCreateSourceCleanupCompleted;
+    };
     const cleanupSandboxCreateSources = (): void => {
       const cleanupErrors: Error[] = [];
       try {

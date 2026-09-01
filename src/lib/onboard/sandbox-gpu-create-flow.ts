@@ -103,36 +103,6 @@ export function cleanupSandboxCreateSource(
   return completed;
 }
 
-/** Bind the exact create-source retirement decision without moving its execution point. */
-export function createSandboxCreateSourceCleanup(
-  source: { readonly cleanup?: () => boolean; readonly cleanupExact?: () => boolean },
-  requireExact: boolean,
-): () => boolean {
-  let completed = false;
-  return () => {
-    if (completed) return true;
-    completed = cleanupSandboxCreateSource(source.cleanup, {
-      exactCleanup: source.cleanupExact,
-      requireExact,
-    });
-    return completed;
-  };
-}
-
-/** Bind cleanup for the one staged build context owned by this create attempt. */
-export function createSandboxBuildContextCleanup(
-  context: { readonly cleanupBuildCtx?: () => boolean } | null,
-): () => boolean {
-  let completed = false;
-  return () => {
-    if (completed) return true;
-    if (!context?.cleanupBuildCtx) return true;
-    completed = context.cleanupBuildCtx();
-    if (completed) process.removeListener("exit", context.cleanupBuildCtx);
-    return completed;
-  };
-}
-
 export function resolvePortableLifecycleMode(
   agent: AgentDefinition | null,
   env: NodeJS.ProcessEnv = process.env,
