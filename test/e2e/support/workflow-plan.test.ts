@@ -269,10 +269,9 @@ describe("E2E workflow plan", () => {
       }),
     );
     const retainedJobs = readFreeStandingJobsInventory().allowedJobs;
+    const migratedTargetIds = ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"];
 
-    expect(retainedJobs).not.toEqual(
-      expect.arrayContaining(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"]),
-    );
+    expect(retainedJobs.filter((id) => migratedTargetIds.includes(id))).toEqual([]);
   });
 
   it.each([
