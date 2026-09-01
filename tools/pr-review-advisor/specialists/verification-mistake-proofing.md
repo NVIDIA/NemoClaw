@@ -27,7 +27,7 @@ For each changed invariant or test, identify the claimed behavior, trigger, acti
 
 Do not report the production defect when the test correctly exposes it. Do not request tests for hypothetical behavior or report external test execution status.
 
-## Lean lens
+## Review principles
 
 Apply poka-yoke and fast feedback. Detect defects at the nearest stable boundary. Prefer the smallest proof that prevents escape. Remove repeated inspection that adds no distinct evidence.
 

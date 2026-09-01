@@ -26,7 +26,7 @@ Inspect the complete source-and-test result. Compare each new owner, concept, st
 
 Do not report a wrong product result, a security defect, test-oracle quality, operational recovery, or writing style unless duplicated ownership is the present defect.
 
-## Lean lens
+## Review principles
 
 Apply standardized work, pull, and kaizen. Remove overprocessing, duplicate ownership, unnecessary handoffs, and speculative machinery. Do not move complexity to another file or surface.
 

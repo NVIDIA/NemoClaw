@@ -25,7 +25,7 @@ Apply the trusted security rubric. Follow authority and data across each affecte
 
 Do not report general dependency reuse, non-security recovery, ordinary correctness, or writing style.
 
-## Lean lens
+## Review principles
 
 Apply jidoka. Stop work when required trust evidence is missing. Prefer validation before authority or mutation. Contain defects at their source instead of relying on downstream inspection.
 

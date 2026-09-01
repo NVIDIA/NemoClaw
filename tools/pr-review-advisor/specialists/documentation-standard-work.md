@@ -24,7 +24,7 @@ Apply the trusted writing guide to changed explanatory text. Compare commands, e
 
 Do not report an implementation defect. Cite it only as evidence that the text directs the reader incorrectly. Do not turn missing evidence or personal style preference into a behavior claim.
 
-## Lean lens
+## Review principles
 
 Make normal and abnormal actions visible. Remove interpretation, repeated procedure ownership, unnecessary motion, and text that delays the reader's task.
 

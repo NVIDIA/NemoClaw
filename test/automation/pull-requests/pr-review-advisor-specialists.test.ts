@@ -48,7 +48,7 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
-  it("runs the seven Lean specialist areas on every review", () => {
+  it("runs the seven specialist areas on every review", () => {
     expect(ADVISOR_SPECIALISTS.map(({ interest, label }) => ({ interest, label }))).toEqual([
       { interest: "architecture-standard-work", label: "Architecture and standard work" },
       { interest: "customer-value-behavior", label: "Customer value and behavior" },

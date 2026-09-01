@@ -18,7 +18,7 @@ For each configured pull-request event, it runs seven independent specialist rev
 - **Documentation and standard work** checks reader actions, procedures, support claims, and terminology.
 - **Delivery flow** checks CI dependencies, fan-out, repeated work, artifact handoffs, failure localization, and feedback latency.
 
-The specialists apply Lean principles to their assigned areas: define customer value, inspect the actual value path, prevent defects at their source, use established standard work, reduce waiting and rework, and recommend the smallest direct correction. All seven run unconditionally and publish separate reports. The advisor does not add a selection, aggregation, or summarization stage.
+The specialists cover distinct review concerns: customer value, built-in quality, standard work, mistake-proofing, recovery, reader action, and delivery flow. They inspect the actual value path, prevent defects at their source, reduce waiting and rework, and recommend the smallest direct correction. All seven run unconditionally and publish separate reports. The advisor does not add a selection, aggregation, or summarization stage.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 

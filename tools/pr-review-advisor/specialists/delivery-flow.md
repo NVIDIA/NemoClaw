@@ -25,7 +25,7 @@ Follow changed CI, build, test, artifact, publication, and release work as a val
 
 Do not report deployment recovery, product runtime performance, security boundaries, generic workflow style, or hypothetical scale concerns. Do not report external CI status.
 
-## Lean lens
+## Review principles
 
 Map the value stream. Remove waiting, batching, transport, repeated work, and excess work in progress. Prefer early deterministic feedback and direct evidence flow.
 

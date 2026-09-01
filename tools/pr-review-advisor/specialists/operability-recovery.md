@@ -26,7 +26,7 @@ Follow deployment, startup, normal use, partial success, failure, retry, cancell
 
 Do not report security consequences, ordinary semantic correctness, architecture without an operational effect, or writing without operational impact.
 
-## Lean lens
+## Review principles
 
 Preserve flow. Expose waiting, rework, excess work in progress, hidden inventory, and unsafe repetition. Make abnormal conditions and standard recovery actions visible.
 

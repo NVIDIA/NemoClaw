@@ -26,7 +26,7 @@ Follow the value path from its initiating action through state changes to its ob
 
 Do not report test structure, implementation organization without a behavior defect, operational diagnostics, cleanup quality, or writing style.
 
-## Lean lens
+## Review principles
 
 Define customer value before evaluating implementation effort. Apply pull: reject unsupported scope and speculative capability. Find defects where they first enter the value path.
 
