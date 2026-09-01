@@ -8,6 +8,7 @@ import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
   classifySnapshotRestoreResult,
+  expectedSnapshotCloneRestoreResult,
 } from "../live/snapshot-commands-helpers.ts";
 
 const HOSTED_FLAG = "NEMOCLAW_E2E_USE_HOSTED_INFERENCE";
@@ -167,5 +168,20 @@ describe("snapshot restore result classification", () => {
 
     expect(classification).toBe(expected);
     expect(classification).not.toContain("secret-output");
+  });
+});
+
+describe("snapshot clone restore expectation", () => {
+  it.each([
+    ["managed-image", "managed-clone-rebind-required"],
+    ["local-dockerfile", "restored"],
+  ] as const)("maps the %s setup independently of snapshot output", (source, expected) => {
+    expect(expectedSnapshotCloneRestoreResult(source)).toBe(expected);
+  });
+
+  it.each([undefined, "unknown"])("rejects an ambiguous workload source %#", (source) => {
+    expect(() => expectedSnapshotCloneRestoreResult(source)).toThrow(
+      "snapshot clone restore requires E2E_WORKLOAD_SOURCE",
+    );
   });
 });

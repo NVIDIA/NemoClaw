@@ -24,6 +24,21 @@ export type SnapshotRestoreResultClassification =
   | "command-failure"
   | "missing-restored-marker";
 
+export function expectedSnapshotCloneRestoreResult(
+  workloadSource: string | undefined,
+): "managed-clone-rebind-required" | "restored" {
+  switch (workloadSource) {
+    case "managed-image":
+      return "managed-clone-rebind-required";
+    case "local-dockerfile":
+      return "restored";
+    default:
+      throw new Error(
+        "snapshot clone restore requires E2E_WORKLOAD_SOURCE to select managed-image or local-dockerfile setup",
+      );
+  }
+}
+
 const SNAPSHOT_GATEWAY_PROBE_REJECTIONS: ReadonlyArray<{
   pattern: RegExp;
   classification: SnapshotGatewayProbeClassification;

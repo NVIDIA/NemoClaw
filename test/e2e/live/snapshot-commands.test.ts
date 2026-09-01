@@ -28,6 +28,7 @@ import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
   classifySnapshotRestoreResult,
+  expectedSnapshotCloneRestoreResult,
   type SnapshotInferenceFixture,
 } from "./snapshot-commands-helpers.ts";
 import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
@@ -54,24 +55,6 @@ const PROTECTED_CREDENTIAL_FILE = `${PROTECTED_CREDENTIALS_DIR}/backup-all-fixtu
 const PROTECTED_CREDENTIAL_FIXTURE = JSON.stringify({
   apiKey: INFERENCE_API_KEY,
 });
-
-function expectedCloneRestoreResult(): "managed-clone-rebind-required" | "restored" {
-  const snapshotDirectories = fs
-    .readdirSync(BACKUP_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory());
-  if (snapshotDirectories.length !== 1) {
-    throw new Error(`expected one created snapshot, found ${String(snapshotDirectories.length)}`);
-  }
-  const manifest = JSON.parse(
-    fs.readFileSync(
-      path.join(BACKUP_DIR, snapshotDirectories[0].name, "rebuild-manifest.json"),
-      "utf8",
-    ),
-  ) as { workload?: { kind?: unknown } };
-  return manifest.workload?.kind === "managed-image"
-    ? "managed-clone-rebind-required"
-    : "restored";
-}
 
 function commandEnv(
   inference?: SnapshotInferenceFixture,
@@ -208,7 +191,6 @@ async function expectShieldsUp(host: HostCliClient, artifactName: string): Promi
 }
 
 async function expectLiveBaselineExcluded(
-  _host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   artifactPrefix: string,
@@ -317,6 +299,12 @@ test(
       env: commandEnv(),
       timeoutMs: 120_000,
     });
+    cleanup.trackDisposable(`remove snapshot backup directory ${BACKUP_DIR}`, () => {
+      fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
+      if (fs.existsSync(BACKUP_DIR)) {
+        throw new Error(`snapshot backup directory remains after cleanup: ${BACKUP_DIR}`);
+      }
+    });
 
     await precleanSnapshotSandbox(host, sandbox, CLONE_SANDBOX_NAME, "pre-cleanup-clone");
     await precleanSnapshotSandbox(host, sandbox, SANDBOX_NAME, "pre-cleanup");
@@ -343,7 +331,7 @@ test(
       },
     );
     expect(excludeBaseline.exitCode, resultText(excludeBaseline)).toBe(0);
-    await expectLiveBaselineExcluded(host, sandbox, SANDBOX_NAME, "phase-2-after-exclude");
+    await expectLiveBaselineExcluded(sandbox, SANDBOX_NAME, "phase-2-after-exclude");
 
     const markerContent = `SNAPSHOT_E2E_${Date.now()}`;
 
@@ -388,7 +376,9 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       leakedFiles: credentialLeaks,
     });
     expect(credentialLeaks).toEqual([]);
-    const requiredCloneRestoreResult = expectedCloneRestoreResult();
+    const requiredCloneRestoreResult = expectedSnapshotCloneRestoreResult(
+      process.env.E2E_WORKLOAD_SOURCE,
+    );
 
     progress.phase("destroy, freshly onboard, and restore workspace state");
     const destroySource = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
@@ -421,7 +411,6 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
     );
     expect(reapplyBaselineExclusion.exitCode, resultText(reapplyBaselineExclusion)).toBe(0);
     await expectLiveBaselineExcluded(
-      host,
       sandbox,
       SANDBOX_NAME,
       "phase-4-after-reapplying-baseline-exclusion",
@@ -459,7 +448,6 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       "phase-4-read-restored-source-marker",
     );
     await expectLiveBaselineExcluded(
-      host,
       sandbox,
       SANDBOX_NAME,
       "phase-4-restored-source-baseline-exclusion",
@@ -478,7 +466,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
     const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
     expect(cloneRestoreResult).toBe(requiredCloneRestoreResult);
     progress.phase("verify the restored clone state and gateway pairing");
-    switch (cloneRestoreResult) {
+    switch (requiredCloneRestoreResult) {
       case "managed-clone-rebind-required": {
         expect(resultText(cloneRestore)).toContain(
           `restoring '${SANDBOX_NAME}' as '${CLONE_SANDBOX_NAME}' requires managed-profile clone rebind`,
@@ -513,7 +501,6 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
           "phase-4-read-clone-marker",
         );
         await expectLiveBaselineExcluded(
-          host,
           sandbox,
           CLONE_SANDBOX_NAME,
           "phase-4-clone-baseline-exclusion",
