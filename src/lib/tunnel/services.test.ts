@@ -645,6 +645,24 @@ describe("stopAll", () => {
     expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
     expect(output).not.toContain("All services stopped");
   });
+
+  it("propagates an unexpected Ollama cleanup failure after stopping services (#10553)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(() =>
+      stopAll({
+        pidDir,
+        unloadOllamaModels: () => {
+          throw new Error("transport failed\nwith unbounded detail");
+        },
+      }),
+    ).toThrow("Ollama model cleanup failed unexpectedly: transport failed with unbounded detail");
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
+    expect(output).not.toContain("All services stopped");
+  });
 });
 
 // #6212: after cloudflared yields a public URL, startAll must register that

@@ -165,6 +165,19 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.deps.rmSync).not.toHaveBeenCalled();
   });
 
+  it("preserves destroy recovery state when stopAll throws unexpectedly (#10553)", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+    vi.mocked(harness.deps.stopAll).mockImplementation(() => {
+      throw new Error("unexpected cleanup failure");
+    });
+
+    expect(() =>
+      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
+    ).toThrow("unexpected cleanup failure");
+    expect(harness.deps.rmSync).not.toHaveBeenCalled();
+    expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("preserves destroy recovery state when scoped Ollama release fails", () => {
     const harness = buildDeps({ provider: "ollama-local" });
     vi.mocked(harness.deps.unloadOllamaModels).mockReturnValue(cleanupFailure);

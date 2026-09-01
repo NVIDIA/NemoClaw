@@ -259,7 +259,7 @@ export type OllamaDeps = CommonDeps & {
     loadPendingOllamaModelCleanup?(sandboxName: string): readonly string[];
     persistPendingOllamaModelCleanup?(sandboxName: string, models: readonly string[]): void;
     clearPendingOllamaModelCleanup?(sandboxName: string, releasedModels?: readonly string[]): void;
-    persistResolvedOllamaHost?(): (() => void) | void;
+    persistResolvedOllamaHost(): () => void;
     clearPersistedOllamaHostIfUnused?(providers: readonly (string | null | undefined)[]): boolean;
   };
   /** Exact provider-owned proof used instead of legacy host warmup/probes. */
