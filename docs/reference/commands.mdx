@@ -3207,9 +3207,9 @@ $$nemoclaw credentials list
 
 ### `$$nemoclaw credentials add <PROVIDER>`
 
-Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. `--from-existing` is available only when no managed MCP server reserves credential keys. The command fails before gateway work when a reservation exists because `--from-existing` does not expose credential keys before provider creation. Rerun with explicit `--credential <ENV_NAME>` input, or remove every managed MCP server that reserves credential keys before retrying. After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
+Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. With `--from-existing`, NemoClaw inspects the provider profile and rejects registration when one of its credential keys is reserved by a managed MCP server. After the gateway accepts the provider, rebuild each sandbox that should use it.
 
-Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes). If you want a provider available to only some sandboxes, scope it with `nemoclaw credentials reset <PROVIDER>` once those sandboxes finish using it.
+Registered providers are gateway-wide and attach to every sandbox you build or rebuild after the call. `nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes. To replace a credential, reset the provider, register the replacement, and rebuild each detached sandbox.
 
 ```bash
 $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY
@@ -3219,8 +3219,8 @@ $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_K
 | --- | --- |
 | `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
 | `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
-| `--config <K=V>` | Provider configuration pair. Repeatable |
-| `--from-existing` | Load credentials and config from existing local state when no managed MCP server reserves credential keys |
+| `--config <K=V>` | Typed non-secret provider configuration. Supported: `OPENAI_BASE_URL=<http(s)://public-IP/path>` with `--type openai`. DNS hostnames are rejected because this gateway-wide credential path cannot enforce admission-time address pins. URLs with credentials, query parameters, fragments, loopback, link-local, private, internal, or reserved IP destinations are also rejected. Configure hostname-based and trusted private inference endpoints through onboarding so NemoClaw can preserve their trust and address pins. Repeatable |
+| `--from-existing` | Load credentials and config from existing local state after checking the provider profile for credential keys reserved by managed MCP servers |
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
