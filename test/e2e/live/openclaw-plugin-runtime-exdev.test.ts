@@ -9,8 +9,8 @@ import path from "node:path";
 
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
 import { resolveOrdinaryOpenClawPairingTarget } from "../../../src/lib/actions/sandbox/launch-readiness.ts";
-import { observeOrdinaryOpenClawPairingSettlement } from "../../../src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
+import { loadSession } from "../../../src/lib/state/onboard-session.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -514,6 +514,7 @@ test(
         ),
       reconcile: () =>
         reconcileOpenClawPluginOnboardPairing({
+          expectedFromDockerfile: customPluginContext.dockerfilePath,
           sandboxName: SANDBOX_NAME,
           captureDiagnostics: () =>
             captureIssue4462FailureDiagnostics(sandbox, {
@@ -527,16 +528,8 @@ test(
               env: sandboxEnv,
               timeoutMs: PROBE_TIMEOUT_MS,
             }),
+          loadSession,
           resolveTarget: () => resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME),
-          observePairing: (target) => {
-            observeOrdinaryOpenClawPairingSettlement(
-              SANDBOX_NAME,
-              target.gatewayName,
-              target.version,
-              target.stateDirectory,
-              { getOpenshellBinary: () => openshellWrapper.executable },
-            );
-          },
         }),
       onEvidence: async (evidence) => {
         await artifacts.writeJson("openclaw-plugin-exdev-onboard-retry.json", evidence);

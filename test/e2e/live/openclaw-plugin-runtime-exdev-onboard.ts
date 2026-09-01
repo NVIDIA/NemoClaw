@@ -24,12 +24,23 @@ type PairingTarget = {
   version: string;
 };
 
+type OnboardPairingSession = {
+  agent: string | null;
+  failure: unknown;
+  machine: { state: string };
+  metadata: { fromDockerfile: string | null; gatewayName: string };
+  resumable: boolean;
+  sandboxName: string | null;
+  status: string;
+};
+
 type OnboardPairingReconciliationOptions<T extends CommandExitResult> = {
+  expectedFromDockerfile: string;
   sandboxName: string;
   captureDiagnostics(): Promise<void>;
   listSandbox(): Promise<T>;
+  loadSession(): OnboardPairingSession | null;
   resolveTarget(): PairingTarget | null;
-  observePairing(target: PairingTarget): void;
 };
 
 export function classifyOpenClawPluginOnboard<T extends CommandExitResult>(
@@ -65,7 +76,7 @@ export function runOpenClawPluginOnboardWithPairingResume<T extends CommandExitR
   });
 }
 
-/** Require the live sandbox and canonical CLI pairing before resume can mutate state. */
+/** Require the paused finalization session and its live runtime before resume can continue. */
 export async function reconcileOpenClawPluginOnboardPairing<T extends CommandExitResult>(
   options: OnboardPairingReconciliationOptions<T>,
 ): Promise<boolean> {
@@ -75,8 +86,18 @@ export async function reconcileOpenClawPluginOnboardPairing<T extends CommandExi
   try {
     const target = options.resolveTarget();
     if (!target) return false;
-    options.observePairing(target);
-    return true;
+    const session = options.loadSession();
+    return (
+      session !== null &&
+      session.status === "in_progress" &&
+      session.resumable === true &&
+      session.failure === null &&
+      session.sandboxName === options.sandboxName &&
+      session.agent === "openclaw" &&
+      session.machine.state === "post_verify" &&
+      session.metadata.gatewayName === target.gatewayName &&
+      session.metadata.fromDockerfile === options.expectedFromDockerfile
+    );
   } catch {
     return false;
   }

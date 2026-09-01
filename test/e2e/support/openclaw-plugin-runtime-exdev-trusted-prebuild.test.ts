@@ -64,52 +64,109 @@ function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
 }
 
 describe("OpenClaw plugin onboarding pairing resume", () => {
-  it("reconciles a Ready sandbox that has canonical pairing (#9844)", async () => {
-    const observePairing = vi.fn();
-
-    await expect(
-      reconcileOpenClawPluginOnboardPairing({
-        sandboxName: "fixture-sandbox",
-        captureDiagnostics: vi.fn(async () => {}),
-        listSandbox: vi.fn(async () => ({
-          ...onboardResult(0),
-          stdout: "NAME STATUS\nfixture-sandbox Ready\n",
-        })),
-        resolveTarget: vi.fn(() => ({
-          gatewayName: "nemoclaw",
-          stateDirectory: "/sandbox/.openclaw",
-          version: "",
-        })),
-        observePairing,
-      }),
-    ).resolves.toBe(true);
-    expect(observePairing).toHaveBeenCalledExactlyOnceWith({
-      gatewayName: "nemoclaw",
-      stateDirectory: "/sandbox/.openclaw",
-      version: "",
-    });
+  const pausedSession = (
+    overrides: Partial<{
+      agent: string | null;
+      failure: unknown;
+      fromDockerfile: string | null;
+      gatewayName: string;
+      machineState: string;
+      resumable: boolean;
+      sandboxName: string | null;
+      status: string;
+    }> = {},
+  ) => ({
+    agent: overrides.agent ?? "openclaw",
+    failure: overrides.failure ?? null,
+    machine: { state: overrides.machineState ?? "post_verify" },
+    metadata: {
+      fromDockerfile: overrides.fromDockerfile ?? "/tmp/plugin/Dockerfile",
+      gatewayName: overrides.gatewayName ?? "nemoclaw",
+    },
+    resumable: overrides.resumable ?? true,
+    sandboxName: overrides.sandboxName ?? "fixture-sandbox",
+    status: overrides.status ?? "in_progress",
   });
 
-  it("rejects reconciliation while canonical pairing is absent (#9844)", async () => {
+  it("reconciles the paused finalization session for the Ready runtime (#9844)", async () => {
     await expect(
       reconcileOpenClawPluginOnboardPairing({
+        expectedFromDockerfile: "/tmp/plugin/Dockerfile",
         sandboxName: "fixture-sandbox",
         captureDiagnostics: vi.fn(async () => {}),
         listSandbox: vi.fn(async () => ({
           ...onboardResult(0),
           stdout: "NAME STATUS\nfixture-sandbox Ready\n",
         })),
+        loadSession: vi.fn(() => pausedSession()),
         resolveTarget: vi.fn(() => ({
           gatewayName: "nemoclaw",
           stateDirectory: "/sandbox/.openclaw",
           version: "",
         })),
-        observePairing: vi.fn(() => {
-          throw new Error("pairing absent");
-        }),
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it.each([
+    ["completed", { status: "complete" }],
+    ["not resumable", { resumable: false }],
+    ["failed", { failure: { step: "post_verify" } }],
+    ["for another sandbox", { sandboxName: "other-sandbox" }],
+    ["for another agent", { agent: "hermes" }],
+    ["before final verification", { machineState: "finalizing" }],
+    ["for another gateway", { gatewayName: "other-gateway" }],
+    ["for another Dockerfile", { fromDockerfile: "/tmp/other/Dockerfile" }],
+  ])("rejects a session that is %s (#9844)", async (_condition, overrides) => {
+    await expect(
+      reconcileOpenClawPluginOnboardPairing({
+        expectedFromDockerfile: "/tmp/plugin/Dockerfile",
+        sandboxName: "fixture-sandbox",
+        captureDiagnostics: vi.fn(async () => {}),
+        listSandbox: vi.fn(async () => ({
+          ...onboardResult(0),
+          stdout: "NAME STATUS\nfixture-sandbox Ready\n",
+        })),
+        loadSession: vi.fn(() => pausedSession(overrides)),
+        resolveTarget: vi.fn(() => ({
+          gatewayName: "nemoclaw",
+          stateDirectory: "/sandbox/.openclaw",
+          version: "",
+        })),
       }),
     ).resolves.toBe(false);
   });
+
+  it.each([
+    ["the sandbox is not Ready", "Stopped", pausedSession(), true],
+    ["the runtime identity is unavailable", "Ready", pausedSession(), false],
+    ["the saved session is unavailable", "Ready", null, true],
+  ])(
+    "rejects reconciliation when %s (#9844)",
+    async (_condition, sandboxPhase, session, hasTarget) => {
+      await expect(
+        reconcileOpenClawPluginOnboardPairing({
+          expectedFromDockerfile: "/tmp/plugin/Dockerfile",
+          sandboxName: "fixture-sandbox",
+          captureDiagnostics: vi.fn(async () => {}),
+          listSandbox: vi.fn(async () => ({
+            ...onboardResult(0),
+            stdout: `NAME STATUS\nfixture-sandbox ${sandboxPhase}\n`,
+          })),
+          loadSession: vi.fn(() => session),
+          resolveTarget: vi.fn(() =>
+            hasTarget
+              ? {
+                  gatewayName: "nemoclaw",
+                  stateDirectory: "/sandbox/.openclaw",
+                  version: "",
+                }
+              : null,
+          ),
+        }),
+      ).resolves.toBe(false);
+    },
+  );
 
   it("resumes once after canonical pairing appears late (#9844)", async () => {
     const sandboxName = "fixture-sandbox";
@@ -141,7 +198,7 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
     );
   });
 
-  it("does not resume after another onboarding failure (#9844)", async () => {
+  it("does not resume without the pairing-unavailable message (#9844)", async () => {
     const run = vi.fn(async () => onboardResult(1, "provider registration failed"));
     const reconcile = vi.fn(async () => true);
 
@@ -157,7 +214,7 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
-  it("does not resume when canonical pairing is still absent (#9844)", async () => {
+  it("does not resume when paused-session reconciliation fails (#9844)", async () => {
     const sandboxName = "fixture-sandbox";
     const run = vi.fn(async () =>
       onboardResult(
