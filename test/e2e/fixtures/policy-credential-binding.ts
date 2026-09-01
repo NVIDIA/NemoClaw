@@ -20,7 +20,7 @@ const policyBoundary = (
 ) as typeof policyBoundaryModule;
 const { parseOpenShellPolicy } = policyBoundary;
 
-export function bindHermesDiscordPolicyEndpoint(
+export function bindPolicyEndpointCredential(
   policyFile: string,
   providerName: string,
   host: string,
@@ -34,18 +34,21 @@ export function bindHermesDiscordPolicyEndpoint(
     const candidateEndpoints = (entry as { endpoints?: unknown }).endpoints;
     return Array.isArray(candidateEndpoints) ? candidateEndpoints : [];
   });
-  const endpoint = endpoints.find((candidate) => {
+  const matchingEndpoints = endpoints.filter((candidate): candidate is Record<string, unknown> => {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
       return false;
     }
     const value = candidate as { host?: unknown; port?: unknown; protocol?: unknown };
-    return (
-      value.host === host &&
-      value.port === port &&
-      value.protocol === protocol
+    return value.host === host && value.port === port && value.protocol === protocol;
+  });
+  if (matchingEndpoints.length !== 1) {
+    throw new Error(
+      matchingEndpoints.length === 0
+        ? `fake endpoint ${host}:${port}/${protocol} is missing from the base policy`
+        : `fake endpoint ${host}:${port}/${protocol} matches ${matchingEndpoints.length} base policy entries; expected exactly one`,
     );
-  }) as Record<string, unknown> | undefined;
-  if (!endpoint) throw new Error("fake Discord endpoint is missing from the base policy");
+  }
+  const endpoint = matchingEndpoints[0]!;
 
   endpoint.credential_binding = { provider: providerName };
   fs.writeFileSync(policyFile, YAML.stringify(policy));
@@ -56,10 +59,10 @@ function main(): void {
   const [policyFile, providerName, host, rawPort, protocol] = process.argv.slice(2);
   if (!policyFile || !providerName || !host || !rawPort || !protocol) {
     throw new Error(
-      "usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port> <protocol>",
+      "usage: policy-credential-binding <policy-file> <provider> <host> <port> <protocol>",
     );
   }
-  bindHermesDiscordPolicyEndpoint(policyFile, providerName, host, Number(rawPort), protocol);
+  bindPolicyEndpointCredential(policyFile, providerName, host, Number(rawPort), protocol);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

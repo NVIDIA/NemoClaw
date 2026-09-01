@@ -189,7 +189,7 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
       `${options.sandboxName}-discord-bridge`,
       FAKE_DISCORD_HOST,
       String(options.api.port),
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
     ],
     {
       artifactName: "bind-hermes-fake-discord-gateway-credential",

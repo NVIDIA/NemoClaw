@@ -559,7 +559,10 @@ export function slackCredentialBindingEvidence(
       : null;
   const endpoints =
     slackPolicyRecord && Array.isArray(slackPolicyRecord.endpoints)
-      ? (slackPolicyRecord.endpoints as Array<Record<string, unknown>>)
+      ? slackPolicyRecord.endpoints.filter(
+          (endpoint): endpoint is Record<string, unknown> =>
+            endpoint !== null && typeof endpoint === "object" && !Array.isArray(endpoint),
+        )
       : [];
   const appEndpoint: SlackRestEndpointExpectation = {
     host: "slack.com",
@@ -567,15 +570,15 @@ export function slackCredentialBindingEvidence(
     provider: `${sandboxName}-slack-app`,
     rules: [{ method: "POST", path: "/api/apps.connections.open" }],
   };
-  const botRules = [
+  const broadBotRules = [
     { method: "GET", path: "/**" },
     { method: "POST", path: "/**" },
   ] as const;
   const botEndpoints: readonly SlackRestEndpointExpectation[] = [
-    "slack.com",
-    "api.slack.com",
-    "hooks.slack.com",
-  ].map((host) => ({ host, provider: `${sandboxName}-slack-bridge`, rules: botRules }));
+    { host: "slack.com", provider: `${sandboxName}-slack-bridge`, rules: broadBotRules },
+    { host: "api.slack.com", provider: `${sandboxName}-slack-bridge`, rules: broadBotRules },
+    { host: "hooks.slack.com", provider: `${sandboxName}-slack-bridge`, rules: broadBotRules },
+  ];
   const expectedRestEndpoints = [appEndpoint, ...botEndpoints];
   const matchesExpectedRoute = (
     endpoint: Record<string, unknown>,
@@ -950,7 +953,7 @@ node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
       SANDBOX_NAME,
       providerName,
       api.port,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
     ],
     {
       artifactName: `apply-${api.kind}-rest-policy-credential-binding`,

@@ -232,7 +232,7 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
       policyHost,
       String(options.api.port),
       options.protocol,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
     ],
     {
       artifactName: `${options.artifactName}-credential-binding`,

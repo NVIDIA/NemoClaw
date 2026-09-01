@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -30,54 +31,65 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
-const SLACK_POLICY_SANDBOX = "e2e-msg-policy-proof";
-const CANONICAL_OPENCLAW_SLACK_POLICY = fs
-  .readFileSync(
-    path.join(REPO_ROOT, "src", "lib", "messaging", "channels", "slack", "policy", "openclaw.yaml"),
-    "utf8",
-  )
-  .replaceAll("{sandboxName}", SLACK_POLICY_SANDBOX);
-const CREDENTIAL_BOUND_SLACK_POLICY = `
-network_policies:
-  slack:
-    endpoints:
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        path: /api/apps.connections.open
-        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-app }
-        rules:
-          - allow: { method: POST, path: "/api/apps.connections.open" }
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-bridge }
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: api.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-bridge }
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: hooks.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-bridge }
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-`;
+const SLACK_POLICY_SANDBOX = "e2e-msg-policy";
+
+type SyntheticSlackEndpoint = {
+  host: string;
+  port: number;
+  protocol: string;
+  enforcement: string;
+  request_body_credential_rewrite: boolean;
+  path?: string;
+  credential_binding?: { provider: string };
+  rules: Array<{ allow: { method: string; path: string } }>;
+};
+
+const SYNTHETIC_SLACK_ENDPOINTS: readonly SyntheticSlackEndpoint[] = [
+  {
+    host: "slack.com",
+    port: 443,
+    protocol: "rest",
+    enforcement: "enforce",
+    request_body_credential_rewrite: true,
+    path: "/api/apps.connections.open",
+    credential_binding: { provider: `${SLACK_POLICY_SANDBOX}-slack-app` },
+    rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
+  },
+  ...["slack.com", "api.slack.com", "hooks.slack.com"].map((host) => ({
+    host,
+    port: 443,
+    protocol: "rest",
+    enforcement: "enforce",
+    request_body_credential_rewrite: true,
+    credential_binding: { provider: `${SLACK_POLICY_SANDBOX}-slack-bridge` },
+    rules: [{ allow: { method: "GET", path: "/**" } }, { allow: { method: "POST", path: "/**" } }],
+  })),
+];
+
+function syntheticSlackPolicy(mutate?: (endpoints: SyntheticSlackEndpoint[]) => void): string {
+  const endpoints = structuredClone(SYNTHETIC_SLACK_ENDPOINTS) as SyntheticSlackEndpoint[];
+  mutate?.(endpoints);
+  return YAML.stringify({
+    version: 1,
+    network_policies: { slack: { name: "slack", endpoints } },
+  });
+}
+
+function mutateSlackEndpoint(
+  host: string,
+  provider: string,
+  mutate: (endpoint: SyntheticSlackEndpoint) => void,
+): string {
+  return syntheticSlackPolicy((endpoints) => {
+    const endpoint = endpoints.find(
+      (candidate) => candidate.host === host && candidate.credential_binding?.provider === provider,
+    );
+    expect(endpoint).toBeDefined();
+    mutate(endpoint!);
+  });
+}
+
+const CREDENTIAL_BOUND_SLACK_POLICY = syntheticSlackPolicy();
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -170,16 +182,32 @@ network_policies:
   });
 
   it.each([
-    ["port", "port: 443", "port: 80"],
-    ["protocol", "protocol: rest", "protocol: websocket"],
-    ["enforcement", "enforcement: enforce", "enforcement: audit"],
+    [
+      "port",
+      (endpoint: SyntheticSlackEndpoint) => {
+        endpoint.port = 80;
+      },
+    ],
+    [
+      "protocol",
+      (endpoint: SyntheticSlackEndpoint) => {
+        endpoint.protocol = "websocket";
+      },
+    ],
+    [
+      "enforcement",
+      (endpoint: SyntheticSlackEndpoint) => {
+        endpoint.enforcement = "audit";
+      },
+    ],
     [
       "app rule",
-      '- allow: { method: POST, path: "/api/apps.connections.open" }',
-      '- allow: { method: GET, path: "/api/apps.connections.open" }',
+      (endpoint: SyntheticSlackEndpoint) => {
+        endpoint.rules = [{ allow: { method: "GET", path: "/api/apps.connections.open" } }];
+      },
     ],
-  ])("rejects an app credential endpoint with the wrong %s", (_field, current, replacement) => {
-    const policy = CREDENTIAL_BOUND_SLACK_POLICY.replace(current, replacement);
+  ])("rejects an app credential endpoint with the wrong %s", (_field, mutate) => {
+    const policy = mutateSlackEndpoint("slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, mutate);
 
     expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
       app: false,
@@ -188,9 +216,12 @@ network_policies:
   });
 
   it("rejects a bot credential endpoint without both broad Slack API rules", () => {
-    const policy = CREDENTIAL_BOUND_SLACK_POLICY.replace(
-      '          - allow: { method: GET, path: "/**" }\n',
-      "",
+    const policy = mutateSlackEndpoint(
+      "slack.com",
+      `${SLACK_POLICY_SANDBOX}-slack-bridge`,
+      (endpoint) => {
+        endpoint.rules = endpoint.rules.filter((rule) => rule.allow.method !== "GET");
+      },
     );
 
     expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
@@ -199,19 +230,73 @@ network_policies:
     });
   });
 
+  it.each([
+    ["app", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, false, true],
+    ["broad bot", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+    ["API bot", "api.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+    ["webhook bot", "hooks.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+  ] as const)(
+    "rejects the %s endpoint when its credential provider is wrong",
+    (_label, host, provider, expectedApp, expectedBot) => {
+      const policy = mutateSlackEndpoint(host, provider, (endpoint) => {
+        endpoint.credential_binding = { provider: "wrong-provider" };
+      });
+
+      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+        app: expectedApp,
+        bot: expectedBot,
+      });
+    },
+  );
+
+  it.each([
+    ["app", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, false, true],
+    ["broad bot", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+    ["API bot", "api.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+    ["webhook bot", "hooks.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+  ] as const)(
+    "rejects the %s endpoint when its credential provider is absent",
+    (_label, host, provider, expectedApp, expectedBot) => {
+      const policy = mutateSlackEndpoint(host, provider, (endpoint) => {
+        delete endpoint.credential_binding;
+      });
+
+      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+        app: expectedApp,
+        bot: expectedBot,
+      });
+    },
+  );
+
+  it.each([
+    ["app", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, false, true],
+    ["broad bot", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+    ["API bot", "api.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+    ["webhook bot", "hooks.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
+  ] as const)(
+    "rejects the %s endpoint with an extra credential-bearing permission",
+    (_label, host, provider, expectedApp, expectedBot) => {
+      const policy = mutateSlackEndpoint(host, provider, (endpoint) => {
+        endpoint.rules.push({ allow: { method: "DELETE", path: "/**" } });
+      });
+
+      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+        app: expectedApp,
+        bot: expectedBot,
+      });
+    },
+  );
+
   it.each(["api.slack.com", "hooks.slack.com"])(
     "rejects the %s bot route without credential rewrite",
     (host) => {
-      const routeStart = CREDENTIAL_BOUND_SLACK_POLICY.indexOf(`      - host: ${host}`);
-      const nextRoute = CREDENTIAL_BOUND_SLACK_POLICY.indexOf("      - host:", routeStart + 1);
-      const routeEnd = nextRoute === -1 ? CREDENTIAL_BOUND_SLACK_POLICY.length : nextRoute;
-      const policy =
-        CREDENTIAL_BOUND_SLACK_POLICY.slice(0, routeStart) +
-        CREDENTIAL_BOUND_SLACK_POLICY.slice(routeStart, routeEnd).replace(
-          "request_body_credential_rewrite: true",
-          "request_body_credential_rewrite: false",
-        ) +
-        CREDENTIAL_BOUND_SLACK_POLICY.slice(routeEnd);
+      const policy = mutateSlackEndpoint(
+        host,
+        `${SLACK_POLICY_SANDBOX}-slack-bridge`,
+        (endpoint) => {
+          endpoint.request_body_credential_rewrite = false;
+        },
+      );
 
       expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
         app: true,
@@ -221,13 +306,32 @@ network_policies:
   );
 
   it("rejects an extra unbound broad Slack REST endpoint", () => {
-    const policy = `${CREDENTIAL_BOUND_SLACK_POLICY}      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+    const policy = syntheticSlackPolicy((endpoints) => {
+      endpoints.push({
+        host: "slack.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: false,
+        rules: [
+          { allow: { method: "GET", path: "/**" } },
+          { allow: { method: "POST", path: "/**" } },
+        ],
+      });
+    });
+
+    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+      app: false,
+      bot: false,
+    });
+  });
+
+  it("treats a malformed Slack endpoint as missing credential evidence", () => {
+    const policy = `
+network_policies:
+  slack:
+    endpoints:
+      - null
 `;
 
     expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
