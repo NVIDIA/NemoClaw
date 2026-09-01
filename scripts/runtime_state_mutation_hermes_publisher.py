@@ -881,6 +881,19 @@ def _verify_state_posture(posture: str, plan_json: str) -> None:
     try:
         plan = guard.parse_agent_state_lock_plan(plan_json)
         identity = guard._production_identity()
+        if posture == "mutable":
+            result = guard.run_guard(
+                "verify-mutable",
+                HERMES_DIR,
+                identity,
+                plan,
+                mutable_top_level_files=tuple(
+                    os.path.join(HERMES_DIR, name) for name in TOP_SELECTORS
+                ),
+            )
+            if not result.ok:
+                _fail("publisher-state-posture-invalid")
+            return
         config_fd = guard._open_absolute_dir_nofollow(HERMES_DIR)
         config_st = os.fstat(config_fd)
         deadline = time.monotonic() + guard.MAX_GUARD_SECONDS

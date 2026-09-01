@@ -2912,9 +2912,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          NEMOCLAW_TRACE_DIR="${NEMOCLAW_TRACE_DIR:-}"
           expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
           if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
-            echo "::error::Refusing to sanitize unexpected raw trace path" >&2
+            echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2
+            printf 'Expected trace path: %s\n' "${expected_trace_dir}" >&2
             exit 1
           fi
           python3 scripts/e2e/sanitize-trace-timing.py \
@@ -2930,9 +2932,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          NEMOCLAW_TRACE_DIR="${NEMOCLAW_TRACE_DIR:-}"
           expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
           if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
-            echo "::error::Refusing to delete unexpected raw trace path" >&2
+            echo "::error title=E2E trace cleanup refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No files were deleted. Correct the trace path configuration before rerunning." >&2
+            printf 'Expected trace path: %s\n' "${expected_trace_dir}" >&2
             exit 1
           fi
           rm -rf -- "${NEMOCLAW_TRACE_DIR}"
@@ -5622,9 +5626,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          NEMOCLAW_TRACE_DIR="${NEMOCLAW_TRACE_DIR:-}"
           expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"
           if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
-            echo "::error::Refusing to sanitize unexpected raw trace path" >&2
+            echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2
+            printf 'Expected trace path: %s\n' "${expected_trace_dir}" >&2
             exit 1
           fi
           python3 scripts/e2e/sanitize-trace-timing.py \
@@ -5642,9 +5648,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          NEMOCLAW_TRACE_DIR="${NEMOCLAW_TRACE_DIR:-}"
           expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"
           if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
-            echo "::error::Refusing to delete unexpected raw trace path" >&2
+            echo "::error title=E2E trace cleanup refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No files were deleted. Correct the trace path configuration before rerunning." >&2
+            printf 'Expected trace path: %s\n' "${expected_trace_dir}" >&2
             exit 1
           fi
           rm -rf -- "${NEMOCLAW_TRACE_DIR}"
