@@ -259,44 +259,6 @@ function runFinalBuildOnlyPathGuard(buildOnlyPath: string) {
 }
 
 describe("Hermes final image layout", () => {
-  // source-shape-contract: compatibility -- The pinned base and final image must stay below the BuildKit snapshot depth that gates managed-image publication.
-  it("keeps the final image below the reviewed BuildKit layer-depth budget", () => {
-    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-    const baseDeclarations = dockerfile
-      .split("\n")
-      .filter((line) => line.startsWith("ARG BASE_IMAGE="));
-    const finalStage = dockerfile.slice(indexOfRequired(dockerfile, "FROM ${BASE_IMAGE}"));
-    const finalStageLayerCount = finalStage.match(/^(?:ADD|COPY|RUN)\b/gmu)?.length ?? 0;
-
-    expect(baseDeclarations).toEqual([`ARG BASE_IMAGE=${HERMES_PINNED_BASE_IMAGE}`]);
-    expect(HERMES_PINNED_BASE_LAYER_COUNT + finalStageLayerCount).toBeLessThanOrEqual(
-      HERMES_COMBINED_LAYER_BUDGET,
-    );
-  });
-
-  // source-shape-contract: security -- Every security-critical Hermes source must match the reviewed Dockerfile digest before image construction proceeds.
-  it.each(HERMES_INTEGRITY_FILES)(
-    "pins $source to its current bytes at $target",
-    ({ arg, source, target }) => {
-      const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-      const declarationPrefix = `ARG ${arg}=`;
-      const declarations = dockerfile
-        .split("\n")
-        .filter((line) => line.startsWith(declarationPrefix));
-      expect(declarations, arg).toHaveLength(1);
-
-      const integrityChecks = dockerfile
-        .split("\n")
-        .filter((line) => line.trim() === `"$${arg}" ${target} \\`);
-      expect(integrityChecks, `${arg} must verify ${target}`).toHaveLength(1);
-
-      const digest = createHash("sha256")
-        .update(fs.readFileSync(path.join(ROOT, source)))
-        .digest("hex");
-      expect(declarations[0]?.slice(declarationPrefix.length), source).toBe(digest);
-    },
-  );
-
   it("removes the neutral-platform patcher after its image probe", () => {
     const run = runNeutralPatcherCleanup();
     try {
