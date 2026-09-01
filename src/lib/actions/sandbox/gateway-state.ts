@@ -380,29 +380,31 @@ function markLivePolicyObservationFailed(
     "",
     "  Live effective policy was not observed.",
     `  Warning: ${error.message}`,
-    `  ${policyObservationRecovery(error, sandboxName, gatewayName)}${sections?.suffix ?? ""}`,
+    `  ${policyObservationRecoveryAction(error, sandboxName, gatewayName)}${sections?.suffix ?? ""}`,
     "",
   ].join("\n");
 }
 
-function policyObservationRecovery(
+export function policyObservationRecoveryAction(
   error: OpenShellSandboxError,
   sandboxName: string,
   gatewayName?: string,
+  retryAction: "status" | "launch" = "status",
 ): string {
+  const retryCommand = `${CLI_NAME} ${sandboxName} ${retryAction}`;
   if (error.kind === "authentication") {
-    return `Restore authentication for the sandbox's OpenShell gateway, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+    return `Restore authentication for the sandbox's OpenShell gateway, then retry \`${retryCommand}\`.`;
   }
   if (error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable")) {
-    return `Verify the gateway with \`openshell status\`. ${gatewayStartGuidance(gatewayName)} Then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+    return `Verify the gateway with \`openshell status\`. ${gatewayStartGuidance(gatewayName)} Then retry \`${retryCommand}\`.`;
   }
   if (error.kind === "transport") {
-    return `Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+    return `Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${retryCommand}\`.`;
   }
   if (error.kind === "schema") {
-    return `Update the OpenShell CLI and gateway to compatible versions, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+    return `Update the OpenShell CLI and gateway to compatible versions, then retry \`${retryCommand}\`.`;
   }
-  return `Inspect \`openshell status\`, correct the policy-read failure, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+  return `Inspect \`openshell status\`, correct the policy-read failure, then retry \`${retryCommand}\`.`;
 }
 
 function policyObservationFailureState(

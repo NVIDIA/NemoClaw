@@ -11,6 +11,7 @@ import {
   createCliOpenShellSandboxPolicyReader,
   createSyncCliOpenShellSandboxPolicyReader,
   readCliOpenShellSandboxPolicy,
+  redactOpenShellSandboxPolicyReadForDisplay,
 } from "./sandbox-policy-cli";
 
 const POLICY = "version: 1\nnetwork_policies: {}";
@@ -406,5 +407,34 @@ describe("CLI OpenShell sandbox policy reader", () => {
         scope: "base",
       }),
     ).resolves.toMatchObject({ result: { ok: true }, displayOutput: raw });
+  });
+
+  it("allowlists raw metadata without exposing credential-bearing headers (#9805)", () => {
+    const credential = "opaque-metadata-credential";
+
+    const display = redactOpenShellSandboxPolicyReadForDisplay({
+      displayOutput: [
+        "Version: 4",
+        `Hash: sha256:${"a".repeat(64)}`,
+        "Status: active",
+        "Active: 3",
+        "Created: 2026-09-01T12:00:00Z",
+        `Authorization: Bearer ${credential}`,
+        "Untrusted: arbitrary value",
+        "---",
+        POLICY,
+      ].join("\n"),
+      document: POLICY,
+    });
+
+    expect(display?.raw).toContain("Version: 4");
+    expect(display?.raw).toContain(`Hash: sha256:${"a".repeat(64)}`);
+    expect(display?.raw).toContain("Status: active");
+    expect(display?.raw).toContain("Active: 3");
+    expect(display?.raw).toContain("Created: 2026-09-01T12:00:00Z");
+    expect(display?.raw).toContain(POLICY);
+    expect(display?.raw).not.toContain("Authorization");
+    expect(display?.raw).not.toContain("Untrusted");
+    expect(display?.raw).not.toContain(credential);
   });
 });

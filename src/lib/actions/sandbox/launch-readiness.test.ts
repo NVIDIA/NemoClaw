@@ -181,9 +181,7 @@ describe("launch readiness validation", () => {
     gatewayPort: number;
   }>;
   let captureRequests: string[][];
-  let captureOptions: Array<
-    Parameters<NonNullable<LaunchReadinessDeps["capture"]>>[1]
-  >;
+  let captureOptions: Array<Parameters<NonNullable<LaunchReadinessDeps["capture"]>>[1]>;
   let gatewayHealthRequests: Array<[string, string]>;
   let forwardRequests: Array<[string, string]>;
   let inferenceHealthRequests: Array<[string, string]>;
@@ -1326,7 +1324,11 @@ describe("launch readiness validation", () => {
       stderr: "",
     });
     expect(await publishLaunchReadiness(publication, hashUnavailable)).toEqual({
-      kind: "evidence-failed",
+      kind: "policy-observation-failed",
+      error: {
+        kind: "schema",
+        message: "OpenShell returned an invalid sandbox policy document.",
+      },
     });
 
     const inferenceObservationUnavailable = deps();
@@ -1348,6 +1350,66 @@ describe("launch readiness validation", () => {
       kind: "evidence-failed",
     });
   });
+
+  it.each([
+    [
+      "an unreachable gateway",
+      { status: 1, output: "connection refused", stdout: "", stderr: "connection refused" },
+      {
+        kind: "transport",
+        reason: "unreachable",
+        message: "OpenShell could not reach the selected gateway.",
+      },
+    ],
+    [
+      "authentication failure",
+      { status: 1, output: "unauthorized", stdout: "", stderr: "unauthorized" },
+      {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox policy read.",
+      },
+    ],
+    [
+      "gateway identity mismatch",
+      {
+        status: 1,
+        output: "handshake verification failed",
+        stdout: "",
+        stderr: "handshake verification failed",
+      },
+      {
+        kind: "transport",
+        reason: "identity_mismatch",
+        message: "The selected OpenShell gateway identity does not match the recorded identity.",
+      },
+    ],
+    [
+      "an invalid policy document",
+      { status: 0, output: "version: [", stdout: "version: [", stderr: "" },
+      {
+        kind: "schema",
+        message: "OpenShell returned an invalid sandbox policy document.",
+      },
+    ],
+  ] as const)(
+    "preserves typed policy evidence for final publication after $0",
+    async (_label, policyResult, expectedError) => {
+      const first = await inspectLaunchReadiness(SANDBOX, deps());
+      const publication = publicationFromDecision(SANDBOX, first);
+      const currentDeps = deps();
+      currentDeps.capture = (args) =>
+        (args[0] === "policy"
+          ? policyResult
+          : { status: 0, output: routeOutput, stdout: routeOutput, stderr: "" }) as ReturnType<
+          NonNullable<LaunchReadinessDeps["capture"]>
+        >;
+
+      await expect(publishLaunchReadiness(publication, currentDeps)).resolves.toEqual({
+        kind: "policy-observation-failed",
+        error: expectedError,
+      });
+    },
+  );
 
   it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
     const currentDeps = deps();

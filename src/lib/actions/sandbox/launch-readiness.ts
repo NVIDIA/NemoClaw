@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import { readSandboxPolicyWithCapture } from "../../adapters/openshell/policy-state";
+import type { OpenShellSandboxError } from "../../adapters/openshell/sandbox-observer";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
 import {
@@ -155,6 +156,7 @@ export type LaunchReadinessPublicationResult =
       category: "identity" | "config" | "health" | "session";
       failedCheck?: LaunchReadinessFailedCheck;
     }
+  | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
   | { kind: "evidence-failed" };
 
 export type LaunchReadinessMutationGateResult<T> =
@@ -664,11 +666,20 @@ function validateLivePolicy(
     sandboxName,
     scope: "effective",
   });
-  if (!result.ok) throw new LaunchReadinessEvidenceError();
+  if (!result.ok) throw new LaunchReadinessPolicyObservationError(result.error);
   try {
     parseAndValidateSandboxPolicy(result.value.document);
   } catch {
-    throw new LaunchReadinessEvidenceError();
+    throw new LaunchReadinessPolicyObservationError({
+      kind: "schema",
+      message: "OpenShell returned an invalid sandbox policy document.",
+    });
+  }
+}
+
+class LaunchReadinessPolicyObservationError extends Error {
+  constructor(readonly policyError: OpenShellSandboxError) {
+    super(policyError.message);
   }
 }
 
@@ -1409,6 +1420,12 @@ export async function publishLaunchReadiness(
           }
           if (captureFailure !== undefined) throw captureFailure;
         } catch (error) {
+          if (error instanceof LaunchReadinessPolicyObservationError) {
+            return {
+              kind: "policy-observation-failed",
+              error: error.policyError,
+            } as const;
+          }
           const validation = publicationValidationCategory(error);
           return validation
             ? ({ kind: "validation-failed", ...validation } as const)

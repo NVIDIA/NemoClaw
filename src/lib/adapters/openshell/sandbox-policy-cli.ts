@@ -74,6 +74,30 @@ export type CliOpenShellSandboxPolicyRead = (
 
 const DEFAULT_POLICY_READ_TIMEOUT_MS = 15_000;
 
+function safePolicyMetadataLine(line: string): string | null {
+  const revision = /^(Version|Active):\s*(\d+)\s*$/u.exec(line);
+  if (revision) {
+    const value = Number.parseInt(revision[2]!, 10);
+    return Number.isSafeInteger(value) ? `${revision[1]}: ${value}` : null;
+  }
+  if (/^Hash:\s*sha256:[0-9a-f]{64}\s*$/iu.test(line)) return line.trimEnd();
+  if (/^Status:\s*(?:active|inactive)\s*$/iu.test(line)) return line.trimEnd();
+  if (
+    /^(?:Created|Loaded|Updated):\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s*$/u.test(line)
+  ) {
+    return line.trimEnd();
+  }
+  return null;
+}
+
+function safePolicyMetadata(output: string): string {
+  return metadataSection(output)
+    .split(/\r?\n/u)
+    .map(safePolicyMetadataLine)
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
 /** Return a validated, credential-redacted policy document for terminal display. */
 export function redactOpenShellSandboxPolicyDocumentForDisplay(document: string): string | null {
   try {
@@ -90,7 +114,7 @@ export function redactOpenShellSandboxPolicyReadForDisplay(input: {
 }): { readonly raw: string; readonly yaml: string } | null {
   const yaml = redactOpenShellSandboxPolicyDocumentForDisplay(input.document);
   if (yaml === null) return null;
-  const metadata = metadataSection(stripAnsi(input.displayOutput)).trimEnd();
+  const metadata = safePolicyMetadata(stripAnsi(input.displayOutput));
   return {
     raw: metadata ? `${metadata}\n---\n${yaml}` : yaml,
     yaml,

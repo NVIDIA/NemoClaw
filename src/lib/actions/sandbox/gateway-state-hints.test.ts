@@ -182,6 +182,39 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   );
 
   it.each([
+    [
+      "authentication",
+      { kind: "authentication", message: "authentication failed" } as const,
+      "Restore authentication for the sandbox's OpenShell gateway",
+    ],
+    [
+      "unreachable gateway",
+      { kind: "transport", reason: "unreachable", message: "gateway unreachable" } as const,
+      "Verify the gateway with `openshell status`",
+    ],
+    [
+      "gateway identity mismatch",
+      { kind: "transport", reason: "identity_mismatch", message: "identity mismatch" } as const,
+      "restore the expected gateway",
+    ],
+    [
+      "schema mismatch",
+      { kind: "schema", message: "invalid policy document" } as const,
+      "Update the OpenShell CLI and gateway to compatible versions",
+    ],
+  ])("renders launch recovery for $0 policy failures", (_label, error, expected) => {
+    const recovery = gatewayState.policyObservationRecoveryAction(
+      error,
+      "instance-a",
+      "nemoclaw",
+      "launch",
+    );
+
+    expect(recovery).toContain(expected);
+    expect(recovery).toContain("nemoclaw instance-a launch");
+  });
+
+  it.each([
     {
       label: "authentication",
       result: { status: 1, output: "authentication failed credential-value" },
@@ -225,7 +258,9 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   ])(
     "exits when an effective-policy read fails after a Ready sandbox observation [$label]",
     async ({ result, expected, gatewayLauncher }) => {
-      const guidance = requireDist("../../gateway-start-guidance.js") as typeof import("../../gateway-start-guidance");
+      const guidance = requireDist(
+        "../../gateway-start-guidance.js",
+      ) as typeof import("../../gateway-start-guidance");
       const renderGuidance = guidance.gatewayStartGuidance;
       vi.spyOn(guidance, "gatewayStartGuidance").mockImplementation((gatewayName) =>
         renderGuidance(gatewayName, gatewayLauncher),

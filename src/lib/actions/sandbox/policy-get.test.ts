@@ -71,7 +71,7 @@ describe("getSandboxPolicy", () => {
     const fake = createFakeOpenShell(
       [
         "Version: 1",
-        "Hash: sha256:abc",
+        `Hash: sha256:${"a".repeat(64)}`,
         "Status: active",
         "Active: 1",
         "Created: 2026-07-01T00:00:00Z",
@@ -104,7 +104,9 @@ describe("getSandboxPolicy", () => {
   });
 
   it("does not return unparsed output when policy YAML is malformed", async () => {
-    const fake = createFakeOpenShell("Version: 1\nHash: sha256:abc\nStatus: active\n");
+    const fake = createFakeOpenShell(
+      `Version: 1\nHash: sha256:${"a".repeat(64)}\nStatus: active\n`,
+    );
 
     await expect(getSandboxPolicy("alpha", fake.readPolicy)).rejects.toThrow(
       "OpenShell returned an invalid sandbox policy document",
@@ -116,7 +118,7 @@ describe("getSandboxPolicy", () => {
     const fake = createFakeOpenShell(
       [
         "Version: 4",
-        "Hash: sha256:abc",
+        `Hash: sha256:${"a".repeat(64)}`,
         "Status: active",
         "Active: 4",
         "---",
