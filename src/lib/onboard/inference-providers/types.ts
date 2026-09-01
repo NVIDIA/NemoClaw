@@ -213,7 +213,7 @@ export type HermesDeps = CommonDeps & {
 // loosely so callers can pass either shape without casting.
 export type RunFn = (
   cmd: any,
-  opts?: { ignoreError?: boolean; suppressOutput?: boolean },
+  opts?: { ignoreError?: boolean; suppressOutput?: boolean; env?: NodeJS.ProcessEnv },
 ) => RunResult;
 
 export type VllmDeps = CommonDeps & {
@@ -255,6 +255,7 @@ export type OllamaDeps = CommonDeps & {
       allowToolsIncompatible: boolean,
     ): { ok: boolean; message?: string };
     validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
+    runOllamaWarmup?(model: string, runImpl: RunFn): void;
     persistResolvedOllamaHost?(): (() => void) | void;
     clearPersistedOllamaHostIfUnused?(providers: readonly (string | null | undefined)[]): boolean;
   };

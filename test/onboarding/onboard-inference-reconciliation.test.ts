@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { createLocalInferenceRouteApplier } from "../../src/lib/onboard/local-inference-route.js";
-import type { SetupInference } from "../../src/lib/onboard/setup-inference.js";
+import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import {
   bedrockRuntimeOnboard,
@@ -1016,7 +1016,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
   function releaseHarness(options: {
     getSandbox: () => typeof priorEntry | null;
     sandboxes: (typeof priorEntry)[];
-    unloadOllamaModels: (onlyModels: readonly string[]) => void;
+    unloadOllamaModels: NonNullable<SetupInferenceDeps["unloadOllamaModels"]>;
     applyLocalInferenceRoute?: () => Promise<boolean>;
     clearPersistedOllamaHostIfUnused?: (
       providers: readonly (string | null | undefined)[],
@@ -1095,11 +1095,47 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     let result: Awaited<ReturnType<SetupInference>>;
     try {
       result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("synthetic unload failure"));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("stop or destroy the former sandbox"),
+      );
     } finally {
       warn.mockRestore();
     }
     expect(result).toEqual({ ok: true });
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
+  it("reports structured cleanup failure after a successful provider switch", async () => {
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<SetupInference>>;
+    try {
+      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("http://host.docker.internal:11434"),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("unload-request-failed"));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("stop or destroy the former sandbox"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+    expect(result).toEqual({ ok: true });
   });
 
   it("keeps the model when the re-onboard selects the same one (#9110)", async () => {

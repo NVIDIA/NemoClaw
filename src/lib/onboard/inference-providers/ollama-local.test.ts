@@ -3,9 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CONTAINER_REACHABILITY_IMAGE,
   getOllamaWarmupCommand,
   OLLAMA_HOST_DOCKER_INTERNAL,
   resetOllamaHostCache,
+  runOllamaWarmup,
   setResolvedOllamaHost,
 } from "../../inference/local";
 import { setupOllamaLocalInference } from "./ollama-local";
@@ -136,6 +138,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   it("dispatches Windows-host warm-up through Docker Desktop", async () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const run = vi.fn((_command: unknown) => ({ status: 0 }));
+    const cleanup = vi.fn(() => ({ ok: true as const }));
 
     await expect(
       setupOllamaLocalInference(
@@ -146,13 +149,32 @@ describe("Ollama local provider sandbox-facing model gate", () => {
           localInference: {
             validateOllamaModelWithToolsOverride: () => ({ ok: true }),
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            runOllamaWarmup: (model, runImpl) =>
+              runOllamaWarmup(model, runImpl, () => ({
+                env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+                isolatedCredentialConfig: true,
+                cleanup,
+              })),
             persistResolvedOllamaHost: vi.fn(),
           },
         }),
       ),
     ).resolves.toEqual({ done: false });
 
-    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        CONTAINER_REACHABILITY_IMAGE,
+        "http://host.docker.internal:11434/api/generate",
+      ]),
+      {
+        ignoreError: true,
+        env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+      },
+    );
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it("fails before provider registration when the cleanup route cannot be staged", async () => {

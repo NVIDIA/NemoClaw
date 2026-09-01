@@ -24,6 +24,7 @@ import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
+  type OllamaUnloadResult,
   withOllamaModelOwnershipLock,
 } from "../inference/ollama/proxy";
 import {
@@ -218,7 +219,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
-  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
   withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
@@ -556,6 +557,7 @@ function releaseSupersededOllamaModel(
   // still owns its model.
   if (!previous || result.retry) return;
   let authorityRefusal: unknown;
+  let cleanupWarning: string | null = null;
   try {
     const withOwnershipLock = deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
     withOwnershipLock(() => {
@@ -572,16 +574,43 @@ function releaseSupersededOllamaModel(
         authorityRefusal = error;
         return;
       }
-      if (superseded) deps.unloadOllamaModels?.([superseded]);
+      if (superseded) {
+        try {
+          const cleanup = deps.unloadOllamaModels?.([superseded]);
+          if (cleanup && !cleanup.ok) {
+            const detail = cleanup.message
+              ? `: ${cleanup.message.replace(/\s+/g, " ").slice(0, 240)}`
+              : "";
+            cleanupWarning =
+              `  Warning: Ollama did not release superseded model '${superseded}' from ` +
+              `${cleanup.endpoint} (outcome: ${cleanup.outcome}${detail}). The new inference ` +
+              `route remains active. Restore Ollama access at ${cleanup.endpoint}, then stop or ` +
+              `destroy the former sandbox to retry cleanup.`;
+          }
+        } catch (error) {
+          const detail = (error instanceof Error ? error.message : String(error))
+            .replace(/\s+/g, " ")
+            .slice(0, 240);
+          cleanupWarning =
+            `  Warning: Ollama cleanup for superseded model '${superseded}' failed: ${detail}. ` +
+            `The new inference route remains active. Restore Ollama access, then stop or destroy ` +
+            `the former sandbox to retry cleanup.`;
+        }
+      }
       if (retireRoute) {
-        deps.localInference.clearPersistedOllamaHostIfUnused?.(
-          peers.map((peer) => peer.provider),
-        );
+        deps.localInference.clearPersistedOllamaHostIfUnused?.(peers.map((peer) => peer.provider));
       }
     });
-  } catch {
-    /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
+  } catch (error) {
+    const detail = (error instanceof Error ? error.message : String(error))
+      .replace(/\s+/g, " ")
+      .slice(0, 240);
+    cleanupWarning =
+      `  Warning: NemoClaw could not finish superseded Ollama cleanup: ${detail}. The new ` +
+      `inference route remains active. Restore Ollama access, then stop or destroy the former ` +
+      `sandbox to retry cleanup.`;
   }
+  if (cleanupWarning) console.warn(cleanupWarning);
   if (authorityRefusal) throw authorityRefusal;
 }
 
@@ -601,9 +630,7 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
-    const revalidateSandboxIdentity = sandboxName
-      ? options.revalidateSandboxIdentity
-      : undefined;
+    const revalidateSandboxIdentity = sandboxName ? options.revalidateSandboxIdentity : undefined;
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;

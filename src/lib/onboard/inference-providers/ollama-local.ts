@@ -164,7 +164,11 @@ export async function setupOllamaLocalInference(
     }
   } else {
     log(`  Priming Ollama model: ${model}`);
-    run(getOllamaWarmupCommand(model), { ignoreError: true });
+    if (localInference.runOllamaWarmup) {
+      localInference.runOllamaWarmup(model, run);
+    } else {
+      run(getOllamaWarmupCommand(model), { ignoreError: true });
+    }
     const probe = localInference.validateOllamaModelWithToolsOverride(
       model,
       allowToolsIncompatible,
