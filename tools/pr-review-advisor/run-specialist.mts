@@ -42,7 +42,7 @@ export function documentationSpecialistTools(
   interest: AdvisorInterest,
   { baseRef, headRef, cwd = process.cwd() }: { baseRef: string; headRef: string; cwd?: string },
 ): ToolDefinition[] {
-  return interest === "documentation"
+  return interest === "documentation-standard-work"
     ? createTerminologyToolController({ baseRef, headRef, cwd }).tools
     : [];
 }

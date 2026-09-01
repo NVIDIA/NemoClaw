@@ -8,28 +8,17 @@ model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs an
 read-only data. It posts a sticky comment that links to the complete specialist reviews in the
 workflow run.
 
-It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself and by including E2E coverage and target guidance in the same model session:
+It runs seven independent specialist reviews on every pull request:
 
-- sandbox and workflow security review;
-- acceptance coverage for observable outcomes, current constraints and non-goals, supported
-  contracts, and explicit maintainer decisions in linked issues. Proposed designs, implementation
-  ideas, and ordinary discussion remain context; `Refs #...`, `References #...`, and
-  `Follow-up to #...` relations do not make an entire issue binding;
-- codebase drift and architecture review grounded in current behavior and contracts;
-- source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
-- static test-inventory context from changed test files and nearby test names;
-- a complete simplicity sweep that considers the changed code and its surrounding area, including
-  safe deletion, consolidation, existing or new patterns, and neutral or negative net-line outcomes.
-  Present design defects can block when checked-in evidence shows duplicated ownership, unnecessary
-  machinery, substantial repeated setup, widened dependencies, or unrelated churn and the review
-  provides a concrete behavior-preserving reduction. The reduction case covers source and tests
-  together, defaults to a negative total line outcome, and may be line-neutral only when it
-  materially reduces owners, concepts, invalid combinations, or dependency width;
-- semantic terminology review for terms that changed explanatory text introduces, expands, or
-  redefines, with repository evidence for each model-selected candidate;
-- E2E coverage, job, target, and fan-out guidance based on the checked-in deterministic plan and
-  supported inventory;
-- correctness and test-quality checks that CI cannot prove.
+- **Customer value and behavior** checks accepted scope, observable results, contracts, compatibility, and data integrity.
+- **Security and built-in quality** checks authority, sensitive data, isolation, supply-chain trust, and fail-closed controls.
+- **Architecture and standard work** checks ownership, dependency direction, reuse, total change economy, and migration completion.
+- **Verification and mistake-proofing** checks independent oracles, stable behavior boundaries, test depth, and E2E coverage.
+- **Operability and recovery** checks diagnostics, retries, reconciliation, cleanup, lifecycle states, and resource bounds.
+- **Documentation and standard work** checks reader actions, procedures, support claims, and terminology.
+- **Delivery flow** checks CI dependencies, fan-out, repeated work, artifact handoffs, failure localization, and feedback latency.
+
+The specialists apply Lean principles to their assigned areas: define customer value, inspect the actual value path, prevent defects at their source, use established standard work, reduce waiting and rework, and recommend the smallest direct correction. All seven run unconditionally and publish separate reports. The advisor does not add a selection, aggregation, or summarization stage.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 

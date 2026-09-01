@@ -98,7 +98,7 @@ export function buildSpecialistInvestigateTurn(
   const specialist = advisorSpecialist(interest);
   const fullTurn = chunkSpecialistContext(buildInvestigateTurn(context));
   const activeToolNames = ["read", "grep", "find", "ls"];
-  if (interest === "documentation") activeToolNames.push(TERMINOLOGY_TRACE_TOOL);
+  if (interest === "documentation-standard-work") activeToolNames.push(TERMINOLOGY_TRACE_TOOL);
 
   return {
     ...fullTurn,

@@ -47,6 +47,18 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
+  it("runs the seven Lean specialist areas on every review", () => {
+    expect(ADVISOR_INTERESTS).toEqual([
+      "architecture-standard-work",
+      "customer-value-behavior",
+      "delivery-flow",
+      "documentation-standard-work",
+      "operability-recovery",
+      "security-built-in-quality",
+      "verification-mistake-proofing",
+    ]);
+  });
+
   it("writes readable diff evidence in the prepared advisor context", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-context-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -201,7 +213,7 @@ describe("PR review advisor specialist prompts", () => {
 
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
-    const turn = buildSpecialistInvestigateTurn("behavior", {
+    const turn = buildSpecialistInvestigateTurn("customer-value-behavior", {
       ...context,
       controlledWords: largeWords,
     });
@@ -229,13 +241,13 @@ describe("PR review advisor specialist prompts", () => {
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const artifact = writeSpecialistSummary(
       directory,
-      "design-architecture",
+      "architecture-standard-work",
       "## Findings\n\nConcrete reduction.",
     );
 
     const expected = fs.readFileSync(artifact, "utf8");
-    expect(path.basename(artifact)).toBe("pr-review-design-architecture-summary.md");
-    expect(expected).toContain("PR Review Advisor — Design / Architecture specialist");
+    expect(path.basename(artifact)).toBe("pr-review-architecture-standard-work-summary.md");
+    expect(expected).toContain("PR Review Advisor — Architecture / Standard / Work specialist");
     expect(expected).toContain("Complete specialist review for maintainers and review agents.");
     expect(expected).toContain("Concrete reduction.");
   });
@@ -295,12 +307,12 @@ describe("PR review advisor specialist prompts", () => {
       Object.fromEntries(
         ADVISOR_INTERESTS.map((interest) => [
           interest,
-          interest === "documentation" ? [TERMINOLOGY_TRACE_TOOL] : [],
+          interest === "documentation-standard-work" ? [TERMINOLOGY_TRACE_TOOL] : [],
         ]),
       ),
     );
     const documentationTools =
-      captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
+      captured.find(([interest]) => interest === "documentation-standard-work")?.[1] ?? [];
     const trace = documentationTools[0] as CallableTool;
     const evidence = await trace.execute(
       "trace-1",
@@ -318,7 +330,7 @@ describe("PR review advisor specialist prompts", () => {
     (interest) => {
       const turn = buildSpecialistInvestigateTurn(interest, context);
       const expected =
-        interest === "documentation"
+        interest === "documentation-standard-work"
           ? ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL]
           : ["read", "grep", "find", "ls"];
 
