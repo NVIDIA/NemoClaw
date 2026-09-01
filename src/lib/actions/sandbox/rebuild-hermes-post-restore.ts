@@ -138,31 +138,6 @@ export interface HermesPostRestoreGatewayVerification {
  * identity whose MCP load just converged. A gated rebuild keeps the root-owned
  * cron drain active across restart, MCP restoration, and final verification.
  */
-export function ensureHermesGatewayAfterStateRestore(
-  sandboxName: string,
-  agentName: string,
-  deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayState {
-  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
-  return verifyHermesGatewayAfterStateRestore(sandboxName, agentName, restartState, deps);
-}
-
-export function ensureHermesGatewayAfterStateRestoreForCronGate(
-  sandboxName: string,
-  agentName: string,
-  originalIdentity: HermesCronRestoreIdentity,
-  deps: HermesPostRestoreGatewayDeps = {},
-): HermesPostRestoreGatewayVerification {
-  const restartState = restartHermesGatewayAfterStateRestore(sandboxName, agentName, deps);
-  return verifyHermesGatewayAfterStateRestoreForCronGate(
-    sandboxName,
-    agentName,
-    restartState,
-    originalIdentity,
-    deps,
-  );
-}
-
 export function restartHermesGatewayAfterStateRestore(
   sandboxName: string,
   agentName: string,
