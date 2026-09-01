@@ -960,33 +960,59 @@ export async function applyRestRewritePolicy(
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
   if (!providerName) return;
 
+  await bindRestRewritePolicyCredentials(
+    host,
+    [{ providerName, port: api.port }],
+    api.kind,
+    env,
+    redactionValues,
+  );
+}
+
+export async function bindRestRewritePolicyCredentials(
+  host: HostCliClient,
+  bindings: readonly { providerName: string; port: string }[],
+  artifactKind: string,
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<void> {
+  if (bindings.length === 0) throw new Error("at least one REST credential binding is required");
+
   const binding = await runHost(
     host,
     "bash",
     [
       "-lc",
       String.raw`set -eu
+openshell="$1"
+sandbox="$2"
+helper="$3"
+shift 3
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${api.kind}-rest-policy`,
+"$openshell" policy get --base "$sandbox" >"$policy_file"
+node --import tsx "$helper" "$policy_file" "$@"
+"$openshell" policy set --policy "$policy_file" --wait "$sandbox"`,
+      `bind-fake-${artifactKind}-rest-policy`,
       host.openshellCommandPath,
       SANDBOX_NAME,
-      providerName,
-      api.port,
       path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      ...bindings.flatMap(({ providerName, port }) => [
+        providerName,
+        "host.openshell.internal",
+        port,
+        "rest",
+      ]),
     ],
     {
-      artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
+      artifactName: `apply-${artifactKind}-rest-policy-credential-binding`,
       cwd: REPO_ROOT,
       env,
       redactionValues,
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
+  expectExitZero(binding, `bind ${artifactKind} fake REST policy credentials`);
 }
 
 export function lastJsonLine(

@@ -18,6 +18,7 @@ import {
   accountBool,
   accountString,
   applyRestRewritePolicy,
+  bindRestRewritePolicyCredentials,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -884,13 +885,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(
-      host,
-      fakeSlack,
-      state.env,
-      redactionValues,
-      `${SANDBOX_NAME}-slack-bridge`,
-    );
+    await applyRestRewritePolicy(host, fakeSlack, state.env, redactionValues);
     expect(
       fakeSlack.alternatePort,
       "fake Slack API must publish an independent app-token port",
@@ -899,12 +894,16 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       ...fakeSlack,
       port: fakeSlack.alternatePort!,
     };
-    await applyRestRewritePolicy(
+    await applyRestRewritePolicy(host, fakeSlackApp, state.env, redactionValues);
+    await bindRestRewritePolicyCredentials(
       host,
-      fakeSlackApp,
+      [
+        { providerName: `${SANDBOX_NAME}-slack-bridge`, port: fakeSlack.port },
+        { providerName: `${SANDBOX_NAME}-slack-app`, port: fakeSlackApp.port },
+      ],
+      "slack",
       state.env,
       redactionValues,
-      `${SANDBOX_NAME}-slack-app`,
     );
 
     const slackBotPlaceholder = await sandboxOutput(

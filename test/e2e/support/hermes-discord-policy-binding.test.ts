@@ -152,4 +152,55 @@ describe("Hermes Discord E2E policy binding", () => {
       provider: "e2e-hermes-discord-discord-bridge",
     });
   });
+
+  it("binds two Slack ports in one replacement policy", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
+    tempDirs.push(tempDir);
+    const policyFile = path.join(tempDir, "policy.yaml");
+    fs.writeFileSync(
+      policyFile,
+      [
+        "version: 1",
+        "network_policies:",
+        "  slack:",
+        "    endpoints:",
+        "      - host: host.openshell.internal",
+        "        port: 43117",
+        "        protocol: rest",
+        "      - host: host.openshell.internal",
+        "        port: 43118",
+        "        protocol: rest",
+        "",
+      ].join("\n"),
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--disable-warning=DEP0205",
+        "--import",
+        "tsx",
+        HELPER,
+        policyFile,
+        "e2e-msg-slack-bridge",
+        "host.openshell.internal",
+        "43117",
+        "rest",
+        "e2e-msg-slack-app",
+        "host.openshell.internal",
+        "43118",
+        "rest",
+      ],
+      { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
+    );
+    const endpoints = YAML.parse(fs.readFileSync(policyFile, "utf8")).network_policies.slack
+      .endpoints as Array<Record<string, unknown>>;
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(endpoints).toMatchObject([
+      { port: 43117, credential_binding: { provider: "e2e-msg-slack-bridge" } },
+      { port: 43118, credential_binding: { provider: "e2e-msg-slack-app" } },
+    ]);
+  });
 });
