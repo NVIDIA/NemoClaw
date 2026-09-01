@@ -768,114 +768,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
-            { echo "::error::candidate repository is invalid"; exit 1; }
-          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] ||
-            { echo "::error::candidate SHA must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] ||
-            { echo "::error::workflow SHA must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] ||
-            { echo "::error::checked-out commit does not match the artifact candidate SHA"; exit 1; }
-          [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
-            { echo "::error::workflow run identity is invalid"; exit 1; }
-          for required_file in dist/nemoclaw.js dist/build-identity.json; do
-            [[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]] ||
-              { echo "::error::candidate CLI build output is missing or is not a nonempty regular file: $required_file"; exit 1; }
-          done
-          for boundary in \
-            openshell-policy-boundary.cjs \
-            sandbox-name.cjs \
-            snapshot-sanitizer-boundary.cjs; do
-            boundary_path="nemoclaw/dist/shared/$boundary"
-            [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] ||
-              { echo "::error::candidate CLI build shared module is missing or is not a nonempty regular file: $boundary"; exit 1; }
-          done
-
-          jq -e --arg candidateSha "$CANDIDATE_SHA" '
-            type == "object" and
-            (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
-            (.nemoclawVersion | strings | length > 0) and
-            .sourceRevision == $candidateSha
-          ' dist/build-identity.json >/dev/null ||
-            { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
-
-          artifact_catalog="dist/e2e-managed-image-catalog.json"
-          [[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]] || {
-            echo "::error::candidate build created the managed-image catalog path" >&2
-            exit 1
-          }
-
-          artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
-          install -d -m 0700 "$artifact_dir"
-          payload="$artifact_dir/nemoclaw-cli.tar"
-          manifest="$artifact_dir/manifest.json"
-          tar \
-            --sort=name \
-            --mtime=@0 \
-            --owner=0 \
-            --group=0 \
-            --numeric-owner \
-            -cf "$payload" \
-            dist \
-            nemoclaw/dist/shared
-          payload_sha256="$(sha256sum "$payload" | awk '{print $1}')"
-          source_tree="$(git rev-parse 'HEAD^{tree}')"
-          lockfile_sha256="$(sha256sum package-lock.json | awk '{print $1}')"
-          node_version="$(node --version)"
-          npm_version="$(npm --version)"
-          artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"
-
-          jq -n \
-            --arg artifactName "$artifact_name" \
-            --arg buildCommand "npm run build:cli" \
-            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
-            --arg candidateSha "$CANDIDATE_SHA" \
-            --arg lockfileSha256 "$lockfile_sha256" \
-            --arg nodeVersion "$node_version" \
-            --arg npmVersion "$npm_version" \
-            --arg payloadFile "nemoclaw-cli.tar" \
-            --arg payloadSha256 "$payload_sha256" \
-            --arg runAttempt "$RUN_ATTEMPT" \
-            --arg runId "$RUN_ID" \
-            --arg runnerArch "$RUNNER_ARCH" \
-            --arg runnerOs "$RUNNER_OS" \
-            --arg sourceTree "$source_tree" \
-            --arg workflowSha "$WORKFLOW_SHA" \
-            '{
-              kind: "nemoclaw-e2e-cli-artifact-v1",
-              artifactName: $artifactName,
-              candidate: {
-                repository: $candidateRepository,
-                sha: $candidateSha,
-                sourceTree: $sourceTree,
-                lockfileSha256: $lockfileSha256
-              },
-              workflow: {
-                sha: $workflowSha,
-                runId: $runId,
-                runAttempt: $runAttempt
-              },
-              toolchain: {
-                node: $nodeVersion,
-                npm: $npmVersion,
-                runnerOs: $runnerOs,
-                runnerArch: $runnerArch
-              },
-              build: {
-                command: $buildCommand,
-                sourceRevision: $candidateSha
-              },
-              payload: {
-                file: $payloadFile,
-                sha256: $payloadSha256
-              }
-            }' >"$manifest"
-          chmod 0600 "$manifest" "$payload"
-          printf 'artifact_name=%s\n' "$artifact_name" >>"$GITHUB_OUTPUT"
-          printf 'candidate_sha=%s\n' "$CANDIDATE_SHA" >>"$GITHUB_OUTPUT"
-          printf 'payload_sha256=%s\n' "$payload_sha256" >>"$GITHUB_OUTPUT"
+        run: scripts/e2e/package-cli-artifact.sh
 
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
@@ -3390,12 +3283,13 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "external-gateway-health"
       E2E_AGENT_RUNTIME: "none"
-      E2E_OBSERVABLE_OUTCOME: "The reviewed SDK observes exact public gateway health over explicit HTTPS and CA"
+      E2E_OBSERVABLE_OUTCOME: "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.106; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -5769,94 +5663,22 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  openclaw-plugin-runtime-exdev-release:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev-release') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    timeout-minutes: 55
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "openclaw-plugin-runtime-exdev-release"
-      E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Release baseline plugin runtime survives the EXDEV boundary"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; release baseline package; no inference endpoint"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev-release
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev-rel"
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Pre-pull release-matched Docker Hub builder image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker pull node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
-
-      - name: Remove Docker auth before release-pinned fixture
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run OpenClaw custom-plugin release baseline live test
-        run: |
-          set -euo pipefail
-          test -n "${DOCKER_CONFIG:-}"
-          test ! -e "${DOCKER_CONFIG}"
-          test -z "${DOCKERHUB_USERNAME:-}"
-          test -z "${DOCKERHUB_TOKEN:-}"
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            npx tsx tools/e2e/live-vitest-invocation.mts run \
-              --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
-              --selector release-baseline
-
-      - name: Upload OpenClaw plugin release baseline artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  # Main-push current-lifecycle coverage for #6108 / #3513 / #3127. This
-  # proves restart/rebuild persistence and target-side runtime-dependency
-  # replacement across devices without waiting for the release baseline.
+  # Main-push current-lifecycle coverage for #6108. This proves a custom plugin
+  # installs across devices and remains usable after restart and recreation.
   openclaw-plugin-runtime-exdev:
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Two bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
-    # Vitest buffer need 85 minutes; allow 20 more for setup and teardown.
-    timeout-minutes: 105
+    # Two bounded 25-minute onboarding operations plus the 15-minute Vitest
+    # buffer need 65 minutes; allow 20 more for setup and teardown.
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Current plugin lifecycle rebuild and dependencies survive the EXDEV boundary"
+      E2E_OBSERVABLE_OUTCOME: "OpenClaw installs the custom plugin across devices; plugin behavior survives restart and recreation"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; current package; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -5875,13 +5697,13 @@ jobs:
 
       - *dockerhub-auth
 
-      - name: Pre-pull release-matched Docker Hub builder image
+      - name: Pre-pull current-checkout Docker Hub builder image
         shell: bash
         run: |
           set -euo pipefail
           docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
 
-      - name: Remove Docker auth before release-pinned fixture
+      - name: Remove Docker auth before current-checkout fixture
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
@@ -5895,7 +5717,7 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
-      - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
+      - name: Run OpenClaw cross-device plugin lifecycle live test
         run: |
           set -euo pipefail
           test -n "${DOCKER_CONFIG:-}"
@@ -5907,7 +5729,7 @@ jobs:
               --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
               --selector current-lifecycle
 
-      - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
+      - name: Upload OpenClaw cross-device plugin lifecycle artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -5951,7 +5773,6 @@ jobs:
         messaging-providers,
         jetson-nvmap-gpu,
         cloud-onboard,
-        openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
