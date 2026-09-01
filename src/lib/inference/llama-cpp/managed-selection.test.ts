@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type CollectHostObservationsOptions,
   createHostReadinessReport,
@@ -23,6 +23,7 @@ const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
 const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const N1X_WSL_PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
+const LOCAL_DOCKER_SELECTION = { dockerContextIsDefault: () => true } as const;
 
 function readinessReport(
   preset: ManagedInferenceServingPreset,
@@ -232,6 +233,7 @@ describe("managed llama.cpp selection", () => {
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         report,
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({
       kind: "selected",
@@ -259,12 +261,14 @@ describe("managed llama.cpp selection", () => {
         gpu,
         catalog,
         n1xCollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "selected" });
   });
 
   it("rejects an explicit remote Docker context for N1x WSL", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const dockerContextIsDefault = vi.fn(() => false);
 
     expect(
       resolveManagedLlamaCppSelection(
@@ -274,27 +278,33 @@ describe("managed llama.cpp selection", () => {
         },
         catalog,
         report,
+        { dockerContextIsDefault },
       ),
     ).toMatchObject({
       kind: "rejected",
-      reason: expect.stringContaining("default Docker context"),
+      reason: expect.stringContaining("effective Docker context to be default"),
     });
+    expect(dockerContextIsDefault).toHaveBeenCalledWith(
+      expect.objectContaining({ DOCKER_CONTEXT: "remote-builder" }),
+    );
   });
 
   it("rejects a persisted remote Docker context for N1x WSL", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const dockerContextIsDefault = vi.fn(() => false);
 
     expect(
       resolveManagedLlamaCppSelection(
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID, HOME: "/home/test" },
         catalog,
         report,
-        { readDockerConfig: () => JSON.stringify({ currentContext: "remote-builder" }) },
+        { dockerContextIsDefault },
       ),
     ).toMatchObject({
       kind: "rejected",
-      reason: expect.stringContaining("persisted Docker context"),
+      reason: expect.stringContaining("effective Docker context to be default"),
     });
+    expect(dockerContextIsDefault).toHaveBeenCalledOnce();
   });
 
   it("rejects N1x WSL when the real readiness wrapper receives failed GPU proof (#10102)", () => {
@@ -314,6 +324,7 @@ describe("managed llama.cpp selection", () => {
         gpu,
         catalog,
         n1xCollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "rejected" });
   });
@@ -334,6 +345,7 @@ describe("managed llama.cpp selection", () => {
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         withoutGpuProof,
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "rejected" });
   });
@@ -354,6 +366,7 @@ describe("managed llama.cpp selection", () => {
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         withoutN1xIdentity,
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "rejected" });
   });
@@ -374,6 +387,7 @@ describe("managed llama.cpp selection", () => {
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         belowMemoryFloor,
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "rejected" });
   });
@@ -394,6 +408,7 @@ describe("managed llama.cpp selection", () => {
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         nativeDocker,
+        LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "rejected" });
   });

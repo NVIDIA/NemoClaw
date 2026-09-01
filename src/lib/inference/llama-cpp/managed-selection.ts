@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
 
+import { dockerContextIsDefaultFromBuild } from "../../adapters/docker/client-isolation";
 import { getBuildIdentity } from "../../core/version";
 import {
   type CollectHostObservationsOptions,
@@ -37,54 +36,16 @@ export interface ManagedLlamaCppSelectionChoice {
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 
 type ManagedLlamaCppSelectionOptions = {
-  readonly readDockerConfig?: (filePath: string) => string;
+  readonly dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
 };
-
-function exactDockerSelector(value: string | undefined): string | null {
-  if (value === undefined || value === "") return "";
-  return value === value.trim() && !/[\u0000-\u001f\u007f-\u009f]/u.test(value) ? value : null;
-}
 
 function n1xWslDockerLocalityFailure(
   env: NodeJS.ProcessEnv,
   options: ManagedLlamaCppSelectionOptions,
 ): string | null {
-  const dockerHost = exactDockerSelector(env.DOCKER_HOST);
-  if (dockerHost === null || dockerHost) {
-    return "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset.";
-  }
-  const dockerContext = exactDockerSelector(env.DOCKER_CONTEXT);
-  if (dockerContext === null || (dockerContext && dockerContext !== "default")) {
-    return "Managed N1x WSL llama.cpp requires the default Docker context.";
-  }
-  if (dockerContext === "default") return null;
-
-  const dockerConfig = exactDockerSelector(env.DOCKER_CONFIG);
-  const home = exactDockerSelector(env.HOME);
-  if (dockerConfig === null || home === null) {
-    return "Managed N1x WSL llama.cpp cannot verify the local Docker context.";
-  }
-  const configDirectory = dockerConfig || (home ? path.join(home, ".docker") : "");
-  if (!configDirectory) return null;
-  let source: string;
-  try {
-    source = (options.readDockerConfig ?? ((filePath) => fs.readFileSync(filePath, "utf8")))(
-      path.join(configDirectory, "config.json"),
-    );
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT"
-      ? null
-      : "Managed N1x WSL llama.cpp cannot verify the local Docker context.";
-  }
-  try {
-    const currentContext = (JSON.parse(source) as { currentContext?: unknown }).currentContext;
-    if (currentContext === undefined || currentContext === "" || currentContext === "default") {
-      return null;
-    }
-    return "Managed N1x WSL llama.cpp requires the persisted Docker context to be default.";
-  } catch {
-    return "Managed N1x WSL llama.cpp cannot verify the local Docker context.";
-  }
+  return (options.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild)(env)
+    ? null
+    : "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
 }
 
 function selectablePresetsForRecipe(

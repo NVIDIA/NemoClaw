@@ -189,7 +189,7 @@ describe("managed llama.cpp profile onboarding", () => {
 
     await expect(
       setupNim({ platform: "n1x", wslDockerDesktopGpuProofPassed: true } as never, "n1x-agent"),
-    ).rejects.toThrow("default Docker context");
+    ).rejects.toThrow("effective Docker context");
     expect(installManagedLlamaCpp).not.toHaveBeenCalled();
   });
 
