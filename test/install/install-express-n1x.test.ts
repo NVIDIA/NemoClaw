@@ -121,7 +121,7 @@ function [ {
 }
 cat() {
   if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
-    printf "Dell Pro Max"
+    printf "OEM GB10 system"
     return
   fi
   command cat "$@"
@@ -133,6 +133,16 @@ detect_express_platform
 `, { MARKER_CONTENT: contents, MARKER_KIND: markerKind, MARKER_METADATA: metadata });
 
     expect(result.result.stdout).toBe(expected);
+  });
+
+  it("preserves harness-owned environment paths", () => {
+    const result = runInstallerSourced(`
+[ "$HOME" != "/forbidden" ]
+[ "$PATH" != "/forbidden" ]
+[ "$INSTALLER_UNDER_TEST" != "/forbidden" ]
+`, { HOME: "/forbidden", PATH: "/forbidden", INSTALLER_UNDER_TEST: "/forbidden" });
+
+    expect(result.result.status, result.output).toBe(0);
   });
 
   it.each([

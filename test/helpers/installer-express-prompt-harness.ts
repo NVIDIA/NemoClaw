@@ -16,10 +16,10 @@ export function runInstallerSourced(body: string, environment: NodeJS.ProcessEnv
       cwd: path.resolve(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: {
+        ...environment,
         HOME: home,
         PATH: TEST_SYSTEM_PATH,
         INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        ...environment,
       },
     },
   );

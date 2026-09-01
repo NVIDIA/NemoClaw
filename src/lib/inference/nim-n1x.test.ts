@@ -25,7 +25,7 @@ function withFirmwareModel(model: string, fn: () => void): void {
 
 describe("N1x NVIDIA platform detection", () => {
   it("classifies a trusted DGX Spark FastOS marker on an OEM ARM64 host (#10717)", () => {
-    withFirmwareModel("Dell Pro Max", () => {
+    withFirmwareModel("OEM GB10 system", () => {
       expect(
         detectNvidiaPlatform({
           hostPlatform: "linux",

@@ -290,7 +290,7 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it("classifies a trusted OEM DGX Spark FastOS marker as Spark rather than failed N1x (#10717)", () => {
-    const identityFiles = new Map([["/fixtures/product_name", "Dell Pro Max\n"]]);
+    const identityFiles = new Map([["/fixtures/product_name", "OEM GB10 system\n"]]);
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
       fastOsReleasePath: "/fixtures/fastos-release",
@@ -306,7 +306,7 @@ describe("platform readiness qualification (#7410)", () => {
       input({ architecture: "arm64", hasNvidiaGpu: true, ...identity }),
     );
 
-    expect(identity).toEqual({ nvidiaPlatform: "spark", productName: "Dell Pro Max" });
+    expect(identity).toEqual({ nvidiaPlatform: "spark", productName: "OEM GB10 system" });
     expect(qualification(result, "host.platform.dgx_spark")).toBe("qualified");
     expect(result.findings.map(({ id }) => id)).not.toContain("host.platform.n1x_unqualified");
   });
