@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 import {
   mergeIsolatedDockerClientEnv,
@@ -79,6 +80,26 @@ const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS = 1_000;
 const CREATED_SANDBOX_PUBLICATION_DIAGNOSTIC_LIMIT = 1_000;
+
+type PostCreateReadinessDeadline = Readonly<{
+  deadlineMs: number;
+  now: () => number;
+}>;
+
+function createPostCreateReadinessDeadline(
+  input: SandboxGpuCreateFlowInput,
+  deps: SandboxGpuCreateFlowDeps,
+): PostCreateReadinessDeadline {
+  const now = deps.publicationNow ?? (() => performance.now());
+  return {
+    deadlineMs: now() + Math.max(1, Math.round(input.sandboxReadyTimeoutSecs * 1_000)),
+    now,
+  };
+}
+
+function remainingPostCreateReadinessMs(deadline: PostCreateReadinessDeadline): number {
+  return Math.max(0, deadline.deadlineMs - deadline.now());
+}
 
 async function streamSandboxCreateWithPublicImageCredentialIsolation(
   isolate: boolean,
@@ -479,12 +500,12 @@ function waitForCreatedOpenShellSandboxPublication(
   sandboxId: string,
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
+  deadline: PostCreateReadinessDeadline,
 ): void {
-  const timeoutMs = Math.max(1, Math.round(input.sandboxReadyTimeoutSecs * 1_000));
   const published = sandboxReadinessTracing.waitForCreatedSandboxPublication({
-    budgetMs: timeoutMs,
+    budgetMs: remainingPostCreateReadinessMs(deadline),
     pollIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS,
-    now: deps.publicationNow,
+    now: deadline.now,
     sleep: deps.sleep,
     probe: (getRemainingMs) => {
       const result = deps.runOpenshell(
@@ -540,13 +561,14 @@ function waitForCreatedSandboxPublicationOrPersist(
   sandboxId: string,
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
+  deadline: PostCreateReadinessDeadline,
   persistIdentitySettlementRecovery: (
     sandboxIdentityFingerprint: string,
     failureDiagnostic?: string,
   ) => void,
 ): void {
   try {
-    waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
+    waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps, deadline);
   } catch (error) {
     persistIdentitySettlementRecovery(
       fingerprintSandboxRecreateValue(sandboxId),
@@ -680,6 +702,13 @@ export function createSandboxGpuCreateAttemptRunner(
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
     if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
+    let postCreateReadinessDeadline: PostCreateReadinessDeadline | null = null;
+    const requirePostCreateReadinessDeadline = (): PostCreateReadinessDeadline => {
+      postCreateReadinessDeadline ??= createPostCreateReadinessDeadline(input, deps);
+      return postCreateReadinessDeadline;
+    };
+    const remainingPostCreateReadinessSecs = (): number =>
+      remainingPostCreateReadinessMs(requirePostCreateReadinessDeadline()) / 1_000;
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
       failureDiagnostic?: string,
@@ -696,6 +725,7 @@ export function createSandboxGpuCreateAttemptRunner(
         sandboxId,
         input,
         deps,
+        requirePostCreateReadinessDeadline(),
         persistIdentitySettlementRecovery,
       );
     const captureRetainedSandboxRecovery = () => {
@@ -820,12 +850,15 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     const settleCreatedIdentity = (): string => {
       if (readyCheckCreatedIdentityFailure !== null) throw readyCheckCreatedIdentityFailure;
+      const deadline = requirePostCreateReadinessDeadline();
       const sandboxId = settleCreatedOpenShellSandboxId({
         sandboxName: input.sandboxName,
         gatewayName: input.gatewayName,
         createAttemptNonce: createAttemptNonce!,
         runCaptureOpenshell: deps.runCaptureOpenshell,
         priorSandboxId: readyCheckCreatedSandboxId,
+        now: deadline.now,
+        timeoutMs: remainingPostCreateReadinessMs(deadline),
         sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
       });
       if (readyCheckCreatedSandboxId && sandboxId !== readyCheckCreatedSandboxId) {
@@ -905,6 +938,7 @@ export function createSandboxGpuCreateAttemptRunner(
       return process.exit(status);
     };
     if (input.resumeVerifiedCreate) {
+      requirePostCreateReadinessDeadline();
       if (route !== input.resumeVerifiedCreate.route) {
         throw new Error("Verified sandbox recovery route changed before continuation.");
       }
@@ -947,6 +981,7 @@ export function createSandboxGpuCreateAttemptRunner(
               );
             }
             const result = await streamCreate();
+            requirePostCreateReadinessDeadline();
             const createFailure =
               result.status === 0 ? null : classifySandboxCreateFailure(result.output);
             if (result.status !== 0 && createFailure?.kind !== "sandbox_create_incomplete") {
@@ -955,11 +990,12 @@ export function createSandboxGpuCreateAttemptRunner(
             if (createFailure?.kind === "sandbox_create_incomplete") {
               const readiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
                 sandboxName: input.sandboxName,
-                timeoutSecs: input.sandboxReadyTimeoutSecs,
+                timeoutSecs: remainingPostCreateReadinessSecs(),
                 observer: deps.sandboxObserver,
                 target: { kind: "named", gatewayName: input.gatewayName },
                 stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
                 sleep: deps.sleep,
+                now: requirePostCreateReadinessDeadline().now,
               });
               if (!readiness.ready) {
                 if (createAttemptNonce) persistIdentitySettlementRecovery();
@@ -1181,7 +1217,7 @@ export function createSandboxGpuCreateAttemptRunner(
     console.log("  Waiting for sandbox to become ready...");
     const readiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
-      timeoutSecs: input.sandboxReadyTimeoutSecs,
+      timeoutSecs: remainingPostCreateReadinessSecs(),
       observer: deps.sandboxObserver,
       target: { kind: "named", gatewayName: input.gatewayName },
       stableReadyPolls:
@@ -1207,6 +1243,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 getRemainingMs,
               ),
       sleep: deps.sleep,
+      now: requirePostCreateReadinessDeadline().now,
     });
     if (!readiness.ready) {
       console.error("");

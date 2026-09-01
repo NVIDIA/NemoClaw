@@ -305,6 +305,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
   readonly priorSandboxId?: string | null;
   readonly now?: () => number;
+  readonly timeoutMs?: number;
   readonly sleep: (milliseconds: number) => void;
 }): string {
   assertCreateAttemptNonce(input.createAttemptNonce);
@@ -315,9 +316,18 @@ export function settleCreatedOpenShellSandboxId(input: {
   }
   const now = input.now ?? (() => performance.now());
   const startedAt = now();
-  const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
+  const timeoutMs = Math.min(
+    CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
+    input.timeoutMs ?? CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
+  );
+  const deadlineMs = startedAt + timeoutMs;
 
-  if (!Number.isFinite(startedAt) || !Number.isFinite(deadlineMs) || deadlineMs <= startedAt) {
+  if (
+    !Number.isFinite(startedAt) ||
+    !Number.isFinite(timeoutMs) ||
+    !Number.isFinite(deadlineMs) ||
+    deadlineMs <= startedAt
+  ) {
     throw createdIdentityError(input.sandboxName);
   }
 

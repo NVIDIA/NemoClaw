@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { performance } from "node:perf_hooks";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -900,6 +898,66 @@ describe("created sandbox identity gate", () => {
     expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
   });
 
+  it("shares publication time with the final post-create readiness deadline (#10652)", async () => {
+    let nonce = "";
+    let nowMs = 1_000;
+    const input = noGpuInput();
+    input.sandboxReadyTimeoutSecs = 10;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    deps.publicationNow = () => nowMs;
+    vi.mocked(deps.sleep).mockImplementation((seconds) => {
+      nowMs += seconds * 1_000;
+    });
+    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+    const missingSandbox = {
+      status: 1,
+      stdout: "",
+      stderr:
+        "Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\"",
+    };
+    vi.mocked(deps.runOpenshell)
+      .mockReturnValueOnce(missingSandbox)
+      .mockReturnValueOnce(missingSandbox)
+      .mockReturnValueOnce(missingSandbox)
+      .mockReturnValueOnce(missingSandbox)
+      .mockReturnValue({
+        status: 0,
+        stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+        stderr: "",
+      });
+    let finalReadinessTimeoutSecs = Number.NaN;
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      finalReadinessTimeoutSecs = options.timeoutSecs;
+      nowMs += options.timeoutSecs * 1_000;
+      return { ready: false, reason: "timeout", failurePhase: null };
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not become ready after verified creation",
+    );
+
+    expect(deps.sleep).toHaveBeenCalledTimes(4);
+    expect(finalReadinessTimeoutSecs).toBe(6);
+    expect(nowMs).toBe(11_000);
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        timeoutSecs: 6,
+        now: deps.publicationNow,
+      }),
+    );
+    expect(patch.commitAfterReady).not.toHaveBeenCalled();
+  });
+
   it("stops publication probing on a non-transient OpenShell failure (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();
@@ -988,6 +1046,11 @@ describe("created sandbox identity gate", () => {
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
+    let nowMs = 0;
+    deps.publicationNow = () => nowMs;
+    vi.mocked(deps.sleep).mockImplementation((seconds) => {
+      nowMs += seconds * 1_000;
+    });
     vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
       sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
     );
@@ -1063,11 +1126,12 @@ describe("created sandbox identity gate", () => {
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
-    vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
-    vi.spyOn(performance, "now")
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(30_000);
+    let nowMs = 0;
+    deps.publicationNow = () => nowMs;
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation(() => {
+      nowMs = 30_000;
+      return "[]";
+    });
 
     const error = await runSandboxGpuCreateFlow(input, deps).catch((caught: unknown) => {
       events.push("rejected");

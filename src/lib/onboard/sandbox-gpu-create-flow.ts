@@ -298,7 +298,7 @@ export interface SandboxGpuCreateFlowDeps {
   runCaptureOpenshell: RunCaptureOpenshell;
   sandboxObserver: OpenShellSandboxObserver;
   sleep: Sleep;
-  /** Production callers use the system clock; tests may inject publication-wait time. */
+  /** Production callers use a monotonic clock; tests may inject post-create deadline time. */
   publicationNow?: () => number;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
