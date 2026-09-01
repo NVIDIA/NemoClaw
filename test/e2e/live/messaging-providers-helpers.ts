@@ -858,7 +858,7 @@ export async function startFakeDockerApi(
       "--name",
       proxyContainer,
       "--network",
-      "bridge",
+      network,
       ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
       "--read-only",
       "--cap-drop",
@@ -884,19 +884,6 @@ export async function startFakeDockerApi(
     },
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
-
-  const proxyConnect = await runHost(
-    host,
-    "docker",
-    ["network", "connect", network, proxyContainer],
-    {
-      artifactName: `connect-fake-${options.kind}-api-proxy`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy`);
 
   const publishedPort = async (containerPort: number, artifactName: string): Promise<string> => {
     const result = await runHost(
