@@ -473,7 +473,7 @@
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "test/channels/channels-add-preset.test.ts",
-        "test/e2e/support/hermes-discord-policy-binding.test.ts",
+        "test/e2e/support/policy-credential-binding.test.ts",
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"

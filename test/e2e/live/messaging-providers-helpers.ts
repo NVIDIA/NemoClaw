@@ -1072,7 +1072,7 @@ node --import tsx "$helper" "$policy_file" "$@"
       `bind-fake-${artifactKind}-rest-policy`,
       host.openshellCommandPath,
       SANDBOX_NAME,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
       ...bindings.flatMap(({ providerName, port }) => [
         providerName,
         "host.openshell.internal",

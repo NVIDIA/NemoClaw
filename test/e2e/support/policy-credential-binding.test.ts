@@ -9,9 +9,9 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
+import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/policy-boundary-build.ts";
 
-const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
+const HELPER = path.resolve(import.meta.dirname, "../fixtures/policy-credential-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
@@ -34,7 +34,7 @@ function runBinding(policyFile: string, protocol = "websocket") {
   );
 }
 
-describe("Hermes Discord E2E policy binding", () => {
+describe("E2E policy credential binding", () => {
   beforeAll(async () => {
     const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
       encoding: "utf8",

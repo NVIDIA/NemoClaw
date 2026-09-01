@@ -19,7 +19,7 @@ export async function requireSuccessfulPolicyBoundaryBuild(
 ): Promise<void> {
   if (result.status === 0) return;
 
-  const diagnosticPath = await createArtifactSink("hermes-discord-policy-binding").writeText(
+  const diagnosticPath = await createArtifactSink("policy-credential-binding").writeText(
     "policy-boundary-build.log",
     [result.stderr, result.stdout, result.error?.message].filter(Boolean).join("\n"),
   );

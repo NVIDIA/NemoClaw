@@ -64,7 +64,7 @@ function main(): void {
   const [policyFile, ...rawBindings] = process.argv.slice(2);
   if (!policyFile || rawBindings.length === 0 || rawBindings.length % 4 !== 0) {
     throw new Error(
-      "usage: hermes-discord-policy-binding <policy-file> [<provider> <host> <port> <protocol>]...",
+      "usage: policy-credential-binding <policy-file> [<provider> <host> <port> <protocol>]...",
     );
   }
   const bindings: PolicyEndpointBinding[] = [];
