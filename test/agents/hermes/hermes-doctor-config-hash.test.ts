@@ -141,7 +141,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const doctorAndGenerateCommand = dockerRunCommandBetween(
       dockerfile,
       "# Run Hermes' upstream repair",
-      "# Install NemoClaw plugin into Hermes",
+      "# Install the generated policy manifest outside the mutable Hermes home",
     )
       .replaceAll("/sandbox", sandboxRoot)
       .replaceAll("/usr/local/bin/hermes", fakeHermes)

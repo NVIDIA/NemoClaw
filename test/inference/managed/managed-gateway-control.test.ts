@@ -509,7 +509,7 @@ with tempfile.TemporaryDirectory() as root:
                 sys.argv[2],
                 {
                     "LD_PRELOAD": "/tmp/attacker.so",
-                    "SAFE": "1",
+                    "SAFE": "1", "HERMES_HOME": "/sandbox/.hermes", "HERMES_BUNDLED_PLUGINS": "/opt/hermes/plugins",
                     "HERMES_LAZY_INSTALL_TARGET": "/sandbox/.hermes/lazy-packages",
                 },
             )
