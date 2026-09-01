@@ -246,7 +246,7 @@ describe("credentials oclif commands", () => {
 
     expect(calls).toEqual([
       {
-        args: ["provider", "list", "--names"],
+        args: ["provider", "list", "-g", "nemoclaw", "--names"],
         opts: {
           env: expect.any(Object),
           ignoreError: true,
@@ -273,7 +273,9 @@ describe("credentials oclif commands", () => {
 
     const output = await captureOutput(() => CredentialsListCommand.run([]));
 
-    expect(output.stdout).toContain("No provider credentials registered.");
+    expect(output.stdout).toContain(
+      "No provider credentials registered with OpenShell gateway 'nemoclaw'.",
+    );
     expect(output.stdout).toContain("2 per-sandbox messaging bridge(s)");
   });
 
@@ -321,7 +323,7 @@ describe("credentials oclif commands", () => {
 
     expect(calls).toEqual([
       {
-        args: ["provider", "delete", "nvidia-prod"],
+        args: ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
         opts: {
           env: expect.any(Object),
           ignoreError: true,
@@ -416,7 +418,15 @@ describe("credentials oclif commands", () => {
 
       expect(calls).toEqual([
         {
-          args: ["provider", "profile", "import", "--file", TAVILY_PROFILE_PATH],
+          args: [
+            "provider",
+            "profile",
+            "-g",
+            "nemoclaw",
+            "import",
+            "--file",
+            TAVILY_PROFILE_PATH,
+          ],
           opts: {
             env: expect.any(Object),
             ignoreError: true,
@@ -426,7 +436,16 @@ describe("credentials oclif commands", () => {
           },
         },
         {
-          args: ["provider", "profile", "export", "tavily", "--output", "json"],
+          args: [
+            "provider",
+            "profile",
+            "-g",
+            "nemoclaw",
+            "export",
+            "tavily",
+            "--output",
+            "json",
+          ],
           opts: {
             env: expect.any(Object),
             ignoreError: true,
@@ -440,6 +459,8 @@ describe("credentials oclif commands", () => {
           args: [
             "provider",
             "create",
+            "-g",
+            "nemoclaw",
             "--name",
             "tavily-search",
             "--type",
@@ -618,6 +639,8 @@ describe("credentials oclif commands", () => {
       expect(calls[0]?.args).toEqual([
         "provider",
         "profile",
+        "-g",
+        "nemoclaw",
         "import",
         "--file",
         TAVILY_PROFILE_PATH,

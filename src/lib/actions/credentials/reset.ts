@@ -16,7 +16,7 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import {
   isBridgeProviderName,
-  recoverGatewayForCredentialMutationOrExit,
+  recoverCredentialGatewayTargetOrExit,
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
 import { forgetExtraProvider } from "../global";
@@ -114,7 +114,7 @@ export async function runCredentialsResetAction(
   }
 
   const recoveryFailureLines: string[] = [];
-  const target = await recoverGatewayForCredentialMutationOrExit((lines) => {
+  const target = await recoverCredentialGatewayTargetOrExit("mutation", (lines) => {
     recoveryFailureLines.push(...lines);
   });
   if (!target) return fail(recoveryFailureLines);

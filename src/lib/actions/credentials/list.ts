@@ -3,9 +3,8 @@
 
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { recoverGatewayOrExit } from "../../credentials/command-support";
+import { recoverCredentialGatewayTargetOrExit } from "../../credentials/command-support";
 import { classifyGatewayProviderNames } from "../../credentials/provider-list";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 
@@ -28,18 +27,21 @@ export async function runCredentialsListAction(
   deps: CredentialsListDeps = {},
 ): Promise<CredentialsListResult> {
   const recoveryFailureLines: string[] = [];
-  const recovered = await recoverGatewayOrExit("query", (lines) => {
+  const target = await recoverCredentialGatewayTargetOrExit("query", (lines) => {
     recoveryFailureLines.push(...lines);
   });
-  if (!recovered) return fail(recoveryFailureLines);
+  if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
   const result = await providerAdapter.listProviders({
-    target: selectedOpenShellGateway(),
+    target,
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   if (!result.ok) {
-    const failureLines = ["  Could not query OpenShell providers.", `  ${result.error.message}`];
+    const failureLines = [
+      `  Could not query OpenShell providers on gateway '${target.gatewayName}'.`,
+      `  ${result.error.message}`,
+    ];
     if (result.error.kind === "transport" && result.error.reason === "unreachable") {
       failureLines.push(`  ${gatewayStartGuidance()}`);
     }
@@ -49,9 +51,11 @@ export async function runCredentialsListAction(
   const { bridgeNames, credentialNames } = classifyGatewayProviderNames(result.value.names);
   const outputLines: string[] = [];
   if (credentialNames.length === 0) {
-    outputLines.push("  No provider credentials registered.");
+    outputLines.push(
+      `  No provider credentials registered with OpenShell gateway '${target.gatewayName}'.`,
+    );
   } else {
-    outputLines.push("  Providers registered with the OpenShell gateway:");
+    outputLines.push(`  Providers registered with OpenShell gateway '${target.gatewayName}':`);
     outputLines.push(...credentialNames.map((name) => `    ${name}`));
   }
   if (bridgeNames.length > 0) {

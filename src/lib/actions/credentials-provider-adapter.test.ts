@@ -410,6 +410,10 @@ describe("credential actions use typed OpenShell provider results", () => {
     const result = await runCredentialsListAction("nemoclaw", { providerAdapter: adapter });
 
     expect(result.exitCode).toBe(0);
+    expect(adapter.listProviders).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 30_000,
+    });
     expect(result.outputLines).toContain("    alpha");
     expect(result.outputLines).toContain("    zeta");
     expect(result.outputLines.join("\n")).not.toContain("alpha-telegram-bridge");
@@ -507,7 +511,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       expect(result.exitCode).toBe(1);
       expect(failure).toContain(message);
       expect(result.failureLines).toEqual([
-        "  Could not query OpenShell providers.",
+        "  Could not query OpenShell providers on gateway 'nemoclaw'.",
         `  ${message}`,
         ...(expectedGuidance ? [`  ${expectedGuidance}`] : []),
       ]);

@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { recoverNamedGatewayRuntime } from "../actions/global";
-import {
-  namedOpenShellGateway,
-  type OpenShellGatewayTarget,
-} from "../adapters/openshell/sandbox-observer";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { GATEWAY_PORT } from "../core/ports";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
@@ -38,10 +34,14 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   ];
 }
 
-export function credentialsGatewayAuthorityFailureLines(error: unknown): string[] {
+export function credentialsGatewayAuthorityFailureLines(
+  error: unknown,
+  operation: "mutation" | "query" = "mutation",
+): string[] {
   const detail = error instanceof Error ? error.message : String(error);
+  const action = operation === "query" ? "query" : "change";
   return [
-    "  Refusing to change provider credentials because the gateway lifecycle authority could not be revalidated.",
+    `  Refusing to ${action} provider credentials because the gateway lifecycle authority could not be revalidated.`,
     `  ${detail}`,
     `  Run '${CLI_NAME} onboard' to bind the current gateway authority before retrying.`,
   ];
@@ -59,11 +59,16 @@ export async function recoverGatewayOrExit(
   return false;
 }
 
-export async function recoverGatewayForCredentialMutationOrExit(
+export type CredentialGatewayTarget = Readonly<{ kind: "named"; gatewayName: string }>;
+
+export async function recoverCredentialGatewayTargetOrExit(
+  operation: "mutation" | "query",
   reportFailure: (lines: readonly string[]) => void = (lines) =>
     lines.forEach((line) => console.error(line)),
-): Promise<OpenShellGatewayTarget | null> {
-  if (!(await recoverGatewayOrExit("reach", reportFailure))) return null;
+): Promise<CredentialGatewayTarget | null> {
+  if (!(await recoverGatewayOrExit(operation === "query" ? "query" : "reach", reportFailure))) {
+    return null;
+  }
 
   const gatewayName = resolveGatewayName(GATEWAY_PORT);
   try {
@@ -71,9 +76,9 @@ export async function recoverGatewayForCredentialMutationOrExit(
       gatewayName,
       gatewayPort: GATEWAY_PORT,
     });
-    return namedOpenShellGateway(gatewayName);
+    return { kind: "named", gatewayName };
   } catch (error) {
-    reportFailure(credentialsGatewayAuthorityFailureLines(error));
+    reportFailure(credentialsGatewayAuthorityFailureLines(error, operation));
     return null;
   }
 }

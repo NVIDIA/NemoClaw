@@ -13,7 +13,7 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import {
   isBridgeProviderName,
-  recoverGatewayForCredentialMutationOrExit,
+  recoverCredentialGatewayTargetOrExit,
 } from "../credentials/command-support";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
@@ -293,7 +293,7 @@ export async function runCredentialsAddAction(
   }
 
   const recoveryFailureLines: string[] = [];
-  const target = await recoverGatewayForCredentialMutationOrExit((lines) => {
+  const target = await recoverCredentialGatewayTargetOrExit("mutation", (lines) => {
     recoveryFailureLines.push(...lines);
   });
   if (!target) {

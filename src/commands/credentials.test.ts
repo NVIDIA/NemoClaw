@@ -82,9 +82,12 @@ describe("credentials oclif adapter source coverage", () => {
     await CredentialsListCommand.run([], rootDir);
 
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith();
-    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
+    expect(mocks.resolveGatewayCredentialMutationAuthority).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "list", "--names"],
+      ["provider", "list", "-g", "nemoclaw", "--names"],
       {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -106,7 +109,7 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(mocks.prompt).not.toHaveBeenCalled();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "delete", "nvidia-prod"],
+      ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
       {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -261,11 +264,13 @@ describe("credentials oclif adapter source coverage", () => {
       [
         "provider",
         "profile",
+        "-g",
+        "nemoclaw",
         "import",
         "--file",
         expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
       ],
-      ["provider", "profile", "export", "openai", "--output", "json"],
+      ["provider", "profile", "-g", "nemoclaw", "export", "openai", "--output", "json"],
     ]);
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
@@ -297,6 +302,8 @@ describe("credentials oclif adapter source coverage", () => {
       [
         "provider",
         "profile",
+        "-g",
+        "nemoclaw",
         "import",
         "--file",
         expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
@@ -340,14 +347,18 @@ describe("credentials oclif adapter source coverage", () => {
       [
         "provider",
         "profile",
+        "-g",
+        "nemoclaw",
         "import",
         "--file",
         expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
       ],
-      ["provider", "profile", "export", "openai", "--output", "json"],
+      ["provider", "profile", "-g", "nemoclaw", "export", "openai", "--output", "json"],
       [
         "provider",
         "create",
+        "-g",
+        "nemoclaw",
         "--name",
         "openai-prod",
         "--type",
