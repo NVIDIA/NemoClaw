@@ -139,36 +139,52 @@ export function isReviewedMessagingChannelPolicyUpgrade(
     return false;
   }
 
-  const replacementIdcEndpoints = replacementValue.endpoints.filter(
-    (endpoint) =>
-      isRecord(endpoint) &&
-      typeof endpoint.host === "string" &&
-      isWechatIlinkIdcHost(endpoint.host),
-  );
-  if (replacementIdcEndpoints.length !== 1) return false;
-  if (
-    liveValue.endpoints.some(
-      (endpoint) =>
+  const idcEndpoints = (endpoints: unknown[]): PolicyMapping[] =>
+    endpoints.filter(
+      (endpoint): endpoint is PolicyMapping =>
         isRecord(endpoint) &&
         typeof endpoint.host === "string" &&
         isWechatIlinkIdcHost(endpoint.host),
+    );
+  const liveIdcEndpoints = idcEndpoints(liveValue.endpoints);
+  const replacementIdcEndpoints = idcEndpoints(replacementValue.endpoints);
+  if (liveIdcEndpoints.length > 1 || replacementIdcEndpoints.length !== 1) return false;
+  if (
+    [...liveValue.endpoints, ...replacementValue.endpoints].some(
+      (endpoint) =>
+        isRecord(endpoint) && typeof endpoint.host === "string" && endpoint.host.includes("*"),
     )
   ) {
     return false;
   }
 
-  const template = liveValue.endpoints.find(
+  const liveTemplate = liveValue.endpoints.find(
     (endpoint) => isRecord(endpoint) && endpoint.host === WECHAT_TEMPLATE_HOST,
   );
-  if (!isRecord(template)) return false;
-  const [idcEndpoint] = replacementIdcEndpoints;
-  if (!isDeepStrictEqual(idcEndpoint, { ...template, host: idcEndpoint.host })) return false;
+  const replacementTemplate = replacementValue.endpoints.find(
+    (endpoint) => isRecord(endpoint) && endpoint.host === WECHAT_TEMPLATE_HOST,
+  );
+  if (!isRecord(liveTemplate) || !isRecord(replacementTemplate)) return false;
+  const matchesTemplate = (endpoint: Record<string, unknown>, template: PolicyMapping) =>
+    isDeepStrictEqual(endpoint, { ...template, host: endpoint.host });
+  if (liveIdcEndpoints.some((endpoint) => !matchesTemplate(endpoint, liveTemplate))) return false;
+  if (replacementIdcEndpoints.some((endpoint) => !matchesTemplate(endpoint, replacementTemplate))) {
+    return false;
+  }
 
-  const replacementWithoutIdc: PolicyMapping = {
-    ...replacementValue,
-    endpoints: replacementValue.endpoints.filter((endpoint) => endpoint !== idcEndpoint),
-  };
-  return isDeepStrictEqual(liveValue, replacementWithoutIdc);
+  const withoutIdcEndpoints = (policy: PolicyMapping, endpoints: unknown[]): PolicyMapping => ({
+    ...policy,
+    endpoints: endpoints.filter(
+      (endpoint) =>
+        !isRecord(endpoint) ||
+        typeof endpoint.host !== "string" ||
+        !isWechatIlinkIdcHost(endpoint.host),
+    ),
+  });
+  return isDeepStrictEqual(
+    withoutIdcEndpoints(liveValue, liveValue.endpoints),
+    withoutIdcEndpoints(replacementValue, replacementValue.endpoints),
+  );
 }
 
 function materializeWechatIlinkEndpoint(

@@ -19,7 +19,10 @@ import {
   type SandboxMessagingPlan,
 } from "../../messaging";
 import type { Session } from "../../state/onboard-session";
-import { getStoredMessagingChannelConfig } from "../messaging-config";
+import {
+  getMessagingChannelConfigFromPlan,
+  getStoredMessagingChannelConfig,
+} from "../messaging-config";
 
 import {
   bindRebuildPolicyProvidersToCreateArgs,
@@ -175,7 +178,8 @@ describe("rebuild policy provider handoff", () => {
         deltas.requiredNetworkPolicyKeys,
         deltas.removedNetworkPolicyKeys,
         deltas.requiredNetworkPolicyPresetNames,
-        messagingPlan!,
+        messagingPlan!.agent,
+        getMessagingChannelConfigFromPlan(messagingPlan),
         sandboxName,
         [providerName],
       );
@@ -269,10 +273,10 @@ describe("rebuild policy provider handoff", () => {
         deltas.requiredNetworkPolicyKeys,
         deltas.removedNetworkPolicyKeys,
         deltas.requiredNetworkPolicyPresetNames,
-        null,
+        agent,
+        legacyMessagingConfig,
         sandboxName,
         [providerName],
-        { agent, config: legacyMessagingConfig },
       );
 
       try {

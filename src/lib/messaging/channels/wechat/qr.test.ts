@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -14,7 +17,22 @@ import {
   type FetchLike,
 } from "./qr";
 
-type Capture = { url: string; init?: { method?: string; headers?: Record<string, string> } };
+type Capture = {
+  url: string;
+  init?: { method?: string; headers?: Record<string, string>; redirect?: "error" };
+};
+
+const testServers: Server[] = [];
+
+async function listenLoopback(server: Server): Promise<string> {
+  testServers.push(server);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  return `http://127.0.0.1:${address.port}`;
+}
 
 function makeFetch(responder: (req: Capture) => { ok: boolean; status: number; body: string }): {
   fetch: FetchLike;
@@ -82,7 +100,7 @@ function makeStreamingBodyFetch(bodyText: string): {
   return { fetch, usedTextFallback: () => textFallbackUsed };
 }
 
-function makePendingStreamingBodyFetch(): {
+function makePendingStreamingBodyFetch(initialBody = ""): {
   fetch: FetchLike;
   bodyStarted: Promise<void>;
   cancelRequested: Promise<void>;
@@ -99,7 +117,8 @@ function makePendingStreamingBodyFetch(): {
     ok: true,
     status: 200,
     body: new ReadableStream<Uint8Array>({
-      start() {
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(initialBody));
         markBodyStarted();
       },
       cancel() {
@@ -114,9 +133,18 @@ function makePendingStreamingBodyFetch(): {
   return { fetch, bodyStarted, cancelRequested };
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  await Promise.all(
+    testServers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve, reject) => {
+          server.closeAllConnections();
+          server.close((error) => (error ? reject(error) : resolve()));
+        }),
+    ),
+  );
 });
 
 describe("encodeIlinkClientVersion", () => {
@@ -153,6 +181,30 @@ describe("fetchWechatQrSession", () => {
     );
     expect(call.init?.method).toBe("GET");
     expect(call.init?.headers?.["iLink-App-Id"]).toBe("bot");
+  });
+
+  it("blocks native transport redirects before bootstrap or polling contacts the target (#10606)", async () => {
+    let redirectedRequests = 0;
+    const redirectedTarget = await listenLoopback(
+      createServer((_request, response) => {
+        redirectedRequests += 1;
+        response.end('{"status":"wait"}');
+      }),
+    );
+    const redirector = await listenLoopback(
+      createServer((_request, response) => {
+        response.writeHead(302, { location: redirectedTarget });
+        response.end();
+      }),
+    );
+
+    await expect(
+      fetchWechatQrSession({ bootstrapBaseUrl: redirector, timeoutMs: 1_000 }),
+    ).rejects.toMatchObject({ kind: "network", message: "WeChat QR init request failed" });
+    await expect(
+      pollWechatQrStatus({ baseUrl: redirector, qrcode: "qrcode-cookie", timeoutMs: 1_000 }),
+    ).resolves.toEqual({ status: "wait" });
+    expect(redirectedRequests).toBe(0);
   });
 
   it("wraps non-2xx responses without forwarding their body", async () => {
@@ -225,6 +277,25 @@ describe("fetchWechatQrSession", () => {
     });
     expect(String(error)).not.toContain(secret);
     expect(usedTextFallback()).toBe(false);
+  });
+
+  it("rejects an oversized QR response when stream cancellation never settles (#10606)", async () => {
+    vi.useFakeTimers();
+    const { fetch, cancelRequested } = makePendingStreamingBodyFetch(
+      "x".repeat(WECHAT_ILINK_MAX_RESPONSE_BYTES + 1),
+    );
+    let outcome: unknown;
+
+    void fetchWechatQrSession({ fetch, timeoutMs: 10 }).catch((error: unknown) => {
+      outcome = error;
+    });
+    await cancelRequested;
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(outcome).toMatchObject({
+      kind: "parse",
+      message: "WeChat QR init response exceeded the size limit",
+    });
   });
 });
 

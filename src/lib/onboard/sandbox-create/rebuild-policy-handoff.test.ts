@@ -7,6 +7,8 @@ import path from "node:path";
 import YAML from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { loadMessagingChannelPolicyPreset } from "../../messaging";
+
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
@@ -224,6 +226,32 @@ network_policies:
       "ilinkai.wechat.com",
       "idc-37.weixin.qq.com",
     ]);
+  });
+
+  it("replaces one reviewed WeChat IDC endpoint with the current saved endpoint (#10606)", () => {
+    const sandboxName = "wechat-idc-rotation";
+    const loadPolicy = (host: string) =>
+      loadMessagingChannelPolicyPreset("wechat", {
+        agent: "openclaw",
+        sandboxName,
+        messagingConfig: { WECHAT_BASE_URL: `https://${host}` },
+      });
+    const live = loadPolicy("idc-3.weixin.qq.com");
+    const replacement = loadPolicy("idc-37.weixin.qq.com");
+    expect(live).not.toBeNull();
+    expect(replacement).not.toBeNull();
+
+    const merged = mergeReplacementPolicyAccess(live!, replacement!, ["wechat_bridge"]);
+    const policy = YAML.parse(merged.source) as {
+      network_policies: { wechat_bridge: { endpoints: Array<{ host: string }> } };
+    };
+
+    expect(merged.changed).toBe(true);
+    expect(
+      policy.network_policies.wechat_bridge.endpoints
+        .map(({ host }) => host)
+        .filter((host) => host.startsWith("idc-")),
+    ).toEqual(["idc-37.weixin.qq.com"]);
   });
 
   it("rejects a WeChat IDC migration that changes the reviewed endpoint grant (#10606)", () => {

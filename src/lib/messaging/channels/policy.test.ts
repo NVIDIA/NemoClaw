@@ -198,6 +198,12 @@ describe("messaging channel policy presets", () => {
     };
 
     expect(isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, replacement)).toBe(true);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", replacement, {
+        ...replacement,
+        endpoints: [template, { ...template, host: "idc-37.weixin.qq.com" }],
+      }),
+    ).toBe(true);
     expect(isReviewedMessagingChannelPolicyUpgrade("another_channel", live, replacement)).toBe(
       false,
     );
@@ -229,6 +235,20 @@ describe("messaging channel policy presets", () => {
           { ...template, host: "idc-37.weixin.qq.com" },
         ],
       }),
+    ).toBe(false);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade(
+        "wechat_bridge",
+        { ...live, endpoints: [template, { ...template, host: "*.weixin.qq.com" }] },
+        {
+          ...replacement,
+          endpoints: [
+            template,
+            { ...template, host: "*.weixin.qq.com" },
+            { ...template, host: "idc-3.weixin.qq.com" },
+          ],
+        },
+      ),
     ).toBe(false);
   });
 

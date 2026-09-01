@@ -207,20 +207,16 @@ export function selectRebuildCreatePolicy(
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
-  messagingPlan: SandboxMessagingPlan | null | undefined,
+  messagingAgent: string | null | undefined,
+  messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
-  fallbackMessagingContext?: {
-    readonly agent: string | null | undefined;
-    readonly config: MessagingChannelConfig | null | undefined;
-  },
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingPlan?.agent ?? fallbackMessagingContext?.agent,
+      agent: messagingAgent,
       sandboxName,
-      messagingConfig:
-        fallbackMessagingContext?.config ?? getMessagingChannelConfigFromPlan(messagingPlan),
+      messagingConfig,
     });
     if (!source) {
       throw new Error(
@@ -1546,6 +1542,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const effectiveMessagingConfig =
       getMessagingChannelConfigFromPlan(plannedMessagingState?.plan) ??
       getStoredMessagingChannelConfig(sandboxName, createCheckpointSession);
+    const effectiveMessagingAgent = plannedMessagingState?.plan?.agent ?? agent?.name;
     const openingPendingCreateIdentity = pendingVerifiedCreateCheckpointForSession({
       sandboxName,
       gatewayName: GATEWAY_NAME,
@@ -2209,10 +2206,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             ...rebuildObservabilityPolicyDelta.removedNetworkPolicyKeys,
           ],
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
-          plannedMessagingState?.plan,
+          effectiveMessagingAgent,
+          effectiveMessagingConfig,
           sandboxName,
           rebuildPolicyProviderAuthority,
-          { agent: agent?.name, config: effectiveMessagingConfig },
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath

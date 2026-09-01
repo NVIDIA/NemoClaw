@@ -76,7 +76,12 @@ interface FetchResponseLike {
 /** Minimal fetch contract — covers the global `fetch` and any test fake. */
 export type FetchLike = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal },
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+    redirect?: "error";
+  },
 ) => Promise<FetchResponseLike>;
 
 export interface WechatQrClientOptions {
@@ -197,11 +202,7 @@ async function readBoundedResponseText(
         if (done) break;
         bytes += value.byteLength;
         if (bytes > WECHAT_ILINK_MAX_RESPONSE_BYTES) {
-          try {
-            await reader.cancel();
-          } catch {
-            // Preserve the bounded-response error.
-          }
+          requestBodyReadCancellation(() => reader.cancel());
           throw new WechatQrError("parse", `WeChat QR ${label} response exceeded the size limit`);
         }
         chunks.push(value);
@@ -280,6 +281,7 @@ export async function fetchWechatQrSession(
       method: "GET",
       headers: buildIlinkHeaders(),
       signal: controller.signal,
+      redirect: "error",
     });
     if (!response.ok) {
       cancelUnreadResponseBody(response);
@@ -362,6 +364,7 @@ export async function pollWechatQrStatus(params: {
         method: "GET",
         headers: buildIlinkHeaders(),
         signal: localController.signal,
+        redirect: "error",
       });
       debug(`poll response ← status=${response.status}`);
       if (!response.ok) {
