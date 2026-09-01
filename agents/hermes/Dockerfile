@@ -76,8 +76,9 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
-COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch
 COPY agents/hermes/runtime-boundaries.patch /scripts/hermes-runtime-boundaries.patch
+COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch
+COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -211,6 +212,7 @@ ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
 # appends to the OpenShell trust bundle at runtime. The CA is a public
 # certificate, not a secret, so baking it into an image layer is acceptable.
 ARG NEMOCLAW_CORPORATE_CA_B64
+ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=9e41bed797965990bf7edf214c782c18c04d086a15042415ae7085a507873b1c
 
 # Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
 # when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
@@ -245,14 +247,10 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
 
-# A published base can lag the source patches in Dockerfile.base. Reapply the
-# two Hindsight compatibility hunks and the managed gateway execution boundary
-# when needed, then verify the final source contract. This remains idempotent
-# once the published base contains them.
-ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=9e41bed797965990bf7edf214c782c18c04d086a15042415ae7085a507873b1c
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /scripts/hermes-runtime-boundaries.patch | sha256sum -c - \
-    && if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
+# A published base can lag the source patches in Dockerfile.base. Apply only
+# the required final-image hunks, then verify the source contracts in one layer
+# so the already-deep Hermes image remains importable by Docker.
+RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_cli/memory_setup.py \
             /scripts/hermes-security-dependencies.patch; \
@@ -270,6 +268,25 @@ RUN printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /script
     fi \
     && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
+    && rm /scripts/hermes-security-dependencies.patch \
+    && if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+    fi \
+    && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"' /opt/hermes/hermes_cli/web_server.py \
+    && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \
+    && rm /scripts/hermes-dashboard-external-host.patch
+
+# The final Hermes image owns the shipped dependency boundary independently of
+# base freshness. Reassert the idempotent npm-private node-tar fix from the
+# locked cache seed so protected rebuilds remain network-disabled.
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /scripts/hermes-runtime-boundaries.patch | sha256sum -c - \
     && if ! grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_constants.py \
@@ -297,13 +314,8 @@ RUN printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /script
     && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/memory/__init__.py \
     && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/cron_providers/__init__.py \
     && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/providers/__init__.py \
-    && rm /scripts/hermes-security-dependencies.patch /scripts/hermes-runtime-boundaries.patch
-
-# The final Hermes image owns the shipped dependency boundary independently of
-# base freshness. Reassert the idempotent npm-private node-tar fix from the
-# locked cache seed so protected rebuilds remain network-disabled.
-COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    && rm /scripts/hermes-runtime-boundaries.patch \
+    && node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /tmp/nemoclaw-bundled-npm-tar.tgz
 

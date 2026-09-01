@@ -425,10 +425,20 @@ function mapHermesProfile(
     throw new ManagedStartupAgentEnvironmentError("Hermes profile state is inconsistent");
   }
 
+  let chatUiUrl = profile.dashboard.browserUrl ?? profile.dashboard.url;
+  if (profile.dashboard.mode === "loopback-forwarded") {
+    if (profile.dashboard.browserUrl === undefined) {
+      throw new ManagedStartupAgentEnvironmentError(
+        "Cannot start the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding before starting the sandbox.",
+      );
+    }
+    chatUiUrl = profile.dashboard.browserUrl;
+  }
+
   const configurationEnvironment: MutableEnvironment = {
     ...commonConfigurationEnvironment(profile),
     ...messagingEnvironment(profile, "hermes"),
-    CHAT_UI_URL: profile.dashboard.url,
+    CHAT_UI_URL: chatUiUrl,
     NEMOCLAW_CONTEXT_WINDOW:
       profile.tuning.contextWindow === null ? "" : String(profile.tuning.contextWindow),
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: booleanFlag(profile.tools.enabledGateways.length > 0),

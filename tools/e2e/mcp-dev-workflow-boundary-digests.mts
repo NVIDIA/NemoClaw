@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 export const MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256 =
   "052c49d5e8688266dbf38fa911733132d33e4470a29a61deb6e7a11067737559";
 export const MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256 =
-  "2145968c7d511633c71b1c6b3667c1e76f91d6f65adf29ead212b90fdbd1e07e";
+  "aeabd0776df3f02174594194272ef4ad6870b3b91928be7f90f96c55c4095cf4";
 export const MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 =
   "504821ad93c57971d0281ef1130ed6008fadd331bd56acb1a6b5e6a3358f3e49";
 export const MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256 =
@@ -19,3 +19,6 @@ export function contentSha256(value: unknown): string {
     .update(JSON.stringify(value) ?? "")
     .digest("hex");
 }
+
+export const MCP_DEV_JOB_LOCAL_DOCKERFILE_EXECUTION_CONTEXT_SHA256 =
+  "f1a3da59c7c0f7958b953cd18d283f07969bde74a810318e1f1972537567a082";

@@ -12,7 +12,7 @@ import {
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
 import {
   contentSha256,
-  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
+  MCP_DEV_JOB_LOCAL_DOCKERFILE_EXECUTION_CONTEXT_SHA256,
   MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
   MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
@@ -300,7 +300,10 @@ function validateJobSecurity(
 ): void {
   if (jobName === "mcp-bridge-dev") {
     const { steps: _jobSteps, ...jobExecutionContext } = job;
-    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
+    if (
+      contentSha256(jobExecutionContext) !==
+      MCP_DEV_JOB_LOCAL_DOCKERFILE_EXECUTION_CONTEXT_SHA256
+    ) {
       errors.push(
         "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
       );
@@ -898,8 +901,8 @@ function validateCredentialWindowJob(
     E2E_MANAGED_IMAGE_COHORT_RECEIPT:
       "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
     E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
-    NEMOCLAW_EXEC_TIMEOUT: timeoutContract.commandTimeoutEnvironment,
-    NEMOCLAW_TEST_TIMEOUT: timeoutContract.testTimeoutEnvironment,
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON:
+      "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
@@ -909,6 +912,8 @@ function validateCredentialWindowJob(
       "Ubuntu Docker host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_EXEC_TIMEOUT: timeoutContract.commandTimeoutEnvironment,
+    NEMOCLAW_TEST_TIMEOUT: timeoutContract.testTimeoutEnvironment,
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",

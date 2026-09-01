@@ -2676,6 +2676,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -3340,14 +3341,15 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
-      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
       E2E_OBSERVABLE_OUTCOME: "Stable OpenShell MCP bridge reaches tools and inference"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
@@ -3677,8 +3679,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
-      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -3686,6 +3687,8 @@ jobs:
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -3854,14 +3857,15 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
-      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge-dev"
       E2E_OBSERVABLE_OUTCOME: "Development OpenShell MCP bridge reaches tools and inference"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: dev
@@ -5027,8 +5031,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
-      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-e2e"
       E2E_AGENT_RUNTIME: "hermes"
@@ -5036,6 +5039,8 @@ jobs:
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; mock or NVIDIA hosted inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
       NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
@@ -5139,8 +5144,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
-      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
       E2E_AGENT_RUNTIME: "hermes"
@@ -5149,6 +5153,8 @@ jobs:
       E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
@@ -5448,8 +5454,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
-      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "cloud-onboard"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -5457,6 +5462,8 @@ jobs:
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/cloud-onboard
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -5581,8 +5588,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
-      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "messaging-providers"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -5590,6 +5596,8 @@ jobs:
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference and messaging providers"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/messaging-providers
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_EXEC_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6000000' || '' }}
+      NEMOCLAW_TEST_TIMEOUT: ${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && '6600000' || '' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"

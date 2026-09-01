@@ -165,6 +165,7 @@ function hermesProfile(): ManagedStartupProfile {
       agent: "hermes",
       mode: "loopback-forwarded",
       url: "http://127.0.0.1:19189",
+      browserUrl: "https://hermes.example.test:19189",
       publicPort: 19_189,
       internalPort: 29_189,
       tuiEnabled: true,
@@ -490,7 +491,7 @@ describe("managed startup agent environment", () => {
     });
 
     expect(result.configurationEnvironment).toEqual({
-      CHAT_UI_URL: "http://127.0.0.1:19189",
+      CHAT_UI_URL: "https://hermes.example.test:19189",
       NEMOCLAW_CONTEXT_WINDOW: "65536",
       NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
       NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: expect.any(String),
@@ -510,10 +511,7 @@ describe("managed startup agent environment", () => {
       ),
     ).toEqual(["nous-audio", "nous-browser", "nous-code", "nous-image", "nous-web"]);
     expect(result.runtimeEnvironment).toEqual({
-      CHAT_UI_URL: "http://127.0.0.1:19189",
-      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
-      HERMES_HOME: "/sandbox/.hermes",
-      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
+      CHAT_UI_URL: "https://hermes.example.test:19189",
       HTTP_PROXY: "http://proxy.example.test:8080",
       HTTPS_PROXY: "http://proxy.example.test:3128",
       NO_PROXY: "127.0.0.1,localhost",
@@ -530,6 +528,9 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_PROVIDER_ID: "custom",
       NEMOCLAW_MODEL: "claude-sonnet-4-5",
+      HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+      HERMES_HOME: "/sandbox/.hermes",
+      HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
       NEMOCLAW_PROXY_HOST: "proxy_name",
       NEMOCLAW_PROXY_PORT: "43128",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
@@ -562,6 +563,21 @@ describe("managed startup agent environment", () => {
       kind: "configure-dashboard",
       dashboard: hermesProfile().dashboard,
     });
+  });
+
+  it("refuses to start a legacy Hermes dashboard without its browser URL (#10651)", () => {
+    const profile = hermesProfile();
+    assert.equal(profile.dashboard.agent, "hermes");
+    const { browserUrl: _browserUrl, ...legacyDashboard } = profile.dashboard;
+
+    expect(() =>
+      mapManagedStartupProfileToAgentEnvironment({
+        ...profile,
+        dashboard: legacyDashboard,
+      }),
+    ).toThrow(
+      "Cannot start the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding before starting the sandbox.",
+    );
   });
 
   it("keeps DCode routing, provider identity, and auto-approval in root-owned files", () => {

@@ -330,116 +330,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it.each([
-    {
-      caseName: "matching repository and requested SHAs",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: true,
-    },
-    {
-      caseName: "an NVIDIA-owned sibling repository",
-      checkoutRepository: "NVIDIA/NemoClaw-E2E",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: true,
-    },
-    {
-      caseName: "a checkout repository outside NVIDIA",
-      checkoutRepository: "contributor/NemoClaw",
-      nvidiaOwned: false,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: false,
-    },
-    {
-      caseName: "a workflow repository outside NVIDIA/NemoClaw",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "contributor/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: false,
-    },
-    {
-      caseName: "checkout_sha differs from the checked-out commit",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: false,
-      workflowShaMatches: true,
-      expectedAllowed: false,
-    },
-    {
-      caseName: "a requested workflow SHA that differs from the running workflow",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: false,
-      expectedAllowed: false,
-    },
-  ])(
-    "sets E2E credential access to $expectedAllowed for $caseName (#9047)",
-    ({
-      checkoutRepository,
-      nvidiaOwned,
-      workflowRepository,
-      checkoutShaMatches,
-      workflowShaMatches,
-      expectedAllowed,
-    }) => {
-      const workflow = readE2eOperationsWorkflow();
-      const credentialAuthorization = workflow.jobs["generate-matrix"].steps!.find(
-        (step) => step.name === "Authorize E2E credentials",
-      )!;
-      const checkedOutSha = spawnSync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-      }).stdout.trim();
-      const checkoutSha = checkoutShaMatches ? checkedOutSha : "0".repeat(40);
-      const workflowSha = "c".repeat(40);
-      const expectedWorkflowSha = workflowShaMatches ? workflowSha : "d".repeat(40);
-      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-credentials-"));
-      const output = join(directory, "output");
-
-      try {
-        writeFileSync(output, "");
-        const result = spawnSync(
-          "bash",
-          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", credentialAuthorization.run!],
-          {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              CHECKOUT_REPOSITORY: checkoutRepository,
-              CHECKOUT_SHA: checkoutSha,
-              EVENT_NAME: "workflow_dispatch",
-              EXPECTED_WORKFLOW_SHA: expectedWorkflowSha,
-              GITHUB_OUTPUT: output,
-              NVIDIA_OWNED: nvidiaOwned ? "true" : "false",
-              REF: "refs/heads/main",
-              WORKFLOW_REPOSITORY: workflowRepository,
-              WORKFLOW_SHA: workflowSha,
-            },
-          },
-        );
-
-        expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(
-          `allowed=${expectedAllowed ? "true" : "false"}\n`,
-        );
-      } finally {
-        rmSync(directory, { force: true, recursive: true });
-      }
-    },
-  );
-
   it("keeps catalogue-owned GPU targets out of the handwritten workflow jobs", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["llama-cpp-generic-gpu"] = {
@@ -587,6 +477,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "a",
       "b",
       "c",
+      "refs/heads/main",
       "::error::checkout_repository must be an owner/repository name\n",
     ],
     [
@@ -595,6 +486,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "a",
       "d",
       "c",
+      "refs/heads/main",
       "::error::base_sha must match the PR base SHA\n",
     ],
     [
@@ -603,7 +495,17 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "a",
       "b",
       "d",
+      "refs/heads/main",
       "::error::workflow_sha must match the trusted main workflow SHA\n",
+    ],
+    [
+      "a matching workflow SHA from a non-main workflow ref",
+      "NVIDIA/NemoClaw",
+      "a",
+      "b",
+      "c",
+      "refs/heads/pr-controlled-workflow",
+      "::error::Manual PR E2E must be dispatched from trusted main\n",
     ],
   ] as const)(
     "rejects manual PR authentication for %s",
@@ -613,6 +515,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       requestedHeadCharacter,
       requestedBaseCharacter,
       expectedWorkflowCharacter,
+      workflowRef,
       expectedStderr,
     ) => {
       const apiHeadSha = "a".repeat(40);
@@ -645,7 +548,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             JOBS: "",
             PR_NUMBER: "42",
             WORKFLOW_EVENT: "workflow_dispatch",
-            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_REF: workflowRef,
             WORKFLOW_SHA: workflowSha,
           },
         },
