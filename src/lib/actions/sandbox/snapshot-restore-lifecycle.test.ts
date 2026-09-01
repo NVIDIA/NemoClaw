@@ -123,6 +123,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
   });
 
   it("repairs mutable permissions after restoring OpenClaw config", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     f.getLatestBackupMock.mockReturnValue({
       timestamp: "2026-06-15T00:00:00.000Z",
       backupPath: "/tmp/backup-alpha",
@@ -141,6 +142,76 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     expect(f.mutableConfigMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
     expect(f.applyPresetMock).not.toHaveBeenCalled();
+    const output = consoleLog.mock.calls.flat().join("\n");
+    expect(output).toContain("OpenClaw config permissions restored");
+    expect(output).toContain("Restored 1 directories, 1 files");
+    expect(output.indexOf("OpenClaw config permissions restored")).toBeLessThan(
+      output.indexOf("Restored 1 directories, 1 files"),
+    );
+  });
+
+  it("fails after restore when OpenClaw config permission verification fails", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    f.mutableConfigMock.repairMutableConfigPermsMock.mockReturnValue({
+      applied: true,
+      verified: false,
+      errors: ["openclaw.json remains read-only"],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+      lines: [
+        "State restored into 'alpha', but OpenClaw config permissions could not be verified.",
+        expect.stringContaining("nemoclaw alpha doctor --fix"),
+        "Details: openclaw.json remains read-only",
+      ],
+    });
+    expect(consoleLog.mock.calls.flat().join("\n")).not.toContain(
+      "Restored 1 directories, 1 files",
+    );
+  });
+
+  it("fails after restore when OpenClaw config permission repair throws", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    f.mutableConfigMock.repairMutableConfigPermsMock.mockImplementationOnce(() => {
+      throw new Error("permission repair unavailable");
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+      lines: [
+        "State restored into 'alpha', but OpenClaw config permissions could not be verified.",
+        expect.stringContaining("nemoclaw alpha doctor --fix"),
+        "Details: permission repair unavailable",
+      ],
+    });
+    expect(consoleLog.mock.calls.flat().join("\n")).not.toContain(
+      "Restored 1 directories, 1 files",
+    );
   });
 
   it("force-deletes a restore destination before creating its replacement", async () => {

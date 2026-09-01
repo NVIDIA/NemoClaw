@@ -966,25 +966,29 @@ function runSnapshotCreate(
   });
 }
 
-function repairRestoredOpenClawConfigPerms(
+function requireRestoredOpenClawConfigPerms(
   targetSandbox: string,
   result: ReturnType<typeof sandboxState.restoreSandboxState>,
 ): void {
   if (!result.restoredFiles.includes("openclaw.json")) return;
+  let failure: string;
   try {
     const permRepair = repairMutableConfigPerms(targetSandbox);
     if (permRepair.applied && permRepair.verified) {
       console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
-    } else if (permRepair.applied && !permRepair.verified) {
-      console.warn(
-        `  Warning: OpenClaw config permission repair incomplete: ${permRepair.errors.join("; ")}`,
-      );
+      return;
     }
+    failure = permRepair.applied
+      ? permRepair.errors.join("; ") || "permission verification failed"
+      : permRepair.reason;
   } catch (err) {
-    console.warn(
-      `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    failure = err instanceof Error ? err.message : String(err);
   }
+  throw new SnapshotCommandError([
+    `State restored into '${targetSandbox}', but OpenClaw config permissions could not be verified.`,
+    `Run \`${CLI_NAME} ${targetSandbox} doctor --fix\`, then rerun \`${CLI_NAME} ${targetSandbox} doctor\` before running an agent.`,
+    `Details: ${failure}`,
+  ]);
 }
 
 function readCurrentManagedSnapshotProfileAuthority(entry: SandboxEntry | null) {
@@ -1499,6 +1503,7 @@ async function runSnapshotRestoreUnlocked(
           snapshotExit(1);
         }
       }
+      requireRestoredOpenClawConfigPerms(targetSandbox, result);
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
       );
@@ -1525,13 +1530,6 @@ async function runSnapshotRestoreUnlocked(
       }
       snapshotExit(1);
     }
-    // Post-restore security-state reconciliation is best-effort by design: the
-    // filesystem restore succeeded and old snapshots may target hosts where policy
-    // providers or mutable-config repair are temporarily unavailable. Surface every
-    // failure as a warning, but keep the restore result tied to state restoration.
-    // #5027/#4538: openclaw.json restores via the generic copy strategy, which
-    // lands it at 0640. Repair the mutable config contract when needed.
-    repairRestoredOpenClawConfigPerms(targetSandbox, result);
   });
   if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
     try {

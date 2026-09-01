@@ -3,6 +3,7 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
+import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
@@ -97,7 +98,7 @@ export function defaultOpenshellResponses(args: string[]): OpenshellCaptureResul
 }
 
 const mutableConfigMock = vi.hoisted(() => {
-  const repairMutableConfigPermsMock = vi.fn(() => ({
+  const repairMutableConfigPermsMock = vi.fn<() => MutableConfigRepairResult>(() => ({
     applied: true,
     verified: true,
     errors: [],
