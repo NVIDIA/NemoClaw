@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "child_process";
+import { createHash } from "node:crypto";
 // Verify sandbox names stay validated and out of raw shell command strings.
 import fs from "fs";
 import os from "os";
@@ -114,7 +115,43 @@ for (const key of Object.keys(process.env)) {
 process.env.NEMOCLAW_OPENSHELL_BIN = ${JSON.stringify(path.join(fakeBin, "openshell"))};
 const commands = [];
 const asText = (command) => Array.isArray(command) ? command.join(" ") : String(command);
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  gatewayName: "nemoclaw",
+  sandboxId: "sandbox-owning-gateway",
+});
+const foreignSandbox = fixtureMocks.createCreatedSandboxFixture({
+  gatewayName: "foreign-gateway",
+  sandboxId: "sandbox-foreign-gateway",
+  lifecycleState: "created",
+});
+const probeEffects = [];
+const runCreatedSandboxProbe = (command) => {
+  const args = Array.isArray(command) ? command.map(String) : [];
+  const sandboxIndex = args.indexOf("sandbox");
+  const action = sandboxIndex < 0 ? null : args[sandboxIndex + 1];
+  if (action !== "get" && action !== "exec") return null;
+  const name = action === "get" ? args.at(-1) : args[args.indexOf("--name") + 1];
+  if (name !== "my-assistant") return null;
+  const gatewayIndex = args.findIndex((arg) => arg === "-g" || arg === "--gateway");
+  const gateway = gatewayIndex < 0 ? null : args[gatewayIndex + 1] ?? null;
+  const target = gateway === "nemoclaw" ? "owning" : "foreign";
+  probeEffects.push({ action, gateway, target });
+  if (action === "get") {
+    const result = (target === "owning" ? createdSandbox : foreignSandbox).run(command);
+    return result ?? {
+      status: 1,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("gateway-scoped fixture rejected sandbox get\n"),
+    };
+  }
+  return target === "owning"
+    ? { status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
+    : {
+        status: 1,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from("foreign gateway cannot satisfy owning sandbox exec\n"),
+      };
+};
 createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const text = asText(command);
@@ -132,6 +169,8 @@ runner.run = (command, opts = {}) => {
       stderr: Buffer.alloc(0),
     };
   }
+  const sandboxProbe = runCreatedSandboxProbe(command);
+  if (sandboxProbe !== null) return sandboxProbe;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -151,13 +190,14 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => null;
 registry.getDisabledChannels = () => [];
-registry.registerSandbox = () => true;
 registry.removeSandbox = () => true;
 registry.updateSandbox = () => true;
+let registeredSandbox = null;
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
+  registerSandbox: (entry) => { registeredSandbox = entry; },
 });
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
@@ -197,7 +237,14 @@ try {
       createFixture,
     ),
   );
-  console.log(JSON.stringify({ sandboxName, commands }));
+  console.log(JSON.stringify({
+    sandboxName,
+    commands,
+    probeEffects,
+    registeredSandbox,
+    owningSandboxId: createdSandbox.state.sandboxId,
+    foreignSandbox: foreignSandbox.state,
+  }));
 } catch (error) {
   console.error(error && error.stack ? error.stack : String(error));
   process.exit(1);
@@ -233,30 +280,27 @@ try {
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       expect(payloadLine).toBeTruthy();
       const payload = JSON.parse(payloadLine!);
-      const sandboxGetCommands = payload.commands.filter(
-        (entry: { command: string }) =>
-          entry.command.includes("sandbox get") && entry.command.includes("my-assistant"),
+      expect(payload.sandboxName).toBe("my-assistant");
+      expect(payload.registeredSandbox.lifecycleLiveIdentityFingerprint).toBe(
+        createHash("sha256").update(payload.owningSandboxId).digest("hex"),
       );
-      const sandboxExecCommands = payload.commands.filter(
-        (entry: { command: string }) =>
-          entry.command.includes("sandbox exec") && entry.command.includes("my-assistant"),
+      expect(payload.probeEffects).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: "get", target: "owning" }),
+          expect.objectContaining({ action: "exec", target: "owning" }),
+        ]),
       );
-      expect(sandboxGetCommands).not.toHaveLength(0);
-      expect(sandboxExecCommands).not.toHaveLength(0);
       expect(
-        sandboxGetCommands.every(
-          (entry: { command: string }) =>
-            entry.command.includes("sandbox get -g nemoclaw") ||
-            entry.command.includes("sandbox get --gateway nemoclaw"),
+        payload.probeEffects.every(
+          (effect: { target: string }) => effect.target === "owning",
         ),
       ).toBe(true);
-      expect(
-        sandboxExecCommands.every(
-          (entry: { command: string }) =>
-            entry.command.includes("sandbox exec -g nemoclaw") ||
-            entry.command.includes("--gateway nemoclaw"),
-        ),
-      ).toBe(true);
+      expect(payload.foreignSandbox).toMatchObject({
+        sandboxName: "my-assistant",
+        sandboxId: "sandbox-foreign-gateway",
+        gatewayName: "foreign-gateway",
+        lifecycleState: "created",
+      });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

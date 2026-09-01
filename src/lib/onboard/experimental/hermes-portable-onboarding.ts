@@ -788,11 +788,12 @@ async function settleCreatedHermesPortableSandboxReadyPublication(
   observeSandbox: (timeoutBudgetMs?: number) => HermesPortableSandboxObservation,
   delayPoll: (milliseconds: number) => Promise<void>,
   readClockMs: () => number,
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<HermesPortableSandboxObservation> {
-  const boundedTimeoutMs = Math.max(1, Math.round(timeoutMs));
-  const maxPolls = Math.ceil(boundedTimeoutMs / HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS);
-  const deadlineMs = readClockMs() + boundedTimeoutMs;
+  const maxPolls = Math.ceil(
+    Math.max(1, Math.round(deadlineMs - readClockMs())) /
+      HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS,
+  );
   let observation: HermesPortableSandboxObservation = {
     kind: "ambiguous",
     detail: HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL,
@@ -1410,6 +1411,12 @@ export async function runHermesPortableOnboardingTransaction<T>(
     }
 
     if (snapshot.receipt.phase === "pending") {
+      const readReadyPublicationClockMs =
+        deps.readSandboxReadyPublicationClockMs ?? performance.now.bind(performance);
+      const delayReadyPublicationPoll =
+        deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll;
+      const createReadyPublicationDeadline = () =>
+        readReadyPublicationClockMs() + Math.max(1, Math.round(readyPublicationTimeoutMs));
       const createPolicySourcePath = snapshot.receipt.policy.sourcePath;
       assertRegistryMissingBeforeConfiguration(
         snapshot.receipt,
@@ -1421,16 +1428,26 @@ export async function runHermesPortableOnboardingTransaction<T>(
         createIntentSha256: snapshot.receipt.createIntentSha256,
         stateDir: input.stateDir,
       });
-      let observation = observeSandbox();
+      const pendingObservationDeadlineMs = createReadyPublicationDeadline();
+      const pendingObservationBudgetMs = Math.floor(
+        pendingObservationDeadlineMs - readReadyPublicationClockMs(),
+      );
+      let observation =
+        pendingObservationBudgetMs < 1
+          ? {
+              kind: "ambiguous" as const,
+              detail: HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL,
+            }
+          : observeSandbox(pendingObservationBudgetMs);
       if (
         observation.kind === "ambiguous" &&
         observation.detail === HERMES_PORTABLE_NOT_READY_DETAIL
       ) {
         observation = await settleCreatedHermesPortableSandboxReadyPublication(
           observeSandbox,
-          deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll,
-          deps.readSandboxReadyPublicationClockMs ?? performance.now.bind(performance),
-          readyPublicationTimeoutMs,
+          delayReadyPublicationPoll,
+          readReadyPublicationClockMs,
+          pendingObservationDeadlineMs,
         );
       }
       if (observation.kind === "ambiguous")
@@ -1470,9 +1487,9 @@ export async function runHermesPortableOnboardingTransaction<T>(
         created = true;
         observation = await settleCreatedHermesPortableSandboxReadyPublication(
           observeSandbox,
-          deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll,
-          deps.readSandboxReadyPublicationClockMs ?? performance.now.bind(performance),
-          readyPublicationTimeoutMs,
+          delayReadyPublicationPoll,
+          readReadyPublicationClockMs,
+          createReadyPublicationDeadline(),
         );
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();

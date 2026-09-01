@@ -360,13 +360,17 @@ describe("Hermes portable onboarding transaction", () => {
       sandboxId: "sandbox-id-1",
       liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
     };
+    let resumeNowMs = 0;
     const resumeObservations = [
       { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
       { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
       present,
     ];
-    const resumeObserveSandbox = vi.fn(() => resumeObservations.shift() ?? present);
-    let resumeNowMs = 0;
+    const resumeObservationElapsedMs = [30_000, 0, 0];
+    const resumeObserveSandbox = vi.fn(() => {
+      resumeNowMs += resumeObservationElapsedMs.shift() ?? 0;
+      return resumeObservations.shift() ?? present;
+    });
     const delayResumePoll = vi.fn(async (milliseconds: number) => {
       resumeNowMs += milliseconds;
     });
@@ -384,20 +388,23 @@ describe("Hermes portable onboarding transaction", () => {
     expect(delayResumePoll).toHaveBeenCalledTimes(1);
     expect(delayResumePoll).toHaveBeenCalledWith(1_000);
     expect(resumeObserveSandbox.mock.calls.slice(0, 3)).toEqual([
-      [undefined],
       [180_000],
-      [179_000],
+      [150_000],
+      [149_000],
     ]);
+    expect(resumeNowMs).toBe(31_000);
   });
 
   it("fails closed when exact post-create Ready publication exceeds its bound (#9211)", async () => {
     let nowMs = 0;
+    const observationElapsedMs = [0, 0, 180_000];
     const boundedBudgets: Array<{ budgetMs: number; remainingMs: number }> = [];
     const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
       const budgetMs = timeoutBudgetMs ?? 0;
       boundedBudgets.push({ budgetMs, remainingMs: 180_000 - nowMs });
-      nowMs += budgetMs;
-      return timeoutBudgetMs === undefined
+      const elapsedMs = Math.min(budgetMs, observationElapsedMs.shift() ?? 0);
+      nowMs += elapsedMs;
+      return elapsedMs === 0
         ? { kind: "absent" as const }
         : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" };
     });
@@ -426,14 +433,15 @@ describe("Hermes portable onboarding transaction", () => {
     let nowMs = 0;
     let observedMs = 0;
     let delayedMs = 0;
+    const observationElapsedMs = [0, 0, 179_000];
     const boundedBudgets: Array<{ budgetMs: number; remainingMs: number }> = [];
     const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
       const budgetMs = timeoutBudgetMs ?? 0;
       boundedBudgets.push({ budgetMs, remainingMs: 180_000 - nowMs });
-      const elapsedMs = Math.min(budgetMs, observedMs === 0 ? 179_000 : budgetMs);
+      const elapsedMs = Math.min(budgetMs, observationElapsedMs.shift() ?? 0);
       observedMs += elapsedMs;
       nowMs += elapsedMs;
-      return timeoutBudgetMs === undefined
+      return elapsedMs === 0
         ? { kind: "absent" as const }
         : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" };
     });
