@@ -224,29 +224,46 @@ function successfulCommand(stdout = "") {
   };
 }
 
-function fakeDockerHost(
-  publishedAddress = "127.0.0.1",
-  invocations: Array<readonly string[]> = [],
-): HostCliClient {
+function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
+  let network = "";
   const host = {
     command: async (command: string, args: string[]) => {
-      invocations.push([command, ...args]);
       switch (command) {
         case "node":
           return successfulCommand();
         default:
           expect(command).toBe("docker");
-          args
-            .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
-            .forEach((fakeApiMount) => {
-              const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
-              fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
-            });
-          return args[0] === "port"
-            ? successfulCommand(
-                `${publishedAddress}:${args[2] === "8081/tcp" ? "32101" : "32100"}\n`,
-              )
-            : successfulCommand();
+          switch (args[0]) {
+            case "network":
+              network = args[1] === "create" ? (args.at(-1) ?? "") : network;
+              return successfulCommand();
+            case "run":
+              args
+                .filter((argument) => argument.endsWith(":/tmp/fake"))
+                .forEach((fakeApiMount) => {
+                  const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
+                  fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
+                });
+              return successfulCommand();
+            case "inspect":
+              return args[2] === "{{json .NetworkSettings.Networks}}"
+                ? successfulCommand(JSON.stringify({ [network]: {} }))
+                : successfulCommand(
+                    JSON.stringify([
+                      "PATH=/usr/local/bin:/usr/bin:/bin",
+                      "NEMOCLAW_FAKE_API_UPSTREAM=fake-api",
+                      "NEMOCLAW_FAKE_API_PROXY_PORTS=8080",
+                    ]),
+                  );
+            case "port":
+              return successfulCommand(
+                args[2]
+                  ? `${publishedAddress}:${args[2] === "8081/tcp" ? "32101" : "32100"}\n`
+                  : "",
+              );
+            default:
+              return successfulCommand();
+          }
       }
     },
   } as unknown as HostCliClient;
@@ -254,52 +271,6 @@ function fakeDockerHost(
 }
 
 describe("messaging provider installed-runtime proofs", () => {
-  it("runs the published proxy only on the internal fake API network", async () => {
-    const invocations: Array<readonly string[]> = [];
-    const host = fakeDockerHost("127.0.0.1", invocations);
-    const cleanup: Array<() => Promise<void>> = [];
-
-    try {
-      await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
-        kind: "discord-gateway",
-        imageScript: "fake-discord-gateway.cjs",
-        containerPrefix: "fake-discord-gateway",
-        portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-        portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
-        captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-        expectedEnv: {},
-        redactionValues: [],
-        env: {},
-      });
-
-      const networkCreate = invocations.find(
-        (invocation) => invocation[0] === "docker" && invocation[1] === "network",
-      );
-      const network = networkCreate?.at(-1);
-      const proxyRun = invocations.find(
-        (invocation) =>
-          invocation[0] === "docker" &&
-          invocation[1] === "run" &&
-          invocation.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
-      );
-
-      expect(network).toMatch(/^nemoclaw-fake-api-network-/u);
-      expect(proxyRun).toEqual(expect.arrayContaining(["--network", network]));
-      expect(
-        invocations.some(
-          (invocation) =>
-            invocation[0] === "docker" &&
-            invocation[1] === "network" &&
-            invocation[2] === "connect",
-        ),
-      ).toBe(false);
-    } finally {
-      await cleanup
-        .reverse()
-        .reduce((previous, action) => previous.then(action), Promise.resolve());
-    }
-  });
-
   it("collects API diagnostics when the fake container does not become ready", async () => {
     vi.useFakeTimers();
     const artifactNames: string[] = [];
@@ -391,6 +362,7 @@ describe("messaging provider installed-runtime proofs", () => {
     const cleanupTasks: Array<() => Promise<void>> = [];
     let apiContainer = "";
     let proxyContainer = "";
+    let network = "";
     const runner: CommandRunner = {
       async run(command, options) {
         const invocation = [command.command, ...command.args];
@@ -398,6 +370,9 @@ describe("messaging provider installed-runtime proofs", () => {
         artifactNames.push(...(artifactName ? [artifactName] : []));
         invocations.push({ artifactName, command: command.command, args: command.args });
         switch (artifactName) {
+          case "create-fake-slack-api-network":
+            network = invocation.at(-1) ?? "";
+            return successfulShellResult(invocation);
           case "start-fake-slack-api": {
             apiContainer = invocation[invocation.indexOf("--name") + 1] ?? "";
             const mountSuffix = ":/tmp/fake";
@@ -409,6 +384,16 @@ describe("messaging provider installed-runtime proofs", () => {
           case "start-fake-slack-api-proxy":
             proxyContainer = invocation[invocation.indexOf("--name") + 1] ?? "";
             return successfulShellResult(invocation);
+          case "prove-fake-slack-api-api-internal-network":
+          case "prove-fake-slack-api-proxy-internal-network":
+            return successfulShellResult(invocation, JSON.stringify({ [network]: {} }));
+          case "prove-fake-slack-api-internal-only":
+            return successfulShellResult(invocation);
+          case "prove-fake-slack-api-proxy-credential-free":
+            return successfulShellResult(
+              invocation,
+              '["NEMOCLAW_FAKE_API_UPSTREAM=fake-api","NEMOCLAW_FAKE_API_PROXY_PORTS=8080,8081"]',
+            );
           case "port-fake-slack-api":
             return successfulShellResult(invocation, "127.0.0.1:41080\n");
           case "port-fake-slack-websocket-api":

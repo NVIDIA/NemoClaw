@@ -391,6 +391,28 @@ export async function runHost(
   });
 }
 
+async function inspectDockerJson(
+  host: HostCliClient,
+  container: string,
+  template: string,
+  artifactName: string,
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<unknown> {
+  const result = await runHost(host, "docker", ["inspect", "--format", template, container], {
+    artifactName,
+    env,
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(result, `inspect Docker container ${container}`);
+  try {
+    return JSON.parse(result.stdout.trim());
+  } catch {
+    throw new Error(`Docker container ${container} returned unreadable inspection JSON`);
+  }
+}
+
 export async function runSandboxShell(
   sandbox: SandboxClient,
   script: string,
@@ -810,6 +832,8 @@ export async function startFakeDockerApi(
     }
   });
 
+  // The fake API receives raw expected credentials. Keep it unpublished and
+  // expose only this credential-free forwarding container on host loopback.
   const proxyStart = await runHost(
     host,
     "docker",
@@ -846,6 +870,65 @@ export async function startFakeDockerApi(
     },
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
+
+  const networkInspections = await Promise.all(
+    [
+      ["api", container],
+      ["proxy", proxyContainer],
+    ].map(async ([role, name]) => ({
+      role,
+      networks: await inspectDockerJson(
+        host,
+        name!,
+        "{{json .NetworkSettings.Networks}}",
+        `prove-fake-${options.kind}-api-${role}-internal-network`,
+        options.env,
+        options.redactionValues,
+      ),
+    })),
+  );
+  for (const { role, networks } of networkInspections) {
+    if (
+      typeof networks !== "object" ||
+      networks === null ||
+      Array.isArray(networks) ||
+      Object.keys(networks).length !== 1 ||
+      !Object.hasOwn(networks, network)
+    ) {
+      throw new Error(`fake ${options.kind} API ${role} has unexpected network attachments`);
+    }
+  }
+
+  const apiPorts = await runHost(host, "docker", ["port", container], {
+    artifactName: `prove-fake-${options.kind}-api-internal-only`,
+    env: options.env,
+    redactionValues: options.redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(apiPorts, `inspect fake ${options.kind} API published ports`);
+  if (apiPorts.stdout.trim()) {
+    throw new Error(`credential-bearing fake ${options.kind} API container is host-published`);
+  }
+
+  const proxyEnvironment = await inspectDockerJson(
+    host,
+    proxyContainer,
+    "{{json .Config.Env}}",
+    `prove-fake-${options.kind}-api-proxy-credential-free`,
+    options.env,
+    options.redactionValues,
+  );
+  const credentialNames = new Set(Object.keys(options.expectedEnv));
+  if (
+    !Array.isArray(proxyEnvironment) ||
+    !proxyEnvironment.every((entry): entry is string => typeof entry === "string") ||
+    proxyEnvironment.some((entry) => credentialNames.has(entry.split("=", 1)[0] ?? "")) ||
+    options.redactionValues.some(
+      (value) => value.length > 0 && proxyEnvironment.some((entry) => entry.includes(value)),
+    )
+  ) {
+    throw new Error(`fake ${options.kind} API proxy received credential-bearing environment`);
+  }
 
   const publishedPort = async (containerPort: number, artifactName: string): Promise<string> => {
     const result = await runHost(

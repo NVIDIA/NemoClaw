@@ -99,7 +99,20 @@ describe("Hermes Discord E2E policy binding", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
     tempDirs.push(tempDir);
     const policyFile = path.join(tempDir, "policy.yaml");
-    fs.writeFileSync(policyFile, "version: 1\nnetwork_policies: {}\n");
+    const original = [
+      "version: 1",
+      "network_policies:",
+      "  fake:",
+      "    endpoints:",
+      "      - host: host.docker.internal",
+      "        port: 43117",
+      "        protocol: rest",
+      "      - host: host.docker.internal",
+      "        port: 43117",
+      "        protocol: websocket",
+      "",
+    ].join("\n");
+    fs.writeFileSync(policyFile, original);
 
     const result = spawnSync(
       process.execPath,
@@ -118,6 +131,7 @@ describe("Hermes Discord E2E policy binding", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("<protocol>");
+    expect(fs.readFileSync(policyFile, "utf8")).toBe(original);
   });
 
   it("binds only the requested protocol when a fake host and port are shared", () => {
