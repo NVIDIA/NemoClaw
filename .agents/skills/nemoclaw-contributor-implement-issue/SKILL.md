@@ -49,7 +49,9 @@ Read current code, tests, workflows, and active guidance before editing. Load a 
 4. Run focused validation after the final behavior change. Record the command and result.
 5. Keep owning repository guidance in the same change. This includes active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`. Defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
 
-Prefer a neutral or negative total line delta. Possible future reuse is not enough to add a mechanism. Preserve semantic regression coverage. Use runtime or E2E evidence only when a real boundary owns the behavior. When the selected evidence is live E2E, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for local execution; GitHub dispatch still requires an explicit maintainer request.
+Prefer a neutral or negative total line delta. Possible future reuse is not enough to add a mechanism. Preserve semantic regression coverage. Use runtime or E2E evidence only when a real boundary owns the behavior.
+
+For live E2E evidence, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for local execution. Dispatch on GitHub only when a maintainer explicitly requests it.
 
 ## Self-review
 

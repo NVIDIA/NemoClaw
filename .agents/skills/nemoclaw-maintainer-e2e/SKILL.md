@@ -8,25 +8,27 @@ description: Runs local live E2E or dispatches and reports trusted GitHub Action
 
 # Run Maintainer E2E
 
-Use `.github/workflows/e2e.yaml` from trusted `main`. Do not substitute local live E2E unless the maintainer explicitly requests local execution.
-
-Push runs select change-relevant E2E and publish `Relevant E2E`; they do not always run the
-full suite. Only a full manual run publishes `Release qualification`. That aggregate reports the
-full suite; it does not decide whether a tag can proceed. A generic E2E request does not authorize
-`Staging Brev Launchable`.
-
-A GitHub dispatch can test the latest commit of an open PR or the current `main` commit. It cannot
-test an arbitrary historical commit SHA. Report either unsupported request instead of weakening the
-workflow's commit and trust checks.
-
 ## Route the Request
 
-- For local E2E against working-tree content, `HEAD`, or a commit, read and follow
-  [Local Runs](references/local-runs.md).
-- For E2E against a pull request revision, read and follow [Manual PR Runs](references/manual-pr.md).
-- To dispatch ordinary, focused, staging Launchable, or full E2E on `main`, read and follow
-  [Main Runs](references/main-runs.md) and the Launchable boundary below.
-- For a release decision inspection, use the section below. Do not load a dispatch reference unless the maintainer requests a new run.
+| Request | Procedure |
+| --- | --- |
+| Run working-tree source or a selected local commit | [Local Runs](references/local-runs.md) |
+| Run the latest PR commit on GitHub | [Manual PR Runs](references/manual-pr.md) |
+| Run the current `main` commit on GitHub | [Main Runs](references/main-runs.md) |
+| Inspect existing evidence for a release decision | [Report the Release Context](#report-the-release-context) |
+
+A GitHub dispatch tests the latest PR commit or the current `main` commit. It cannot test any
+other commit. Report that request as unsupported. Do not weaken the workflow's identity or trust
+checks.
+
+Push runs select change-relevant E2E and publish `Relevant E2E`; they do not always run the full
+suite. Only a full manual run publishes `Release qualification`. That aggregate reports the full
+suite; it does not decide whether a tag can proceed. A generic E2E request does not authorize
+`Staging Brev Launchable`.
+
+Use `.github/workflows/e2e.yaml` from trusted `main` for GitHub runs. Do not substitute local live
+E2E unless the maintainer explicitly requests local execution. Do not load a dispatch reference for
+a release inspection unless the maintainer requests a new run.
 
 ## Staging Brev Launchable Boundary
 

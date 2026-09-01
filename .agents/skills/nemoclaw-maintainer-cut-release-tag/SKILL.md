@@ -9,9 +9,9 @@ user_invocable: true
 
 # Cut Release Tag
 
-Cut one signed annotated semver tag from a generated plan. Use the release scripts for tag writes
-and [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for maintainer-requested workflow dispatches. Do not improvise raw tag,
-push, version-bump, or other release-state GitHub writes.
+Cut one signed annotated semver tag from a generated plan. Use the release scripts for tag writes.
+Use [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for maintainer-requested workflow
+dispatches. Do not improvise tag, push, version-bump, or other release-state GitHub writes.
 
 Treat these as separate states:
 

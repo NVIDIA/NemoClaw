@@ -80,8 +80,8 @@ Run the current type, repository, contract, activation, provider, and architectu
 diff affects.
 
 Local and CI checks establish contract behavior. They do not replace protected qualification or
-the complete supported live E2E matrix against the commit under review. Follow
-[Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) when the maintainer requests the GitHub Actions run.
+the complete supported live E2E matrix against the commit under review. When a maintainer requests
+a GitHub Actions run, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md).
 
 ## Report
 
