@@ -36,7 +36,7 @@ function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
       command[1] === "run" &&
       command[2] === "--rm" &&
       command[3] === CONTAINER_REACHABILITY_IMAGE &&
-      command.includes(expectedUrl);
+      command.some((argument) => argument === expectedUrl);
     return usesExpectedTransport ? response : "";
   });
 }
@@ -126,7 +126,9 @@ describe("Windows-host Ollama transport", () => {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
       resetOllamaHostCache();
       const capture = vi.fn((command: readonly string[]) =>
-        command.includes("http://127.0.0.1:11434/api/tags") ? JSON.stringify({ models: [] }) : "",
+        command.some((argument) => argument === "http://127.0.0.1:11434/api/tags")
+          ? JSON.stringify({ models: [] })
+          : "",
       );
 
       expect(findReachableOllamaHost(capture, { isWsl: true }, stateRoot)).toBe("127.0.0.1");
@@ -172,7 +174,7 @@ describe("Windows-host Ollama transport", () => {
           command[1] === "run" &&
           command[2] === "--rm" &&
           command[3] === CONTAINER_REACHABILITY_IMAGE &&
-          command.includes("http://host.docker.internal:11434/api/tags")
+          command.some((argument) => argument === "http://host.docker.internal:11434/api/tags")
             ? JSON.stringify({ models: [] })
             : "",
         stderr: "",
@@ -219,7 +221,7 @@ describe("Windows-host Ollama transport", () => {
         command[1] === "run" &&
         command[2] === "--rm" &&
         command[3] === CONTAINER_REACHABILITY_IMAGE &&
-        command.includes("http://host.docker.internal:11434/api/generate");
+        command.some((argument) => argument === "http://host.docker.internal:11434/api/generate");
       return {
         stdout: expected ? JSON.stringify({ done: true, response: "ready" }) : "",
         stderr: "",
@@ -272,7 +274,7 @@ describe("Windows-host Ollama transport", () => {
   it("rejects Windows-host health when the container route is unreachable", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const capture = vi.fn((command: readonly string[]) =>
-      command.includes("http://host.docker.internal:11434/api/tags")
+      command.some((argument) => argument === "http://host.docker.internal:11434/api/tags")
         ? JSON.stringify({ models: [] })
         : "",
     );
