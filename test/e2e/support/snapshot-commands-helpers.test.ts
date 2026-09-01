@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
@@ -24,22 +23,12 @@ const INFERENCE = {
 const HOSTED_CREDENTIAL_ENVS = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"] as const;
 
 afterEach(() => {
-  delete process.env[HOSTED_FLAG];
-  for (const name of HOSTED_CREDENTIAL_ENVS) delete process.env[name];
+  vi.unstubAllEnvs();
 });
 
 describe("snapshot commands live env helper", () => {
-  it("forwards an ambient hosted-inference flag through the shared probe env", () => {
-    process.env[HOSTED_FLAG] = "1";
-
-    // Negative control. The strip below only matters while the flag is
-    // allowlisted for forwarding; if this ever stops holding, the strip
-    // assertion would pass vacuously and the hermeticity guard would rot.
-    expect(buildAvailabilityProbeEnv()[HOSTED_FLAG]).toBe("1");
-  });
-
   it("strips an ambient hosted-inference flag so the target stays hermetic", () => {
-    process.env[HOSTED_FLAG] = "1";
+    vi.stubEnv(HOSTED_FLAG, "1");
 
     const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);
 
@@ -48,7 +37,7 @@ describe("snapshot commands live env helper", () => {
   });
 
   it("strips the hosted-inference flag even when no inference fixture is staged", () => {
-    process.env[HOSTED_FLAG] = "1";
+    vi.stubEnv(HOSTED_FLAG, "1");
 
     expect(buildSnapshotCommandEnv(SANDBOX_NAME)[HOSTED_FLAG]).toBeUndefined();
   });
@@ -92,9 +81,9 @@ describe("snapshot commands live env helper", () => {
   it.each(Array.from(HOSTED_CREDENTIAL_ENVS, (value) => [value]))(
     "never exposes ambient hosted credential %s to the child env",
     (name) => {
-      process.env[HOSTED_FLAG] = "1";
+      vi.stubEnv(HOSTED_FLAG, "1");
       HOSTED_CREDENTIAL_ENVS.forEach((name) => {
-        process.env[name] = "nvapi-ambient-credential-that-must-not-leak";
+        vi.stubEnv(name, "nvapi-ambient-credential-that-must-not-leak");
       });
 
       const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);

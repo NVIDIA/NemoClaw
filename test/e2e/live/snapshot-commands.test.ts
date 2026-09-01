@@ -206,7 +206,7 @@ async function expectLiveBaselineExcluded(
 }
 
 test(
-  "snapshot commands restore a destroyed sandbox and clone without credential leaks",
+  "snapshot commands restore source state without credential leaks; managed clones refuse and legacy clones restore",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: {

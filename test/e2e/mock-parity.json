@@ -314,6 +314,7 @@
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
+      "liveSources": ["test/e2e/live/snapshot-commands-helpers.ts"],
       "fast": [
         "src/lib/actions/sandbox/snapshot-command-host-local-authority.test.ts",
         "src/lib/actions/sandbox/snapshot-restore-lifecycle.test.ts",
