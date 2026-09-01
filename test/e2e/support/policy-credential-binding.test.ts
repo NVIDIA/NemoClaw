@@ -2,162 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import type { HostCliClient } from "../fixtures/clients/host.ts";
+const policyMocks = vi.hoisted(() => ({
+  inspectPolicyMutationContext: vi.fn(),
+  setPolicyDocument: vi.fn(),
+}));
+
+vi.mock("../../../src/lib/policy/index.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/policy/index.ts")>()),
+  inspectPolicyMutationContext: policyMocks.inspectPolicyMutationContext,
+  setPolicyDocument: policyMocks.setPolicyDocument,
+}));
+
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
 import { policyDocumentWithEndpointCredentialBinding } from "../fixtures/policy-credential-binding.ts";
-import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
-import {
-  applyPolicyCredentialBinding,
-  POLICY_BINDING_RECONCILE_ATTEMPTS,
-} from "../live/policy-credential-binding.ts";
+import { applyPolicyCredentialBinding } from "../live/policy-credential-binding.ts";
 
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
-const tempDirs: string[] = [];
-
-function localCommandHost(
-  openshellCommandPath: string,
-): Pick<HostCliClient, "command" | "openshellCommandPath"> {
-  return {
-    openshellCommandPath,
-    async command(
-      command: string,
-      args: string[] = [],
-      options: ShellProbeRunOptions = {},
-    ): Promise<ShellProbeResult> {
-      const result = spawnSync(command, args, {
-        cwd: options.cwd,
-        encoding: "utf8",
-        env: { ...process.env, ...options.env },
-        killSignal: "SIGKILL",
-        timeout: options.timeoutMs,
-      });
-      return {
-        command: [command, ...args],
-        exitCode: result.status,
-        signal: result.signal,
-        timedOut: false,
-        stdout: result.stdout ?? "",
-        stderr: [result.stderr, result.error?.message].filter(Boolean).join("\n"),
-        artifacts: { stdout: "", stderr: "", result: "" },
-      };
-    },
-  };
-}
-
-function fakeOpenShell(
-  policy: string,
-  overrides: {
-    postRecheckConcurrentPolicies?: string[];
-    postRecheckConcurrentPolicy?: string;
-    readbackPolicy?: string;
-    recheckPolicy?: string;
-  } = {},
-): {
-  appliedPolicy: string;
-  env: NodeJS.ProcessEnv;
-  executable: string;
-} {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-transaction-"));
-  tempDirs.push(tempDir);
-  const executable = path.join(tempDir, "openshell");
-  const basePolicy = path.join(tempDir, "base-policy.yaml");
-  const appliedPolicy = path.join(tempDir, "applied-policy.yaml");
-  const callsFile = path.join(tempDir, "calls");
-  const policyVersion = path.join(tempDir, "policy-version");
-  const readbackPolicy = path.join(tempDir, "readback-policy.yaml");
-  const recheckPolicy = path.join(tempDir, "recheck-policy.yaml");
-  const concurrentPolicies = path.join(tempDir, "concurrent-policies");
-  const policyRevisions = path.join(tempDir, "revisions");
-  fs.writeFileSync(basePolicy, policy);
-  fs.writeFileSync(policyVersion, "1\n");
-  fs.writeFileSync(readbackPolicy, overrides.readbackPolicy ?? policy);
-  fs.writeFileSync(recheckPolicy, overrides.recheckPolicy ?? policy);
-  fs.mkdirSync(concurrentPolicies);
-  const requestedConcurrentPolicies =
-    overrides.postRecheckConcurrentPolicies ??
-    (overrides.postRecheckConcurrentPolicy ? [overrides.postRecheckConcurrentPolicy] : []);
-  for (const [index, concurrentPolicy] of requestedConcurrentPolicies.entries()) {
-    fs.writeFileSync(path.join(concurrentPolicies, String(index + 1)), concurrentPolicy);
-  }
-  fs.mkdirSync(policyRevisions);
-  fs.writeFileSync(path.join(policyRevisions, "1"), policy);
-  fs.writeFileSync(
-    executable,
-    [
-      "#!/usr/bin/env bash",
-      "set -eu",
-      'case "${1-}:${2-}" in',
-      "  policy:get)",
-      '    case " $* " in',
-      '      *" --full "*)',
-      `        printf 'metadata\\n' >>"$FAKE_OPENSHELL_CALLS"`,
-      `        version=$(cat "$FAKE_OPENSHELL_POLICY_VERSION")`,
-      '        sandbox="${!#}"',
-      `        printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{},"hash":"sha256:fake-%s","active_version":%s}\\n' "$sandbox" "$version" "$version"`,
-      "        ;;",
-      '      *" --rev "*)',
-      `        printf 'revision\\n' >>"$FAKE_OPENSHELL_CALLS"`,
-      `        revision="$4"`,
-      `        cat "$FAKE_OPENSHELL_POLICY_REVISIONS/$revision"`,
-      "        ;;",
-      "      *)",
-      `        printf 'get\\n' >>"$FAKE_OPENSHELL_CALLS"`,
-      `        get_count=$(grep -c '^get$' "$FAKE_OPENSHELL_CALLS")`,
-      `        case "$get_count" in`,
-      `          1) source="$FAKE_OPENSHELL_BASE_POLICY" ;;`,
-      '          2) source="${FAKE_OPENSHELL_RECHECK_POLICY:-$FAKE_OPENSHELL_BASE_POLICY}" ;;',
-      '          3) source="${FAKE_OPENSHELL_READBACK_POLICY:-$FAKE_OPENSHELL_APPLIED_POLICY}" ;;',
-      '          *) source="${FAKE_OPENSHELL_APPLIED_POLICY:-$FAKE_OPENSHELL_BASE_POLICY}" ;;',
-      `        esac`,
-      `        cat "$source"`,
-      "        ;;",
-      "    esac",
-      "    ;;",
-      "  policy:set)",
-      `    printf 'set\\n' >>"$FAKE_OPENSHELL_CALLS"`,
-      `    version=$(cat "$FAKE_OPENSHELL_POLICY_VERSION")`,
-      `    set_count=$(grep -c '^set$' "$FAKE_OPENSHELL_CALLS")`,
-      `    concurrent_policy="$FAKE_OPENSHELL_CONCURRENT_POLICIES/$set_count"`,
-      `    if [[ -f "$concurrent_policy" ]]; then`,
-      `      version=$((version + 1))`,
-      `      cp "$concurrent_policy" "$FAKE_OPENSHELL_POLICY_REVISIONS/$version"`,
-      "    fi",
-      `    version=$((version + 1))`,
-      `    cp "$4" "$FAKE_OPENSHELL_APPLIED_POLICY"`,
-      `    cp "$4" "$FAKE_OPENSHELL_POLICY_REVISIONS/$version"`,
-      `    printf '%s\\n' "$version" >"$FAKE_OPENSHELL_POLICY_VERSION"`,
-      "    ;;",
-      "  *)",
-      "    exit 64",
-      "    ;;",
-      "esac",
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  return {
-    appliedPolicy,
-    env: {
-      FAKE_OPENSHELL_APPLIED_POLICY: appliedPolicy,
-      FAKE_OPENSHELL_BASE_POLICY: basePolicy,
-      FAKE_OPENSHELL_CALLS: callsFile,
-      FAKE_OPENSHELL_CONCURRENT_POLICIES: concurrentPolicies,
-      FAKE_OPENSHELL_POLICY_REVISIONS: policyRevisions,
-      FAKE_OPENSHELL_POLICY_VERSION: policyVersion,
-      ...(overrides.readbackPolicy ? { FAKE_OPENSHELL_READBACK_POLICY: readbackPolicy } : {}),
-      ...(overrides.recheckPolicy ? { FAKE_OPENSHELL_RECHECK_POLICY: recheckPolicy } : {}),
-    },
-    executable,
-  };
-}
 
 function endpointPolicy(protocols: string[]): string {
   return [
@@ -166,7 +32,7 @@ function endpointPolicy(protocols: string[]): string {
     "  fake:",
     "    endpoints:",
     ...protocols.flatMap((protocol) => [
-      "      - host: host.docker.internal",
+      "      - host: host.openshell.internal",
       "        port: 43117",
       `        protocol: ${protocol}`,
     ]),
@@ -174,19 +40,9 @@ function endpointPolicy(protocols: string[]): string {
   ].join("\n");
 }
 
-function policyWithConcurrentEntry(source: string, index = 1): string {
-  const policy = YAML.parse(source);
-  policy.network_policies[`concurrent_host_edit_${index}`] = {
-    endpoints: [{ host: "concurrent.example.com", port: 443 }],
-  };
-  return YAML.stringify(policy);
-}
-
-function policyWithConflictingBinding(source: string): string {
-  const policy = YAML.parse(source);
-  policy.network_policies.fake.endpoints[0].credential_binding = {
-    provider: "external-policy-provider",
-  };
+function policyWithBinding(provider: string): string {
+  const policy = YAML.parse(endpointPolicy(["rest", "websocket"]));
+  policy.network_policies.fake.endpoints[0].credential_binding = { provider };
   return YAML.stringify(policy);
 }
 
@@ -200,10 +56,9 @@ describe("binds a credential to exactly one policy endpoint", () => {
     await requireSuccessfulPolicyBoundaryBuild(result);
   });
 
-  afterEach(() => {
-    for (const tempDir of tempDirs.splice(0)) {
-      fs.rmSync(tempDir, { force: true, recursive: true });
-    }
+  beforeEach(() => {
+    policyMocks.inspectPolicyMutationContext.mockReset();
+    policyMocks.setPolicyDocument.mockReset();
   });
 
   it("strips OpenShell revision metadata before binding the fake Gateway endpoint", () => {
@@ -215,7 +70,7 @@ describe("binds a credential to exactly one policy endpoint", () => {
         "network_policies:",
         "  discord_gateway:",
         "    endpoints:",
-        "      - host: host.docker.internal",
+        "      - host: host.openshell.internal",
         "        port: 43117",
         "        protocol: websocket",
         "      - host: discord.com",
@@ -223,7 +78,7 @@ describe("binds a credential to exactly one policy endpoint", () => {
         "",
       ].join("\n"),
       "e2e-hermes-discord-discord-bridge",
-      "host.docker.internal",
+      "host.openshell.internal",
       43117,
       "websocket",
     );
@@ -234,7 +89,7 @@ describe("binds a credential to exactly one policy endpoint", () => {
         discord_gateway: {
           endpoints: [
             {
-              host: "host.docker.internal",
+              host: "host.openshell.internal",
               port: 43117,
               protocol: "websocket",
               credential_binding: { provider: "e2e-hermes-discord-discord-bridge" },
@@ -246,84 +101,20 @@ describe("binds a credential to exactly one policy endpoint", () => {
     });
   });
 
-  it("binds only the requested protocol when a fake host and port are shared", () => {
-    const result = policyDocumentWithEndpointCredentialBinding(
-      [
-        "version: 1",
-        "network_policies:",
-        "  fake:",
-        "    endpoints:",
-        "      - host: host.docker.internal",
-        "        port: 43117",
-        "        protocol: rest",
-        "      - host: host.docker.internal",
-        "        port: 43117",
-        "        protocol: websocket",
-        "",
-      ].join("\n"),
-      "e2e-hermes-discord-discord-bridge",
-      "host.docker.internal",
-      43117,
-      "websocket",
-    );
-    const endpoints = YAML.parse(result).network_policies.fake.endpoints as Array<
-      Record<string, unknown>
-    >;
-    expect(endpoints[0]).not.toHaveProperty("credential_binding");
-    expect(endpoints[1]).toHaveProperty("credential_binding", {
-      provider: "e2e-hermes-discord-discord-bridge",
-    });
-  });
-
-  it("rejects duplicate endpoint ownership across network policies", () => {
-    const source = [
-      "version: 1",
-      "network_policies:",
-      "  first:",
-      "    endpoints:",
-      "      - host: host.docker.internal",
-      "        port: 43117",
-      "        protocol: websocket",
-      "  second:",
-      "    endpoints:",
-      "      - host: host.docker.internal",
-      "        port: 43117",
-      "        protocol: websocket",
-      "",
-    ].join("\n");
-
-    expect(() =>
-      policyDocumentWithEndpointCredentialBinding(
-        source,
-        "e2e-hermes-discord-discord-bridge",
-        "host.docker.internal",
-        43117,
-        "websocket",
-      ),
-    ).toThrow(
-      "fake endpoint host.docker.internal:43117/websocket matches 2 base policy entries; expected exactly one",
-    );
-  });
-
   it.each(["rest", "websocket"] as const)(
-    "binds only the %s endpoint when REST and WebSocket share a host and port",
-    async (protocol) => {
-      const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]));
-
-      await applyPolicyCredentialBinding({
-        host: localCommandHost(fake.executable),
-        sandboxName: "e2e-policy-transaction",
-        providerName: "e2e-policy-provider",
-        endpointHost: "host.docker.internal",
-        endpointPort: 43117,
+    "binds only the requested %s endpoint when host and port are shared",
+    (protocol) => {
+      const result = policyDocumentWithEndpointCredentialBinding(
+        endpointPolicy(["rest", "websocket"]),
+        "e2e-policy-provider",
+        "host.openshell.internal",
+        43117,
         protocol,
-        env: fake.env,
-        redactionValues: [],
-        artifactName: `bind-${protocol}-policy-credential`,
-      });
+      );
+      const endpoints = YAML.parse(result).network_policies.fake.endpoints as Array<
+        Record<string, unknown>
+      >;
 
-      const endpoints = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8")).network_policies
-        .fake.endpoints as Array<Record<string, unknown>>;
       expect(endpoints.find((endpoint) => endpoint.protocol === protocol)).toHaveProperty(
         "credential_binding",
         { provider: "e2e-policy-provider" },
@@ -334,162 +125,95 @@ describe("binds a credential to exactly one policy endpoint", () => {
     },
   );
 
-  it("does not set a policy when the shared transaction finds ambiguous endpoint ownership", async () => {
-    const fake = fakeOpenShell(endpointPolicy(["rest", "rest"]));
-
-    await expect(
-      applyPolicyCredentialBinding({
-        host: localCommandHost(fake.executable),
-        sandboxName: "e2e-policy-transaction",
-        providerName: "e2e-policy-provider",
-        endpointHost: "host.docker.internal",
-        endpointPort: 43117,
-        protocol: "rest",
-        env: fake.env,
-        redactionValues: [],
-        artifactName: "bind-ambiguous-policy-credential",
-      }),
-    ).rejects.toThrow("matches 2 base policy entries; expected exactly one");
-
-    expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
+  it("rejects a missing endpoint", () => {
+    expect(() =>
+      policyDocumentWithEndpointCredentialBinding(
+        endpointPolicy(["websocket"]),
+        "e2e-policy-provider",
+        "host.openshell.internal",
+        43117,
+        "rest",
+      ),
+    ).toThrow("fake endpoint host.openshell.internal:43117/rest is missing from the base policy");
   });
 
-  it("does not set a policy when the sandbox base changes during credential binding", async () => {
-    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
-      recheckPolicy: endpointPolicy(["rest"]),
-    });
+  it("rejects duplicate endpoint ownership across network policies", () => {
+    const duplicate = YAML.parse(endpointPolicy(["websocket"]));
+    duplicate.network_policies.second = duplicate.network_policies.fake;
 
-    await expect(
-      applyPolicyCredentialBinding({
-        host: localCommandHost(fake.executable),
-        sandboxName: "e2e-policy-transaction",
-        providerName: "e2e-policy-provider",
-        endpointHost: "host.docker.internal",
-        endpointPort: 43117,
-        protocol: "rest",
-        env: fake.env,
-        redactionValues: [],
-        artifactName: "bind-concurrently-changed-policy-credential",
-      }),
-    ).rejects.toThrow("sandbox base policy changed while preparing the credential binding");
-
-    expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
+    expect(() =>
+      policyDocumentWithEndpointCredentialBinding(
+        YAML.stringify(duplicate),
+        "e2e-policy-provider",
+        "host.openshell.internal",
+        43117,
+        "websocket",
+      ),
+    ).toThrow("matches 2 base policy entries; expected exactly one");
   });
 
-  it("fails when policy readback does not contain the requested credential binding", async () => {
-    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
-      readbackPolicy: endpointPolicy(["rest", "websocket"]),
-    });
-
-    await expect(
-      applyPolicyCredentialBinding({
-        host: localCommandHost(fake.executable),
-        sandboxName: "e2e-policy-transaction",
-        providerName: "e2e-policy-provider",
-        endpointHost: "host.docker.internal",
-        endpointPort: 43117,
-        protocol: "rest",
-        env: fake.env,
-        redactionValues: [],
-        artifactName: "bind-mismatched-policy-readback",
-      }),
-    ).rejects.toThrow("applied policy did not match the requested credential binding");
-
-    expect(fs.existsSync(fake.appliedPolicy)).toBe(true);
+  it("rejects a conflicting credential binding", () => {
+    expect(() =>
+      policyDocumentWithEndpointCredentialBinding(
+        policyWithBinding("external-policy-provider"),
+        "e2e-policy-provider",
+        "host.openshell.internal",
+        43117,
+        "rest",
+      ),
+    ).toThrow("already has a conflicting credential binding");
   });
 
-  it("preserves an unrelated policy edit that races the final recheck and policy set", async () => {
+  it("delegates the transformed policy and binding invariant to the production mutation owner", () => {
     const basePolicy = endpointPolicy(["rest", "websocket"]);
-    const fake = fakeOpenShell(basePolicy, {
-      postRecheckConcurrentPolicy: policyWithConcurrentEntry(basePolicy),
-    });
+    const context = {
+      gatewayName: "nemoclaw",
+      inspection: {},
+      basePolicyDocument: basePolicy,
+    };
+    policyMocks.inspectPolicyMutationContext.mockReturnValue(context);
+    policyMocks.setPolicyDocument.mockImplementation(
+      (sandboxName: string, requestedDocument: string, options: Record<string, unknown>) => {
+        expect(sandboxName).toBe("e2e-policy-transaction");
+        expect(options).toMatchObject({ context, nonFatal: true });
+        expect(YAML.parse(requestedDocument).network_policies.fake.endpoints[0]).toHaveProperty(
+          "credential_binding",
+          { provider: "e2e-policy-provider" },
+        );
+        const validate = options.reconciledDocumentIsAcceptable as (document: string) => boolean;
+        expect(validate(requestedDocument)).toBe(true);
+        expect(validate(policyWithBinding("external-policy-provider"))).toBe(false);
+        return true;
+      },
+    );
 
-    await applyPolicyCredentialBinding({
-      host: localCommandHost(fake.executable),
+    applyPolicyCredentialBinding({
       sandboxName: "e2e-policy-transaction",
       providerName: "e2e-policy-provider",
-      endpointHost: "host.docker.internal",
+      endpointHost: "host.openshell.internal",
       endpointPort: 43117,
       protocol: "rest",
-      env: fake.env,
-      redactionValues: [],
-      artifactName: "bind-policy-after-concurrent-edit",
     });
 
-    const applied = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8"));
-    expect(applied.network_policies).toHaveProperty("concurrent_host_edit_1");
-    expect(applied.network_policies.fake.endpoints[0]).toHaveProperty("credential_binding", {
-      provider: "e2e-policy-provider",
-    });
+    expect(policyMocks.setPolicyDocument).toHaveBeenCalledOnce();
   });
 
-  it("restores a conflicting policy edit that races the final recheck and fails closed", async () => {
-    const basePolicy = endpointPolicy(["rest", "websocket"]);
-    const fake = fakeOpenShell(basePolicy, {
-      postRecheckConcurrentPolicy: policyWithConflictingBinding(basePolicy),
+  it("reports a production mutation failure to the live caller", () => {
+    policyMocks.inspectPolicyMutationContext.mockReturnValue({
+      gatewayName: "nemoclaw",
+      inspection: {},
+      basePolicyDocument: endpointPolicy(["rest"]),
     });
+    policyMocks.setPolicyDocument.mockReturnValue(false);
 
-    await expect(
+    expect(() =>
       applyPolicyCredentialBinding({
-        host: localCommandHost(fake.executable),
         sandboxName: "e2e-policy-transaction",
         providerName: "e2e-policy-provider",
-        endpointHost: "host.docker.internal",
+        endpointHost: "host.openshell.internal",
         endpointPort: 43117,
         protocol: "rest",
-        env: fake.env,
-        redactionValues: [],
-        artifactName: "reject-conflicting-concurrent-policy-binding",
       }),
-    ).rejects.toThrow("restored the external policy and refused the conflicting binding");
-
-    const applied = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8"));
-    expect(applied.network_policies.fake.endpoints[0]).toHaveProperty("credential_binding", {
-      provider: "external-policy-provider",
-    });
-  });
-
-  it("restores a conflict on the final reconciliation attempt before failing closed", async () => {
-    const basePolicy = endpointPolicy(["rest", "websocket"]);
-    const requestedPolicy = policyDocumentWithEndpointCredentialBinding(
-      basePolicy,
-      "e2e-policy-provider",
-      "host.docker.internal",
-      43117,
-      "rest",
-    );
-    const requestedAfterFirstRebase = policyWithConcurrentEntry(requestedPolicy, 1);
-    const requestedAfterSecondRebase = policyWithConcurrentEntry(requestedAfterFirstRebase, 2);
-    const requestedAfterThirdRebase = policyWithConcurrentEntry(requestedAfterSecondRebase, 3);
-    const concurrentPolicies = [
-      policyWithConcurrentEntry(basePolicy, 1),
-      policyWithConcurrentEntry(requestedPolicy, 2),
-      policyWithConcurrentEntry(requestedAfterFirstRebase, 3),
-      policyWithConcurrentEntry(requestedAfterSecondRebase, 4),
-      policyWithConflictingBinding(requestedAfterThirdRebase),
-    ];
-    expect(concurrentPolicies).toHaveLength(POLICY_BINDING_RECONCILE_ATTEMPTS);
-    const expectedRestoredPolicy = concurrentPolicies.at(-1)!;
-    const fake = fakeOpenShell(basePolicy, {
-      postRecheckConcurrentPolicies: concurrentPolicies,
-    });
-
-    await expect(
-      applyPolicyCredentialBinding({
-        host: localCommandHost(fake.executable),
-        sandboxName: "e2e-policy-transaction",
-        providerName: "e2e-policy-provider",
-        endpointHost: "host.docker.internal",
-        endpointPort: 43117,
-        protocol: "rest",
-        env: fake.env,
-        redactionValues: [],
-        artifactName: "reject-final-attempt-conflicting-policy-binding",
-      }),
-    ).rejects.toThrow("restored the external policy and refused the conflicting binding");
-
-    expect(YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8"))).toEqual(
-      YAML.parse(expectedRestoredPolicy),
-    );
+    ).toThrow("failed to bind the e2e-policy-provider credential provider");
   });
 });

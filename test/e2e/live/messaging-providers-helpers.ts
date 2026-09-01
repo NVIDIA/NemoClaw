@@ -938,16 +938,12 @@ export async function applyRestRewritePolicy(
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
   if (!providerName) return;
 
-  await applyPolicyCredentialBinding({
-    host,
+  applyPolicyCredentialBinding({
     sandboxName: SANDBOX_NAME,
     providerName,
     endpointHost: "host.openshell.internal",
     endpointPort: api.port,
     protocol: "rest",
-    env,
-    redactionValues,
-    artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
   });
 }
 

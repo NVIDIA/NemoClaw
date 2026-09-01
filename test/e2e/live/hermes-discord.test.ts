@@ -176,16 +176,12 @@ async function applyHermesFakeDiscordPolicy(options: {
   );
   expectExitZero(result, "apply Hermes fake Discord Gateway policy");
 
-  await applyPolicyCredentialBinding({
-    host: options.host,
+  applyPolicyCredentialBinding({
     sandboxName: options.sandboxName,
     providerName: `${options.sandboxName}-discord-bridge`,
     endpointHost: FAKE_DISCORD_HOST,
     endpointPort: options.api.port,
     protocol: "websocket",
-    env: options.env,
-    redactionValues: options.redactions,
-    artifactName: "bind-hermes-fake-discord-gateway-credential",
   });
 }
 

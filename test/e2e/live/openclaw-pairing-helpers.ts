@@ -216,16 +216,12 @@ export async function applyFakePolicy(options: {
   });
   expectExitZero(result, options.artifactName);
 
-  await applyPolicyCredentialBinding({
-    host: options.host,
+  applyPolicyCredentialBinding({
     sandboxName: options.sandboxName,
     providerName: options.providerName,
     endpointHost: policyHost,
     endpointPort: options.api.port,
     protocol: options.protocol,
-    env: options.env,
-    redactionValues: options.redactions,
-    artifactName: `${options.artifactName}-credential-binding`,
   });
 }
 

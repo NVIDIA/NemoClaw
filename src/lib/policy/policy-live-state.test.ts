@@ -182,6 +182,159 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
+  it("reconciles five consecutive unrelated policy revisions before reporting success", () => {
+    let activeVersion = 1;
+    let concurrentRevision = livePolicy;
+    let writes = 0;
+    mocks.inspectSandboxPolicy.mockImplementation(() => {
+      const policy = YAML.parse(livePolicy);
+      return {
+        policySource: "sandbox",
+        effectivePolicy: policy,
+        policy,
+        policyIdentity: { hash: `sha256:live-${String(activeVersion)}`, activeVersion },
+      };
+    });
+    mocks.captureSandboxBasePolicyRevision.mockImplementation(() => concurrentRevision);
+    mocks.run.mockImplementation((command: readonly string[]) => {
+      writes += 1;
+      const policyIndex = command.indexOf("--policy");
+      const requested = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+      const concurrent = YAML.parse(livePolicy);
+      concurrent.network_policies[`concurrent_host_edit_${String(writes)}`] = {
+        endpoints: [{ host: `concurrent-${String(writes)}.example.com`, port: 443 }],
+      };
+      const raced = writes <= 5;
+      concurrentRevision = raced ? YAML.stringify(concurrent) : concurrentRevision;
+      activeVersion += Number(raced);
+      livePolicy = requested;
+      activeVersion += 1;
+      return { status: 0 };
+    });
+    const desired = YAML.parse(livePolicy);
+    desired.network_policies.requested_policy = {
+      endpoints: [{ host: "requested.example.com", port: 443 }],
+    };
+
+    expect(setPolicyDocument(sandboxName, YAML.stringify(desired), { nonFatal: true })).toBe(true);
+    expect(writes).toBe(6);
+    expect(YAML.parse(livePolicy).network_policies).toEqual(
+      expect.objectContaining({
+        requested_policy: expect.any(Object),
+        concurrent_host_edit_1: expect.any(Object),
+        concurrent_host_edit_2: expect.any(Object),
+        concurrent_host_edit_3: expect.any(Object),
+        concurrent_host_edit_4: expect.any(Object),
+        concurrent_host_edit_5: expect.any(Object),
+      }),
+    );
+  });
+
+  it("restores the latest external policy after the reconciliation bound is exhausted", () => {
+    let activeVersion = 1;
+    let concurrentRevision = livePolicy;
+    let writes = 0;
+    mocks.inspectSandboxPolicy.mockImplementation(() => {
+      const policy = YAML.parse(livePolicy);
+      return {
+        policySource: "sandbox",
+        effectivePolicy: policy,
+        policy,
+        policyIdentity: { hash: `sha256:live-${String(activeVersion)}`, activeVersion },
+      };
+    });
+    mocks.captureSandboxBasePolicyRevision.mockImplementation(() => concurrentRevision);
+    mocks.run.mockImplementation((command: readonly string[]) => {
+      writes += 1;
+      const policyIndex = command.indexOf("--policy");
+      const requested = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+      const concurrent = YAML.parse(livePolicy);
+      concurrent.network_policies[`concurrent_host_edit_${String(writes)}`] = {
+        endpoints: [{ host: `concurrent-${String(writes)}.example.com`, port: 443 }],
+      };
+      const raced = writes <= 6;
+      concurrentRevision = raced ? YAML.stringify(concurrent) : concurrentRevision;
+      activeVersion += Number(raced);
+      livePolicy = requested;
+      activeVersion += 1;
+      return { status: 0 };
+    });
+    const desired = YAML.parse(livePolicy);
+    desired.network_policies.requested_policy = {
+      endpoints: [{ host: "requested.example.com", port: 443 }],
+    };
+
+    expect(setPolicyDocument(sandboxName, YAML.stringify(desired), { nonFatal: true })).toBe(false);
+    expect(writes).toBe(7);
+    expect(YAML.parse(livePolicy)).toEqual(YAML.parse(concurrentRevision));
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit_6");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("The latest external policy is being restored"),
+    );
+  });
+
+  it("restores a later credential conflict rejected by the caller invariant", () => {
+    livePolicy = YAML.stringify({
+      version: 1,
+      network_policies: {
+        fake: {
+          endpoints: [{ host: "host.openshell.internal", port: 43117, protocol: "rest" }],
+        },
+      },
+    });
+    let activeVersion = 1;
+    let concurrentRevision = livePolicy;
+    let writes = 0;
+    mocks.inspectSandboxPolicy.mockImplementation(() => {
+      const policy = YAML.parse(livePolicy);
+      return {
+        policySource: "sandbox",
+        effectivePolicy: policy,
+        policy,
+        policyIdentity: { hash: `sha256:live-${String(activeVersion)}`, activeVersion },
+      };
+    });
+    mocks.captureSandboxBasePolicyRevision.mockImplementation(() => concurrentRevision);
+    mocks.run.mockImplementation((command: readonly string[]) => {
+      writes += 1;
+      const policyIndex = command.indexOf("--policy");
+      const requested = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+      const concurrent = YAML.parse(livePolicy);
+      writes === 1
+        ? (concurrent.network_policies.concurrent_host_edit = {
+            endpoints: [{ host: "concurrent.example.com", port: 443 }],
+          })
+        : (concurrent.network_policies.fake.endpoints[0].credential_binding = {
+            provider: "external-policy-provider",
+          });
+      const raced = writes <= 2;
+      concurrentRevision = raced ? YAML.stringify(concurrent) : concurrentRevision;
+      activeVersion += Number(raced);
+      livePolicy = requested;
+      activeVersion += 1;
+      return { status: 0 };
+    });
+    const desired = YAML.parse(livePolicy);
+    desired.network_policies.fake.endpoints[0].credential_binding = {
+      provider: "e2e-policy-provider",
+    };
+
+    expect(
+      setPolicyDocument(sandboxName, YAML.stringify(desired), {
+        nonFatal: true,
+        reconciledDocumentIsAcceptable: (document) =>
+          YAML.parse(document).network_policies.fake.endpoints[0].credential_binding.provider ===
+          "e2e-policy-provider",
+      }),
+    ).toBe(false);
+    expect(writes).toBe(3);
+    expect(YAML.parse(livePolicy)).toEqual(YAML.parse(concurrentRevision));
+    expect(YAML.parse(livePolicy).network_policies.fake.endpoints[0]).toHaveProperty(
+      "credential_binding",
+      { provider: "external-policy-provider" },
+    );
+  });
+
   it("accepts an ambiguous write only when live readback matches", () => {
     const desiredPolicy = YAML.stringify({
       version: 1,

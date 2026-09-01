@@ -962,7 +962,7 @@ function mergeConcurrentPolicyValue(
   return clonePolicyMergeValue(external);
 }
 
-export function rebasePolicyDocumentOntoConcurrentEdit(
+function rebasePolicyDocumentOntoConcurrentEdit(
   originalDocument: string,
   requestedDocument: string,
   externalDocument: string,
@@ -1006,6 +1006,7 @@ export function setPolicyDocument(
     gatewayName?: string;
     operation?: string;
     context?: PolicyMutationContext;
+    reconciledDocumentIsAcceptable?: (document: string) => boolean;
   } = {},
 ): boolean {
   const operation = options.operation ?? "set the sandbox policy";
@@ -1022,8 +1023,9 @@ export function setPolicyDocument(
 
   let requestedDocument = policyDocument;
   let recoveryOnly = false;
+  let reconciliationAttempts = 0;
 
-  for (let attempt = 1; attempt <= POLICY_RECONCILE_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= POLICY_RECONCILE_ATTEMPTS + 2; attempt += 1) {
     if (attempt > 1) {
       try {
         context = recheckPolicyMutationContext(sandboxName, operation, context);
@@ -1085,6 +1087,14 @@ export function setPolicyDocument(
       process.exit(status || 1);
     }
 
+    if (recoveryOnly) {
+      console.error(
+        `  Could not confirm restoration of the external policy for sandbox '${sandboxName}' because the policy changed again during recovery. Inspect the current policy before retrying.`,
+      );
+      if (options.nonFatal) return false;
+      process.exit(1);
+    }
+
     let externalDocument: string;
     try {
       externalDocument = requestedIsCurrent
@@ -1100,12 +1110,30 @@ export function setPolicyDocument(
         externalDocument,
       );
       context = observed;
-      if (rebased.conflicts.length > 0) {
+      reconciliationAttempts += 1;
+      let reconciledDocumentIsAcceptable = rebased.conflicts.length === 0;
+      if (reconciledDocumentIsAcceptable && options.reconciledDocumentIsAcceptable) {
+        try {
+          reconciledDocumentIsAcceptable = options.reconciledDocumentIsAcceptable(
+            rebased.document,
+          );
+        } catch {
+          reconciledDocumentIsAcceptable = false;
+        }
+      }
+      if (!reconciledDocumentIsAcceptable) {
         recoveryOnly = true;
         requestedDocument = externalDocument;
         console.error(
           `  The current OpenShell policy changed in the same fields while NemoClaw prepared ${operation}. ` +
             "The external policy is being restored; rerun the command against the current policy.",
+        );
+      } else if (reconciliationAttempts > POLICY_RECONCILE_ATTEMPTS) {
+        recoveryOnly = true;
+        requestedDocument = externalDocument;
+        console.error(
+          `  Refusing to ${operation}: the current OpenShell policy kept changing while NemoClaw reconciled the requested update. ` +
+            "The latest external policy is being restored; rerun the command against the current policy.",
         );
       } else {
         requestedDocument = rebased.document;
@@ -1118,7 +1146,7 @@ export function setPolicyDocument(
   }
 
   console.error(
-    `  Refusing to ${operation}: the current OpenShell policy kept changing while NemoClaw reconciled the requested update. Rerun the command against the current policy.`,
+    `  Could not confirm ${operation}: the current OpenShell policy remained unstable. Inspect the current policy before retrying.`,
   );
   if (options.nonFatal) return false;
   process.exit(1);
