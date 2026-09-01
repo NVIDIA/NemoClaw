@@ -570,7 +570,7 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 | `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | None | Gated and requires license acceptance. |
 
-Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
+Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID or a registered served model name.
 An unrecognized value fails before image or model downloads and prints the valid slugs.
 A recognized override that does not support the detected host also fails before image or model downloads.
 The error names the selected model and detected host profile.
