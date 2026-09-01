@@ -16,7 +16,9 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
-        "src/lib/onboard/sandbox-prebuild.test.ts"
+        "src/lib/onboard/sandbox-prebuild.test.ts",
+        "test/agents/hermes/hermes-start.test.ts",
+        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
       ]
     },
     {
@@ -315,8 +317,15 @@
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
+      "liveSources": ["test/e2e/live/snapshot-commands-helpers.ts"],
       "fast": [
         "src/lib/actions/sandbox/snapshot-command-host-local-authority.test.ts",
+        "src/lib/actions/sandbox/snapshot-restore-lifecycle.test.ts",
+        "src/lib/actions/sandbox/stopped-sandbox-backup.test.ts",
+        "src/lib/state/sandbox-backup-sanitization.test.ts",
+        "test/agents/openclaw/openclaw-config-snapshot.test.ts",
+        "test/cli/snapshot-shields.test.ts",
+        "test/state/snapshot.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -537,6 +546,7 @@
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
         "test/e2e/live/mcp-bridge-cleanup.ts",
+        "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
