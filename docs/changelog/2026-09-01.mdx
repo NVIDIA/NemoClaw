@@ -33,9 +33,12 @@ It also broadens Deferred N1x detection and gives N1x managed vLLM a dedicated s
   Hermes dashboards behind a reverse proxy also accept the hostname from a validated HTTPS `CHAT_UI_URL` for HTTP and WebSocket requests while remaining bound to loopback.
   Related changes: [PR #10641](https://github.com/NVIDIA/NemoClaw/pull/10641) and [PR #10687](https://github.com/NVIDIA/NemoClaw/pull/10687).
 - Inference status now queries the selected gateway instead of implicitly using the default gateway. Hugging Face model downloads with no output abort after a bounded stall timeout.
-  Related changes: [PR #10698](https://github.com/NVIDIA/NemoClaw/pull/10698) and [PR #10352](https://github.com/NVIDIA/NemoClaw/pull/10352).
+  Managed vLLM accepts a catalog short name, full Hugging Face model ID, or registered served model name as aliases for the same model. Onboarding normalizes known aliases when it reuses an existing managed vLLM endpoint, while pull-request CI verifies pinned Hugging Face references without credentials.
+  Related changes: [PR #10698](https://github.com/NVIDIA/NemoClaw/pull/10698), [PR #10352](https://github.com/NVIDIA/NemoClaw/pull/10352), and [PR #10429](https://github.com/NVIDIA/NemoClaw/pull/10429).
 - Shields status for Hermes now remains read-only instead of repairing mutable state during observation.
   Related change: [PR #10710](https://github.com/NVIDIA/NemoClaw/pull/10710).
+- DGX Station Express host preparation now ignores NemoClaw and OpenShell agent processes owned by another user for non-root and `sudo` controllers. It still blocks the controller agent processes and keeps direct-root agent checks, vLLM conflicts, and Docker conflicts host-wide.
+  Related change: [PR #10689](https://github.com/NVIDIA/NemoClaw/pull/10689).
 - Deferred N1x preview detection now accepts NVIDIA display-class GPUs without requiring one PCI device ID and recognizes OEM DGX Spark FastOS identity.
   N1x managed vLLM uses a dedicated Qwen3.6 35B NVFP4 serving profile with a physically exercised memory, context, concurrency, and batching envelope; N1x remains Deferred pending complete Express end-to-end validation.
   Related changes: [PR #10099](https://github.com/NVIDIA/NemoClaw/pull/10099), [PR #10721](https://github.com/NVIDIA/NemoClaw/pull/10721), and [PR #10625](https://github.com/NVIDIA/NemoClaw/pull/10625).
