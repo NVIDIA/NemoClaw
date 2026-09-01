@@ -27,18 +27,6 @@ import {
   runWithPostCreateRecovery,
 } from "./orchestration";
 
-const ROUTE_SELECTION = {
-  provider: "ollama-local",
-  model: "qwen3:4b",
-  endpointUrl: "http://127.0.0.1:11434/v1",
-  endpointSource: null,
-  credentialEnv: null,
-  preferredInferenceApi: "openai-completions",
-  compatibleEndpointReasoning: null,
-  compatibleEndpointReasoningEffort: null,
-  nimContainer: null,
-} as const;
-
 const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayName: "nemoclaw",
   gatewayPort: 8080,

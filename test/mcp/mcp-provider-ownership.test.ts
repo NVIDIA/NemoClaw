@@ -254,12 +254,26 @@ describe("MCP provider ownership", () => {
 
   it("reports a same-shape provider with a different stable ID as drift", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-status-owner-"));
+    const openshellLog = path.join(home, "openshell.log");
+    const openshellStub = path.join(home, "openshell");
+    fs.writeFileSync(
+      openshellStub,
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
+        `case "$*" in *valid_placeholder*) printf '%s\\n' v1 ;; *) printf '%s\\n' registered ;; esac`,
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.EXPECTED_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const policies = require("./src/lib/policy/index.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 agentDefs.loadAgent = () => ({
@@ -273,6 +287,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
+policies.getPresetContentGatewayState = () => "match";
 providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
@@ -319,11 +334,15 @@ bridge.statusMcpBridge("alpha", "fake").then(
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
       encoding: "utf8",
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: openshellStub },
     });
+    const openshellCalls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
     fs.rmSync(home, { recursive: true, force: true });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(openshellCalls).toContain("sandbox exec --name alpha");
+    expect(openshellCalls).toContain("valid_placeholder");
+    expect(openshellCalls).not.toContain("provider get");
     const status = JSON.parse(result.stdout) as {
       env: { ready: boolean };
       provider: { credentialReady: boolean; detail?: string };
