@@ -472,6 +472,8 @@ describe("messaging provider installed-runtime proofs", () => {
     const network = networkCreate?.at(-1);
     const stateDiagnostics = ["inspect", "--format", "{{json .State}}", proxyContainer];
     const logDiagnostics = ["logs", "--tail", "100", proxyContainer];
+    const apiStateDiagnostics = ["inspect", "--format", "{{json .State}}", apiContainer];
+    const apiLogDiagnostics = ["logs", "--tail", "100", apiContainer];
     const countCalls = (expected: string[]): number =>
       calls.filter((args) => JSON.stringify(args) === JSON.stringify(expected)).length;
 
@@ -480,6 +482,8 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(calls).toContainEqual(["inspect", "--format", "{{.State.Running}}", proxyContainer]);
     expect(countCalls(stateDiagnostics)).toBe(1);
     expect(countCalls(logDiagnostics)).toBe(1);
+    expect(countCalls(apiStateDiagnostics)).toBe(1);
+    expect(countCalls(apiLogDiagnostics)).toBe(1);
     expect(calls).toContainEqual(["rm", "-f", proxyContainer]);
     expect(calls).toContainEqual(["rm", "-f", apiContainer]);
     expect(calls).toContainEqual(["network", "rm", network]);

@@ -921,7 +921,21 @@ export async function startFakeDockerApi(
     `/opt/nemoclaw-e2e/${options.imageScript}`,
   );
 
+  let apiDiagnosticsCaptured = false;
+  const captureApiDiagnostics = async (): Promise<void> => {
+    if (apiDiagnosticsCaptured) return;
+    apiDiagnosticsCaptured = true;
+    await captureFakeApiContainerDiagnostics(
+      host,
+      options.kind,
+      "api",
+      container,
+      options.env,
+      options.redactionValues,
+    );
+  };
   cleanup(`remove ${container}`, async () => {
+    await captureApiDiagnostics();
     const remove = await runHost(host, "docker", ["rm", "-f", container], {
       artifactName: `cleanup-${container}`,
       env: options.env,
@@ -950,14 +964,7 @@ export async function startFakeDockerApi(
     await sleep(100);
   }
   if (!apiReady) {
-    await captureFakeApiContainerDiagnostics(
-      host,
-      options.kind,
-      "api",
-      container,
-      options.env,
-      options.redactionValues,
-    );
+    await captureApiDiagnostics();
     throw new Error(
       `fake ${options.kind} API ${container} did not become ready; see the redacted API state and log artifacts`,
     );
@@ -1075,7 +1082,10 @@ export async function startFakeDockerApi(
     proxyContainer,
     bridgeAddress: openshellBridgeAddress,
     readinessPort: publishedReadinessPort,
-    captureDiagnostics: captureProxyDiagnostics,
+    captureDiagnostics: async () => {
+      await captureProxyDiagnostics();
+      await captureApiDiagnostics();
+    },
     env: options.env,
     redactionValues: options.redactionValues,
   });
