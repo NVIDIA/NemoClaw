@@ -90,7 +90,7 @@ jobs:
             printf 'selected=%s\n' "$selected"
           } >>"$GITHUB_OUTPUT"
 
-      - name: Check out trusted publication gate
+      - name: Check out PR base SHA for publication verification
         if: ${{ steps.changed.outputs.selected == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,17 +104,19 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install trusted publication gate dependencies
+      - name: Install publication verifier dependencies
         if: ${{ steps.changed.outputs.selected == 'true' }}
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - id: publication
-        name: Verify applicable base-image publication
+        name: Verify complete base and managed-image publication
         if: ${{ steps.changed.outputs.selected == 'true' }}
         env:
           EXPECTED_SHA: ${{ steps.changed.outputs.base_sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1"
           REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
+          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1"
         shell: bash
         run: |
           set -euo pipefail

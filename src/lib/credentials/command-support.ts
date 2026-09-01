@@ -22,7 +22,7 @@ export function printCredentialsUsage(log: (message?: string) => void = console.
   log("    reset <PROVIDER> [--yes]        Remove a provider credential so onboard re-prompts");
   log("");
   log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
-  log("  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.");
+  log("  Nothing is persisted to host disk; credential registration reads values from env vars.");
   log("");
 }
 

@@ -223,7 +223,6 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
         deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         pairingStateSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-        policySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
       expect(serialized).not.toContain(TOKEN);
       expect(serialized).not.toContain(PRIVATE_KEY);
@@ -309,7 +308,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
     });
 
-    it("rejects unrelated or same-device pending requests during ordinary onboarding (#9844)", () => {
+    it("ignores unrelated pending requests during ordinary onboarding (#9844)", () => {
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {
         unrelated: {
           requestId: "unrelated",
@@ -320,14 +319,17 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         },
       });
 
-      expect(() => observeOrdinarySettlement()).toThrow(
-        "OpenClaw pairing qualification is unavailable",
-      );
+      expect(observeOrdinarySettlement()).toEqual({
+        state: "settled",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
       expect(() => observeRepairSettlement()).toThrow(
         "OpenClaw pairing qualification is unavailable",
       );
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
+    });
 
+    it("rejects malformed same-device pending requests during ordinary onboarding (#9844)", () => {
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {
         related: {
           requestId: "related",
@@ -337,6 +339,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
           scopes: ["operator.admin"],
         },
       });
+
       expect(() => observeOrdinarySettlement()).toThrow(
         "OpenClaw pairing qualification is unavailable",
       );
@@ -391,9 +394,10 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
           scopes: ["operator.admin"],
         },
       });
-      expect(() => observeOrdinarySettlement()).toThrow(
-        "OpenClaw pairing qualification is unavailable",
-      );
+      expect(observeOrdinarySettlement()).toEqual({
+        state: "scope-upgrade-pending",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
       expect(() => observeRepairSettlement()).toThrow(
         "OpenClaw pairing qualification is unavailable",
       );

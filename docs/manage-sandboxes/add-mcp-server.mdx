@@ -23,6 +23,8 @@ The early capability check identifies managed image version only; NemoClaw still
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes performs its managed runtime probe before an active add or restart changes a live provider or policy.
+Hermes stores the credential revision from the readiness check in the OpenShell resolver placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that revision while it remains observable.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
@@ -43,19 +45,20 @@ The assignment is illustrative.
 Load real values from an approved secret manager or masked prompt so the credential is not recorded in shell history.
 
 `--env KEY` reads the value from the host process environment and stores it in OpenShell's provider store.
-NemoClaw persists only the variable name, writes `openshell:resolve:env:KEY` into sandbox-side MCP config, and relies on OpenShell to resolve the placeholder at egress.
+NemoClaw persists only the variable name and writes an OpenShell resolver placeholder for that key into sandbox-side MCP configuration.
+OpenShell resolves the placeholder at egress.
 
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
 ## Add a Trusted Private Server
 
-Use an exact trusted private host when the MCP endpoint must remain on an operator-controlled private network.
+Use a trusted private host when the MCP endpoint must remain on an operator-controlled private network.
 This flow is the same for OpenClaw, Hermes, and Deep Agents Code.
 
 Before registration, configure an HTTPS endpoint that meets these requirements:
 
-- The endpoint hostname resolves to stable RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, or the URL uses one exact private IPv4 literal.
+- The endpoint hostname resolves to stable RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, or the URL uses one private IPv4 literal.
 - The OpenShell gateway can route to every resolved address.
 - The Transport Layer Security (TLS) certificate matches the endpoint hostname and chains to a trust root available to the managed runtime.
 - A host firewall limits the listener to the OpenShell gateway or the required deployment subnet.
@@ -67,7 +70,7 @@ For source validation and custom-image requirements, refer to [Configure Corpora
 
 For a host-local MCP process, keep the process bound to loopback when practical.
 Place an operator-managed HTTPS reverse proxy on one stable, routed private address.
-Bind the proxy to the exact private interface instead of every host interface.
+Bind the proxy to the private interface instead of every host interface.
 NemoClaw preserves the URL hostname for TLS Server Name Indication and certificate validation.
 A direct private IPv4 URL requires a certificate with the matching IP subject alternative name.
 Use a DNS hostname for an IPv6 unique local address.
@@ -77,11 +80,11 @@ Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejecte
 Sandbox loopback is not the host service, and trusted-private admission does not create a route to it.
 
 <Warning>
-The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` admit private network access to the matching exact host for this registration.
+The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` admit private network access to the exact matching host for this registration.
 Confirm that you operate the endpoint and its network before you run the command.
 </Warning>
 
-Export one dedicated bearer credential, then register the endpoint with its exact URL hostname:
+Export one dedicated bearer credential, then register the endpoint with its URL hostname:
 
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
@@ -99,11 +102,11 @@ It also rejects a trusted-private hostname when its DNS answers mix public and p
 As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
 NemoClaw combines the environment list with any `--trusted-private-host` options.
 It normalizes and deduplicates environment entries, ignores entries unrelated to this URL, and persists only the matching private host.
-The command records the resulting exact trust intent, so later lifecycle commands do not depend on the ambient environment.
+The command records the resulting trust intent, so later lifecycle commands do not depend on the ambient environment.
 
-NemoClaw records the normalized trust intent and every validated address as exact policy pins.
+NemoClaw records the normalized trust intent and every validated address as policy pins.
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
-The sandbox configuration contains only the `openshell:resolve:env:LOCAL_MCP_TOKEN` credential placeholder.
+The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
 An exported replacement updates it during restart, and `mcp remove` or sandbox destroy deletes the registry-owned provider.
 
@@ -162,7 +165,7 @@ Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
 Public endpoints need no trusted-private declaration.
-Private endpoints require an exact trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
+Private endpoints require a trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
 Supply the declaration with `--trusted-private-host` or the generic `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` environment variable.
 NemoClaw continues to reject loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
 OpenShell re-resolves the hostname for each new connection, requires every current answer to match the pinned `allowed_ips`, and connects to the validated socket addresses.
@@ -170,7 +173,7 @@ OpenShell re-resolves the hostname for each new connection, requires every curre
 A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
 
 Cloudflare Quick Tunnels and other endpoints with rotating address sets are not durable managed MCP deployments.
-A named tunnel can stabilize the hostname without stabilizing its exact address set.
+A named tunnel can stabilize the hostname without stabilizing its address set.
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
 
 Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal`.

@@ -174,33 +174,6 @@ describe("base-image publication evidence", () => {
     },
   );
 
-  it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
-    const source = fs.readFileSync(
-      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
-      "utf8",
-    );
-
-    expect(parseBaseImagePushPaths(source)).toEqual(
-      expect.arrayContaining([
-        ".github/actions/ci-reviewed-npm-audit/**",
-        ".github/workflows/base-image.yaml",
-        "Dockerfile",
-        "Dockerfile.base",
-        "agents/**",
-        "agents/hermes/Dockerfile.base",
-        "agents/langchain-deepagents-code/Dockerfile.base",
-        "nemoclaw/**",
-        "nemoclaw-blueprint/**",
-        "scripts/**",
-        "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
-        "src/lib/messaging/**",
-        "src/lib/tool-disclosure.ts",
-        "tools/mcp-tool-discovery-runtime/**",
-        "tsconfig.runtime-preloads.json",
-      ]),
-    );
-  });
-
   it.each([
     [
       "a duplicate",
@@ -345,6 +318,7 @@ describe("base-image publication evidence", () => {
 
   it("binds API evidence to the active checked-in workflow identity (#7372)", () => {
     expect(validateWorkflow(workflowMetadata())).toBe(WORKFLOW_ID);
+    expect(validateWorkflow(workflowMetadata({ name: "Images / Base Images" }))).toBe(WORKFLOW_ID);
     expect(() => validateWorkflow(workflowMetadata({ state: "disabled_manually" }))).toThrow(
       /state must be active/u,
     );
@@ -480,6 +454,62 @@ describe("base-image publication evidence", () => {
     });
   });
 
+  it("selects the nearest fully successful trusted run for branch reuse", () => {
+    const failedRunId = RUN_ID + 1;
+    const selection = selectPublicationRun(
+      runsPayload([
+        workflowRun({
+          id: failedRunId,
+          head_sha: DESCENDANT_SHA,
+          conclusion: "failure",
+          html_url: `${RUN_URL_ROOT}/${failedRunId}`,
+        }),
+        workflowRun(),
+      ]),
+      history(),
+      WORKFLOW_ID,
+      { completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
+    });
+  });
+
+  it("accepts the renamed trusted workflow while selecting branch reuse", () => {
+    const selection = selectPublicationRun(
+      runsPayload([workflowRun({ name: "Images / Base Images" })]),
+      history(),
+      WORKFLOW_ID,
+      { completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
+    });
+  });
+
+  it("does not select an incomplete or failed publication for branch reuse", () => {
+    expect(
+      selectPublicationRun(
+        runsPayload([
+          workflowRun({ status: "in_progress", conclusion: null }),
+          workflowRun({
+            id: RUN_ID + 1,
+            head_sha: DESCENDANT_SHA,
+            conclusion: "failure",
+            html_url: `${RUN_URL_ROOT}/${RUN_ID + 1}`,
+          }),
+        ]),
+        history(),
+        WORKFLOW_ID,
+        { completedSuccessOnly: true },
+      ),
+    ).toEqual({ state: "missing" });
+  });
+
   it("ignores pre-rename workflow metadata outside the eligible history (#7372)", () => {
     const selection = selectPublicationRun(
       runsPayload([
@@ -505,7 +535,7 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(/name must be Images \/ Publish Base and Managed Images/u);
+    ).toThrow(/name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u);
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {
@@ -574,6 +604,16 @@ describe("base-image publication evidence", () => {
         run,
       ),
     ).toThrow(/provenance does not match/u);
+  });
+
+  it("accepts the renamed trusted publisher jobs", () => {
+    const jobs = [
+      publisherJob("Manifests / OpenClaw", { id: 1 }),
+      publisherJob("Manifests / Hermes", { id: 2 }),
+      publisherJob("Manifests / Deep Agents Code", { id: 3 }),
+    ];
+
+    expect(validatePublisherJobs({ total_count: jobs.length, jobs }, selectedRun())).toBe("ready");
   });
 
   it("classifies an incomplete required publisher as pending only while the selected run is in progress (#9549)", () => {

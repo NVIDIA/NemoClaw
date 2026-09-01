@@ -8,7 +8,7 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
-import { inspectGatewayCredentialOnlyProviderBinding } from "../gateway-provider-metadata";
+import { inspectGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
 type ProviderPreparationInput = {
@@ -25,6 +25,12 @@ type ProviderPreparationDeps = Pick<
   "providerExistsInGateway" | "runOpenshell"
 > & {
   readonly cleanupCreateSources: () => void;
+};
+
+type DeferredProviderAttachmentInput = {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly providerNames: readonly string[];
 };
 
 function expectedMessagingBindings(input: ProviderPreparationInput) {
@@ -50,8 +56,13 @@ function inspectExpectedMessagingBinding(
 ): boolean {
   const expected = expectedBindings.get(providerName);
   if (!expected) return true;
-  const inspection = inspectGatewayCredentialOnlyProviderBinding(expected, (args, options) =>
-    deps.runOpenshell([...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)], options),
+  const inspection = inspectGatewayCredentialFamilyProviderBinding(
+    expected,
+    (args, options) =>
+      deps.runOpenshell(
+        [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
+        options,
+      ),
   );
   return inspection.kind === "exact";
 }
@@ -136,4 +147,13 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
       `OpenShell did not confirm messaging provider '${attachedProvider}' after publication.`,
     );
   }
+}
+
+/** Attach the planned providers only after the created sandbox passed its exact identity gate. */
+export function attachProvidersAfterSandboxCreation(input: DeferredProviderAttachmentInput): void {
+  if (input.providerNames.length === 0) return;
+  throw new Error(
+    `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
+      `The sandbox remains incomplete on gateway '${input.gatewayName}'; preserve its verified create checkpoint for administrator recovery.`,
+  );
 }

@@ -19,6 +19,24 @@ import { executeSandboxDestroy } from "./destroy-execution";
 const AUTHORITY_ID = `mxc-endpoint:${"a".repeat(64)}`;
 const BINDING_SHA256 = "d".repeat(64);
 const MODEL = "qwen3.5-9b";
+const SANDBOX_FINGERPRINT = "a".repeat(64);
+type PendingCreateVerification = NonNullable<SandboxEntry["pendingCreateIdentity"]>;
+
+function pendingCreateIdentity(
+  overrides: Partial<PendingCreateVerification> = {},
+): PendingCreateVerification {
+  return {
+    schemaVersion: 1,
+    state: "verified-create",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    sandboxName: "alpha",
+    lifecycleGeneration: "alpha-generation-1",
+    sandboxIdentityFingerprint: SANDBOX_FINGERPRINT,
+    route: "none",
+    ...overrides,
+  };
+}
 
 function receipt(
   service: "ollama" | "nim" | "vllm" = "vllm",
@@ -167,6 +185,7 @@ async function runDestroy(
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
+    inspectSandboxIdentityFingerprint?: () => string;
     lifecycleOptions?: NonNullable<
       NonNullable<
         Parameters<typeof executeSandboxDestroy>[0]["deps"]
@@ -213,6 +232,11 @@ async function runDestroy(
       ...(options.lifecycleOptions
         ? { hostLocalInferenceLifecycleOptions: options.lifecycleOptions }
         : {}),
+      ...(options.inspectSandboxIdentityFingerprint
+        ? {
+            inspectOpenShellSandboxIdentityFingerprint: options.inspectSandboxIdentityFingerprint,
+          }
+        : {}),
       readTimerMarker: () => null,
       wipeSandboxState: () => undefined,
     },
@@ -237,6 +261,93 @@ describe("sandbox destroy host-local inference transaction", () => {
       },
     };
   }
+
+  it.each([
+    ["changes", () => "b".repeat(64)],
+    [
+      "cannot be inspected",
+      () => {
+        throw new Error("identity unavailable");
+      },
+    ],
+  ])("preserves a pending create when its sandbox identity %s", async (_case, inspect) => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", receipt(), {
+      pendingCreateIdentity: pendingCreateIdentity(),
+    });
+
+    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
+      entry,
+      inspectSandboxIdentityFingerprint: inspect,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      deleteOutput: expect.stringContaining("Pending create sandbox identity"),
+    });
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+    expect(runtimeProvider.events).toEqual([]);
+  });
+
+  it("re-reads a matching pending checkpoint and gateway-scopes its delete", async () => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", receipt(), {
+      pendingCreateIdentity: pendingCreateIdentity(),
+    });
+    const inspect = vi.fn(() => SANDBOX_FINGERPRINT);
+
+    const { getSandbox, result, runOpenshell } = await runDestroy(runtimeProvider, {
+      entry,
+      inspectSandboxIdentityFingerprint: inspect,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(getSandbox.mock.calls.length).toBeGreaterThanOrEqual(10);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("preserves a pending create when its checkpoint changes during identity inspection", async () => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", receipt(), {
+      pendingCreateIdentity: pendingCreateIdentity(),
+    });
+    const getSandbox = vi
+      .fn()
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce({
+        ...entry,
+        pendingCreateIdentity: pendingCreateIdentity({ route: "compatibility" }),
+      });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const stopInferenceResources = vi.fn();
+
+    const result = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: vi.fn(),
+      force: false,
+      getSandbox,
+      listSandboxes: () => ({ sandboxes: [entry] }),
+      runOpenshell,
+      sandbox: entry,
+      sandboxConfirmedAbsent: false,
+      sandboxName: "alpha",
+      stopInferenceResources,
+      runtimeProviders: { mxc: runtimeProvider.bundle },
+      deps: {
+        inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
+        readTimerMarker: () => null,
+        wipeSandboxState: () => undefined,
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
 
   function explicitLlamaSandbox(value = explicitLlamaReceipt()): SandboxEntry {
     const serialized = serializeHostLocalInferenceReceipt(value);

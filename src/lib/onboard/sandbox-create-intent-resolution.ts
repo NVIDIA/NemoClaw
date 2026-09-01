@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
-import type { BaselineExclusionEntry } from "../state/registry";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { NamedMessagingChannel } from "./messaging-prep";
 import {
@@ -11,6 +10,7 @@ import {
   resolveSandboxCreateMessagingProviderRequests,
 } from "./sandbox-create-intent";
 import type { SandboxCreateIntent } from "./sandbox-create-intent-types";
+import { getActiveChannelsFromPlan } from "./messaging-plan-session";
 import { resolveSandboxCreatePolicyTier } from "./sandbox-create-plan";
 import {
   selectHermesPortableExtraProviderPlan,
@@ -37,8 +37,6 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   extraProviders: readonly string[];
   staleExtraProviders: readonly string[];
   policyTier?: string | null;
-  /** Operator baseline exclusions replayed into create/rebuild policy generation. */
-  baselineExclusions?: readonly BaselineExclusionEntry[];
   /** Internal OpenClaw resume authority for exact registered provider reuse. */
   reuseRegisteredCredentials?: boolean;
 };
@@ -67,6 +65,22 @@ export function createSandboxCreateIntentResolver<
     return deps.filterEnabledChannelsByAgent(enabledChannels ? [...enabledChannels] : null, agent);
   }
 
+  function resolveSelectedChannels(
+    input: Pick<
+      CompleteSandboxCreateIntentInput<Agent, ResourceProfile>,
+      "sandboxName" | "enabledChannels" | "agent"
+    >,
+  ): string[] | null {
+    const selected = filterEnabledChannels(input.enabledChannels, input.agent);
+    if (selected !== null) return selected;
+    const stagedPlan = deps.messagingPreflightDeps.readMessagingPlanFromEnv();
+    if (stagedPlan?.sandboxName === input.sandboxName) {
+      return filterEnabledChannels(getActiveChannelsFromPlan(stagedPlan), input.agent) ?? [];
+    }
+    const agentName = input.agent?.name?.trim().toLowerCase();
+    return agentName && agentName !== "openclaw" ? null : [];
+  }
+
   async function prepareMessagingCapabilities(
     input: Pick<
       CompleteSandboxCreateIntentInput<Agent, ResourceProfile>,
@@ -85,13 +99,12 @@ export function createSandboxCreateIntentResolver<
         ? {
             ...deps.messagingPreflightDeps,
             readMessagingPlanFromEnv: () => null,
-            registerExtraPlaceholderProviders: () => [],
           }
         : deps.messagingPreflightDeps;
     const result = await prepareSandboxMessagingPreflight(
       {
         channels: deps.channels,
-        enabledChannels: filterEnabledChannels(input.enabledChannels, input.agent),
+        enabledChannels: resolveSelectedChannels(input),
         sandboxName: input.sandboxName,
         agentName: input.agent?.name ?? "openclaw",
         requireExactProviderBinding:
@@ -133,7 +146,7 @@ export function createSandboxCreateIntentResolver<
       inferenceProvider: input.inferenceProvider,
       hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,
-      enabledChannels: filterEnabledChannels(input.enabledChannels, input.agent),
+      enabledChannels: resolveSelectedChannels(input),
       disabledChannelNames: messaging.disabledChannelNames,
       messagingProviderRequests: resolveSandboxCreateMessagingProviderRequests(
         messaging.messagingTokenDefs,
@@ -154,7 +167,6 @@ export function createSandboxCreateIntentResolver<
       extraPlaceholderKeys: messaging.extraPlaceholderKeys,
       agentName: input.agent?.name,
       policyTier: resolveSandboxCreatePolicyTier(input.policyTier),
-      baselineExclusions: input.baselineExclusions,
     });
   }
 

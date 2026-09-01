@@ -14,9 +14,17 @@ import {
   DISCORD_GATEWAY_CLIENT_SOURCE,
 } from "../live/messaging-providers-helpers.ts";
 import {
+  closeServer,
+  createRejectedSlackForwardProxy,
+  createSlackSocketClient,
+  createSuccessfulSlackForwardProxy,
+  listenOnLoopback,
+} from "./fixtures/slack-forward-proxy.ts";
+import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
+  SLACK_PAIRING_SCRIPT,
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
@@ -140,6 +148,47 @@ function localDiscordGatewayClientSource(): string {
 }
 
 describe("OpenClaw Discord pairing helper contracts", () => {
+  it("sends an absolute-form fake Slack WebSocket upgrade through the proxy", async () => {
+    const targetPort = 4443;
+    const envelope = { payload: { event: { type: "message" } } };
+    const proxy = createSuccessfulSlackForwardProxy(envelope);
+    const proxyPort = await listenOnLoopback(proxy.server);
+
+    try {
+      await expect(createSlackSocketClient(proxyPort, targetPort)()).resolves.toEqual(envelope);
+      await vi.waitFor(() => expect(proxy.websocketMessages()).not.toHaveLength(0), {
+        interval: 10,
+        timeout: 1_000,
+      });
+      expect(proxy.requests).toHaveLength(1);
+      expect(proxy.requests[0]).toMatch(
+        new RegExp(
+          `^GET http://host\\.openshell\\.internal:${targetPort}/socket-mode HTTP/1\\.1`,
+          "u",
+        ),
+      );
+      expect(JSON.parse(proxy.websocketMessages()[0] ?? "{}")).toEqual({
+        type: "socket_mode_client_hello",
+        token: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
+      });
+    } finally {
+      await closeServer(proxy.server);
+    }
+  });
+
+  it("rejects a non-101 fake Slack WebSocket proxy response", async () => {
+    const proxy = createRejectedSlackForwardProxy();
+    const proxyPort = await listenOnLoopback(proxy);
+
+    try {
+      await expect(createSlackSocketClient(proxyPort, 4443)()).rejects.toThrow(
+        "fake Slack websocket upgrade failed: HTTP/1.1 502 Bad Gateway",
+      );
+    } finally {
+      await closeServer(proxy);
+    }
+  });
+
   it("shell-quotes pairing code and user without command substitution", () => {
     const code = "abc$(touch /tmp/e2e-should-not-run)";
     const user = "user`touch /tmp/e2e-should-not-run`";
@@ -265,7 +314,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     },
   ])("fails closed on invalid Slack probe input before network access: $name", ({ env, error }) => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseFakeSlackPort(); parseProxyTarget(); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseFakeSlackPort("FAKE_SLACK_API_PORT"); parseProxyTarget(); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
       encoding: "utf8",
       env: { ...process.env, ...env },
     });
@@ -274,6 +323,51 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.stderr).toEqual(expect.stringContaining(error));
     expect(result.stderr).toEqual(expect.stringContaining("NETWORK_ATTEMPTED=false"));
   });
+
+  it.each(["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"])(
+    "accepts the revision-scoped OpenShell credential reference for %s",
+    (name) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nparseManagedCredentialReference(${JSON.stringify(name)}); console.log("VALID");\n`,
+        encoding: "utf8",
+        env: { ...process.env, [name]: `openshell:resolve:env:v42_${name}` },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("VALID\n");
+      expect(result.stdout).not.toContain("openshell:resolve:env:");
+    },
+  );
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "raw secret", value: "xapp-raw-secret" },
+    { name: "identityless canonical reference", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
+    {
+      name: "identityless provider alias",
+      value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    },
+    {
+      name: "wrong credential key",
+      value: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
+    },
+  ])(
+    "rejects an invalid Slack app credential reference before network access: $name",
+    ({ value }) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false; try { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+        encoding: "utf8",
+        env: { ...process.env, SLACK_APP_TOKEN: value },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference issued to the sandbox",
+      );
+      expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
+      expect(result.stderr).not.toContain(value || "xapp-raw-secret");
+    },
+  );
 
   it("keeps the shared Discord Gateway client valid for sandbox node heredoc", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
@@ -284,6 +378,53 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain('"\\r\\n"');
     expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  });
+
+  it("uses distinct ports on the OpenShell host for Slack REST and websocket traffic", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function receiveSlackSocketEvent() {\n  const host = "host.openshell.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
+    );
+  });
+
+  it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_APP_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_BOT_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
+  });
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "unscoped", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
+    { name: "raw token", value: "xapp-raw-slack-token" },
+  ])("rejects a $name Slack app credential before network access", ({ value }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      encoding: "utf8",
+      env: { ...process.env, SLACK_APP_TOKEN: value },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference",
+    );
+    expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
+    expect(result.stderr).not.toContain("xapp-raw-slack-token");
   });
 
   it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {

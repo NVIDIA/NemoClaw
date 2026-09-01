@@ -114,7 +114,7 @@ export function listMessagingCredentialEnvAssignments(
         credential,
       ]),
     );
-    return manifest.render.flatMap((render) => {
+    const renderedAssignments = manifest.render.flatMap((render) => {
       if (options.agent && render.agent !== options.agent) return [];
       if (render.kind !== "env-lines") return [];
       return render.lines.flatMap((line) => {
@@ -133,6 +133,27 @@ export function listMessagingCredentialEnvAssignments(
         ];
       });
     });
+    const runtimeAssignments = (["openclaw", "hermes"] as const).flatMap((agent) => {
+      if (options.agent && agent !== options.agent) return [];
+      if (!manifest.supportedAgents.includes(agent)) return [];
+      return (manifest.runtime?.[agent]?.envAliases ?? []).flatMap((alias) => {
+        if (!alias.targetEnvKey) return [];
+        const credential = manifest.credentials.find(
+          (candidate) => candidate.providerEnvKey === alias.envKey,
+        );
+        if (!credential) return [];
+        return [
+          {
+            channelId: manifest.id,
+            agent,
+            sourceEnvKey: alias.envKey,
+            targetEnvKey: alias.targetEnvKey,
+            placeholder: credential.placeholder,
+          },
+        ];
+      });
+    });
+    return [...renderedAssignments, ...runtimeAssignments];
   });
 }
 

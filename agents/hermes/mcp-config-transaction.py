@@ -74,7 +74,6 @@ ENV_PLACEHOLDER_RE = re.compile(
 REVISIONED_ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:(v[0-9]{1,20})_([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
-OPENSHELL_CREDENTIAL_REVISION_RE = re.compile(r"^v[0-9]{1,20}$")
 OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = re.compile(r"^v[0-9]+_[A-Za-z0-9_]+$")
 BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.106.json"
 ANSI_ESCAPE_RE = re.compile(
@@ -365,8 +364,6 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
         raise ValueError("Unsupported MCP config action")
     allowed = {"server", "url", "headers"}
     allowed.add("replace_existing" if action == "add" else "force")
-    if action == "add":
-        allowed.update({"credential_name", "credential_revision"})
     unexpected = sorted(set(payload) - allowed)
     if unexpected:
         raise ValueError(
@@ -459,38 +456,35 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
         raise ValueError("MCP mutation payload must contain one Authorization header")
     authorization = headers.get("Authorization")
-    declared_credential_name = payload.get("credential_name")
-    credential_revision = payload.get("credential_revision")
-    if credential_revision is not None and (
-        not isinstance(credential_revision, str)
-        or OPENSHELL_CREDENTIAL_REVISION_RE.fullmatch(credential_revision) is None
-    ):
-        raise ValueError("Hermes MCP credential revision is invalid")
-    authorization_match = None
-    credential_name = None
-    if isinstance(authorization, str) and credential_revision is not None:
-        authorization_match = REVISIONED_ENV_PLACEHOLDER_RE.fullmatch(authorization)
-        if (
-            authorization_match is not None
-            and authorization_match.group(1) == credential_revision
-            and isinstance(declared_credential_name, str)
-            and authorization_match.group(2) == declared_credential_name
-        ):
-            credential_name = authorization_match.group(2)
-        else:
-            authorization_match = None
-    elif isinstance(authorization, str) and declared_credential_name is None:
-        authorization_match = ENV_PLACEHOLDER_RE.fullmatch(authorization)
-        if authorization_match is not None:
-            credential_name = authorization_match.group(1)
+    revisioned_authorization_match = (
+        REVISIONED_ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if isinstance(authorization, str)
+        else None
+    )
+    canonical_authorization_match = (
+        ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if isinstance(authorization, str)
+        else None
+    )
+    authorization_match = (
+        revisioned_authorization_match or canonical_authorization_match
+    )
     if authorization_match is None:
         raise ValueError(
             "Hermes MCP Authorization must contain an OpenShell environment placeholder"
         )
-    if action == "add" and (
-        not isinstance(credential_name, str)
-        or _credential_name_is_reserved(credential_name)
-    ):
+    credential_name = (
+        revisioned_authorization_match.group(2)
+        if revisioned_authorization_match is not None
+        else canonical_authorization_match.group(1)
+    )
+    if action == "add" and revisioned_authorization_match is not None:
+        expected_child_value = authorization.removeprefix("Bearer ")
+        if os.environ.get(credential_name) != expected_child_value:
+            raise ValueError(
+                "Hermes MCP Authorization revision does not match the OpenShell child environment"
+            )
+    if action == "add" and _credential_name_is_reserved(credential_name):
         raise ValueError(
             "Hermes MCP Authorization uses a reserved credential environment name"
         )
@@ -515,6 +509,7 @@ def _managed_candidate(payload: dict[str, object]) -> dict[str, object]:
 def _managed_candidate_matches(
     actual: object, expected: dict[str, object], allow_revisioned: bool
 ) -> bool:
+    """Compare managed config with bounded revision equivalence when requested."""
     if actual == expected:
         return True
     if not allow_revisioned or not isinstance(actual, dict):

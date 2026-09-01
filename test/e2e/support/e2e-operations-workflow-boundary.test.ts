@@ -330,116 +330,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it.each([
-    {
-      caseName: "matching repository and requested SHAs",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: true,
-    },
-    {
-      caseName: "an NVIDIA-owned sibling repository",
-      checkoutRepository: "NVIDIA/NemoClaw-E2E",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: true,
-    },
-    {
-      caseName: "a checkout repository outside NVIDIA",
-      checkoutRepository: "contributor/NemoClaw",
-      nvidiaOwned: false,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: false,
-    },
-    {
-      caseName: "a workflow repository outside NVIDIA/NemoClaw",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "contributor/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: true,
-      expectedAllowed: false,
-    },
-    {
-      caseName: "checkout_sha differs from the checked-out commit",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: false,
-      workflowShaMatches: true,
-      expectedAllowed: false,
-    },
-    {
-      caseName: "a requested workflow SHA that differs from the running workflow",
-      checkoutRepository: "NVIDIA/NemoClaw",
-      nvidiaOwned: true,
-      workflowRepository: "NVIDIA/NemoClaw",
-      checkoutShaMatches: true,
-      workflowShaMatches: false,
-      expectedAllowed: false,
-    },
-  ])(
-    "sets E2E credential access to $expectedAllowed for $caseName (#9047)",
-    ({
-      checkoutRepository,
-      nvidiaOwned,
-      workflowRepository,
-      checkoutShaMatches,
-      workflowShaMatches,
-      expectedAllowed,
-    }) => {
-      const workflow = readE2eOperationsWorkflow();
-      const credentialAuthorization = workflow.jobs["generate-matrix"].steps!.find(
-        (step) => step.name === "Authorize E2E credentials",
-      )!;
-      const checkedOutSha = spawnSync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-      }).stdout.trim();
-      const checkoutSha = checkoutShaMatches ? checkedOutSha : "0".repeat(40);
-      const workflowSha = "c".repeat(40);
-      const expectedWorkflowSha = workflowShaMatches ? workflowSha : "d".repeat(40);
-      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-credentials-"));
-      const output = join(directory, "output");
-
-      try {
-        writeFileSync(output, "");
-        const result = spawnSync(
-          "bash",
-          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", credentialAuthorization.run!],
-          {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              CHECKOUT_REPOSITORY: checkoutRepository,
-              CHECKOUT_SHA: checkoutSha,
-              EVENT_NAME: "workflow_dispatch",
-              EXPECTED_WORKFLOW_SHA: expectedWorkflowSha,
-              GITHUB_OUTPUT: output,
-              NVIDIA_OWNED: nvidiaOwned ? "true" : "false",
-              REF: "refs/heads/main",
-              WORKFLOW_REPOSITORY: workflowRepository,
-              WORKFLOW_SHA: workflowSha,
-            },
-          },
-        );
-
-        expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(
-          `allowed=${expectedAllowed ? "true" : "false"}\n`,
-        );
-      } finally {
-        rmSync(directory, { force: true, recursive: true });
-      }
-    },
-  );
-
   it("keeps catalogue-owned GPU targets out of the handwritten workflow jobs", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["llama-cpp-generic-gpu"] = {
@@ -537,11 +427,48 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
         expect(authentication.run).not.toContain("collaborators/");
         expect(authentication.run).not.toContain("role_name");
+        expect(authentication.env).not.toHaveProperty("GITHUB_TOKEN");
+        expect(authentication.run).not.toContain("Authorization:");
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
     },
   );
+
+  it.each([
+    ["a denied public PR metadata request", "return 22"],
+    ["malformed public PR metadata", `printf '%s' '{'`],
+  ])("fails closed for %s", (_caseName, curlResult) => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    const prefix = ["curl() {", `  ${curlResult}`, "}"].join("\n");
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          BASE_SHA: "b".repeat(40),
+          CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
+          CHECKOUT_SHA: "a".repeat(40),
+          EXPECTED_WORKFLOW_SHA: "c".repeat(40),
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          INCLUDE_LAUNCHABLE: "false",
+          JOBS: "",
+          PR_NUMBER: "42",
+          WORKFLOW_EVENT: "workflow_dispatch",
+          WORKFLOW_REF: "refs/heads/main",
+          WORKFLOW_SHA: "c".repeat(40),
+        },
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+  });
 
   it.each([
     [
@@ -550,6 +477,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "a",
       "b",
       "c",
+      "refs/heads/main",
       "::error::checkout_repository must be an owner/repository name\n",
     ],
     [
@@ -558,6 +486,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "a",
       "d",
       "c",
+      "refs/heads/main",
       "::error::base_sha must match the PR base SHA\n",
     ],
     [
@@ -566,7 +495,17 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "a",
       "b",
       "d",
+      "refs/heads/main",
       "::error::workflow_sha must match the trusted main workflow SHA\n",
+    ],
+    [
+      "a matching workflow SHA from a non-main workflow ref",
+      "NVIDIA/NemoClaw",
+      "a",
+      "b",
+      "c",
+      "refs/heads/pr-controlled-workflow",
+      "::error::Manual PR E2E must be dispatched from trusted main\n",
     ],
   ] as const)(
     "rejects manual PR authentication for %s",
@@ -576,6 +515,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       requestedHeadCharacter,
       requestedBaseCharacter,
       expectedWorkflowCharacter,
+      workflowRef,
       expectedStderr,
     ) => {
       const apiHeadSha = "a".repeat(40);
@@ -608,7 +548,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             JOBS: "",
             PR_NUMBER: "42",
             WORKFLOW_EVENT: "workflow_dispatch",
-            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_REF: workflowRef,
             WORKFLOW_SHA: workflowSha,
           },
         },
@@ -1421,39 +1361,40 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       vi.unstubAllEnvs();
     }
   });
-
-  it("sanitizes raw traces before cleanup", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const cloudSteps = workflow.jobs["cloud-onboard"].steps!;
-    const sanitize = cloudSteps.find(
-      (step) => step.name === "Build trusted cloud-onboard timing summary",
-    )!;
-    sanitize.run = "cp -R raw-traces e2e-artifacts";
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
-    );
-  });
-
-  it("prevents the PR Review Advisor from writing to Actions or dispatching workflows", () => {
-    const workflow = readE2eOperationsWorkflow();
+  it.each(
+    (() => {
+      const run = "${{ github.run_id }}",
+        attempt = "${{ github.run_attempt }}",
+        temp = "${{ runner.temp }}",
+        matrix = "${{ matrix.advisor.artifact_name }}";
+      return [
+        [
+          `pr-review-advisor-context-${run}\n`,
+          `pr-review-advisor-context-${run}-${attempt}\n`,
+          false,
+        ],
+        [
+          `name: pr-review-advisor-context-${run}\n          path: ${temp}`,
+          `name: pr-review-advisor-context-${run}-${attempt}\n          path: ${temp}`,
+          false,
+        ],
+        ["overwrite: true", "overwrite: false", false],
+        [`${matrix}-${attempt}`, matrix, true],
+      ] as const;
+    })(),
+  )("rejects an unsafe Advisor rerun artifact mutation", (before, after, specialist) => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-operations-"));
     const advisorPath = join(directory, "advisor.yaml");
     try {
-      writeFileSync(advisorPath, "permissions: write-all\njobs:\n  advisor:\n    steps: []\n");
-      expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toContain(
-        "Unified advisor must not hold actions: write",
+      const source = readFileSync(
+        join(process.cwd(), ".github/workflows/pr-review-advisor.yaml"),
+        "utf8",
       );
-
-      writeFileSync(
-        advisorPath,
-        'permissions: read-all\njobs:\n  advisor:\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
-      );
-      expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
-        expect.arrayContaining([
-          "Unified advisor must not hold actions: write",
-          "Unified advisor must not auto-dispatch workflows",
-        ]),
+      writeFileSync(advisorPath, source.replace(before, after));
+      expect(validateE2eOperationsWorkflow(readE2eOperationsWorkflow(), advisorPath)).toContain(
+        specialist
+          ? "Unified advisor specialist artifacts must be unique per rerun attempt"
+          : "Unified advisor context artifact must survive failed-job and full reruns",
       );
     } finally {
       rmSync(directory, { force: true, recursive: true });

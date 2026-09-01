@@ -21,13 +21,29 @@ export function buildPolicySetCommand(
 
 /** Read the round-trippable base policy before a mutation. */
 export function buildPolicyGetCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand([
+  return buildOpenshellCommand(buildPolicyGetArgs(sandboxName, gatewayName));
+}
+
+/** Read the round-trippable base policy before a mutation without selecting a binary. */
+export function buildPolicyGetArgs(sandboxName: string, gatewayName?: string): string[] {
+  return ["policy", "get", ...policyGatewayArgs(gatewayName), "--base", sandboxName];
+}
+
+/** Read one stored base-policy revision for concurrent-write reconciliation. */
+export function buildPolicyGetRevisionArgs(
+  sandboxName: string,
+  gatewayName: string,
+  revision: number,
+): string[] {
+  return [
     "policy",
     "get",
     ...policyGatewayArgs(gatewayName),
+    "--rev",
+    String(revision),
     "--base",
     sandboxName,
-  ]);
+  ];
 }
 
 /** Read the effective policy for status and other diagnostics. */
@@ -46,8 +62,8 @@ function policyGatewayArgs(gatewayName?: string): string[] {
 }
 
 /** Read effective sandbox policy and its authority metadata as JSON. */
-export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand([
+export function buildPolicyGetFullJsonArgs(sandboxName: string, gatewayName?: string): string[] {
+  return [
     "policy",
     "get",
     ...policyGatewayArgs(gatewayName),
@@ -55,12 +71,12 @@ export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?:
     "--output",
     "json",
     sandboxName,
-  ]);
+  ];
 }
 
-/** Read the global policy and its authority metadata as JSON. */
-export function buildGlobalPolicyGetFullJsonCommand(gatewayName?: string): string[] {
-  return buildOpenshellCommand([
+/** Read the active global policy and its authority metadata as JSON. */
+export function buildGlobalPolicyGetFullJsonArgs(gatewayName?: string): string[] {
+  return [
     "policy",
     "get",
     ...policyGatewayArgs(gatewayName),
@@ -68,17 +84,10 @@ export function buildGlobalPolicyGetFullJsonCommand(gatewayName?: string): strin
     "--full",
     "--output",
     "json",
-  ]);
+  ];
 }
 
 /** Check whether the global policy has revision history. */
-export function buildGlobalPolicyListCommand(gatewayName?: string): string[] {
-  return buildOpenshellCommand([
-    "policy",
-    "list",
-    ...policyGatewayArgs(gatewayName),
-    "--global",
-    "--limit",
-    "1",
-  ]);
+export function buildGlobalPolicyListArgs(gatewayName?: string): string[] {
+  return ["policy", "list", ...policyGatewayArgs(gatewayName), "--global", "--limit", "1"];
 }

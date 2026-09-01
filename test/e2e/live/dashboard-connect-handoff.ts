@@ -9,7 +9,7 @@ import {
   spawnObservedChild,
 } from "../fixtures/observed-child-process.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/workload-source-env.ts";
+import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/shell-probe.ts";
 import { dashboardRemoteBindConnectStarted } from "./dashboard-remote-bind-env.ts";
 
 const CONNECT_CAPTURE_LIMIT_BYTES = 1024 * 1024;

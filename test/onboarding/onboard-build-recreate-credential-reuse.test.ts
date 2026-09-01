@@ -99,7 +99,7 @@ const { setupNim, setupInference } = require(${onboardPath});
     result.hermesToolGateways,
     {
       allowToolsIncompatible: result.allowToolsIncompatible,
-      revalidatePolicyRequirements: () => {},
+      revalidateSandboxIdentity: () => {},
       skipHostInferenceSmoke: result.skipHostInferenceSmoke,
       reuseGatewayCredentialWithoutLocalKey: result.reuseGatewayCredentialWithoutLocalKey,
     },

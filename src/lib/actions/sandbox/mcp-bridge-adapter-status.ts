@@ -17,6 +17,8 @@ import {
 // state can never be layered over the validated registry projection.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
+export const HERMES_MCP_TRANSACTION_HELPER =
+  "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 
 /** Resolve Mcporter's project root beneath an OpenClaw agent configuration directory. */
 export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): string {

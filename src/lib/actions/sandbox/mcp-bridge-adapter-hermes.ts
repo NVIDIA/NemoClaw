@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { getAgentBranding } from "../../cli/branding";
 import { waitUntil } from "../../core/wait";
 import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -14,13 +15,16 @@ import {
   type AdapterRegistrationInspection,
   inspectAdapterRegistrationCommand,
 } from "./mcp-bridge-adapter-inspection";
-import { buildHermesMcpStatusCommand, entryHeaders } from "./mcp-bridge-adapter-status";
+import {
+  buildHermesMcpStatusCommand,
+  entryHeaders,
+  HERMES_MCP_TRANSACTION_HELPER,
+} from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { executeGatewaySupervisorAction } from "./process-recovery";
 
-const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
 const HERMES_MCP_STARTUP_TIMEOUT_SECONDS = 90;
@@ -40,9 +44,6 @@ export function buildHermesMcpRegisterCommand(
     url: entry.url,
     headers: entryHeaders(entry, credentialRevision),
     replace_existing: replaceExisting,
-    ...(credentialRevision
-      ? { credential_name: entry.env[0], credential_revision: credentialRevision }
-      : {}),
   };
   return [HERMES_MCP_TRANSACTION_HELPER, "add", "--payload", JSON.stringify(payload)];
 }
@@ -148,7 +149,7 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
     if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
     if (lastDetail === HERMES_MCP_LIFECYCLE_NOT_READY) {
       throw new McpBridgeError(
-        `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`nemoclaw ${sandboxName} recover\` and retry.`,
+        `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`${getAgentBranding().cli} ${sandboxName} recover\` and retry.`,
       );
     }
     throw new McpBridgeError(
