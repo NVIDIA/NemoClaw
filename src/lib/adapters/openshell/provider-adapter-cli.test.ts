@@ -210,6 +210,35 @@ describe("CLI OpenShell provider adapter", () => {
     expect(JSON.stringify(result)).not.toContain(credentialValue);
   });
 
+  it("removes URL userinfo from typed failures (#9806)", async () => {
+    const username = "upstream-user";
+    const password = "upstream-password";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(1, "", `provider rejected https://${username}:${password}@example.test/path`),
+    });
+
+    const result = await adapter.createProvider({
+      target: selectedOpenShellGateway(),
+      name: "search-prod",
+      type: "tavily",
+      credentials: [{ name: "TAVILY_API_KEY", value: "unrelated-host-value" }],
+      config: [],
+      fromExisting: false,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "provider rejected https://example.test/path",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(username);
+    expect(JSON.stringify(result)).not.toContain(password);
+  });
+
   it("does not expose an imported credential value in a provider failure (#9806)", async () => {
     const storedCredentialValue = "arbitrary-stored-value";
     const adapter = createCliOpenShellProviderAdapter({

@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
-import { redactFull } from "../../security/redact";
+import { redactFullWithUrls } from "../../security/redact";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   parseCliOpenShellProviderNames,
@@ -85,7 +85,7 @@ function redactProviderDiagnostic(output: string, secrets: readonly string[]): s
   for (const secret of secrets) {
     if (secret) safe = safe.replaceAll(secret, "<REDACTED>");
   }
-  return redactFull(safe).trim();
+  return redactFullWithUrls(safe).trim();
 }
 
 function attachedSandboxNames(output: string): string[] | null {
