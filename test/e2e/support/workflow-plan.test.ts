@@ -86,7 +86,7 @@ describe("E2E workflow plan", () => {
       catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 4,
       "shared-e2e": 2,
-      "retained-workflow": 19,
+      "retained-workflow": 18,
       staging: 1,
     });
     expect(plan.coverageMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([
@@ -96,7 +96,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(93);
+    expect(plan.coverageMatrix).toHaveLength(92);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -113,7 +113,6 @@ describe("E2E workflow plan", () => {
       "mcp-bridge-dev",
       "messaging-providers",
       "openclaw-plugin-runtime-exdev",
-      "openclaw-plugin-runtime-exdev-release",
       "openshell-credential-generation-window",
       "openshell-gateway-auth-contract",
       "shared-e2e",
