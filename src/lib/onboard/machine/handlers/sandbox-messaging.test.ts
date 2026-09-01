@@ -379,6 +379,7 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
       authoritative: false,
       plan: null,
     })),
+    inspectGatewayCredential: vi.fn(() => ({ kind: "missing" as const })),
     providerMatchesGatewayCredential: vi.fn(() => false),
   };
 }
@@ -404,8 +405,8 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv,
+        inspectGatewayCredential: () => ({ kind: "missing" }),
         note: vi.fn(),
-        providerMatchesGatewayCredential: () => false,
         writePlanToEnv: vi.fn(),
       },
       plan,
@@ -419,8 +420,8 @@ describe("reconcileReusedSandboxMessaging", () => {
     const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
     const deps = {
       clearPlanEnv: vi.fn(),
+      inspectGatewayCredential: () => ({ kind: "missing" as const }),
       note: vi.fn(),
-      providerMatchesGatewayCredential: () => false,
       writePlanToEnv: vi.fn(),
     };
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
@@ -451,8 +452,8 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv: vi.fn(),
+        inspectGatewayCredential: () => ({ kind: "missing" }),
         note: vi.fn(),
-        providerMatchesGatewayCredential: () => false,
         writePlanToEnv: vi.fn(),
       },
       plan,
@@ -465,19 +466,19 @@ describe("reconcileReusedSandboxMessaging", () => {
     const plan = googlechatPlan();
     // The pasted secret dies with its process, so a later rebuild sees empty env.
     vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "");
-    const providerMatchesGatewayCredential = vi.fn(() => true);
+    const inspectGatewayCredential = vi.fn(() => ({ kind: "exact" as const }));
     const note = vi.fn();
 
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn(), note, providerMatchesGatewayCredential, writePlanToEnv: vi.fn() },
+      { clearPlanEnv: vi.fn(), inspectGatewayCredential, note, writePlanToEnv: vi.fn() },
       plan,
     );
 
     expect(result).toEqual({ plan, selectedChannels: ["googlechat"], changed: false });
     expect(note).not.toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
-    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+    expect(inspectGatewayCredential).toHaveBeenCalledWith(
       "alpha-googlechat-bridge",
       "google-chat-bridge",
       "GOOGLE_CHAT_ACCESS_TOKEN",
@@ -494,8 +495,8 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv: vi.fn(),
+        inspectGatewayCredential: () => ({ kind: "missing" }),
         note,
-        providerMatchesGatewayCredential: () => false,
         writePlanToEnv: vi.fn(),
       },
       plan,
@@ -513,29 +514,29 @@ describe("reconcileReusedSandboxMessaging", () => {
   it("keeps a token channel whose provider still matches at the gateway (#10660)", () => {
     const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
-    const providerMatchesGatewayCredential = vi.fn(() => true);
+    const inspectGatewayCredential = vi.fn(() => ({ kind: "exact" as const }));
 
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
       {
         clearPlanEnv: vi.fn(),
+        inspectGatewayCredential,
         note: vi.fn(),
-        providerMatchesGatewayCredential,
         writePlanToEnv: vi.fn(),
       },
       plan,
     );
 
     expect(result).toEqual({ plan, selectedChannels: ["discord"], changed: false });
-    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+    expect(inspectGatewayCredential).toHaveBeenCalledWith(
       "alpha-discord-bridge",
       expect.any(String),
       "DISCORD_BOT_TOKEN",
     );
   });
 
-  it("disables a Slack channel when one required gateway credential is missing (#10660)", () => {
+  it("disables Slack when its app-token gateway credential is missing (#10660)", () => {
     const plan = slackPlan(
       hashCredential("previous-slack-bot-token") ?? "",
       hashCredential("previous-slack-app-token") ?? "",
@@ -543,8 +544,11 @@ describe("reconcileReusedSandboxMessaging", () => {
     vi.stubEnv("SLACK_BOT_TOKEN", "");
     vi.stubEnv("SLACK_APP_TOKEN", "");
     const writePlanToEnv = vi.fn();
-    const providerMatchesGatewayCredential = vi.fn(
-      (_name: string, _type: string, credentialEnv: string) => credentialEnv === "SLACK_BOT_TOKEN",
+    const inspectGatewayCredential = vi.fn(
+      (_name: string, _type: string, credentialEnv: string) =>
+        credentialEnv === "SLACK_BOT_TOKEN"
+          ? ({ kind: "exact" } as const)
+          : ({ kind: "missing" } as const),
     );
 
     const result = reconcileReusedSandboxMessaging(
@@ -552,8 +556,8 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv: vi.fn(),
+        inspectGatewayCredential,
         note: vi.fn(),
-        providerMatchesGatewayCredential,
         writePlanToEnv,
       },
       plan,
@@ -562,6 +566,95 @@ describe("reconcileReusedSandboxMessaging", () => {
 
     expect(result).toEqual({ plan: disabledPlan, selectedChannels: [], changed: true });
     expect(writePlanToEnv).toHaveBeenCalledWith(disabledPlan);
+    expect(inspectGatewayCredential).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables Slack when its bot-token gateway credential is missing (#10660)", () => {
+    const plan = slackPlan(
+      hashCredential("previous-slack-bot-token") ?? "",
+      hashCredential("previous-slack-app-token") ?? "",
+    );
+    vi.stubEnv("SLACK_BOT_TOKEN", "");
+    vi.stubEnv("SLACK_APP_TOKEN", "");
+    const writePlanToEnv = vi.fn();
+    const inspectGatewayCredential = vi.fn(
+      (_name: string, _type: string, credentialEnv: string) =>
+        credentialEnv === "SLACK_APP_TOKEN"
+          ? ({ kind: "exact" } as const)
+          : ({ kind: "missing" } as const),
+    );
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "openclaw" },
+      {
+        clearPlanEnv: vi.fn(),
+        inspectGatewayCredential,
+        note: vi.fn(),
+        writePlanToEnv,
+      },
+      plan,
+    );
+    const disabledPlan = withChannelDisabled(plan, "slack");
+
+    expect(result).toEqual({ plan: disabledPlan, selectedChannels: [], changed: true });
+    expect(writePlanToEnv).toHaveBeenCalledWith(disabledPlan);
+    expect(inspectGatewayCredential).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["collision", "indeterminate"] as const)(
+    "preserves the channel plan when gateway credential inspection is %s (#10660)",
+    (kind) => {
+      const plan = googlechatPlan();
+      vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "");
+      const clearPlanEnv = vi.fn();
+      const writePlanToEnv = vi.fn();
+
+      expect(() =>
+        reconcileReusedSandboxMessaging(
+          structuredClone(plan),
+          { name: "openclaw" },
+          {
+            clearPlanEnv,
+            inspectGatewayCredential: () => ({ kind }),
+            note: vi.fn(),
+            writePlanToEnv,
+          },
+          plan,
+        ),
+      ).toThrow(/provider 'alpha-googlechat-bridge'.*sandbox 'alpha'.*No messaging state was changed/u);
+      expect(clearPlanEnv).not.toHaveBeenCalled();
+      expect(writePlanToEnv).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves Slack when a missing binding accompanies an indeterminate inspection (#10660)", () => {
+    const plan = slackPlan(
+      hashCredential("previous-slack-bot-token") ?? "",
+      hashCredential("previous-slack-app-token") ?? "",
+    );
+    vi.stubEnv("SLACK_BOT_TOKEN", "");
+    vi.stubEnv("SLACK_APP_TOKEN", "");
+    const clearPlanEnv = vi.fn();
+    const writePlanToEnv = vi.fn();
+    const inspectGatewayCredential = vi.fn(
+      (_name: string, _type: string, credentialEnv: string) =>
+        credentialEnv === "SLACK_BOT_TOKEN"
+          ? ({ kind: "missing" } as const)
+          : ({ kind: "indeterminate" } as const),
+    );
+
+    expect(() =>
+      reconcileReusedSandboxMessaging(
+        structuredClone(plan),
+        { name: "openclaw" },
+        { clearPlanEnv, inspectGatewayCredential, note: vi.fn(), writePlanToEnv },
+        plan,
+      ),
+    ).toThrow(/Could not inspect messaging provider/u);
+    expect(inspectGatewayCredential).toHaveBeenCalledTimes(2);
+    expect(clearPlanEnv).not.toHaveBeenCalled();
+    expect(writePlanToEnv).not.toHaveBeenCalled();
   });
 
   it("keeps an in-sandbox QR channel in a reused sandbox selection (#9283)", () => {
@@ -574,8 +667,8 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv: vi.fn(),
+        inspectGatewayCredential: () => ({ kind: "missing" }),
         note: vi.fn(),
-        providerMatchesGatewayCredential: () => false,
         writePlanToEnv: vi.fn(),
       },
       plan,
@@ -593,8 +686,8 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv() {},
+        inspectGatewayCredential: () => ({ kind: "missing" }),
         note() {},
-        providerMatchesGatewayCredential: () => false,
         writePlanToEnv() {},
       },
     );

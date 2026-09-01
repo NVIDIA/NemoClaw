@@ -11,6 +11,7 @@ import {
 } from "../state/onboard-checkpoint-types";
 import {
   checkpointSandboxIdentityMatches,
+  collectRequiredMessagingProviderBindings,
   observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
@@ -374,6 +375,87 @@ describe("requiredMessagingProviderBindings", () => {
         name: "hermes-discord-discord-bridge",
         type: "discord-hermes-static-v1",
         credentialEnv: "DISCORD_BOT_TOKEN",
+      },
+    ]);
+  });
+
+  it("filters provider bindings to one active messaging channel", () => {
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "telegram",
+          displayName: "Telegram",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+        {
+          channelId: "slack",
+          displayName: "Slack",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegramBotToken",
+          sourceInput: "botToken",
+          providerName: "alpha-telegram-bridge",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+        {
+          channelId: "slack",
+          credentialId: "slackBotToken",
+          sourceInput: "botToken",
+          providerName: "alpha-slack-bridge",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:SLACK_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+        {
+          channelId: "slack",
+          credentialId: "slackAppToken",
+          sourceInput: "appToken",
+          providerName: "alpha-slack-bridge",
+          providerEnvKey: "SLACK_APP_TOKEN",
+          placeholder: "openshell:resolve:env:SLACK_APP_TOKEN",
+          credentialAvailable: true,
+        },
+      ],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+
+    expect(collectRequiredMessagingProviderBindings("alpha", plan, new Set(["slack"]))).toEqual([
+      {
+        name: "alpha-slack-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_BOT_TOKEN",
+      },
+      {
+        name: "alpha-slack-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_APP_TOKEN",
       },
     ]);
   });

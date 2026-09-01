@@ -275,19 +275,34 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): boolean {
+    return inspectGatewayCredentialBinding(binding, runOpenshell).kind === "exact";
+  }
+
+  function inspectGatewayCredentialBinding(
+    binding: CheckpointProviderBinding,
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
     const staticProfileMatches = messagingBridgeProvider.matchesRegisteredStaticMessagingProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (staticProfileMatches === false) return false;
-    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(
-      providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
+    if (staticProfileMatches === false) return { kind: "indeterminate" };
+    return gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
       {
         name: binding.name,
         type: binding.type,
         credentialKey: binding.credentialEnv,
       },
+      runOpenshell,
     );
+  }
+
+  function inspectGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+    return inspectGatewayCredentialBinding({ name, type, credentialEnv }, gatewayRunner());
   }
 
   function providerMatchesGatewayCredential(
@@ -368,6 +383,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
+    inspectGatewayCredential,
     providerMatchesGatewayCredential,
     stageSandboxCredentialProviders,
     upsertProvider,

@@ -20,15 +20,13 @@ import {
 import { hashCredential } from "../../../security/credential-hash";
 import { isDecisionSelected, isDecisionUnset } from "../../../state/onboard-checkpoint-decision";
 import type { Session } from "../../../state/onboard-session";
+import { collectRequiredMessagingProviderBindings } from "../../checkpoint-replay";
+import type { GatewayCredentialOnlyProviderInspection } from "../../gateway-provider-metadata";
 import {
   detectMessagingChannelsFromEnv,
   detectUnconfiguredMessagingChannels,
 } from "../../messaging-channel-setup";
-import {
-  bridgeProviderNamesForChannel,
-  messagingBridgeProfilesForAgent,
-  staticMessagingProviderTypeForChannel,
-} from "../../messaging-bridge-provider";
+import { staticMessagingProviderTypeForChannel } from "../../messaging-bridge-provider";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
 
 export {
@@ -65,6 +63,11 @@ export interface SandboxMessagingDeps<Agent> {
   writePlanToEnv(plan: SandboxMessagingPlan): void;
   clearPlanEnv(): void;
   getRegistrySandboxMessagingAuthority(sandboxName: string): RegistryMessagingAuthority;
+  inspectGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): GatewayCredentialOnlyProviderInspection;
   providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
 }
 
@@ -236,32 +239,37 @@ function selectionFromReusablePlan<Agent>(
 function channelCredentialLivesAtGateway<Agent>(
   plan: SandboxMessagingPlan,
   channelId: string,
-  deps: Pick<SandboxMessagingDeps<Agent>, "providerMatchesGatewayCredential">,
+  deps: Pick<SandboxMessagingDeps<Agent>, "inspectGatewayCredential">,
 ): boolean {
-  const providerBindings = plan.credentialBindings
-    .filter((binding) => binding.channelId === channelId)
-    .map((binding) => ({
-      name: binding.providerName,
-      type:
-        staticMessagingProviderTypeForChannel(channelId, plan.agent) ??
-        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-      credentialEnv: binding.providerEnvKey,
-    }));
-  // A bridge channel renders no binding; resolve its provider by name.
-  for (const profile of messagingBridgeProfilesForAgent(plan.agent)) {
-    if (profile.channelId !== channelId) continue;
-    for (const name of bridgeProviderNamesForChannel(plan.sandboxName, channelId, [profile])) {
-      providerBindings.push({
-        name,
-        type: profile.profileId,
-        credentialEnv: profile.credentialKey,
-      });
-    }
-  }
-  if (providerBindings.length === 0) return false;
-  return providerBindings.every(({ name, type, credentialEnv }) =>
-    deps.providerMatchesGatewayCredential(name, type, credentialEnv),
+  const providerBindings = collectRequiredMessagingProviderBindings(
+    plan.sandboxName,
+    plan,
+    new Set([channelId]),
   );
+  if (providerBindings.length === 0) return false;
+  const inspections = providerBindings.map((binding) => ({
+    binding,
+    inspection: deps.inspectGatewayCredential(
+      binding.name,
+      binding.type,
+      binding.credentialEnv,
+    ),
+  }));
+  const unresolved = inspections.find(
+    ({ inspection }) => inspection.kind === "collision" || inspection.kind === "indeterminate",
+  );
+  if (unresolved) {
+    const { name } = unresolved.binding;
+    if (unresolved.inspection.kind === "indeterminate") {
+      throw new Error(
+        `Could not inspect messaging provider '${name}' for sandbox '${plan.sandboxName}'. No messaging state was changed. Run onboarding again after the OpenShell gateway is available.`,
+      );
+    }
+    throw new Error(
+      `Messaging provider '${name}' for sandbox '${plan.sandboxName}' does not match the recorded credential binding. No messaging state was changed.`,
+    );
+  }
+  return inspections.every(({ inspection }) => inspection.kind === "exact");
 }
 
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
@@ -269,7 +277,7 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
   agent: Agent,
   deps: Pick<
     SandboxMessagingDeps<Agent>,
-    "clearPlanEnv" | "note" | "providerMatchesGatewayCredential" | "writePlanToEnv"
+    "clearPlanEnv" | "inspectGatewayCredential" | "note" | "writePlanToEnv"
   >,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
@@ -526,7 +534,7 @@ export function reconcileReusedSandboxMessaging<Agent>(
   agent: Agent,
   deps: Pick<
     SandboxMessagingDeps<Agent>,
-    "clearPlanEnv" | "note" | "providerMatchesGatewayCredential" | "writePlanToEnv"
+    "clearPlanEnv" | "inspectGatewayCredential" | "note" | "writePlanToEnv"
   >,
   recordedPlan: SandboxMessagingPlan | null = plan,
 ): SandboxMessagingSelection & { readonly changed: boolean } {

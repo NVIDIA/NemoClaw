@@ -257,6 +257,63 @@ describe("credential provider registration", () => {
     ]);
   });
 
+  it.each([
+    {
+      condition: "a gateway command failure",
+      result: () => ({ status: 2, stderr: "gateway unavailable" }),
+      expected: { kind: "indeterminate" as const },
+    },
+    {
+      condition: "malformed provider metadata",
+      result: () => ({ status: 0, stdout: "unexpected output" }),
+      expected: { kind: "collision" as const },
+    },
+    {
+      condition: "a thrown gateway command",
+      result: () => {
+        throw new Error("gateway unavailable");
+      },
+      expected: { kind: "indeterminate" as const },
+    },
+  ])("preserves $condition when inspecting a credential binding", ({ result, expected }) => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(vi.fn(result), session),
+    );
+
+    expect(
+      registration.inspectGatewayCredential(
+        "alpha-telegram-bridge",
+        "nemoclaw-mcp-v1",
+        "TELEGRAM_BOT_TOKEN",
+      ),
+    ).toEqual(expected);
+  });
+
+  it("treats a failed static profile inspection as indeterminate", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile")
+        ? { status: 2, stderr: "gateway unavailable" }
+        : providerMetadata(
+            "alpha-discord-bridge",
+            "discord-hermes-static-v1",
+            "DISCORD_BOT_TOKEN",
+          ),
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+
+    expect(
+      registration.inspectGatewayCredential(
+        "alpha-discord-bridge",
+        "discord-hermes-static-v1",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toEqual({ kind: "indeterminate" });
+  });
+
   it("rejects tokenless Hermes Discord profile drift before provider mutation", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) =>

@@ -893,8 +893,7 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-const registeredCredentialProviders =
-  credentialProviderRegistration.createCredentialProviderRegistration({
+const registration = credentialProviderRegistration.createCredentialProviderRegistration({
     root: ROOT,
     runOpenshell,
     getGatewayName: () => GATEWAY_NAME,
@@ -903,9 +902,8 @@ const registeredCredentialProviders =
     stagedLegacyValues,
     migratedLegacyKeys,
     persistMigratedLegacyKeys,
-  });
-const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } =
-  registeredCredentialProviders;
+});
+const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } = registration;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
   onboardProviders.providerExistsInGateway(
     name,
@@ -2522,7 +2520,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
 const stageSandboxCredentialProviders = (
   input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>,
 ) =>
-  registeredCredentialProviders.stageSandboxCredentialProviders(
+  registration.stageSandboxCredentialProviders(
     input,
     sandboxCreateIntentResolver.prepareCredentialProviders,
   );
@@ -3217,6 +3215,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             clearPlanEnv: messagingChannelSetup.clearPlanEnv,
             getRegistrySandboxMessagingAuthority:
               messagingChannelSetup.getRegistrySandboxMessagingAuthority,
+            inspectGatewayCredential: registration.inspectGatewayCredential,
             providerMatchesGatewayCredential,
             stageSandboxCredentialProviders,
             promptValidatedSandboxName,

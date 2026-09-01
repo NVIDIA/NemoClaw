@@ -139,17 +139,23 @@ export function requiredWebSearchProviderType(
     : provider;
 }
 
-export function requiredMessagingProviderBindings(
+/** Collect every active credential binding, including multiple keys owned by one provider. */
+export function collectRequiredMessagingProviderBindings(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
+  channelIds?: ReadonlySet<string>,
 ): CheckpointProviderBinding[] {
   if (!plan) return [];
-  const activeChannels = new Set(getActiveChannelIdsFromPlan(plan));
+  const activeChannels = new Set(
+    getActiveChannelIdsFromPlan(plan).filter(
+      (channelId) => channelIds === undefined || channelIds.has(channelId),
+    ),
+  );
   const profiles = messagingBridgeProfilesForAgent(plan.agent, listMessagingBridgeProfiles());
-  const bindings = new Map<string, CheckpointProviderBinding>();
+  const bindings: CheckpointProviderBinding[] = [];
   for (const binding of plan.credentialBindings) {
     if (!activeChannels.has(binding.channelId)) continue;
-    bindings.set(binding.providerName, {
+    bindings.push({
       name: binding.providerName,
       type:
         staticMessagingProviderTypeForChannel(binding.channelId, plan.agent, profiles) ??
@@ -160,13 +166,19 @@ export function requiredMessagingProviderBindings(
   for (const profile of profiles) {
     if (!activeChannels.has(profile.channelId)) continue;
     const name = `${sandboxName}-${profile.channelId}-bridge`;
-    const existing = bindings.get(name);
-    bindings.set(
-      name,
-      existing
-        ? { ...existing, type: profile.profileId }
-        : { name, type: profile.profileId, credentialEnv: profile.credentialKey },
-    );
+    if (bindings.some((binding) => binding.name === name)) continue;
+    bindings.push({ name, type: profile.profileId, credentialEnv: profile.credentialKey });
+  }
+  return bindings;
+}
+
+export function requiredMessagingProviderBindings(
+  sandboxName: string,
+  plan: SandboxMessagingPlan | null,
+): CheckpointProviderBinding[] {
+  const bindings = new Map<string, CheckpointProviderBinding>();
+  for (const binding of collectRequiredMessagingProviderBindings(sandboxName, plan)) {
+    bindings.set(binding.name, binding);
   }
   return [...bindings.values()];
 }
