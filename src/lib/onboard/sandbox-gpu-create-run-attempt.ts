@@ -19,7 +19,7 @@ import {
   settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
 import { createReadinessWaitOptions } from "../core/readiness-wait";
-import { waitUntil, waitUntilAsync } from "../core/wait";
+import { waitUntil } from "../core/wait";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import { redact, redactFullWithUrls } from "../security/redact";
@@ -82,8 +82,6 @@ type PostCreateReadinessDeadline = Readonly<{
   deadlineMs: number;
   now: () => number;
 }>;
-
-export { waitUntilAsync as waitForSandboxReadinessUntil };
 
 function createPostCreateReadinessDeadline(
   input: SandboxGpuCreateFlowInput,

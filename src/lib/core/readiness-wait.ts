@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WaitUntilOptions } from "./wait";
+import { type WaitUntilOptions, waitUntil, waitUntilAsync } from "./wait";
+
+export { type WaitUntilOptions, waitUntil, waitUntilAsync };
 
 const DEFAULT_INITIAL_INTERVAL_MS = 250;
 const DEFAULT_MAX_INTERVAL_MS = 2_000;

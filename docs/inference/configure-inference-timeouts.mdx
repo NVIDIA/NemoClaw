@@ -20,7 +20,7 @@ Use the error location to select the correct setting.
 |---|---|---|
 | `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint onboarding validation paths that read this setting | `180` seconds |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | OpenShell publication, durable identity settlement, and executable readiness after creation | `180` seconds |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | OpenShell publication, durable identity settlement, and executable readiness after creation; a new full budget starts after a managed runtime commit | `180` seconds |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
 
 The readiness timeout does not govern inference requests or provider validation.
@@ -95,6 +95,7 @@ This variable does not extend the later sandbox-readiness wait.
 ## Increase the Sandbox Readiness Timeout
 
 Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` when OpenShell needs more than 180 seconds after the create command returns to publish the sandbox, settle its durable identity, or reach executable `Ready`.
+After a managed runtime commit, NemoClaw starts a new full budget with this value to verify that the same sandbox returns to executable `Ready`. Local-inference validation does not consume the post-commit budget.
 This setting does not extend image build or gateway upload time.
 
 ```bash
@@ -102,7 +103,7 @@ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
 
-If this deadline expires, NemoClaw preserves the sandbox and records recovery evidence when possible.
+If either readiness deadline expires, NemoClaw preserves the sandbox and records recovery evidence when possible.
 Follow [Recover a retained sandbox](../../reference/commands#recover-a-retained-sandbox) before reusing the sandbox name.
 
 ## Increase the Recovery Wait

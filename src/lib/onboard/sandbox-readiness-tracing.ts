@@ -19,8 +19,9 @@ import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
+  waitUntil,
+  waitUntilAsync,
 } from "../core/readiness-wait";
-import { waitUntil, waitUntilAsync } from "../core/wait";
 import { envInt } from "./env";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 

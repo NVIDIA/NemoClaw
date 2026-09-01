@@ -13,6 +13,7 @@ import {
   parseOpenShellSandboxId,
 } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
+import { waitUntilAsync } from "../../src/lib/core/wait.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
   type StopHostGatewayResult,
@@ -37,12 +38,7 @@ import {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
-import type {
-  RuntimeProviderBundle,
-  RuntimeProviderManagedImageBootstrapSurface,
-} from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
-import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
 import {
   OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
@@ -51,7 +47,6 @@ import {
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowInput,
-  waitForSandboxReadinessUntil,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
@@ -336,12 +331,16 @@ export type ManagedImageRetainedSandboxRecovery = Readonly<{
 
 const MANAGED_IMAGE_RETAINED_RECOVERY_FILE = "retained-sandbox-recovery.json";
 
+export function managedImageRetainedSandboxRecoveryPath(stateDir: string): string {
+  return path.join(stateDir, MANAGED_IMAGE_RETAINED_RECOVERY_FILE);
+}
+
 export function readManagedImageRetainedSandboxRecovery(
   stateDir: string,
 ): ManagedImageRetainedSandboxRecovery | null {
   try {
     const value = JSON.parse(
-      fs.readFileSync(path.join(stateDir, MANAGED_IMAGE_RETAINED_RECOVERY_FILE), "utf8"),
+      fs.readFileSync(managedImageRetainedSandboxRecoveryPath(stateDir), "utf8"),
     ) as Partial<ManagedImageRetainedSandboxRecovery>;
     if (
       value.schemaVersion !== 1 ||
@@ -374,7 +373,7 @@ export function persistManagedImageRetainedSandboxRecovery(options: {
     sandboxIdentityFingerprint: options.sandboxIdentityFingerprint ?? null,
     message: options.message,
   };
-  const recordPath = path.join(options.stateDir, MANAGED_IMAGE_RETAINED_RECOVERY_FILE);
+  const recordPath = managedImageRetainedSandboxRecoveryPath(options.stateDir);
   const temporaryPath = `${recordPath}.tmp`;
   let descriptor: number | null = null;
   let directoryDescriptor: number | null = null;
@@ -414,14 +413,17 @@ export function removeManagedImageGatewayStateIfSafe(
   stateDir: string,
   gatewayStop: Pick<StopHostGatewayResult, "failed" | "ownershipFailures">,
   gatewayRemovalStatus: number | null,
+  cleanupVerified = true,
 ): boolean {
   if (
     gatewayStop.failed.length > 0 ||
     (gatewayStop.ownershipFailures?.length ?? 0) > 0 ||
-    gatewayRemovalStatus !== 0
+    gatewayRemovalStatus !== 0 ||
+    !cleanupVerified
   ) {
     return false;
   }
+  fs.rmSync(managedImageRetainedSandboxRecoveryPath(stateDir), { force: true });
   fs.rmSync(stateDir, { recursive: true, force: true });
   return true;
 }
@@ -658,7 +660,7 @@ export async function waitForCommittedSandboxProbe(
       timeoutMs,
     );
   let lastHealthDetail = "";
-  const ready = await waitForSandboxReadinessUntil(
+  const ready = await waitUntilAsync(
     () => {
       const remainingMs = deadlineMs - now();
       const health = runProbe(healthProbe, Math.max(1, Math.min(15_000, remainingMs)));
@@ -1009,7 +1011,7 @@ export function assertFailedSandboxOwnerCleanupRetention(
     get.status !== 0 ||
     parseOpenShellSandboxId(String(get.stdout ?? "")) !== expectedSandboxId ||
     list.status !== 0 ||
-    !parseLiveSandboxNames(String(list.stdout ?? "")).has(input.sandbox)
+    !onboard.isSandboxReady(String(list.stdout ?? ""), input.sandbox)
   ) {
     throw new Error(
       `managed-bootstrap rollback did not retain its exact OpenShell owner-cleanup state: get=${commandDetail(get)} list=${commandDetail(list)}`,
@@ -1216,8 +1218,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     const runtimeProvider = {
       ...createDockerRuntimeProviderBundle(),
       bootstrap: createDockerManagedBootstrapSurface("docker"),
-    } as RuntimeProviderBundle & {
-      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
@@ -1526,9 +1526,20 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
     try {
-      if (!removeManagedImageGatewayStateIfSafe(stateDir, gatewayStop, gatewayRemovalStatus)) {
+      const cleanupVerified = cleanupErrors.length === 0;
+      if (
+        !removeManagedImageGatewayStateIfSafe(
+          stateDir,
+          gatewayStop,
+          gatewayRemovalStatus,
+          cleanupVerified,
+        )
+      ) {
+        const retainedRecoveryPath = managedImageRetainedSandboxRecoveryPath(stateDir);
         cleanupErrors.push(
-          `OpenShell gateway ownership evidence remains at ${stateDir} because gateway cleanup did not complete`,
+          readManagedImageRetainedSandboxRecovery(stateDir)
+            ? `Retained sandbox recovery evidence remains at ${retainedRecoveryPath} because cleanup did not complete`
+            : `OpenShell gateway ownership evidence remains at ${stateDir} because cleanup did not complete`,
         );
       }
     } catch (error) {

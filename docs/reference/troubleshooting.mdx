@@ -2002,7 +2002,9 @@ This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`. It covers the
 
 <AgentOnly variant="openclaw,hermes">
 
-For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal. Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`. NemoClaw keeps waiting only when OpenShell reports exact sandbox absence or its exact `sandbox is not ready` response. A missing or malformed ID, or another command failure, stops the wait. NemoClaw preserves the sandbox, saves create-attempt evidence when possible, and requires identity-bound recovery instead of ordinary failed-creation cleanup.
+For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal. Within the initial post-create budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`. NemoClaw keeps waiting only when OpenShell reports exact sandbox absence or its exact `sandbox is not ready` response. A missing or malformed ID, or another command failure, stops the wait. NemoClaw preserves the sandbox, saves create-attempt evidence when possible, and requires identity-bound recovery instead of ordinary failed-creation cleanup.
+
+After a managed runtime commit, NemoClaw starts a new full `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget to verify that the same durable sandbox returns to executable `Ready`. The local-inference validation timeout remains separate and does not consume this post-commit budget.
 
 If onboarding reports that the managed runtime commit completed but the same sandbox did not return to executable `Ready`, stop before retrying.
 NemoClaw keeps the sandbox, prints its create-attempt label and a one-way durable identity fingerprint, and does not start dashboard forwarding.

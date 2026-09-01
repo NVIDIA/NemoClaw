@@ -30,6 +30,7 @@ import {
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
+  managedImageRetainedSandboxRecoveryPath,
   managedImageSandboxCleanupOwnershipError,
   parseManagedImageOpenShellE2eInputs,
   persistManagedImageRetainedSandboxRecovery,
@@ -447,9 +448,53 @@ describe("protected managed-image runtime contract", () => {
     }
   });
 
+  it("retains exact recovery evidence when managed-image cleanup is unresolved (#10652)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-recovery-"));
+    const createAttemptNonce = "c".repeat(62);
+    const sandboxIdentityFingerprint = "d".repeat(64);
+    expect(
+      persistManagedImageRetainedSandboxRecovery({
+        stateDir,
+        sandboxName: VALID_SANDBOX,
+        message: "Retained after incomplete cleanup.",
+        createAttemptNonce,
+        sandboxIdentityFingerprint,
+      }),
+    ).toBe(true);
+
+    try {
+      expect(
+        removeManagedImageGatewayStateIfSafe(
+          stateDir,
+          { failed: [], ownershipFailures: [] },
+          0,
+          false,
+        ),
+      ).toBe(false);
+      expect(managedImageRetainedSandboxRecoveryPath(stateDir)).toBe(
+        path.join(stateDir, "retained-sandbox-recovery.json"),
+      );
+      expect(readManagedImageRetainedSandboxRecovery(stateDir)).toMatchObject({
+        createAttemptLabel: expect.stringMatching(new RegExp(`=${createAttemptNonce}$`, "u")),
+        sandboxIdentityFingerprint,
+      });
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
   it("removes gateway state only after scoped stop and gateway removal succeed (#7744)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-state-remove-"));
     fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), "9999601\n");
+    expect(
+      persistManagedImageRetainedSandboxRecovery({
+        stateDir,
+        sandboxName: VALID_SANDBOX,
+        message: "Retire after exact cleanup.",
+        createAttemptNonce: "e".repeat(62),
+        sandboxIdentityFingerprint: "f".repeat(64),
+      }),
+    ).toBe(true);
 
     expect(
       removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0),
@@ -623,7 +668,7 @@ describe("protected managed-image runtime contract", () => {
 
     expect(() =>
       assertFailedSandboxOwnerCleanupRetention(
-        { runOpenshell } as never,
+        { ...MANAGED_IMAGE_ONBOARD, runOpenshell },
         input,
         expectedSandboxId,
         {},
@@ -668,7 +713,7 @@ describe("protected managed-image runtime contract", () => {
     );
     const assertion = () =>
       assertFailedSandboxOwnerCleanupRetention(
-        { runOpenshell } as never,
+        { ...MANAGED_IMAGE_ONBOARD, runOpenshell },
         input,
         expectedSandboxId,
         {},
