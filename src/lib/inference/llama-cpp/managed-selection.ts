@@ -6,6 +6,7 @@ import os from "node:os";
 import { getBuildIdentity } from "../../core/version";
 import { createHostReadinessReport } from "../../readiness/host";
 import type { SystemReadinessReport } from "../../readiness/types";
+import type { GpuDetection } from "../nim";
 import {
   isLlamaCppServingRecipe,
   LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF,
@@ -208,4 +209,19 @@ export function resolveManagedLlamaCppSelection(
   }
   const resolution = selected[0]!.resolution;
   return validatedLlamaCppSelection(resolution, recipeId);
+}
+
+/** Resolve managed selection with the GPU proof already admitted by onboarding preflight. */
+export function resolveManagedLlamaCppSelectionForGpu(
+  env: NodeJS.ProcessEnv | undefined,
+  gpu: GpuDetection | null,
+  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
+): ManagedLlamaCppSelectionResult {
+  const report = createHostReadinessReport(getBuildIdentity(), {
+    ...(gpu ? { detectGpu: () => gpu } : {}),
+    ...(gpu?.wslDockerDesktopGpuProofPassed === undefined
+      ? {}
+      : { wslDockerDesktopGpuProofPassed: gpu.wslDockerDesktopGpuProofPassed }),
+  });
+  return resolveManagedLlamaCppSelection(env, catalog, report);
 }

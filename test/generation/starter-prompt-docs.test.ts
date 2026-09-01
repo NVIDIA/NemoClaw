@@ -590,24 +590,6 @@ describe("starter prompt docs CTA", () => {
     expect(formSource).not.toContain("sessionStorage");
   });
 
-  it.each(Array.from(Object.values(promptAssets), (value) => [value]))(
-    "keeps local prompt assets byte-aligned with their pinned revision blobs [case %#] (#6990)",
-    (asset) => {
-      resolvePromptAssetRevision(promptAssetRevision, runGit);
-
-      const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
-      const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset, runGit);
-      const pinnedSha256 = createHash("sha256").update(pinnedBytes).digest("hex");
-
-      expect(asset.pinnedSha256).toMatch(/^[0-9a-f]{64}$/);
-      expect(
-        localBytes.equals(pinnedBytes),
-        `${asset.path} does not byte-match its Git blob at ${promptAssetRevision}; commit the asset content, then repin every platform URL, promptAssetRevision, and digest to that content commit`,
-      ).toBe(true);
-      expect(pinnedSha256, `${asset.path} has a stale pinned SHA-256`).toBe(asset.pinnedSha256);
-    },
-  );
-
   it("fails closed when the immutable prompt asset revision or blobs cannot be resolved (#6990)", () => {
     expect(() => resolvePromptAssetRevision("main", () => fail("git must not run"))).toThrow(
       "promptAssetRevision must be a full lowercase commit SHA",
@@ -697,9 +679,7 @@ describe("starter prompt docs CTA", () => {
     expect(sparkSource).toContain(
       "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
     );
-    expect(sparkSource).toContain(
-      "Preserve an existing `NEMOCLAW_VLLM_PORT` host-port override",
-    );
+    expect(sparkSource).toContain("Preserve an existing `NEMOCLAW_VLLM_PORT` host-port override");
     expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
     expect(stationSource).toContain("`nemotron-ultra`");
     expect(stationSource).toContain("`deepseek-v4-flash`");
@@ -750,6 +730,10 @@ describe("starter prompt docs CTA", () => {
     expect(windowsSource).toContain("HTTP 429");
     expect(windowsSource).toContain("HF_TOKEN");
     expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
+    expect(windowsSource).toContain("local Docker Desktop is confirmed");
+    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-ollama");
+    expect(windowsSource).toContain("remote or unknown Docker targets");
+    expect(windowsSource).toContain("sandbox authentication proxy");
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
   });
 

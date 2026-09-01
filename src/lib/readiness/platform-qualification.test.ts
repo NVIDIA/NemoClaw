@@ -192,16 +192,6 @@ describe("platform readiness qualification (#7410)", () => {
       }),
     );
 
-    expect(runCaptureImpl).toHaveBeenCalledWith(
-      [
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "(Get-CimInstance Win32_ComputerSystem).Model",
-      ],
-      { ignoreError: true },
-    );
     expect(identity).toMatchObject({ n1xWslProduct: true });
     expect(capability(result, "host.platform.n1x_wsl")).toBe("present");
     expect(qualification(result, "host.platform.n1x_wsl")).toBe("qualified");

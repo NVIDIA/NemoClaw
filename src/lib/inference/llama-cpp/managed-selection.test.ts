@@ -239,6 +239,46 @@ describe("managed llama.cpp selection", () => {
     ).toMatchObject({ kind: "rejected" });
   });
 
+  it("rejects the N1x WSL recipe below its independent GPU-memory floor (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const belowMemoryFloor = {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.gpu.memory_total_bytes"
+          ? { ...observation, value: 50_331_647_999 }
+          : observation,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        belowMemoryFloor,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects the N1x WSL recipe without Docker Desktop runtime (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const nativeDocker = {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.docker.runtime"
+          ? { ...observation, value: "docker" }
+          : observation,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        nativeDocker,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
   it("selects the highest-priority compatible managed llama.cpp recipe", () => {
     const { catalog, report } = fixture();
     const synthetic = withSyntheticRecipe(catalog, 550);
