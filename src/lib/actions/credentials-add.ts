@@ -290,7 +290,7 @@ export async function runCredentialsAddAction(
       return fail([
         `  --credential expects an env variable name, not 'KEY=VALUE'.`,
         `  Export the value first (e.g. \`export ${credential.split("=", 1)[0]}=...\`)`,
-        `  and re-run with \`--credential ${credential.split("=", 1)[0]}\`.`,
+        `  and rerun with \`--credential ${credential.split("=", 1)[0]}\`.`,
       ]);
     }
     if (!ENV_NAME_PATTERN.test(credential)) {
@@ -320,7 +320,7 @@ export async function runCredentialsAddAction(
     const key = entry.slice(0, eq);
     if (!CONFIG_KEY_PATTERN.test(key)) {
       return fail([
-        "  --config key must be alphanumeric / underscore (e.g. `--config region=us-east-1`).",
+        "  --config key must be alphanumeric / underscore (e.g. `--config OPENAI_BASE_URL=https://93.184.216.34/v1`).",
       ]);
     }
     if (CONFIG_KEY_DENYLIST.test(key)) {
