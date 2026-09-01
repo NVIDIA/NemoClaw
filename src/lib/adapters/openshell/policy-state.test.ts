@@ -147,6 +147,50 @@ describe("OpenShell policy observation", () => {
     ]);
   });
 
+  it("uses the selected gateway mTLS bundle for policy queries (#10664)", () => {
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/var/lib/nemoclaw/gateway/tls");
+    const spy = vi
+      .spyOn(openshellRuntime, "captureResolvedOpenshell")
+      .mockReturnValue(capture("", { stderr: "No global policy history found\n" }) as never);
+
+    expect(inspectActiveGlobalPolicy({ gatewayName: "nemoclaw" })).toEqual({ state: "absent" });
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw",
+          OPENSHELL_LOCAL_TLS_DIR: "/var/lib/nemoclaw/gateway/tls",
+        }),
+        replaceEnv: true,
+      }),
+    );
+  });
+
+  it("reports a redacted mTLS failure and stops policy inspection (#10664)", () => {
+    vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue(
+      capture("", {
+        status: 1,
+        stderr:
+          "\u001b[31minvalid peer certificate: BadSignature\u001b[0m\n" +
+          "OPENAI_API_KEY=policy-output-secret-canary\n" +
+          `${"x".repeat(400)}policy-output-tail-canary\n`,
+      }) as never,
+    );
+
+    let observed: unknown;
+    try {
+      inspectActiveGlobalPolicy({ gatewayName: "nemoclaw" });
+    } catch (error) {
+      observed = error;
+    }
+    expect(isPolicyObservationError(observed)).toBe(true);
+    expect((observed as Error).message).toContain("invalid peer certificate: BadSignature");
+    expect((observed as Error).message).toContain("Policy-dependent operations must stop");
+    expect((observed as Error).message).not.toContain("policy-output-secret-canary");
+    expect((observed as Error).message).not.toContain("policy-output-tail-canary");
+    expect((observed as Error).message).not.toContain("\u001b");
+  });
+
   it("validates required entries while allowing unrelated host changes", () => {
     expect(() =>
       assertObservedPolicyRequirements({

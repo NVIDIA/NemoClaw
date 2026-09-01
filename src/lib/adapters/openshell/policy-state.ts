@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  diagnosticPreview,
-  isValidName,
-  NAME_ALLOWED_FORMAT,
-  NAME_MAX_LENGTH,
-} from "../../sandbox-name-contract";
-import {
   buildGlobalPolicyGetFullJsonArgs,
   buildGlobalPolicyListArgs,
   buildPolicyGetArgs,
@@ -23,10 +17,18 @@ import {
   type OpenShellPolicyInspection,
   parseSandboxPolicyMetadata,
 } from "../../policy/merge";
+import { sanitizeReadinessText } from "../../readiness/sanitize";
+import {
+  diagnosticPreview,
+  isValidName,
+  NAME_ALLOWED_FORMAT,
+  NAME_MAX_LENGTH,
+} from "../../sandbox-name-contract";
 import * as openshellRuntime from "./runtime";
 import { fingerprintOpenShellSandboxLiveIdentity } from "./sandbox-identity";
 const POLICY_STATE_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_STATE_CAPTURE_TIMEOUT_MS = 30_000;
+const POLICY_FAILURE_DIAGNOSTIC_MAX_LENGTH = 240;
 
 type JsonObject = Record<string, unknown>;
 
@@ -96,7 +98,11 @@ function captureBoundedOpenShell(
 ): ReturnType<typeof openshellRuntime.captureResolvedOpenshell> {
   const env = openshellRuntime.buildOpenShellSubprocessEnv();
   if (runtimeSelection !== undefined) {
-    for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
+    for (const name of [
+      "XDG_CONFIG_HOME",
+      "OPENSHELL_WORKSPACE",
+      "OPENSHELL_LOCAL_TLS_DIR",
+    ] as const) {
       const value = process.env[name];
       if (value !== undefined) env[name] = value;
     }
@@ -116,6 +122,17 @@ function captureBoundedOpenShell(
   } catch {
     failInspection(subject, "the policy query could not run");
   }
+}
+
+function policyFailureDiagnostic(result: {
+  readonly stdout: string;
+  readonly stderr: string;
+}): string {
+  const raw = result.stderr.trim() || result.stdout.trim();
+  if (!raw) return "";
+  return sanitizeReadinessText(raw, POLICY_FAILURE_DIAGNOSTIC_MAX_LENGTH)
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function capturePolicyCommand(
@@ -143,7 +160,11 @@ function capturePolicyCommand(
     failInspection(subject, "the policy query could not run");
   }
   if (result.status !== 0) {
-    failInspection(subject, "the policy query did not complete successfully");
+    const detail = policyFailureDiagnostic({ stdout: result.stdout, stderr: result.stderr });
+    failInspection(
+      subject,
+      `the policy query did not complete successfully${detail ? `; OpenShell detail: ${detail}` : ""}`,
+    );
   }
   return { output: result.output, stdout: result.stdout, stderr: result.stderr };
 }
