@@ -237,7 +237,9 @@ export function createManagedWorkloadOnboardRuntime(
     : {
         ...discoveredRuntimeCapabilities,
         managedImageSelectionPolicy: "prefer-managed" as const,
-        managedImages: input.stockManagedRuntime ? discoveredRuntimeCapabilities.managedImages : null,
+        managedImages: input.stockManagedRuntime
+          ? discoveredRuntimeCapabilities.managedImages
+          : null,
       };
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
@@ -374,6 +376,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     "createArgs" | "managedStartupRootApplyRequest"
   > & { readonly sandboxName: string };
   readonly plannedMessagingPlan: SandboxMessagingPlan | null;
+  readonly messagingConfig?: MaterializeSandboxCreatePlanInput["messagingConfig"];
   readonly gpu: {
     readonly provider: string;
     readonly config: SandboxGpuConfig;
@@ -439,7 +442,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     deferSandboxEffectsUntilIdentityVerification:
       input.plan.deferSandboxEffectsUntilIdentityVerification,
     messagingTokenDefs: [...messagingTokenDefs],
-    messagingConfig: getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
+    messagingConfig:
+      input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
     getHermesToolGatewayProviderName: input.plan.getHermesToolGatewayProviderName,

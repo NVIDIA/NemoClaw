@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-import { isWechatIlinkIdcHost } from "../../messaging/channels/wechat/ilink-base-url";
+import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { parseOpenShellPolicy } from "../../policy/merge";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
@@ -53,49 +53,6 @@ function policyPaths(value: unknown, label: string): string[] {
 
 function optionalPolicyPaths(mapping: PolicyMapping, field: string, label: string): string[] {
   return mapping[field] === undefined ? [] : policyPaths(mapping[field], `${label}.${field}`);
-}
-
-function isReviewedWechatIlinkEndpointUpgrade(
-  key: string,
-  liveValue: unknown,
-  replacementValue: unknown,
-): boolean {
-  if (key !== "wechat_bridge") return false;
-  if (!isPolicyMapping(liveValue) || !isPolicyMapping(replacementValue)) return false;
-  if (!Array.isArray(liveValue.endpoints) || !Array.isArray(replacementValue.endpoints)) {
-    return false;
-  }
-
-  const replacementIdcEndpoints = replacementValue.endpoints.filter(
-    (endpoint) =>
-      isPolicyMapping(endpoint) &&
-      typeof endpoint.host === "string" &&
-      isWechatIlinkIdcHost(endpoint.host),
-  );
-  if (replacementIdcEndpoints.length !== 1) return false;
-  if (
-    liveValue.endpoints.some(
-      (endpoint) =>
-        isPolicyMapping(endpoint) &&
-        typeof endpoint.host === "string" &&
-        isWechatIlinkIdcHost(endpoint.host),
-    )
-  ) {
-    return false;
-  }
-
-  const template = liveValue.endpoints.find(
-    (endpoint) => isPolicyMapping(endpoint) && endpoint.host === "ilinkai.wechat.com",
-  );
-  if (!isPolicyMapping(template)) return false;
-  const [idcEndpoint] = replacementIdcEndpoints;
-  if (!isDeepStrictEqual(idcEndpoint, { ...template, host: idcEndpoint.host })) return false;
-
-  const replacementWithoutIdc = {
-    ...replacementValue,
-    endpoints: replacementValue.endpoints.filter((endpoint) => endpoint !== idcEndpoint),
-  };
-  return isDeepStrictEqual(liveValue, replacementWithoutIdc);
 }
 
 function mergeReplacementFilesystemAccess(
@@ -245,7 +202,7 @@ function mergeRequestedReplacementNetworkPolicies(
     if (Object.hasOwn(livePolicies, key)) {
       if (!isDeepStrictEqual(livePolicies[key], replacementPolicies[key])) {
         if (
-          isReviewedWechatIlinkEndpointUpgrade(key, livePolicies[key], replacementPolicies[key])
+          isReviewedMessagingChannelPolicyUpgrade(key, livePolicies[key], replacementPolicies[key])
         ) {
           livePolicies[key] = structuredClone(replacementPolicies[key]);
           changed = true;

@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { isValidName } from "../../sandbox-name-contract";
@@ -15,6 +16,8 @@ type PolicyPresetLocator = {
   readonly channelId: string;
   readonly presetName: string;
 };
+
+type PolicyMapping = Record<string, unknown>;
 
 type PolicyPresetMetadataReader = (options: {
   readonly agent?: MessagingAgentId;
@@ -107,6 +110,65 @@ function readPresetHeader(content: string): { name: string; description: string 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function resolveMessagingPolicyRequirementsFromConfig(
+  messagingConfig: Readonly<Record<string, string | undefined>> | null | undefined,
+): {
+  readonly requiredNetworkPolicyKeys: readonly string[];
+  readonly requiredNetworkPolicyPresetNames: readonly string[];
+} {
+  const baseUrl = normalizeWechatIlinkBaseUrl(messagingConfig?.[WECHAT_BASE_URL_ENV_KEY]);
+  return baseUrl
+    ? {
+        requiredNetworkPolicyKeys: [WECHAT_POLICY_KEY],
+        requiredNetworkPolicyPresetNames: ["wechat"],
+      }
+    : { requiredNetworkPolicyKeys: [], requiredNetworkPolicyPresetNames: [] };
+}
+
+/** Approve only channel-owned, structurally identical policy endpoint migrations. */
+export function isReviewedMessagingChannelPolicyUpgrade(
+  key: string,
+  liveValue: unknown,
+  replacementValue: unknown,
+): boolean {
+  if (key !== WECHAT_POLICY_KEY) return false;
+  if (!isRecord(liveValue) || !isRecord(replacementValue)) return false;
+  if (!Array.isArray(liveValue.endpoints) || !Array.isArray(replacementValue.endpoints)) {
+    return false;
+  }
+
+  const replacementIdcEndpoints = replacementValue.endpoints.filter(
+    (endpoint) =>
+      isRecord(endpoint) &&
+      typeof endpoint.host === "string" &&
+      isWechatIlinkIdcHost(endpoint.host),
+  );
+  if (replacementIdcEndpoints.length !== 1) return false;
+  if (
+    liveValue.endpoints.some(
+      (endpoint) =>
+        isRecord(endpoint) &&
+        typeof endpoint.host === "string" &&
+        isWechatIlinkIdcHost(endpoint.host),
+    )
+  ) {
+    return false;
+  }
+
+  const template = liveValue.endpoints.find(
+    (endpoint) => isRecord(endpoint) && endpoint.host === WECHAT_TEMPLATE_HOST,
+  );
+  if (!isRecord(template)) return false;
+  const [idcEndpoint] = replacementIdcEndpoints;
+  if (!isDeepStrictEqual(idcEndpoint, { ...template, host: idcEndpoint.host })) return false;
+
+  const replacementWithoutIdc: PolicyMapping = {
+    ...replacementValue,
+    endpoints: replacementValue.endpoints.filter((endpoint) => endpoint !== idcEndpoint),
+  };
+  return isDeepStrictEqual(liveValue, replacementWithoutIdc);
 }
 
 function materializeWechatIlinkEndpoint(

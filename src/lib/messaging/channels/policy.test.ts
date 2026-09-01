@@ -9,9 +9,11 @@ import {
 } from "./metadata";
 import {
   createMessagingChannelPolicyResolver,
+  isReviewedMessagingChannelPolicyUpgrade,
   listMessagingChannelPolicyPresets,
   loadMessagingChannelPolicyPreset,
   materializeMessagingPolicySandboxName,
+  resolveMessagingPolicyRequirementsFromConfig,
   resolveMessagingChannelPolicyPresetPath,
 } from "./policy";
 
@@ -171,5 +173,82 @@ describe("messaging channel policy presets", () => {
         messagingConfig: { WECHAT_BASE_URL: "https://idc-3.weixin.qq.com" },
       }),
     ).toThrow("reviewed template 'ilinkai.wechat.com' is missing");
+  });
+
+  it("owns the exact static-to-IDC policy transition without widening its grant (#10606)", () => {
+    const template = {
+      host: "ilinkai.wechat.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      credential_binding: { provider: "alpha-wechat-bridge" },
+      rules: [
+        { allow: { method: "GET", path: "/**" } },
+        { allow: { method: "POST", path: "/**" } },
+      ],
+    };
+    const live = {
+      name: "wechat_bridge",
+      endpoints: [template],
+      binaries: [{ path: "/usr/local/bin/node" }],
+    };
+    const replacement = {
+      ...live,
+      endpoints: [template, { ...template, host: "idc-3.weixin.qq.com" }],
+    };
+
+    expect(isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, replacement)).toBe(true);
+    expect(isReviewedMessagingChannelPolicyUpgrade("another_channel", live, replacement)).toBe(
+      false,
+    );
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, {
+        ...replacement,
+        endpoints: [template, { ...template, host: "idc-3.weixin.qq.com", port: 80 }],
+      }),
+    ).toBe(false);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, {
+        ...replacement,
+        endpoints: [
+          template,
+          {
+            ...template,
+            host: "idc-3.weixin.qq.com",
+            credential_binding: { provider: "another-provider" },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isReviewedMessagingChannelPolicyUpgrade("wechat_bridge", live, {
+        ...replacement,
+        endpoints: [
+          template,
+          { ...template, host: "idc-3.weixin.qq.com" },
+          { ...template, host: "idc-37.weixin.qq.com" },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("derives the legacy WeChat rebuild requirement from a reviewed saved origin (#10606)", () => {
+    expect(
+      resolveMessagingPolicyRequirementsFromConfig({
+        WECHAT_BASE_URL: "https://idc-37.weixin.qq.com",
+      }),
+    ).toEqual({
+      requiredNetworkPolicyKeys: ["wechat_bridge"],
+      requiredNetworkPolicyPresetNames: ["wechat"],
+    });
+    expect(resolveMessagingPolicyRequirementsFromConfig(null)).toEqual({
+      requiredNetworkPolicyKeys: [],
+      requiredNetworkPolicyPresetNames: [],
+    });
+    expect(() =>
+      resolveMessagingPolicyRequirementsFromConfig({
+        WECHAT_BASE_URL: "https://idc-3.weixin.qq.com.evil.example",
+      }),
+    ).toThrow("WeChat baseUrl must use an expected iLink host");
   });
 });

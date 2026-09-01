@@ -11,8 +11,12 @@ import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
-import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
+import {
+  loadMessagingChannelPolicyPreset,
+  resolveMessagingPolicyRequirementsFromConfig,
+} from "../../messaging/channels/policy";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import type { MessagingChannelConfig } from "../../messaging-channel-config";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -26,7 +30,10 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
-import { getMessagingChannelConfigFromPlan } from "../messaging-config";
+import {
+  getMessagingChannelConfigFromPlan,
+  getStoredMessagingChannelConfig,
+} from "../messaging-config";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -131,15 +138,16 @@ export function resolveRebuildMessagingPolicyDeltas(
     | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
     | null
     | undefined,
+  fallbackMessagingConfig?: MessagingChannelConfig | null,
 ): {
   readonly requiredNetworkPolicyKeys: readonly string[];
   readonly requiredNetworkPolicyPresetNames: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
+    const requirements = resolveMessagingPolicyRequirementsFromConfig(fallbackMessagingConfig);
     return {
-      requiredNetworkPolicyKeys: [],
-      requiredNetworkPolicyPresetNames: [],
+      ...requirements,
       removedNetworkPolicyKeys: [],
     };
   }
@@ -202,12 +210,17 @@ export function selectRebuildCreatePolicy(
   messagingPlan: SandboxMessagingPlan | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
+  fallbackMessagingContext?: {
+    readonly agent: string | null | undefined;
+    readonly config: MessagingChannelConfig | null | undefined;
+  },
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingPlan?.agent,
+      agent: messagingPlan?.agent ?? fallbackMessagingContext?.agent,
       sandboxName,
-      messagingConfig: getMessagingChannelConfigFromPlan(messagingPlan),
+      messagingConfig:
+        fallbackMessagingContext?.config ?? getMessagingChannelConfigFromPlan(messagingPlan),
     });
     if (!source) {
       throw new Error(
@@ -1530,6 +1543,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
     let createEffectsFinalized = false;
     const createCheckpointSession = onboardSession.loadSession();
+    const effectiveMessagingConfig =
+      getMessagingChannelConfigFromPlan(plannedMessagingState?.plan) ??
+      getStoredMessagingChannelConfig(sandboxName, createCheckpointSession);
     const openingPendingCreateIdentity = pendingVerifiedCreateCheckpointForSession({
       sandboxName,
       gatewayName: GATEWAY_NAME,
@@ -2123,6 +2139,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               openshellArgv,
             },
             plannedMessagingPlan: plannedMessagingState?.plan ?? null,
+            messagingConfig: effectiveMessagingConfig,
             gpu: {
               provider,
               config: effectiveSandboxGpuConfig,
@@ -2165,6 +2182,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     } = preparedOnboardLaunch;
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
+      effectiveMessagingConfig,
     );
     const rebuildObservabilityPolicyDelta = resolveRebuildObservabilityPolicyDelta({
       agent: agent?.name,
@@ -2194,6 +2212,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           plannedMessagingState?.plan,
           sandboxName,
           rebuildPolicyProviderAuthority,
+          { agent: agent?.name, config: effectiveMessagingConfig },
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath

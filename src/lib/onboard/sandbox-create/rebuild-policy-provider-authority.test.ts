@@ -18,6 +18,8 @@ import {
   MessagingWorkflowPlanner,
   type SandboxMessagingPlan,
 } from "../../messaging";
+import type { Session } from "../../state/onboard-session";
+import { getStoredMessagingChannelConfig } from "../messaging-config";
 
 import {
   bindRebuildPolicyProvidersToCreateArgs,
@@ -209,6 +211,101 @@ describe("rebuild policy provider handoff", () => {
         expect(policy.network_policies.wechat_bridge.binaries.map(({ path }) => path)).toContain(
           agent === "hermes" ? "/usr/local/bin/hermes" : "/usr/local/bin/node",
         );
+      } finally {
+        rebuilt.cleanup?.();
+      }
+    },
+  );
+
+  it.each(["openclaw", "hermes"] as const)(
+    "upgrades a legacy session-only WeChat policy and keeps its provider attached for %s (#10606)",
+    (agent) => {
+      const sandboxName = agent === "hermes" ? "legacy-he" : "legacy-oc";
+      const providerName = `${sandboxName}-wechat-bridge`;
+      const legacyWechatPolicy = loadMessagingChannelPolicyPreset("wechat", {
+        agent,
+        sandboxName,
+      });
+      assert(legacyWechatPolicy);
+      const livePolicyPath = tempPolicy(legacyWechatPolicy);
+      const legacyMessagingConfig = getStoredMessagingChannelConfig(
+        sandboxName,
+        {
+          sandboxName,
+          messagingPlan: null,
+          wechatConfig: {
+            accountId: "legacy-account",
+            baseUrl: "https://idc-3.weixin.qq.com",
+            userId: "legacy-user",
+          },
+        } as Session,
+        {
+          readMessagingPlanFromEnv: () => null,
+          getRegistryMessagingAuthority: () => ({ authoritative: false, plan: null }),
+        },
+      );
+      expect(legacyMessagingConfig?.WECHAT_BASE_URL).toBe("https://idc-3.weixin.qq.com");
+      const replacementWechatPolicy = loadMessagingChannelPolicyPreset("wechat", {
+        agent,
+        sandboxName,
+        messagingConfig: legacyMessagingConfig,
+      });
+      assert(replacementWechatPolicy);
+
+      const deltas = resolveRebuildMessagingPolicyDeltas(null, legacyMessagingConfig);
+      expect(deltas).toEqual({
+        requiredNetworkPolicyKeys: ["wechat_bridge"],
+        requiredNetworkPolicyPresetNames: ["wechat"],
+        removedNetworkPolicyKeys: [],
+      });
+      const rebuilt = selectRebuildCreatePolicy(
+        livePolicyPath,
+        {
+          policyPath: livePolicyPath,
+          appliedPresets: [],
+          credentialBindingProviders: [providerName],
+          sourceBytes: Buffer.from(replacementWechatPolicy),
+        },
+        deltas.requiredNetworkPolicyKeys,
+        deltas.removedNetworkPolicyKeys,
+        deltas.requiredNetworkPolicyPresetNames,
+        null,
+        sandboxName,
+        [providerName],
+        { agent, config: legacyMessagingConfig },
+      );
+
+      try {
+        const policy = YAML.parse(rebuilt.sourceBytes?.toString("utf8") ?? "") as {
+          network_policies: {
+            wechat_bridge: {
+              endpoints: Array<{
+                host: string;
+                credential_binding: { provider: string };
+              }>;
+            };
+          };
+        };
+        const endpoints = policy.network_policies.wechat_bridge.endpoints;
+        expect(endpoints.find(({ host }) => host === "idc-3.weixin.qq.com")).toMatchObject({
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          credential_binding: { provider: providerName },
+          rules: [
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "POST", path: "/**" } },
+          ],
+        });
+        expect(endpoints.filter(({ host }) => host.startsWith("idc-"))).toHaveLength(1);
+        expect(endpoints.map(({ host }) => host)).not.toContain("*.weixin.qq.com");
+
+        expect(bindRebuildPolicyProvidersToCreateArgs(["--from", "image"], rebuilt)).toEqual([
+          "--from",
+          "image",
+          "--provider",
+          providerName,
+        ]);
       } finally {
         rebuilt.cleanup?.();
       }
