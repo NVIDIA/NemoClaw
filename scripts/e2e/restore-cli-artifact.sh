@@ -114,6 +114,8 @@ cli_entrypoint="$restore_dir/dist/nemoclaw.js"
     exit 1
   }
 for boundary in \
+  openshell-gateway-health-sdk.js \
+  openshell-observation-boundary.cjs \
   openshell-policy-boundary.cjs \
   sandbox-name.cjs \
   snapshot-sanitizer-boundary.cjs; do
