@@ -366,7 +366,7 @@ When the recovery record contains a durable identity fingerprint, run `$$nemocla
 Use the result from `destroy` to choose the next action:
 
 - If OpenShell still reports the sandbox present, `destroy` preserves the record and removes no resources. Do not delete the sandbox manually by mutable name. Give the displayed create-attempt label to an OpenShell administrator when present and ask them to remove that exact sandbox through an identity-bound procedure. Without a label, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence.
-- After the administrator removes the exact sandbox, rerun `$$nemoclaw <sandbox-name> destroy`.
+- After the administrator removes the exact sandbox, run `$$nemoclaw <sandbox-name> destroy --yes` to reconcile the recovery record.
 - If OpenShell confirms the sandbox is absent, `destroy` verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, it also verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
 
@@ -555,7 +555,19 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
-Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Install Managed llama.cpp on DGX Spark](../inference/local-inference/choose-local-inference-server#install-managed-llamacpp-on-dgx-spark).
+On a qualifying Windows WSL N1x host, Windows Express selects the explicit Experimental managed Qwen 3.6 recipe.
+Before selection, unset `DOCKER_HOST` and select Docker's `default` context.
+Onboarding also requires local Docker Desktop, Arm64, N1x product identity, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
+Select that recipe non-interactively with these values:
+
+```bash
+NEMOCLAW_PROVIDER=install-llama-cpp \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Set Up llama.cpp](../inference/local-inference/set-up-llama-cpp).
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference. The interactive review offers these actions:
 
@@ -3638,9 +3650,9 @@ non-interactive, disables Express selection, and sets this value automatically w
 `--local-model-runtime=vllm`. | | `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` | Selects the fixed vLLM
 local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also
 requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from
-`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID |
+`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug, Hugging Face model ID, or registered served model name |
 Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station
-installer setup. Slugs and full model IDs are case-insensitive. Recognized slugs: `qwen3.6-27b`,
+installer setup. Slugs, full model IDs, and registered served model names are case-insensitive. Recognized slugs: `qwen3.6-27b`,
 `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`,
 `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b`
 and `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a
@@ -3940,6 +3952,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
+| `NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT` | `600` (10 minutes) | Maximum silence between Hugging Face download output during onboard. A positive finite value in seconds overrides the default, up to the Node.js timer limit of about 24.8 days. Blank, invalid, non-positive, sub-millisecond, and oversized values use the default. This is not a total download limit. Increase it only when a working download can produce no output for ten minutes. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its runtime identity. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately. Set to `1` to restore fast-fail on the first `Error` poll. |

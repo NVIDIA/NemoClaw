@@ -19,6 +19,7 @@ import {
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
+  type ShippedManagedImageAgent,
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../managed-image/contract";
@@ -47,6 +48,7 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly runtime: SandboxWorkloadRuntimeCapabilities;
   readonly version: string;
   readonly policy?: ManagedImageSelectionPolicy;
+  readonly catalog?: ManagedImageContractCatalog | null;
   readonly catalogPath?: string | null;
   readonly expectedCatalogRevision?: string | null;
   readonly catalogRevision?: string | null;
@@ -111,9 +113,30 @@ export function installedManagedImageCatalogRevision(
   return identity.sourceRevision;
 }
 
-export interface LiveE2eManagedImageCatalog {
-  readonly path: string;
-  readonly revision: string;
+export type LiveE2eManagedImageCatalog =
+  | {
+      readonly catalog: ManagedImageContractCatalog;
+      readonly path?: never;
+      readonly revision: string;
+    }
+  | { readonly catalog?: never; readonly path: string; readonly revision: string };
+
+function parseInlineManagedImageCatalog(value: string): ManagedImageContractCatalog {
+  const size = Buffer.byteLength(value, "utf8");
+  if (size < 2 || size > 64 * 1024) {
+    throw new SandboxWorkloadPreparationError(
+      "the live E2E managed-image catalog must be bounded JSON",
+    );
+  }
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error();
+    return parsed as ManagedImageContractCatalog;
+  } catch {
+    throw new SandboxWorkloadPreparationError(
+      "the live E2E managed-image catalog must be bounded JSON",
+    );
+  }
 }
 
 /** Select the trusted PR catalog only for an exact live E2E candidate. */
@@ -123,11 +146,26 @@ export function liveE2eManagedImageCatalog(
   if (environment.GITHUB_ACTIONS !== "true" || environment.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     return null;
   }
+  const inlineCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim();
   const configuredPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
   const workspace = environment.GITHUB_WORKSPACE?.trim();
   const catalogPath =
     configuredPath ||
     (workspace ? path.join(workspace, "dist", "e2e-managed-image-catalog.json") : "");
+  if (inlineCatalog && configuredPath) {
+    throw new SandboxWorkloadPreparationError(
+      "the live E2E managed-image catalog has conflicting authorities",
+    );
+  }
+  if (inlineCatalog) {
+    const revision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+    if (!/^[0-9a-f]{40}$/u.test(revision)) {
+      throw new SandboxWorkloadPreparationError(
+        "the live E2E managed-image catalog requires an exact candidate revision",
+      );
+    }
+    return { catalog: parseInlineManagedImageCatalog(inlineCatalog), revision };
+  }
   if (!catalogPath) return null;
   try {
     fs.lstatSync(catalogPath);
@@ -230,13 +268,19 @@ function unavailableResult(
 
 function requireCompleteManagedImageCatalog(
   catalog: ManagedImageContractCatalog,
-  expectedRelease: string,
-  expectedPlatform: ManagedImagePlatform,
+  expectedRelease: string | null,
+  expectedPlatform: ManagedImagePlatform | null,
   expectedRevision: string | null,
-): { readonly release: string; readonly revision: string } {
+): {
+  readonly contracts: ReadonlyMap<ShippedManagedImageAgent, ManagedImageContractV1>;
+  readonly release: string;
+  readonly revision: string;
+} {
+  const contracts = new Map<ShippedManagedImageAgent, ManagedImageContractV1>();
   let cohortRevision: string | null = null;
   let cohortRelease: string | null = null;
   let publicationCohort: string | null = null;
+  let cohortPlatform = expectedPlatform;
   for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
     const candidate = catalog[agent];
     if (candidate === undefined) {
@@ -245,8 +289,17 @@ function requireCompleteManagedImageCatalog(
       );
     }
     try {
-      const contract = parseManagedImageContractV1(candidate, agent, expectedPlatform);
-      if (expectedRevision === null && contract.source.release !== expectedRelease) {
+      const contract = parseManagedImageContractV1(
+        candidate,
+        agent,
+        cohortPlatform ?? undefined,
+      );
+      cohortPlatform ??= contract.platform;
+      if (
+        expectedRevision === null &&
+        expectedRelease !== null &&
+        contract.source.release !== expectedRelease
+      ) {
         throw new SandboxWorkloadPreparationError(
           `managed image catalog contract for '${agent}' belongs to '${contract.source.release}', not '${expectedRelease}'`,
         );
@@ -269,6 +322,7 @@ function requireCompleteManagedImageCatalog(
           "managed image catalog does not identify one all-agent publication cohort",
         );
       }
+      contracts.set(agent, contract);
     } catch (error) {
       if (error instanceof SandboxWorkloadPreparationError) throw error;
       throw new SandboxWorkloadPreparationError(
@@ -282,7 +336,23 @@ function requireCompleteManagedImageCatalog(
       "managed image catalog source revision does not match the trusted catalog revision",
     );
   }
-  return { release: cohortRelease!, revision: cohortRevision! };
+  return { contracts, release: cohortRelease!, revision: cohortRevision! };
+}
+
+/** Read and validate every contract in one selected live E2E catalog. */
+export function readLiveE2eManagedImageCatalogContracts(
+  selected: LiveE2eManagedImageCatalog,
+): ReadonlyMap<ShippedManagedImageAgent, ManagedImageContractV1> {
+  const catalog = selected.catalog ?? readExactManagedImageCatalog(selected.path);
+  if (
+    JSON.stringify(Object.keys(catalog).sort()) !==
+    JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
+  ) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog must contain only the shipped agent contracts",
+    );
+  }
+  return requireCompleteManagedImageCatalog(catalog, null, null, selected.revision).contracts;
 }
 
 function requireCandidateManagedImageCatalog(
@@ -360,9 +430,15 @@ export async function prepareSandboxWorkloadSource(
     };
   }
 
-  if (candidateSelection && !input.catalogPath) {
+  if (input.catalog && input.catalogPath) {
     throw new SandboxWorkloadPreparationError(
-      `'${input.agentName}' is a release candidate and requires an exact managed image catalog file`,
+      "managed image catalog has conflicting content authorities",
+    );
+  }
+
+  if (candidateSelection && !input.catalog && !input.catalogPath) {
+    throw new SandboxWorkloadPreparationError(
+      `'${input.agentName}' is a release candidate and requires an exact managed image catalog`,
     );
   }
 
@@ -400,15 +476,18 @@ export async function prepareSandboxWorkloadSource(
     );
   }
   try {
-    catalog = input.catalogPath
-      ? readExactManagedImageCatalog(input.catalogPath)
-      : await (
-          dependencies.resolveCatalog ?? ((options) => resolveManagedImageCatalogFromGhcr(options))
-        )({
-          release,
-          platform,
-          ...(input.catalogRevision ? { revision: input.catalogRevision } : {}),
-        });
+    catalog = input.catalog
+      ? input.catalog
+      : input.catalogPath
+        ? readExactManagedImageCatalog(input.catalogPath)
+        : await (
+            dependencies.resolveCatalog ??
+            ((options) => resolveManagedImageCatalogFromGhcr(options))
+          )({
+            release,
+            platform,
+            ...(input.catalogRevision ? { revision: input.catalogRevision } : {}),
+          });
   } catch (error) {
     if (!(error instanceof ManagedImageCatalogUnavailableError)) {
       throw new SandboxWorkloadPreparationError(

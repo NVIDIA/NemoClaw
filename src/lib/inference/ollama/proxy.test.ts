@@ -163,7 +163,7 @@ describe("promptOllamaModel installed-model fit filter", () => {
     expect(setup.promptArgs).toEqual(["  Choose model [2]: "]);
   });
 
-  it("keeps the memory-based default when a requested model is not shown", async () => {
+  it("prefers the largest registered fitting model over an unregistered tag when the requested default is not shown (#10103)", async () => {
     const setup = loadProxyWithMocks({
       installed: ["qwen2.5:0.5b", "qwen3.5:9b"],
       promptValues: [""],
@@ -177,8 +177,12 @@ describe("promptOllamaModel installed-model fit filter", () => {
       },
       { defaultModel: "qwen3.6:35b" },
     );
-    expect(result).toBe("qwen2.5:0.5b");
-    expect(setup.promptArgs).toEqual(["  Choose model [1]: "]);
+    // qwen2.5:0.5b is not in the registry, so it cannot outrank the known,
+    // larger qwen3.5:9b — the menu still lists both in installed order, but
+    // the default selection is the registered model, not whichever listed
+    // first.
+    expect(result).toBe("qwen3.5:9b");
+    expect(setup.promptArgs).toEqual(["  Choose model [2]: "]);
   });
 
   it("respects unknown installed tags (not in the registry) even when nothing else fits", async () => {
