@@ -29,6 +29,7 @@ export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 export const CLI_ARTIFACT_RESTORE_ACTION = E2E_ACTION_PROVENANCE.restoreCliArtifact.reference;
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
+export const CLI_ARTIFACT_PACKAGE_SCRIPT = "scripts/e2e/package-cli-artifact.sh";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
 
@@ -285,7 +286,6 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   const uploadStep = uploadSteps[0];
   const provenanceStep = provenanceSteps[0];
   if (!packageStep || !uploadStep || !provenanceStep) return;
-
   if (packageStep.id !== "package_cli_artifact" || packageStep.shell !== "bash") {
     errors.push("CLI artifact package step must use id package_cli_artifact and the Bash shell");
   }
@@ -302,40 +302,11 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
       "CLI artifact package step must bind candidate and trusted workflow identities explicitly",
     );
   }
-  requireFragments(errors, "CLI artifact package step", packageStep.run, [
-    'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
-    "dist/nemoclaw.js",
-    "dist/build-identity.json",
-    "dist/lib/blueprint-runner.js",
-    "dist/nemoclaw/package.json",
-    "dist/nemoclaw/blueprint/runner.js",
-    '[[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]]',
-    "openshell-gateway-health-sdk.js",
-    "openshell-observation-boundary.cjs",
-    "sandbox-name.cjs",
-    '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
-    'artifact_catalog="dist/e2e-managed-image-catalog.json"',
-    '[[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]]',
-    "candidate build created the managed-image catalog path",
-
-    ".sourceRevision == $candidateSha",
-    "candidate CLI build identity does not match the candidate commit SHA",
-    '(keys | sort) == ["type"]',
-    '.type == "module"',
-    "candidate Blueprint Runner module boundary is invalid",
-    "--sort=name",
-    "--mtime=@0",
-    "nemoclaw/dist/shared",
-
-    "source_tree=\"$(git rev-parse 'HEAD^{tree}')\"",
-    'lockfile_sha256="$(sha256sum package-lock.json',
-    'artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"',
-    'kind: "nemoclaw-e2e-cli-artifact-v1"',
-    "sha: $candidateSha",
-    "sha: $workflowSha",
-    "sourceRevision: $candidateSha",
-    "sha256: $payloadSha256",
-  ]);
+  if (packageStep.run !== CLI_ARTIFACT_PACKAGE_SCRIPT) {
+    errors.push(
+      `CLI artifact package step must invoke ${CLI_ARTIFACT_PACKAGE_SCRIPT} directly`,
+    );
+  }
 
   if (
     uploadStep.id !== "upload_cli_artifact" ||

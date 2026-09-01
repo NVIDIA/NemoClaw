@@ -8,8 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { CLI_ARTIFACT_PACKAGE_STEP } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
-import { readWorkflow, type Workflow } from "../../helpers/e2e-workflow-contract";
+import { CLI_ARTIFACT_PACKAGE_SCRIPT } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
 
 type CatalogInput = "absent" | "file" | "symlink";
 
@@ -97,12 +96,7 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   const catalog = path.join(dist, "e2e-managed-image-catalog.json");
   CATALOG_INPUT_WRITERS[catalogInput](catalog);
 
-  const workflow = readWorkflow() as Workflow;
-  const packageStep = workflow.jobs["generate-matrix"]?.steps?.find(
-    (step) => step.name === CLI_ARTIFACT_PACKAGE_STEP,
-  );
-  expect(packageStep?.run).toEqual(expect.any(String));
-  const result = spawnSync("bash", ["-c", packageStep!.run!], {
+  const result = spawnSync("bash", [path.resolve(CLI_ARTIFACT_PACKAGE_SCRIPT)], {
     cwd: workspace,
     encoding: "utf8",
     env: {
