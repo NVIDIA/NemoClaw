@@ -62,7 +62,6 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
-  restoreSandboxLaunchForwards,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
@@ -70,20 +69,6 @@ import {
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
-
-export function retireDestroyedSandboxForwardAuthority(
-  sandboxName: string,
-  deps: {
-    teardown?: typeof teardownSandboxDashboardForward;
-    error?: (message: string) => void;
-  } = {},
-): boolean {
-  if ((deps.teardown ?? teardownSandboxDashboardForward)(sandboxName)) return true;
-  (deps.error ?? console.error)(
-    `  Sandbox '${sandboxName}' is gone, but its ForwardTcp process authority could not be retired. The sandbox registry entry was preserved so exact cleanup can be retried.`,
-  );
-  return false;
-}
 
 type RemoveSandboxImageDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -742,8 +727,7 @@ async function destroySandboxUnlocked(
         ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
-      retireForwardServices: () => teardownSandboxDashboardForward(sandboxName),
-      restoreForwardServices: () => restoreSandboxLaunchForwards(sandboxName),
+      verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
   } catch (error) {
@@ -873,10 +857,6 @@ async function destroySandboxUnlocked(
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
-  }
-  if (deleteSucceededOrAlreadyGone && !retireDestroyedSandboxForwardAuthority(sandboxName)) {
-    preparedManagedLlamaCppCleanup?.abort();
-    requestSandboxDestroyExit(1);
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     const stateVolumeCleanup = abortPreparedCleanupOnError(() =>

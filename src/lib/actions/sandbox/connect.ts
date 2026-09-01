@@ -684,7 +684,6 @@ function hermesPortableForwardInputForConnectProbe(
     intent: input.intent,
     onTiming: writeHermesPortableForwardRecoveryTiming,
     ports,
-    sandboxIdentityFingerprint: input.authority.entry.lifecycleLiveIdentityFingerprint ?? "",
     sandboxName: input.sandboxName,
   });
 }

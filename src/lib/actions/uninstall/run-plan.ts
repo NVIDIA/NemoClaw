@@ -72,7 +72,6 @@ import {
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
-import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import {
   assertGatewayStatePathSafe,
   GATEWAYS_SUBDIR,
@@ -90,8 +89,6 @@ import {
   type ManagedHermesStateVolumeContext,
   removeManagedHermesStateVolumes,
   requiresManagedHermesStateVolume,
-  stopForwardServicesForUninstall,
-  stopHermesForwardWatchers,
 } from "./hermes-uninstall-cleanup";
 import {
   stopBedrockRuntimeAdapter,
@@ -3193,7 +3190,6 @@ function executePlan(
   sharedRegistryMustBePreserved: boolean,
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
-  sandboxRegistrations: Readonly<Record<string, GatewayRegistryEntry>>,
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -3220,7 +3216,6 @@ function executePlan(
       sharedRegistryMustBePreserved,
       otherGatewayPorts,
       sandboxNames,
-      sandboxRegistrations,
       managedHermesStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
@@ -3242,7 +3237,6 @@ function executePreparedPlan(
   sharedRegistryMustBePreserved: boolean,
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
-  sandboxRegistrations: Readonly<Record<string, GatewayRegistryEntry>>,
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -3294,16 +3288,6 @@ function executePreparedPlan(
     }
     if (step.name === "Stopping services") {
       if (
-        !stopForwardServicesForUninstall(
-          sandboxRegistrations,
-          path.join(paths.nemoclawStateDir, "state"),
-          runtime,
-          (entry) => resolveGatewayName(registryEntryGatewayPort(entry as GatewayRegistryEntry)),
-        )
-      ) {
-        return { ok: false };
-      }
-      if (
         !portableRuntimeCleanup &&
         !recordManagedModelCleanup(
           paths,
@@ -3334,19 +3318,6 @@ function executePreparedPlan(
         if (options.keepOpenShell || portableRuntimeCleanup) {
           runtime.log(serviceKeepMessage);
         } else {
-          stopMatchingPids(
-            `openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`,
-            runtime,
-            "local OpenShell forward processes",
-          );
-          stopStaleDashboardListeners({
-            run: runtime.run,
-            kill: runtime.kill,
-            env: runtime.env,
-            log: runtime.log,
-            warn: runtime.warn,
-            commandExists: runtime.commandExists,
-          });
           stopOrphanedOpenShell(runtime);
           if (!externallySupervised && openShellCleanup !== "reservation-removed") {
             stopHostGatewayProcessesForUninstall(
@@ -3367,7 +3338,6 @@ function executePreparedPlan(
       } else {
         runtime.log("Sibling gateways remain; kept shared helper services and sibling forwards.");
       }
-      if (!stopHermesForwardWatchers(paths.nemoclawStateDir, runtime)) return { ok: false };
       if (externallySupervised) {
         runtime.log("Kept the externally supervised OpenShell gateway process running.");
       }
@@ -3826,7 +3796,6 @@ function executePreparedUninstall(prepared: PreparedUninstallRun): UninstallRunO
       prepared.gatewayInspection.sharedRegistryMustBePreserved,
       prepared.gatewayInspection.otherGatewayPorts,
       selectedSandboxState.names,
-      selectedSandboxState.registrations,
       selectedSandboxState.managedHermesStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,

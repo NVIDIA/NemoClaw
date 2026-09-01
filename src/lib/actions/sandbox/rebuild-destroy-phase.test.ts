@@ -473,8 +473,8 @@ describe("rebuild destroy phase", () => {
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
-    expect(mocks.teardownSandboxDashboardForward).toHaveBeenCalledWith("alpha");
-    expect(mocks.restoreSandboxLaunchForwards).toHaveBeenCalledWith("alpha");
+    expect(mocks.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -1001,7 +1001,7 @@ describe("rebuild destroy phase", () => {
     expect(order).toEqual(["journal:deleting", "openshell:delete"]);
   });
 
-  it("blocks rebuild deletion when exact ForwardTcp retirement is incomplete", async () => {
+  it("preserves recovery state when ForwardTcp ports remain after deletion", async () => {
     const recreateJournal = stubRecreateJournal();
     mocks.teardownSandboxDashboardForward.mockReturnValue(false);
 
@@ -1019,11 +1019,14 @@ describe("rebuild destroy phase", () => {
         relockShieldsIfNeeded: vi.fn(() => true),
         onDeleted: vi.fn(),
       }),
-    ).rejects.toThrow("Could not retire the sandbox's exact host-forward authority");
+    ).rejects.toThrow("Sandbox host ports did not release after deletion");
 
-    expect(mocks.restoreSandboxLaunchForwards).toHaveBeenCalledWith("alpha");
-    expect(recreateJournal.markDeleting).not.toHaveBeenCalled();
-    expectNoSandboxDelete(mocks.runOpenshell);
+    expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
+    expect(recreateJournal.markDeleting).toHaveBeenCalledOnce();
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
   });
 
   it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {

@@ -128,33 +128,6 @@ function writeEmptyOpenClawSnapshot(home: string, name: string): void {
   );
 }
 
-function writeHealthyForwardControllerPreload(home: string): string {
-  const preload = path.join(home, "forward-service-controller-preload.cjs");
-  fs.writeFileSync(
-    preload,
-    [
-      'const Module = require("node:module");',
-      'const original = Module._extensions[".js"];',
-      'Module._extensions[".js"] = (loaded, filename) => {',
-      "  original(loaded, filename);",
-      '  if (!filename.endsWith("/lib/adapters/openshell/forward-service-controller.js")) return;',
-      "  loaded.exports.createForwardServiceController = () => ({",
-      '    inspect: () => ({ disposition: "owned", ownsListener: true, reachable: true, receipt: {} }),',
-      '    ensure: () => ({ action: "reused", receipt: {} }),',
-      '    stop: () => "absent",',
-      '    stopPort: () => "absent",',
-      "    stopAll: () => 0,",
-      "  });",
-      "};",
-      "",
-    ].join("\n"),
-    { mode: 0o600 },
-  );
-  return [process.env.NODE_OPTIONS, `--require=${JSON.stringify(preload)}`]
-    .filter(Boolean)
-    .join(" ");
-}
-
 function startReachableForward(port: number): void {
   const listener =
     'const net=require("node:net");' +
@@ -356,7 +329,6 @@ function makeVmRestoreToEnv(
     NEMOCLAW_OPENSHELL_BIN: path.join(localBin, "openshell"),
     NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
     NEMOCLAW_TEST_SNAPSHOT_RESTORE_MARKER: snapshotRestoreMarker,
-    NODE_OPTIONS: writeHealthyForwardControllerPreload(home),
     PATH: `${localBin}:${process.env.PATH ?? ""}`,
   };
 }

@@ -11,7 +11,6 @@ import {
   LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
 } from "../helpers/launch-readiness-fixture";
-import { healthyForwardServiceNodeOptions } from "../helpers/forward-service-controller-preload";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import { execTimeout } from "../helpers/timeouts";
 
@@ -591,10 +590,7 @@ export function runConnect(
       encoding: "utf-8",
       env: {
         HOME: tmpDir,
-        NODE_OPTIONS: nonWslPlatformNodeOptions(
-          tmpDir,
-          healthyForwardServiceNodeOptions(tmpDir, ""),
-        ),
+        NODE_OPTIONS: nonWslPlatformNodeOptions(tmpDir, ""),
         PATH: `${path.join(tmpDir, ".local", "bin")}:/usr/bin:/bin`,
         NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
         NEMOCLAW_NO_CONNECT_HINT: "1",

@@ -182,9 +182,8 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
-  it("rolls back and exits when the forward cannot be started", () => {
+  it("reports and exits when the forward cannot be started", () => {
     const ensureForward = vi.fn(() => false);
-    const stopForward = vi.fn(() => true);
     const errors: string[] = [];
 
     expect(() =>
@@ -194,9 +193,7 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
         ensureForward,
         note: vi.fn(),
         rollbackOnFailure: {
-          stopForward,
           cliName: () => "nemoclaw",
-          forwardPortsToStop: ["18789", undefined, 3978],
           error: (message = "") => errors.push(message),
           exit: (code) => {
             throw new Error(`process.exit(${code})`);
@@ -209,9 +206,6 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
       }),
     ).toThrow("process.exit(1)");
 
-    expect(stopForward).toHaveBeenCalledWith("demo", 18_789);
-    expect(stopForward).toHaveBeenCalledWith("demo", 3_978);
-    expect(stopForward).toHaveBeenCalledTimes(2);
     expect(errors.join("\n")).toContain("rollback:manual");
     expect(errors.join("\n")).toContain(
       "Failed to start Microsoft Teams webhook forward on port 3978",

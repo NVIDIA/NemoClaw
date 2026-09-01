@@ -7,29 +7,9 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
-const { forwardServiceControllerTestDouble: forwardMocks } =
-  await import("../support/forward-service-controller-test-double.ts");
-const forwardControllerModule = requireSource(
-  "../../src/lib/adapters/openshell/forward-service-controller.ts",
-);
-forwardControllerModule.createForwardServiceController = () => forwardMocks.controller;
-const forwardMigrationModule = requireSource("../../src/lib/onboard/forward-service-migration.ts");
-forwardMigrationModule.requireProductionForwardServiceAuthority = (sandboxName: string) => ({
-  authority: {
-    gatewayName: "nemoclaw",
-    sandboxIdentityFingerprint: "a".repeat(64),
-    sandboxName,
-  },
-  migrated: false,
-  assertCurrent: vi.fn(),
-  assertLiveCurrent: vi.fn(),
-  completeLegacyMigration: vi.fn(),
-  isLegacyMigrationComplete: () => true,
-});
-forwardMigrationModule.retireProductionLegacySandboxForwards = () => 0;
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
@@ -40,10 +20,6 @@ function checkAndRecoverSandboxProcesses(
 ) {
   return checkAndRecoverSandboxProcessesImpl(sandboxName, { isWsl: false, ...options });
 }
-
-beforeEach(() => {
-  forwardMocks.reset();
-});
 
 afterEach(() => {
   vi.restoreAllMocks();

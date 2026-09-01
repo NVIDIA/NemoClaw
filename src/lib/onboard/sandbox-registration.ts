@@ -278,11 +278,6 @@ export function buildCreatedSandboxRegistryEntry(
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-    forwardServiceMigrationVersion:
-      typeof input.lifecycleGeneration === "string" &&
-      /^[0-9a-f]{64}$/u.test(input.lifecycleLiveIdentityFingerprint ?? "")
-        ? 1
-        : undefined,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
     ...(input.hostMounts && input.hostMounts.length > 0

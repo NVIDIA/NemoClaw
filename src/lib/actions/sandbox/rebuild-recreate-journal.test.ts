@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
-  completeForwardServiceMigration: vi.fn(),
   resolveGatewayRebuildAuthority: vi.fn(),
 }));
 
@@ -21,10 +20,6 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
   resolveGatewayRebuildAuthority: mocks.resolveGatewayRebuildAuthority,
-}));
-
-vi.mock("./forward-recovery", () => ({
-  completeSandboxForwardServiceMigration: mocks.completeForwardServiceMigration,
 }));
 
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
@@ -299,10 +294,6 @@ describe("rebuild replacement journal", () => {
     expect(recorded?.sourceLiveIdentityFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(recorded?.targetIntentFingerprint).toBe(journal.targetIntentFingerprint);
     expect(JSON.stringify(session.checkpoint)).not.toContain(SANDBOX_ID);
-    expect(mocks.completeForwardServiceMigration).toHaveBeenCalledOnce();
-    expect(mocks.completeForwardServiceMigration.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(registry.getSandbox).mock.invocationCallOrder[1],
-    );
   });
 
   it("selects the exact gateway authority the journal records", () => {

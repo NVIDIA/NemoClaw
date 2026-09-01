@@ -18,11 +18,6 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./ti
 type CommandArgs = string[];
 
 export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS };
-export {
-  createForwardServiceController,
-  type ForwardServiceController,
-  type ForwardServiceSandboxAuthority,
-} from "./forward-service-controller";
 export { classifyManagedGatewayEndpointBinding } from "./client";
 export { runCaptureEx } from "../../runner";
 

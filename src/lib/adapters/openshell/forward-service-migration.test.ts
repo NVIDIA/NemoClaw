@@ -3,153 +3,29 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  requireForwardServiceAuthority,
-  retireLegacySandboxForwards,
-} from "./forward-service-migration";
-
-const fingerprint = "a".repeat(64);
+import { retireLegacySandboxForwards } from "./forward-service-migration";
 
 describe("ForwardTcp legacy migration", () => {
-  it("publishes complete authority from the live OpenShell sandbox ID", () => {
-    let current: Record<string, unknown> = {
-      name: "alpha",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-    };
-    const compareAndSet = vi.fn((_expected, generation, liveFingerprint) => {
-      current = {
-        ...current,
-        lifecycleGeneration: generation,
-        lifecycleLiveIdentityFingerprint: liveFingerprint,
-      };
-      return true;
-    });
-    const observe = vi.fn(() => ({
-      state: "ready" as const,
-      liveIdentityFingerprint: fingerprint,
-    }));
-
-    const migration = requireForwardServiceAuthority("alpha", {
-      compareAndSet: compareAndSet as never,
-      completeMigration: vi.fn(() => {
-        current = { ...current, forwardServiceMigrationVersion: 1 };
-        return true;
-      }),
-      generation: () => "generation-1",
-      getSandbox: () => current as never,
-      observe,
-      resolveGatewayName: () => "nemoclaw",
-      resolveGatewayPort: () => 8080,
-    });
-
-    expect(migration.migrated).toBe(true);
-    expect(migration.authority).toEqual({
-      gatewayName: "nemoclaw",
-      sandboxIdentityFingerprint: fingerprint,
-      sandboxName: "alpha",
-    });
-    expect(compareAndSet).toHaveBeenCalledOnce();
-    expect(current).toMatchObject({
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: fingerprint,
-    });
-    expect(observe).toHaveBeenCalledWith({
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      sandboxName: "alpha",
-    });
-  });
-
-  it("retires only same-gateway same-sandbox legacy rows before direct service adoption", () => {
-    const assertCurrent = vi.fn();
-    const assertLiveCurrent = vi.fn();
-    const completeLegacyMigration = vi.fn();
+  it("retires only registered NemoClaw ports for the selected sandbox", () => {
     const run = vi.fn(() => ({ status: 0 }));
-    const migration = {
-      authority: {
-        gatewayName: "nemoclaw",
-        sandboxIdentityFingerprint: fingerprint,
-        sandboxName: "alpha",
-      },
-      migrated: false,
-      assertCurrent,
-      assertLiveCurrent,
-      completeLegacyMigration,
-      isLegacyMigrationComplete: () => false,
-    };
 
     expect(
-      retireLegacySandboxForwards(migration, {
-        capture: vi.fn(() => ({
+      retireLegacySandboxForwards("nemoclaw", "demo", [18_789], {
+        capture: () => ({
           status: 0,
-          output:
-            "SANDBOX BIND PORT PID STATUS\n" +
-            "alpha 127.0.0.1 18789 10 running\n" +
-            "beta 127.0.0.1 3978 11 running\n",
-        })) as never,
+          output: [
+            "SANDBOX  BIND       PORT   PID  STATUS",
+            "demo     127.0.0.1  18789  10   running",
+            "demo     127.0.0.1  19999  11   running",
+            "other    127.0.0.1  18789  12   running",
+          ].join("\n"),
+        }),
         isReachable: () => false,
-        run: run as never,
+        run,
       }),
     ).toBe(1);
-    expect(run).toHaveBeenCalledWith("nemoclaw", "alpha", 18_789);
-    expect(assertLiveCurrent).toHaveBeenCalledOnce();
-    expect(completeLegacyMigration).toHaveBeenCalledOnce();
-  });
 
-  it("does not enumerate the removed legacy path after migration is complete", () => {
-    const capture = vi.fn();
-    const migration = {
-      authority: {
-        gatewayName: "nemoclaw",
-        sandboxIdentityFingerprint: fingerprint,
-        sandboxName: "alpha",
-      },
-      migrated: false,
-      assertCurrent: vi.fn(),
-      assertLiveCurrent: vi.fn(),
-      completeLegacyMigration: vi.fn(),
-      isLegacyMigrationComplete: () => true,
-    };
-
-    expect(
-      retireLegacySandboxForwards(migration, {
-        capture: capture as never,
-        isReachable: vi.fn(),
-        run: vi.fn() as never,
-      }),
-    ).toBe(0);
-    expect(capture).not.toHaveBeenCalled();
-    expect(migration.completeLegacyMigration).not.toHaveBeenCalled();
-  });
-
-  it("refuses mutable-name legacy cleanup after live identity drift", () => {
-    const run = vi.fn();
-    const migration = {
-      authority: {
-        gatewayName: "nemoclaw",
-        sandboxIdentityFingerprint: fingerprint,
-        sandboxName: "alpha",
-      },
-      migrated: false,
-      assertCurrent: vi.fn(),
-      assertLiveCurrent: vi.fn(() => {
-        throw new Error("live identity changed");
-      }),
-      completeLegacyMigration: vi.fn(),
-      isLegacyMigrationComplete: () => false,
-    };
-
-    expect(() =>
-      retireLegacySandboxForwards(migration, {
-        capture: vi.fn(() => ({
-          status: 0,
-          output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 10 running\n",
-        })) as never,
-        isReachable: () => false,
-        run: run as never,
-      }),
-    ).toThrow(/live identity changed/u);
-    expect(run).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith("nemoclaw", "demo", 18_789);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });

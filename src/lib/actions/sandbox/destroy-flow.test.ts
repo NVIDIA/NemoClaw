@@ -441,9 +441,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.preparePortableDestroyAuthoritySpy).toHaveBeenCalledOnce();
-    // ForwardTcp retirement adds one final identity proof immediately before
-    // the mutable-name OpenShell delete.
-    expect(harness.portableDestroyRevalidateSpy).toHaveBeenCalledTimes(7);
+    expect(harness.portableDestroyRevalidateSpy).toHaveBeenCalledTimes(6);
     expect(harness.portableDestroyVerifyAbsentSpy).toHaveBeenCalledOnce();
     expect(harness.dockerRunSpy).not.toHaveBeenCalled();
     expect(harness.portableDestroyVerifyAbsentSpy.mock.invocationCallOrder[0]).toBeLessThan(

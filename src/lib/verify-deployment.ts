@@ -98,9 +98,6 @@ export interface VerifyDeploymentDeps {
   /** Probe an HTTP endpoint on the host. Returns the HTTP status code or 0 on failure. */
   probeHostPort: (port: number, path: string) => number;
 
-  /** List active port forwards. Returns raw output from `openshell forward list`. */
-  captureForwardList: () => string | null;
-
   /** Get the list of configured messaging channels for a sandbox. */
   getMessagingChannels: (name: string) => string[];
 

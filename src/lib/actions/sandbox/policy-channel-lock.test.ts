@@ -11,7 +11,6 @@ const lockMocks = vi.hoisted(() => ({
   withMcpLifecycleLock: vi.fn(async (_sandboxName: string, operation: () => unknown) =>
     operation(),
   ),
-  withMcpLifecycleLockSync: vi.fn((_sandboxName: string, operation: () => unknown) => operation()),
   withSandboxMutationLock: vi.fn(async () => undefined),
 }));
 

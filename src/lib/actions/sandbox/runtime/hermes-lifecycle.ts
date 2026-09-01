@@ -23,11 +23,7 @@ export function createHermesCredentialEnvReconciliationRuntime(
       }),
     restartGateway: (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = processRecovery.executeGatewaySupervisorActionWithStartupRetry(
-        sandboxName,
-        "restart",
-        { timeout: 210_000 },
-      );
+      const result = processRecovery.executeGatewaySupervisorAction(sandboxName, "restart", 210000);
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
       return result;
     },

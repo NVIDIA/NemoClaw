@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
-import { createForwardServiceController } from "../adapters/openshell/forward-service-controller";
 import {
   getActiveMessagingHostForward,
   MessagingHostStateApplier,
@@ -13,11 +10,7 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
-import { withDashboardSandboxLifecycleLockSync } from "./dashboard-port";
-import {
-  requireProductionForwardServiceAuthority,
-  retireProductionLegacySandboxForwards,
-} from "./forward-service-migration";
+import { retireProductionLegacySandboxForwards } from "./forward-service-migration";
 
 type GatewayBinding =
   | {
@@ -44,10 +37,7 @@ export function productionForwardServiceRegistryContext() {
   return {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
-    stateDirectory: path.join(path.dirname(registry.REGISTRY_FILE), "state"),
-    runExclusive: withDashboardSandboxLifecycleLockSync,
     resolveGatewayName: resolveProductionForwardServiceGatewayName,
-    migrateAuthority: requireProductionForwardServiceAuthority,
     retireLegacy: retireProductionLegacySandboxForwards,
   };
 }
@@ -64,17 +54,12 @@ export function stopAllProductionForwardServices(deps: {
   run(gatewayName: string, sandboxName: string, port: number): { status?: number | null };
 }): void {
   const context = productionForwardServiceRegistryContext();
-  const controller = createForwardServiceController({
-    executable: () => {
-      throw new Error("ForwardTcp cleanup cannot start a process");
-    },
-    stateDirectory: context.stateDirectory,
-    runExclusive: context.runExclusive,
-  });
   for (const sandbox of context.listSandboxes().sandboxes) {
-    const migration = context.migrateAuthority(sandbox.name);
-    context.retireLegacy(migration, deps);
-    controller.stopAll(migration.authority);
+    const gatewayName = context.resolveGatewayName(sandbox);
+    const ports = [sandbox.dashboardPort, sandbox.hermesApiPort, sandbox.hermesDashboardPort].filter(
+      (port): port is number => Number.isInteger(port),
+    );
+    context.retireLegacy(sandbox.name, gatewayName, ports, deps);
   }
 }
 
@@ -99,10 +84,8 @@ export function createProductionForwardServiceCleanupDeps(deps: {
 }
 
 export interface MessagingHostForwardRollbackOptions {
-  readonly stopForward: (sandboxName: string, port: number) => boolean;
   readonly buildRollbackMessage: (sandboxName: string, err: unknown) => readonly string[];
   readonly cliName: () => string;
-  readonly forwardPortsToStop?: readonly (number | string | null | undefined)[];
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
 }
@@ -182,19 +165,6 @@ function abortMessagingHostForwardFailure({
   readonly forward: SandboxMessagingHostForwardPlan;
   readonly rollback: MessagingHostForwardRollbackOptions;
 }): never {
-  const portsToStop = new Set<string>();
-  for (const port of rollback.forwardPortsToStop ?? []) {
-    if (port !== null && port !== undefined && String(port).trim() !== "") {
-      portsToStop.add(String(port));
-    }
-  }
-  portsToStop.add(String(forward.port));
-
-  for (const port of portsToStop) {
-    if (!rollback.stopForward(sandboxName, Number(port))) {
-      throw new Error(`ForwardTcp rollback authority is unavailable for '${sandboxName}'`);
-    }
-  }
   const error = new Error(
     `Failed to start ${forward.label} forward on port ${forward.port}. Free the port and ` +
       `re-run \`${rollback.cliName()} onboard\`, or choose a different messaging channel port.`,

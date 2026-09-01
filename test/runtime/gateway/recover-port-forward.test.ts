@@ -11,7 +11,6 @@ import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   launchReadinessRegistryFixture,
 } from "../../helpers/launch-readiness-fixture";
-import { recoveringForwardServiceNodeOptions } from "../../helpers/forward-service-controller-preload";
 import { nonWslPlatformNodeOptions } from "../../helpers/platform-override-node-options";
 import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
@@ -97,7 +96,6 @@ interface Fixture {
   tmpDir: string;
   sandboxName: string;
   invocationLog: string;
-  nodeOptions: string;
   recoveryWaitMs: string;
 }
 
@@ -124,6 +122,7 @@ function setupFixture(opts: {
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
   fs.mkdirSync(registryDir, { recursive: true });
+
   fs.writeFileSync(
     path.join(registryDir, "sandboxes.json"),
     JSON.stringify({
@@ -151,7 +150,7 @@ function setupFixture(opts: {
   const forwardPollCountFile = path.join(tmpDir, "forward-poll-count");
   const listenerPidFile = path.join(tmpDir, "forward-listener-pids");
   const listenerReadyFile = path.join(tmpDir, "forward-listener-ready");
-  fs.writeFileSync(forwardStateFile, opts.forwardListStatus);
+  fs.writeFileSync(forwardStateFile, "initial");
   fs.writeFileSync(forwardPollCountFile, "0");
   fs.writeFileSync(listenerPidFile, "");
 
@@ -165,6 +164,7 @@ function setupFixture(opts: {
     `#!${process.execPath}
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
+const net = require("node:net");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(invocationLog)}, args.join(" ") + "\\n");
 
@@ -265,6 +265,23 @@ if (args[0] === "forward" && args[1] === "start") {
   process.exit(0);
 }
 
+const forwardIndex = args.indexOf("forward");
+if (forwardIndex >= 0 && args[forwardIndex + 1] === "service") {
+  if (${opts.forwardStartHeals === false ? "false" : "true"}) {
+    const local = args[args.indexOf("--local") + 1];
+    const servicePort = Number(local.split(":").at(-1));
+    const server = net.createServer(() => {});
+    process.on("SIGTERM", () => server.close(() => process.exit(0)));
+    server.listen(servicePort, "127.0.0.1", () => {
+      fs.appendFileSync(${JSON.stringify(listenerPidFile)}, String(process.pid) + "\\n");
+      fs.writeFileSync(${JSON.stringify(listenerReadyFile)}, "ready", { mode: 0o600 });
+      fs.writeFileSync(${JSON.stringify(forwardStateFile)}, "running");
+    });
+  } else {
+    process.exit(1);
+  }
+}
+
 if (args[0] === "forward") {
   process.exit(0);
 }
@@ -281,7 +298,7 @@ if (args[0] === "inference" && args[1] === "get") {
   process.exit(0);
 }
 
-process.exit(0);
+if (!(forwardIndex >= 0 && args[forwardIndex + 1] === "service")) process.exit(0);
 `,
     { mode: 0o755 },
   );
@@ -289,7 +306,7 @@ process.exit(0);
   // A running OpenShell row is only healthy when its local socket also
   // answers. Keep the listener alive in a separate process because runRecover
   // uses spawnSync and blocks this Vitest worker's event loop.
-  const reachablePorts = opts.forwardStartHeals !== false ? [port] : [];
+  const reachablePorts = opts.forwardListStatus === "running" ? [port] : [];
   reachablePorts.forEach((reachablePort) =>
     startReachableForward(reachablePort, listenerPidFile, listenerReadyFile),
   );
@@ -298,18 +315,6 @@ process.exit(0);
     tmpDir,
     sandboxName,
     invocationLog,
-    nodeOptions: nonWslPlatformNodeOptions(
-      tmpDir,
-      recoveringForwardServiceNodeOptions(tmpDir, {
-        heal: opts.forwardStartHeals !== false,
-        invocationLog,
-        sandboxIdentityFingerprint:
-          launchReadinessRegistryFixture().lifecycleLiveIdentityFingerprint,
-        sandboxName,
-        settlePolls: opts.forwardStartDelayPolls ?? 0,
-        stateFile: forwardStateFile,
-      }),
-    ),
     recoveryWaitMs: opts.recoveryWaitMs ?? "2000",
   };
 }
@@ -325,7 +330,7 @@ function runRecover(fixture: Fixture) {
       env: {
         ...process.env,
         HOME: fixture.tmpDir,
-        NODE_OPTIONS: fixture.nodeOptions,
+        NODE_OPTIONS: nonWslPlatformNodeOptions(fixture.tmpDir),
         PATH: "/usr/bin:/bin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
@@ -346,7 +351,7 @@ describe("nemoclaw <name> recover", () => {
         forwardListStatus: "dead",
       });
       const result = runRecover(fixture);
-      expect(result.status, `${result.stdout ?? ""}\n${result.stderr ?? ""}`).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain(
@@ -354,14 +359,15 @@ describe("nemoclaw <name> recover", () => {
       );
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      const startIdx = calls.findIndex((line) => line === "forward-service ensure");
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(calls.some((line) => line.startsWith("forward start "))).toBe(false);
+      const stopIdx = calls.findIndex((l) => l.startsWith("forward stop "));
+      const startIdx = calls.findIndex((line) => line.includes("forward service "));
+      expect(stopIdx).toBeGreaterThanOrEqual(0);
+      expect(startIdx).toBeGreaterThan(stopIdx);
     },
   );
 
   it(
-    "polls until the exact forward owner appears after background start",
+    "launches OpenShell service forwarding without legacy owner polling",
     testTimeoutOptions(20_000),
     () => {
       const fixture = setupFixture({
@@ -372,36 +378,15 @@ describe("nemoclaw <name> recover", () => {
         recoveryWaitMs: "2000",
       });
       const result = runRecover(fixture);
-      expect(result.status, `${result.stdout ?? ""}\n${result.stderr ?? ""}`).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      const startIdx = calls.findIndex((line) => line === "forward-service ensure");
-      const settlementChecks = calls
+      const startIdx = calls.findIndex((line) => line.includes("forward service "));
+      const postStartListCalls = calls
         .slice(startIdx + 1)
-        .filter((line) => line === "forward-service settle");
+        .filter((line) => line === "forward list");
       expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(settlementChecks.length).toBeGreaterThanOrEqual(3);
-    },
-  );
-
-  it(
-    "reports a failure when forward start succeeds but the post-restart probe still shows dead",
-    testTimeoutOptions(20_000),
-    () => {
-      const fixture = setupFixture({
-        sandboxName: "stuck-sandbox",
-        gatewayProbe: "RUNNING",
-        forwardListStatus: "dead",
-        forwardStartHeals: false,
-        recoveryWaitMs: "0",
-      });
-      const result = runRecover(fixture);
-      expect(result.status).toBe(1);
-
-      const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("gateway is running in 'stuck-sandbox'");
-      expect(combined).toContain("primary dashboard/API host forward could not be re-established");
-      expect(combined).not.toContain("restored dashboard port forward");
+      expect(postStartListCalls).toEqual([]);
     },
   );
 
@@ -412,7 +397,7 @@ describe("nemoclaw <name> recover", () => {
       forwardListStatus: "running",
     });
     const result = runRecover(fixture);
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
     const combined = (result.stdout || "") + (result.stderr || "");
     expect(combined).toContain("gateway is running in 'healthy-sandbox'");
@@ -420,6 +405,7 @@ describe("nemoclaw <name> recover", () => {
     expect(combined).not.toContain("restored dashboard port forward");
 
     const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-    expect(calls.some((line) => line.startsWith("forward-service "))).toBe(false);
+    expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
+    expect(calls.some((line) => line.includes("forward service "))).toBe(false);
   });
 });

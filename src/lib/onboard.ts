@@ -476,8 +476,6 @@ const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
-const { tryCleanupOrphanedDashboardForward } =
-  require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { runPreflightGatewaySequence } =
   require("./onboard/preflight-gateway-sequence") as typeof import("./onboard/preflight-gateway-sequence");
 const { destroyGatewayWithVolumeCleanup } =
@@ -1161,12 +1159,6 @@ function buildGatewayClusterExecArgv(script: string): string[] {
   return dockerExecArgv(getGatewayClusterContainerName(GATEWAY_NAME), ["sh", "-lc", script]);
 }
 
-function captureProcessArgs(pid: number): string {
-  return runCapture(["ps", "-p", String(pid), "-o", "args="], {
-    ignoreError: true,
-  }).trim();
-}
-
 function checkGatewayPortAvailable() {
   return checkPortAvailable(GATEWAY_PORT, dockerDriverGatewayEnv.getGatewayPortCheckOptions());
 }
@@ -1289,7 +1281,6 @@ async function preflight(
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
-        stopDashboardForwards: stopAllForwardServicesForGatewayCleanup,
         checkPortAvailable,
         verifyGatewayContainerRunning,
       });
@@ -1313,25 +1304,6 @@ async function preflight(
       );
       if (managedListenerAccepted) {
         continue;
-      }
-      // Auto-cleanup orphaned SSH port-forward from a previous NemoClaw session
-      // (e.g. dashboard forward left behind after destroy). Only kill the process
-      // if its command line contains "openshell" to avoid killing unrelated SSH
-      // tunnels the user may have set up on the same port. (#1950)
-      if (kind === "dashboard" && portCheck.process === "ssh" && portCheck.pid) {
-        const outcome = await tryCleanupOrphanedDashboardForward({
-          port,
-          pid: portCheck.pid,
-          label,
-          portCheckOptions,
-          captureProcessArgs,
-          runCaptureOpenshell,
-          run,
-          sleepSeconds,
-          checkPortAvailable,
-        });
-        if (outcome.kind === "killed-still-blocked") portCheck = outcome.portCheck;
-        else if (outcome.kind !== "not-openshell") continue;
       }
       printPortConflictReport({
         port,
@@ -2576,7 +2548,6 @@ const {
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
-  isForwardServiceHealthy,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
@@ -2676,8 +2647,6 @@ async function preflightAuthoritativeRebuildTarget(
         assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
         inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-        isOwnedForwardService: (port) => isForwardServiceHealthy(opts.sandboxName, port),
-        checkPort: (port) => checkPortAvailable(port),
       },
     );
     return gatewayAuthorityCheckpoint.checkpointGatewayAuthority(getGatewayOwner());
@@ -3374,8 +3343,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   );
                   return parseInt(result.trim(), 10) || 0;
                 },
-                captureForwardList: () =>
-                  runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),

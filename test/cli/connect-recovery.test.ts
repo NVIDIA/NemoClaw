@@ -12,7 +12,6 @@ import {
   LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
 } from "../helpers/launch-readiness-fixture";
-import { healthyForwardServiceNodeOptions } from "../helpers/forward-service-controller-preload";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import {
   runWithEnv,
@@ -279,10 +278,7 @@ describe("CLI connect recovery process contracts", () => {
       try {
         const result = runWithEnv("alpha connect --probe-only", {
           HOME: home,
-          NODE_OPTIONS: nonWslPlatformNodeOptions(
-            home,
-            healthyForwardServiceNodeOptions(home),
-          ),
+          NODE_OPTIONS: nonWslPlatformNodeOptions(home),
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 
@@ -361,10 +357,7 @@ describe("CLI connect recovery process contracts", () => {
       try {
         const result = runWithEnv("alpha connect --probe-only", {
           HOME: home,
-          NODE_OPTIONS: nonWslPlatformNodeOptions(
-            home,
-            healthyForwardServiceNodeOptions(home),
-          ),
+          NODE_OPTIONS: nonWslPlatformNodeOptions(home),
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 

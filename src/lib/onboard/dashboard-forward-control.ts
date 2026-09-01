@@ -4,12 +4,8 @@
 export interface DashboardForwardOptions {
   rollbackSandboxOnFailure?: boolean;
   gatewayName?: string;
-  /** Exact live sandbox identity used to own a direct ForwardTcp process. */
-  sandboxIdentityFingerprint?: string;
-  preserveSandboxPorts?: Array<number | string>;
   allowPortReallocation?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
-  onForwardStarted?: (port: number) => void;
 }
 
 export function normalizeDashboardForwardOptions(options: DashboardForwardOptions = {}): {

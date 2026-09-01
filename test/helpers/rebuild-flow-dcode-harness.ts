@@ -18,7 +18,6 @@ import {
   gatewayRuntime,
   gatewayState,
   gatewayTeardownAuthority,
-  forwardServiceMigration,
   installTerminalStepFailureMock,
   listHarnessRebuildBackups,
   loadRebuildSandbox,
@@ -367,11 +366,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     // Tests that exercise the legacy ambiguous-image path override this explicitly.
     nemoclawVersion: "0.0.71",
     nimContainer: null,
-    gatewayName: "nemoclaw",
-    gatewayPort: 8080,
-    lifecycleGeneration: "rebuild-dcode-generation",
-    lifecycleLiveIdentityFingerprint: "a".repeat(64),
-    forwardServiceMigrationVersion: 1,
     ...(overrides.sandboxEntry ?? {}),
   };
   const preDeleteDefaultSandbox =
@@ -385,19 +379,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         : sandboxEntry
     ) as never;
   });
-  vi.spyOn(forwardServiceMigration, "requireProductionForwardServiceAuthority").mockImplementation(
-    ((sandboxName: string) => ({
-      authority: {
-        gatewayName: String(sandboxEntry.gatewayName),
-        sandboxIdentityFingerprint: String(sandboxEntry.lifecycleLiveIdentityFingerprint),
-        sandboxName,
-      },
-      migrated: false,
-      assertCurrent: vi.fn(),
-      assertLiveCurrent: vi.fn(),
-    })) as never,
-  );
-  vi.spyOn(forwardServiceMigration, "retireProductionLegacySandboxForwards").mockReturnValue(0);
   let registryLoadCount = 0;
   vi.spyOn(registryPersistence, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;

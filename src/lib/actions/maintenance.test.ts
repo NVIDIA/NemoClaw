@@ -55,7 +55,6 @@ vi.mock("../state/sandbox", () => ({
   BackupResult: {},
 }));
 vi.mock("../state/mcp-lifecycle-lock", () => ({
-  withMcpLifecycleLockSync: <T>(_name: string, callback: () => T) => callback(),
   withSandboxMutationLock: mocks.withSandboxMutationLock,
 }));
 vi.mock("../state/portable-uninstall-retirement", () => ({

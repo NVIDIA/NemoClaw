@@ -6,45 +6,12 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { checkAndRecoverSandboxProcesses as checkAndRecoverSandboxProcessesImpl } from "../../src/lib/actions/sandbox/process-recovery";
-import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health";
-import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime";
-import * as agentRuntime from "../../src/lib/agent/runtime";
-import * as registry from "../../src/lib/state/registry";
-import { forwardServiceControllerTestDouble as forwardMocks } from "../support/forward-service-controller-test-double";
-
-const childProcessMocks = vi.hoisted(() => ({
-  spawnSync: vi.fn(),
-}));
-
-vi.mock("node:child_process", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:child_process")>()),
-  spawnSync: childProcessMocks.spawnSync,
-}));
-
-vi.mock("../../src/lib/adapters/openshell/forward-service-controller", async () => {
-  const { forwardServiceControllerTestDouble } =
-    await import("../support/forward-service-controller-test-double");
-  return { createForwardServiceController: () => forwardServiceControllerTestDouble.controller };
-});
-
-vi.mock("../../src/lib/onboard/forward-service-migration", () => ({
-  requireProductionForwardServiceAuthority: (sandboxName: string) => ({
-    authority: {
-      gatewayName: "nemoclaw",
-      sandboxIdentityFingerprint: "a".repeat(64),
-      sandboxName,
-    },
-    migrated: false,
-    assertCurrent: vi.fn(),
-    assertLiveCurrent: vi.fn(),
-    isLegacyMigrationComplete: () => true,
-  }),
-  retireProductionLegacySandboxForwards: vi.fn(() => 0),
-}));
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
+const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
+  "../../src/lib/actions/sandbox/process-recovery.ts",
+) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -55,11 +22,6 @@ function checkAndRecoverSandboxProcesses(
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-beforeEach(() => {
-  forwardMocks.reset();
-  childProcessMocks.spawnSync.mockReset();
 });
 
 function getSandboxExecShellCommand(rawArgs: unknown): string {
@@ -146,13 +108,18 @@ function withFakeOpenshellBinary<T>(fn: () => T): T {
 
 describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
   it("retains SSH health-probe compatibility for an explicitly loaded custom gateway agent", () => {
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+    const registry = requireSource("../../src/lib/state/registry.ts");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
+    const childProcess = requireSource("node:child_process");
     const sshCommands: string[] = [];
 
     vi.spyOn(openshellRuntime, "captureSandboxSshConfig").mockReturnValue({
       status: 0,
       output: "Host openshell-custom-box\n  HostName 127.0.0.1\n",
     } as never);
-    childProcessMocks.spawnSync.mockImplementation((command: unknown, rawArgs: unknown) => {
+    vi.spyOn(childProcess, "spawnSync").mockImplementation((command: unknown, rawArgs: unknown) => {
       const sshCommand = getSandboxExecShellCommand(rawArgs);
       sshCommands.push(...(command === "ssh" ? [sshCommand] : []));
       return (
@@ -169,23 +136,13 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
       binary_path: "/usr/local/bin/custom-agent",
       gateway_command: "custom-agent gateway run",
       forwardPort: 19000,
-      healthProbe: {
-        url: "http://127.0.0.1:19000/health",
-        port: 19000,
-        timeout_seconds: 30,
-      },
-    } as never);
+      healthProbe: { url: "http://127.0.0.1:19000/health", port: 19000 },
+    });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "custom-box",
       agent: "custom-agent",
       dashboardPort: 19000,
-      forwardServiceMigrationVersion: 1,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      lifecycleGeneration: "current-generation",
-      lifecycleLiveIdentityFingerprint: "a".repeat(64),
     });
-    forwardMocks.seed("custom-box", "127.0.0.1", 19000);
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -207,6 +164,11 @@ custom-box  127.0.0.1  19000  12345  running`,
   });
 
   it("recovers a stopped custom gateway agent over SSH fallback", () => {
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+    const registry = requireSource("../../src/lib/state/registry.ts");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
+    const childProcess = requireSource("node:child_process");
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 custom-box  127.0.0.1  19000  12345  running`;
     const sshCommands: string[] = [];
@@ -225,43 +187,36 @@ custom-box  127.0.0.1  19000  12345  running`;
         status: 0,
         output: "Host openshell-custom-box\n  HostName 127.0.0.1\n",
       } as never);
-      childProcessMocks.spawnSync.mockImplementation((command: unknown, rawArgs: unknown) => {
-        healthProbeCalls += Number(
-          String(command).endsWith("openshell") &&
-            getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl"),
-        );
-        const setRecovered = (value: boolean): void => {
-          recovered = value;
-        };
-        return spawnResultForCommand(
-          command,
-          rawArgs,
-          sshCommands,
-          recovered,
-          setRecovered,
-        ) as never;
-      });
+      vi.spyOn(childProcess, "spawnSync").mockImplementation(
+        (command: unknown, rawArgs: unknown) => {
+          healthProbeCalls += Number(
+            String(command).endsWith("openshell") &&
+              getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl"),
+          );
+          const setRecovered = (value: boolean): void => {
+            recovered = value;
+          };
+          return spawnResultForCommand(
+            command,
+            rawArgs,
+            sshCommands,
+            recovered,
+            setRecovered,
+          ) as never;
+        },
+      );
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
         name: "custom-agent",
         displayName: "Custom Agent",
         binary_path: "/usr/local/bin/custom-agent",
         gateway_command: "custom-agent gateway run",
         forwardPort: 19000,
-        healthProbe: {
-          url: "http://127.0.0.1:19000/health",
-          port: 19000,
-          timeout_seconds: 30,
-        },
-      } as never);
+        healthProbe: { url: "http://127.0.0.1:19000/health", port: 19000 },
+      });
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "custom-box",
         agent: "custom-agent",
         dashboardPort: 19000,
-        forwardServiceMigrationVersion: 1,
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        lifecycleGeneration: "current-generation",
-        lifecycleLiveIdentityFingerprint: "a".repeat(64),
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
@@ -293,11 +248,14 @@ custom-box  127.0.0.1  19000  12345  running`;
   });
 
   it("fails closed when a persisted non-OpenClaw manifest cannot be loaded", () => {
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+    const registry = requireSource("../../src/lib/state/registry.ts");
+    const childProcess = requireSource("node:child_process");
     const commands: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    childProcessMocks.spawnSync.mockImplementation((command: unknown, rawArgs: unknown) => {
+    vi.spyOn(childProcess, "spawnSync").mockImplementation((command: unknown, rawArgs: unknown) => {
       commands.push(`${String(command)} ${getSandboxExecShellCommand(rawArgs)}`);
       return {
         status: 0,

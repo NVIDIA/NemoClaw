@@ -9,7 +9,6 @@ import { digestBaselineEntry } from "../../policy/baseline-exclusion";
 import type { PolicyObject } from "../../policy/preset-parsing";
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
-  withMcpLifecycleLockSync: <T>(_name: string, action: () => T) => action(),
   withSandboxMutationLock: <T>(_name: string, action: () => Promise<T>) => action(),
 }));
 vi.mock("./policy-context-refresh", () => ({

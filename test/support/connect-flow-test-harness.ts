@@ -16,8 +16,6 @@ type WaitForSandboxReadyOrExit =
   (typeof import("../../src/lib/actions/sandbox/connect"))["waitForSandboxReadyOrExit"];
 type RestoreSandboxStartupState =
   (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
-type PrepareHermesPortableLaunchForwards =
-  (typeof import("../../src/lib/actions/sandbox/process-recovery"))["prepareHermesPortableLaunchForwards"];
 type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
@@ -155,15 +153,10 @@ export type ConnectHarnessOptions = {
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
   portablePairingSettlementResult?: PortablePairingSettlementResult;
-  useRealHermesPortableLaunchForwards?: boolean;
 };
 
 function throwSttyFailure(): never {
   throw new Error("stty failed");
-}
-
-function throwForwardAuthorityFixtureFailure(message: string): never {
-  throw new Error(message);
 }
 
 function spawnStatusFromOptions(options: ConnectHarnessOptions): number | null {
@@ -188,7 +181,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         } as never)) as never);
 
   const runtime = requireDist("../../src/lib/adapters/openshell/runtime.js");
-  const forwardMigration = requireDist("../../src/lib/onboard/forward-service-migration.js");
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
@@ -481,19 +473,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
-  if (options.useRealHermesPortableLaunchForwards !== true) {
-    vi.spyOn(processRecovery, "prepareHermesPortableLaunchForwards").mockImplementation(
-      (rawInput: unknown) => {
-        const input = rawInput as Parameters<PrepareHermesPortableLaunchForwards>[0];
-        for (let index = 0; index < 5; index += 1) input.deps.assertCurrent();
-        return {
-          result: { kind: "verified", restoredPorts: [] },
-          release: () => ({ kind: "verified", restoredPorts: [] }),
-          rollback: () => undefined,
-        };
-      },
-    );
-  }
   const recoverPortableDemoLifecycleSpy = vi
     .spyOn(gatewayState, "recoverPortableDemoSandboxLifecycleForConnect")
     .mockReturnValue(options.portableRecoveryResult ?? { kind: "not-installed" });
@@ -536,7 +515,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           gatewayName: portableDisposition.gatewayName,
           lifecycleGeneration: portableDisposition.lifecycleGeneration,
           lifecycleLiveIdentityFingerprint: portableDisposition.liveIdentityFingerprint,
-          forwardServiceMigrationVersion: 1,
         }
       : {}),
     ...options.registryEntry,
@@ -554,30 +532,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
             },
       )
     : [primaryRegistryEntry];
-  vi.spyOn(forwardMigration, "requireProductionForwardServiceAuthority").mockImplementation(((
-    sandboxName: string,
-  ) => {
-    const entry = registryEntries.find((candidate) => candidate.name === sandboxName);
-    const sandboxIdentityFingerprint =
-      entry?.lifecycleLiveIdentityFingerprint ??
-      throwForwardAuthorityFixtureFailure("fixture forwarding authority unavailable");
-    const assertCurrent = () => {
-      const current = registryEntries.find((candidate) => candidate.name === sandboxName);
-      current?.lifecycleLiveIdentityFingerprint === sandboxIdentityFingerprint ||
-        throwForwardAuthorityFixtureFailure("fixture forwarding authority changed");
-    };
-    return {
-      authority: {
-        gatewayName: String(entry?.gatewayName ?? "nemoclaw"),
-        sandboxIdentityFingerprint,
-        sandboxName,
-      },
-      migrated: false,
-      assertCurrent,
-      assertLiveCurrent: assertCurrent,
-    };
-  }) as never);
-  vi.spyOn(forwardMigration, "retireProductionLegacySandboxForwards").mockReturnValue(0);
   vi.spyOn(registry, "getSandbox").mockImplementation(
     (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
   );

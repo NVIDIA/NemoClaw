@@ -44,7 +44,6 @@ import {
   validateRebuildRecoveryManifest,
 } from "../../state/sandbox";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import { completeSandboxForwardServiceMigration } from "./forward-recovery";
 
 const REBUILD_RECOVERY_FILE = ".nemoclaw-rebuild-recovery.json";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -202,7 +201,10 @@ export function recordRebuildRecoveryBackup(
   };
   const descriptor = fs.openSync(
     recoveryPath(manifest.backupPath),
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+    fs.constants.O_WRONLY |
+      fs.constants.O_CREAT |
+      fs.constants.O_EXCL |
+      fs.constants.O_NOFOLLOW,
     0o600,
   );
   try {
@@ -363,17 +365,8 @@ export function openRebuildRecreateJournal(
     throw error;
   }
   const gatewayAuthority = checkpointGatewayAuthority(authority);
-  // Legacy authority backfill and raw-forward retirement mutate the registry.
-  // Finish that one-time migration before fingerprinting the source row so a
-  // rebuild cannot invalidate its own same-name replacement journal.
-  const sourceBeforeMigration = registry.getSandbox(target.sandboxName);
+  const sourceEntry = registry.getSandbox(target.sandboxName);
   const observation = observe(target);
-  if (sourceBeforeMigration && observation.state !== "missing") {
-    completeSandboxForwardServiceMigration(target.sandboxName);
-  }
-  const sourceEntry = sourceBeforeMigration
-    ? registry.getSandbox(target.sandboxName)
-    : sourceBeforeMigration;
   const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
   const recovery = active
     ? planSandboxRecreateRecovery(active, observation, sourceEntry)

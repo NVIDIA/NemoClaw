@@ -51,9 +51,6 @@ export interface HealthyPortReuseInput {
   portCheckOptions: CheckPortOpts | undefined;
   supportsLifecycleCommands: boolean;
   destroyGateway: () => boolean;
-  dashboardPort?: number;
-  runOpenshell?: (args: string[], opts: { ignoreError: true }) => unknown;
-  stopDashboardForwards?: () => void;
   checkPortAvailable: (port?: number, opts?: CheckPortOpts) => Promise<PortProbeResult>;
   verifyGatewayContainerRunning: (gatewayName: string) => GatewayContainerState;
 }
@@ -95,10 +92,6 @@ export async function applyHealthyPortReuse(
     });
     if (decision === "stale") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-      if (!input.stopDashboardForwards) {
-        throw new Error("ForwardTcp cleanup authority is unavailable");
-      }
-      input.stopDashboardForwards();
       const gatewayReuseState = destroyGatewayForReuse(
         input.destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",

@@ -51,8 +51,6 @@ const testState = vi.hoisted(() => {
     runOpenshellProviderCommand: vi.fn(),
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
-    teardownSandboxDashboardForward: vi.fn(() => true),
-    restoreSandboxLaunchForwards: vi.fn(() => true),
     warnUnpreservedUserManagedFiles: vi.fn(),
   };
 });
@@ -96,11 +94,6 @@ vi.mock("../../src/lib/actions/sandbox/policy-get", () => ({
 vi.mock("../../src/lib/actions/sandbox/rebuild-flow-helpers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/actions/sandbox/rebuild-flow-helpers")>()),
   warnUnpreservedUserManagedFiles: testState.warnUnpreservedUserManagedFiles,
-}));
-
-vi.mock("../../src/lib/actions/sandbox/forward-recovery", () => ({
-  teardownSandboxDashboardForward: testState.teardownSandboxDashboardForward,
-  restoreSandboxLaunchForwards: testState.restoreSandboxLaunchForwards,
 }));
 
 vi.mock("../../src/lib/inference/nim", () => ({

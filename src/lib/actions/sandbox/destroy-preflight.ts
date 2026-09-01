@@ -29,10 +29,7 @@ import {
 } from "./gateway-target";
 import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
 
-export {
-  restoreSandboxLaunchForwards,
-  teardownSandboxDashboardForward,
-} from "./forward-recovery";
+export { teardownSandboxDashboardForward } from "./forward-recovery";
 
 export type SandboxDestroyPreflight = {
   cleanupGatewayName: string;

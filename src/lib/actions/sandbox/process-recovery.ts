@@ -85,11 +85,7 @@ import {
   type ManagedSupervisorRelaunch,
   relaunchManagedSupervisorSession,
 } from "./supervisor-relaunch";
-export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
-export {
-  classifyForwardHealthWithReachability,
-  classifySandboxForwardHealth,
-} from "./forward-health";
+export type { SandboxForwardHealth } from "./forward-health";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
 export {
   createHermesPortableForwardRecoveryInput,
@@ -310,39 +306,6 @@ export function executeGatewaySupervisorAction(
   timeout = 210000,
 ): ManagedGatewaySupervisorActionResult | null {
   return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
-}
-
-/** Retry only exact managed-controller startup transitions for one requested action. */
-export function executeGatewaySupervisorActionWithStartupRetry(
-  sandboxName: string,
-  action: "restart" | "recover",
-  options: {
-    intervalSeconds?: number;
-    maxAttempts?: number;
-    requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
-    sleepImpl?: (seconds: number) => void;
-    timeout?: number;
-  } = {},
-): ManagedGatewaySupervisorActionResult | null {
-  const requestGatewaySupervisorAction =
-    options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
-  const sleep = options.sleepImpl ?? sleepSeconds;
-  const intervalSeconds = options.intervalSeconds ?? 3;
-  const maxAttempts = options.maxAttempts ?? MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
-  let result: ManagedGatewaySupervisorActionResult | null = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    result = requestGatewaySupervisorAction(sandboxName, action, options.timeout ?? 210_000);
-    if (result?.status === 0) return result;
-    if (
-      !isExactlyManagedGatewayStartupTransition(result) &&
-      !isExactlyRetryableManagedRecoveryFailure(result) &&
-      !isExactlyRetryableManagedControlTransition(result)
-    ) {
-      return result;
-    }
-    if (attempt < maxAttempts) sleep(intervalSeconds);
-  }
-  return result;
 }
 
 async function executeSandboxExecCommandForStatus(
@@ -1550,35 +1513,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         wasRunning: true,
         recovered: false,
         forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
-      };
-    }
-    if (forwardHealthy === "occupied") {
-      probeTiming?.setForwardAction("failed");
-      if (!quiet) {
-        console.log("");
-        console.error(`  Dashboard port forward for '${sandboxName}' is owned by another sandbox.`);
-        console.error("  Leaving the existing port forward unchanged.");
-      }
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward is owned by another sandbox",
-      };
-    }
-    if (forwardHealthy === null) {
-      probeTiming?.setForwardAction("failed");
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
       };
     }
     const dashboardForwardRecovered = measure("forward", () =>

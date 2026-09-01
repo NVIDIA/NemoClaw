@@ -30,14 +30,6 @@ esac
 exit 0
 `;
 
-const CURRENT_FORWARD_AUTHORITY = {
-  forwardServiceMigrationVersion: 1,
-  gatewayName: "nemoclaw",
-  gatewayPort: 8080,
-  lifecycleGeneration: "current-generation",
-  lifecycleLiveIdentityFingerprint: "a".repeat(64),
-};
-
 describe("CLI dispatch", () => {
   it(
     "uses the platform gateway default when the last sandbox is destroyed (#2166, #4662)",
@@ -55,7 +47,6 @@ describe("CLI dispatch", () => {
         JSON.stringify({
           sandboxes: {
             alpha: {
-              ...CURRENT_FORWARD_AUTHORITY,
               name: "alpha",
               model: "test-model",
               provider: "nvidia-prod",
@@ -102,7 +93,7 @@ describe("CLI dispatch", () => {
       const shouldCleanupGateway = process.platform === "darwin";
       expect(openshellOutput).toContain("sandbox delete alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      expect(openshellOutput).not.toContain("forward stop");
+      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -128,7 +119,6 @@ describe("CLI dispatch", () => {
         JSON.stringify({
           sandboxes: {
             alpha: {
-              ...CURRENT_FORWARD_AUTHORITY,
               name: "alpha",
               model: "test-model",
               provider: "nvidia-prod",
@@ -183,7 +173,7 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       expect(openshellOutput).toContain("sandbox delete alpha");
-      expect(openshellOutput).not.toContain("forward stop");
+      expect(openshellOutput).toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
       expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
@@ -212,7 +202,6 @@ describe("CLI dispatch", () => {
         JSON.stringify({
           sandboxes: {
             alpha: {
-              ...CURRENT_FORWARD_AUTHORITY,
               name: "alpha",
               model: "test-model",
               provider: "nvidia-prod",
@@ -262,7 +251,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-      expect(openshellOutput).not.toContain("forward stop");
+      expect(openshellOutput).toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw");
       expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
@@ -304,7 +293,6 @@ describe("CLI dispatch", () => {
         JSON.stringify({
           sandboxes: {
             alpha: {
-              ...CURRENT_FORWARD_AUTHORITY,
               name: "alpha",
               model: "test-model",
               provider: "nvidia-prod",
@@ -375,7 +363,6 @@ describe("CLI dispatch", () => {
         JSON.stringify({
           sandboxes: {
             alpha: {
-              ...CURRENT_FORWARD_AUTHORITY,
               name: "alpha",
               model: "test-model",
               provider: "nvidia-prod",
@@ -450,7 +437,6 @@ describe("CLI dispatch", () => {
       JSON.stringify({
         sandboxes: {
           alpha: {
-            ...CURRENT_FORWARD_AUTHORITY,
             name: "alpha",
             model: "test-model",
             provider: "nvidia-prod",
@@ -502,7 +488,7 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -523,7 +509,6 @@ describe("CLI dispatch", () => {
       JSON.stringify({
         sandboxes: {
           alpha: {
-            ...CURRENT_FORWARD_AUTHORITY,
             name: "alpha",
             model: "test-model",
             provider: "nvidia-prod",
@@ -568,7 +553,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
-    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
     if (fs.existsSync(bashLog)) {
@@ -590,7 +575,6 @@ describe("CLI dispatch", () => {
       JSON.stringify({
         sandboxes: {
           alpha: {
-            ...CURRENT_FORWARD_AUTHORITY,
             name: "alpha",
             model: "test-model",
             provider: "nvidia-prod",
@@ -684,7 +668,6 @@ describe("CLI dispatch", () => {
         JSON.stringify({
           sandboxes: {
             alpha: {
-              ...CURRENT_FORWARD_AUTHORITY,
               name: "alpha",
               model: "test-model",
               provider: "nvidia-prod",
@@ -749,7 +732,6 @@ describe("CLI dispatch", () => {
       JSON.stringify({
         sandboxes: {
           alpha: {
-            ...CURRENT_FORWARD_AUTHORITY,
             name: "alpha",
             model: "test-model",
             provider: "nvidia-prod",
@@ -811,7 +793,6 @@ describe("CLI dispatch", () => {
         JSON.stringify({
           sandboxes: {
             alpha: {
-              ...CURRENT_FORWARD_AUTHORITY,
               name: "alpha",
               model: "test-model",
               provider: "nvidia-prod",
@@ -870,7 +851,7 @@ describe("CLI dispatch", () => {
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput).not.toContain("forward stop");
+      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -892,7 +873,6 @@ describe("CLI dispatch", () => {
       JSON.stringify({
         sandboxes: {
           alpha: {
-            ...CURRENT_FORWARD_AUTHORITY,
             name: "alpha",
             model: "test-model",
             provider: "nvidia-prod",

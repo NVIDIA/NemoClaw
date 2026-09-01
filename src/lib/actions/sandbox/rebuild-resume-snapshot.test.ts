@@ -70,9 +70,9 @@ describe("rebuild resume snapshot repair", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     spies.push(
-      vi
-        .spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup")
-        .mockImplementation(() => undefined),
+      vi.spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup").mockImplementation(
+        () => undefined,
+      ),
     );
 
     session = onboardSession.createSession({
@@ -166,11 +166,8 @@ describe("rebuild resume snapshot repair", () => {
         nimContainer: null,
         nemoclawVersion: "0.1.0",
         dashboardPort: 18789,
-        forwardServiceMigrationVersion: 1,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        lifecycleGeneration: "current-generation",
-        lifecycleLiveIdentityFingerprint: "a".repeat(64),
       } as never),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),

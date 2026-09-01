@@ -24,11 +24,7 @@ import {
   GATEWAY_PORT,
 } from "../core/ports";
 import { listHostGatewayRegistryEntries } from "../state/gateway-registry";
-import {
-  type McpLifecycleLockOptions,
-  withMcpLifecycleLock,
-  withMcpLifecycleLockSync,
-} from "../state/mcp-lifecycle-lock";
+import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
 
 // runner.ts is still CommonJS — use require so module shape matches.
 const { runCapture } = require("../runner");
@@ -42,9 +38,6 @@ type SandboxRegistryEntry = {
 };
 
 export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
-
-/** Synchronous sandbox fence used by the onboarding ForwardTcp owner. */
-export const withDashboardSandboxLifecycleLockSync = withMcpLifecycleLockSync;
 
 const DASHBOARD_PORT_RESERVATION_LOCK = "dashboard-port-reservation:host";
 
@@ -142,8 +135,8 @@ export function probePortBoundSync(port: number): boolean {
  *   3. Node `net` bind probe — authoritative fallback when both lsof
  *      invocations come up empty, mirroring the direct ForwardTcp bind.
  *
- * Returns false (optimistic) when every probe is inconclusive — the
- * receipt-owned ForwardTcp settlement is the final authority (#3260).
+ * Returns false (optimistic) when every probe is inconclusive. The detached
+ * OpenShell launch performs the final bind check.
  */
 export function isPortBoundOnHost(port: number): boolean {
   try {

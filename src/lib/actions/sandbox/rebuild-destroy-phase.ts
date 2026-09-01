@@ -26,10 +26,7 @@ import type {
   RebuildRecreateJournal,
   RebuildRecreateSourcePresence,
 } from "./rebuild-recreate-journal";
-import {
-  restoreSandboxLaunchForwards,
-  teardownSandboxDashboardForward,
-} from "./forward-recovery";
+import { teardownSandboxDashboardForward } from "./forward-recovery";
 
 export type RebuildDeleteValidationResult =
   | { ok: true }
@@ -402,20 +399,6 @@ export async function runRebuildDestroyPhase(
     }
   }
 
-  // MCP adapter entries are already detached and scrubbed here. A journal write
-  // that fails must reattach them before the rebuild gives up, or the still
-  // running sandbox is left without its MCP wiring.
-  const restoreRetiredHostForwards = (): string | null => {
-    try {
-      return restoreSandboxLaunchForwards(sandboxName)
-        ? null
-        : "the sandbox host forwards could not be re-established";
-    } catch (error) {
-      return `the sandbox host forwards could not be re-established: ${redactFull(
-        error instanceof Error ? error.message : String(error),
-      )}`;
-    }
-  };
   let sourcePresence: RebuildRecreateSourcePresence;
   try {
     sourcePresence = recreateJournal.observeSourceForDelete();
@@ -434,26 +417,9 @@ export async function runRebuildDestroyPhase(
     );
     return null;
   }
-  if (!teardownSandboxDashboardForward(sandboxName)) {
-    const forwardRecoveryFailure = restoreRetiredHostForwards();
-    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-      sandboxName,
-      rebuildDetachedMcpProviderEntries,
-      rebuildScrubbedMcpAdapterEntries,
-    );
-    relockShieldsIfNeeded(true);
-    const recoveryFailures = [mcpRecoveryFailure, forwardRecoveryFailure].filter(Boolean);
-    bail(
-      `Could not retire the sandbox's exact host-forward authority before rebuild deletion.${
-        recoveryFailures.length > 0 ? ` Recovery also failed: ${recoveryFailures.join("; ")}` : ""
-      }`,
-    );
-    return null;
-  }
   try {
     recreateJournal.markDeleting();
   } catch (error) {
-    const forwardRecoveryFailure = restoreRetiredHostForwards();
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
       rebuildDetachedMcpProviderEntries,
@@ -461,7 +427,7 @@ export async function runRebuildDestroyPhase(
     );
     relockShieldsIfNeeded(true);
     const detail = error instanceof Error ? error.message : String(error);
-    const recoveryFailures = [mcpRecoveryFailure, forwardRecoveryFailure].filter(Boolean);
+    const recoveryFailures = [mcpRecoveryFailure].filter(Boolean);
     bail(
       `Sandbox deletion could not be journaled: ${redactFull(detail)}${
         recoveryFailures.length > 0
@@ -501,24 +467,19 @@ export async function runRebuildDestroyPhase(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
       );
-      const forwardRecoveryFailure = restoreRetiredHostForwards();
       if (mcpRecoveryFailure) {
         console.error(
           `  Failed to reattach MCP providers to the existing sandbox: ${mcpRecoveryFailure}`,
         );
-      }
-      if (forwardRecoveryFailure) {
-        console.error(`  Failed to restore host forwards: ${forwardRecoveryFailure}`);
       }
       if (backupManifest) {
         console.error("  State backup is preserved at: " + backupManifest.backupPath);
       }
       relockShieldsIfNeeded(true);
       bail(
-        mcpRecoveryFailure || forwardRecoveryFailure
+        mcpRecoveryFailure
           ? `Failed to delete sandbox; recovery also failed: ${[
               mcpRecoveryFailure,
-              forwardRecoveryFailure,
             ]
               .filter(Boolean)
               .join("; ")}`
@@ -555,6 +516,14 @@ export async function runRebuildDestroyPhase(
     }
     input.onDeleteStateAmbiguous?.();
     bail("Sandbox deletion could not be confirmed.");
+    return null;
+  }
+  if (!teardownSandboxDashboardForward(sandboxName)) {
+    console.error(
+      "  Sandbox deletion succeeded, but one or more ForwardTcp host ports did not release.",
+    );
+    input.onDeleteStateAmbiguous?.();
+    bail("Sandbox host ports did not release after deletion.");
     return null;
   }
   try {

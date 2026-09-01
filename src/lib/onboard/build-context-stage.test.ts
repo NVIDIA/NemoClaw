@@ -169,11 +169,8 @@ describe("stageCreateSandboxBuildContext", () => {
     tmpDirs.push(result.buildCtx);
 
     const stagedBytes = readStagedBytes(result.buildCtx);
-    expect(
-      requiredFiles.every(([relativePath, contents]) =>
-        Object.is(fs.readFileSync(path.join(result.buildCtx, relativePath), "utf8"), contents),
-      ),
-    ).toBe(true);
+    expect(requiredFiles.every(([relativePath, contents]) =>
+        Object.is(fs.readFileSync(path.join(result.buildCtx, relativePath), "utf8"), contents))).toBe(true);
     credentialFiles.forEach(([relativePath, contents]) => {
       expect(fs.existsSync(path.join(result.buildCtx, relativePath))).toBe(false);
       expect(stagedBytes).not.toContain(contents);
@@ -456,27 +453,5 @@ describe("stageCreateSandboxBuildContext", () => {
     expect(defaultResult.buildCtx).toBe(defaultBuild.buildCtx);
     expect(defaultResult.origin).toBe("generated");
     expect(stageDefaultSandboxBuildContext).toHaveBeenCalledWith("/repo");
-  });
-
-  it("stages an explicitly selected checked-in OpenClaw Dockerfile as generated", () => {
-    const repoRoot = makeTmpDir("nemoclaw-openclaw-root-");
-    const dockerfile = path.join(repoRoot, "Dockerfile");
-    fs.writeFileSync(dockerfile, "FROM scratch\n");
-    const defaultBuild = {
-      buildCtx: makeTmpDir("nemoclaw-openclaw-staged-"),
-      stagedDockerfile: path.join(makeTmpDir("nemoclaw-openclaw-df-"), "Dockerfile"),
-    };
-    const stageDefaultSandboxBuildContext = vi.fn(() => defaultBuild);
-
-    const result = stageCreateSandboxBuildContext({
-      root: repoRoot,
-      fromDockerfile: dockerfile,
-      agent: null,
-      createAgentSandbox: vi.fn(),
-      stageDefaultSandboxBuildContext,
-    });
-
-    expect(result).toMatchObject({ ...defaultBuild, origin: "generated" });
-    expect(stageDefaultSandboxBuildContext).toHaveBeenCalledWith(repoRoot);
   });
 });

@@ -7,29 +7,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertUnambiguousDestroyContainerIdentity,
   cleanupSandboxServices,
-  retireDestroyedSandboxForwardAuthority,
 } from "./destroy";
 
 const SANDBOX = "mybox";
 const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
 const googlechatPidDir = `${mainPidDir}-googlechat`;
-
-describe("destroyed sandbox ForwardTcp cleanup", () => {
-  it("preserves retry authority when exact process cleanup fails", () => {
-    const error = vi.fn();
-    const teardown = vi.fn(() => false);
-
-    expect(retireDestroyedSandboxForwardAuthority(SANDBOX, { error, teardown })).toBe(false);
-    expect(teardown).toHaveBeenCalledWith(SANDBOX);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("registry entry was preserved"));
-  });
-
-  it("permits registry retirement after exact process cleanup succeeds", () => {
-    expect(retireDestroyedSandboxForwardAuthority(SANDBOX, { teardown: vi.fn(() => true) })).toBe(
-      true,
-    );
-  });
-});
 
 describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
   it("fails closed before later cleanup when the Google Chat tunnel cannot stop", () => {

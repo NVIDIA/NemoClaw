@@ -21,7 +21,6 @@ vi.mock("../../../agent/runtime", async (importOriginal) => ({
 
 vi.mock("../../../state/mcp-lifecycle-lock", () => ({
   withMcpLifecycleLock: mocks.withMcpLifecycleLock,
-  withMcpLifecycleLockSync: <T>(_name: string, operation: () => T) => operation(),
 }));
 
 vi.mock("../../../onboard/experimental/portable-agent-lifecycle", () => ({

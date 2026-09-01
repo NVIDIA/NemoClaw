@@ -33,7 +33,7 @@ function teardownDashboardForwardBestEffort(
   try {
     if (teardown(sandboxName) === false) {
       warn(
-        `  Warning: ForwardTcp cleanup for '${sandboxName}' is incomplete; retained exact process authority. Retry '${CLI_NAME} ${sandboxName} stop'.`,
+        `  Warning: a ForwardTcp port for '${sandboxName}' did not release. Retry '${CLI_NAME} ${sandboxName} stop'.`,
       );
     }
   } catch (error) {

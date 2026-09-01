@@ -26,7 +26,6 @@ import {
   isHostPortFree,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
-import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 
 export type DestroyRunOpenshell = (
   args: string[],
@@ -118,10 +117,6 @@ export function cleanupGatewayAfterLastSandbox(
     (require("../../adapters/openshell/runtime") as { runOpenshell: DestroyRunOpenshell })
       .runOpenshell;
 
-  // Receipt-owned ForwardTcp services are retired at the sandbox delete
-  // boundary. Sweep only untracked historical listeners before removing the
-  // shared gateway; production never creates an OpenShell SSH forward.
-  stopStaleDashboardListeners();
   let packagedServiceFallbackReason: string | null = null;
   if (!externallySupervised && owner.source === "packaged-service") {
     const stopService = deps.stopOpenShellGatewayUserService ?? stopOpenShellGatewayUserService;

@@ -13,8 +13,6 @@ type CommandOptions = {
 
 export interface GatewayProcessLifecycleDeps {
   gatewayName(): string;
-  /** Retained only for test-fixture source compatibility; ForwardTcp owns cleanup. */
-  dashboardPort?: () => number;
   runOpenshell(args: string[], options?: CommandOptions): CommandResult;
   runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
   dockerInspect(
