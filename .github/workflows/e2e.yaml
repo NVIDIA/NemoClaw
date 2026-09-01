@@ -748,114 +748,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
-            { echo "::error::candidate repository is invalid"; exit 1; }
-          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] ||
-            { echo "::error::candidate SHA must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] ||
-            { echo "::error::workflow SHA must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] ||
-            { echo "::error::checked-out commit does not match the artifact candidate SHA"; exit 1; }
-          [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
-            { echo "::error::workflow run identity is invalid"; exit 1; }
-          for required_file in dist/nemoclaw.js dist/build-identity.json; do
-            [[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]] ||
-              { echo "::error::candidate CLI build output is missing or is not a nonempty regular file: $required_file"; exit 1; }
-          done
-          for boundary in \
-            openshell-policy-boundary.cjs \
-            sandbox-name.cjs \
-            snapshot-sanitizer-boundary.cjs; do
-            boundary_path="nemoclaw/dist/shared/$boundary"
-            [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] ||
-              { echo "::error::candidate CLI build shared module is missing or is not a nonempty regular file: $boundary"; exit 1; }
-          done
-
-          jq -e --arg candidateSha "$CANDIDATE_SHA" '
-            type == "object" and
-            (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
-            (.nemoclawVersion | strings | length > 0) and
-            .sourceRevision == $candidateSha
-          ' dist/build-identity.json >/dev/null ||
-            { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
-
-          artifact_catalog="dist/e2e-managed-image-catalog.json"
-          [[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]] || {
-            echo "::error::candidate build created the managed-image catalog path" >&2
-            exit 1
-          }
-
-          artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
-          install -d -m 0700 "$artifact_dir"
-          payload="$artifact_dir/nemoclaw-cli.tar"
-          manifest="$artifact_dir/manifest.json"
-          tar \
-            --sort=name \
-            --mtime=@0 \
-            --owner=0 \
-            --group=0 \
-            --numeric-owner \
-            -cf "$payload" \
-            dist \
-            nemoclaw/dist/shared
-          payload_sha256="$(sha256sum "$payload" | awk '{print $1}')"
-          source_tree="$(git rev-parse 'HEAD^{tree}')"
-          lockfile_sha256="$(sha256sum package-lock.json | awk '{print $1}')"
-          node_version="$(node --version)"
-          npm_version="$(npm --version)"
-          artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"
-
-          jq -n \
-            --arg artifactName "$artifact_name" \
-            --arg buildCommand "npm run build:cli" \
-            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
-            --arg candidateSha "$CANDIDATE_SHA" \
-            --arg lockfileSha256 "$lockfile_sha256" \
-            --arg nodeVersion "$node_version" \
-            --arg npmVersion "$npm_version" \
-            --arg payloadFile "nemoclaw-cli.tar" \
-            --arg payloadSha256 "$payload_sha256" \
-            --arg runAttempt "$RUN_ATTEMPT" \
-            --arg runId "$RUN_ID" \
-            --arg runnerArch "$RUNNER_ARCH" \
-            --arg runnerOs "$RUNNER_OS" \
-            --arg sourceTree "$source_tree" \
-            --arg workflowSha "$WORKFLOW_SHA" \
-            '{
-              kind: "nemoclaw-e2e-cli-artifact-v1",
-              artifactName: $artifactName,
-              candidate: {
-                repository: $candidateRepository,
-                sha: $candidateSha,
-                sourceTree: $sourceTree,
-                lockfileSha256: $lockfileSha256
-              },
-              workflow: {
-                sha: $workflowSha,
-                runId: $runId,
-                runAttempt: $runAttempt
-              },
-              toolchain: {
-                node: $nodeVersion,
-                npm: $npmVersion,
-                runnerOs: $runnerOs,
-                runnerArch: $runnerArch
-              },
-              build: {
-                command: $buildCommand,
-                sourceRevision: $candidateSha
-              },
-              payload: {
-                file: $payloadFile,
-                sha256: $payloadSha256
-              }
-            }' >"$manifest"
-          chmod 0600 "$manifest" "$payload"
-          printf 'artifact_name=%s\n' "$artifact_name" >>"$GITHUB_OUTPUT"
-          printf 'candidate_sha=%s\n' "$CANDIDATE_SHA" >>"$GITHUB_OUTPUT"
-          printf 'payload_sha256=%s\n' "$payload_sha256" >>"$GITHUB_OUTPUT"
+        run: scripts/e2e/package-cli-artifact.sh
 
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
@@ -3364,12 +3257,13 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "external-gateway-health"
       E2E_AGENT_RUNTIME: "none"
-      E2E_OBSERVABLE_OUTCOME: "The reviewed SDK observes exact public gateway health over explicit HTTPS and CA"
+      E2E_OBSERVABLE_OUTCOME: "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.106; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

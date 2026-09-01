@@ -237,8 +237,9 @@
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
+      "liveSources": ["test/e2e/live/external-gateway-health-helpers.ts"],
       "fast": [
-        "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+        "test/e2e/support/external-gateway-health-process.test.ts",
         "test/install/reviewed-npm-archive.test.ts"
       ]
     },
