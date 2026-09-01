@@ -11,16 +11,32 @@ import { describe, expect, it } from "vitest";
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh");
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
+const retryDelays = ["2", "4", "8", "16", "30", "30", "30", "30", "30"];
 const retryWarnings = [
-  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=1/7 failure=anonymous-unavailable retry-in=2s",
-  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=2/7 failure=anonymous-unavailable retry-in=4s",
-  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=3/7 failure=anonymous-unavailable retry-in=8s",
-  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=4/7 failure=anonymous-unavailable retry-in=16s",
-  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=5/7 failure=anonymous-unavailable retry-in=30s",
-  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=6/7 failure=anonymous-unavailable retry-in=30s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=1/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=2s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=2/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=4s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=3/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=8s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=4/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=16s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=5/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=30s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=6/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=30s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=7/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=30s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=8/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=30s",
+  "::warning::GHCR anonymous exact-digest pull outcome=transient-external attempt=9/10 failure=anonymous-unavailable elapsed=0s deadline=300s retry-in=30s",
 ];
 
-type Scenario = "exit-one-exhausted" | "exit-one-through-six-then-success" | "success" | "terminal";
+type Scenario =
+  | "deadline-exhausted"
+  | "exit-one-exhausted"
+  | "exit-one-through-nine-then-success"
+  | "success"
+  | "terminal";
+
+function normalizedElapsedDiagnostics(output: string): string[] {
+  return output
+    .trim()
+    .replace(/elapsed=[0-9]+s/gu, "elapsed=0s")
+    .split("\n");
+}
 
 function runPuller(scenario: Scenario, candidateReference = reference) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-pull-"));
@@ -46,7 +62,7 @@ if [ "$SCENARIO" = "terminal" ]; then
   echo "unexpected Docker daemon failure" >&2
   exit 41
 fi
-if [ "$SCENARIO" = "exit-one-exhausted" ] || { [ "$SCENARIO" = "exit-one-through-six-then-success" ] && [ "$count" -le 6 ]; }; then
+if [ "$SCENARIO" = "deadline-exhausted" ] || [ "$SCENARIO" = "exit-one-exhausted" ] || { [ "$SCENARIO" = "exit-one-through-nine-then-success" ] && [ "$count" -le 9 ]; }; then
   case "$count" in
     1) echo "Error response from daemon: Head registry manifest: denied" >&2 ;;
     2) echo "denied: permission_denied" >&2 ;;
@@ -60,27 +76,40 @@ echo "pulled $EXPECTED_REFERENCE"
 `,
     { mode: 0o755 },
   );
-  fs.writeFileSync(
-    path.join(fakeBin, "sleep"),
-    '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n\' "$1" >>"$SLEEP_LOG"\n',
-    { mode: 0o755 },
-  );
-
   try {
-    const result = spawnSync(puller, [candidateReference, "linux/amd64"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        CONFIG_LOG: configLog,
-        COUNT_FILE: countFile,
-        DOCKER_AUTH_CONFIG: "must-not-reach-docker",
-        EXPECTED_REFERENCE: candidateReference,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-        RUNNER_TEMP: temporaryRoot,
-        SCENARIO: scenario,
-        SLEEP_LOG: sleepLog,
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail
+SECONDS=0
+sleep() {
+  printf '%s\\n' "$1" >>"$SLEEP_LOG"
+  if [ "$SCENARIO" = "deadline-exhausted" ]; then
+    SECONDS=300
+  else
+    SECONDS=0
+  fi
+}
+source "$PULLER" "$EXPECTED_REFERENCE" linux/amd64
+`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CONFIG_LOG: configLog,
+          COUNT_FILE: countFile,
+          DOCKER_AUTH_CONFIG: "must-not-reach-docker",
+          EXPECTED_REFERENCE: candidateReference,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          PULLER: puller,
+          RUNNER_TEMP: temporaryRoot,
+          SCENARIO: scenario,
+          SLEEP_LOG: sleepLog,
+        },
       },
-    });
+    );
     const count = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8").trim()) : 0;
     const configs = fs.existsSync(configLog)
       ? fs.readFileSync(configLog, "utf8").trim().split("\n")
@@ -109,21 +138,21 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual([]);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stdout.trim()).toBe(
-      "::notice::GHCR anonymous exact-digest pull outcome=passed-first-attempt attempt=1/7",
+      "::notice::GHCR anonymous exact-digest pull outcome=passed-first-attempt attempt=1/10",
     );
   });
 
-  it("reaches a seventh anonymous pull after six exit-1 propagation failures", () => {
-    const result = runPuller("exit-one-through-six-then-success");
+  it("reaches a tenth anonymous pull after nine exit-1 propagation failures", () => {
+    const result = runPuller("exit-one-through-nine-then-success");
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.count).toBe(7);
-    expect(result.sleeps).toEqual(["2", "4", "8", "16", "30", "30"]);
+    expect(result.count).toBe(10);
+    expect(result.sleeps).toEqual(retryDelays);
     expect(new Set(result.configs).size).toBe(1);
     expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr.trim().split("\n")).toEqual(retryWarnings);
+    expect(normalizedElapsedDiagnostics(result.stderr)).toEqual(retryWarnings);
     expect(result.stdout.trim()).toBe(
-      "::notice::GHCR anonymous exact-digest pull outcome=passed-after-retry attempt=7/7",
+      "::notice::GHCR anonymous exact-digest pull outcome=passed-after-retry attempt=10/10",
     );
     expect(result.stdout + result.stderr).not.toContain("Head registry manifest: denied");
   });
@@ -136,7 +165,7 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual([]);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stderr.trim()).toBe(
-      "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=1/7 docker-exit=41",
+      "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=1/10 docker-exit=41",
     );
     expect(result.stderr).not.toContain("unexpected Docker daemon failure");
   });
@@ -145,17 +174,32 @@ describe("pull-public-exact-digest", () => {
     const result = runPuller("exit-one-exhausted");
 
     expect(result.status).toBe(1);
-    expect(result.count).toBe(7);
-    expect(result.sleeps).toEqual(["2", "4", "8", "16", "30", "30"]);
+    expect(result.count).toBe(10);
+    expect(result.sleeps).toEqual(retryDelays);
     expect(new Set(result.configs).size).toBe(1);
     expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr.trim().split("\n")).toEqual([
+    expect(normalizedElapsedDiagnostics(result.stderr)).toEqual([
       ...retryWarnings,
-      "::error::GHCR anonymous exact-digest pull outcome=exhausted attempt=7/7 failure=anonymous-unavailable",
+      "::error::GHCR anonymous exact-digest pull outcome=exhausted attempt=10/10 failure=anonymous-unavailable limit=attempt-cap elapsed=0s deadline=300s",
     ]);
     expect(result.stderr).not.toContain("permission_denied");
     expect(result.stderr).not.toContain("manifest unknown");
     expect(result.stderr).not.toContain("anonymous HEAD request");
+  });
+
+  it("stops at the elapsed deadline before another anonymous pull", () => {
+    const result = runPuller("deadline-exhausted");
+
+    expect(result.status).toBe(1);
+    expect(result.count).toBe(1);
+    expect(result.sleeps).toEqual(["2"]);
+    expect(result.configsWereRemoved).toBe(true);
+    const diagnostics = result.stderr.trim().split("\n");
+    expect(diagnostics).toHaveLength(2);
+    expect(normalizedElapsedDiagnostics(diagnostics[0] ?? "")).toEqual([retryWarnings[0]]);
+    expect(diagnostics[1]).toBe(
+      "::error::GHCR anonymous exact-digest pull outcome=exhausted attempt=1/10 failure=anonymous-unavailable limit=elapsed-deadline elapsed=300s deadline=300s",
+    );
   });
 
   it("rejects a mutable or non-GHCR reference before Docker runs", () => {
