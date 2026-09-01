@@ -41,6 +41,7 @@ const WORKFLOW_SOURCE = `on:
     paths:
       - ".github/workflows/base-image.yaml"
       - "Dockerfile.base"
+      - "src/lib/onboard/**"
   workflow_dispatch:
 jobs: {}
 `;
@@ -103,6 +104,7 @@ function workflowRun(overrides: Record<string, unknown> = {}) {
 
 function candidateRequest(options: {
   readonly candidateRepository?: string;
+  readonly changedPath?: string;
   readonly imageChanged: boolean;
   readonly run?: unknown;
   readonly artifactHeadSha?: string;
@@ -111,14 +113,15 @@ function candidateRequest(options: {
   readonly missingAgent?: ManagedImageAgent;
 }) {
   const candidateRepository = options.candidateRepository ?? CANONICAL_REPOSITORY;
+  const changedPath = options.changedPath ?? "Dockerfile.base";
   const artifactRunAttempt = options.artifactRunAttempt ?? 1;
   const artifactRunId = options.artifactRunId ?? RUN_ID;
   const baseEntries = [
-    treeEntry("Dockerfile.base", "3".repeat(40)),
+    treeEntry(changedPath, "3".repeat(40)),
     treeEntry("docs/guide.mdx", "4".repeat(40)),
   ];
   const candidateEntries = [
-    treeEntry("Dockerfile.base", (options.imageChanged ? "5" : "3").repeat(40)),
+    treeEntry(changedPath, (options.imageChanged ? "5" : "3").repeat(40)),
     treeEntry("docs/guide.mdx", "4".repeat(40)),
   ];
   const responses = new Map<string, unknown>([
@@ -261,6 +264,22 @@ describe("exact PR managed-image publication", () => {
     expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
   });
 
+  it("selects a candidate catalog when only managed-image onboarding runtime changes", async () => {
+    const input = resolverInput();
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        input,
+        candidateRequest({
+          changedPath: "src/lib/onboard/workload/preparation.ts",
+          imageChanged: true,
+        }),
+        downloadContract,
+      ),
+    ).resolves.toBe("candidate-catalog");
+    expect(fs.existsSync(input.outputPath)).toBe(true);
+  });
+
   it("uses one serialization contract for assembled and resolved candidate catalogs", async () => {
     const input = resolverInput();
     await resolvePrManagedImageCatalog(
@@ -277,12 +296,7 @@ describe("exact PR managed-image publication", () => {
       return contractPath;
     });
     const assembledPath = path.join(assemblyRoot, "assembled", "catalog.json");
-    writeManagedImageCatalog(
-      contractPaths,
-      CANDIDATE_SHA,
-      assembledPath,
-      `ghrun-${RUN_ID}-1`,
-    );
+    writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath, `ghrun-${RUN_ID}-1`);
 
     expect(fs.readFileSync(assembledPath)).toEqual(fs.readFileSync(input.outputPath));
     expect(fs.statSync(assembledPath).mode & 0o777).toBe(0o600);
