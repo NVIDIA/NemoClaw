@@ -500,7 +500,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       { isWsl: runningInWsl, runCaptureImpl },
     );
     if (output) {
-      type ParsedGpu = { name: string; memoryMB: number; freeMemoryMB: number };
+      type ParsedGpu = {
+        name: string;
+        memoryMB: number;
+        freeMemoryMB: number;
+        freeMemoryMBKnown: boolean;
+      };
       const parsed: ParsedGpu[] = [];
       for (const raw of output.split("\n")) {
         const line = raw.trim();
@@ -519,7 +524,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         parsed.push({
           name,
           memoryMB,
+          // A genuine 0 (GPU fully occupied by another workload) must stay
+          // distinguishable from an unparseable `[N/A]` reading downstream —
+          // nimUsableMemoryMB() only falls back to totalMemoryMB when
+          // availableMemoryMB is absent, not when it is 0.
           freeMemoryMB: isNaN(freeMemoryMB) ? 0 : freeMemoryMB,
+          freeMemoryMBKnown: !isNaN(freeMemoryMB),
         });
       }
       if (parsed.length > 0) {
@@ -628,6 +638,10 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           (sum: number, p: ParsedGpu) => sum + p.freeMemoryMB,
           0,
         );
+        // Only surface the aggregate when every GPU's free-memory reading
+        // actually parsed; a genuine 0 (fully-occupied GPU) must still be
+        // reported, not conflated with an unparseable `[N/A]` row.
+        const availableMemoryMBKnown = trusted.every((p: ParsedGpu) => p.freeMemoryMBKnown);
         const firstName = trusted[0].name;
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
@@ -658,7 +672,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           })),
           count: trusted.length,
           totalMemoryMB: selectedTotalMemoryMB,
-          ...(selectedAvailableMemoryMB > 0
+          ...(n1xWslOllamaEligible || availableMemoryMBKnown
             ? { availableMemoryMB: selectedAvailableMemoryMB }
             : {}),
           perGpuMB: n1xWslOllamaEligible ? selectedTotalMemoryMB : trusted[0].memoryMB,
