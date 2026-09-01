@@ -81,9 +81,7 @@ describe("E2E fixture primitives", () => {
       VITEST: "true",
     });
 
-    expect(environment.NEMOCLAW_FROM_DOCKERFILE).toBe(
-      "/workspace/agents/hermes/Dockerfile",
-    );
+    expect(environment.NEMOCLAW_FROM_DOCKERFILE).toBe("/workspace/agents/hermes/Dockerfile");
     expect(environment.NEMOCLAW_SANDBOX_PREBUILD).toBe("1");
     expect(resolveSandboxPrebuildEnabled(environment, true)).toBe(true);
   });
@@ -96,7 +94,7 @@ describe("E2E fixture primitives", () => {
       VITEST: "true",
     };
 
-    expect(resolveLiveE2eWorkloadSourceEnv(input)).toEqual(input);
+    expect(resolveLiveE2eWorkloadSourceEnv(input)).toBe(input);
     expect(resolveSandboxPrebuildEnabled(input, true)).toBe(false);
   });
 
