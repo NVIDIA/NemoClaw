@@ -744,7 +744,7 @@ if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
 }
 
 async function captureFakeApiContainerDiagnostics(
-  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   kind: FakeDockerApiKind,
   component: "api" | "api-proxy",
   container: string,
@@ -752,7 +752,7 @@ async function captureFakeApiContainerDiagnostics(
   redactionValues: string[],
 ): Promise<void> {
   await runSecondaryCleanup(async () => {
-    await runHost(host, "docker", ["inspect", "--format", "{{json .State}}", container], {
+    await runtimeProvider.command(["inspect", "--format", "{{json .State}}", container], {
       artifactName: `diagnose-fake-${kind}-${component}-state`,
       env,
       redactionValues,
@@ -760,7 +760,7 @@ async function captureFakeApiContainerDiagnostics(
     });
   });
   await runSecondaryCleanup(async () => {
-    await runHost(host, "docker", ["logs", "--tail", "100", container], {
+    await runtimeProvider.command(["logs", "--tail", "100", container], {
       artifactName: `diagnose-fake-${kind}-${component}-logs`,
       env,
       redactionValues,
@@ -771,6 +771,7 @@ async function captureFakeApiContainerDiagnostics(
 
 async function requireFakeApiProxyReady(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   options: {
     kind: FakeDockerApiKind;
     proxyContainer: string;
@@ -781,9 +782,7 @@ async function requireFakeApiProxyReady(
     redactionValues: string[];
   },
 ): Promise<void> {
-  const running = await runHost(
-    host,
-    "docker",
+  const running = await runtimeProvider.command(
     ["inspect", "--format", "{{.State.Running}}", options.proxyContainer],
     {
       artifactName: `inspect-fake-${options.kind}-api-proxy-readiness`,
@@ -884,22 +883,20 @@ function environmentContainsCredential(entries: string[], redactionValues: strin
   );
 }
 
-async function requireFakeApiDockerTopology(
-  host: HostCliClient,
+async function requireFakeApiRuntimeTopology(
+  runtimeProvider: RuntimeProviderPrerequisite,
   options: {
     kind: FakeDockerApiKind;
     apiContainer: string;
     proxyContainer: string;
     network: string;
-    openshellBridgeAddress: string;
+    proxyPublishAddress: string;
     proxyPorts: readonly number[];
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
   },
 ): Promise<void> {
-  const containerInspect = await runHost(
-    host,
-    "docker",
+  const containerInspect = await runtimeProvider.command(
     ["inspect", options.apiContainer, options.proxyContainer],
     {
       artifactName: `inspect-fake-${options.kind}-api-topology`,
@@ -909,7 +906,7 @@ async function requireFakeApiDockerTopology(
     },
   );
   expectExitZero(containerInspect, `inspect fake ${options.kind} API topology`);
-  const networkInspect = await runHost(host, "docker", ["network", "inspect", options.network], {
+  const networkInspect = await runtimeProvider.command(["network", "inspect", options.network], {
     artifactName: `inspect-fake-${options.kind}-api-network`,
     env: options.env,
     redactionValues: options.redactionValues,
@@ -961,7 +958,7 @@ async function requireFakeApiDockerTopology(
     JSON.stringify(observedContainerPorts) !== JSON.stringify(expectedContainerPorts) ||
     proxyBindings.some(
       ({ hostAddress, hostPort }) =>
-        hostAddress !== options.openshellBridgeAddress || !/^\d+$/u.test(hostPort),
+        hostAddress !== options.proxyPublishAddress || !/^\d+$/u.test(hostPort),
     ) ||
     proxy?.HostConfig?.ReadonlyRootfs !== true ||
     !proxyCapabilityDrops.includes("ALL") ||
@@ -970,7 +967,9 @@ async function requireFakeApiDockerTopology(
     environmentContainsCredential(proxyEnvironment, options.redactionValues) ||
     proxy?.HostConfig?.PidsLimit !== 32
   ) {
-    throw new Error(`fake ${options.kind} API Docker topology did not preserve isolation`);
+    throw new Error(
+      `fake ${options.kind} API ${runtimeProvider.displayName} topology did not preserve isolation`,
+    );
   }
 }
 
@@ -990,9 +989,13 @@ export async function startFakeDockerApi(
     env: NodeJS.ProcessEnv;
   },
 ): Promise<FakeDockerApi> {
-  const runtimeProvider = new RuntimeProviderPrerequisite(host, (reason) => {
-    throw new Error(reason);
-  });
+  const runtimeProvider = new RuntimeProviderPrerequisite(
+    host,
+    (reason) => {
+      throw new Error(reason);
+    },
+    options.env,
+  );
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
   const captureFile = path.join(dir, "capture.jsonl");
@@ -1010,9 +1013,7 @@ export async function startFakeDockerApi(
     options.env.OPENSHELL_DOCKER_NETWORK_NAME ??
     process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
     DEFAULT_OPENSHELL_DOCKER_NETWORK;
-  const openshellNetworkInspect = await runHost(
-    host,
-    "docker",
+  const openshellNetworkInspect = await runtimeProvider.command(
     ["network", "inspect", openshellNetwork],
     {
       artifactName: `inspect-fake-${options.kind}-openshell-network`,
@@ -1021,7 +1022,7 @@ export async function startFakeDockerApi(
       timeoutMs: 30_000,
     },
   );
-  expectExitZero(openshellNetworkInspect, "inspect OpenShell Docker network");
+  expectExitZero(openshellNetworkInspect, `inspect OpenShell ${runtimeProvider.displayName} network`);
   let openshellNetworkRecords: unknown;
   try {
     openshellNetworkRecords = JSON.parse(openshellNetworkInspect.stdout);
@@ -1046,8 +1047,12 @@ export async function startFakeDockerApi(
       "bridge" ||
     typeof openshellBridgeAddress !== "string"
   ) {
-    throw new Error("OpenShell Docker network must expose exactly one IPv4 bridge gateway");
+    throw new Error(
+      `OpenShell ${runtimeProvider.displayName} network must expose exactly one IPv4 bridge gateway`,
+    );
   }
+  const proxyPublishAddress =
+    runtimeProvider.id === "podman" ? "0.0.0.0" : openshellBridgeAddress;
 
   const networkCreate = await runtimeProvider.command(
     ["network", "create", "--internal", network],
@@ -1106,7 +1111,7 @@ export async function startFakeDockerApi(
     if (apiDiagnosticsCaptured) return;
     apiDiagnosticsCaptured = true;
     await captureFakeApiContainerDiagnostics(
-      host,
+      runtimeProvider,
       options.kind,
       "api",
       container,
@@ -1144,7 +1149,7 @@ export async function startFakeDockerApi(
     if (proxyDiagnosticsCaptured) return;
     proxyDiagnosticsCaptured = true;
     await captureFakeApiContainerDiagnostics(
-      host,
+      runtimeProvider,
       options.kind,
       "api-proxy",
       proxyContainer,
@@ -1173,7 +1178,7 @@ export async function startFakeDockerApi(
       proxyContainer,
       "--network",
       "bridge",
-      ...proxyPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
+      ...proxyPorts.flatMap((port) => ["-p", `${proxyPublishAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -1212,12 +1217,12 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy`);
 
-  await requireFakeApiDockerTopology(host, {
+  await requireFakeApiRuntimeTopology(runtimeProvider, {
     kind: options.kind,
     apiContainer: container,
     proxyContainer,
     network,
-    openshellBridgeAddress,
+    proxyPublishAddress,
     proxyPorts,
     env: options.env,
     redactionValues: options.redactionValues,
@@ -1235,9 +1240,9 @@ export async function startFakeDockerApi(
     );
     expectExitZero(result, `read fake ${options.kind} API proxy port`);
     const published = result.stdout.trim().match(/^(\d+\.\d+\.\d+\.\d+):(\d+)$/u);
-    if (published?.[1] !== openshellBridgeAddress || !published[2]) {
+    if (published?.[1] !== proxyPublishAddress || !published[2]) {
       throw new Error(
-        `fake ${options.kind} API proxy port did not bind only to the OpenShell bridge`,
+        `fake ${options.kind} API proxy port did not bind to the reviewed ${runtimeProvider.displayName} address`,
       );
     }
     return published[2];
@@ -1250,7 +1255,7 @@ export async function startFakeDockerApi(
     FAKE_API_PROXY_READINESS_PORT,
     `port-fake-${options.kind}-api-proxy-readiness`,
   );
-  await requireFakeApiProxyReady(host, {
+  await requireFakeApiProxyReady(host, runtimeProvider, {
     kind: options.kind,
     proxyContainer,
     bridgeAddress: openshellBridgeAddress,
