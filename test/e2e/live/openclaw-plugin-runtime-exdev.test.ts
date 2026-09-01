@@ -222,9 +222,11 @@ RUN HOME=/sandbox openclaw plugins install /opt/weather-plugin \
     && HOME=/sandbox openclaw plugins enable weather
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.
+# The runtime test copies this fixture into tmpfs after OpenShell starts the sandbox.
 # hadolint ignore=DL3002
 USER root
-RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
+RUN chmod -R a+rX /opt/weather-plugin \
+    && chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
     && chmod 660 /sandbox/.openclaw/openclaw.json \
     && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \
