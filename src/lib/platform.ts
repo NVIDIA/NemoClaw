@@ -13,6 +13,7 @@ export interface PlatformLookupOptions {
   platform?: NodeJS.Platform;
   home?: string;
   uid?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface WslDetectionOptions {
@@ -188,6 +189,10 @@ function shouldPatchCoredns(runtime: ContainerRuntime, opts: WslDetectionOptions
   return runtime === "colima" || runtime === "podman";
 }
 
+function dedupe(paths: string[]): string[] {
+  return [...new Set(paths)];
+}
+
 function getColimaDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   return [
@@ -211,6 +216,7 @@ function findColimaDockerSocket(
 function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   const platform = opts.platform ?? process.platform;
+  const env = opts.env ?? process.env;
   const uid = opts.uid ?? process.getuid?.() ?? 1000;
 
   if (platform === "darwin") {
@@ -221,7 +227,16 @@ function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   }
 
   if (platform === "linux") {
-    return [`/run/user/${String(uid)}/podman/podman.sock`, "/run/podman/podman.sock"];
+    // Rootless Podman puts its socket under the session runtime directory.
+    // `XDG_RUNTIME_DIR` names that directory and is not always `/run/user/$UID`
+    // — systemd user sessions on some hosts relocate it, and the DNS commands
+    // have honoured it since before they shared this candidate list (#10632).
+    const runtimeDir = env.XDG_RUNTIME_DIR;
+    return dedupe([
+      ...(runtimeDir ? [path.join(runtimeDir, "podman/podman.sock")] : []),
+      `/run/user/${String(uid)}/podman/podman.sock`,
+      "/run/podman/podman.sock",
+    ]);
   }
 
   return [];
@@ -241,7 +256,7 @@ function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
 
   if (platform === "linux") {
     return [
-      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
+      ...getPodmanSocketCandidates({ env: opts.env, home, platform, uid: opts.uid }),
       "/run/docker.sock",
       "/var/run/docker.sock",
     ];
@@ -266,7 +281,7 @@ function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDete
   const fileExists = opts.existsSync ?? defaultExistsSync;
   let selection: DockerHostDetection | null = null;
   let selectedIdentity: Exclude<DockerVersionIdentity, "unknown"> | null = null;
-  for (const socketPath of getDockerSocketCandidates(opts)) {
+  for (const socketPath of getDockerSocketCandidates({ ...opts, env })) {
     if (!fileExists(socketPath)) continue;
     const dockerHost = `unix://${socketPath}`;
     const observation = probe(dockerHost);
@@ -291,5 +306,6 @@ export {
   getPodmanSocketCandidates,
   inferContainerRuntime,
   isWsl,
+  probeDockerHost,
   shouldPatchCoredns,
 };

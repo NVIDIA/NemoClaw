@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { DockerHostProbe, DockerVersionIdentity } from "../../platform";
 import type { CommandResult } from "./index";
 import { runFixCoreDns, runSetupDnsProxy } from "./index.js";
 
@@ -13,12 +14,57 @@ function fail(stderr = "failed"): CommandResult {
   return { status: 1, stdout: "", stderr };
 }
 
+const DEFAULT_AUTHORITY = "docker-cli-default";
+
+/**
+ * Answer the Docker probe from a fixed table of hosts that have a daemon
+ * behind them. Every other host is unreachable, which is what a socket file
+ * left behind by an engine that is not running looks like.
+ */
+function probeAnswers(answers: Record<string, DockerVersionIdentity>): DockerHostProbe {
+  return (dockerHost) => {
+    const identity = answers[dockerHost ?? DEFAULT_AUTHORITY];
+    return identity ? { reachable: true, identity } : { reachable: false, identity: "unknown" };
+  };
+}
+
+/** No engine answers anywhere, so nothing is adopted. */
+const NOTHING_ANSWERS = probeAnswers({});
+
+const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
+
+/** A clean Linux environment, so an ambient `DOCKER_HOST` cannot leak in. */
+const LINUX_ENV = {
+  DOCKER_HOST: undefined,
+  HOME: "/home/test",
+  XDG_RUNTIME_DIR: undefined,
+};
+
+function patchingRunDocker(dockerInfo: string) {
+  const calls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
+  const runDocker = vi.fn((args: string[], options: { env?: NodeJS.ProcessEnv } = {}) => {
+    calls.push({ args, env: options.env });
+    const answers: Array<[boolean, CommandResult]> = [
+      [args[0] === "info", ok(dockerInfo)],
+      [args[0] === "ps", ok("openshell-cluster-nemoclaw\n")],
+      [args[0] === "exec" && args[2] === "cat", ok("nameserver 9.9.9.9\n")],
+    ];
+    return answers.find(([matched]) => matched)?.[1] ?? ok();
+  });
+  return { calls, runDocker };
+}
+
 describe("runFixCoreDns", () => {
   it("skips cleanly when no supported local Docker socket is detected", () => {
     const log = vi.fn();
     const result = runFixCoreDns(
       {},
-      { env: { HOME: "/tmp/none" }, existsSocket: () => false, log },
+      {
+        env: { ...LINUX_ENV, HOME: "/tmp/none" },
+        existsSocket: () => false,
+        log,
+        probeDockerHost: NOTHING_ANSWERS,
+      },
     );
 
     expect(result).toEqual({ exitCode: 0, runtime: "unknown", skipped: true });
@@ -50,19 +96,148 @@ describe("runFixCoreDns", () => {
     const result = runFixCoreDns(
       {},
       {
-        env: { HOME: "/Users/test" },
+        env: { ...LINUX_ENV, HOME: "/Users/test" },
         existsSocket: (socketPath) => socketPath === "/var/run/docker.sock",
         log,
         platform: "darwin",
+        probeDockerHost: probeAnswers({ "unix:///var/run/docker.sock": "docker" }),
         runDocker,
+      },
+    );
+
+    expect(result).toEqual({ exitCode: 0, runtime: "custom", skipped: true });
+    expect(runDocker).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      "Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.",
+    );
+  });
+
+  it("does not adopt a Podman socket that exists without a daemon behind it (#10632)", () => {
+    const log = vi.fn();
+    const runDocker = vi.fn();
+    const result = runFixCoreDns(
+      {},
+      {
+        env: LINUX_ENV,
+        existsSocket: (socketPath) => socketPath === PODMAN_SOCKET,
+        log,
+        platform: "linux",
+        probeDockerHost: NOTHING_ANSWERS,
+        runDocker,
+        uid: () => "1000",
       },
     );
 
     expect(result).toEqual({ exitCode: 0, runtime: "unknown", skipped: true });
     expect(runDocker).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(
-      "Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.",
+  });
+
+  it("keeps a working Docker CLI default when a stale Podman socket file is present (#10632)", () => {
+    const { calls, runDocker } = patchingRunDocker("Name: colima\nServer Version: 27.0.0\n");
+    const result = runFixCoreDns(
+      { gatewayName: "nemoclaw" },
+      {
+        commandExists: () => false,
+        env: LINUX_ENV,
+        existsSocket: (socketPath) => socketPath === PODMAN_SOCKET,
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost: probeAnswers({ [DEFAULT_AUTHORITY]: "docker" }),
+        readFile: () => "nameserver 1.1.1.1\n",
+        runDocker,
+        uid: () => "1000",
+      },
     );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.runtime).toBe("colima");
+    expect(result.upstreamDns).toBe("9.9.9.9");
+    expect(calls.map((call) => call.env?.DOCKER_HOST)).not.toContain(`unix://${PODMAN_SOCKET}`);
+  });
+
+  it("adopts a discovered Podman socket once it answers", () => {
+    const { calls, runDocker } = patchingRunDocker("");
+    const result = runFixCoreDns(
+      { gatewayName: "nemoclaw" },
+      {
+        env: LINUX_ENV,
+        existsSocket: (socketPath) => socketPath === PODMAN_SOCKET,
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost: probeAnswers({ [`unix://${PODMAN_SOCKET}`]: "podman" }),
+        readFile: () => "nameserver 1.1.1.1\n",
+        runDocker,
+        uid: () => "1000",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.runtime).toBe("podman");
+    expect(calls.every((call) => call.env?.DOCKER_HOST === `unix://${PODMAN_SOCKET}`)).toBe(true);
+  });
+
+  it("locates the rootless Podman socket under XDG_RUNTIME_DIR", () => {
+    const xdgSocket = "/run/user/501/podman/podman.sock";
+    const { calls, runDocker } = patchingRunDocker("");
+    const result = runFixCoreDns(
+      { gatewayName: "nemoclaw" },
+      {
+        env: { ...LINUX_ENV, XDG_RUNTIME_DIR: "/run/user/501" },
+        existsSocket: (socketPath) => socketPath === xdgSocket,
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost: probeAnswers({ [`unix://${xdgSocket}`]: "podman" }),
+        readFile: () => "nameserver 1.1.1.1\n",
+        runDocker,
+        uid: () => "1000",
+      },
+    );
+
+    expect(result.runtime).toBe("podman");
+    expect(calls.every((call) => call.env?.DOCKER_HOST === `unix://${xdgSocket}`)).toBe(true);
+  });
+
+  it("skips rather than guess when two engines answer", () => {
+    const runDocker = vi.fn();
+    const result = runFixCoreDns(
+      {},
+      {
+        env: LINUX_ENV,
+        existsSocket: (socketPath) =>
+          socketPath === PODMAN_SOCKET || socketPath === "/run/docker.sock",
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost: probeAnswers({
+          "unix:///run/docker.sock": "docker",
+          [`unix://${PODMAN_SOCKET}`]: "podman",
+        }),
+        runDocker,
+        uid: () => "1000",
+      },
+    );
+
+    expect(result).toEqual({ exitCode: 0, runtime: "unknown", skipped: true });
+    expect(runDocker).not.toHaveBeenCalled();
+  });
+
+  it("labels a Podman default from its version banner without reading docker info", () => {
+    const { calls, runDocker } = patchingRunDocker("Server Version: 5.6.2\nOperating System: fedora");
+    const result = runFixCoreDns(
+      { gatewayName: "nemoclaw" },
+      {
+        env: LINUX_ENV,
+        existsSocket: () => false,
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost: probeAnswers({ [DEFAULT_AUTHORITY]: "podman" }),
+        readFile: () => "nameserver 1.1.1.1\n",
+        runDocker,
+        uid: () => "1000",
+      },
+    );
+
+    expect(result.runtime).toBe("podman");
+    expect(calls.map((call) => call.args[0])).not.toContain("info");
   });
 
   it("patches CoreDNS through docker with JSON-escaped Corefile payload", () => {
@@ -159,6 +334,31 @@ describe("runFixCoreDns", () => {
 });
 
 describe("runSetupDnsProxy", () => {
+  it("keeps the Docker CLI default when a stale Podman socket file is present (#10632)", () => {
+    const calls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
+    const runDocker = vi.fn((args: string[], options: { env?: NodeJS.ProcessEnv } = {}) => {
+      calls.push({ args, env: options.env });
+      return ok();
+    });
+
+    const result = runSetupDnsProxy(
+      { gatewayName: "nemoclaw", sandboxName: "box" },
+      {
+        env: LINUX_ENV,
+        existsSocket: (socketPath) => socketPath === PODMAN_SOCKET,
+        log: vi.fn(),
+        probeDockerHost: probeAnswers({ [DEFAULT_AUTHORITY]: "docker" }),
+        runDocker,
+        sleep: vi.fn(),
+        uid: () => "1000",
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].env?.DOCKER_HOST).toBeUndefined();
+  });
+
   it("configures the DNS proxy through kubectl-in-docker argv calls", () => {
     const calls: string[][] = [];
     const log = vi.fn();

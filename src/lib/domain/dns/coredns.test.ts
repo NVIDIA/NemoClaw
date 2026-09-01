@@ -15,6 +15,7 @@ import {
 describe("CoreDNS domain helpers", () => {
   it("classifies Docker host socket runtimes", () => {
     expect(dockerHostRuntime("unix:///Users/me/.colima/default/docker.sock")).toBe("colima");
+    expect(dockerHostRuntime("unix:///Users/me/.colima/docker.sock")).toBe("colima");
     expect(dockerHostRuntime("unix:///run/user/1000/podman/podman.sock")).toBe("podman");
     expect(dockerHostRuntime("unix:///Users/me/.docker/run/docker.sock")).toBe("docker-desktop");
     expect(dockerHostRuntime("tcp://docker.example:2376")).toBe("custom");
