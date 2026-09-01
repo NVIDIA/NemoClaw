@@ -3,7 +3,11 @@
 
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { redactFull } from "../../security/redact";
-import { parseCliOpenShellProviderNames, runOpenshellProviderCommand } from "./provider-command";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  parseCliOpenShellProviderNames,
+  runOpenshellProviderCommand,
+} from "./provider-command";
 import {
   type CreateOpenShellProviderRequest,
   type DeleteOpenShellProviderRequest,
@@ -18,7 +22,6 @@ import {
 } from "./provider-adapter";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 import { ensureEndpointlessProviderProfile as reconcileEndpointlessProviderProfile } from "./provider-profile";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./timeouts";
 
 export type CapturedProviderCommandResult = Readonly<{
   status: number | null;
