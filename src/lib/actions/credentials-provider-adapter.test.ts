@@ -301,7 +301,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       inventory: { ok: true, value: { names: ["custom-provider"] } } as const,
       expectedLines: [
         "  OpenShell reports provider 'custom-provider' is registered; local provider ownership was preserved.",
-        "  Rebuild the target sandbox (`nemoclaw <sandbox> rebuild`) to attach the provider.",
+        "  Rebuild each sandbox that should use 'custom-provider' (`nemoclaw <sandbox> rebuild`).",
       ],
       forgetCalls: 0,
     },
@@ -315,7 +315,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       inventory: { ok: true, value: { names: ["custom-provider"] } } as const,
       expectedLines: [
         "  OpenShell reports provider 'custom-provider' is registered; local provider ownership was preserved.",
-        "  Rebuild the target sandbox (`nemoclaw <sandbox> rebuild`) to attach the provider.",
+        "  Rebuild each sandbox that should use 'custom-provider' (`nemoclaw <sandbox> rebuild`).",
       ],
       forgetCalls: 0,
     },
@@ -344,7 +344,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       expectedLines: [
         "  Could not determine whether provider 'custom-provider' was registered; local provider ownership was preserved.",
         "  Run 'nemoclaw credentials list' to inspect the gateway before retrying.",
-        "  If the provider exists, rebuild the target sandbox; otherwise run 'nemoclaw credentials reset custom-provider --yes' before retrying.",
+        "  If the provider exists, rebuild each sandbox that should use 'custom-provider'; otherwise run 'nemoclaw credentials reset custom-provider --yes' before retrying.",
       ],
       forgetCalls: 0,
     },

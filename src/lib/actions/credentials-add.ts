@@ -228,7 +228,7 @@ async function reconcileUncertainProviderCreate(
       lines: [
         `  OpenShell reports provider '${provider}' is registered; local provider ownership was preserved.`,
         `  Verify with '${CLI_NAME} credentials list'.`,
-        `  Rebuild the target sandbox (\`${CLI_NAME} <sandbox> rebuild\`) to attach the provider.`,
+        `  Rebuild each sandbox that should use '${provider}' (\`${CLI_NAME} <sandbox> rebuild\`).`,
       ],
     };
   }
@@ -246,7 +246,7 @@ async function reconcileUncertainProviderCreate(
     lines: [
       `  Could not determine whether provider '${provider}' was registered; local provider ownership was preserved.`,
       `  Run '${CLI_NAME} credentials list' to inspect the gateway before retrying.`,
-      `  If the provider exists, rebuild the target sandbox; otherwise run '${CLI_NAME} credentials reset ${provider} --yes' before retrying.`,
+      `  If the provider exists, rebuild each sandbox that should use '${provider}'; otherwise run '${CLI_NAME} credentials reset ${provider} --yes' before retrying.`,
       `  ${inventory.error.message}`,
     ],
   };
@@ -431,7 +431,7 @@ export async function runCredentialsAddAction(
         return ok([
           `  Registered provider '${provider}' with the OpenShell gateway.`,
           `  Verify with '${CLI_NAME} credentials list'.`,
-          `  Rebuild the target sandbox (\`${CLI_NAME} <sandbox> rebuild\`) to attach the new provider.`,
+          `  Rebuild each sandbox that should use '${provider}' (\`${CLI_NAME} <sandbox> rebuild\`).`,
         ]);
       }
 
