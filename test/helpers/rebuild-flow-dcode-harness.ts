@@ -9,6 +9,7 @@ import {
   agentDefs,
   agentOnboard,
   agentRuntime,
+  captureResolvedRebuildFixture,
   createHarnessTempDir,
   createRebuildFlowSession,
   destroy,
@@ -63,6 +64,16 @@ export type RebuildFlowOverrides = {
   sessionAgentName?: string | null;
   applyPreset?: (presetName: string) => boolean;
   captureOpenshell?: (
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  };
+  captureResolvedOpenshell?: (
     args: string[],
     options?: Record<string, unknown>,
   ) => {
@@ -171,6 +182,7 @@ export type RebuildFlowHarness = {
   restoreRegistryEntryIfMissingSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
+  captureResolvedOpenshellSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
   prepareMcpBridgesForRebuildSpy: MockInstance;
@@ -592,6 +604,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         }
       : { status: 0, output: "" };
   });
+  const captureResolvedOpenshellSpy = vi
+    .spyOn(openshellRuntime, "captureResolvedOpenshell")
+    .mockImplementation((args: unknown, options?: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      if (overrides.captureResolvedOpenshell) {
+        return overrides.captureResolvedOpenshell(
+          argv,
+          options as Record<string, unknown> | undefined,
+        );
+      }
+      return captureResolvedRebuildFixture(argv, deletedSourceGateways);
+    });
   const removeSandboxRegistryEntrySpy = vi
     .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
     .mockReturnValue({
@@ -807,6 +831,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreRegistryEntryIfMissingSpy,
     restoreSandboxStateSpy,
     captureOpenshellSpy,
+    captureResolvedOpenshellSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
     prepareMcpBridgesForRebuildSpy,

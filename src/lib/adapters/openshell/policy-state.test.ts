@@ -60,6 +60,12 @@ describe("OpenShell policy observation", () => {
       observed = error;
     }
     expect(isPolicyObservationError(observed)).toBe(true);
+    expect(observed).toMatchObject({
+      policyReadError: {
+        kind: "timeout",
+        message: "The OpenShell sandbox policy read timed out.",
+      },
+    });
     expect(spy).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({

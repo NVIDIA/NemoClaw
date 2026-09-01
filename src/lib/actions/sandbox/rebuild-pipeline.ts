@@ -237,6 +237,7 @@ async function rebuildSandboxUnlocked(
 
       const backup = runRebuildBackupPhase({
         sandboxName,
+        gatewayName: recreateOptions.targetGatewayName,
         // The requested observability bit is replacement intent, not a
         // preflight mutation of the old registry row. Use a copy only for
         // target policy normalization; replacement registration commits it.
@@ -280,8 +281,10 @@ async function rebuildSandboxUnlocked(
         }
       };
       const capturePolicyHandoff = (): boolean => {
-        const capturedPath = captureRebuildPolicySource(sandboxName);
-        if (!capturedPath) return false;
+        const capturedPath = captureRebuildPolicySource(
+          sandboxName,
+          recreateOptions.targetGatewayName,
+        );
         try {
           return publishPolicyHandoff(fs.readFileSync(capturedPath, "utf8"));
         } finally {
@@ -566,19 +569,23 @@ async function rebuildSandboxUnlocked(
           // path only after digest-verifying the policy handoff bound to the
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
-          return capturePolicyHandoff()
-            ? validation
-            : {
-                ok: false,
-                message: "The current OpenShell policy became unavailable before sandbox deletion.",
-              };
+          try {
+            return capturePolicyHandoff()
+              ? validation
+              : {
+                  ok: false,
+                  message:
+                    "The current OpenShell policy became unavailable before sandbox deletion.",
+                };
+          } catch (error) {
+            return {
+              ok: false,
+              message: error instanceof Error ? error.message : String(error),
+            };
+          }
         },
         cleanupDockerOrphanAfterDelete: () =>
-          removeStaleRebuildDockerOrphan(
-            sandboxName,
-            sandboxEntry.openshellDriver,
-            log,
-          ),
+          removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
           sandboxStillExists = false;
           retainPolicyHandoffForRecovery = true;

@@ -87,6 +87,39 @@ export function sourceSandboxGateway(argv: string[], verb: string): string | nul
     : null;
 }
 
+export function captureResolvedRebuildFixture(
+  argv: string[],
+  deletedSourceGateways: ReadonlySet<string>,
+) {
+  const livePolicy = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+  if (argv[0] === "policy" && argv.includes("--output")) {
+    const output = JSON.stringify({
+      scope: "sandbox",
+      sandbox: "alpha",
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "sha256:rebuild-policy",
+      active_version: 1,
+      policy: { version: 1, network_policies: { host_preserved: {} } },
+    });
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  if (argv[0] === "policy") {
+    const output = `Version: 1\nActive: 1\n---\n${livePolicy}`;
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  const probedGateway = sourceSandboxGateway(argv, "get");
+  const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+  return probedGateway && !deletedSourceGateways.has(probedGateway)
+    ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
+    : {
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "Error: sandbox alpha not found",
+      };
+}
+
 const harnessTempDirs: string[] = [];
 type HarnessRebuildBackup = ReturnType<typeof sandboxState.listBackups>[number];
 const harnessRebuildBackups: HarnessRebuildBackup[] = [];

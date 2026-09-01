@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PolicyObservationError } from "../../adapters/openshell/policy-state";
 
 const mocks = vi.hoisted(() => ({
   captureRecordedSandboxBasePolicy: vi.fn(),
@@ -58,6 +59,7 @@ describe("rebuild policy handoff", () => {
     const result = runRebuildBackupPhase(
       {
         sandboxName: "alpha",
+        gatewayName: "nemoclaw",
         sandboxEntry: { name: "alpha" },
         staleRecovery: false,
         preparedRecoveryManifest: null,
@@ -99,6 +101,7 @@ describe("rebuild policy handoff", () => {
       runRebuildBackupPhase(
         {
           sandboxName: "alpha",
+          gatewayName: "nemoclaw",
           sandboxEntry: { name: "alpha" },
           staleRecovery: false,
           preparedRecoveryManifest: null,
@@ -115,7 +118,83 @@ describe("rebuild policy handoff", () => {
     ).toThrow(
       "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
     );
-    expect(backup).toHaveBeenCalledOnce();
+    expect(backup).not.toHaveBeenCalled();
+    expect(mocks.secureTempFile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "authentication failure",
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox policy read.",
+      } as const,
+      recovery: "Restore authentication for the sandbox's OpenShell gateway",
+    },
+    {
+      label: "unreachable gateway",
+      error: {
+        kind: "transport",
+        reason: "unreachable",
+        message: "OpenShell could not reach the selected gateway.",
+      } as const,
+      recovery: "Verify the gateway with `openshell status`",
+    },
+    {
+      label: "gateway identity mismatch",
+      error: {
+        kind: "transport",
+        reason: "identity_mismatch",
+        message: "The selected OpenShell gateway identity does not match the recorded identity.",
+      } as const,
+      recovery: "Verify the sandbox's recorded gateway identity with `openshell status`",
+    },
+    {
+      label: "schema mismatch",
+      error: {
+        kind: "schema",
+        message: "The OpenShell CLI and gateway policy schemas do not match.",
+      } as const,
+      recovery: "Update the OpenShell CLI and gateway to compatible versions",
+    },
+  ])("stops before backup and delete after a typed $label", ({ error, recovery }) => {
+    mocks.captureRecordedSandboxBasePolicy.mockImplementation(() => {
+      throw new PolicyObservationError(error.message, { policyReadError: error });
+    });
+    const backup = vi.fn(() => null);
+
+    let failure: unknown;
+    try {
+      runRebuildBackupPhase(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw-8091",
+          sandboxEntry: { name: "alpha", gatewayName: "nemoclaw-8091" },
+          staleRecovery: false,
+          preparedRecoveryManifest: null,
+          messagingPlan: null,
+          webSearchConfig: null,
+          log: vi.fn(),
+          bail: (message): never => {
+            throw new Error(message);
+          },
+          relockShieldsIfNeeded: vi.fn(() => true),
+        },
+        backup,
+      );
+    } catch (caught) {
+      failure = caught;
+    }
+
+    expect(failure).toBeInstanceOf(PolicyObservationError);
+    expect((failure as PolicyObservationError).policyReadError).toEqual(error);
+    const message = String((failure as Error).message);
+    expect(message).toContain("sandbox 'alpha'");
+    expect(message).toContain("recorded gateway 'nemoclaw-8091'");
+    expect(message).toContain(error.message);
+    expect(message).toContain(recovery);
+    expect(message).toContain("`nemoclaw alpha rebuild`");
+    expect(backup).not.toHaveBeenCalled();
     expect(mocks.secureTempFile).not.toHaveBeenCalled();
   });
 
@@ -124,6 +203,7 @@ describe("rebuild policy handoff", () => {
       runRebuildBackupPhase(
         {
           sandboxName: "alpha",
+          gatewayName: "nemoclaw",
           sandboxEntry: { name: "alpha" },
           staleRecovery: true,
           preparedRecoveryManifest: null,
@@ -173,6 +253,7 @@ describe("rebuild policy handoff", () => {
       runRebuildBackupPhase(
         {
           sandboxName: "alpha",
+          gatewayName: "nemoclaw",
           sandboxEntry: { name: "alpha" },
           staleRecovery: true,
           preparedRecoveryManifest,
@@ -213,6 +294,7 @@ describe("rebuild backup safety", () => {
   function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
     return {
       sandboxName: "custom-openclaw",
+      gatewayName: "nemoclaw",
       sandboxEntry: {
         name: "custom-openclaw",
         agent: "openclaw",

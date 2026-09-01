@@ -22,7 +22,11 @@ import {
   createSyncCliOpenShellSandboxPolicyReader,
   type SyncCapturePolicyCommand,
 } from "./sandbox-policy-cli";
-import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+  type OpenShellSandboxError,
+} from "./sandbox-observer";
 import { fingerprintOpenShellSandboxLiveIdentity } from "./sandbox-identity";
 const POLICY_STATE_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_STATE_CAPTURE_TIMEOUT_MS = 30_000;
@@ -37,18 +41,25 @@ const POLICY_OBSERVATION_ERROR_CODE = "NEMOCLAW_POLICY_OBSERVATION_ERROR";
 /** A final failure while observing or validating live OpenShell policy. */
 export class PolicyObservationError extends Error {
   readonly code = POLICY_OBSERVATION_ERROR_CODE;
+  readonly policyReadError: OpenShellSandboxError | undefined;
 
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(
+    message: string,
+    options?: ErrorOptions & { readonly policyReadError?: OpenShellSandboxError },
+  ) {
     super(message, options);
     this.name = "PolicyObservationError";
+    this.policyReadError = options?.policyReadError;
   }
 }
 
 /** Recognize live-policy observation failures across module boundaries. */
-export function isPolicyObservationError(error: unknown): boolean {
+export function isPolicyObservationError(error: unknown): error is PolicyObservationError {
   return (
     error instanceof PolicyObservationError ||
-    (isObject(error) && error.code === POLICY_OBSERVATION_ERROR_CODE)
+    (isObject(error) &&
+      error.code === POLICY_OBSERVATION_ERROR_CODE &&
+      typeof error.message === "string")
   );
 }
 
@@ -82,9 +93,15 @@ function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function failInspection(subject: "sandbox" | "global" | "gateway", reason: string): never {
+function failInspection(
+  subject: "sandbox" | "global" | "gateway",
+  reason: string | OpenShellSandboxError,
+): never {
+  const detail = typeof reason === "string" ? reason : reason.message;
+  const punctuation = /[.!?]$/u.test(detail) ? "" : ".";
   throw new PolicyObservationError(
-    `OpenShell ${subject} policy inspection failed: ${reason}. Policy-dependent operations must stop.`,
+    `OpenShell ${subject} policy inspection failed: ${detail}${punctuation} Policy-dependent operations must stop.`,
+    typeof reason === "string" ? undefined : { policyReadError: reason },
   );
 }
 
@@ -148,7 +165,7 @@ function captureSandboxPolicyDocument(input: {
     capture: (args, options) =>
       captureBoundedOpenShell(args, "sandbox", { gatewayName: input.gatewayName }, options.timeout),
   });
-  if (!result.ok) failInspection("sandbox", result.error.message);
+  if (!result.ok) failInspection("sandbox", result.error);
   return result.value.document;
 }
 
@@ -207,7 +224,7 @@ export function inspectSandboxPolicy({
     target: sandboxPolicyTarget(validatedGatewayName),
     sandboxName: validatedSandboxName,
   });
-  if (!result.ok) failInspection("sandbox", result.error.message);
+  if (!result.ok) failInspection("sandbox", result.error);
   return result.value;
 }
 
@@ -280,7 +297,7 @@ export function captureSandboxBasePolicyRevision(
     sandboxName: validatedSandboxName,
     revision,
   });
-  if (!result.ok) failInspection("sandbox", result.error.message);
+  if (!result.ok) failInspection("sandbox", result.error);
   return result.value.document;
 }
 

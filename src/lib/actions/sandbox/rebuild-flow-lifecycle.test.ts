@@ -6,12 +6,13 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import { PolicyObservationError } from "../../adapters/openshell/policy-state";
 import {
   createRebuildFlowHarness,
   createHarnessTempDir,
   installRebuildFlowTestHooks,
   originalSandboxName,
-  policyGet,
+  policies,
   portableAgentLifecycle,
   snapshotEnv,
   tempFiles,
@@ -83,6 +84,69 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
+  it.each([
+    {
+      label: "authentication failure",
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox policy read.",
+      } as const,
+      recovery: "Restore authentication for the sandbox's OpenShell gateway",
+    },
+    {
+      label: "unreachable gateway",
+      error: {
+        kind: "transport",
+        reason: "unreachable",
+        message: "OpenShell could not reach the selected gateway.",
+      } as const,
+      recovery: "Verify the gateway with `openshell status`",
+    },
+    {
+      label: "gateway identity mismatch",
+      error: {
+        kind: "transport",
+        reason: "identity_mismatch",
+        message: "The selected OpenShell gateway identity does not match the recorded identity.",
+      } as const,
+      recovery: "Verify the sandbox's recorded gateway identity with `openshell status`",
+    },
+    {
+      label: "schema mismatch",
+      error: {
+        kind: "schema",
+        message: "The OpenShell CLI and gateway policy schemas do not match.",
+      } as const,
+      recovery: "Update the OpenShell CLI and gateway to compatible versions",
+    },
+  ])(
+    "stops rebuild before backup or sandbox delete after a typed $label",
+    async ({ error, recovery }) => {
+      const harness = createRebuildFlowHarness();
+      vi.spyOn(policies, "captureRecordedSandboxBasePolicy").mockImplementation(() => {
+        throw new PolicyObservationError(error.message, { policyReadError: error });
+      });
+
+      let failure: unknown;
+      try {
+        await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+      } catch (caught) {
+        failure = caught;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      const message = String((failure as Error).message);
+      expect(message).toContain("sandbox 'alpha'");
+      expect(message).toContain("recorded gateway 'nemoclaw'");
+      expect(message).toContain(error.message);
+      expect(message).toContain(recovery);
+      expect(message).toContain("`nemoclaw alpha rebuild`");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+    },
+  );
+
   it("backs up once, recreates with the captured OpenShell policy, restores, and relocks on a successful OpenClaw rebuild", async ({
     onTestFinished,
   }) => {
@@ -126,8 +190,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
         recreatedPolicy = fs.readFileSync(rebuildPolicySourcePath, "utf8");
       },
     });
-    vi.mocked(policyGet.getSandboxPolicy).mockReset().mockReturnValue({ yaml: completePolicy });
-
     await expect(
       harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
     ).resolves.toBeUndefined();
@@ -155,7 +217,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       }),
     );
     expect(innerBackupMarker).toBe("1");
-    expect(policyGet.getSandboxPolicy).toHaveBeenCalledOnce();
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
     expect(recreatedPolicy).toContain("durable_user_policy");
     expect(recreatedPolicy).toContain("mcp_bridge_github");
     expect(recreatedPolicy).toContain("nemoclaw-mcp-alpha-github");
@@ -251,20 +316,32 @@ describe("rebuildSandbox flow: lifecycle", () => {
         detachedProviderEntries: [mcpEntry],
       },
     });
-    vi.mocked(policyGet.getSandboxPolicy)
-      .mockReset()
-      .mockReturnValueOnce({ yaml: "version: 1\nnetwork_policies: {}\n" })
-      .mockReturnValue({ yaml: "" });
+    const captureLivePolicy = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+    let policyReadCount = 0;
+    harness.captureResolvedOpenshellSpy.mockImplementation((args: unknown, options?: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      const failRead = argv[0] === "policy" && (policyReadCount += 1) > 2;
+      return failRead
+        ? {
+            status: 1,
+            output: "",
+            stdout: "",
+            stderr: "connection refused",
+          }
+        : captureLivePolicy(args, options);
+    });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("OpenShell policy became unavailable before sandbox deletion");
+    ).rejects.toThrow(
+      /Cannot read the current OpenShell policy.*Verify the gateway with `openshell status`/u,
+    );
 
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(fs.existsSync(policyDirectory)).toBe(false);
+    expect(fs.readdirSync(policyDirectory)).toEqual([]);
   });
 
   it("keeps the original sandbox when the shared route drifts at the delete edge (#7798)", async () => {

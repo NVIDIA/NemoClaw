@@ -4,8 +4,10 @@
 // sourceOfTruth: nemoclaw/src/shared/credential-filter-boundary.cts
 // Keep this package entry wrapper implementation-free so migration and the CLI
 // execute the same credential-stripping rules.
-export {
-  CONTEXT_PATTERNS as CONTEXT_SECRET_PATTERNS,
+import credentialFilterBoundary from "../shared/credential-filter-boundary.cjs";
+
+export const {
+  CONTEXT_PATTERNS: CONTEXT_SECRET_PATTERNS,
   CREDENTIAL_PLACEHOLDER,
   CREDENTIAL_SENSITIVE_BASENAMES,
   isConfigObject,
@@ -16,6 +18,6 @@ export {
   sanitizeEnvFileContent,
   stripCredentials,
   valueLooksLikeSecret,
-} from "../shared/credential-filter-boundary.cjs";
+} = credentialFilterBoundary;
 
 export type { ConfigObject, ConfigValue } from "../shared/credential-filter-boundary.cjs";

@@ -118,6 +118,16 @@ export type RebuildFlowOverrides = {
     stderr?: string;
     error?: Error;
   };
+  captureResolvedOpenshell?: (
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  };
   backupPreservedEnv?: PreservedEnvFile[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
@@ -164,6 +174,7 @@ export type RebuildFlowHarness = {
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
+  captureResolvedOpenshellSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxRebuildSpy: MockInstance;

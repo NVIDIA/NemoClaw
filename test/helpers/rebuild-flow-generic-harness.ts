@@ -9,6 +9,7 @@ import {
   agentDefs,
   agentRuntime,
   buildContextFingerprint,
+  captureResolvedRebuildFixture,
   createHarnessTempDir,
   createRebuildFlowSession,
   destroy,
@@ -56,6 +57,7 @@ export {
   createHarnessTempDir,
   installRebuildFlowTestHooks,
   originalSandboxName,
+  policies,
   policyGet,
   portableAgentLifecycle,
   snapshotEnv,
@@ -536,6 +538,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : { status: 1, output: "", stderr: "Error: sandbox alpha not found" };
     });
+  const captureResolvedOpenshellSpy = vi
+    .spyOn(openshellRuntime, "captureResolvedOpenshell")
+    .mockImplementation((args: unknown, options?: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      if (overrides.captureResolvedOpenshell) {
+        return overrides.captureResolvedOpenshell(
+          argv,
+          options as Record<string, unknown> | undefined,
+        );
+      }
+      return captureResolvedRebuildFixture(argv, deletedSourceGateways);
+    });
   const defaultRemovalReceipt = {
     entry: preDeleteSandboxEntry,
     wasDefault: preDeleteDefaultSandbox === "alpha",
@@ -731,6 +745,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     relockSpy,
     restoreSandboxStateSpy,
     captureOpenshellSpy,
+    captureResolvedOpenshellSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
     prepareMcpBridgesForAbsentSandboxRebuildSpy,

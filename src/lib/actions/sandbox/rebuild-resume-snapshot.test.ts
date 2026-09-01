@@ -222,6 +222,22 @@ describe("rebuild resume snapshot repair", () => {
         stdout: "",
         stderr: "Error: sandbox alpha not found",
       } as never),
+      vi
+        .spyOn(openshellRuntime, "captureResolvedOpenshell")
+        .mockImplementation((args: string[]) => {
+          const output = args.includes("--output")
+            ? JSON.stringify({
+                scope: "sandbox",
+                sandbox: "alpha",
+                status: "effective",
+                policy_source: "sandbox",
+                hash: "sha256:resume-policy",
+                active_version: 1,
+                policy: { version: 1, network_policies: {} },
+              })
+            : "Version: 1\nActive: 1\n---\nversion: 1\nnetwork_policies: {}\n";
+          return { status: 0, output, stdout: output, stderr: "" } as never;
+        }),
       vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
         entry: {
           name: "alpha",
