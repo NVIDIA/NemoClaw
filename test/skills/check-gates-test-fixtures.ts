@@ -26,6 +26,7 @@ const PR_WORKFLOW_JOB_NAMES = [
   "docs-only-checks",
   "static-checks",
   "openshell-sdk-package",
+  "compile-artifacts",
   "build-typecheck",
   "installer-integration",
   "wechat-runtime-audit",
@@ -58,8 +59,13 @@ interface ActionJobFixture {
 
 interface ActionRunFixture {
   attempt: number;
+  nextAttempt?: number;
+  nextCreatedAt?: string;
+  nextUpdatedAt?: string;
+  nextDisplayTitle?: string;
+  nextStatus?: string;
+  nextConclusion?: string | null;
   jobs?: ActionJobFixture[];
-  previousAttemptJobs?: ActionJobFixture[];
   jobPages?: ActionJobFixture[][];
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -174,6 +180,10 @@ interface ComparatorFixture extends ComplianceFixture {
 
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function successfulRequiredChecksWithoutE2e() {
+  return successfulRequiredChecks();
 }
 
 function successfulRequiredChecks() {
@@ -365,7 +375,7 @@ function e2eRunFixture(
   return {
     body: "Signed-off-by: Example User <user@example.com>",
     verified: true,
-    statusChecks: [...successfulRequiredChecks(), ...checks.map(e2eGateCheck)],
+    statusChecks: [...successfulRequiredChecksWithoutE2e(), ...checks.map(e2eGateCheck)],
     actionRunAttempts,
   };
 }
@@ -634,33 +644,35 @@ function runGate(fixture: ComplianceFixture) {
   });
   const actionRunCases = Object.entries(actionRunFixtures)
     .flatMap(([runId, value]) => {
-      const actionJobData = ({
-        startedAt,
-        completedAt,
-        omitStartedAt,
-        omitCompletedAt,
-        ...job
-      }: ActionJobFixture) => ({
-        ...job,
-        status: job.status ?? "completed",
-        conclusion: job.conclusion === undefined ? "success" : job.conclusion,
-        ...(omitStartedAt
-          ? {}
-          : { started_at: startedAt === undefined ? "2026-01-01T00:01:00Z" : startedAt }),
-        ...(omitCompletedAt
-          ? {}
-          : {
-              completed_at: completedAt === undefined ? "2026-01-01T00:03:00Z" : completedAt,
-            }),
-      });
       const jobPages = (value.jobPages ?? [value.jobs ?? []]).map((page) =>
-        page.map(actionJobData),
+        page.map(({ startedAt, completedAt, omitStartedAt, omitCompletedAt, ...job }) => ({
+          ...job,
+          status: job.status ?? "completed",
+          conclusion: job.conclusion === undefined ? "success" : job.conclusion,
+          ...(omitStartedAt
+            ? {}
+            : { started_at: startedAt === undefined ? "2026-01-01T00:01:00Z" : startedAt }),
+          ...(omitCompletedAt
+            ? {}
+            : {
+                completed_at: completedAt === undefined ? "2026-01-01T00:03:00Z" : completedAt,
+              }),
+        })),
       );
-      const previousAttemptJobs = value.previousAttemptJobs?.map(actionJobData);
       const jobs = jobPages.flat();
       const runData = actionRunData(runId, value);
+      const refreshedRunData = {
+        ...runData,
+        run_attempt: value.nextAttempt ?? value.attempt,
+        ...(value.nextCreatedAt === undefined ? {} : { created_at: value.nextCreatedAt }),
+        ...(value.nextUpdatedAt === undefined ? {} : { updated_at: value.nextUpdatedAt }),
+        display_title: value.nextDisplayTitle ?? runData.display_title,
+        status: value.nextStatus ?? runData.status,
+        conclusion: value.nextConclusion === undefined ? runData.conclusion : value.nextConclusion,
+      };
+      const runMarker = path.join(tmp, `action-run-${runId}-seen`);
       return [
-        `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}") printf '%s' ${shellSingleQuote(JSON.stringify(runData))} ;;`,
+        `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}") if mkdir ${shellSingleQuote(runMarker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(runData))}; else printf '%s' ${shellSingleQuote(JSON.stringify(refreshedRunData))}; fi ;;`,
         `  "api --paginate --slurp repos/NVIDIA/NemoClaw/actions/runs/${runId}/attempts/${value.attempt}/jobs?per_page=100") printf '%s' ${shellSingleQuote(
           JSON.stringify(
             jobPages.map((page) => ({
@@ -669,18 +681,6 @@ function runGate(fixture: ComplianceFixture) {
             })),
           ),
         )} ;;`,
-        ...(previousAttemptJobs === undefined
-          ? []
-          : [
-              `  "api --paginate --slurp repos/NVIDIA/NemoClaw/actions/runs/${runId}/attempts/${value.attempt - 1}/jobs?per_page=100") printf '%s' ${shellSingleQuote(
-                JSON.stringify([
-                  {
-                    total_count: previousAttemptJobs.length,
-                    jobs: previousAttemptJobs,
-                  },
-                ]),
-              )} ;;`,
-            ]),
       ];
     })
     .join("\n");
@@ -925,4 +925,5 @@ export {
   runComparatorGate,
   runGate,
   successfulRequiredChecks,
+  successfulRequiredChecksWithoutE2e,
 };

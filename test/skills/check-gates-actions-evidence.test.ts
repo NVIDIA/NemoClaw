@@ -13,6 +13,8 @@ import {
   exactDiffGateRun,
   HEAD_SHA,
   INCOMPLETE_E2E,
+  prWorkflowJobs,
+  prWorkflowRun,
   REQUIRED_CHECK_NAMES,
   runGate,
   successfulRequiredChecks,
@@ -21,18 +23,7 @@ import {
 
 const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
-const ADVISOR_SPECIALIST_JOBS = [
-  "Specialist / Behavior",
-  "Specialist / Code reduction",
-  "Specialist / Dependency use",
-  "Specialist / Design and architecture",
-  "Specialist / Documentation",
-  "Specialist / Migration completion",
-  "Specialist / Operations",
-  "Specialist / Test design",
-  "Specialist / Trust",
-] as const;
-const ADVISOR_SPECIALIST_JOB = ADVISOR_SPECIALIST_JOBS[0];
+const ADVISOR_SPECIALIST_JOB = "Specialist / Behavior";
 
 interface AdvisorCheckOptions {
   name?: string;
@@ -93,6 +84,18 @@ function advisorRun(jobId: number, options: AdvisorRunOptions = {}) {
   };
 }
 
+function prWorkflowCheck(runId: number, job: ActionJobFixture, startedAt: string) {
+  return {
+    __typename: "CheckRun",
+    name: job.name,
+    workflowName: "CI / Pull Request",
+    detailsUrl: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${job.id}`,
+    startedAt,
+    status: (job.status ?? "completed").toUpperCase(),
+    conclusion: (job.conclusion ?? "success")?.toUpperCase(),
+  };
+}
+
 describe("maintainer merge-gate contributor compliance", () => {
   it("requires PR/base SHA evidence for optional Actions checks", () => {
     const result = runGate({
@@ -125,24 +128,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       failingChecks: ["optional-check: latest attempt evidence incomplete"],
     });
     expect(output.allPass).toBe(false);
-  });
-
-  it.each(ADVISOR_SPECIALIST_JOBS)("keeps an authenticated %s specialist failure advisory", (name) => {
-    const runId = 8_900 + ADVISOR_SPECIALIST_JOBS.indexOf(name);
-    const jobId = runId + 100;
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      statusChecks: [...successfulRequiredChecks(), advisorCheck(runId, jobId, { name })],
-      actionRunAttempts: {
-        [String(runId)]: advisorRun(jobId, { jobName: name }),
-      },
-    });
-
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      allPass: true,
-      gates: { ci: { pass: true } },
-    });
   });
 
   it.each([
@@ -334,12 +319,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       run: { jobName: "Publish PR review advisor" },
     },
     {
-      evidence: "a malformed specialist job is not allowlisted",
-      check: { name: "Specialist / Behavior / Future" },
-      run: { jobName: "Specialist / Behavior / Future" },
-    },
-    {
-      evidence: "a retired advisor job is not allowlisted",
+      evidence: "a future advisor job is not allowlisted",
       check: { name: "PR review advisor (Future Model)" },
       run: { jobName: "PR review advisor (Future Model)" },
     },
@@ -383,6 +363,77 @@ describe("maintainer merge-gate contributor compliance", () => {
     const output = JSON.parse(result.stdout);
     expect(output).toMatchObject({ allPass: false, gates: { ci: { pass: false } } });
     expect(output.gates.ci.failingChecks).toContain("checks: latest attempt evidence incomplete");
+  });
+
+  it.each([
+    {
+      order: "before",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:30Z",
+    },
+    {
+      order: "after",
+      createdAt: "2026-01-01T00:02:00Z",
+      updatedAt: "2026-01-01T00:02:30Z",
+    },
+  ])(
+    "uses the successful code run when a metadata edit runs $order it",
+    ({ createdAt, updatedAt }) => {
+      const runId = 9_100;
+      const jobs = prWorkflowJobs("skipped", {
+        checks: { conclusion: "success" },
+      });
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          ...jobs.map((job) => prWorkflowCheck(runId, job, createdAt)),
+        ],
+        actionRunAttempts: {
+          [String(runId)]: {
+            ...prWorkflowRun("success", jobs, false),
+            createdAt,
+            updatedAt,
+          },
+        },
+      });
+
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+    },
+  );
+
+  it("keeps a metadata edit with an unknown job merge-relevant", () => {
+    const runId = 9_101;
+    const jobs = [
+      ...prWorkflowJobs("skipped", {
+        checks: { conclusion: "success" },
+      }),
+      { id: 99, name: "future-job", conclusion: "skipped" },
+    ];
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...successfulRequiredChecks(),
+        ...jobs.map((job) => prWorkflowCheck(runId, job, "2026-01-01T00:02:00Z")),
+      ],
+      actionRunAttempts: {
+        [String(runId)]: {
+          ...prWorkflowRun("success", jobs, false),
+          createdAt: "2026-01-01T00:02:00Z",
+          updatedAt: "2026-01-01T00:02:30Z",
+        },
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: false,
+      gates: { ci: { pass: false } },
+    });
   });
 
   it.each([
