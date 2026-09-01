@@ -9,6 +9,10 @@ Review date: 2026-07-21
 
 Last updated: 2026-08-21
 
+Shields retirement addendum date: September 1, 2026.
+
+Shields was retired from NemoClaw after this review was written. Every Shields reference below is retained as historical evidence of the ownership and migration behavior evaluated for the original OpenClaw 2026.7.1 integration; none describes a current command, supported runtime posture, or merge gate. The current mutable runtime retains the descriptor-pinned legacy-cache validation and removal, pinned-version migration suppression, and symlink, hard-link, size, and stability checks recorded here without a Shields-protected parent.
+
 ## Decision
 
 Pin the production OpenClaw runtime and matching official plugins to the
@@ -662,12 +666,13 @@ follows:
 - new images do not seed the legacy `update-check.json` placeholder.
   During an upgrade, the descriptor-pinned config helper removes this obsolete
   update polling and notification cache whether it is empty or populated when
-  the entrypoint can mutate the parent. A non-root gateway under the exact
-  root-owned shields-up topology retains the stable cache because it cannot
-  unlink it; the patched OpenClaw migration ignores that non-authoritative
-  pinned-version cache without producing a startup warning.
-  Without the compatibility patch, OpenClaw would try to harden and archive the
-  retained cache inside a shields-protected parent. Symbolic links, hard links,
+  the entrypoint can mutate the parent. Under the then-supported, now-retired
+  root-owned Shields-up topology, a non-root gateway retained the stable cache
+  because it could not unlink it. The patched OpenClaw migration continues to
+  ignore that non-authoritative pinned-version cache without producing a startup warning.
+  Without the compatibility patch, OpenClaw would historically have tried to
+  harden and archive the retained cache inside the then-supported, now-retired Shields-protected parent.
+  Symbolic links, hard links,
   directories, oversized files, or a file that changes during validation are
   rejected;
 - a root entrypoint starts the `gateway` user with `HOME=/sandbox`, so startup
