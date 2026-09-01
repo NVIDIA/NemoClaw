@@ -173,10 +173,9 @@ function Invoke-ChildSideEffectProbe {
 
 function Start-ProcessStartAudit {
     $sourceIdentifier = 'NemoClawNativeInstaller-' + [guid]::NewGuid().ToString('N')
-    $subscription = Register-WmiEvent -Class Win32_ProcessStartTrace -SourceIdentifier $sourceIdentifier
+    Register-WmiEvent -Class Win32_ProcessStartTrace -SourceIdentifier $sourceIdentifier | Out-Null
     return [pscustomobject]@{
         sourceIdentifier = $sourceIdentifier
-        subscription = $subscription
     }
 }
 
@@ -225,7 +224,6 @@ function Stop-ProcessStartAudit {
         Remove-Event -EventIdentifier $event.EventIdentifier
     }
     Unregister-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue
-    Remove-Job -Job $Audit.subscription -Force -ErrorAction SilentlyContinue
 }
 
 function Assert-ProhibitedProcessesAbsent {
