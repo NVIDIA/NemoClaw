@@ -6,7 +6,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
-import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -113,26 +112,6 @@ async function precleanHermesDiscord(
   );
 }
 
-async function startHermesFakeDiscordGateway(
-  host: HostCliClient,
-  cleanup: CleanupRegistry,
-  env: NodeJS.ProcessEnv,
-  token: string,
-  redactionValues: string[],
-): Promise<FakeDockerApi> {
-  return startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
-    kind: "discord-gateway",
-    imageScript: "fake-discord-gateway.cjs",
-    containerPrefix: "nemoclaw-fake-discord-hermes",
-    portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
-    captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
-    env,
-    redactionValues,
-  });
-}
-
 async function applyHermesFakeDiscordPolicy(options: {
   host: HostCliClient;
   sandboxName: string;
@@ -152,14 +131,6 @@ async function applyHermesFakeDiscordPolicy(options: {
       `${FAKE_DISCORD_HOST}:${options.api.port}:GET:/**`,
       "--add-allow",
       `${FAKE_DISCORD_HOST}:${options.api.port}:WEBSOCKET_TEXT:/**`,
-      "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--binary",
-      "/usr/local/bin/python3",
-      "--binary",
-      "/usr/bin/python3",
       "--binary",
       "/opt/hermes/.venv/bin/python",
       "--wait",
@@ -182,7 +153,9 @@ policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
 node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
-"$1" policy set --policy "$policy_file" --wait "$2"`,
+"$1" policy set --policy "$policy_file" --wait "$2"
+"$1" policy get --base "$2" >"$policy_file"
+node --import tsx "$6" --assert-binaries "$policy_file" "$4" "$5" websocket /opt/hermes/.venv/bin/python`,
       "bind-hermes-fake-discord-policy",
       options.host.openshellCommandPath,
       options.sandboxName,
@@ -605,12 +578,19 @@ PY`,
   expect(envProbe.stdout.trim()).toBe("OK");
 
   progress.phase("exercise native Discord gateway rewrite");
-  const fakeGateway = await startHermesFakeDiscordGateway(
+  const fakeGateway = await startFakeDockerApi(
     host,
-    cleanup,
-    env,
-    DISCORD_TOKEN,
-    redactionValues,
+    cleanup.trackDisposable.bind(cleanup),
+    {
+      kind: "discord-gateway",
+      imageScript: "fake-discord-gateway.cjs",
+      containerPrefix: "nemoclaw-fake-discord-hermes",
+      portEnv: "FAKE_DISCORD_GATEWAY_PORT",
+      captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+      expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: DISCORD_TOKEN },
+      env,
+      redactionValues,
+    },
   );
   await applyHermesFakeDiscordPolicy({
     host,
