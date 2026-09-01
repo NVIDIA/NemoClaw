@@ -261,45 +261,62 @@ export function selectManagedImagePublicationRun(
   positiveInteger(expected.prNumber, "PR number");
   positiveInteger(expected.workflowId, "managed-image workflow id");
   const response = record(payload, "managed-image workflow runs");
-  if (response.total_count !== 1 || !Array.isArray(response.workflow_runs)) {
-    throw new Error("exact managed-image workflow run is missing or ambiguous");
+  if (!Array.isArray(response.workflow_runs)) {
+    throw new Error("exact managed-image workflow run listing is invalid");
   }
-  if (response.workflow_runs.length !== 1) {
+  if (response.total_count !== response.workflow_runs.length) {
     throw new Error("exact managed-image workflow run listing is incomplete");
   }
-  const run = record(response.workflow_runs[0], "managed-image workflow run");
-  const id = positiveInteger(run.id, "managed-image workflow run id");
-  const attempt = positiveInteger(run.run_attempt, "managed-image workflow run attempt");
-  if (run.workflow_id !== expected.workflowId) {
-    throw new Error("managed-image workflow run does not match the trusted workflow");
+  if (response.workflow_runs.length === 0) {
+    throw new Error("exact managed-image workflow run is missing or ambiguous");
   }
-  exactString(run.name, MANAGED_IMAGE_WORKFLOW_NAME, "managed-image workflow run name");
-  exactString(run.path, MANAGED_IMAGE_WORKFLOW_PATH, "managed-image workflow run path");
-  exactString(run.event, "pull_request", "managed-image workflow run event");
-  exactString(run.head_sha, expected.headSha, "managed-image workflow run commit");
-  exactString(
-    record(run.repository, "managed-image workflow repository").full_name,
-    REPOSITORY,
-    "managed-image workflow repository",
-  );
-  exactString(
-    record(run.head_repository, "managed-image workflow source repository").full_name,
-    REPOSITORY,
-    "managed-image workflow source repository",
-  );
-  if (
-    !Array.isArray(run.pull_requests) ||
-    run.pull_requests.length !== 1 ||
-    record(run.pull_requests[0], "managed-image workflow pull request").number !== expected.prNumber
-  ) {
-    throw new Error("managed-image workflow run does not match the PR number");
+  const successfulRuns: ManagedImagePublicationRun[] = [];
+  const runIds = new Set<number>();
+  for (const rawRun of response.workflow_runs) {
+    const run = record(rawRun, "managed-image workflow run");
+    const id = positiveInteger(run.id, "managed-image workflow run id");
+    const attempt = positiveInteger(run.run_attempt, "managed-image workflow run attempt");
+    if (runIds.has(id)) {
+      throw new Error("exact managed-image workflow run listing contains duplicate runs");
+    }
+    runIds.add(id);
+    if (run.workflow_id !== expected.workflowId) {
+      throw new Error("managed-image workflow run does not match the trusted workflow");
+    }
+    exactString(run.name, MANAGED_IMAGE_WORKFLOW_NAME, "managed-image workflow run name");
+    exactString(run.path, MANAGED_IMAGE_WORKFLOW_PATH, "managed-image workflow run path");
+    exactString(run.event, "pull_request", "managed-image workflow run event");
+    exactString(run.head_sha, expected.headSha, "managed-image workflow run commit");
+    exactString(
+      record(run.repository, "managed-image workflow repository").full_name,
+      REPOSITORY,
+      "managed-image workflow repository",
+    );
+    exactString(
+      record(run.head_repository, "managed-image workflow source repository").full_name,
+      REPOSITORY,
+      "managed-image workflow source repository",
+    );
+    if (
+      !Array.isArray(run.pull_requests) ||
+      run.pull_requests.length !== 1 ||
+      record(run.pull_requests[0], "managed-image workflow pull request").number !==
+        expected.prNumber
+    ) {
+      throw new Error("managed-image workflow run does not match the PR number");
+    }
+    if (run.status === "completed" && run.conclusion === "success") {
+      successfulRuns.push({ attempt, headSha: expected.headSha, id });
+    }
   }
-  if (run.status !== "completed" || run.conclusion !== "success") {
+  if (successfulRuns.length === 0) {
     throw new Error(
       `managed-image workflow for candidate ${expected.headSha} must complete successfully before live E2E`,
     );
   }
-  return { attempt, headSha: expected.headSha, id };
+  const selectedRun = successfulRuns.sort((left, right) => right.id - left.id)[0];
+  if (!selectedRun) throw new Error("successful managed-image workflow run is missing");
+  return selectedRun;
 }
 
 /** Resolve one exact PR candidate catalog before candidate code executes. */

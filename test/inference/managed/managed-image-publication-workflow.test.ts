@@ -620,6 +620,7 @@ describe("complete managed-image publication workflow", () => {
     expect(activation.env?.NEMOCLAW_E2E_EXPECTED_SHA).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
+    expect(activation.env?.NEMOCLAW_E2E_SHARD).toBe("default");
     expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
       "${{ github.workspace }}/managed-pr-catalog.json",
     );
@@ -628,6 +629,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
+    expect(step(activation, "Bind E2E correlation identity").run).toContain("randomUUID()");
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );

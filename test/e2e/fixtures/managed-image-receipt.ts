@@ -4,23 +4,20 @@
 import os from "node:os";
 import path from "node:path";
 
-import {
-  openRegularFileNoFollow,
-  type OpenRegularFile,
-} from "../../../src/lib/adapters/fs/regular-file.ts";
 import { DEFAULT_GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
 import {
   isShippedManagedImageAgent,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
-  parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractV1,
-  type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
-import { liveE2eManagedImageCatalog } from "../../../src/lib/onboard/workload/preparation.ts";
+import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
 import { readConfigFile } from "../../../src/lib/state/config-io.ts";
 import { parseSandboxRegistryEntries } from "../../../src/lib/state/registry-normalization.ts";
 import { cloneSandboxWorkloadReceipt } from "../../../src/lib/state/registry/workload.ts";
@@ -36,50 +33,10 @@ function readCandidateCatalog(
     throw new Error("stock onboarding requires a selected candidate managed-image catalog");
   }
 
-  let candidateCatalog: OpenRegularFile | null = null;
   try {
-    let parsed: unknown;
-    if (selected.catalog) {
-      parsed = selected.catalog;
-    } else {
-      candidateCatalog = openRegularFileNoFollow(selected.path);
-      const metadata = candidateCatalog.stat();
-      if (metadata.size < 2 || metadata.size > 64 * 1024) throw new Error();
-      parsed = JSON.parse(candidateCatalog.readBytes(64 * 1024).toString("utf8")) as unknown;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-    const catalog = parsed as Record<string, unknown>;
-    if (
-      JSON.stringify(Object.keys(catalog).sort()) !==
-      JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
-    ) {
-      throw new Error();
-    }
-
-    const contracts = new Map<ShippedManagedImageAgent, ManagedImageContractV1>();
-    let cohort: string | null = null;
-    let platform: ManagedImagePlatform | null = null;
-    let release: string | null = null;
-    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-      const contract = parseManagedImageContractV1(catalog[agent], agent);
-      cohort ??= contract.source.cohort;
-      platform ??= contract.platform;
-      release ??= contract.source.release;
-      if (
-        contract.source.revision !== selected.revision ||
-        contract.source.cohort !== cohort ||
-        contract.platform !== platform ||
-        contract.source.release !== release
-      ) {
-        throw new Error();
-      }
-      contracts.set(agent, contract);
-    }
-    return contracts;
+    return readLiveE2eManagedImageCatalogContracts(selected);
   } catch {
     throw new Error("stock onboarding candidate managed-image catalog is invalid");
-  } finally {
-    candidateCatalog?.close();
   }
 }
 

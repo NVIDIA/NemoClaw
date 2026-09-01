@@ -28,6 +28,7 @@ import {
   installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   prepareSandboxWorkloadSource,
+  readLiveE2eManagedImageCatalogContracts,
   SandboxWorkloadPreparationError,
 } from "./workload/preparation";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
@@ -243,6 +244,40 @@ describe("sandbox workload preparation", () => {
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
         }),
       ).toThrow("conflicting authorities");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("validates every contract in an inline live E2E catalog", () => {
+    const selected = liveE2eManagedImageCatalog({
+      GITHUB_ACTIONS: "true",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+      NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
+    });
+
+    expect(selected).not.toBeNull();
+    expect(readLiveE2eManagedImageCatalogContracts(selected!)).toEqual(
+      new Map(SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)])),
+    );
+  });
+
+  it("reads a regular live E2E catalog without following a symbolic link", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const symlinkPath = path.join(fixtureRoot, "catalog-link.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    fs.symlinkSync(catalogPath, symlinkPath);
+    try {
+      expect(
+        readLiveE2eManagedImageCatalogContracts({ path: catalogPath, revision: REVISION }),
+      ).toEqual(
+        new Map(SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)])),
+      );
+      expect(() =>
+        readLiveE2eManagedImageCatalogContracts({ path: symlinkPath, revision: REVISION }),
+      ).toThrow("must be a bounded regular file");
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }

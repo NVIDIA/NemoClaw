@@ -100,12 +100,13 @@ It binds each artifact to the selected workflow run, attempt, revision, artifact
 The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64`.
 Only then does it emit `managed_image_revision` and the complete cohort receipt.
 
-When a reviewed image input changed, the planner requires one successful managed-image PR workflow run for the candidate commit.
-The run must belong to the same open PR and an NVIDIA/NemoClaw source branch.
+When a reviewed image input changed, the planner validates every returned managed-image PR workflow run for the candidate commit and selects the newest successful run by run ID.
+An earlier failed run does not block a later successful run.
+Every returned run must belong to the same open PR and an NVIDIA/NemoClaw source branch.
 The planner downloads one `managed-pr-contract-*` artifact for each shipped agent.
 It binds every artifact to the workflow run, attempt, candidate commit, artifact ID, and digest.
 It requires every shipped agent once, one candidate revision, one release, and one cohort before it assembles the candidate catalog.
-Missing, ambiguous, failed, incomplete, mixed, or substituted evidence stops before any stock-onboarding consumer starts.
+No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
 Manual PR E2E does not fall back to local Dockerfile builds.
 
 Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.

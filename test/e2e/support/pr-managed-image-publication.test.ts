@@ -71,27 +71,26 @@ function treeEntry(entryPath: string, sha: string) {
   return { mode: "100644", path: entryPath, sha, type: "blob" };
 }
 
-function workflowRun(overrides: Record<string, unknown> = {}) {
+function workflowRunRecord(overrides: Record<string, unknown> = {}) {
   return {
-    total_count: 1,
-    workflow_runs: [
-      {
-        id: RUN_ID,
-        run_attempt: 1,
-        workflow_id: WORKFLOW_ID,
-        name: "Images / Build, Test, and Publish Managed Images",
-        path: ".github/workflows/managed-images.yaml",
-        event: "pull_request",
-        head_sha: CANDIDATE_SHA,
-        status: "completed",
-        conclusion: "success",
-        repository: { full_name: CANONICAL_REPOSITORY },
-        head_repository: { full_name: CANONICAL_REPOSITORY },
-        pull_requests: [{ number: PR_NUMBER }],
-        ...overrides,
-      },
-    ],
+    id: RUN_ID,
+    run_attempt: 1,
+    workflow_id: WORKFLOW_ID,
+    name: "Images / Build, Test, and Publish Managed Images",
+    path: ".github/workflows/managed-images.yaml",
+    event: "pull_request",
+    head_sha: CANDIDATE_SHA,
+    status: "completed",
+    conclusion: "success",
+    repository: { full_name: CANONICAL_REPOSITORY },
+    head_repository: { full_name: CANONICAL_REPOSITORY },
+    pull_requests: [{ number: PR_NUMBER }],
+    ...overrides,
   };
+}
+
+function workflowRun(overrides: Record<string, unknown> = {}) {
+  return { total_count: 1, workflow_runs: [workflowRunRecord(overrides)] };
 }
 
 function candidateRequest(options: {
@@ -99,9 +98,13 @@ function candidateRequest(options: {
   readonly imageChanged: boolean;
   readonly run?: unknown;
   readonly artifactHeadSha?: string;
+  readonly artifactRunAttempt?: number;
+  readonly artifactRunId?: number;
   readonly missingAgent?: ManagedImageAgent;
 }) {
   const candidateRepository = options.candidateRepository ?? CANONICAL_REPOSITORY;
+  const artifactRunAttempt = options.artifactRunAttempt ?? 1;
+  const artifactRunId = options.artifactRunId ?? RUN_ID;
   const baseEntries = [
     treeEntry("Dockerfile.base", "3".repeat(40)),
     treeEntry("docs/guide.mdx", "4".repeat(40)),
@@ -150,13 +153,13 @@ function candidateRequest(options: {
     ],
   ]);
   for (const [index, agent] of SHIPPED_MANAGED_IMAGE_AGENTS.entries()) {
-    const name = `managed-pr-contract-${RUN_ID}-1-${agent}`;
+    const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}`;
     const archive = artifactZip([
       { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
     ]);
     const id = index + 100;
     responses.set(
-      `/repos/${CANONICAL_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
+      `/repos/${CANONICAL_REPOSITORY}/actions/runs/${artifactRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
       options.missingAgent === agent
         ? { total_count: 0, artifacts: [] }
         : {
@@ -169,7 +172,10 @@ function candidateRequest(options: {
                 id,
                 name,
                 size_in_bytes: archive.length,
-                workflow_run: { head_sha: options.artifactHeadSha ?? CANDIDATE_SHA, id: RUN_ID },
+                workflow_run: {
+                  head_sha: options.artifactHeadSha ?? CANDIDATE_SHA,
+                  id: artifactRunId,
+                },
               },
             ],
           },
@@ -289,6 +295,34 @@ describe("exact PR managed-image publication", () => {
       ),
     ).rejects.toThrow("must complete successfully before live E2E");
     expect(download).not.toHaveBeenCalled();
+  });
+
+  it("uses the newest successful Images run after an earlier failure", async () => {
+    const laterRunId = RUN_ID + 10;
+    const request = vi.fn(
+      candidateRequest({
+        artifactRunAttempt: 2,
+        artifactRunId: laterRunId,
+        imageChanged: true,
+        run: {
+          total_count: 2,
+          workflow_runs: [
+            workflowRunRecord({ conclusion: "failure" }),
+            workflowRunRecord({ id: laterRunId, run_attempt: 2 }),
+          ],
+        },
+      }),
+    );
+
+    await expect(
+      resolvePrManagedImageCatalog(resolverInput(), request, downloadContract),
+    ).resolves.toBe("candidate-catalog");
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining(`/actions/runs/${laterRunId}/artifacts`),
+    );
+    expect(request).not.toHaveBeenCalledWith(
+      expect.stringContaining(`/actions/runs/${RUN_ID}/artifacts`),
+    );
   });
 
   it("rejects missing or ambiguous exact-candidate Images runs", async () => {

@@ -19,6 +19,7 @@ import {
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
+  type ShippedManagedImageAgent,
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../managed-image/contract";
@@ -267,13 +268,19 @@ function unavailableResult(
 
 function requireCompleteManagedImageCatalog(
   catalog: ManagedImageContractCatalog,
-  expectedRelease: string,
-  expectedPlatform: ManagedImagePlatform,
+  expectedRelease: string | null,
+  expectedPlatform: ManagedImagePlatform | null,
   expectedRevision: string | null,
-): { readonly release: string; readonly revision: string } {
+): {
+  readonly contracts: ReadonlyMap<ShippedManagedImageAgent, ManagedImageContractV1>;
+  readonly release: string;
+  readonly revision: string;
+} {
+  const contracts = new Map<ShippedManagedImageAgent, ManagedImageContractV1>();
   let cohortRevision: string | null = null;
   let cohortRelease: string | null = null;
   let publicationCohort: string | null = null;
+  let cohortPlatform = expectedPlatform;
   for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
     const candidate = catalog[agent];
     if (candidate === undefined) {
@@ -282,8 +289,17 @@ function requireCompleteManagedImageCatalog(
       );
     }
     try {
-      const contract = parseManagedImageContractV1(candidate, agent, expectedPlatform);
-      if (expectedRevision === null && contract.source.release !== expectedRelease) {
+      const contract = parseManagedImageContractV1(
+        candidate,
+        agent,
+        cohortPlatform ?? undefined,
+      );
+      cohortPlatform ??= contract.platform;
+      if (
+        expectedRevision === null &&
+        expectedRelease !== null &&
+        contract.source.release !== expectedRelease
+      ) {
         throw new SandboxWorkloadPreparationError(
           `managed image catalog contract for '${agent}' belongs to '${contract.source.release}', not '${expectedRelease}'`,
         );
@@ -306,6 +322,7 @@ function requireCompleteManagedImageCatalog(
           "managed image catalog does not identify one all-agent publication cohort",
         );
       }
+      contracts.set(agent, contract);
     } catch (error) {
       if (error instanceof SandboxWorkloadPreparationError) throw error;
       throw new SandboxWorkloadPreparationError(
@@ -319,7 +336,23 @@ function requireCompleteManagedImageCatalog(
       "managed image catalog source revision does not match the trusted catalog revision",
     );
   }
-  return { release: cohortRelease!, revision: cohortRevision! };
+  return { contracts, release: cohortRelease!, revision: cohortRevision! };
+}
+
+/** Read and validate every contract in one selected live E2E catalog. */
+export function readLiveE2eManagedImageCatalogContracts(
+  selected: LiveE2eManagedImageCatalog,
+): ReadonlyMap<ShippedManagedImageAgent, ManagedImageContractV1> {
+  const catalog = selected.catalog ?? readExactManagedImageCatalog(selected.path);
+  if (
+    JSON.stringify(Object.keys(catalog).sort()) !==
+    JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
+  ) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog must contain only the shipped agent contracts",
+    );
+  }
+  return requireCompleteManagedImageCatalog(catalog, null, null, selected.revision).contracts;
 }
 
 function requireCandidateManagedImageCatalog(
