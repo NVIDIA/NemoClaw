@@ -25,7 +25,11 @@ import {
   detectUnconfiguredMessagingChannels,
 } from "../../messaging-channel-setup";
 import { staticMessagingProviderTypeForChannel } from "../../messaging-bridge-provider";
-import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
+import {
+  getActiveChannelsFromPlan,
+  getChannelsFromPlan,
+  messagingChannelsWithReusableGatewayCredentials,
+} from "../../messaging-plan-session";
 
 export {
   type RegistryMessagingAuthority,
@@ -227,16 +231,23 @@ function selectionFromReusablePlan<Agent>(
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
+  deps: Pick<
+    SandboxMessagingDeps<Agent>,
+    "clearPlanEnv" | "note" | "providerMatchesGatewayCredential" | "writePlanToEnv"
+  >,
 ): SandboxMessagingSelection {
-  // A registry plan records the previous selection, not the current host
-  // input. Rebuild the host-backed selection so policy reconciliation can
-  // disable a removed channel. The detector keeps in-sandbox QR-paired
-  // channels.
+  // A missing process input does not opt out a channel whose exact gateway
+  // credential provider still exists. Credential removal remains the durable
+  // opt-out signal for host-backed channels; disabled plan entries remain
+  // excluded from selectedChannels before this check.
+  const reusableChannels = messagingChannelsWithReusableGatewayCredentials(
+    selection.plan,
+    deps.providerMatchesGatewayCredential,
+  );
   const unconfiguredChannels = new Set(
     detectUnconfiguredMessagingChannels(
       selection.selectedChannels,
-      [],
+      reusableChannels,
       agent as Parameters<typeof detectUnconfiguredMessagingChannels>[2],
     ),
   );
@@ -470,7 +481,10 @@ async function selectionFromRegistryPlan<Agent>(
 export function reconcileReusedSandboxMessaging<Agent>(
   plan: SandboxMessagingPlan | null,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
+  deps: Pick<
+    SandboxMessagingDeps<Agent>,
+    "clearPlanEnv" | "note" | "providerMatchesGatewayCredential" | "writePlanToEnv"
+  >,
   recordedPlan: SandboxMessagingPlan | null = plan,
 ): SandboxMessagingSelection & { readonly changed: boolean } {
   const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;

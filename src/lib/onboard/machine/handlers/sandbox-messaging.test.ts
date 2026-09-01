@@ -226,6 +226,38 @@ function whatsappPlan(): SandboxMessagingPlan {
   };
 }
 
+function teamsPlan(credentialHash: string): SandboxMessagingPlan {
+  return {
+    ...telegramPlan(credentialHash),
+    agent: "hermes",
+    channels: [
+      {
+        channelId: "teams",
+        displayName: "Microsoft Teams",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      },
+    ],
+    credentialBindings: [
+      {
+        channelId: "teams",
+        credentialId: "clientSecret",
+        sourceInput: "clientSecret",
+        providerName: "alpha-teams-bridge",
+        providerEnvKey: "MSTEAMS_CLIENT_SECRET",
+        placeholder: "openshell:resolve:env:MSTEAMS_CLIENT_SECRET",
+        credentialAvailable: true,
+        credentialHash,
+      },
+    ],
+  };
+}
+
 function slackPlan(
   botCredentialHash: string,
   appCredentialHash?: string,
@@ -361,7 +393,9 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
       authoritative: false,
       plan: null,
     })),
-    providerMatchesGatewayCredential: vi.fn(() => false),
+    providerMatchesGatewayCredential: vi.fn(
+      (_name: string, _type: string, _credentialEnv: string) => false,
+    ),
   };
 }
 
@@ -376,6 +410,8 @@ afterEach(() => {
 });
 
 describe("reconcileReusedSandboxMessaging", () => {
+  const unavailableProvider = vi.fn(() => false);
+
   it("does not clear an equal recorded plan from a different authority", () => {
     const plan = telegramPlan(hashCredential("123456:registry-token") ?? "");
     const clearPlanEnv = vi.fn();
@@ -384,7 +420,12 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv, note: vi.fn(), writePlanToEnv: vi.fn() },
+      {
+        clearPlanEnv,
+        note: vi.fn(),
+        providerMatchesGatewayCredential: unavailableProvider,
+        writePlanToEnv: vi.fn(),
+      },
       plan,
     );
 
@@ -394,7 +435,12 @@ describe("reconcileReusedSandboxMessaging", () => {
 
   it("omits a retired host-backed channel from a reused sandbox selection (#9283)", () => {
     const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
-    const deps = { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() };
+    const deps = {
+      clearPlanEnv: vi.fn(),
+      note: vi.fn(),
+      providerMatchesGatewayCredential: unavailableProvider,
+      writePlanToEnv: vi.fn(),
+    };
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
 
     const result = reconcileReusedSandboxMessaging(
@@ -421,11 +467,41 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
+      {
+        clearPlanEnv: vi.fn(),
+        note: vi.fn(),
+        providerMatchesGatewayCredential: unavailableProvider,
+        writePlanToEnv: vi.fn(),
+      },
       plan,
     );
 
     expect(result.selectedChannels).toEqual(["discord"]);
+  });
+
+  it("keeps a channel when its process inputs are absent but its gateway provider remains (#10667)", () => {
+    const plan = discordPlan(hashCredential("previous-discord-token") ?? "", "hermes");
+    const providerMatchesGatewayCredential = vi.fn(() => true);
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "hermes" },
+      {
+        clearPlanEnv: vi.fn(),
+        note: vi.fn(),
+        providerMatchesGatewayCredential,
+        writePlanToEnv: vi.fn(),
+      },
+      plan,
+    );
+
+    expect(result).toEqual({ plan, selectedChannels: ["discord"], changed: false });
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+    );
   });
 
   it("keeps an in-sandbox QR channel in a reused sandbox selection (#9283)", () => {
@@ -436,7 +512,12 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
+      {
+        clearPlanEnv: vi.fn(),
+        note: vi.fn(),
+        providerMatchesGatewayCredential: unavailableProvider,
+        writePlanToEnv: vi.fn(),
+      },
       plan,
     );
 
@@ -450,7 +531,12 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       mixedChannelPlan(),
       { name: "openclaw" },
-      { clearPlanEnv() {}, note() {}, writePlanToEnv() {} },
+      {
+        clearPlanEnv() {},
+        note() {},
+        providerMatchesGatewayCredential: unavailableProvider,
+        writePlanToEnv() {},
+      },
     );
     const filtered = result.plan;
 
@@ -527,6 +613,72 @@ describe("reconcileSandboxMessaging plan authority", () => {
 
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
+  });
+
+  it.each([
+    ["discord", discordPlan(hashCredential("discord-token") ?? "", "hermes")],
+    [
+      "slack",
+      slackPlan(
+        hashCredential("slack-bot-token") ?? "",
+        hashCredential("slack-app-token") ?? "",
+        "hermes",
+      ),
+    ],
+    ["teams", teamsPlan(hashCredential("teams-client-secret") ?? "")],
+  ])(
+    "preserves active %s configuration when its gateway credential providers remain (#10667)",
+    async (channelId, registryPlan) => {
+      const deps = reconcileDeps([]);
+      deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+        authoritative: true,
+        plan: registryPlan,
+      });
+      deps.providerMatchesGatewayCredential.mockReturnValue(true);
+
+      const result = await reconcileSandboxMessaging({
+        resume: false,
+        session: null,
+        sandboxName: "alpha",
+        agent: { name: "hermes" },
+        deps,
+      });
+
+      expect(result).toEqual({ plan: registryPlan, selectedChannels: [channelId] });
+      expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+      expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledTimes(
+        registryPlan.credentialBindings.length,
+      );
+    },
+  );
+
+  it("requires every Slack credential provider before preserving absent process inputs (#10667)", async () => {
+    const registryPlan = slackPlan(
+      hashCredential("slack-bot-token") ?? "",
+      hashCredential("slack-app-token") ?? "",
+      "hermes",
+    );
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    deps.providerMatchesGatewayCredential.mockImplementation(
+      (_name, _type, credentialEnv) => credentialEnv === "SLACK_BOT_TOKEN",
+    );
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "hermes" },
+      deps,
+    });
+
+    expect(result).toEqual({
+      plan: withChannelDisabled(registryPlan, "slack"),
+      selectedChannels: [],
+    });
   });
 
   it("uses the registry plan without reading an invalid environment plan", async () => {
@@ -631,6 +783,33 @@ describe("reconcileSandboxMessaging plan authority", () => {
     });
   });
 
+  it("keeps an explicit lifecycle opt-out disabled when its provider remains (#10667)", async () => {
+    const registryPlan = {
+      ...withChannelDisabled(
+        discordPlan(hashCredential("previous-discord-token") ?? "", "hermes"),
+        "discord",
+      ),
+      workflow: "remove-channel" as const,
+    };
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    deps.providerMatchesGatewayCredential.mockReturnValue(true);
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "hermes" },
+      deps,
+    });
+
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: [] });
+    expect(deps.providerMatchesGatewayCredential).not.toHaveBeenCalled();
+  });
+
   it("keeps a still-configured channel in a lifecycle-workflow registry plan (#9283)", async () => {
     const token = "still-configured-discord-token";
     const registryPlan = {
@@ -678,6 +857,29 @@ describe("reconcileSandboxMessaging plan authority", () => {
       plan: withChannelDisabled(registryPlan, "discord"),
       selectedChannels: [],
     });
+  });
+
+  it("preserves a provider-backed staged plan from recorded resume channels (#10667)", async () => {
+    const stagedPlan = discordPlan(hashCredential("previous-discord-token") ?? "", "hermes");
+    const deps = reconcileDeps([stagedPlan]);
+    deps.getRecordedMessagingChannelsForResume.mockReturnValue(["discord"]);
+    deps.providerMatchesGatewayCredential.mockReturnValue(true);
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "hermes" },
+      deps,
+    });
+
+    expect(result).toEqual({ plan: stagedPlan, selectedChannels: ["discord"] });
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+    );
   });
 
   it("omits a retired host-backed channel from recorded resume channels (#9283)", async () => {

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 import { createPolicyHandlerDeps, basePolicyHandlerOptions } from "./policies-test-fixture";
 import { handlePoliciesState } from "./policies";
 
@@ -74,6 +75,45 @@ describe("policy state handler", () => {
     expect(calls.setupPolicies).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("policies", "live OpenShell rebuild policy");
     expect(result.appliedPolicyPresets).toEqual([]);
+  });
+
+  it("keeps a provider-backed channel in policy requirements when process inputs are absent (#10667)", async () => {
+    const discordPlan = makeMessagingPlan({
+      channels: ["discord"],
+      agent: "hermes",
+      credentialBindings: [
+        {
+          channelId: "discord",
+          credentialId: "discordBotToken",
+          sourceInput: "botToken",
+          providerName: "my-assistant-discord-bridge",
+          providerEnvKey: "DISCORD_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: "discord-token-hash",
+        },
+      ],
+    });
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: vi.fn(() => ({ messaging: { plan: discordPlan } })),
+      providerMatchesGatewayCredential: vi.fn(() => true),
+    });
+    calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
+      configuredChannels.includes("discord") ? [] : ["discord"],
+    );
+
+    await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      selectedMessagingChannels: [],
+      agent: { name: "hermes" },
+    });
+
+    expect(calls.unconfiguredChannels).toHaveBeenCalledWith(
+      ["discord"],
+      ["discord"],
+      { name: "hermes" },
+    );
+    expect(calls.mergeChannels).toHaveBeenCalledWith([], [], ["discord"], []);
   });
 
   it("merges live messaging channels into policy requirements", async () => {

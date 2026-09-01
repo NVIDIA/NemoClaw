@@ -3316,8 +3316,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           loadSession: onboardSession.loadSession,
           getActiveSandbox: (name) => registry.getSandbox(name),
           mergePolicyMessagingChannels,
-          detectUnconfiguredMessagingChannels:
-            messagingChannelSetup.detectUnconfiguredMessagingChannels,
+          detectUnconfiguredMessagingChannels: messagingChannelSetup.detectUnconfiguredMessagingChannels,
+          providerMatchesGatewayCredential,
           verifyCompatibleEndpointSandboxSmoke: (options) =>
             verifyCompatibleEndpointSandboxSmoke({
               ...options,

@@ -7,6 +7,7 @@ import { normalizeAgentNameForResumeState } from "../../agent-resume-state";
 import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
+  messagingChannelsWithReusableGatewayCredentials,
 } from "../../messaging-plan-session";
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
@@ -57,6 +58,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       selectedChannels: readonly string[],
       agent: Agent,
     ): string[];
+    providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
     verifyCompatibleEndpointSandboxSmoke(options: {
       sandboxName: string;
       provider: string;
@@ -148,15 +150,18 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
   const planDisabledChannels = getDisabledChannelsFromPlan(activePlan);
-  // A channel the operator stopped configuring never reaches `disabledChannels`,
-  // so without this the reused plan keeps it enabled and every later onboarding
-  // run re-applies its egress preset. Adding it to `disabledChannels` here lets
-  // the existing disabled-channel pruning drop the preset from both the merged
-  // selection and the previously-applied set.
-  //
+  const reusableMessagingChannels = messagingChannelsWithReusableGatewayCredentials(
+    activePlan ?? latestSession?.messagingPlan ?? null,
+    deps.providerMatchesGatewayCredential,
+  );
+  // A removed gateway credential is the durable opt-out signal for an active
+  // host-backed channel. Missing process inputs alone do not disable it because
+  // interactive values normally disappear between onboard runs. Adding a
+  // channel with no reusable provider to `disabledChannels` lets the existing
+  // pruning remove its preset from the merged and previously applied sets.
   const unconfiguredMessagingChannels = deps.detectUnconfiguredMessagingChannels(
     [...recordedMessagingChannels, ...activeMessagingChannels],
-    selectedMessagingChannels,
+    [...new Set([...selectedMessagingChannels, ...reusableMessagingChannels])],
     agent,
   );
   const disabledChannels =
