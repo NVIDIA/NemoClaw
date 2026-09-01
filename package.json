@@ -4,8 +4,18 @@
   "version": "0.1.0",
   "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
+  "exports": {
+    "./lifecycle": {
+      "types": "./dist/lifecycle/index.d.ts",
+      "import": "./dist/lifecycle/index.js",
+      "require": "./dist/lifecycle/index.js",
+      "default": "./dist/lifecycle/index.js"
+    },
+    "./*": "./*"
+  },
   "bin": {
     "nemoclaw": "./bin/nemoclaw.js",
+    "nemoclaw-blueprint-runner": "./dist/lib/blueprint-runner.js",
     "nemohermes": "./bin/nemohermes.js",
     "nemo-deepagents": "./bin/nemoclaw.js"
   },
@@ -24,6 +34,7 @@
     "dev:setup": "bash scripts/dev-setup.sh",
     "dev:doctor": "bash scripts/dev-setup.sh --doctor",
     "agent": "pi",
+    "review:local": "node --experimental-strip-types --no-warnings tools/pr-review-advisor/local-review.mts",
     "test": "npm run clean:cli && npm --prefix nemoclaw run clean && npm run build:cli && npm --prefix nemoclaw run build && vitest run --project cli --project integration --project installer-integration --project package-contract --project plugin --project e2e-support",
     "test:spec": "npm test -- --reporter=tree",
     "test:fast": "npm run clean:cli && npm run catalog:compile && vitest run --project cli --project plugin --project e2e-support",
@@ -60,8 +71,10 @@
     "catalog:compile": "tsx src/lib/inference/serving/generate-catalog.ts",
     "catalog:check": "tsx src/lib/inference/serving/generate-catalog.ts --check",
     "catalog:verify-hugging-face": "npm run catalog:compile && tsx tools/managed-inference/verify-hugging-face-models.ts",
-    "build:cli": "npm run build:policy-boundary && tsc -p tsconfig.src.json && node dist/lib/core/generate-build-identity.js && node dist/lib/inference/serving/generate-catalog.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
+    "build:cli": "npm run prune:retired-cli && npm run build:policy-boundary && npm run build:runner-boundary && tsc -p tsconfig.src.json && node --experimental-strip-types --no-warnings scripts/lib/package-blueprint-runner-runtime.mts && node dist/lib/core/generate-build-identity.js && node dist/lib/inference/serving/generate-catalog.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
+    "build:runner-boundary": "node -e \"require('node:fs').rmSync('nemoclaw/runner-dist', { recursive: true, force: true })\" && tsc -p nemoclaw/tsconfig.runner.json",
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prune:retired-cli": "node -e \"const fs = require('node:fs'); for (const prefix of ['dist/commands/deploy', 'dist/lib/actions/deploy']) for (const suffix of ['.js', '.js.map', '.d.ts', '.d.ts.map']) fs.rmSync(prefix + suffix, { force: true }); fs.rmSync('dist/lib/deploy', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.mts",
     "generate:agent-state-lock-plans": "node --import tsx scripts/lib/generate-agent-state-lock-plans.mts",
@@ -99,6 +112,12 @@
     "smol-toml": "1.7.0",
     "undici": "8.10.0",
     "yaml": "2.8.3"
+  },
+  "optionalDependencies": {
+    "@bufbuild/protobuf": "2.12.1",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-node": "2.1.2",
+    "@nvidia/openshell-sdk": "0.0.106"
   },
   "bundleDependencies": [
     "p-retry"

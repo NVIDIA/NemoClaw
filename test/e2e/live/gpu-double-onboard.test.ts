@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -153,7 +153,7 @@ async function expectSandboxInference42(
     },
   );
   expect(response.exitCode, resultText(response)).toBe(0);
-  expect(containsInteger42Answer(response.stdout), resultText(response)).toBe(true);
+  expect(containsAnswer(response.stdout, "42"), resultText(response)).toBe(true);
 }
 
 test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboard", {

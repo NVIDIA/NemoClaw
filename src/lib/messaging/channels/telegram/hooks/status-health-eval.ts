@@ -73,7 +73,7 @@ export type TelegramProbeInput = {
   // ISO timestamp captured by the orchestrator when the probe ran.
   probedAt: string;
   // Whether the telegram preset is recorded in the sandbox registry.
-  presetInRegistry: boolean;
+  presetApplied: boolean;
   // Whether the telegram preset's network policy is loaded on the gateway,
   // or null when the gateway could not be reached.
   presetOnGateway: boolean | null;
@@ -103,7 +103,7 @@ function configCoverageSignal(input: TelegramProbeInput): DiagnosticSignal {
 }
 
 function policyCoverageSignal(input: TelegramProbeInput): DiagnosticSignal {
-  if (input.presetOnGateway === false && input.presetInRegistry) {
+  if (input.presetOnGateway === false && input.presetApplied) {
     return {
       label: "Policy coverage",
       severity: "fail",
@@ -111,7 +111,7 @@ function policyCoverageSignal(input: TelegramProbeInput): DiagnosticSignal {
       hint: "rebuild the sandbox so the preset is reapplied to the OpenShell gateway",
     };
   }
-  if (!input.presetInRegistry) {
+  if (!input.presetApplied) {
     return {
       label: "Policy coverage",
       severity: "fail",

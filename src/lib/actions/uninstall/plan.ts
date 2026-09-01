@@ -7,6 +7,7 @@ import os from "node:os";
 import {
   defaultUninstallPaths,
   NEMOCLAW_PROVIDERS,
+  selectedGatewayStateDirIsWithinDefaultRoot,
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
 import {
@@ -16,7 +17,12 @@ import {
 } from "../../domain/uninstall/plan";
 import { classifyNemoclawShim, type ShimClassification } from "../../domain/uninstall/shims";
 
-export { buildUninstallPlan, defaultUninstallPaths, NEMOCLAW_PROVIDERS };
+export {
+  buildUninstallPlan,
+  defaultUninstallPaths,
+  NEMOCLAW_PROVIDERS,
+  selectedGatewayStateDirIsWithinDefaultRoot,
+};
 export type { UninstallPaths, UninstallPlan };
 
 export interface FileSystemDeps {
@@ -28,7 +34,12 @@ export interface FileSystemDeps {
 }
 
 export interface HostUninstallPlanOptions extends Omit<UninstallPlanOptions, "shim"> {
-  env: Partial<Pick<NodeJS.ProcessEnv, "HOME" | "TMPDIR" | "XDG_BIN_HOME">>;
+  env: Partial<
+    Pick<
+      NodeJS.ProcessEnv,
+      "HOME" | "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR" | "TMPDIR" | "XDG_BIN_HOME"
+    >
+  >;
   fs?: FileSystemDeps;
 }
 
@@ -118,6 +129,7 @@ export function classifyShimPath(
 export function buildHostUninstallPlan(options: HostUninstallPlanOptions): UninstallPlan {
   const home = resolveUninstallHome(options.env.HOME);
   const paths = defaultUninstallPaths({
+    gatewayStateDir: options.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
     home,
     tmpDir: options.env.TMPDIR,
     xdgBinHome: options.env.XDG_BIN_HOME,

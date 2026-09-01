@@ -54,8 +54,10 @@ afterEach(async () => {
 });
 
 describe("Bedrock raw-command progress", () => {
-  it("reports timestamp-only output activity without forwarding child payloads", async () => {
+  it("applies the local Dockerfile and reports timestamp-only output activity", async () => {
     const secret = "opaque-bedrock-progress-secret";
+    const expectedDockerfile = path.resolve("Dockerfile");
+    const expectedOutput = `${secret}:${expectedDockerfile}`;
     const artifacts = await artifactSink("bedrock-progress-output");
     const observation = progressProbe();
     const { progress } = observation;
@@ -64,19 +66,25 @@ describe("Bedrock raw-command progress", () => {
       process.execPath,
       [
         "-e",
-        "process.stdout.write(process.env.BEDROCK_TEST_SECRET); process.stderr.write('stderr-ready')",
+        "process.stdout.write(`${process.env.BEDROCK_TEST_SECRET}:${process.env.NEMOCLAW_FROM_DOCKERFILE}`); process.stderr.write('stderr-ready')",
       ],
       {
         artifactName: "bedrock-progress-output",
         artifacts,
-        env: { ...process.env, BEDROCK_TEST_SECRET: secret },
+        env: {
+          ...process.env,
+          BEDROCK_TEST_SECRET: secret,
+          E2E_TARGET_ID: "bedrock-runtime-compatible-anthropic",
+          E2E_WORKLOAD_SOURCE: "local-dockerfile",
+          NEMOCLAW_AGENT: "openclaw",
+        },
         progress,
         redactionValues: [secret],
       },
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe(secret);
+    expect(result.stdout).toBe(expectedOutput);
     observation.timers[0]?.();
     expect(observation.lines.at(-1)).toContain("no active command");
     expect(observation.lines).toEqual(
@@ -95,7 +103,7 @@ describe("Bedrock raw-command progress", () => {
         path.join(artifacts.rootDir, "raw-shell/bedrock-progress-output.stdout.txt"),
         "utf8",
       ),
-    ).resolves.toBe("[REDACTED]");
+    ).resolves.toBe(`[REDACTED]:${expectedDockerfile}`);
   });
 
   it("emits an immediate content-free timeout event and closes command activity", async () => {

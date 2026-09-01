@@ -32,6 +32,13 @@ const runtimeSnapshotMocks = vi.hoisted(() => ({
 const sandboxCreateMocks = vi.hoisted(() => ({
   isDockerDesktopWslRuntime: vi.fn(),
 }));
+const dockerClientIsolationMocks = vi.hoisted(() => ({
+  prepare:
+    vi.fn<typeof import("../../adapters/docker/client-isolation").prepareDockerBuildEnvironment>(),
+  original: undefined as
+    | undefined
+    | typeof import("../../adapters/docker/client-isolation").prepareDockerBuildEnvironment,
+}));
 
 vi.mock("../../adapters/docker/inspect", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/docker/inspect")>()),
@@ -54,6 +61,12 @@ vi.mock("../docker-gpu-sandbox-create", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../docker-gpu-sandbox-create")>()),
   isDockerDesktopWslRuntime: sandboxCreateMocks.isDockerDesktopWslRuntime,
 }));
+
+vi.mock("../../adapters/docker/client-isolation", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../adapters/docker/client-isolation")>();
+  dockerClientIsolationMocks.original = original.prepareDockerBuildEnvironment;
+  return { ...original, prepareDockerBuildEnvironment: dockerClientIsolationMocks.prepare };
+});
 
 vi.mock("../openshell-docker-sandbox-containers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../openshell-docker-sandbox-containers")>()),
@@ -106,6 +119,10 @@ function compatibilityLifecycleInput(
     },
     requiredLimits: [],
     timeoutSecs: 30,
+    dockerClientEnv: {
+      DOCKER_CONFIG: "/managed-create/.docker",
+      DOCKER_HOST: "unix:///managed-create/docker.sock",
+    },
     network: {
       inferenceProvider: "openai",
       gatewayUsesContainerBridge: true,
@@ -168,6 +185,14 @@ beforeEach(() => {
     timeoutKind: null,
   });
   sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(false);
+  dockerClientIsolationMocks.prepare.mockImplementation(
+    (input) =>
+      dockerClientIsolationMocks.original?.(input) ?? {
+        env: {},
+        isolatedCredentialConfig: false,
+        cleanup: () => ({ ok: true }),
+      },
+  );
   runtimeSnapshotMocks.query.mockReturnValue({
     ok: true,
     imageId: `sha256:${"a".repeat(64)}`,
@@ -184,6 +209,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const stateRoot of temporaryStateRoots.splice(0)) {
     fs.rmSync(stateRoot, { recursive: true, force: true });
   }
@@ -266,17 +292,57 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
     dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
     dockerRun.mockReturnValueOnce({ status: 1, stderr: "probe rejected" });
+    const isolatedConfig = "/tmp/nemoclaw-wsl-buildkit-docker-config";
+    const retainedDirectory = "/tmp/nemoclaw-wsl-buildkit-docker-config";
+    const cleanup = vi.fn(() => ({
+      ok: false as const,
+      directory: retainedDirectory,
+      error: "permission denied",
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dockerClientIsolationMocks.prepare.mockReturnValue({
+      env: {
+        DOCKER_BUILDKIT: "1",
+        DOCKER_CONFIG: isolatedConfig,
+        DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST,
+      },
+      isolatedCredentialConfig: true,
+      cleanup,
+    });
 
     await runCompatibilityCreate(input, seed);
 
+    expect(dockerClientIsolationMocks.prepare).toHaveBeenCalledTimes(2);
+    expect(dockerClientIsolationMocks.prepare).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ env: input.dockerClientEnv }),
+    );
+    expect(dockerClientIsolationMocks.prepare).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ env: input.dockerClientEnv }),
+    );
     expect(dockerAdapterMocks.imageInspect).toHaveBeenCalledWith(
       sandboxImage,
-      expect.objectContaining({ ignoreError: true, suppressOutput: true, timeout: 30_000 }),
+      expect.objectContaining({
+        env: expect.objectContaining({ DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST }),
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+      }),
     );
     expect(dockerAdapterMocks.pullWithProgressWatchdog).toHaveBeenCalledWith(
       sandboxImage,
       expect.objectContaining({ maxTimeoutMs: 30 * 60 * 1000 }),
     );
+    const pullEnv = dockerAdapterMocks.pullWithProgressWatchdog.mock.calls[0]?.[1]?.env;
+    expect(pullEnv?.DOCKER_CONFIG).toBe(isolatedConfig);
+    expect(pullEnv?.DOCKER_HOST).toBe(input.dockerClientEnv.DOCKER_HOST);
+    expect(pullEnv?.DOCKER_BUILDKIT).toBe("1");
+    expect(pullEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(cleanup).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(retainedDirectory));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(sandboxImage));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("contains no credentials"));
     expect(dockerAdapterMocks.pullWithProgressWatchdog.mock.invocationCallOrder[0]).toBeLessThan(
       dockerRun.mock.invocationCallOrder[0] ?? 0,
     );
@@ -291,6 +357,18 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     expect(secondProbeArgs.slice(-2)).toEqual([sandboxImage, "true"]);
     expect(dockerRun.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 30_000 }));
     expect(dockerRun.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ timeout: 30_000 }));
+    expect(dockerRun.mock.calls[0]?.[1]?.env).toEqual(
+      expect.objectContaining({
+        DOCKER_CONFIG: isolatedConfig,
+        DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST,
+      }),
+    );
+    expect(dockerRun.mock.calls[1]?.[1]?.env).toEqual(
+      expect.objectContaining({
+        DOCKER_CONFIG: isolatedConfig,
+        DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST,
+      }),
+    );
   });
 
   it("skips the pull when the exact WSL sandbox image is already local", async () => {
@@ -379,9 +457,21 @@ describe("Docker managed-bootstrap GPU probe image", () => {
       const { dependencies, dockerRun } = gpuModeDependencies();
       const seed = authority("openclaw");
       const input = compatibilityLifecycleInput(seed, dependencies);
+      const sandboxImage = `${input.image.repository}@${input.image.manifestDigest}`;
+      const retainedDirectory = "/tmp/nemoclaw-retained-docker-config";
       sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
       dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
       dockerAdapterMocks.pullWithProgressWatchdog.mockResolvedValue(pullResult);
+      dockerClientIsolationMocks.prepare.mockReturnValue({
+        env: { DOCKER_CONFIG: retainedDirectory },
+        isolatedCredentialConfig: true,
+        cleanup: () => ({
+          ok: false,
+          directory: retainedDirectory,
+          error: "permission denied",
+        }),
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const lifecycle = createDockerManagedBootstrapSurface().createLifecycle(input);
 
       await expect(
@@ -389,6 +479,8 @@ describe("Docker managed-bootstrap GPU probe image", () => {
       ).rejects.toThrow(
         `Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`,
       );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(retainedDirectory));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(sandboxImage));
       expect(dockerRun).not.toHaveBeenCalled();
       expect(adapterMocks.prepare).not.toHaveBeenCalled();
     },
@@ -447,6 +539,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       },
       requiredLimits: [],
       timeoutSecs: 30,
+      dockerClientEnv: {},
       network: {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
@@ -544,6 +637,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       },
       requiredLimits: [],
       timeoutSecs: 30,
+      dockerClientEnv: {},
       onPatchFailure,
       network: {
         inferenceProvider: "openai",

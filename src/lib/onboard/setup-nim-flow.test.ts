@@ -1256,7 +1256,7 @@ describe("createSetupNim", () => {
     expect(installManagedLlamaCpp).toHaveBeenCalledWith(selection, {
       sandboxName: "spark-agent",
       gatewayPort: 8091,
-      revalidatePolicyRequirements: expect.any(Function),
+      revalidateSandboxIdentity: expect.any(Function),
       runtimeProvider,
     });
     expect(getRuntimeProvider).toHaveBeenCalledOnce();

@@ -354,10 +354,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
     (args: readonly string[], commandOptions?: Record<string, unknown>) => {
       switch (args[0]) {
         case "create": {
+          const name = String(args[args.indexOf("--name") + 1] ?? "");
+          if (name.startsWith("nemoclaw-managed-startup-receipt-seed-")) return ok();
           events.push("create:replacement");
           const source =
             original ?? failFixture("original disappeared before replacement creation");
-          const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
           const dockerOptions = args.slice(0, imageIndex);
@@ -396,6 +397,10 @@ export function fixture(options: DockerFixtureOptions = {}) {
         }
         case "ps":
           return ok(original ? OLD_ID : "");
+        case "volume":
+          return ok();
+        case "rm":
+          return ok();
         case "inspect": {
           const id = String(args[3] ?? "");
           if (dockerInspectUnknownIds.has(id)) {
@@ -413,6 +418,9 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const source = String(args[sourceIndex] ?? "");
           const destination = String(args[sourceIndex + 1] ?? "");
           const copyIntoContainer = () => {
+            if (args[1] === "-a" && destination.includes("nemoclaw-managed-startup-receipt-seed")) {
+              return ok();
+            }
             events.push("stage:envelope");
             expect(args).toEqual(["cp", "-", `${NEW_ID}:/`]);
             expect(commandOptions?.stdio).toEqual(["pipe", "pipe", "pipe"]);

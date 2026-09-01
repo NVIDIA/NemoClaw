@@ -133,7 +133,6 @@ export function buildOnboardMachineContext(session: Session): OnboardMachineCont
     ...(reasoningEffort ? { reasoningEffort } : {}),
     hermesAuthMethod: hermesAuthMethod(session.hermesAuthMethod),
     hermesToolGateways: stringArray(session.hermesToolGateways),
-    policyPresets: stringArray(session.policyPresets),
     messagingChannels: getActiveChannelsFromPlan(session.messagingPlan),
     gpuPassthrough: booleanValue(session.gpuPassthrough),
   };
