@@ -178,6 +178,22 @@ export async function runAdvisorSpecialist(input: {
   if (cleanupError) throw cleanupError;
   return result;
 }
+export function validateSpecialistArtifacts(
+  root: string,
+  artifactDirectory: string,
+  interest: string,
+): void {
+  const directory = path.join(root, "artifacts", artifactDirectory);
+  const expected = [`pr-review-${interest}-session.jsonl`, `pr-review-${interest}-summary.md`];
+  if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(expected))
+    throw new Error("Specialist artifacts do not match the existing Markdown and JSONL contract");
+  if (expected.some((name) => {
+    const stat = fs.lstatSync(path.join(directory, name));
+    return !stat.isFile() || stat.isSymbolicLink();
+  }))
+    throw new Error("Specialist artifact must be a regular file");
+}
+
 export function publishSpecialistJobSummary(env: NodeJS.ProcessEnv): void {
   const interest = env.PR_REVIEW_ADVISOR_INTEREST;
   const artifactDirectory = env.PR_REVIEW_ADVISOR_ARTIFACT_DIR;
@@ -248,8 +264,16 @@ export async function runAdvisorSpecialistCommand(
       },
       cancelled: () => received !== undefined,
     });
-    if (result === "complete" && received === undefined && env.GITHUB_STEP_SUMMARY)
+    if (result === "complete" && received === undefined && env.GITHUB_STEP_SUMMARY) {
+      if (!env.GITHUB_WORKSPACE || !env.PR_REVIEW_ADVISOR_ARTIFACT_DIR || !env.PR_REVIEW_ADVISOR_INTEREST)
+        throw new Error("Hosted specialist artifact environment is incomplete");
+      validateSpecialistArtifacts(
+        env.GITHUB_WORKSPACE,
+        env.PR_REVIEW_ADVISOR_ARTIFACT_DIR,
+        env.PR_REVIEW_ADVISOR_INTEREST,
+      );
       publishSpecialistJobSummary(env);
+    }
   } catch (error) {
     cancellationFailure ??= error;
     if (!received) throw error;

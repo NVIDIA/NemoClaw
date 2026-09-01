@@ -15,6 +15,7 @@ import {
   defaultAdvisorSpecialistLifecycle,
   redactAdvisorDiagnostic,
   runAdvisorSpecialist,
+  validateSpecialistArtifacts,
   type AdvisorSpecialistLifecycle,
 } from "./specialist-lifecycle.mts";
 import { ADVISOR_SPECIALISTS, type AdvisorSpecialist } from "./specialist-catalog.mts";
@@ -285,20 +286,6 @@ function stageArtifacts(
     },
   };
 }
-
-function validateSpecialistArtifacts(root: string, interest: string): void {
-  const directory = path.join(root, "artifacts", "pr-review-specialist-" + interest);
-  const expected = [`pr-review-${interest}-session.jsonl`, `pr-review-${interest}-summary.md`];
-  if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(expected))
-    throw new Error("Specialist artifacts do not match the existing Markdown and JSONL contract");
-  if (
-    expected.some((name) => {
-      const stat = fs.lstatSync(path.join(directory, name));
-      return !stat.isFile() || stat.isSymbolicLink();
-    })
-  )
-    throw new Error("Specialist artifact must be a regular file");
-}
 function specialistEnvironment(
   advisorDirectory: string,
   output: string,
@@ -402,7 +389,7 @@ export async function runLocalReview(input: {
         ),
         lifecycle,
         prepare: false,
-        validate: () => validateSpecialistArtifacts(output, specialist.interest),
+        validate: () => validateSpecialistArtifacts(output, `pr-review-specialist-${specialist.interest}`, specialist.interest),
         setActiveCleanup: (value) => {
           activeCleanup = value;
         },

@@ -147,11 +147,13 @@ describe("PR review advisor specialist lifecycle", () => {
       startGateway: () => ({ configure: Promise.resolve() }),
       create: () => undefined,
       run: () => undefined,
-      download: () =>
-        void fs.writeFileSync(
+      download: () => {
+        fs.writeFileSync(
           path.join(artifactPath, "pr-review-behavior-summary.md"),
           "# Behavior specialist\n\nNo behavior finding.\n",
-        ),
+        );
+        fs.writeFileSync(path.join(artifactPath, "pr-review-behavior-session.jsonl"), "{}\n");
+      },
       remove: () => undefined,
     };
 
@@ -169,6 +171,38 @@ describe("PR review advisor specialist lifecycle", () => {
     expect(fs.readFileSync(jobSummary, "utf8")).toBe(
       "Existing summary.\n# Behavior specialist\n\nNo behavior finding.\n",
     );
+  });
+
+  it("rejects an incomplete hosted specialist artifact before publication", async () => {
+    const workspace = temporaryDirectory();
+    const artifactDirectory = "pr-review-specialist-behavior";
+    const artifactPath = path.join(workspace, "artifacts", artifactDirectory);
+    const jobSummary = path.join(workspace, "job-summary.md");
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(jobSummary, "Existing summary.\n");
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => undefined,
+      run: () => undefined,
+      download: () =>
+        void fs.writeFileSync(path.join(artifactPath, "pr-review-behavior-summary.md"), "# Summary\n"),
+      remove: () => undefined,
+    };
+
+    await expect(
+      runAdvisorSpecialistCommand(
+        "analysis",
+        {
+          GITHUB_STEP_SUMMARY: jobSummary,
+          GITHUB_WORKSPACE: workspace,
+          PR_REVIEW_ADVISOR_ARTIFACT_DIR: artifactDirectory,
+          PR_REVIEW_ADVISOR_INTEREST: "behavior",
+        },
+        lifecycle,
+      ),
+    ).rejects.toThrow("Specialist artifacts do not match");
+    expect(fs.readFileSync(jobSummary, "utf8")).toBe("Existing summary.\n");
   });
 
   it("does not publish a specialist summary after cancellation during cleanup", async () => {
