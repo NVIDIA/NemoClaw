@@ -772,7 +772,7 @@ export async function startFakeDockerApi(
   if (!apiReady) throw new Error(`fake ${options.kind} API did not become ready`);
 
   cleanup(`remove ${proxyContainer}`, async () => {
-    const remove = await runtimeProvider.command(["rm", "-f", proxyContainer], {
+    const remove = await runtimeProvider.command(["rm", "--force", proxyContainer], {
       artifactName: `cleanup-${proxyContainer}`,
       env: options.env,
       redactionValues: options.redactionValues,
