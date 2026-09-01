@@ -14,13 +14,17 @@ import type { CleanupSandboxServicesDeps } from "../../../src/lib/actions/sandbo
 import { cleanupSandboxServices } from "../../../src/lib/actions/sandbox/destroy.js";
 import { SANDBOX_PROVIDER_SUFFIXES } from "../../../src/lib/onboard/sandbox-provider-cleanup.js";
 
-type SandboxLike = { provider?: string | null } | null;
+type SandboxLike = { name?: string; model?: string | null; provider?: string | null } | null;
 
-function buildDeps(sandbox: SandboxLike): {
+function buildDeps(
+  sandbox: SandboxLike,
+  peers: Exclude<SandboxLike, null>[] = [],
+): {
   deps: Required<
     Pick<
       CleanupSandboxServicesDeps,
       | "getSandbox"
+      | "listSandboxes"
       | "stopAll"
       | "unloadOllamaModels"
       | "runOpenshell"
@@ -31,21 +35,32 @@ function buildDeps(sandbox: SandboxLike): {
   >;
   stopAllCalls: Array<{ sandboxName: string }>;
   unloadCalls: number;
+  unloadArgs: Array<readonly string[] | undefined>;
 } {
   const stopAllCalls: Array<{ sandboxName: string }> = [];
+  const target = sandbox
+    ? { name: "regression-2717", model: "target-model:latest", ...sandbox }
+    : null;
   let unloadCalls = 0;
+  const unloadArgs: Array<readonly string[] | undefined> = [];
   return {
     stopAllCalls,
+    unloadArgs,
     get unloadCalls() {
       return unloadCalls;
     },
     deps: {
-      getSandbox: vi.fn(() => sandbox as never),
+      getSandbox: vi.fn(() => target as never),
+      listSandboxes: vi.fn(() => ({
+        sandboxes: [...(target ? [target] : []), ...peers] as never,
+        defaultSandbox: null,
+      })),
       stopAll: vi.fn((opts: { sandboxName: string }) => {
         stopAllCalls.push(opts);
       }),
-      unloadOllamaModels: vi.fn(() => {
+      unloadOllamaModels: vi.fn((onlyModels?: readonly string[]) => {
         unloadCalls += 1;
+        unloadArgs.push(onlyModels);
       }),
       runOpenshell: vi.fn(() => ({ status: 0 })),
       rmSync: vi.fn(),
@@ -86,7 +101,28 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
 
     expect(harness.deps.stopAll).not.toHaveBeenCalled();
     expect(harness.deps.unloadOllamaModels).toHaveBeenCalledTimes(1);
+    expect(harness.unloadArgs).toEqual([["target-model:latest"]]);
     expect(harness.unloadCalls).toBe(1);
+  });
+
+  it("releases only the destroyed sandbox model when another Ollama sandbox uses a different model", () => {
+    const harness = buildDeps({ provider: "ollama-local", model: "target-model:latest" }, [
+      { name: "peer", provider: "ollama-local", model: "peer-model:latest" },
+    ]);
+
+    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+
+    expect(harness.unloadArgs).toEqual([["target-model:latest"]]);
+  });
+
+  it("keeps a model that another Ollama sandbox shares", () => {
+    const harness = buildDeps({ provider: "ollama-local", model: "shared-model" }, [
+      { name: "peer", provider: "ollama-local", model: "shared-model:latest" },
+    ]);
+
+    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+
+    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
   });
 
   it("preserves destroy recovery state when stopAll cannot release Ollama", () => {

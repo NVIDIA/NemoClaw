@@ -166,13 +166,23 @@ type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status
 
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
+  listSandboxes?: typeof registry.listSandboxes;
   stopAll?: (opts: { sandboxName: string }) => OllamaUnloadResult | void;
-  unloadOllamaModels?: () => OllamaUnloadResult | void;
+  unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
+
+function sameOllamaModelRef(left: string, right: string): boolean {
+  const normalize = (model: string) => {
+    const ref = model.trim();
+    const lastSegment = ref.slice(ref.lastIndexOf("/") + 1);
+    return ref && !lastSegment.includes(":") ? `${ref}:latest` : ref;
+  };
+  return normalize(left) === normalize(right);
+}
 
 type ShieldsTimerNeutralizeResult = {
   warnings?: string[];
@@ -224,6 +234,7 @@ export function cleanupSandboxServices(
   const validatedSandboxName = validateName(sandboxName, "sandbox name");
   const servicesPidDir = path.resolve("/tmp", `nemoclaw-services-${validatedSandboxName}`);
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
   const stopAll =
     deps.stopAll ??
     ((opts: { sandboxName: string }) => {
@@ -234,11 +245,11 @@ export function cleanupSandboxServices(
     });
   const unloadOllamaModels =
     deps.unloadOllamaModels ??
-    (() => {
+    ((onlyModels?: readonly string[]) => {
       const { unloadOllamaModels: unload } = require("../../inference/ollama/proxy") as {
-        unloadOllamaModels: () => OllamaUnloadResult;
+        unloadOllamaModels: (onlyModels?: readonly string[]) => OllamaUnloadResult;
       };
-      return unload();
+      return unload(onlyModels);
     });
   const runOpenshell =
     deps.runOpenshell ??
@@ -287,30 +298,33 @@ export function cleanupSandboxServices(
     );
   }
 
+  let ollamaCleanup: OllamaUnloadResult | void = undefined;
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
     // see src/lib/tunnel/services.ts. Don't double-call here.
-    const cleanup = stopAll({ sandboxName: validatedSandboxName });
-    if (cleanup && !cleanup.ok) {
-      throw new Error(
-        `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). ` +
-          "The sandbox registry and saved route were retained; repair Ollama and retry destroy.",
-      );
-    }
+    ollamaCleanup = stopAll({ sandboxName: validatedSandboxName });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
     const sb = getSandbox(validatedSandboxName);
-    if (sb?.provider?.includes("ollama")) {
-      const cleanup = unloadOllamaModels();
-      if (cleanup && !cleanup.ok) {
-        throw new Error(
-          `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). ` +
-            "The sandbox registry and saved route were retained; repair Ollama and retry destroy.",
-        );
-      }
+    const model = String(sb?.model ?? "").trim();
+    if (sb?.provider?.includes("ollama") && model) {
+      const peers = listSandboxes().sandboxes.filter(
+        (candidate) =>
+          candidate.name !== validatedSandboxName && candidate.provider?.includes("ollama"),
+      );
+      const sharedModel = peers.some(
+        (candidate) => candidate.model && sameOllamaModelRef(model, candidate.model),
+      );
+      if (!sharedModel) ollamaCleanup = unloadOllamaModels([model]);
     }
+  }
+  if (ollamaCleanup && !ollamaCleanup.ok) {
+    throw new Error(
+      `Ollama model cleanup failed at ${ollamaCleanup.endpoint} (${ollamaCleanup.outcome}: ${ollamaCleanup.message ?? "no detail"}). ` +
+        "The sandbox registry and saved route were retained; repair Ollama and retry destroy.",
+    );
   }
 
   try {
@@ -978,9 +992,7 @@ async function destroySandboxUnlocked(
             providers: readonly (string | null | undefined)[],
           ): boolean;
         };
-        clearPersistedOllamaHostIfUnused(
-          remainingSandboxes.map(({ provider }) => provider),
-        );
+        clearPersistedOllamaHostIfUnused(remainingSandboxes.map(({ provider }) => provider));
       } catch (error) {
         console.warn(
           `  ${YW}⚠${R} Failed to retire the final local Ollama route receipt: ${redactDestroyError(error)}`,

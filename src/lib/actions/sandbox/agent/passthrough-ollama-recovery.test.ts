@@ -136,7 +136,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).not.toContain("Ollama was unreachable during the restart check");
   });
 
-  it("contains an unexpected recovery exception", () => {
+  it("continues OpenClaw dispatch when Ollama recovery throws", () => {
     const { writes, proc } = makeProcMock();
 
     expect(() =>
