@@ -265,7 +265,7 @@ jobs:
           & .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
           & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
 
-      - name: Qualify install, repair, uninstall, and no-WSL process boundaries
+      - name: Qualify install, repair, and uninstall in an OS-restricted boundary
         shell: powershell
         run: |
           Set-StrictMode -Version Latest

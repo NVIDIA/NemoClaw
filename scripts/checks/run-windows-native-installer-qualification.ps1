@@ -41,22 +41,6 @@ function Fail-Qualification {
     throw "Windows native installer qualification failed: $Message"
 }
 
-function Get-FileSha256 {
-    param([Parameter(Mandatory)][string]$Path)
-
-    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    try {
-        $sha256 = [Security.Cryptography.SHA256]::Create()
-        try {
-            return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
-        } finally {
-            $sha256.Dispose()
-        }
-    } finally {
-        $stream.Dispose()
-    }
-}
-
 function Resolve-PlainDirectory {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -147,45 +131,182 @@ function Assert-CommittedFile {
     if ($workingBlob -cne $committedBlob) {
         Fail-Qualification "Candidate file bytes do not match the candidate commit: $RelativePath"
     }
-    if ((Get-FileSha256 -Path $FilePath) -cne $ExpectedSha256) {
+    if ((Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedSha256) {
         Fail-Qualification "Candidate file SHA-256 does not match the trusted plan: $RelativePath"
     }
 }
 
-function Assert-InstallerProcessBoundary {
-    param([Parameter(Mandatory)][string]$InstallerPath)
+function Enter-RestrictedInstallerBoundary {
+    if (-not ('NemoClaw.WindowsQualification.JobBoundary' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
 
-    $tokens = $null
-    $parseErrors = $null
-    $ast = [Management.Automation.Language.Parser]::ParseFile(
-        $InstallerPath,
-        [ref]$tokens,
-        [ref]$parseErrors
-    )
-    if ($parseErrors.Count -ne 0) {
-        Fail-Qualification 'Candidate installer has PowerShell parse errors.'
+namespace NemoClaw.WindowsQualification
+{
+    [StructLayout(LayoutKind.Sequential)]
+    public struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
     }
-    $prohibitedCommands = @(
-        'bash', 'bash.exe', 'cmd', 'cmd.exe', 'docker', 'docker.exe',
-        'invoke-expression', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe',
-        'start-process', 'ubuntu', 'ubuntu.exe', 'wsl', 'wsl.exe'
-    )
-    $commands = $ast.FindAll({
-        param($node)
-        return $node -is [Management.Automation.Language.CommandAst]
-    }, $true)
-    foreach ($command in $commands) {
-        $name = $command.GetCommandName()
-        if ($null -eq $name) {
-            Fail-Qualification 'Candidate installer contains a dynamic command invocation.'
-        }
-        if ($prohibitedCommands -ccontains $name.ToLowerInvariant()) {
-            Fail-Qualification "Candidate installer invokes a prohibited command: $name"
-        }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
     }
-    $source = Get-Content -LiteralPath $InstallerPath -Raw
-    if ($source -match '(?i)\[\s*(?:System\.)?Diagnostics\.Process\s*\]\s*::\s*Start') {
-        Fail-Qualification 'Candidate installer invokes System.Diagnostics.Process.Start.'
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ExtendedLimitInformation
+    {
+        public BasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    public static class JobBoundary
+    {
+        public const uint ActiveProcessLimit = 0x00000008;
+        public const int ExtendedLimitInformationClass = 9;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            ref ExtendedLimitInformation information,
+            uint informationLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool CloseHandle(IntPtr handle);
+    }
+}
+'@
+    }
+
+    $processPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $firewallRule = "NemoClawNativeQualification-$PID-$([guid]::NewGuid().ToString('N'))"
+    $firewallParameters = @{
+        Name = $firewallRule
+        DisplayName = $firewallRule
+        Direction = 'Outbound'
+        Action = 'Block'
+        Program = $processPath
+        Profile = 'Any'
+    }
+    New-NetFirewallRule @firewallParameters | Out-Null
+
+    $jobHandle = [NemoClaw.WindowsQualification.JobBoundary]::CreateJobObject(
+        [IntPtr]::Zero,
+        "NemoClawNativeQualification-$PID"
+    )
+    if ($jobHandle -eq [IntPtr]::Zero) {
+        Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
+        Fail-Qualification 'Could not create the installer qualification Job Object.'
+    }
+    $limit = [NemoClaw.WindowsQualification.ExtendedLimitInformation]::new()
+    $limit.BasicLimitInformation.LimitFlags = [NemoClaw.WindowsQualification.JobBoundary]::ActiveProcessLimit
+    $limit.BasicLimitInformation.ActiveProcessLimit = 1
+    $limitLength = [Runtime.InteropServices.Marshal]::SizeOf($limit)
+    if (-not [NemoClaw.WindowsQualification.JobBoundary]::SetInformationJobObject(
+        $jobHandle,
+        [NemoClaw.WindowsQualification.JobBoundary]::ExtendedLimitInformationClass,
+        [ref]$limit,
+        $limitLength
+    )) {
+        [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($jobHandle) | Out-Null
+        Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
+        Fail-Qualification 'Could not apply the one-process installer qualification limit.'
+    }
+    $currentProcess = [Diagnostics.Process]::GetCurrentProcess()
+    if (-not [NemoClaw.WindowsQualification.JobBoundary]::AssignProcessToJobObject(
+        $jobHandle,
+        $currentProcess.Handle
+    )) {
+        [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($jobHandle) | Out-Null
+        Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
+        Fail-Qualification 'Could not enter the one-process installer qualification Job Object.'
+    }
+    return [pscustomobject]@{
+        JobHandle = $jobHandle
+        FirewallRule = $firewallRule
+        ProgramPath = $processPath
+    }
+}
+
+function Test-RestrictedInstallerBoundary {
+    $childProcessDenied = $false
+    try {
+        $childParameters = @{
+            FilePath = $env:ComSpec
+            ArgumentList = @('/d', '/c', 'exit', '0')
+            Wait = $true
+            PassThru = $true
+            ErrorAction = 'Stop'
+        }
+        $child = Start-Process @childParameters
+        if ($child) {
+            $child.Dispose()
+        }
+    } catch {
+        $childProcessDenied = $true
+    }
+    if (-not $childProcessDenied) {
+        Fail-Qualification 'The installer qualification Job Object allowed a child process.'
+    }
+
+    $outboundNetworkDenied = $false
+    Add-Type -AssemblyName System.Net.Http
+    $httpClient = [Net.Http.HttpClient]::new()
+    $httpClient.Timeout = [TimeSpan]::FromSeconds(5)
+    try {
+        $response = $httpClient.GetAsync('https://api.github.com/').GetAwaiter().GetResult()
+        $response.Dispose()
+    } catch {
+        $outboundNetworkDenied = $true
+    } finally {
+        $httpClient.Dispose()
+    }
+    if (-not $outboundNetworkDenied) {
+        Fail-Qualification 'The installer qualification firewall allowed outbound network access.'
+    }
+    return [pscustomobject]@{
+        jobActiveProcessLimit = 1
+        childProcessDenied = $true
+        outboundNetworkDenied = $true
+    }
+}
+
+function Exit-RestrictedInstallerBoundary {
+    param([Parameter(Mandatory)]$Boundary)
+
+    Remove-NetFirewallRule -Name $Boundary.FirewallRule -ErrorAction SilentlyContinue
+    if ($Boundary.JobHandle -ne [IntPtr]::Zero) {
+        [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($Boundary.JobHandle) | Out-Null
     }
 }
 
@@ -267,7 +388,6 @@ $committedInstallerParameters = @{
     ExpectedSha256 = $InstallerSha256
 }
 Assert-CommittedFile @committedInstallerParameters
-Assert-InstallerProcessBoundary -InstallerPath $installer
 
 $artifactPath = [IO.Path]::GetFullPath($ArtifactDirectory).TrimEnd('\')
 $artifactParent = Split-Path -Parent $artifactPath
@@ -281,6 +401,8 @@ $qualificationRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-windows-native-' + [g
 $payloadRoot = Join-Path $qualificationRoot 'payload'
 $installRoot = Join-Path $qualificationRoot 'install'
 $receiptStage = Join-Path $artifactParent ('.' + $artifactName + '.' + [guid]::NewGuid().ToString('N'))
+$restrictedBoundary = $null
+$restrictedBoundaryEvidence = $null
 [IO.Directory]::CreateDirectory($payloadRoot) | Out-Null
 [IO.Directory]::CreateDirectory($receiptStage) | Out-Null
 
@@ -299,7 +421,7 @@ try {
         $distributionEntries += [pscustomobject]@{
             source = $payloadRelative
             destination = $payloadRelative
-            sha256 = Get-FileSha256 -Path $payloadPath
+            sha256 = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
             required = $true
         }
     }
@@ -310,7 +432,7 @@ try {
         $distributionEntries += [pscustomobject]@{
             source = $z3Relative
             destination = $z3Relative
-            sha256 = Get-FileSha256 -Path (Join-Path $payloadRoot $z3Relative)
+            sha256 = (Get-FileHash -LiteralPath (Join-Path $payloadRoot $z3Relative) -Algorithm SHA256).Hash.ToLowerInvariant()
             required = $true
         }
     }
@@ -319,7 +441,7 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($WxcExecPath)) {
         $resolvedWxc = [IO.Path]::GetFullPath($WxcExecPath)
         if (-not (Test-Path -LiteralPath $resolvedWxc -PathType Leaf) -or
-            (Get-FileSha256 -Path $resolvedWxc) -cne $WxcExecSha256) {
+            (Get-FileHash -LiteralPath $resolvedWxc -Algorithm SHA256).Hash.ToLowerInvariant() -cne $WxcExecSha256) {
             Fail-Qualification 'wxc-exec candidate is missing or has the wrong digest.'
         }
         $wxcPayload = Join-Path $payloadRoot $wxcRelative
@@ -348,6 +470,8 @@ try {
     $manifestPath = Join-Path $payloadRoot 'distribution-manifest.json'
     Write-JsonFile -Path $manifestPath -Value $manifest
 
+    $restrictedBoundary = Enter-RestrictedInstallerBoundary
+    $restrictedBoundaryEvidence = Test-RestrictedInstallerBoundary
     $preExecution = Assert-ProhibitedProcessesAbsent -Phase 'pre-execution'
     $installParameters = @{
         Action = 'Install'
@@ -378,7 +502,7 @@ try {
     $repairedReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
     $expectedOpenShell = @($repairedReceipt.files | Where-Object { $_.path -ceq 'bin\openshell.exe' })
     if ($expectedOpenShell.Count -ne 1 -or
-        (Get-FileSha256 -Path (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe')) -cne $expectedOpenShell[0].sha256) {
+        (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShell[0].sha256) {
         Fail-Qualification 'Repair did not restore the OpenShell CLI digest.'
     }
 
@@ -406,7 +530,7 @@ try {
     })
     Write-JsonFile -Path (Join-Path $receiptStage 'process-absence.json') -Value ([pscustomobject]@{
         receiptVersion = 1
-        installerAstProcessBoundary = $true
+        restrictedExecution = $restrictedBoundaryEvidence
         preExecution = $preExecution
         postExecution = $postExecution
     })
@@ -420,6 +544,9 @@ try {
     $receiptStage = $null
     Write-Host "Windows native installer qualification receipts: $artifactPath"
 } finally {
+    if ($restrictedBoundary) {
+        Exit-RestrictedInstallerBoundary -Boundary $restrictedBoundary
+    }
     if ($receiptStage -and (Test-Path -LiteralPath $receiptStage -PathType Container)) {
         [IO.Directory]::Delete($receiptStage, $true)
     }
