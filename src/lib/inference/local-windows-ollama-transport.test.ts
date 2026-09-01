@@ -161,7 +161,7 @@ describe("Windows-host Ollama transport", () => {
     }
   });
 
-  it("probes persisted Windows-host health through Docker Desktop", () => {
+  it("probes a resolved Windows-host route through Docker Desktop", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-health-"));
     try {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);

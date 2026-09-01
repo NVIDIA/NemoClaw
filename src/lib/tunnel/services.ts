@@ -550,8 +550,18 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     }
   } catch (error) {
     ollamaCleanupIncomplete = true;
+    const detail = error instanceof Error ? error.message : String(error);
+    ollamaCleanup = {
+      ok: false,
+      outcome: "discovery-failed",
+      endpoint: "the saved local Ollama endpoint",
+      selectedModels: [],
+      discoveries: [],
+      requests: [],
+      message: detail,
+    };
     warn(
-      `Ollama model cleanup failed unexpectedly: ${error instanceof Error ? error.message : String(error)}. Retry this command after repairing Ollama.`,
+      `Ollama model cleanup failed unexpectedly: ${detail}. The saved local route was retained; restore access to the saved local Ollama endpoint, then retry this command.`,
     );
   }
 

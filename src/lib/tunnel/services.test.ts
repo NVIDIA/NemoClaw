@@ -645,6 +645,30 @@ describe("stopAll", () => {
     expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
     expect(output).not.toContain("All services stopped");
   });
+
+  it("returns a failed cleanup result when Ollama cleanup throws", () => {
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = stopAll({
+      pidDir,
+      sandboxName: "test-box",
+      unloadOllamaModels: () => {
+        throw new Error("synthetic cleanup exception");
+      },
+      clearPendingOllamaModelCleanup,
+    });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(result).toMatchObject({
+      ok: false,
+      outcome: "discovery-failed",
+      message: "synthetic cleanup exception",
+    });
+    expect(output).toContain("restore access to the saved local Ollama endpoint");
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+  });
 });
 
 // #6212: after cloudflared yields a public URL, startAll must register that
