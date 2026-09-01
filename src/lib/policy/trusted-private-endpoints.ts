@@ -19,23 +19,16 @@ export interface ExternalPolicyPreset {
   filePath: string;
   presetName: string;
   content: string;
-  trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
   trustedPrivatePinCapability?: TrustedPrivatePolicyPinCapability;
-}
-
-export interface TrustedPrivatePolicyPinReceipt {
-  version: 1;
-  contentDigest: string;
 }
 
 declare const trustedPrivatePolicyPinCapabilityBrand: unique symbol;
 
 export interface TrustedPrivatePolicyPinCapability {
-  readonly receipt: TrustedPrivatePolicyPinReceipt;
   readonly [trustedPrivatePolicyPinCapabilityBrand]: true;
 }
 
-const TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES = new WeakSet<object>();
+const TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES = new WeakMap<object, string>();
 
 export interface TrustedPrivatePolicyPreparationDependencies {
   lookup?: EndpointDnsLookupFn;
@@ -48,8 +41,6 @@ type EndpointReference = {
   host: string;
 };
 
-const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
-
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -58,31 +49,23 @@ function policyContentDigest(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function createTrustedPrivatePolicyPinReceipt(content: string): TrustedPrivatePolicyPinReceipt {
-  validateTrustedPrivatePinnedContent(content);
-  return { version: 1, contentDigest: policyContentDigest(content) };
-}
-
 function isHostGatewayBridge(host: string): boolean {
   return host === OPENSHELL_SANDBOX_HOST_BRIDGE;
 }
 
 /**
- * Re-parse durable generated content before it can regain process-local pin
- * authority. The digest binds bytes; this check binds semantics and prevents a
- * crafted registry receipt from admitting loopback, metadata, link-local, or
- * other reserved destinations. The existing host-gateway bridge exception is
- * separate reviewed policy authority and is ignored here.
+ * Validate command-generated pinned content before granting a process-local
+ * capability. No receipt or policy copy is persisted outside OpenShell.
  */
 function validateTrustedPrivatePinnedContent(content: string): void {
   let document: unknown;
   try {
     document = YAML.parse(content) as unknown;
   } catch {
-    throw new Error("trusted private policy pin receipt content is not valid YAML");
+    throw new Error("trusted private pinned policy content is not valid YAML");
   }
   if (!isObjectRecord(document) || !isObjectRecord(document.network_policies)) {
-    throw new Error("trusted private policy pin receipt content has no network policies");
+    throw new Error("trusted private pinned policy content has no network policies");
   }
 
   let validatedPinnedEndpoint = false;
@@ -127,47 +110,17 @@ function validateTrustedPrivatePinnedContent(content: string): void {
     }
   }
   if (!validatedPinnedEndpoint) {
-    throw new Error("trusted private policy pin receipt content has no generated private pins");
+    throw new Error("trusted private pinned policy content has no generated private pins");
   }
 }
 
 function issueTrustedPrivatePolicyPinCapability(
-  receipt: TrustedPrivatePolicyPinReceipt,
-): TrustedPrivatePolicyPinCapability {
-  const capability = Object.freeze({
-    receipt: Object.freeze({ ...receipt }),
-  }) as unknown as TrustedPrivatePolicyPinCapability;
-  TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES.add(capability);
-  return capability;
-}
-
-/** Validate and clone the durable receipt bound to generated policy content. */
-export function normalizeTrustedPrivatePolicyPinReceipt(
   content: string,
-  value: unknown,
-): TrustedPrivatePolicyPinReceipt | undefined {
-  if (value === undefined) return undefined;
-  if (
-    !isObjectRecord(value) ||
-    value.version !== 1 ||
-    typeof value.contentDigest !== "string" ||
-    !SHA256_DIGEST_PATTERN.test(value.contentDigest) ||
-    Object.keys(value).some((key) => key !== "version" && key !== "contentDigest") ||
-    value.contentDigest !== policyContentDigest(content)
-  ) {
-    throw new Error("trusted private policy pin receipt does not match its exact content");
-  }
+): TrustedPrivatePolicyPinCapability {
   validateTrustedPrivatePinnedContent(content);
-  return { version: 1, contentDigest: value.contentDigest };
-}
-
-/** True when a durable receipt is valid for this exact generated content. */
-export function hasTrustedPrivatePolicyPinReceipt(content: string, value: unknown): boolean {
-  try {
-    return normalizeTrustedPrivatePolicyPinReceipt(content, value) !== undefined;
-  } catch {
-    return false;
-  }
+  const capability = Object.freeze({}) as TrustedPrivatePolicyPinCapability;
+  TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES.set(capability, policyContentDigest(content));
+  return capability;
 }
 
 /** True only for process-local authority issued for this exact policy content. */
@@ -178,23 +131,8 @@ export function isTrustedPrivatePolicyPinCapability(
   return (
     typeof value === "object" &&
     value !== null &&
-    TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES.has(value) &&
-    hasTrustedPrivatePolicyPinReceipt(content, (value as TrustedPrivatePolicyPinCapability).receipt)
+    TRUSTED_PRIVATE_POLICY_PIN_CAPABILITIES.get(value) === policyContentDigest(content)
   );
-}
-
-/**
- * Reissue process-local authority from a validated durable registry receipt.
- * The host registry is the operator-approved authority boundary for rebuild;
- * snapshot content alone is deliberately insufficient to reach this function.
- */
-export function replayTrustedPrivatePolicyPinCapability(
-  content: string,
-  receipt: unknown,
-): TrustedPrivatePolicyPinCapability {
-  const normalized = normalizeTrustedPrivatePolicyPinReceipt(content, receipt);
-  if (!normalized) throw new Error("trusted private policy pin receipt is missing");
-  return issueTrustedPrivatePolicyPinCapability(normalized);
 }
 
 function endpointUrl(host: string): string {
@@ -339,12 +277,10 @@ export async function prepareTrustedPrivatePolicyPresets(
     const content = YAML.stringify(document);
     const injectedPins = injectedEndpoints.size > 0;
     if (!injectedPins) return { ...preset, content };
-    const trustedPrivatePins = createTrustedPrivatePolicyPinReceipt(content);
     return {
       ...preset,
       content,
-      trustedPrivatePins,
-      trustedPrivatePinCapability: issueTrustedPrivatePolicyPinCapability(trustedPrivatePins),
+      trustedPrivatePinCapability: issueTrustedPrivatePolicyPinCapability(content),
     };
   });
 }

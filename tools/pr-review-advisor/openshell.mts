@@ -11,13 +11,14 @@ import { pathToFileURL } from "node:url";
 import { getDiff } from "../advisors/git.mts";
 import { ADVISOR_OPENSHELL_INFERENCE_BASE_URL } from "../advisors/provider-constants.mts";
 import {
-  configureOpenShellInference,
+  startOwnedOpenShellInference,
+  type OwnedOpenShellInference,
   createOpenShellSandbox,
   credentialFreeEnvironment,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
   downloadOpenShellPath,
-  execOpenShellSandbox,
+  execOpenShellSandboxAsync,
   type OpenShellTools,
   required,
 } from "../openshell-agent/runtime.mts";
@@ -27,7 +28,6 @@ import {
   serializePreparedGitHubContext,
 } from "./github-context.mts";
 import { writeSpecialistDiff } from "./specialist-context.mts";
-import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
 
 const ADVISOR_CONTEXT_DIRECTORY_NAME = "pr-review-advisor-context";
 const ADVISOR_RUNTIME_DIRECTORY_NAME = "pr-review-advisor-runtime";
@@ -45,12 +45,10 @@ const SANDBOX_CONTEXT_DIR = `/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_RUNTIME_DIR = `/sandbox/${ADVISOR_RUNTIME_DIRECTORY_NAME}`;
 const SANDBOX_TOOLS_DIR = `/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
 const SANDBOX_CONTEXT_PATH = `${SANDBOX_CONTEXT_DIR}/${ADVISOR_CONTEXT_FILE_NAME}`;
-const SANDBOX_SPECIALIST_SESSION_DIR = `${SANDBOX_WORKDIR}/.pr-review-advisor-sessions`;
+const SANDBOX_SPECIALIST_CONTEXT_DIR = `${SANDBOX_WORKDIR}/.${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const ADVISOR_RUNTIME_TMPFS_BYTES = 512 * 1024 * 1024;
 const SANDBOX_API_KEY = "unused";
 const DEFAULT_SANDBOX_TIMEOUT_SECONDS = 2100;
-const DEFAULT_UNAVAILABLE_REASON =
-  "OpenShell inference configuration failed or the advisor credential is unavailable";
 const EXPECTED_WRITE_DENIAL_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 
 type PrepareAdvisorSandboxOptions = {
@@ -143,6 +141,7 @@ function requireGitMetadataDirectory(directory: string, name: string): void {
 function advisorSandboxDriverConfig(input: {
   advisorDirectory: string;
   contextDirectory: string;
+  specialistContextDirectory: string;
   toolsDirectory: string;
   workdir: string;
 }): Readonly<Record<string, unknown>> {
@@ -165,6 +164,12 @@ function advisorSandboxDriverConfig(input: {
           type: "bind",
           source: input.contextDirectory,
           target: SANDBOX_CONTEXT_DIR,
+          read_only: true,
+        },
+        {
+          type: "bind",
+          source: input.specialistContextDirectory,
+          target: SANDBOX_SPECIALIST_CONTEXT_DIR,
           read_only: true,
         },
         {
@@ -246,46 +251,20 @@ export async function prepareAdvisorSandboxInputs(
   fs.chmodSync(toolsDirectory, 0o755);
 }
 
-export async function configureAdvisorOpenShellInference(
-  env: NodeJS.ProcessEnv,
-  tools: OpenShellTools = defaultOpenShellTools,
-): Promise<void> {
-  await configureOpenShellInference(
-    env,
-    {
-      enableBindMounts: true,
-      gatewayId: "pr-review-advisor",
-      modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
-      providerName: "advisor",
-    },
-    tools,
-  );
+function advisorInferenceOptions(env: NodeJS.ProcessEnv) {
+  return {
+    enableBindMounts: true,
+    gatewayId: "pr-review-advisor",
+    modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
+    providerName: "advisor",
+  } as const;
 }
 
-export function writeUnavailableAdvisorArtifacts(
+export function startAdvisorOpenShellInference(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
-): void {
-  const advisorDirectory = required(env.ADVISOR_DIR, "ADVISOR_DIR");
-  const commandEnv = credentialFreeEnvironment({
-    ...env,
-    PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: path.join(
-      runnerDirectory(env, ADVISOR_CONTEXT_DIRECTORY_NAME),
-      ADVISOR_CONTEXT_FILE_NAME,
-    ),
-    PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0",
-    PR_REVIEW_ADVISOR_UNAVAILABLE_REASON:
-      env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON || DEFAULT_UNAVAILABLE_REASON,
-  });
-  tools.run(
-    process.execPath,
-    [
-      "--experimental-strip-types",
-      "--no-warnings",
-      path.join(advisorDirectory, "tools", "pr-review-advisor", "run-analysis.mts"),
-    ],
-    { env: commandEnv },
-  );
+): OwnedOpenShellInference {
+  return startOwnedOpenShellInference(env, advisorInferenceOptions(env), tools);
 }
 
 export function createAdvisorSandbox(
@@ -313,16 +292,6 @@ export function createAdvisorSandbox(
     "advisor tools directory",
   );
   const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
-  if (env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) {
-    const expected = path.join(advisorWorkdir, ".pr-review-advisor-sessions");
-    if (fs.realpathSync(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) !== expected) {
-      throw new Error(
-        "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
-      );
-    }
-    validateSpecialistSessionDirectory(expected);
-  }
-
   createOpenShellSandbox(
     env,
     {
@@ -337,6 +306,10 @@ export function createAdvisorSandbox(
       driverConfig: advisorSandboxDriverConfig({
         advisorDirectory,
         contextDirectory,
+        specialistContextDirectory: path.join(
+          contextDirectory,
+          ADVISOR_SPECIALIST_CONTEXT_DIRECTORY_NAME,
+        ),
         toolsDirectory,
         workdir: advisorWorkdir,
       }),
@@ -368,8 +341,6 @@ function passthroughEnvironment(env: NodeJS.ProcessEnv): Record<string, string> 
     "PR_REVIEW_ADVISOR_INTEREST",
     "PR_REVIEW_ADVISOR_MAX_CAPTURE_BYTES",
     "PR_REVIEW_ADVISOR_MODEL",
-    "PR_REVIEW_ADVISOR_RUN_ANALYSIS",
-    "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR",
     "PR_REVIEW_ADVISOR_TIMEOUT_MS",
     "PR_REVIEW_ADVISOR_UNAVAILABLE_REASON",
     "PR_REVIEW_ADVISOR_WORKFLOW_NAME",
@@ -394,12 +365,12 @@ function advisorArtifactDirectory(env: NodeJS.ProcessEnv): string {
   return value;
 }
 
-export function runAdvisorSandbox(
+export function runAdvisorSandboxAsync(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
-): void {
+): ReturnType<typeof execOpenShellSandboxAsync> {
   advisorArtifactDirectory(env);
-  execOpenShellSandbox(
+  return execOpenShellSandboxAsync(
     env,
     {
       name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
@@ -418,19 +389,19 @@ export function runAdvisorSandbox(
         PR_REVIEW_ADVISOR_API_KEY: SANDBOX_API_KEY,
         PR_REVIEW_ADVISOR_BASE_URL: ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
         PR_REVIEW_ADVISOR_CONFIG_DIR: `${SANDBOX_RUNTIME_DIR}/config`,
+        PR_REVIEW_ADVISOR_CONTEXT_DIR: SANDBOX_SPECIALIST_CONTEXT_DIR,
         PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: SANDBOX_CONTEXT_PATH,
-        ...(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR
-          ? { PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR: SANDBOX_SPECIALIST_SESSION_DIR }
-          : {}),
         TMPDIR: `${SANDBOX_RUNTIME_DIR}/tmp`,
       },
       command: [
         "/usr/bin/node",
         "--experimental-strip-types",
         "--no-warnings",
-        env.PR_REVIEW_ADVISOR_INTEREST
-          ? `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`
-          : `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-analysis.mts`,
+        `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`,
+        "--base",
+        required(env.BASE_REF, "BASE_REF"),
+        "--head",
+        required(env.HEAD_REF, "HEAD_REF"),
       ],
     },
     tools,
@@ -602,39 +573,19 @@ export function initializeAdvisorSandboxRuntime(): void {
   checkAdvisorSandboxRuntime();
 }
 
-async function main(): Promise<void> {
-  const command = required(process.argv[2], "openshell command");
-  switch (command) {
-    case "prepare":
-      await prepareAdvisorSandboxInputs(process.env);
-      return;
-    case "configure":
-      await configureAdvisorOpenShellInference(process.env);
-      return;
-    case "unavailable":
-      writeUnavailableAdvisorArtifacts(process.env);
-      return;
-    case "create":
-      createAdvisorSandbox(process.env);
-      return;
-    case "run":
-      runAdvisorSandbox(process.env);
-      return;
-    case "download":
-      downloadAdvisorArtifacts(process.env);
-      return;
-    case "delete":
-      deleteAdvisorSandbox(process.env);
-      return;
-    case "initialize":
-      initializeAdvisorSandboxRuntime();
-      return;
-    case "check":
-      checkAdvisorSandboxRuntime();
-      return;
-    default:
-      throw new Error(`Unsupported OpenShell advisor command: ${command}`);
+export function runOpenShellAdvisorCommand(
+  command: string | undefined,
+  initialize: () => void = initializeAdvisorSandboxRuntime,
+): void {
+  const requiredCommand = required(command, "openshell command");
+  if (requiredCommand !== "initialize") {
+    throw new Error(`Unsupported OpenShell advisor command: ${requiredCommand}`);
   }
+  initialize();
+}
+
+async function main(): Promise<void> {
+  runOpenShellAdvisorCommand(process.argv[2]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

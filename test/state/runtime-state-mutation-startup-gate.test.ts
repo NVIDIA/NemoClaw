@@ -16,10 +16,13 @@ const GATE = path.join(
 const HARNESS = String.raw`
 import hashlib
 import importlib.util
+import io
 import json
 import os
+import signal
 import sys
 import tempfile
+from contextlib import redirect_stderr
 
 spec = importlib.util.spec_from_file_location("runtime_state_startup_gate", sys.argv[1])
 gate = importlib.util.module_from_spec(spec)
@@ -36,6 +39,8 @@ start = {
     "commandSha256": "a" * 64,
     "procDevice": "22",
     "procInode": "33",
+    "executableDevice": "44",
+    "executableInode": "55",
 }
 gate._capture_parent = lambda: start
 
@@ -92,6 +97,21 @@ with tempfile.TemporaryDirectory() as root:
     }
     write(os.path.join(durable, gate.PERMIT_NAME), permit, 0o444)
     results["admitted"] = gate._run("admit")
+    gate._capture_parent = lambda: {**start, "pid": 42}
+    invalid_stderr = io.StringIO()
+    with redirect_stderr(invalid_stderr):
+        results["invalid_status"] = gate.main(["admit"])
+    results["invalid_stderr"] = invalid_stderr.getvalue().strip()
+    gate._capture_parent = lambda: start
+    os.chmod(os.path.join(durable, gate.PERMIT_NAME), 0o600)
+    with open(os.path.join(durable, gate.PERMIT_NAME), "wb") as stream:
+        stream.write(b"{\n")
+    os.chmod(os.path.join(durable, gate.PERMIT_NAME), 0o444)
+    malformed_stderr = io.StringIO()
+    with redirect_stderr(malformed_stderr):
+        results["malformed_status"] = gate.main(["admit"])
+    results["malformed_stderr"] = malformed_stderr.getvalue().strip()
+    write(os.path.join(durable, gate.PERMIT_NAME), permit, 0o444)
 
     orphan = os.path.join(candidate_directory, ".startup-complete.json.91.interrupted")
     with open(orphan, "wb") as stream:
@@ -139,8 +159,45 @@ with tempfile.TemporaryDirectory() as root:
         "start": start,
         "candidateDirectory": candidate_directory,
     }
-    write(os.path.join(durable, gate.RELEASE_NAME), release, 0o444)
+    release_path = os.path.join(durable, gate.RELEASE_NAME)
+    write(release_path, release, 0o444)
     results["released"] = gate._run("admit")
+    original_replace = gate.os.replace
+
+    def fail_release_ack_replace(*_args, **_kwargs):
+        raise OSError("sensitive fixture detail")
+
+    gate.os.replace = fail_release_ack_replace
+    results["release_ack_write_failure"] = code(lambda: gate._run("acknowledge"))
+    gate.os.replace = original_replace
+    results["release_ack_nonce"] = gate._run("acknowledge")
+    release_ack_path = os.path.join(candidate_directory, gate.RELEASE_ACK_NAME)
+    with open(release_ack_path, "rb") as stream:
+        results["release_ack"] = json.load(stream)
+    results["release_ack_committed"] = gate._run("acknowledge")
+    publisher_pid = os.fork()
+    if publisher_pid == 0:
+        null_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null_fd, 1)
+        os.dup2(null_fd, 2)
+        os.close(null_fd)
+        os._exit(gate.main(["acknowledge"]))
+    stopped_pid, stopped_status = os.waitpid(publisher_pid, os.WUNTRACED)
+    results["release_publisher_stopped"] = (
+        stopped_pid == publisher_pid
+        and os.WIFSTOPPED(stopped_status)
+        and os.WSTOPSIG(stopped_status) == signal.SIGSTOP
+    )
+    os.kill(publisher_pid, signal.SIGCONT)
+    resumed_pid, resumed_status = os.waitpid(publisher_pid, 0)
+    results["release_publisher_resumed"] = (
+        resumed_pid == publisher_pid
+        and os.WIFEXITED(resumed_status)
+        and os.WEXITSTATUS(resumed_status) == 0
+    )
+    gate._capture_parent = lambda: {**start, "pid": 42}
+    results["foreign_parent_ack"] = code(lambda: gate._run("acknowledge"))
+    gate._capture_parent = lambda: start
     with open(candidate_path, "ab") as stream:
         stream.write(b"tamper")
     results["tampered_release"] = code(lambda: gate._run("admit"))
@@ -182,6 +239,8 @@ describe("runtime state mutation startup gate", () => {
       commandSha256: "a".repeat(64),
       procDevice: "22",
       procInode: "33",
+      executableDevice: "44",
+      executableInode: "55",
     };
     expect(value).toMatchObject({
       uses_o_path_when_available: true,
@@ -197,9 +256,23 @@ describe("runtime state mutation startup gate", () => {
       retry_wait: "retry-wait",
       retry_wrong_transaction: "retry-permit-mismatch",
       released: "released",
+      release_ack_write_failure: "release-ack-write-failed",
+      release_ack_nonce: "b".repeat(64),
+      release_ack_committed: "b".repeat(64),
+      release_publisher_stopped: true,
+      release_publisher_resumed: true,
+      foreign_parent_ack: "gate-start-mismatch",
       tampered_release: "release-candidate-mismatch",
       symlink_directory: "unsafe-directory",
       invalid_present_directory: "gate-directory-invalid",
+      invalid_status: 76,
+      invalid_stderr:
+        "runtime-state-mutation-startup-gate: invalid-state " +
+        `code=gate-start-mismatch transaction=${"c".repeat(64)}`,
+      malformed_status: 76,
+      malformed_stderr:
+        "runtime-state-mutation-startup-gate: invalid-state " +
+        "code=gate-receipt-invalid transaction=unknown",
       candidate: {
         schemaVersion: 1,
         protocol: "nemoclaw-runtime-state-mutation-startup-complete-v1",
@@ -214,6 +287,14 @@ describe("runtime state mutation startup gate", () => {
         transactionId: "c".repeat(64),
         nonce: "b".repeat(64),
         retrySha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        start: expectedStart,
+      },
+      release_ack: {
+        schemaVersion: 1,
+        protocol: "nemoclaw-runtime-state-mutation-release-ack-v1",
+        transactionId: "c".repeat(64),
+        nonce: "b".repeat(64),
+        releaseSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
         start: expectedStart,
       },
     });

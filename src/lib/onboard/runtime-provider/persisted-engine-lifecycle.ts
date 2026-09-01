@@ -130,8 +130,11 @@ export interface PersistedEngineLifecycleStore {
   ) => boolean;
   /** Retire only the exact completed receipt; a durable tombstone prevents ID reuse. */
   readonly retire: (transactionId: string, resultSha256: string) => void;
-  /** Finish safe cleanup left after a released mutation lost its final response. */
-  readonly retireReleasedStateMutations: (sandboxName: string) => void;
+  /** Finish provider cleanup before retiring a released mutation's durable receipt. */
+  readonly retireReleasedStateMutations: (
+    sandboxName: string,
+    beforeRetire: (record: PersistedEngineLifecycleRecord) => void,
+  ) => void;
   /** Match only an exact durable retirement receipt. */
   readonly isRetired: (transactionId: string, resultSha256: string) => boolean;
 }
@@ -1787,7 +1790,10 @@ export function createFilePersistedEngineLifecycleStore(
     retire(transactionId: string, resultSha256: string) {
       retireCompletedTransaction(root, transactionId, resultSha256);
     },
-    retireReleasedStateMutations(sandboxName: string) {
+    retireReleasedStateMutations(
+      sandboxName: string,
+      beforeRetire: (record: PersistedEngineLifecycleRecord) => void,
+    ) {
       const exactSandboxName = exactName(sandboxName, "sandbox name");
       requirePrivateDirectory(root);
       for (const entry of fs.readdirSync(root).sort()) {
@@ -1807,6 +1813,7 @@ export function createFilePersistedEngineLifecycleStore(
           hasFinalizedStateMutationRelease(root, current) &&
           !hasMatchingRuntimeTargetClaim(root, current)
         ) {
+          beforeRetire(current);
           retireCompletedTransaction(root, current.transactionId, current.resultSha256 as string);
         }
       }

@@ -19,8 +19,11 @@ import {
   createMxcRuntimeProviderBundle,
 } from "./mxc";
 import type { MxcNativeArtifactControlPlane } from "./mxc-bootstrap-operations";
-import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
-import type { MxcOpenShellAttachmentObservationRequest } from "./mxc-openshell-observer";
+import {
+  mxcOpenShellAttachmentDigestMap,
+  mxcOpenShellAttachmentFixture,
+  mxcOpenShellAttachmentObservationRequest,
+} from "./mxc-openshell-attachment-test-fixture";
 import {
   createRuntimeProviderBundleRegistry,
   RuntimeProviderRegistrationError,
@@ -57,32 +60,6 @@ function candidateBundle() {
   });
 }
 
-function attachmentObservation(): MxcOpenShellAttachmentObservationRequest {
-  const source = mxcOpenShellAttachmentFixture().observation;
-  return {
-    contractVersion: 2,
-    providerId: "mxc",
-    mode: "attach-existing",
-    observedDistribution: {
-      version: source.distribution.version,
-      revision: source.distribution.revision,
-    },
-    observedGateway: {
-      driver: source.gateway.driver,
-      backend: source.gateway.backend,
-    },
-    installation: {
-      distributionArtifactPath: "C:\\OpenShell\\packages\\openshell-0.0.21.zip",
-      distributionRoot: source.distributionRoot,
-      mxcRoot: source.mxcRoot,
-      cliPath: source.cliPath,
-      gatewayPath: source.gatewayPath,
-      wxcExecPath: source.wxcExecPath,
-      gatewayConfigPath: source.gatewayConfigPath,
-    },
-  };
-}
-
 function bootstrapInput(): RuntimeProviderNativeArtifactBootstrapInput {
   return {
     providerId: "mxc",
@@ -116,14 +93,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       ...inactiveBootstrapControlPlane(),
       verifyAndCreate: vi.fn(async () => ({ status: "unknown" as const })),
     };
-    const accepted = attachment.observation;
-    const digests = new Map<string, string>([
-      ["C:\\OpenShell\\packages\\openshell-0.0.21.zip", accepted.distribution.sha256],
-      ["C:\\OpenShell\\bin\\openshell.exe", accepted.components.cliSha256],
-      ["C:\\OpenShell\\bin\\openshell-gateway.exe", accepted.components.gatewaySha256],
-      ["C:\\mxc-kit\\bin\\wxc-exec.exe", accepted.components.wxcExecSha256],
-      ["C:\\ProgramData\\NVIDIA\\OpenShell\\gateway.toml", accepted.gateway.configSha256],
-    ]);
+    const digests = mxcOpenShellAttachmentDigestMap(attachment.observation);
     const observeFileDigest = vi.fn(async (filePath: string) => digests.get(filePath)!);
 
     const { provider } = await attachMxcRuntimeProviderBundleFromExistingInstallation({
@@ -133,14 +103,14 @@ describe("inactive OpenShell MXC runtime provider", () => {
         release: "10.0.28000.1836",
       },
       openshellAttachmentAuthority: attachment.authority,
-      attachmentObservation: attachmentObservation(),
+      attachmentObservation: mxcOpenShellAttachmentObservationRequest(),
       bootstrapControlPlane: controlPlane,
       observeFileDigest,
     });
 
     expect(provider.preflightDoctor.inspectHost()).toMatchObject({
       status: "info",
-      detail: expect.stringMatching(/OpenShell 0\.0\.21/u),
+      detail: expect.stringMatching(/OpenShell 0\.0\.24/u),
     });
     expect(observeFileDigest).toHaveBeenCalledTimes(5);
     expect(controlPlane.verifyAndCreate).not.toHaveBeenCalled();
@@ -176,7 +146,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
         release: "10.0.28000.1836",
       },
       openshellAttachmentAuthority: attachment.authority,
-      attachmentObservation: attachmentObservation(),
+      attachmentObservation: mxcOpenShellAttachmentObservationRequest(),
       bootstrapControlPlane: {
         contractVersion: 1,
         providerId: "mxc",
@@ -223,7 +193,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
         release: "10.0.28000.1836",
       },
       openshellAttachmentAuthority: attachment.authority,
-      attachmentObservation: attachmentObservation(),
+      attachmentObservation: mxcOpenShellAttachmentObservationRequest(),
       bootstrapControlPlane: {
         contractVersion: 1,
         providerId: "mxc",
@@ -259,13 +229,8 @@ describe("inactive OpenShell MXC runtime provider", () => {
   it("rejects installed-file substitution before constructing the candidate (#8178)", async () => {
     const attachment = mxcOpenShellAttachmentFixture();
     const accepted = attachment.observation;
-    const observedDigests = new Map<string, string>([
-      ["C:\\OpenShell\\packages\\openshell-0.0.21.zip", accepted.distribution.sha256],
-      [accepted.cliPath, accepted.components.cliSha256],
-      [accepted.gatewayPath, "6".repeat(64)],
-      [accepted.wxcExecPath, accepted.components.wxcExecSha256],
-      [accepted.gatewayConfigPath, accepted.gateway.configSha256],
-    ]);
+    const observedDigests = mxcOpenShellAttachmentDigestMap(accepted);
+    observedDigests.set(accepted.gatewayPath, "6".repeat(64));
     const observeFileDigest = vi.fn(async (filePath: string) => observedDigests.get(filePath)!);
     const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
 
@@ -277,7 +242,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
           release: "10.0.28000.1836",
         },
         openshellAttachmentAuthority: attachment.authority,
-        attachmentObservation: attachmentObservation(),
+        attachmentObservation: mxcOpenShellAttachmentObservationRequest(),
         bootstrapControlPlane: {
           ...inactiveBootstrapControlPlane(),
           verifyAndCreate,
@@ -338,10 +303,10 @@ describe("inactive OpenShell MXC runtime provider", () => {
       label: "OpenShell MXC process_container candidate",
       status: "info",
       detail:
-        "Windows x64 build 28000 and OpenShell 0.0.21 match the inactive attachment contract.",
+        "Windows x64 build 28000 and OpenShell 0.0.24 match the inactive attachment contract.",
       hint:
-        "This check does not enable MXC. Maintainers must qualify the accepted OpenShell " +
-        "distribution and required live E2E coverage before adding production selection.",
+        "This check does not enable MXC. Maintainers must accept a stable OpenShell distribution " +
+        "and complete required live E2E coverage before adding production selection.",
     });
 
     const attachment = mxcOpenShellAttachmentFixture();

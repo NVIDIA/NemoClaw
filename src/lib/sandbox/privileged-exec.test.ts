@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -16,12 +18,21 @@ const dockerRunPath = require.resolve("../adapters/docker/run");
 const portableLifecyclePath = require.resolve("../onboard/experimental/portable-demo-lifecycle");
 const registryPath = require.resolve("../state/registry");
 const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-generation");
-const persistedLifecyclePath = require.resolve(
-  "../onboard/runtime-provider/persisted-engine-lifecycle",
-);
+const persistedLifecyclePath =
+  require.resolve("../onboard/runtime-provider/persisted-engine-lifecycle");
 const statePathsPath = require.resolve("../state/paths");
 const transitionLockPath = require.resolve("../shields/transition-lock");
-const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
+const {
+  buildStoppedDockerSandboxChannelCleanupScript,
+  containerNameMatchesSandbox,
+  selectDirectSandboxContainer,
+} = require(helperPath);
+const PINNED_CLEANUP_IMAGE =
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+const EXPECTED_WECHAT_STATE_PATHS = [
+  "/sandbox/.openclaw/wechat",
+  "/sandbox/.openclaw/openclaw-weixin",
+] as const;
 
 function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void {
   if (priorEntry) requireCache[modulePath] = priorEntry;
@@ -31,6 +42,10 @@ function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void
 function withPrivilegedExecMocks<T>(
   deps: {
     dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
+    dockerRun?: (
+      args: readonly string[],
+      options?: { timeout?: number },
+    ) => { status: number; stdout: string; stderr: string; error: null };
     getSandbox: (name: string) => {
       name?: string;
       lifecycleGeneration?: string;
@@ -74,7 +89,11 @@ function withPrivilegedExecMocks<T>(
     id: dockerRunPath,
     filename: dockerRunPath,
     loaded: true,
-    exports: { dockerCapture: deps.dockerCapture },
+    exports: {
+      dockerCapture: deps.dockerCapture,
+      dockerRun:
+        deps.dockerRun ?? (() => ({ status: 0, stdout: "", stderr: "", error: null }) as const),
+    },
   } as any;
   requireCache[portableLifecyclePath] = {
     id: portableLifecyclePath,
@@ -170,6 +189,476 @@ describe("privileged sandbox exec routing", () => {
       selectDirectSandboxContainer("demo", "abc123\topenshell-default--demo-2026\n", ["demo"]),
     ).toBe("abc123");
   });
+
+  it("clears stopped OpenClaw WeChat state through an isolated immutable-image helper", () => {
+    const containerId = "a".repeat(64);
+    const helperId = "b".repeat(64);
+    const mounts = JSON.stringify([
+      {
+        Type: "volume",
+        Name: "nemoclaw-alpha-state",
+        Destination: "/sandbox",
+        RW: true,
+      },
+      {
+        Type: "bind",
+        Source: "/home/operator/project",
+        Destination: "/sandbox/project",
+        RW: false,
+      },
+    ]);
+    const results = [
+      {
+        status: 0,
+        stdout: `${containerId}\tfalse\t${mounts}\n`,
+        stderr: "",
+        error: null,
+      },
+      {
+        status: 0,
+        stdout: `sha256:${"c".repeat(64)}\n`,
+        stderr: "",
+        error: null,
+      },
+      {
+        status: 1,
+        stdout: "",
+        stderr: "Error: No such object: cleanup-helper",
+        error: null,
+      },
+      {
+        status: 0,
+        stdout: `${helperId}\n`,
+        stderr: "",
+        error: null,
+      },
+      { status: 0, stdout: "", stderr: "", error: null },
+      { status: 0, stdout: helperId, stderr: "", error: null },
+      {
+        status: 1,
+        stdout: "",
+        stderr: `Error: No such container: ${helperId}`,
+        error: null,
+      },
+      {
+        status: 0,
+        stdout: `${containerId}\tfalse\t${mounts}\n`,
+        stderr: "",
+        error: null,
+      },
+    ];
+    const runDocker = vi.fn(
+      (_args: readonly string[]) => results.shift() as (typeof results)[number],
+    );
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          { cleared: true },
+        );
+      },
+    );
+
+    const helperArgv = runDocker.mock.calls[3]?.[0];
+    expect(runDocker).toHaveBeenCalledTimes(8);
+    expect(helperArgv).toEqual(
+      expect.arrayContaining([
+        "create",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "DAC_OVERRIDE",
+        "--mount",
+        "type=volume,src=nemoclaw-alpha-state,dst=/sandbox,volume-nocopy",
+        PINNED_CLEANUP_IMAGE,
+      ]),
+    );
+    expect(helperArgv).not.toContain("--volumes-from");
+    expect(helperArgv?.join("\0")).not.toContain("/home/operator/project");
+    expect(helperArgv?.join("\0")).not.toContain("/sandbox/project");
+    expect(helperArgv).not.toContain("/bin/sh");
+    expect(helperArgv?.join("\0")).not.toContain("rm -rf");
+    expect(helperArgv?.at(-1)).toBe(JSON.stringify(EXPECTED_WECHAT_STATE_PATHS));
+    expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
+    expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
+  });
+
+  it("deletes only the exact stopped-channel directories", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-cleanup-"));
+    const configDir = path.join(root, ".openclaw");
+    const wechatDir = path.join(configDir, "wechat");
+    const otherDir = path.join(configDir, "preserve");
+    fs.mkdirSync(wechatDir, { recursive: true });
+    fs.mkdirSync(otherDir);
+    fs.writeFileSync(path.join(wechatDir, "account.json"), "credential residue\n");
+    fs.writeFileSync(path.join(otherDir, "sentinel"), "preserve\n");
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["-e", buildStoppedDockerSandboxChannelCleanupScript(root), JSON.stringify([wechatDir])],
+        { encoding: "utf8", timeout: 5000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(wechatDir)).toBe(false);
+      expect(fs.readFileSync(path.join(otherDir, "sentinel"), "utf8")).toBe("preserve\n");
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a symlinked parent without touching its external target", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-cleanup-root-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-cleanup-outside-"));
+    const outsideWechat = path.join(outside, "wechat");
+    fs.mkdirSync(outsideWechat);
+    fs.writeFileSync(path.join(outsideWechat, "sentinel"), "preserve\n");
+    fs.symlinkSync(outside, path.join(root, ".openclaw"));
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          buildStoppedDockerSandboxChannelCleanupScript(root),
+          JSON.stringify([path.join(root, ".openclaw", "wechat")]),
+        ],
+        { encoding: "utf8", timeout: 5000 },
+      );
+
+      expect(result.status).toBe(43);
+      expect(fs.readFileSync(path.join(outsideWechat, "sentinel"), "utf8")).toBe("preserve\n");
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+      fs.rmSync(outside, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses an unsafe stopped-cleanup path before Docker discovery", () => {
+    const captureDocker = vi.fn(() => "");
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: captureDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(
+          clearStoppedDockerSandboxChannelState("alpha", ["/sandbox/.openclaw/../project"]),
+        ).toEqual({ cleared: false, failure: "state-paths-invalid" });
+      },
+    );
+    expect(captureDocker).not.toHaveBeenCalled();
+  });
+
+  it("refuses stopped cleanup for a non-Docker sandbox before Docker discovery", () => {
+    const captureDocker = vi.fn(() => "");
+    const runDocker = vi.fn((_args: readonly string[]) => {
+      return { status: 0, stdout: "", stderr: "", error: null } as const;
+    });
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: captureDocker,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "vm" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "driver-not-docker",
+          },
+        );
+      },
+    );
+
+    expect(captureDocker).not.toHaveBeenCalled();
+    expect(runDocker).not.toHaveBeenCalled();
+  });
+
+  it("refuses cleanup when the stopped container has no writable sandbox mount", () => {
+    const containerId = "a".repeat(64);
+    const runDocker = vi.fn((_args: readonly string[]) => {
+      return {
+        status: 0,
+        stdout: `${containerId}\tfalse\t[]\n`,
+        stderr: "",
+        error: null,
+      } as const;
+    });
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "sandbox-volume-unavailable",
+          },
+        );
+      },
+    );
+
+    expect(runDocker).toHaveBeenCalledOnce();
+  });
+
+  it("classifies an unavailable Docker daemon without exposing its error", () => {
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => {
+          throw new Error("daemon detail must stay private");
+        },
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "docker-discovery-failed",
+          },
+        );
+      },
+    );
+  });
+
+  it("classifies a missing eligible stopped container", () => {
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => "",
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "no-eligible-stopped-container",
+          },
+        );
+      },
+    );
+  });
+
+  it("classifies invalid stopped-container ownership metadata", () => {
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => `gateway-id\topenshell-gateway-nemoclaw\n`,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "container-ownership-invalid",
+          },
+        );
+      },
+    );
+  });
+
+  it("classifies an unavailable pinned cleanup image", () => {
+    const containerId = "a".repeat(64);
+    const mounts = JSON.stringify([
+      { Type: "volume", Name: "nemoclaw-alpha-state", Destination: "/sandbox", RW: true },
+    ]);
+    const results = [
+      {
+        status: 0,
+        stdout: `${containerId}\tfalse\t${mounts}\n`,
+        stderr: "",
+        error: null,
+      },
+      { status: 1, stdout: "", stderr: "helper detail must stay private", error: null },
+    ];
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerRun: () => results.shift() as (typeof results)[number],
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "cleanup-helper-image-unavailable",
+          },
+        );
+      },
+    );
+  });
+
+  it("reconciles a helper container after an ambiguous create failure", () => {
+    const containerId = "a".repeat(64);
+    const helperId = "d".repeat(64);
+    const sandboxVolume = "nemoclaw-alpha-state";
+    const ownerIdentity = createHash("sha256").update("alpha").digest("hex");
+    const volumeIdentity = createHash("sha256").update(sandboxVolume).digest("hex");
+    const helperName = `nemoclaw-channel-cleanup-${ownerIdentity.slice(0, 24)}`;
+    const mounts = JSON.stringify([
+      { Type: "volume", Name: sandboxVolume, Destination: "/sandbox", RW: true },
+    ]);
+    let helperInspections = 0;
+    const runDocker = vi.fn((args: readonly string[]) => {
+      switch (args[0]) {
+        case "image":
+          return {
+            status: 0,
+            stdout: `sha256:${"c".repeat(64)}\n`,
+            stderr: "",
+            error: null,
+          } as const;
+        case "create":
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "daemon response was interrupted",
+            error: null,
+          } as const;
+        case "rm":
+          return { status: 0, stdout: helperId, stderr: "", error: null } as const;
+        case "inspect": {
+          switch (args.at(-1)) {
+            case containerId:
+              return {
+                status: 0,
+                stdout: `${containerId}\tfalse\t${mounts}\n`,
+                stderr: "",
+                error: null,
+              } as const;
+            case helperName:
+              helperInspections += 1;
+              return helperInspections === 1
+                ? ({
+                    status: 1,
+                    stdout: "",
+                    stderr: `Error: No such object: ${helperName}`,
+                    error: null,
+                  } as const)
+                : ({
+                    status: 0,
+                    stdout: `${helperId}\t${PINNED_CLEANUP_IMAGE}\t1\t${ownerIdentity}\t${volumeIdentity}\n`,
+                    stderr: "",
+                    error: null,
+                  } as const);
+            default:
+              return {
+                status: 1,
+                stdout: "",
+                stderr: `Error: No such container: ${helperId}`,
+                error: null,
+              } as const;
+          }
+        }
+        default:
+          throw new Error(`unexpected Docker argv: ${args.join(" ")}`);
+      }
+    });
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          { cleared: false, failure: "cleanup-helper-failed" },
+        );
+      },
+    );
+
+    expect(runDocker).toHaveBeenCalledWith(
+      ["rm", "-f", helperId],
+      expect.objectContaining({ timeout: 30_000 }),
+    );
+    expect(helperInspections).toBe(2);
+  });
+
+  it.each([
+    [43, "cleanup-state-tree-unsafe"],
+    [45, "cleanup-deletion-unconfirmed"],
+    [125, "cleanup-helper-failed"],
+  ] as const)(
+    "removes and confirms the named helper before classifying start exit %i as %s",
+    (startStatus, expectedFailure) => {
+      const containerId = "a".repeat(64);
+      const helperId = "e".repeat(64);
+      const mounts = JSON.stringify([
+        { Type: "volume", Name: "nemoclaw-alpha-state", Destination: "/sandbox", RW: true },
+      ]);
+      const results = [
+        {
+          status: 0,
+          stdout: `${containerId}\tfalse\t${mounts}\n`,
+          stderr: "",
+          error: null,
+        },
+        {
+          status: 0,
+          stdout: `sha256:${"c".repeat(64)}\n`,
+          stderr: "",
+          error: null,
+        },
+        {
+          status: 1,
+          stdout: "",
+          stderr: "Error: No such object: cleanup-helper",
+          error: null,
+        },
+        { status: 0, stdout: `${helperId}\n`, stderr: "", error: null },
+        { status: startStatus, stdout: "", stderr: "private helper detail", error: null },
+        { status: 0, stdout: helperId, stderr: "", error: null },
+        {
+          status: 1,
+          stdout: "",
+          stderr: `Error: No such container: ${helperId}`,
+          error: null,
+        },
+      ];
+      const runDocker = vi.fn(
+        (_args: readonly string[]) => results.shift() as (typeof results)[number],
+      );
+
+      withPrivilegedExecMocks(
+        {
+          dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+          dockerRun: runDocker,
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        },
+        ({ clearStoppedDockerSandboxChannelState }) => {
+          expect(
+            clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS),
+          ).toEqual({ cleared: false, failure: expectedFailure });
+        },
+      );
+
+      expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
+      expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
+      expect(runDocker).toHaveBeenCalledTimes(7);
+    },
+  );
 
   it("rejects ambiguous labeled running containers", () => {
     expect(() =>
@@ -567,7 +1056,9 @@ describe("privileged sandbox exec routing", () => {
           refusal = error;
         }
         expect(refusal).toBeInstanceOf(Error);
-        expect(String(refusal)).toMatch(/container identity changed.*refusing privileged execution/i);
+        expect(String(refusal)).toMatch(
+          /container identity changed.*refusing privileged execution/i,
+        );
         expect(isPinnedSandboxContainerIdentityChangedError(refusal)).toBe(true);
       },
     );

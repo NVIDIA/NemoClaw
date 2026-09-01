@@ -33,10 +33,10 @@ It also hardens host readiness, inference health checks, managed images, documen
   Managed LangChain Deep Agents Code images retain the reviewed 0.1.34 integration contract while pinning `uv==0.11.33`, `mcp==1.28.1`, `Pillow==12.3.0`, and `pyasn1==0.6.4`.
   Image validation also rejects retained `uv` build cache metadata, ignores build-only BuildKit telemetry during the Deep Agents Code probe, and clears each local platform pull before validating the next architecture.
 - Trusted CI now publishes agent-complete Open Container Initiative images by immutable digest, validates anonymous pulls and runtime contracts, and promotes aliases only after those checks pass.
-  Dormant managed-image selection and startup-profile contracts resolve exact all-agent cohorts and bounded agent-specific startup data without activating buildless onboarding or changing the current `Dockerfile` path.
+  Dormant managed-image selection and startup-profile contracts resolve all-agent cohorts and bounded agent-specific startup data without activating buildless onboarding or changing the current `Dockerfile` path.
 - Documentation now keeps provider-switch sections within the applicable OpenClaw and Hermes guide variants, corrects the Omni sub-agent model ID, and generalizes agent-selection guidance.
   The runtime identity, two-DGX Station vLLM, and memory search guides are now separate focused pages.
   The NVIDIA DORI installation pin is corrected from 0.10.0 to 0.9.0.
   For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers) and [Set Up Task-Specific Sub-Agents](/user-guide/openclaw/configure-agents/set-up-sub-agent).
-- Release E2E now preserves command and agent first-turn latency separately, evaluates recurring anomalies within an exact 12-sample cohort, and routes retired rebuild selectors to focused replacement evidence.
+- Release E2E now preserves command and agent first-turn latency separately, evaluates recurring anomalies within a 12-sample cohort, and routes retired rebuild selectors to focused replacement evidence.
   The credential-generation window runs independently, managed startup recovery covers the persisted startup command, and the standing Brev Launchable waits for the staging image family before deployment.

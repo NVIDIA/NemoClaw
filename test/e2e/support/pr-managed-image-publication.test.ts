@@ -1,201 +1,119 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { describe, expect, it } from "vitest";
+import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
+import { resolvePrManagedImageSource } from "../../../tools/e2e/pr-managed-image-publication.mts";
 
-import {
-  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_REPOSITORIES,
-  MANAGED_IMAGE_SOURCE_REPOSITORY,
-  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-  type ManagedImageAgent,
-  type ManagedImageContractV1,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../../../src/lib/onboard/managed-image/contract";
-import {
-  assembleManagedImageCatalog,
-  main,
-  managedImagePublicationRequired,
-  parseManagedImagePullRequestPaths,
-  selectManagedImagePublicationRun,
-} from "../../../tools/e2e/pr-managed-image-publication.mts";
-
+const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
-const PR_NUMBER = 8746;
-const WORKFLOW_ID = 12345;
+const BASE_TREE_SHA = "1".repeat(40);
+const CANDIDATE_TREE_SHA = "2".repeat(40);
+const PR_NUMBER = 10_263;
+const CANONICAL_REPOSITORY = "NVIDIA/NemoClaw";
+const WORKFLOW_SOURCE = `on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/base-image.yaml"
+      - "Dockerfile.base"
+  workflow_dispatch:
+jobs: {}
+`;
 
-function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
-  const image = MANAGED_IMAGE_REPOSITORIES[agent];
-  const digest = `sha256:${String(index + 1).repeat(64)}` as const;
-  return {
-    contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
-    agent,
-    platform: "linux/amd64",
-    image,
-    digest,
-    reference: `${image}@${digest}`,
-    source: {
-      repository: MANAGED_IMAGE_SOURCE_REPOSITORY,
-      revision: CANDIDATE_SHA,
-      release: "v0.0.110",
-      cohort: "ghrun-32144654845-1",
-    },
-    startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-    capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  };
+function treeEntry(path: string, sha: string) {
+  return { mode: "100644", path, sha, type: "blob" };
 }
 
-function run(overrides: Record<string, unknown> = {}): unknown {
-  return {
-    total_count: 1,
-    workflow_runs: [
+function requestFor(candidateRepository: string, imageChanged: boolean) {
+  const baseEntries = [
+    treeEntry("Dockerfile.base", "3".repeat(40)),
+    treeEntry("docs/guide.mdx", "4".repeat(40)),
+  ];
+  const candidateEntries = [
+    treeEntry("Dockerfile.base", (imageChanged ? "5" : "3").repeat(40)),
+    treeEntry("docs/guide.mdx", "4".repeat(40)),
+  ];
+  const responses = new Map<string, unknown>([
+    [
+      `/repos/${CANONICAL_REPOSITORY}/pulls/${PR_NUMBER}`,
       {
-        id: 32144654845,
-        run_attempt: 1,
-        workflow_id: WORKFLOW_ID,
-        name: "Images / Build, Test, and Publish Managed Images",
-        path: ".github/workflows/managed-images.yaml",
-        event: "pull_request",
-        head_sha: CANDIDATE_SHA,
-        status: "completed",
-        conclusion: "success",
-        repository: { full_name: "NVIDIA/NemoClaw" },
-        head_repository: { full_name: "NVIDIA/NemoClaw" },
-        pull_requests: [{ number: PR_NUMBER }],
-        ...overrides,
+        state: "open",
+        base: { sha: BASE_SHA, repo: { full_name: CANONICAL_REPOSITORY } },
+        head: { sha: CANDIDATE_SHA, repo: { full_name: candidateRepository } },
       },
     ],
+    [
+      `/repos/${CANONICAL_REPOSITORY}/git/commits/${BASE_SHA}`,
+      { sha: BASE_SHA, tree: { sha: BASE_TREE_SHA } },
+    ],
+    [
+      `/repos/${CANONICAL_REPOSITORY}/git/trees/${BASE_TREE_SHA}?recursive=1`,
+      { sha: BASE_TREE_SHA, tree: baseEntries, truncated: false },
+    ],
+    [
+      `/repos/${candidateRepository}/git/commits/${CANDIDATE_SHA}`,
+      { sha: CANDIDATE_SHA, tree: { sha: CANDIDATE_TREE_SHA } },
+    ],
+    [
+      `/repos/${candidateRepository}/git/trees/${CANDIDATE_TREE_SHA}?recursive=1`,
+      { sha: CANDIDATE_TREE_SHA, tree: candidateEntries, truncated: false },
+    ],
+  ]);
+  return async (requestPath: string): Promise<unknown> =>
+    responses.get(requestPath) ?? Promise.reject(new Error(`unexpected request ${requestPath}`));
+}
+
+function selectorInput(candidateRepository: string) {
+  return {
+    baseSha: BASE_SHA,
+    candidateRepository,
+    candidateSha: CANDIDATE_SHA,
+    prNumber: PR_NUMBER,
+    token: "test-token",
+    workflowSource: WORKFLOW_SOURCE,
   };
 }
 
-describe("exact PR managed-image publication (#8746, #9464)", () => {
-  it("derives applicability from the trusted managed-image workflow", () => {
-    const patterns = parseManagedImagePullRequestPaths(
-      fs.readFileSync(".github/workflows/managed-images.yaml", "utf8"),
-    );
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
-    expect(
-      managedImagePublicationRequired(["src/lib/onboard/workload/preparation.ts"], patterns),
-    ).toBe(true);
-    expect(
-      managedImagePublicationRequired(["tools/mcp-tool-discovery-runtime/server.mts"], patterns),
-    ).toBe(true);
-    expect(
-      managedImagePublicationRequired(
-        ["src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts"],
-        patterns,
+describe("PR managed-image source selection", () => {
+  it("keeps source selection bound to commit A during A-to-B-to-A PR drift", async () => {
+    await expect(
+      resolvePrManagedImageSource(
+        selectorInput(CANONICAL_REPOSITORY),
+        requestFor(CANONICAL_REPOSITORY, true),
       ),
-    ).toBe(true);
-    expect(managedImagePublicationRequired(["docs/My Guide.md"], patterns)).toBe(false);
-    expect(() =>
-      managedImagePublicationRequired(["src/lib/onboard/file.ts\nother"], patterns),
-    ).toThrow("changed-file path is invalid");
+    ).resolves.toBe("local-dockerfile");
   });
 
-  it("rejects an unreviewed path-filter glob", () => {
-    expect(() =>
-      parseManagedImagePullRequestPaths(`
-on:
-  pull_request:
-    paths:
-      - ".github/workflows/managed-images.yaml"
-      - "src/**/nested/**"
-`),
-    ).toThrow("unsupported glob");
-  });
-
-  it("selects one successful workflow run for the candidate commit", () => {
-    expect(
-      selectManagedImagePublicationRun(run(), {
-        headSha: CANDIDATE_SHA,
-        prNumber: PR_NUMBER,
-        workflowId: WORKFLOW_ID,
-      }),
-    ).toEqual({ id: 32144654845, attempt: 1, headSha: CANDIDATE_SHA });
-  });
-
-  it.each([
-    ["pending", { status: "in_progress", conclusion: null }, "must complete successfully"],
-    ["failed", { conclusion: "failure" }, "must complete successfully"],
-    ["different commit", { head_sha: "b".repeat(40) }, "commit must be"],
-    ["different PR", { pull_requests: [{ number: 9464 }] }, "PR number"],
-  ])("rejects a %s publication run", (_label, overrides, message) => {
-    expect(() =>
-      selectManagedImagePublicationRun(run(overrides), {
-        headSha: CANDIDATE_SHA,
-        prNumber: PR_NUMBER,
-        workflowId: WORKFLOW_ID,
-      }),
-    ).toThrow(message);
-  });
-
-  it("assembles one exact all-agent catalog", () => {
-    const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map(contract);
-
-    expect(assembleManagedImageCatalog(contracts, CANDIDATE_SHA)).toEqual(
-      Object.fromEntries(contracts.map((value) => [value.agent, value])),
-    );
-  });
-
-  it("writes a validated catalog through the shared assembly command", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-test-"));
-    try {
-      const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
-        const contractPath = path.join(directory, `${agent}.json`);
-        fs.writeFileSync(contractPath, JSON.stringify(contract(agent, index)));
-        return contractPath;
+  it("reads a validated external candidate repository through the default request policy", async () => {
+    const candidateRepository = "external-contributor/NemoClaw";
+    const request = requestFor(candidateRepository, false);
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = new URL(input);
+      return new Response(JSON.stringify(await request(`${url.pathname}${url.search}`)), {
+        status: 200,
       });
-      const outputPath = path.join(directory, "catalog.json");
+    });
 
-      await main(["assemble", CANDIDATE_SHA, outputPath, ...contracts], {});
-
-      expect(JSON.parse(fs.readFileSync(outputPath, "utf8"))).toEqual(
-        Object.fromEntries(
-          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
-        ),
-      );
-      expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
+    await expect(resolvePrManagedImageSource(selectorInput(candidateRepository))).resolves.toBe(
+      "managed-image",
+    );
   });
 
-  it.each([
-    [
-      "candidate revision",
-      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
-        index === 0
-          ? {
-              ...contract(agent, index),
-              source: { ...contract(agent, index).source, revision: "b".repeat(40) },
-            }
-          : contract(agent, index),
-      ),
-      "candidate commit",
-    ],
-    [
-      "publication cohort",
-      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) =>
-        index === 0
-          ? {
-              ...contract(agent, index),
-              source: { ...contract(agent, index).source, cohort: "ghrun-32144654845-2" },
-            }
-          : contract(agent, index),
-      ),
-      "publication cohort",
-    ],
-    [
-      "agent set",
-      [contract("openclaw", 0), contract("openclaw", 0), contract("hermes", 1)],
-      "every shipped agent",
-    ],
-  ])("rejects mixed %s authority", (_label, contracts, message) => {
-    expect(() => assembleManagedImageCatalog(contracts, CANDIDATE_SHA)).toThrow(message);
+  it("rejects a GitHub request outside the canonical and candidate repositories", async () => {
+    await expect(
+      githubRequest(`/repos/other-owner/other-repository/git/commits/${CANDIDATE_SHA}`, "token", {
+        additionalRepository: "external-contributor/NemoClaw",
+        attempts: 1,
+        fetchImpl: async () => {
+          throw new Error("must not fetch");
+        },
+      }),
+    ).rejects.toThrow("GitHub API path must stay within an allowed repository");
   });
 });

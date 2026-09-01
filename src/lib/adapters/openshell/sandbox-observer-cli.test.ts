@@ -4,8 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createCliOpenShellLegacyPodReadinessProbe,
   createCliOpenShellSandboxLookup,
   createCliOpenShellSandboxObserver as createObserver,
+  createCliOpenShellSandboxObserverFromRunner,
   type CapturedSandboxCommandResult,
   type CliOpenShellSandboxObserverDeps,
   parseCliOpenShellSandboxInventory,
@@ -92,6 +94,24 @@ describe("CLI OpenShell sandbox observer", () => {
         { name: "epsilon", phase: "Running", readiness: "ready" },
       ],
     });
+  });
+
+  it("parses the captured DGX Spark readiness sequence inside the CLI implementation (#9803)", () => {
+    const rows = [
+      "my-sandbox   Provisioning   2s ago",
+      "my-sandbox   Error          6s ago",
+      "my-sandbox   Error          8s ago",
+      "my-sandbox   Error          10s ago",
+      "my-sandbox   Ready          14s ago",
+    ];
+
+    expect(rows.map((row) => parseCliOpenShellSandboxInventory(row).sandboxes[0]?.phase)).toEqual([
+      "Provisioning",
+      "Error",
+      "Error",
+      "Error",
+      "Ready",
+    ]);
   });
 
   it("parses successful list output from stdout without treating stderr as inventory (#9803)", async () => {
@@ -217,6 +237,108 @@ describe("CLI OpenShell sandbox observer", () => {
     ).resolves.toEqual({
       ok: false,
       error: { kind: "timeout", message: "OpenShell sandbox observation timed out." },
+    });
+  });
+
+  it("normalizes a structured runner without exposing runner output to consumers (#9803)", async () => {
+    const run = vi.fn(() => ({
+      status: 0,
+      stdout: Buffer.from("alpha Ready"),
+      stderr: Buffer.from("warning text"),
+    }));
+    const observer = createCliOpenShellSandboxObserverFromRunner(run, 9_000);
+
+    await expect(
+      observer.listSandboxes({ target: namedOpenShellGateway("nemoclaw") }),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+      },
+    });
+    expect(run).toHaveBeenCalledWith(["sandbox", "list", "-g", "nemoclaw"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: 9_000,
+    });
+  });
+
+  it("keeps the legacy Kubernetes readiness command and phase parsing in the CLI implementation (#9803)", async () => {
+    const capture = vi.fn(() => captured(0, "Running"));
+    const probe = createCliOpenShellLegacyPodReadinessProbe({
+      capture,
+      defaultTimeoutMs: 7_000,
+    });
+
+    await expect(
+      probe({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: "ready" });
+    expect(capture).toHaveBeenCalledWith(
+      [
+        "doctor",
+        "exec",
+        "-g",
+        "nemoclaw",
+        "--",
+        "kubectl",
+        "-n",
+        "openshell",
+        "get",
+        "pod",
+        "alpha",
+        "-o",
+        "jsonpath={.status.phase}",
+      ],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: 7_000,
+      },
+    );
+  });
+
+  it("keeps the legacy Kubernetes readiness command unscoped for the selected gateway (#9803)", async () => {
+    const capture = vi.fn(() => captured(0, "Running"));
+    const probe = createCliOpenShellLegacyPodReadinessProbe({ capture });
+
+    await expect(
+      probe({ target: selectedOpenShellGateway(), sandboxName: "alpha" }),
+    ).resolves.toEqual({ ok: true, value: "ready" });
+    expect(capture).toHaveBeenCalledWith(
+      [
+        "doctor",
+        "exec",
+        "--",
+        "kubectl",
+        "-n",
+        "openshell",
+        "get",
+        "pod",
+        "alpha",
+        "-o",
+        "jsonpath={.status.phase}",
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("returns a typed legacy Kubernetes observation failure (#9803)", async () => {
+    const probe = createCliOpenShellLegacyPodReadinessProbe({
+      capture: () => captured(1, "", "authentication failed"),
+    });
+
+    await expect(
+      probe({ target: selectedOpenShellGateway(), sandboxName: "alpha" }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox observation.",
+      },
     });
   });
 });

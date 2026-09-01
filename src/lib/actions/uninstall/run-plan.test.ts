@@ -552,6 +552,7 @@ describe("uninstall run plan", () => {
           readBytes: () => Buffer.from("12000\n"),
           readUtf8: () => "12000\n",
           replaceUtf8: () => {},
+          stat: () => ({}) as fs.Stats,
         }),
         rmSync: vi.fn(),
         run: (command, args) => {

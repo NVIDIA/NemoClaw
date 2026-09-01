@@ -139,10 +139,10 @@ describe("PR review advisor specialist prompts", () => {
       ["--experimental-strip-types", "render-specialist-matrix.mts"],
       { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
     );
-    const matrix = JSON.parse(output) as Array<{ interest: string; sandbox_name: string }>;
+    const matrix = JSON.parse(output) as Array<{ interest: string }>;
 
     expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
-    expect(matrix.every(({ sandbox_name: sandboxName }) => sandboxName.length <= 19)).toBe(true);
+    expect(matrix.every((entry) => !("sandbox_name" in entry))).toBe(true);
   });
 
   it("discovers a specialist from one Markdown prompt file", () => {
@@ -158,20 +158,8 @@ describe("PR review advisor specialist prompts", () => {
         interest: "reliability",
         label: "Reliability",
         prompt: "Decide whether the change remains reliable.",
-        sandboxName: expect.stringMatching(/^pr-adv-sp-reli-[0-9a-f]{4}$/u),
       },
     ]);
-  });
-
-  it("gives long specialist names distinct sandbox names", () => {
-    const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-prompts-"));
-    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(directory, "design-architecture.md"), "Review one design.\n");
-    fs.writeFileSync(path.join(directory, "design-archive.md"), "Review another design.\n");
-
-    const names = readAdvisorSpecialists(directory).map(({ sandboxName }) => sandboxName);
-    expect(new Set(names).size).toBe(2);
-    expect(names.every((name) => name.length <= 19)).toBe(true);
   });
 
   it("rejects an empty specialist prompt", () => {
