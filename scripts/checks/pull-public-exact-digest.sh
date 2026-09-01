@@ -11,11 +11,10 @@ fi
 
 reference="$1"
 platform="$2"
-# Observed GHCR publication remained anonymously unavailable through +168s
-# and became readable at +211s. Keep retries bounded by both wall time and count.
-max_attempts=10
-deadline_seconds=300
-retry_delays=(2 4 8 16 30 30 30 30 30)
+# Observed GHCR publication remained anonymously unavailable through +288s
+# and became readable by about +344s. Keep retries bounded by both wall time and count.
+max_attempts=20
+deadline_seconds=600
 
 if [[ ! "$reference" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]; then
   echo "ERROR: public image reference must be an exact lowercase GHCR digest" >&2
@@ -52,7 +51,8 @@ for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
     else
       outcome="passed-after-retry"
     fi
-    echo "::notice::GHCR anonymous exact-digest pull outcome=$outcome attempt=$attempt/$max_attempts"
+    elapsed="$((SECONDS - started_at))"
+    echo "::notice::GHCR anonymous exact-digest pull outcome=$outcome attempt=$attempt/$max_attempts elapsed=${elapsed}s deadline=${deadline_seconds}s"
     exit 0
   else
     status="$?"
@@ -74,7 +74,11 @@ for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
     exit "$status"
   fi
 
-  delay="${retry_delays[$((attempt - 1))]}"
+  if [ "$attempt" -le 4 ]; then
+    delay="$((1 << attempt))"
+  else
+    delay=30
+  fi
   remaining="$((deadline_seconds - elapsed))"
   if [ "$delay" -gt "$remaining" ]; then
     delay="$remaining"
