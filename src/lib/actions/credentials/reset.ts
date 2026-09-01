@@ -133,7 +133,7 @@ export async function runCredentialsResetAction(
       removedLocal
         ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
         : `  Provider '${key}' is already absent from the OpenShell gateway.`,
-      `  Re-run '${CLI_NAME} onboard' to enter a new value.`,
+      `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
       ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
     ]);
   }
@@ -151,7 +151,7 @@ export function formatResetOutcome(
   recovery: CredentialsProviderDeleteWithRecoveryResult,
   gatewayName: string,
 ): { ok: boolean; lines: string[] } {
-  const onboardHint = `  Re-run '${CLI_NAME} onboard' to enter a new value.`;
+  const onboardHint = `  Rerun '${CLI_NAME} onboard' to enter a new value.`;
   if (recovery.ok) {
     return {
       ok: true,
@@ -193,7 +193,7 @@ export function formatResetOutcome(
         (sandbox) =>
           `    openshell sandbox provider detach -g ${gatewayName} ${sandbox} ${key}`,
       ),
-      `  Then re-run '${CLI_NAME} credentials reset ${key}'.`,
+      `  Then rerun '${CLI_NAME} credentials reset ${key}'.`,
     );
   }
   const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
@@ -201,7 +201,7 @@ export function formatResetOutcome(
     lines.push(
       "",
       `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")}, but provider removal was not confirmed.`,
-      `  Re-run '${CLI_NAME} credentials reset ${key}' to complete provider removal.`,
+      `  Rerun '${CLI_NAME} credentials reset ${key}' to complete provider removal.`,
       "  If the provider remains registered, restore it by rebuilding the detached sandbox(es):",
       ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
     );
