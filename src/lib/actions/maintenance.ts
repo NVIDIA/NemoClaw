@@ -367,6 +367,15 @@ export async function backupAllUnderPortableHostFence(
   let notRunningSkipped = 0;
   const strandedOrphans: string[] = [];
   const backupRegisteredSandbox = async (sb: (typeof sandboxes)[number]): Promise<void> => {
+    // A committed lifecycle containment can reject entry before the stopped
+    // container path reports that this registry row has no runtime to back up.
+    // Apply the same gateway-binding + Docker-absence proof before acquiring
+    // that lock. The confirming post-loop probes below still close the race
+    // before the installer accepts the exemption.
+    if (orphanNames.has(sb.name) && isSandboxContainerDefinitivelyAbsent(sb.name)) {
+      strandedOrphans.push(sb.name);
+      return;
+    }
     // A registered docker-driver sandbox whose container is merely stopped is
     // backupable: start it for the duration of the backup and return it to
     // its stopped state after (#6500). Anything else that is not Ready keeps

@@ -8,7 +8,7 @@ import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes
 import { createManagedHermesStateVolumeOnboardLifecycle } from "../managed-workload/onboard-orchestration";
 import {
   finalizeRecreatedSourceHermesStateVolume,
-  runSandboxCreateWithPolicyAuthorityChecks,
+  runSandboxCreateWithIdentityVerification,
 } from "./orchestration";
 
 function managedHermesSource(): SandboxEntry {
@@ -16,6 +16,7 @@ function managedHermesSource(): SandboxEntry {
     name: "alpha",
     agent: "hermes",
     openshellDriver: "docker-linux",
+    createAttemptNonce: "a".repeat(62),
     workload: {
       schemaVersion: 1,
       kind: "managed-image",
@@ -57,6 +58,7 @@ describe("managed Hermes state volume recreation", () => {
         "io.nvidia.nemoclaw.hermes-state.schema": "1",
         "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
         "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+        "io.nvidia.nemoclaw.hermes-state.create-attempt": "a".repeat(62),
       },
     });
     const targetLifecycle = createManagedHermesStateVolumeOnboardLifecycle(
@@ -65,6 +67,7 @@ describe("managed Hermes state volume recreation", () => {
         runtimeProvider: { identity: { id: "docker" } } as never,
         sandboxName: "alpha",
         workloadKind: "managed-image",
+        createAttemptNonce: "a".repeat(62),
       },
       {
         runDocker: docker.runDocker as never,
@@ -132,6 +135,7 @@ describe("managed Hermes state volume recreation", () => {
         runtimeProviderId: "docker",
         sandboxName: "alpha",
         workloadKind: "managed-image",
+        createAttemptNonce: "a".repeat(62),
       });
       expect(deps.note).toHaveBeenCalledWith("  Removed managed Hermes state volume for 'alpha'.");
     },
@@ -197,16 +201,16 @@ describe("managed Hermes state volume failed-create cleanup", () => {
     captureCreatedSandboxIdentity: vi.fn(() => "a".repeat(64)),
     persistCreatedSandboxIdentity: vi.fn(),
     revalidateCreatedSandboxIdentity: vi.fn(),
-    verifyCreatedPolicy: vi.fn(() => "verified"),
-    persistVerifiedPolicy: vi.fn(),
-    revalidateVerifiedPolicy: vi.fn(),
+    captureVerifiedCreateBoundary: vi.fn(() => "verified"),
+    persistCreateIdentity: vi.fn(),
+    revalidateVerifiedCreateIdentity: vi.fn(),
   };
 
   async function rejectSandboxCreate(
     lifecycle: NonNullable<ReturnType<typeof createManagedHermesStateVolumeOnboardLifecycle>>,
   ): Promise<void> {
     await expect(
-      runSandboxCreateWithPolicyAuthorityChecks({
+      runSandboxCreateWithIdentityVerification({
         sandboxName: "alpha",
         revalidate: vi.fn(),
         create: async () => {
@@ -227,6 +231,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
         runtimeProvider: { identity: { id: "docker" } } as never,
         sandboxName: "alpha",
         workloadKind: "managed-image",
+        createAttemptNonce: "a".repeat(62),
       },
       { runDocker: docker.runDocker as never, registerExitCleanup: () => vi.fn() },
     );
@@ -245,6 +250,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
         "io.nvidia.nemoclaw.hermes-state.schema": "1",
         "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
         "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+        "io.nvidia.nemoclaw.hermes-state.create-attempt": "a".repeat(62),
       },
     });
     const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
@@ -253,6 +259,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
         runtimeProvider: { identity: { id: "docker" } } as never,
         sandboxName: "alpha",
         workloadKind: "managed-image",
+        createAttemptNonce: "a".repeat(62),
       },
       { runDocker: docker.runDocker as never },
     );
@@ -263,7 +270,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
     expect(docker.calls.some((args) => args[0] === "rm")).toBe(false);
   });
 
-  it("retains a newly created volume with identity-bound recovery after policy failure", async () => {
+  it("retains a newly created volume after post-create verification failure", async () => {
     const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
     const unregister = vi.fn();
@@ -273,6 +280,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
         runtimeProvider: { identity: { id: "docker" } } as never,
         sandboxName: "alpha",
         workloadKind: "managed-image",
+        createAttemptNonce: "a".repeat(62),
       },
       {
         runDocker: docker.runDocker as never,
@@ -283,7 +291,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
       },
     );
 
-    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+    const error = await runSandboxCreateWithIdentityVerification({
       sandboxName: "alpha",
       revalidate: vi.fn(),
       create: async (verifyCreatedSandbox) => {
@@ -291,12 +299,12 @@ describe("managed Hermes state volume failed-create cleanup", () => {
         return "created";
       },
       ...exactIdentityBoundary,
-      verifyCreatedPolicy: () => {
-        throw new Error("policy verification failed");
+      captureVerifiedCreateBoundary: () => {
+        throw new Error("post-create verification failed");
       },
       cleanupTemporarySources: vi.fn(),
       cleanupIncompleteCreate: () => lifecycle!.cleanupIncompleteCreate(),
-      preserveIncompleteCreate: () => lifecycle!.preserveForRecovery(),
+      preserveIncompleteCreate: () => lifecycle!.commit(),
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -312,6 +320,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
         runtimeProvider: { identity: { id: "docker" } } as never,
         sandboxName: "alpha",
         workloadKind: "managed-image",
+        createAttemptNonce: "a".repeat(62),
       },
       { runDocker: docker.runDocker as never },
     );
@@ -335,6 +344,7 @@ describe("managed Hermes state volume failed-create cleanup", () => {
           runtimeProvider: { identity: { id: "docker" } } as never,
           sandboxName: "alpha",
           workloadKind: "managed-image",
+          createAttemptNonce: "a".repeat(62),
         },
         { runDocker: docker.runDocker as never },
       ),

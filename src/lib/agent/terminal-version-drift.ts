@@ -89,8 +89,11 @@ export function checkTerminalAgentVersion(
     // manifests. Keep this boundary aligned with terminal-smoke.ts; convert it
     // to an argv-form allowlist before accepting custom/user manifests here.
     // The timeout prevents a hung command from wedging onboarding.
+    // Pi's exact resource-limit login profile requires Bash because Ubuntu
+    // /bin/sh cannot inspect nproc.
+    const shellPath = agent.name === "pi" ? "/bin/bash" : "sh";
     result = runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", agent.versionCommand],
+      ["sandbox", "exec", "-n", sandboxName, "--", shellPath, "-lc", agent.versionCommand],
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
     );
   } catch {

@@ -20,6 +20,7 @@ const MANAGED_HERMES_VOLUME_LABELS = {
   "io.nvidia.nemoclaw.hermes-state.sandbox": "hermes",
   "io.nvidia.nemoclaw.hermes-state.schema": "1",
   "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+  "io.nvidia.nemoclaw.hermes-state.create-attempt": "a".repeat(62),
 };
 
 function ok(stdout = ""): RunResult {
@@ -66,6 +67,7 @@ async function runManagedHermesVolumeUninstall(
           gatewayPort: 8080,
           name: "hermes",
           openshellDriver: "docker",
+          createAttemptNonce: "a".repeat(62),
           workload: { kind: "managed-image" },
         },
       },
@@ -189,7 +191,7 @@ describe("managed Hermes state volume uninstall", () => {
       expect(harness.volumePresent()).toBe(true);
       expect(harness.dockerCalls).not.toContainEqual(["volume", "rm", harness.volumeName]);
       expect(harness.errors.join("\n")).toContain(
-        `Left Docker volume '${harness.volumeName}' untouched because the exact NemoClaw ownership labels are absent or changed.`,
+        `Left Docker volume '${harness.volumeName}' untouched because the exact NemoClaw ownership or create-attempt labels are absent or changed.`,
       );
     } finally {
       harness.cleanup();

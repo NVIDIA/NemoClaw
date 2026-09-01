@@ -379,6 +379,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "progress" },
   ],
   [
+    "test/e2e/live/external-gateway-health-helpers.ts#startPreparedExternalTlsGateway",
+    { kind: "path", path: "progress" },
+  ],
+  [
     "test/e2e/live/mcp-bridge-servers.ts#startPublicMcpHttpsTunnel",
     { kind: "path", path: "options.progress" },
   ],

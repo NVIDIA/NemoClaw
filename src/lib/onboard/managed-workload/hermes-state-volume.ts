@@ -25,6 +25,8 @@ const MANAGED_LABEL = "io.nvidia.nemoclaw.hermes-state.managed";
 const SCHEMA_LABEL = "io.nvidia.nemoclaw.hermes-state.schema";
 const SANDBOX_LABEL = "io.nvidia.nemoclaw.hermes-state.sandbox";
 const TARGET_LABEL = "io.nvidia.nemoclaw.hermes-state.target";
+const CREATE_ATTEMPT_LABEL = "io.nvidia.nemoclaw.hermes-state.create-attempt";
+const CREATE_ATTEMPT_PATTERN = /^[0-9a-f]{62}$/u;
 const MISSING_VOLUME_PATTERN = /\bno such volume\b/iu;
 const COMMAND_TIMEOUT_MS = 30_000;
 
@@ -33,6 +35,8 @@ export type ManagedHermesStateVolumeContext = {
   readonly runtimeProviderId: string | null | undefined;
   readonly sandboxName: string;
   readonly workloadKind: string;
+  readonly createAttemptNonce?: string;
+  readonly authorizedPriorCreateAttemptNonce?: string;
 };
 
 export type ManagedHermesStateVolumeMount = {
@@ -62,6 +66,10 @@ export type ManagedHermesStateVolumeScope = {
   readonly mount: ManagedHermesStateVolumeMount;
   readonly reused: boolean;
   readonly volumeName: string;
+  readonly recoveryDescriptor: {
+    readonly name: string;
+    readonly createAttemptNonce: string;
+  } | null;
   cleanupIncompleteCreate(): ManagedHermesStateVolumeCleanupResult;
   commit(): void;
 };
@@ -90,12 +98,16 @@ function boundedDetail(result: DockerRunResultLike): string {
   return commandOutput(result).replace(/\s+/gu, " ").slice(0, 500) || "Docker command failed";
 }
 
-function expectedLabels(sandboxName: string): Readonly<Record<string, string>> {
+function expectedLabels(
+  sandboxName: string,
+  createAttemptNonce?: string,
+): Readonly<Record<string, string>> {
   return Object.freeze({
     [MANAGED_LABEL]: "true",
     [SCHEMA_LABEL]: "1",
     [SANDBOX_LABEL]: sandboxName,
     [TARGET_LABEL]: MANAGED_HERMES_STATE_ROOT,
+    ...(createAttemptNonce ? { [CREATE_ATTEMPT_LABEL]: createAttemptNonce } : {}),
   });
 }
 
@@ -167,18 +179,43 @@ export function requiresManagedHermesStateVolume(
 
 function removeOwnedVolume(
   sandboxName: string,
+  expectedCreateAttemptNonce: string | undefined,
   runDocker: DockerRun,
 ): ManagedHermesStateVolumeCleanupResult {
   const volumeName = managedHermesStateVolumeName(sandboxName);
+  if (!expectedCreateAttemptNonce || !CREATE_ATTEMPT_PATTERN.test(expectedCreateAttemptNonce)) {
+    return {
+      status: "not-owned",
+      detail: "the exact create-attempt authority is absent or invalid",
+      volumeName,
+    };
+  }
+  const expected = expectedLabels(sandboxName, expectedCreateAttemptNonce);
   const observation = inspectVolume(volumeName, runDocker);
   if (observation.status === "absent") return { status: "absent" };
   if (observation.status === "failed") {
     return { status: "failed", detail: observation.detail, volumeName };
   }
-  if (!labelsMatch(observation.labels, expectedLabels(sandboxName))) {
+  if (!labelsMatch(observation.labels, expected)) {
     return {
       status: "not-owned",
-      detail: "the exact NemoClaw ownership labels are absent or changed",
+      detail: "the exact NemoClaw ownership or create-attempt labels are absent or changed",
+      volumeName,
+    };
+  }
+  const stableObservation = inspectVolume(volumeName, runDocker);
+  if (stableObservation.status === "absent") return { status: "absent" };
+  if (stableObservation.status === "failed") {
+    return { status: "failed", detail: stableObservation.detail, volumeName };
+  }
+  if (
+    !labelsMatch(stableObservation.labels, expected) ||
+    !labelsMatch(observation.labels, stableObservation.labels) ||
+    !labelsMatch(stableObservation.labels, observation.labels)
+  ) {
+    return {
+      status: "not-owned",
+      detail: "the exact NemoClaw ownership or create-attempt labels changed before removal",
       volumeName,
     };
   }
@@ -197,12 +234,39 @@ export function prepareManagedHermesStateVolume(
   deps: ManagedHermesStateVolumeDeps = {},
 ): ManagedHermesStateVolumeScope | null {
   if (!requiresManagedHermesStateVolume(context)) return null;
+  if (!context.createAttemptNonce || !CREATE_ATTEMPT_PATTERN.test(context.createAttemptNonce)) {
+    throw new Error("Managed Hermes state volume requires one valid create-attempt nonce.");
+  }
+  if (
+    context.authorizedPriorCreateAttemptNonce !== undefined &&
+    !CREATE_ATTEMPT_PATTERN.test(context.authorizedPriorCreateAttemptNonce)
+  ) {
+    throw new Error("Managed Hermes state volume has invalid prior create-attempt authority.");
+  }
   const runDocker = deps.runDocker ?? defaultDockerRun;
   const volumeName = managedHermesStateVolumeName(context.sandboxName);
-  const labels = expectedLabels(context.sandboxName);
+  const labels = expectedLabels(context.sandboxName, context.createAttemptNonce);
+  const ownershipLabels = expectedLabels(context.sandboxName);
   const before = inspectVolume(volumeName, runDocker);
   if (before.status === "failed") {
     throw new Error(`Cannot inspect managed Hermes state volume '${volumeName}': ${before.detail}`);
+  }
+  if (before.status === "observed" && !labelsMatch(before.labels, ownershipLabels)) {
+    throw new Error(
+      `Cannot use managed Hermes state volume '${volumeName}': exact NemoClaw ownership labels do not match.`,
+    );
+  }
+  const observedCreateAttempt =
+    before.status === "observed" ? before.labels[CREATE_ATTEMPT_LABEL] : undefined;
+  if (
+    before.status === "observed" &&
+    (!observedCreateAttempt ||
+      (observedCreateAttempt !== context.createAttemptNonce &&
+        observedCreateAttempt !== context.authorizedPriorCreateAttemptNonce))
+  ) {
+    throw new Error(
+      `Cannot use managed Hermes state volume '${volumeName}': existing volume is not authorized for create attempt ${context.createAttemptNonce}.`,
+    );
   }
   let created = false;
   if (before.status === "absent") {
@@ -226,8 +290,16 @@ export function prepareManagedHermesStateVolume(
     created = true;
   }
   const verified = inspectVolume(volumeName, runDocker);
-  if (verified.status !== "observed" || !labelsMatch(verified.labels, labels)) {
-    if (created) removeOwnedVolume(context.sandboxName, runDocker);
+  if (
+    verified.status !== "observed" ||
+    !labelsMatch(verified.labels, ownershipLabels) ||
+    (created
+      ? !labelsMatch(verified.labels, labels)
+      : !verified.labels[CREATE_ATTEMPT_LABEL] ||
+        (verified.labels[CREATE_ATTEMPT_LABEL] !== context.createAttemptNonce &&
+          verified.labels[CREATE_ATTEMPT_LABEL] !== context.authorizedPriorCreateAttemptNonce))
+  ) {
+    if (created) removeOwnedVolume(context.sandboxName, context.createAttemptNonce, runDocker);
     const detail =
       verified.status === "failed"
         ? verified.detail
@@ -240,7 +312,7 @@ export function prepareManagedHermesStateVolume(
   let committed = false;
   const cleanup = (): ManagedHermesStateVolumeCleanupResult => {
     if (committed || !created) return { status: "not-applicable" };
-    return removeOwnedVolume(context.sandboxName, runDocker);
+    return removeOwnedVolume(context.sandboxName, context.createAttemptNonce, runDocker);
   };
   const unregisterExitCleanup = created
     ? (deps.registerExitCleanup ?? defaultRegisterExitCleanup)(() => {
@@ -257,6 +329,9 @@ export function prepareManagedHermesStateVolume(
     }),
     reused: !created,
     volumeName,
+    recoveryDescriptor: created
+      ? Object.freeze({ name: volumeName, createAttemptNonce: context.createAttemptNonce })
+      : null,
     cleanupIncompleteCreate: cleanup,
     commit() {
       committed = true;
@@ -270,5 +345,29 @@ export function removeManagedHermesStateVolume(
   deps: Pick<ManagedHermesStateVolumeDeps, "runDocker"> = {},
 ): ManagedHermesStateVolumeCleanupResult {
   if (!requiresManagedHermesStateVolume(context)) return { status: "not-applicable" };
-  return removeOwnedVolume(context.sandboxName, deps.runDocker ?? defaultDockerRun);
+  return removeOwnedVolume(
+    context.sandboxName,
+    context.createAttemptNonce,
+    deps.runDocker ?? defaultDockerRun,
+  );
+}
+
+export function removeRetainedManagedHermesStateVolume(
+  sandboxName: string,
+  retained: { readonly name: string; readonly createAttemptNonce: string },
+  deps: Pick<ManagedHermesStateVolumeDeps, "runDocker"> = {},
+): ManagedHermesStateVolumeCleanupResult {
+  const expectedName = managedHermesStateVolumeName(sandboxName);
+  if (retained.name !== expectedName || !CREATE_ATTEMPT_PATTERN.test(retained.createAttemptNonce)) {
+    return {
+      status: "not-owned",
+      detail: "the retained volume name or create-attempt authority is invalid",
+      volumeName: retained.name,
+    };
+  }
+  return removeOwnedVolume(
+    sandboxName,
+    retained.createAttemptNonce,
+    deps.runDocker ?? defaultDockerRun,
+  );
 }

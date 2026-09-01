@@ -45,6 +45,8 @@ export function managedHermesStateVolumeContext(
         : "",
     sandboxName,
     workloadKind: typeof workloadKind === "string" ? workloadKind : "",
+    createAttemptNonce:
+      typeof entry["createAttemptNonce"] === "string" ? entry["createAttemptNonce"] : undefined,
   };
 }
 

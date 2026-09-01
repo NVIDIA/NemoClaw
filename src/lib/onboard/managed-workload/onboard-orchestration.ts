@@ -91,7 +91,10 @@ export type ManagedHermesStateVolumeOnboardLifecycle = {
     materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
   ): SandboxCreatePlan;
   cleanupIncompleteCreate(): void;
-  preserveForRecovery(): void;
+  readonly recoveryDescriptor: {
+    readonly name: string;
+    readonly createAttemptNonce: string;
+  } | null;
   commit(): void;
 };
 
@@ -107,11 +110,14 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
       runtimeProviderId: input.runtimeProvider?.identity.id,
       sandboxName: input.sandboxName,
       workloadKind: input.workloadKind,
+      createAttemptNonce: input.createAttemptNonce,
+      authorizedPriorCreateAttemptNonce: input.authorizedPriorCreateAttemptNonce,
     },
     deps,
   );
   if (!scope) return null;
   return {
+    recoveryDescriptor: scope.recoveryDescriptor,
     materializeSandboxCreatePlan(input, materialize) {
       return materialize({ ...input, managedStateMount: scope.mount });
     },
@@ -122,9 +128,6 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
           `Cannot clean up incomplete managed Hermes state volume '${result.volumeName}' (${result.status}).`,
         );
       }
-    },
-    preserveForRecovery() {
-      scope.commit();
     },
     commit() {
       scope.commit();
@@ -241,15 +244,19 @@ export function createManagedWorkloadOnboardRuntime(
   const discoveredRuntimeCapabilities = resolveSandboxWorkloadRuntimeCapabilities(
     input.computePlan,
   );
-  const strictManagedRuntime = input.tempManagedRuntime || input.managedWorkloadRebuild !== null;
-  const runtimeCapabilities =
-    strictManagedRuntime || input.stockManagedRuntime
-      ? discoveredRuntimeCapabilities
-      : {
-          ...discoveredRuntimeCapabilities,
-          managedImageSelectionPolicy: "prefer-managed" as const,
-          managedImages: null,
-        };
+  const strictManagedRuntime =
+    input.tempManagedRuntime ||
+    input.tempManagedRuntimeCatalog !== null ||
+    input.managedWorkloadRebuild !== null;
+  const runtimeCapabilities = strictManagedRuntime
+    ? discoveredRuntimeCapabilities
+    : {
+        ...discoveredRuntimeCapabilities,
+        managedImageSelectionPolicy: "prefer-managed" as const,
+        managedImages: input.stockManagedRuntime
+          ? discoveredRuntimeCapabilities.managedImages
+          : null,
+      };
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
     CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -372,8 +379,8 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   };
   readonly plan: {
     readonly intent: SandboxCreateIntent;
-    readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
-    readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
+    readonly policylessCreate?: boolean;
+    readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
@@ -402,8 +409,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
 
 export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
-  readonly policyTier: string | null;
-  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
@@ -448,9 +453,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   const createPlan = input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
-    policyAuthority: input.plan.policyAuthority,
-    deferSandboxEffectsUntilPolicyVerification:
-      input.plan.deferSandboxEffectsUntilPolicyVerification,
+    policylessCreate: input.plan.policylessCreate,
+    deferSandboxEffectsUntilIdentityVerification:
+      input.plan.deferSandboxEffectsUntilIdentityVerification,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
@@ -535,8 +540,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 
   return {
     initialSandboxPolicy: createPlan.initialSandboxPolicy,
-    policyTier: createPlan.policyTier,
-    policyAuthority: createPlan.policyAuthority,
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
@@ -554,14 +557,12 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 export function prepareHermesPortableOnboardSandboxLaunch(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
-  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly launchInput: Omit<SandboxCreateLaunchInput, "createArgs">;
   readonly gpuConfig: SandboxGpuConfig;
 }): PreparedOnboardSandboxWorkloadLaunch {
   const createPlan = materializeHermesPortableCreatePlan({
     intent: input.intent,
     fromRef: input.fromRef,
-    policyAuthority: input.policyAuthority,
   });
   const launch = prepareSandboxCreateLaunch({
     ...input.launchInput,

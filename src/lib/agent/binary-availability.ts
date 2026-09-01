@@ -4,15 +4,19 @@
 import { shellQuote } from "../runner";
 import type { AgentDefinition } from "./defs";
 
-type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+type RunCaptureOpenshell = (
+  args: string[],
+  opts?: { ignoreError?: boolean; includeStderr?: boolean },
+) => string | { status?: number | null; output?: string | null } | null;
 
 export type AgentBinaryAvailability =
   | { available: true }
   | {
       available: false;
-      reason: "not_found" | "not_executable" | "path_mismatch";
+      reason: "not_found" | "not_executable" | "path_mismatch" | "unobservable";
       binaryPath?: string;
       resolvedPath?: string;
+      transportStatus?: number | null;
     };
 
 const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
@@ -26,9 +30,15 @@ export function verifyAgentBinaryAvailable(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: RunCaptureOpenshell,
+  gatewayName?: string,
 ): AgentBinaryAvailability {
   const executable = agentExecutableName(agent);
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
+  // Pi's fail-closed login profile verifies nproc as well as nofile. Ubuntu's
+  // /bin/sh cannot inspect nproc, so it intentionally rejects that profile
+  // before the binary probe runs. Bash is the image's declared login-shell
+  // boundary and can enforce both limits.
+  const shellPath = agent.name === "pi" ? "/bin/bash" : "/bin/sh";
   const script = binaryPath
     ? [
         `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
@@ -43,12 +53,29 @@ export function verifyAgentBinaryAvailable(
         `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
       ].join("; ");
   const result = runCaptureOpenshell(
-    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", script],
-    {
-      ignoreError: true,
-    },
+    [
+      "sandbox",
+      "exec",
+      "-n",
+      sandboxName,
+      ...(gatewayName ? ["-g", gatewayName] : []),
+      "--no-tty",
+      "--",
+      shellPath,
+      "-lc",
+      script,
+    ],
+    { ignoreError: true, includeStderr: true },
   );
-  const status = result?.trim() ?? "";
+  if (typeof result !== "string" && result?.status !== 0) {
+    return {
+      available: false,
+      reason: "unobservable",
+      binaryPath: binaryPath || undefined,
+      ...(result ? { transportStatus: result.status ?? null } : {}),
+    };
+  }
+  const status = (typeof result === "string" ? result : result?.output)?.trim() ?? "";
   const marker = status
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -56,6 +83,9 @@ export function verifyAgentBinaryAvailable(
   const checkStatus = marker?.slice(AGENT_BINARY_CHECK_PREFIX.length) ?? "";
   if (checkStatus === "ok") {
     return { available: true };
+  }
+  if (!marker) {
+    return { available: false, reason: "unobservable", binaryPath: binaryPath || undefined };
   }
   if (binaryPath && checkStatus) {
     const mismatch = checkStatus.match(/^path_mismatch:(.+)$/);
@@ -85,6 +115,12 @@ export function describeAgentBinaryFailure(
   }
   if (result.reason === "not_executable") {
     return `${agent.displayName} configured binary '${result.binaryPath}' is not executable inside sandbox '${sandboxName}'`;
+  }
+  if (result.reason === "unobservable") {
+    const status = Object.hasOwn(result, "transportStatus")
+      ? ` (OpenShell exec status ${String(result.transportStatus)})`
+      : "";
+    return `${agent.displayName} binary availability could not be observed inside sandbox '${sandboxName}'${status}`;
   }
   return `${agent.displayName} binary '${executable}' is missing inside sandbox '${sandboxName}'`;
 }

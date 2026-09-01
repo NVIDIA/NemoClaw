@@ -9,6 +9,7 @@ import {
   managedHermesStateVolumeName,
   prepareManagedHermesStateVolume,
   removeManagedHermesStateVolume,
+  removeRetainedManagedHermesStateVolume,
 } from "./hermes-state-volume";
 
 const context = {
@@ -16,6 +17,7 @@ const context = {
   runtimeProviderId: "docker",
   sandboxName: "alpha",
   workloadKind: "managed-image",
+  createAttemptNonce: "a".repeat(62),
 } as const;
 
 describe("managed Hermes state volume", () => {
@@ -96,6 +98,76 @@ describe("managed Hermes state volume", () => {
     expect(reused.volume).not.toBeNull();
   });
 
+  it("fails closed on fresh cross-attempt reuse and permits exact recovery authorization", () => {
+    const created = dockerHarness();
+    prepareManagedHermesStateVolume(context, {
+      runDocker: created.runDocker as never,
+      registerExitCleanup: () => () => undefined,
+    })?.commit();
+    const retry = dockerHarness(created.volume);
+    const nextAttempt = { ...context, createAttemptNonce: "b".repeat(62) };
+
+    expect(() =>
+      prepareManagedHermesStateVolume(nextAttempt, { runDocker: retry.runDocker as never }),
+    ).toThrow(/not authorized for create attempt/u);
+    expect(
+      prepareManagedHermesStateVolume(
+        { ...nextAttempt, authorizedPriorCreateAttemptNonce: "a".repeat(62) },
+        { runDocker: retry.runDocker as never },
+      ),
+    ).toMatchObject({
+      reused: true,
+      recoveryDescriptor: null,
+    });
+  });
+
+  it("refuses and leaves untouched a legacy four-label volume without create-attempt authority", () => {
+    const name = managedHermesStateVolumeName(context.sandboxName);
+    const legacy = dockerHarness({
+      name,
+      labels: {
+        "io.nvidia.nemoclaw.hermes-state.managed": "true",
+        "io.nvidia.nemoclaw.hermes-state.schema": "1",
+        "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
+        "io.nvidia.nemoclaw.hermes-state.target": MANAGED_HERMES_STATE_ROOT,
+      },
+    });
+
+    expect(() =>
+      prepareManagedHermesStateVolume(context, { runDocker: legacy.runDocker as never }),
+    ).toThrow(/not authorized for create attempt/u);
+    expect(legacy.volume).not.toBeNull();
+    expect(legacy.calls.filter((args) => args[0] === "rm")).toEqual([]);
+  });
+
+  it("removes a retained volume only with its exact name and create-attempt authority", () => {
+    const name = managedHermesStateVolumeName(context.sandboxName);
+    const created = dockerHarness();
+    prepareManagedHermesStateVolume(context, {
+      runDocker: created.runDocker as never,
+      registerExitCleanup: () => () => undefined,
+    })?.commit();
+    const mismatched = dockerHarness(created.volume);
+
+    expect(
+      removeRetainedManagedHermesStateVolume(
+        context.sandboxName,
+        { name, createAttemptNonce: "b".repeat(62) },
+        { runDocker: mismatched.runDocker as never },
+      ),
+    ).toMatchObject({ status: "not-owned", volumeName: name });
+    expect(mismatched.volume).not.toBeNull();
+
+    expect(
+      removeRetainedManagedHermesStateVolume(
+        context.sandboxName,
+        { name, createAttemptNonce: context.createAttemptNonce },
+        { runDocker: mismatched.runDocker as never },
+      ),
+    ).toEqual({ status: "removed" });
+    expect(mismatched.volume).toBeNull();
+  });
+
   it("refuses a same-name volume without exact NemoClaw ownership labels", () => {
     const name = managedHermesStateVolumeName(context.sandboxName);
     const docker = dockerHarness({ name, labels: { "com.example.owner": "foreign" } });
@@ -115,17 +187,62 @@ describe("managed Hermes state volume", () => {
     });
     scope!.commit();
 
-    expect(
-      removeManagedHermesStateVolume(context, { runDocker: owned.runDocker as never }),
-    ).toEqual({ status: "removed" });
-    expect(owned.volume).toBeNull();
-
     const name = managedHermesStateVolumeName(context.sandboxName);
-    const foreign = dockerHarness({ name, labels: { "com.example.owner": "foreign" } });
+    const mismatched = dockerHarness(owned.volume);
     expect(
-      removeManagedHermesStateVolume(context, { runDocker: foreign.runDocker as never }),
+      removeManagedHermesStateVolume(
+        { ...context, createAttemptNonce: "b".repeat(62) },
+        { runDocker: mismatched.runDocker as never },
+      ),
     ).toMatchObject({ status: "not-owned", volumeName: name });
-    expect(foreign.volume).not.toBeNull();
+    expect(mismatched.volume).not.toBeNull();
+    expect(mismatched.calls.filter((args) => args[0] === "rm")).toEqual([]);
+
+    expect(
+      removeManagedHermesStateVolume(context, { runDocker: mismatched.runDocker as never }),
+    ).toEqual({ status: "removed" });
+    expect(mismatched.volume).toBeNull();
+  });
+
+  it("leaves the volume untouched when ownership changes between deletion checks", () => {
+    const name = managedHermesStateVolumeName(context.sandboxName);
+    const labels = {
+      "io.nvidia.nemoclaw.hermes-state.managed": "true",
+      "io.nvidia.nemoclaw.hermes-state.schema": "1",
+      "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
+      "io.nvidia.nemoclaw.hermes-state.target": MANAGED_HERMES_STATE_ROOT,
+      "io.nvidia.nemoclaw.hermes-state.create-attempt": context.createAttemptNonce,
+    };
+    const runDocker = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({ Name: name, Labels: labels }),
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({ Name: name, Labels: { ...labels, "com.example.replaced": "true" } }),
+        stderr: "",
+      });
+
+    expect(removeManagedHermesStateVolume(context, { runDocker })).toMatchObject({
+      status: "not-owned",
+      volumeName: name,
+    });
+    expect(runDocker).not.toHaveBeenCalledWith(["rm", name], expect.anything());
+  });
+
+  it("leaves a legacy successful registry volume untouched when nonce authority is absent", () => {
+    const runDocker = vi.fn();
+
+    expect(
+      removeManagedHermesStateVolume(
+        { ...context, createAttemptNonce: undefined },
+        { runDocker: runDocker as never },
+      ),
+    ).toMatchObject({ status: "not-owned" });
+    expect(runDocker).not.toHaveBeenCalled();
   });
 
   it.each([

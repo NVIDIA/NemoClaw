@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { isDeepStrictEqual } from "node:util";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import {
   namedOpenShellGateway,
@@ -29,9 +30,9 @@ import { retryUntil } from "../../core/retry";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
+  buildGatewayInferenceGetArgs,
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
   planInferenceRouteReconcile,
@@ -67,7 +68,6 @@ import {
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
-  buildGatewayInferenceGetArgs,
   buildGatewayInferenceSetArgs,
 } from "./connect-inference-gateway";
 import {
@@ -82,8 +82,11 @@ import {
   assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
   type HermesPortableActiveLifecycleAuthority,
+  getNamedGatewayLifecycleState,
   printGatewayLifecycleHint,
+  qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
   isTerminalSandboxPhase,
@@ -96,6 +99,7 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   createProbeTimingRecorder,
+  createBoundLaunchReadinessDeps,
   inspectLaunchReadiness,
   portableOpenClawPairingIncompleteMessage,
   type ProbeTimingRecorder,
@@ -104,14 +108,28 @@ import {
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
+import type { HermesPortableLifecycleRecoveryTimingEvidence } from "../../onboard/experimental/hermes-portable-lifecycle";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
+  HermesPortableForwardRecoveryError,
+  type HermesPortableForwardRecoveryFailure,
+  type HermesPortableForwardRecoveryTimingEvidence,
   type ManagedGatewayControlCompletion,
+  prepareHermesPortableLaunchForwards,
+  verifyHermesPortableLaunchForwards,
+  type PreparedHermesPortableForwardRecovery,
   resolveSandboxDashboardPort,
+  resolveSandboxLaunchForwardPorts,
   waitForManagedGatewaySupervisor,
 } from "./process-recovery";
+import {
+  classifyHermesPortableInferenceConnectRecoveryFailure,
+  inspectHermesPortableInferenceReadinessRuntimeForConnectProbe,
+  recoverHermesPortableInferenceForConnectProbe,
+  type HermesPortableInferenceConnectRecoveryFailure,
+} from "./probe/hermes-portable-inference-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
@@ -304,10 +322,18 @@ async function runSandboxConnectProbe(
   sandboxName: string,
   {
     hermesPortable = false,
+    hermesPortableCommandAuthority,
+    probeOnly,
     probeTiming,
-  }: { hermesPortable?: boolean; probeTiming?: ProbeTimingRecorder } = {},
+  }: {
+    hermesPortable?: boolean;
+    hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
+    probeOnly: true;
+    probeTiming?: ProbeTimingRecorder;
+  },
 ): Promise<void> {
-  const measure = <T>(stage: "inference" | "pairing", operation: () => T): T =>
+  if (probeOnly !== true) throw new Error("connect recovery requires probe-only authority");
+  const measure = <T>(stage: "forward" | "inference" | "pairing", operation: () => T): T =>
     probeTiming ? probeTiming.measure(stage, operation) : operation();
   const measureAsync = <T>(
     stage: "inference" | "pairing",
@@ -316,7 +342,33 @@ async function runSandboxConnectProbe(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (hermesPortable) {
-    measure("inference", () => verifyHermesPortableInferenceRouteOrExit(sandboxName, agent));
+    if (probeOnly !== true) throw new Error("Hermes inference recovery requires probe-only mode");
+    const route = measure("inference", () =>
+      verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(sandboxName, agent, undefined, {
+        commandAuthority: hermesPortableCommandAuthority,
+        probeTiming,
+      }),
+    );
+    if (!route.forwardsRecovered) {
+      let authority: HermesPortableActiveLifecycleAuthority;
+      try {
+        authority = requireHermesPortableActiveLifecycleAuthority(
+          sandboxName,
+          undefined,
+          portableAgentLifecycleAuthorityDeps(),
+        );
+      } catch {
+        probeTiming?.setForwardAction("failed");
+        probeTiming?.markFailureStage("forward");
+        failHermesPortableForwardRecovery(sandboxName, "authority-drift");
+      }
+      recoverHermesPortableForwardsForConnectProbeOrExit(
+        sandboxName,
+        authority,
+        probeTiming,
+        hermesPortableCommandAuthority,
+      );
+    }
     console.log(
       `  Probe complete: ${agentName} passed receipt-owned authenticated health in '${sandboxName}'.`,
     );
@@ -444,6 +496,61 @@ function failHermesPortableInferenceRoute(sandboxName: string, reason: string): 
   process.exit(1);
 }
 
+function failHermesPortableInferenceRecovery(
+  sandboxName: string,
+  failure: HermesPortableInferenceConnectRecoveryFailure,
+): never {
+  let detail: string;
+  switch (failure) {
+    case "runtime-restoration-unproved":
+      detail =
+        "NemoClaw could not prove restoration of the exact stopped managed inference runtime. Do not run another probe or launch until the recorded runtime state is inspected.";
+      break;
+    case "registry-restoration-unproved":
+      detail =
+        "NemoClaw could not prove restoration of the exact stopped Portable registry. Do not run another probe or launch until the recorded registry state is inspected.";
+      break;
+    case "authority-drift":
+      detail =
+        "Recorded managed inference authority changed during recovery. Do not run another probe or launch until the current Portable state is inspected.";
+      break;
+    case "recovery-failed":
+      detail =
+        "Managed inference recovery stopped without a verified result. Do not run another probe or launch until the current Portable state is inspected.";
+      break;
+    default:
+      detail = `Managed inference recovery stopped at boundary ${failure}. Do not run another probe or launch until the current Portable state is inspected.`;
+      break;
+  }
+  console.error(
+    `  Error: Hermes Portable inference recovery for '${sandboxName}' failed. ${detail}`,
+  );
+  process.exit(1);
+}
+
+function failHermesPortableForwardRecovery(
+  sandboxName: string,
+  failure: HermesPortableForwardRecoveryFailure,
+): never {
+  const detail =
+    failure === "restoration-unproved"
+      ? "NemoClaw could not prove that the recovered host forwards returned to a stopped state. Do not run another probe or launch until the recorded forward state is inspected."
+      : failure === "authority-drift"
+        ? "Hermes Portable authority changed during host-forward recovery. Do not run another probe or launch until the current Portable state is inspected."
+        : "The required recorded host forwards could not be restored. No launch-readiness evidence was published.";
+  console.error(
+    `  Error: Hermes Portable host-forward recovery for '${sandboxName}' failed. ${detail}`,
+  );
+  process.exit(1);
+}
+
+function failHermesPortableReadinessAuthority(sandboxName: string): never {
+  console.error(
+    `  Error: Hermes portable lifecycle authority for '${sandboxName}' is missing, incomplete, or changed during launch-readiness verification. No recovery was attempted.`,
+  );
+  process.exit(1);
+}
+
 function captureHermesPortableOpenShell(
   sandboxName: string,
   args: string[],
@@ -459,15 +566,248 @@ function captureHermesPortableOpenShell(
   });
 }
 
+type HermesPortableReadinessCommandAuthority = ReturnType<
+  typeof qualifyHermesPortableOperatingCommandAuthority
+>;
+
+function probeTimingLaunchReadinessDeps(
+  probeTiming?: ProbeTimingRecorder,
+): NonNullable<Parameters<typeof inspectLaunchReadiness>[1]> {
+  return probeTiming
+    ? {
+        recordObservationTiming: probeTiming.recordReadinessObservation,
+        recordObservationFailure: probeTiming.recordReadinessObservationFailure,
+      }
+    : {};
+}
+
+function captureHermesPortableReadinessObservation(
+  authority: HermesPortableReadinessCommandAuthority,
+  args: string[],
+  options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
+  assertCurrent = authority.assertCurrent,
+) {
+  assertCurrent();
+  try {
+    return captureResolvedOpenshell(args, {
+      ...options,
+      env: authority.env,
+      openshellBinary: authority.executablePath,
+      replaceEnv: true,
+    });
+  } finally {
+    assertCurrent();
+  }
+}
+
+function hermesPortableLaunchReadinessDeps(
+  authority: HermesPortableReadinessCommandAuthority,
+  probeTiming?: ProbeTimingRecorder,
+  assertCurrent = authority.assertCurrent,
+): NonNullable<Parameters<typeof inspectLaunchReadiness>[1]> {
+  const capture = (
+    args: string[],
+    options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
+  ) => captureHermesPortableReadinessObservation(authority, args, options, assertCurrent);
+  return {
+    ...createBoundLaunchReadinessDeps(capture),
+    ...probeTimingLaunchReadinessDeps(probeTiming),
+  };
+}
+
 function portableAgentLifecycleAuthorityDeps() {
   return { readRegistry: registry.getSandbox };
 }
 
-/** Verify the recorded Hermes route without invoking any inference repair. */
-function verifyHermesPortableInferenceRouteOrExit(
+type HermesPortableForwardConnectRecoveryInput = {
+  readonly intent: "connect-probe-only";
+  readonly sandboxName: string;
+  readonly authority: HermesPortableActiveLifecycleAuthority;
+  readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
+  readonly commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>;
+};
+
+function hermesPortableForwardInputForConnectProbe(
+  input: HermesPortableForwardConnectRecoveryInput,
+) {
+  const expectedEntry = structuredClone(input.authority.entry);
+  const assertRegistryCurrent = () => {
+    const current = requireHermesPortableActiveLifecycleAuthority(
+      input.sandboxName,
+      input.authority,
+      { readRegistry: input.readRegistry },
+    );
+    if (
+      current.gatewayName !== input.authority.gatewayName ||
+      !isDeepStrictEqual(current.entry, expectedEntry) ||
+      !isDeepStrictEqual(input.readRegistry(input.sandboxName), expectedEntry)
+    ) {
+      throw new Error("Hermes Portable registry authority changed during forward recovery.");
+    }
+  };
+
+  let commandAuthority: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>;
+  try {
+    assertRegistryCurrent();
+    commandAuthority =
+      input.commandAuthority ?? qualifyHermesPortableOperatingCommandAuthority(input.sandboxName);
+    commandAuthority.assertCurrent();
+  } catch {
+    throw new HermesPortableForwardRecoveryError("authority-drift");
+  }
+  const assertCommandCurrent = () => commandAuthority.assertCurrent();
+  const assertProductCurrent = () => {
+    assertRegistryCurrent();
+    assertCommandCurrent();
+  };
+  let ports: number[] | null;
+  try {
+    ports = resolveSandboxLaunchForwardPorts(input.sandboxName);
+  } catch {
+    throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
+  }
+  try {
+    assertProductCurrent();
+  } catch {
+    throw new HermesPortableForwardRecoveryError("authority-drift");
+  }
+  if (!ports || ports.length === 0) {
+    throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
+  }
+
+  const capture = (args: readonly string[], timeout: number) => {
+    return captureResolvedOpenshell([...args], {
+      env: commandAuthority.env,
+      openshellBinary: commandAuthority.executablePath,
+      replaceEnv: true,
+      ignoreError: true,
+      timeout,
+    });
+  };
+  const runMutation = (args: readonly string[], timeout: number) => {
+    return runOpenshell([...args], {
+      env: commandAuthority.env,
+      openshellBinary: commandAuthority.executablePath,
+      replaceEnv: true,
+      ignoreError: true,
+      stdio: "ignore",
+      timeout,
+    });
+  };
+
+  return {
+    intent: input.intent,
+    sandboxName: input.sandboxName,
+    gatewayName: input.authority.gatewayName,
+    operationTimeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    ports,
+    probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    timing: { onComplete: writeHermesPortableForwardRecoveryTiming },
+    deps: {
+      assertCurrent: assertProductCurrent,
+      assertRollbackCurrent: assertCommandCurrent,
+      captureCurrentList: capture,
+      captureRollbackList: capture,
+      runCurrentMutation: runMutation,
+      runRollbackMutation: runMutation,
+    },
+  } as const;
+}
+
+/** Restore the launch-readiness forwards through current Hermes command authority. */
+function prepareHermesPortableForwardsForConnectProbe(
+  input: HermesPortableForwardConnectRecoveryInput,
+) {
+  return prepareHermesPortableLaunchForwards(hermesPortableForwardInputForConnectProbe(input));
+}
+
+function writeHermesPortableForwardRecoveryTiming(
+  evidence: HermesPortableForwardRecoveryTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} total=${String(evidence.totalMs)}ms result=${evidence.result}`,
+  );
+}
+
+function writeHermesPortableLifecycleRecoveryTiming(
+  evidence: HermesPortableLifecycleRecoveryTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable lifecycle recovery timing: entryQualification=${String(evidence.entryQualificationMs)}ms containerStart=${String(evidence.containerStartMs)}ms postStartCurrentness=${String(evidence.postStartCurrentnessMs)}ms execReady=${String(evidence.execReadyMs)}ms preHealthCurrentness=${String(evidence.preHealthCurrentnessMs)}ms authenticatedHealth=${String(evidence.authenticatedHealthMs)}ms startupLaunch=${String(evidence.startupLaunchMs)}ms healthPollCurrentness=${String(evidence.healthPollCurrentnessMs)}ms finalQualification=${String(evidence.finalQualificationMs)}ms rollback=${String(evidence.rollbackMs)}ms qualificationCount=${String(evidence.qualificationCount)} transactionCurrentnessCount=${String(evidence.transactionCurrentnessCount)} containerInspectionCount=${String(evidence.containerInspectionCount)} containerStartCount=${String(evidence.containerStartCount)} execReadyAttempts=${String(evidence.execReadyAttempts)} authenticatedHealthCount=${String(evidence.authenticatedHealthCount)} startupLaunchCount=${String(evidence.startupLaunchCount)} rollbackCount=${String(evidence.rollbackCount)} total=${String(evidence.totalMs)}ms containerAction=${evidence.containerAction} result=${evidence.result}`,
+  );
+}
+
+/** Verify the launch-readiness forwards without starting or stopping them. */
+function verifyHermesPortableForwardsForConnectProbe(
+  input: HermesPortableForwardConnectRecoveryInput,
+) {
+  return verifyHermesPortableLaunchForwards(hermesPortableForwardInputForConnectProbe(input));
+}
+
+function recoverHermesPortableForwardsForConnectProbeOrExit(
+  sandboxName: string,
+  authority: HermesPortableActiveLifecycleAuthority,
+  probeTiming?: ProbeTimingRecorder,
+  commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
+): void {
+  try {
+    const prepared = prepareHermesPortableForwardsForConnectProbeMeasured(
+      sandboxName,
+      authority,
+      probeTiming,
+      commandAuthority,
+    );
+    const forwardRecovery = prepared.release();
+    probeTiming?.setForwardAction(forwardRecovery.kind === "restored" ? "restored" : "verified");
+  } catch (error) {
+    failHermesPortableForwardRecovery(
+      sandboxName,
+      error instanceof HermesPortableForwardRecoveryError ? error.failure : "recovery-failed",
+    );
+  }
+}
+
+function prepareHermesPortableForwardsForConnectProbeMeasured(
+  sandboxName: string,
+  authority: HermesPortableActiveLifecycleAuthority,
+  probeTiming?: ProbeTimingRecorder,
+  commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
+) {
+  try {
+    const prepare = () =>
+      prepareHermesPortableForwardsForConnectProbe({
+        intent: "connect-probe-only",
+        sandboxName,
+        authority,
+        readRegistry: registry.getSandbox,
+        ...(commandAuthority ? { commandAuthority } : {}),
+      });
+    return probeTiming ? probeTiming.measure("forward", prepare) : prepare();
+  } catch (error) {
+    probeTiming?.setForwardAction("failed");
+    probeTiming?.markFailureStage("forward");
+    throw error instanceof HermesPortableForwardRecoveryError
+      ? error
+      : new HermesPortableForwardRecoveryError("recovery-failed");
+  }
+}
+
+class HermesPortableInferenceRouteVerificationError extends Error {
+  constructor(readonly reason: string) {
+    super("Hermes Portable inference route verification failed");
+  }
+}
+
+function refuseHermesPortableInferenceRoute(reason: string): never {
+  throw new HermesPortableInferenceRouteVerificationError(reason);
+}
+
+/** Verify the recorded Hermes route without invoking repair or process exit. */
+function verifyHermesPortableInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
+  commandAuthority?: HermesPortableReadinessCommandAuthority,
 ): SandboxEntry {
   let authority: ReturnType<typeof requireHermesPortableActiveLifecycleAuthority>;
   try {
@@ -477,12 +817,12 @@ function verifyHermesPortableInferenceRouteOrExit(
       portableAgentLifecycleAuthorityDeps(),
     );
   } catch {
-    failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+    refuseHermesPortableInferenceRoute("missing or incomplete");
   }
   const sandbox = authority.entry;
   const inference = registry.getSandboxEntryInference(sandbox);
   if (inference.kind !== "configured") {
-    failHermesPortableInferenceRoute(sandboxName, "not configured");
+    refuseHermesPortableInferenceRoute("not configured");
   }
   assertNoOpenShellGatewayEndpointOverride();
   const routeAuthority = {
@@ -491,34 +831,35 @@ function verifyHermesPortableInferenceRouteOrExit(
     provider: inference.provider,
     model: inference.model,
   } as const;
-  const liveResult = captureHermesPortableOpenShell(
-    sandboxName,
-    buildGatewayInferenceGetArgs(authority.gatewayName),
-    { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
-  );
+  const capture = (
+    args: string[],
+    options: { readonly includeStreams?: boolean; readonly timeout: number },
+  ) =>
+    commandAuthority
+      ? captureHermesPortableReadinessObservation(commandAuthority, args, options)
+      : captureHermesPortableOpenShell(sandboxName, args, options);
+  const liveResult = capture(buildGatewayInferenceGetArgs(authority.gatewayName), {
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   if (liveResult.status !== 0 || liveResult.error) {
-    failHermesPortableInferenceRoute(sandboxName, "unreachable");
+    refuseHermesPortableInferenceRoute("unreachable");
   }
   const live = parseGatewayInference(liveResult.output);
   if (planInferenceRouteReconcile(live, inference).kind !== "aligned") {
-    failHermesPortableInferenceRoute(sandboxName, "different from its recorded provider or model");
+    refuseHermesPortableInferenceRoute("different from its recorded provider or model");
   }
   const probe = parseSandboxInferenceRouteProbeResult(
-    captureHermesPortableOpenShell(
-      sandboxName,
-      buildSandboxInferenceRouteProbeArgs(sandboxName, agent, authority.gatewayName),
-      {
-        includeStreams: true,
-        timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-      },
-    ),
+    capture(buildSandboxInferenceRouteProbeArgs(sandboxName, agent, authority.gatewayName), {
+      includeStreams: true,
+      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+    }),
   );
   if (
     !probe.healthy ||
     (inference.provider === "ollama-local" &&
       (probe.httpStatus === undefined || probe.httpStatus < 200 || probe.httpStatus >= 300))
   ) {
-    failHermesPortableInferenceRoute(sandboxName, "unreachable");
+    refuseHermesPortableInferenceRoute("unreachable");
   }
   let finalAuthority: ReturnType<typeof requireHermesPortableActiveLifecycleAuthority>;
   try {
@@ -528,7 +869,7 @@ function verifyHermesPortableInferenceRouteOrExit(
       portableAgentLifecycleAuthorityDeps(),
     );
   } catch {
-    failHermesPortableInferenceRoute(sandboxName, "changed during verification");
+    refuseHermesPortableInferenceRoute("changed during verification");
   }
   if (
     finalAuthority.entry.gatewayName !== routeAuthority.gatewayName ||
@@ -536,9 +877,147 @@ function verifyHermesPortableInferenceRouteOrExit(
     finalAuthority.entry.provider !== routeAuthority.provider ||
     finalAuthority.entry.model !== routeAuthority.model
   ) {
-    failHermesPortableInferenceRoute(sandboxName, "changed during verification");
+    refuseHermesPortableInferenceRoute("changed during verification");
   }
   return finalAuthority.entry;
+}
+
+/** Verify the recorded Hermes route without invoking any inference repair. */
+function verifyHermesPortableInferenceRouteOrExit(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  expectedAuthority?: HermesPortableActiveLifecycleAuthority,
+  commandAuthority?: HermesPortableReadinessCommandAuthority,
+): SandboxEntry {
+  try {
+    return verifyHermesPortableInferenceRoute(
+      sandboxName,
+      agent,
+      expectedAuthority,
+      commandAuthority,
+    );
+  } catch (error) {
+    failHermesPortableInferenceRoute(
+      sandboxName,
+      error instanceof HermesPortableInferenceRouteVerificationError ? error.reason : "unreachable",
+    );
+  }
+}
+
+type HermesPortableProbeRouteResult = {
+  readonly forwardsRecovered: boolean;
+};
+
+type HermesPortableProbeRouteOptions = {
+  readonly commandAuthority?: HermesPortableReadinessCommandAuthority;
+  readonly probeTiming?: ProbeTimingRecorder;
+  readonly validateVerified?: (entry: SandboxEntry) => void;
+};
+
+/** Verify the recorded route and resume published Ollama only for probe-only recovery. */
+function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  expectedAuthority?: HermesPortableActiveLifecycleAuthority,
+  options: HermesPortableProbeRouteOptions = {},
+): HermesPortableProbeRouteResult {
+  let authority: HermesPortableActiveLifecycleAuthority;
+  try {
+    authority = requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      expectedAuthority,
+      portableAgentLifecycleAuthorityDeps(),
+    );
+  } catch {
+    failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+  }
+  if (authority.entry.provider !== "ollama-local") {
+    const entry = verifyHermesPortableInferenceRouteOrExit(
+      sandboxName,
+      agent,
+      authority,
+      options.commandAuthority,
+    );
+    try {
+      options.validateVerified?.(entry);
+    } catch {
+      failHermesPortableInferenceRoute(sandboxName, "changed during verification");
+    }
+    return { forwardsRecovered: false };
+  }
+  let verified: SandboxEntry | null = null;
+  let preparedForwards: PreparedHermesPortableForwardRecovery | null = null;
+  try {
+    recoverHermesPortableInferenceForConnectProbe({
+      sandboxName,
+      authority,
+      readRegistry: registry.getSandbox,
+      assertCallerTransactionCurrent: options.commandAuthority?.assertTransactionCurrent,
+      assertCallerCurrent: options.commandAuthority?.assertCurrent,
+      ...(options.commandAuthority
+        ? {
+            runGatewayOpenshell: (
+              _sandboxName: string,
+              args: string[],
+              captureOptions: { readonly env?: NodeJS.ProcessEnv; readonly timeout: number },
+            ) => {
+              if (captureOptions.env && Object.keys(captureOptions.env).length > 0) {
+                throw new Error(
+                  "Hermes Portable inference recovery rejected command environment drift.",
+                );
+              }
+              return captureHermesPortableReadinessObservation(options.commandAuthority!, args, {
+                ignoreError: true,
+                includeStreams: true,
+                timeout: captureOptions.timeout,
+              });
+            },
+          }
+        : {}),
+      verifyRoute: () => {
+        verified = verifyHermesPortableInferenceRoute(
+          sandboxName,
+          agent,
+          authority,
+          options.commandAuthority,
+        );
+        try {
+          options.validateVerified?.(verified);
+        } catch {
+          refuseHermesPortableInferenceRoute("changed during verification");
+        }
+        return verified;
+      },
+      prepareProbeDependency: () => {
+        preparedForwards = prepareHermesPortableForwardsForConnectProbeMeasured(
+          sandboxName,
+          authority,
+          options.probeTiming,
+          options.commandAuthority,
+        );
+        return preparedForwards;
+      },
+    });
+  } catch (error) {
+    if (error instanceof HermesPortableForwardRecoveryError) {
+      failHermesPortableForwardRecovery(sandboxName, error.failure);
+    }
+    if (error instanceof HermesPortableInferenceRouteVerificationError) {
+      failHermesPortableInferenceRoute(sandboxName, error.reason);
+    }
+    failHermesPortableInferenceRecovery(
+      sandboxName,
+      classifyHermesPortableInferenceConnectRecoveryFailure(error),
+    );
+  }
+  const retainedForwards = preparedForwards as PreparedHermesPortableForwardRecovery | null;
+  if (!verified || !retainedForwards) {
+    failHermesPortableInferenceRoute(sandboxName, "unreachable");
+  }
+  options.probeTiming?.setForwardAction(
+    retainedForwards.result.kind === "restored" ? "restored" : "verified",
+  );
+  return { forwardsRecovered: true };
 }
 
 const GATEWAY_UNAVAILABLE_RE =
@@ -1223,13 +1702,13 @@ type WaitForSandboxReadyOptions = {
 
 // OpenShell can transiently publish `Error` immediately after `sandbox start`
 // before the same sandbox advances through `Provisioning` to `Ready`. Its list
-// output exposes no structured transition reason. A caller opts into ten
+// output exposes no structured transition reason. A caller opts into twenty
 // three-second grace polls only after it starts the container; every other
 // terminal phase still fails immediately, and a persistent Error fails after
 // the bound. Remove this compatibility exception once OpenShell exposes a
 // structured restart signal or guarantees that post-start recovery never emits
 // the terminal Error phase.
-const START_INITIAL_ERROR_GRACE_POLLS = 10;
+const START_INITIAL_ERROR_GRACE_POLLS = 20;
 
 // Readiness budget for the repair paths that wait for a restarted sandbox
 // before they touch in-sandbox processes or host forwards. A cold agent boot on
@@ -1375,12 +1854,20 @@ async function runConnectEntryPreflight(
   {
     probeOnly,
     probeTiming,
+    hermesPortableCommandAuthority,
+    retainedHermesLifecycleRecovery,
     withinLifecycleFence,
   }: {
     probeOnly: boolean;
     probeTiming?: ProbeTimingRecorder;
+    hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
+    retainedHermesLifecycleRecovery?: {
+      readonly kind: "already-running" | "recovered";
+      readonly assertCurrent: () => void;
+    };
     withinLifecycleFence?: (route: {
       readonly hermesPortable: boolean;
+      readonly hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
       readonly requalify: () => void;
     }) => Promise<void>;
   },
@@ -1398,6 +1885,12 @@ async function runConnectEntryPreflight(
         qualifyPortableAgentLifecycleAuthority(sandboxName, portableAgentLifecycleAuthorityDeps()),
       );
       hermesPortable = authority.kind === "hermes";
+      if (hermesPortableCommandAuthority && !hermesPortable) {
+        throw new Error("Hermes portable command authority disagrees with lifecycle authority");
+      }
+      if (hermesPortable) {
+        measure("authority", () => hermesPortableCommandAuthority?.assertCurrent());
+      }
       let hermesAuthority = hermesPortable
         ? measure("authority", () =>
             requireHermesPortableActiveLifecycleAuthority(
@@ -1422,9 +1915,36 @@ async function runConnectEntryPreflight(
           assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName),
         );
       }
-      const initialRecovery = measure("lifecycle", () =>
-        recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName),
-      );
+      const initialRecovery = retainedHermesLifecycleRecovery
+        ? measure("authority", () => {
+            retainedHermesLifecycleRecovery.assertCurrent();
+            return { kind: retainedHermesLifecycleRecovery.kind } as const;
+          })
+        : measure("lifecycle", () =>
+            hermesPortableCommandAuthority
+              ? recoverPortableDemoSandboxLifecycleForConnect(
+                  sandboxName,
+                  registered,
+                  gatewayName,
+                  hermesPortableCommandAuthority,
+                  hermesPortable && probeTiming
+                    ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
+                    : undefined,
+                )
+              : hermesPortable && probeTiming
+                ? recoverPortableDemoSandboxLifecycleForConnect(
+                    sandboxName,
+                    registered,
+                    gatewayName,
+                    undefined,
+                    { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                  )
+                : recoverPortableDemoSandboxLifecycleForConnect(
+                    sandboxName,
+                    registered,
+                    gatewayName,
+                  ),
+          );
       probeTiming?.setLifecycleAction(
         initialRecovery.kind === "recovered"
           ? "recovered"
@@ -1439,6 +1959,7 @@ async function runConnectEntryPreflight(
       }
       if (hermesAuthority) {
         const currentAuthority = hermesAuthority;
+        measure("authority", () => hermesPortableCommandAuthority?.assertCurrent());
         hermesAuthority = measure("authority", () =>
           requireHermesPortableActiveLifecycleAuthority(
             sandboxName,
@@ -1471,28 +1992,50 @@ async function runConnectEntryPreflight(
             portableAgentLifecycleAuthorityDeps(),
           ),
         );
-        const activeAuthority = hermesAuthority;
-        const currentGateway = resolveSandboxGatewayName(activeAuthority.entry);
-        const recovery = measure("lifecycle", () =>
-          recoverPortableDemoSandboxLifecycleForConnect(
-            sandboxName,
-            activeAuthority.entry,
-            currentGateway,
-          ),
-        );
-        if (recovery.kind === "not-installed") {
-          probeTiming?.setLifecycleAction("failed");
-          probeTiming?.markFailureStage("lifecycle");
-          throw new Error("Hermes portable lifecycle authority disappeared during connect");
+        measure("authority", () => hermesPortableCommandAuthority?.assertCurrent());
+        if (!probeOnly) {
+          const activeAuthority = hermesAuthority;
+          const currentGateway = resolveSandboxGatewayName(activeAuthority.entry);
+          const recovery = measure("lifecycle", () =>
+            hermesPortableCommandAuthority
+              ? recoverPortableDemoSandboxLifecycleForConnect(
+                  sandboxName,
+                  activeAuthority.entry,
+                  currentGateway,
+                  hermesPortableCommandAuthority,
+                  probeTiming
+                    ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
+                    : undefined,
+                )
+              : hermesPortable && probeTiming
+                ? recoverPortableDemoSandboxLifecycleForConnect(
+                    sandboxName,
+                    activeAuthority.entry,
+                    currentGateway,
+                    undefined,
+                    { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                  )
+                : recoverPortableDemoSandboxLifecycleForConnect(
+                    sandboxName,
+                    activeAuthority.entry,
+                    currentGateway,
+                  ),
+          );
+          if (recovery.kind === "not-installed") {
+            probeTiming?.setLifecycleAction("failed");
+            probeTiming?.markFailureStage("lifecycle");
+            throw new Error("Hermes portable lifecycle authority disappeared during connect");
+          }
+          const recoveredAuthority = activeAuthority;
+          hermesAuthority = measure("authority", () =>
+            requireHermesPortableActiveLifecycleAuthority(
+              sandboxName,
+              recoveredAuthority,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          measure("authority", () => hermesPortableCommandAuthority?.assertCurrent());
         }
-        const recoveredAuthority = activeAuthority;
-        hermesAuthority = measure("authority", () =>
-          requireHermesPortableActiveLifecycleAuthority(
-            sandboxName,
-            recoveredAuthority,
-            portableAgentLifecycleAuthorityDeps(),
-          ),
-        );
       };
     } catch (error) {
       probeTiming?.markFailureStage("authority");
@@ -1523,7 +2066,11 @@ async function runConnectEntryPreflight(
         failConnectReadinessDockerRuntimeDown(sandboxName);
       }
     }
-    await withinLifecycleFence?.({ hermesPortable, requalify });
+    await withinLifecycleFence?.({
+      hermesPortable,
+      ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
+      requalify,
+    });
     requalify();
   });
 }
@@ -1727,12 +2274,189 @@ async function prepareConnectSandboxWithinLifecycleFence(
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
-    probeTiming!.measure("authority", () =>
-      requalifyPortableAgentSandboxAuthority(sandboxName, portableAgentLifecycleAuthorityDeps()),
-    );
-    let readiness = await probeTiming!.measureAsync("readiness", () =>
-      inspectLaunchReadiness(sandboxName),
-    );
+    let portableAuthorityReady = false;
+    let hermesMissingFastPathEligible = false;
+    let hermesReadinessAuthority: {
+      readonly active: HermesPortableActiveLifecycleAuthority;
+      readonly command: HermesPortableReadinessCommandAuthority;
+    } | null = null;
+    let retainedHermesLifecycleRecovery: {
+      readonly kind: "already-running" | "recovered";
+      readonly assertCurrent: () => void;
+    } | null = null;
+    let initialPortableAuthority: ReturnType<typeof qualifyPortableAgentLifecycleAuthority>;
+    try {
+      initialPortableAuthority = probeTiming!.measure("authority", () =>
+        qualifyPortableAgentLifecycleAuthority(sandboxName, portableAgentLifecycleAuthorityDeps()),
+      );
+    } catch {
+      probeTiming!.markFailureStage("authority");
+      failHermesPortableReadinessAuthority(sandboxName);
+    }
+    if (initialPortableAuthority.kind === "hermes") {
+      try {
+        let active = probeTiming!.measure("authority", () =>
+          requireHermesPortableActiveLifecycleAuthority(
+            sandboxName,
+            undefined,
+            portableAgentLifecycleAuthorityDeps(),
+          ),
+        );
+        let qualified;
+        let recoveredLifecycle:
+          | {
+              readonly kind: "already-running" | "recovered";
+              readonly assertReceiptCurrent: () => void;
+            }
+          | undefined;
+        try {
+          qualified = probeTiming!.measure("authority", () =>
+            qualifyHermesPortableAcceptedReadinessAuthority(sandboxName),
+          );
+          hermesMissingFastPathEligible = qualified.kind === "current";
+        } catch {
+          // A stopped receipt-owned Hermes container can be restarted before
+          // its operating authority is ready to answer. Re-enter the existing
+          // proof-backed requalification and lifecycle recovery exactly once;
+          // executable, socket, receipt, container, or policy drift still
+          // fails inside those authorities before another readiness read.
+          const requalified = probeTiming!.measure("authority", () =>
+            requalifyPortableAgentSandboxAuthority(
+              sandboxName,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          portableAuthorityReady = true;
+          if (requalified.kind === "not-installed" || requalified.kind === "not-hermes") {
+            throw new Error("Hermes portable lifecycle authority changed during probe");
+          }
+          active = probeTiming!.measure("authority", () =>
+            requireHermesPortableActiveLifecycleAuthority(
+              sandboxName,
+              active,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          const registered = active.entry;
+          requalified.assertCurrent();
+          const recovery = probeTiming!.measure("lifecycle", () =>
+            recoverPortableDemoSandboxLifecycleForConnect(
+              sandboxName,
+              registered,
+              resolveSandboxGatewayName(registered),
+              undefined,
+              { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+            ),
+          );
+          if (recovery.kind === "not-installed") {
+            probeTiming!.setLifecycleAction("failed");
+            throw new Error("Hermes portable lifecycle authority disappeared during probe");
+          }
+          probeTiming!.setLifecycleAction(recovery.kind === "recovered" ? "recovered" : "reused");
+          recoveredLifecycle = {
+            kind: recovery.kind,
+            assertReceiptCurrent: requalified.assertCurrent,
+          };
+          active = probeTiming!.measure("authority", () =>
+            requireHermesPortableActiveLifecycleAuthority(
+              sandboxName,
+              active,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          qualified = probeTiming!.measure("authority", () =>
+            qualifyHermesPortableAcceptedReadinessAuthority(sandboxName, {
+              priorReceiptAuthority: requalified,
+            }),
+          );
+          hermesMissingFastPathEligible =
+            requalified.kind === "already-current" && qualified.kind === "current";
+        }
+        if (qualified.kind === "requalification-required") {
+          const requalified = probeTiming!.measure("authority", () =>
+            requalifyPortableAgentSandboxAuthority(
+              sandboxName,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          if (requalified.kind === "not-installed" || requalified.kind === "not-hermes") {
+            throw new Error("Hermes portable lifecycle authority changed during probe");
+          }
+          active = probeTiming!.measure("authority", () =>
+            requireHermesPortableActiveLifecycleAuthority(
+              sandboxName,
+              active,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          qualified = probeTiming!.measure("authority", () =>
+            qualifyHermesPortableAcceptedReadinessAuthority(sandboxName, {
+              priorReceiptAuthority: requalified,
+            }),
+          );
+          if (qualified.kind === "requalification-required") {
+            throw new Error("Hermes portable schema-6 authority was not published during probe");
+          }
+        }
+        probeTiming!.measure("authority", qualified.commandAuthority.assertCurrent);
+        portableAuthorityReady = true;
+        hermesReadinessAuthority = {
+          active,
+          command: qualified.commandAuthority,
+        };
+        if (recoveredLifecycle) {
+          const retainedActive = active;
+          const retainedCommand = qualified.commandAuthority;
+          retainedHermesLifecycleRecovery = {
+            kind: recoveredLifecycle.kind,
+            assertCurrent: () => {
+              recoveredLifecycle.assertReceiptCurrent();
+              retainedCommand.assertCurrent();
+              const current = requireHermesPortableActiveLifecycleAuthority(
+                sandboxName,
+                retainedActive,
+                portableAgentLifecycleAuthorityDeps(),
+              );
+              if (!isDeepStrictEqual(current.entry, retainedActive.entry)) {
+                throw new Error("Hermes portable lifecycle authority changed after recovery");
+              }
+            },
+          };
+        }
+      } catch {
+        probeTiming!.markFailureStage("authority");
+        failHermesPortableReadinessAuthority(sandboxName);
+      }
+    }
+    let readiness: Awaited<ReturnType<typeof inspectLaunchReadiness>>;
+    try {
+      readiness = await probeTiming!.measureAsync("readiness", () =>
+        inspectLaunchReadiness(
+          sandboxName,
+          hermesReadinessAuthority
+            ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command, probeTiming)
+            : probeTimingLaunchReadinessDeps(probeTiming),
+        ),
+      );
+      probeTiming!.recordReadinessDecision(readiness.category);
+      const currentReadinessAuthority = hermesReadinessAuthority;
+      if (currentReadinessAuthority) {
+        probeTiming!.measure("authority", currentReadinessAuthority.command.assertCurrent);
+        probeTiming!.measure("authority", () =>
+          requireHermesPortableActiveLifecycleAuthority(
+            sandboxName,
+            currentReadinessAuthority.active,
+            portableAgentLifecycleAuthorityDeps(),
+          ),
+        );
+      }
+    } catch (error) {
+      if (hermesReadinessAuthority) {
+        probeTiming!.markFailureStage("authority");
+        failHermesPortableReadinessAuthority(sandboxName);
+      }
+      throw error;
+    }
     let publication: Awaited<ReturnType<typeof publishLaunchReadiness>>;
     while (true) {
       if (readiness.kind === "accepted") {
@@ -1745,44 +2469,49 @@ async function prepareConnectSandboxWithinLifecycleFence(
         );
         probeTiming!.setLifecycleAction("reused");
         if (authority.kind === "hermes") {
-          let activeAuthority = probeTiming!.measure("authority", () =>
-            requireHermesPortableActiveLifecycleAuthority(
-              sandboxName,
-              undefined,
-              portableAgentLifecycleAuthorityDeps(),
-            ),
-          );
-          const registered = activeAuthority.entry;
-          const gatewayName = resolveSandboxGatewayName(registered);
-          const recovery = probeTiming!.measure("lifecycle", () =>
-            recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName),
-          );
-          if (recovery.kind === "not-installed") {
-            probeTiming!.setLifecycleAction("failed");
-            probeTiming!.markFailureStage("lifecycle");
-            throw new Error("Hermes portable lifecycle authority disappeared during probe");
+          const acceptedHermesAuthority = hermesReadinessAuthority;
+          if (!acceptedHermesAuthority) {
+            probeTiming!.markFailureStage("authority");
+            failHermesPortableReadinessAuthority(sandboxName);
           }
-          probeTiming!.setLifecycleAction(recovery.kind === "recovered" ? "recovered" : "reused");
-          activeAuthority = probeTiming!.measure("authority", () =>
-            requireHermesPortableActiveLifecycleAuthority(
-              sandboxName,
-              activeAuthority,
-              portableAgentLifecycleAuthorityDeps(),
-            ),
+          let activeAuthority: HermesPortableActiveLifecycleAuthority;
+          try {
+            activeAuthority = probeTiming!.measure("authority", () =>
+              requireHermesPortableActiveLifecycleAuthority(
+                sandboxName,
+                acceptedHermesAuthority.active,
+                portableAgentLifecycleAuthorityDeps(),
+              ),
+            );
+            if (!isDeepStrictEqual(activeAuthority.entry, acceptedReadiness.sb)) {
+              throw new Error("Hermes portable registry authority changed during probe");
+            }
+            probeTiming!.measure("authority", acceptedHermesAuthority.command.assertCurrent);
+          } catch {
+            probeTiming!.markFailureStage("authority");
+            failHermesPortableReadinessAuthority(sandboxName);
+          }
+          recoverHermesPortableForwardsForConnectProbeOrExit(
+            sandboxName,
+            activeAuthority,
+            probeTiming,
+            acceptedHermesAuthority.command,
           );
-          const verified = probeTiming!.measure("inference", () =>
-            verifyHermesPortableInferenceRouteOrExit(
-              sandboxName,
-              acceptedReadiness.agent,
-              activeAuthority,
-            ),
-          );
-          probeTiming!.measure("authority", () =>
-            assertHermesPortableLifecycleForConnect(sandboxName, verified, gatewayName),
-          );
+        } else if (hermesReadinessAuthority) {
+          probeTiming!.markFailureStage("authority");
+          failHermesPortableReadinessAuthority(sandboxName);
         }
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
         return null;
+      }
+      if (!portableAuthorityReady) {
+        probeTiming!.measure("authority", () =>
+          requalifyPortableAgentSandboxAuthority(
+            sandboxName,
+            portableAgentLifecycleAuthorityDeps(),
+          ),
+        );
+        portableAuthorityReady = true;
       }
       // Refuse recovery only when a prior epoch might exist and could not be
       // durably rotated. When the authority and receipt are both securely
@@ -1803,10 +2532,109 @@ async function prepareConnectSandboxWithinLifecycleFence(
       }
       const publicationRequest = publicationFromDecision(sandboxName, readiness);
       const gated = await withLaunchReadinessMutationGate(publicationRequest, async () => {
+        if (
+          readiness.category === "missing" &&
+          hermesMissingFastPathEligible &&
+          hermesReadinessAuthority?.active.entry.provider === "ollama-local" &&
+          typeof hermesReadinessAuthority.active.entry.hostLocalInferenceReceipt === "string"
+        ) {
+          const retainedAuthority = hermesReadinessAuthority;
+          const assertBaseCurrent = (): void => {
+            probeTiming!.measure("authority", retainedAuthority.command.assertTransactionCurrent);
+            const current = probeTiming!.measure("authority", () =>
+              requireHermesPortableActiveLifecycleAuthority(
+                sandboxName,
+                retainedAuthority.active,
+                portableAgentLifecycleAuthorityDeps(),
+              ),
+            );
+            if (!isDeepStrictEqual(current.entry, retainedAuthority.active.entry)) {
+              throw new Error(
+                "Hermes portable registry authority changed during readiness recapture",
+              );
+            }
+          };
+          let runtime: ReturnType<
+            typeof inspectHermesPortableInferenceReadinessRuntimeForConnectProbe
+          >;
+          try {
+            runtime = probeTiming!.measure("inference", () =>
+              inspectHermesPortableInferenceReadinessRuntimeForConnectProbe({
+                intent: "connect-probe-only",
+                sandboxName,
+                entry: retainedAuthority.active.entry,
+                operatingReceipt: retainedAuthority.command.receipt,
+                readRegistry: registry.getSandbox,
+                assertCallerCurrent: assertBaseCurrent,
+                env: retainedAuthority.command.env,
+              }),
+            );
+          } catch {
+            probeTiming!.markFailureStage("authority");
+            failHermesPortableReadinessAuthority(sandboxName);
+          }
+          if (runtime.kind === "running-current") {
+            let forward: ReturnType<typeof verifyHermesPortableForwardsForConnectProbe>;
+            try {
+              runtime.assertCurrent();
+              forward = probeTiming!.measure("forward", () =>
+                verifyHermesPortableForwardsForConnectProbe({
+                  intent: "connect-probe-only",
+                  sandboxName,
+                  authority: retainedAuthority.active,
+                  readRegistry: registry.getSandbox,
+                  commandAuthority: retainedAuthority.command,
+                }),
+              );
+              runtime.assertCurrent();
+            } catch (error) {
+              failHermesPortableForwardRecovery(
+                sandboxName,
+                error instanceof HermesPortableForwardRecoveryError
+                  ? error.failure
+                  : "authority-drift",
+              );
+            }
+            if (forward.kind === "healthy") {
+              const publicationDeps = {
+                ...hermesPortableLaunchReadinessDeps(
+                  retainedAuthority.command,
+                  probeTiming,
+                  retainedAuthority.command.assertTransactionCurrent,
+                ),
+                assertPublicationCurrent: runtime.assertCurrent,
+              };
+              runtime.assertCurrent();
+              const fastPublication = await probeTiming!.measureAsync("publication", () =>
+                publishLaunchReadiness(publicationRequest, publicationDeps),
+              );
+              runtime.assertCurrent();
+              if (fastPublication.kind === "published") {
+                probeTiming!.setLifecycleAction("reused");
+                probeTiming!.setForwardAction("verified");
+                return fastPublication;
+              }
+              if (
+                fastPublication.kind !== "validation-failed" ||
+                fastPublication.category !== "health"
+              ) {
+                return fastPublication;
+              }
+            }
+          }
+        }
         await runConnectEntryPreflight(sandboxName, {
           probeOnly: true,
           probeTiming,
-          withinLifecycleFence: async ({ hermesPortable, requalify }) => {
+          ...(hermesReadinessAuthority
+            ? { hermesPortableCommandAuthority: hermesReadinessAuthority.command }
+            : {}),
+          ...(retainedHermesLifecycleRecovery ? { retainedHermesLifecycleRecovery } : {}),
+          withinLifecycleFence: async ({
+            hermesPortable,
+            hermesPortableCommandAuthority,
+            requalify,
+          }) => {
             // Restart a stopped container before the readiness wait. Without this step,
             // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
             const startedStoppedContainer = hermesPortable
@@ -1821,7 +2649,13 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 observer: hermesPortable
                   ? createCliOpenShellSandboxObserver({
                       capture: (args, captureOptions) =>
-                        captureHermesPortableOpenShell(sandboxName, args, captureOptions),
+                        hermesPortableCommandAuthority
+                          ? captureHermesPortableReadinessObservation(
+                              hermesPortableCommandAuthority,
+                              args,
+                              captureOptions,
+                            )
+                          : captureHermesPortableOpenShell(sandboxName, args, captureOptions),
                       defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
                     })
                   : undefined,
@@ -1839,18 +2673,74 @@ async function prepareConnectSandboxWithinLifecycleFence(
               );
             }
             requalify();
-            await runSandboxConnectProbe(sandboxName, { hermesPortable, probeTiming });
+            await runSandboxConnectProbe(sandboxName, {
+              hermesPortable,
+              ...(hermesPortableCommandAuthority ? { hermesPortableCommandAuthority } : {}),
+              probeOnly: true,
+              probeTiming,
+            });
             requalify();
           },
         });
-        return probeTiming!.measureAsync("publication", () =>
-          publishLaunchReadiness(publicationRequest),
+        const retainedCommand = hermesReadinessAuthority?.command;
+        if (retainedCommand) {
+          probeTiming!.measure("authority", retainedCommand.assertCurrent);
+        }
+        const published = await probeTiming!.measureAsync("publication", () =>
+          publishLaunchReadiness(
+            publicationRequest,
+            retainedCommand
+              ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)
+              : probeTimingLaunchReadinessDeps(probeTiming),
+          ),
         );
+        if (retainedCommand) {
+          probeTiming!.measure("authority", retainedCommand.assertCurrent);
+        }
+        return published;
       });
       if (gated.kind === "changed") {
-        readiness = await probeTiming!.measureAsync("readiness", () =>
-          inspectLaunchReadiness(sandboxName),
-        );
+        if (hermesReadinessAuthority) {
+          try {
+            let active = probeTiming!.measure("authority", () =>
+              requireHermesPortableActiveLifecycleAuthority(
+                sandboxName,
+                undefined,
+                portableAgentLifecycleAuthorityDeps(),
+              ),
+            );
+            const qualified = probeTiming!.measure("authority", () =>
+              qualifyHermesPortableAcceptedReadinessAuthority(sandboxName),
+            );
+            if (qualified.kind === "requalification-required") {
+              throw new Error("Hermes portable schema-6 authority changed during probe");
+            }
+            probeTiming!.measure("authority", qualified.commandAuthority.assertCurrent);
+            readiness = await probeTiming!.measureAsync("readiness", () =>
+              inspectLaunchReadiness(
+                sandboxName,
+                hermesPortableLaunchReadinessDeps(qualified.commandAuthority, probeTiming),
+              ),
+            );
+            probeTiming!.measure("authority", qualified.commandAuthority.assertCurrent);
+            active = probeTiming!.measure("authority", () =>
+              requireHermesPortableActiveLifecycleAuthority(
+                sandboxName,
+                active,
+                portableAgentLifecycleAuthorityDeps(),
+              ),
+            );
+            hermesReadinessAuthority = { active, command: qualified.commandAuthority };
+          } catch {
+            probeTiming!.markFailureStage("authority");
+            failHermesPortableReadinessAuthority(sandboxName);
+          }
+        } else {
+          readiness = await probeTiming!.measureAsync("readiness", () =>
+            inspectLaunchReadiness(sandboxName, probeTimingLaunchReadinessDeps(probeTiming)),
+          );
+        }
+        probeTiming!.recordReadinessDecision(readiness.category);
         continue;
       }
       if (gated.kind === "unsafe") {

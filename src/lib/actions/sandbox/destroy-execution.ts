@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
 import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
@@ -33,11 +33,12 @@ import { readTimerMarker } from "../../shields/timer-control";
 import type { SandboxEntry } from "../../state/registry";
 import {
   classifyDestroyContainerIdentity,
-  isSameDestroyContainerIdentity,
+  isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
-  removeExactDestroyContainerIdentity,
+  type DestroyContainerIdentityProof,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
+import { removeExactOpenShellDockerSandboxContainers } from "../../onboard/openshell-docker-sandbox-containers";
 import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
@@ -61,6 +62,7 @@ export { preparePortableDemoSandboxDestroyAuthority };
 
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
+  cliName?: string;
   force: boolean;
   getSandbox?: (sandboxName: string) => SandboxEntry | null;
   listSandboxes?: () => { sandboxes: SandboxEntry[] };
@@ -68,10 +70,11 @@ type SandboxDestroyExecutionInput = {
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
   sandboxName: string;
-  // `undefined` delegates identity gating to the runtime provider.
-  // `null` records confirmed absence; an object records the one managed
-  // container observed by the pre-destroy guard.
-  expectedContainerIdentity?: SandboxNameLabeledContainer | null;
+  // `undefined` delegates identity gating to the runtime provider. An empty
+  // array records confirmed absence; other arrays contain the immutable
+  // Docker IDs qualified before destroy preparation.
+  expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
+  expectedContainerIdentityFingerprint?: string;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -137,7 +140,7 @@ async function prepareMcpDestroy(
   }
   const preparation = sandboxConfirmedAbsent
     ? await prepareMcpBridgesForAbsentSandboxDestroy(sandboxName, { force })
-    : await prepareMcpBridgesForDestroy(sandboxName);
+    : await prepareMcpBridgesForDestroy(sandboxName, { force });
   if (sandboxConfirmedAbsent && preparation.entries.length > 0) {
     console.warn(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
@@ -148,10 +151,11 @@ async function prepareMcpDestroy(
 
 function wipeAndHardenLiveSandbox(
   sandboxName: string,
-  sandboxConfirmedAbsent: boolean,
+  sandboxRuntimeConfirmedAbsent: boolean,
+  cliName: string,
   deps: NonNullable<SandboxDestroyExecutionInput["deps"]> = {},
 ): HardenedDeleteState {
-  if (sandboxConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
+  if (sandboxRuntimeConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
 
   // Wipe before delete while the retained volume is still mounted. The caller
   // holds the timer-bound lock across this phase and all following teardown.
@@ -214,7 +218,7 @@ function wipeAndHardenLiveSandbox(
         "If sandbox deletion fails, the auto-restore timer retries the transition to lockdown within its seven-attempt recovery budget. " +
         "Waiting for a verified live sandbox mutation owner does not consume that budget. " +
         "If the budget is exhausted, durable containment blocks sandbox mutations. " +
-        `Run \`nemoclaw ${sandboxName} shields status\` for exact-generation recovery guidance.`,
+        `Run \`${cliName} ${sandboxName} shields status\` for exact-generation recovery guidance.`,
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }
@@ -229,7 +233,11 @@ async function restoreMcpAfterDeleteAbort(
   let recoveryFailure: string | undefined;
   let openedRollbackWindow = false;
   try {
-    if (hardened.hardenedForDelete && preparation.entries.length > 0) {
+    if (
+      hardened.hardenedForDelete &&
+      preparation.entries.length > 0 &&
+      !preparation.adapterScrubSkipped
+    ) {
       if (!hardened.timerProcessToken) {
         throw new Error(
           "Cannot open a bounded MCP rollback window because the active shields timer had no valid process token.",
@@ -289,6 +297,7 @@ async function finalizeMcpDestroy(
 
 export async function executeSandboxDestroy({
   cleanupShieldsArtifacts,
+  cliName = "nemoclaw",
   force,
   getSandbox,
   listSandboxes,
@@ -296,7 +305,8 @@ export async function executeSandboxDestroy({
   sandbox,
   sandboxConfirmedAbsent,
   sandboxName,
-  expectedContainerIdentity,
+  expectedContainerIdentities,
+  expectedContainerIdentityFingerprint,
   portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -308,48 +318,68 @@ export async function executeSandboxDestroy({
       | { status: "changed"; subject?: string }
       | { status: "ambiguous"; detail: string; subject?: string }
       | { status: "probe-failed"; detail: string; subject?: string };
-    const pendingPolicyVerification = sandbox?.pendingPolicyVerification;
-    const inspectPendingPolicyVerificationContinuity = (): IdentityContinuity => {
-      if (!pendingPolicyVerification) return { status: "match" };
+    const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
+    const expectedContainerProof: DestroyContainerIdentityProof =
+      expectedContainerIdentities === undefined ? {} : { identities: expectedContainerIdentities };
+    const proofFromVerdict = (
+      verdict: ReturnType<typeof classifyDestroyContainerIdentity>,
+    ): DestroyContainerIdentityProof | null => {
+      if (verdict.status === "clear") {
+        return { identities: verdict.identity === null ? [] : [verdict.identity] };
+      }
+      if (verdict.status === "recovery") return { identities: verdict.identities };
+      return null;
+    };
+    const inspectPendingCreateVerificationContinuity = (): IdentityContinuity => {
+      if (!pendingCreateIdentity) return { status: "match" };
       if (!getSandbox) {
         return {
           status: "probe-failed",
-          subject: "Pending policy verification sandbox identity",
+          subject: "Pending create sandbox identity",
           detail: "an exact registry reader is unavailable",
         };
       }
-      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingPolicyVerification;
+      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingCreateIdentity;
       try {
-        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)) {
-          return { status: "changed", subject: "Pending policy verification authority" };
+        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)) {
+          return { status: "changed", subject: "Pending create identity" };
+        }
+        if (
+          sandboxConfirmedAbsent &&
+          expectedContainerIdentities !== undefined &&
+          expectedContainerIdentityFingerprint === pendingCreateIdentity.sandboxIdentityFingerprint
+        ) {
+          return isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
+            ? { status: "match" }
+            : { status: "changed", subject: "Pending create identity" };
         }
         const inspectIdentity =
           deps.inspectOpenShellSandboxIdentityFingerprint ??
           inspectOpenShellSandboxIdentityFingerprint;
         const liveFingerprint = inspectIdentity({
           sandboxName,
-          gatewayName: pendingPolicyVerification.gatewayName,
+          gatewayName: pendingCreateIdentity.gatewayName,
         });
         if (
-          liveFingerprint !== pendingPolicyVerification.sandboxIdentityFingerprint ||
-          !isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)
+          liveFingerprint !== pendingCreateIdentity.sandboxIdentityFingerprint ||
+          !isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
         ) {
           return {
             status: "changed",
-            subject: "Pending policy verification sandbox identity",
+            subject: "Pending create sandbox identity",
           };
         }
         return { status: "match" };
       } catch (error) {
         return {
           status: "probe-failed",
-          subject: "Pending policy verification sandbox identity",
+          subject: "Pending create sandbox identity",
           detail: redactDestroyError(error),
         };
       }
     };
     const inspectIdentityContinuity = (): IdentityContinuity => {
-      const pendingContinuity = inspectPendingPolicyVerificationContinuity();
+      const pendingContinuity = inspectPendingCreateVerificationContinuity();
       if (pendingContinuity.status !== "match") return pendingContinuity;
       if (portableContainerAuthority) {
         try {
@@ -359,12 +389,17 @@ export async function executeSandboxDestroy({
           return { status: "probe-failed", detail: redactDestroyError(error) };
         }
       }
-      if (expectedContainerIdentity === undefined) return { status: "match" };
+      if (expectedContainerIdentities === undefined) return { status: "match" };
       const verdict = classifyDestroyContainerIdentity(
         sandboxName,
         observeDestroyContainerIdentity(sandboxName),
+        expectedContainerIdentityFingerprint,
       );
-      if (isSameDestroyContainerIdentity(expectedContainerIdentity, verdict)) {
+      const actualContainerProof = proofFromVerdict(verdict);
+      if (
+        actualContainerProof &&
+        isSameDestroyContainerIdentityProof(expectedContainerProof, actualContainerProof)
+      ) {
         return { status: "match" };
       }
       if (verdict.status === "probe-failed") {
@@ -507,9 +542,22 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
       );
     }
+    // An empty `expectedContainerIdentities` is a completed Docker identity
+    // probe with zero matching containers. `undefined` means this runtime
+    // does not use that probe (or Portable owns identity); skip hardening
+    // only when OpenShell already proved absence. A live labeled Docker
+    // identity still hardens even if the OpenShell list says absent.
+    const sandboxRuntimeConfirmedAbsent =
+      expectedContainerIdentities?.length === 0 ||
+      (expectedContainerIdentities === undefined && sandboxConfirmedAbsent);
     let hardened: HardenedDeleteState;
     try {
-      hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+      hardened = wipeAndHardenLiveSandbox(
+        sandboxName,
+        sandboxRuntimeConfirmedAbsent,
+        cliName,
+        deps,
+      );
     } catch (error) {
       const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
       const workspaceTimedOut = error instanceof SandboxWorkspaceCleanupTimeoutError;
@@ -566,21 +614,27 @@ export async function executeSandboxDestroy({
         ` Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.${detachedDetail}`,
       );
     }
-    const deleteArgs = pendingPolicyVerification
-      ? ["sandbox", "delete", "-g", pendingPolicyVerification.gatewayName, sandboxName]
+    const deleteArgs = pendingCreateIdentity
+      ? ["sandbox", "delete", "-g", pendingCreateIdentity.gatewayName, sandboxName]
       : ["sandbox", "delete", sandboxName];
-    const deleteResult = runOpenshell(deleteArgs, {
-      ignoreError: true,
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-    });
+    // A successful preflight absence is already the required OpenShell
+    // lifecycle proof. Do not issue a later mutable-name delete that could
+    // target a same-name replacement created after that observation.
+    const deleteResult: ReturnType<DestroyRunOpenshell> = sandboxConfirmedAbsent
+      ? { status: 0, stdout: "", stderr: "" }
+      : runOpenshell(deleteArgs, {
+          ignoreError: true,
+          killSignal: "SIGKILL",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        });
     const {
       output: capturedDeleteOutput,
-      alreadyGone,
+      alreadyGone: deleteReportedAlreadyGone,
       gatewayUnreachable,
       timedOut,
     } = getSandboxDeleteOutcome(deleteResult);
+    const alreadyGone = sandboxConfirmedAbsent || deleteReportedAlreadyGone;
     const deleteOutput = timedOut
       ? `OpenShell sandbox delete timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Deletion could not be confirmed.`
       : capturedDeleteOutput;
@@ -622,12 +676,19 @@ export async function executeSandboxDestroy({
       };
     }
 
-    if (!forcedLocalCleanup && (portableContainerAuthority || expectedContainerIdentity)) {
+    if (
+      !forcedLocalCleanup &&
+      (portableContainerAuthority || expectedContainerIdentities !== undefined)
+    ) {
       try {
         if (portableContainerAuthority) {
           portableContainerAuthority.verifyAbsent();
-        } else if (expectedContainerIdentity) {
-          removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+        } else if (expectedContainerIdentities !== undefined) {
+          removeExactOpenShellDockerSandboxContainers(
+            sandboxName,
+            expectedContainerIdentities.map(({ id }) => id),
+            console.log,
+          );
         }
       } catch (error) {
         const detail = redactDestroyError(error);

@@ -12,6 +12,9 @@ runs:
       with:
         node-version: "22"
         cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          nemoclaw/package-lock.json
 
     - name: Install base-trusted createRequire verifier dependencies
       shell: bash
@@ -33,13 +36,11 @@ runs:
         [ "$HADOLINT_SHA256" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
         chmod +x /usr/local/bin/hadolint
 
-    - name: Validate sandbox payload lockfile
-      shell: bash
-      run: npm --prefix nemoclaw ci --ignore-scripts --dry-run
-
     - name: Install dependencies
       shell: bash
-      run: npm install --ignore-scripts
+      env:
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
+      run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
 
     - name: Verify reviewed runtime bundles
       shell: bash
