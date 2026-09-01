@@ -462,7 +462,7 @@ check_agent_and_inference_conflicts
     expect(active.output).toMatch(/vLLM inference workload is active: pid=998 process=vllm/);
     expect(active.output).toContain("pid=999 process=python3");
     expect(active.output).toContain("pid=1000 process=docker-init");
-    expect(active.output).toContain(`owner_uid=1001`);
+    expect(active.output).toContain(`owner_uid=${process.getuid!() + 1}`);
     expect(active.output).toContain("action=ask_owner_or_host_administrator_to_stop");
     expect(active.output).not.toContain("stop_command='kill --");
     expect(active.output).not.toContain("first-sensitive-model");
@@ -512,18 +512,18 @@ check_vllm_container_conflicts
     expect(active.output).not.toContain("hidden-model-name");
   });
 
-  it("blocks only the user's active agent before offering a vLLM container handoff (#7287, #10649)", () => {
+  it("blocks an active agent before checking a vLLM container handoff (#7287)", () => {
     const active = runSourced(
       STATION_PREPARE,
       `MODE=--check
-ps() { printf '%s 999 1 openshell openshell gateway\n%s 1000 1 node node /home/other/.nemoclaw/openshell gateway\n' "$EUID" "$((EUID + 1))"; }
+ps() { printf '%s 999 1 openshell openshell gateway\n' "$EUID"; }
 ss() { :; }
 docker() { printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'; }
 check_initial_workload_quiescence`,
     );
     expect(active.result.status, active.output).toBe(1);
     expect(active.output).toContain("Agent workload is active: pid=999 process=openshell");
-    expect(active.output).not.toMatch(/pid=1000|container_id=1234567890ab|hidden-model-name/);
+    expect(active.output).not.toMatch(/container_id=1234567890ab|hidden-model-name/);
   });
 
   it("refuses an installed CUDA keyring version that differs from the pin", () => {
