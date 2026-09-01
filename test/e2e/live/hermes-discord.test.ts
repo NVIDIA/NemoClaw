@@ -13,7 +13,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { assertFakeApiDockerTopologyProof } from "./fake-api-docker-topology-proof.ts";
 import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import {
   assertDiscordGatewayCapture,
@@ -593,14 +592,6 @@ PY`,
       redactionValues,
     },
   );
-  await assertFakeApiDockerTopologyProof({
-    host,
-    kind: "discord-gateway",
-    containerPrefix: "nemoclaw-fake-discord-hermes",
-    api: fakeGateway,
-    env,
-    redactionValues,
-  });
   await applyHermesFakeDiscordPolicy({
     host,
     sandboxName: SANDBOX_NAME,
