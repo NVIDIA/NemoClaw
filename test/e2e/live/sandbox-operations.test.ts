@@ -8,6 +8,7 @@
  * and gateway recovery — without introducing another target framework.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -194,26 +195,43 @@ async function execInSandbox(
 }
 
 function credentialBoundaryProbeScript(): string {
-  const encodedFixture = Buffer.from(CREDENTIAL_VALUE, "utf8").toString("base64");
-  return `python3 - ${shellQuote(encodedFixture)} <<'PY'
+  const fixtureDigest = createHash("sha256").update(CREDENTIAL_VALUE, "utf8").digest("hex");
+  return `python3 - ${shellQuote(fixtureDigest)} ${CREDENTIAL_VALUE.length} <<'PY'
 from pathlib import Path
-import base64
+import hashlib
 import os
 import sys
 
-secret = base64.b64decode(sys.argv[1], validate=True)
+secret_digest = bytes.fromhex(sys.argv[1])
+secret_length = int(sys.argv[2])
 
 def contains_secret(path):
     try:
-        return secret in Path(path).read_bytes()
+        content = Path(path).read_bytes()
     except OSError:
         return False
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
+
+def contains_secret_bytes(content):
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
 
 environment = b"\\0".join(
     f"{key}={value}".encode("utf-8", errors="surrogateescape")
     for key, value in os.environ.items()
 )
-if secret in environment:
+if contains_secret_bytes(environment):
     raise SystemExit(98)
 
 managed_config_files = 0
@@ -247,7 +265,7 @@ for process in Path("/proc").iterdir():
     except OSError:
         continue
     agent_environment_inspected = True
-    if secret in command or secret in agent_environment:
+    if contains_secret_bytes(command) or contains_secret_bytes(agent_environment):
         raise SystemExit(98)
 
 if managed_config_files == 0 or not agent_environment_inspected:

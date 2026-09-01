@@ -224,11 +224,11 @@ async function reconcileUncertainProviderCreate(
   });
   if (inventory.ok && inventory.value.names.includes(provider)) {
     return {
-      keepReservation: true,
+      keepReservation: false,
       lines: [
-        `  OpenShell reports provider '${provider}' is registered; local provider ownership was preserved.`,
-        `  Verify with '${CLI_NAME} credentials list'.`,
-        `  Rebuild each sandbox that should use '${provider}' (\`${CLI_NAME} <sandbox> rebuild\`).`,
+        `  OpenShell reports a provider named '${provider}', but a name-only inventory cannot verify that this command created it.`,
+        "  Local provider ownership was not recorded.",
+        "  Do not rebuild a sandbox from this result. Resolve the provider through a verified gateway operation, then retry.",
       ],
     };
   }
@@ -242,11 +242,10 @@ async function reconcileUncertainProviderCreate(
     };
   }
   return {
-    keepReservation: true,
+    keepReservation: false,
     lines: [
-      `  Could not determine whether provider '${provider}' was registered; local provider ownership was preserved.`,
-      `  Run '${CLI_NAME} credentials list' to inspect the gateway before retrying.`,
-      `  If the provider exists, rebuild each sandbox that should use '${provider}'; otherwise run '${CLI_NAME} credentials reset ${provider} --yes' before retrying.`,
+      `  Could not determine whether provider '${provider}' was registered; local provider ownership was not recorded.`,
+      "  Do not rebuild a sandbox from this result. Resolve the provider through a verified gateway operation, then retry.",
       `  ${inventory.error.message}`,
     ],
   };

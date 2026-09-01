@@ -293,17 +293,18 @@ describe("credential actions use typed OpenShell provider results", () => {
 
   it.each([
     {
-      case: "timed out and is confirmed present",
+      case: "timed out and a name-only inventory finds the provider",
       createError: {
         kind: "timeout",
         message: "The OpenShell provider operation timed out.",
       } as const,
       inventory: { ok: true, value: { names: ["custom-provider"] } } as const,
       expectedLines: [
-        "  OpenShell reports provider 'custom-provider' is registered; local provider ownership was preserved.",
-        "  Rebuild each sandbox that should use 'custom-provider' (`nemoclaw <sandbox> rebuild`).",
+        "  OpenShell reports a provider named 'custom-provider', but a name-only inventory cannot verify that this command created it.",
+        "  Local provider ownership was not recorded.",
+        "  Do not rebuild a sandbox from this result. Resolve the provider through a verified gateway operation, then retry.",
       ],
-      forgetCalls: 0,
+      forgetCalls: 1,
     },
     {
       case: "has no status and is confirmed present",
@@ -314,10 +315,11 @@ describe("credential actions use typed OpenShell provider results", () => {
       } as const,
       inventory: { ok: true, value: { names: ["custom-provider"] } } as const,
       expectedLines: [
-        "  OpenShell reports provider 'custom-provider' is registered; local provider ownership was preserved.",
-        "  Rebuild each sandbox that should use 'custom-provider' (`nemoclaw <sandbox> rebuild`).",
+        "  OpenShell reports a provider named 'custom-provider', but a name-only inventory cannot verify that this command created it.",
+        "  Local provider ownership was not recorded.",
+        "  Do not rebuild a sandbox from this result. Resolve the provider through a verified gateway operation, then retry.",
       ],
-      forgetCalls: 0,
+      forgetCalls: 1,
     },
     {
       case: "has no status and is confirmed absent",
@@ -342,11 +344,10 @@ describe("credential actions use typed OpenShell provider results", () => {
         error: { kind: "timeout", message: "The provider inventory query timed out." },
       } as const,
       expectedLines: [
-        "  Could not determine whether provider 'custom-provider' was registered; local provider ownership was preserved.",
-        "  Run 'nemoclaw credentials list' to inspect the gateway before retrying.",
-        "  If the provider exists, rebuild each sandbox that should use 'custom-provider'; otherwise run 'nemoclaw credentials reset custom-provider --yes' before retrying.",
+        "  Could not determine whether provider 'custom-provider' was registered; local provider ownership was not recorded.",
+        "  Do not rebuild a sandbox from this result. Resolve the provider through a verified gateway operation, then retry.",
       ],
-      forgetCalls: 0,
+      forgetCalls: 1,
     },
   ])("reconciles provider creation when the result $case (#9806)", async (testCase) => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
@@ -384,6 +385,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       timeoutMs: 30_000,
     });
     expect(result.failureLines).toEqual(expect.arrayContaining(testCase.expectedLines));
+    expect(result.failureLines.join("\n")).not.toContain("<sandbox> rebuild");
     expect(forgetExtraProvider).toHaveBeenCalledTimes(testCase.forgetCalls);
   });
 
