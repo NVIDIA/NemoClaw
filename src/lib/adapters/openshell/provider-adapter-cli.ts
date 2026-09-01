@@ -234,9 +234,14 @@ export function createCliOpenShellProviderAdapter(
     const result = invoke(["provider", "list", "--names"], request);
     const error = commandError(result);
     if (error) return failure(error);
-    return success({
-      names: parseCliOpenShellProviderNames(result.stdout),
-    });
+    const names = parseCliOpenShellProviderNames(result.stdout);
+    if (!names) {
+      return failure({
+        kind: "schema",
+        message: "OpenShell returned an invalid provider inventory.",
+      });
+    }
+    return success({ names });
   };
 
   const createProvider: OpenShellProviderAdapter["createProvider"] = async (request) => {

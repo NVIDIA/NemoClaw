@@ -4,6 +4,7 @@
 import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
@@ -128,6 +129,36 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
+  it("does not create an OpenAI provider after incompatible profile reconciliation (#9806)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
+    const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =
+      async () => ({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "profile_incompatible",
+          message: "The installed endpointless profile does not match.",
+        },
+      });
+    const adapter = providerAdapter({
+      ensureEndpointlessProviderProfile: vi.fn(ensureEndpointlessProviderProfile),
+    });
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "openai-prod",
+        type: "openai",
+        credentials: ["OPENAI_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("does not create a provider from an incompatible bundled profile (#9806)", async () => {
     vi.stubEnv("TAVILY_API_KEY", "host-only-value");
     const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
@@ -180,6 +211,22 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.outputLines).toContain(
       "    Pause without clearing credentials: `nemoclaw <sandbox> channels stop <channel>`",
     );
+  });
+
+  it.each([
+    ["OSC control", "alpha\n\u001b]52;c;YXR0YWNr\u0007"],
+    ["invalid name", "alpha\nbad/name"],
+  ])("does not render an unsafe gateway provider inventory: %s (#9806)", async (_case, output) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => ({ status: 0, stdout: output }),
+    });
+
+    const result = await runCredentialsListAction("nemoclaw", { providerAdapter: adapter });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain("  OpenShell returned an invalid provider inventory.");
+    expect(result.outputLines).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(output);
   });
 
   it.each([

@@ -30,8 +30,10 @@ export function queryRegisteredGatewayProviders(
       timeout: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
     });
     if (result.status === 0) {
-      return classifyGatewayProviderNames(parseCliOpenShellProviderNames(result.output))
-        .credentialNames;
+      const providerNames = parseCliOpenShellProviderNames(result.output);
+      if (providerNames) {
+        return classifyGatewayProviderNames(providerNames).credentialNames;
+      }
     }
   } catch (_error: unknown) {
     // #5924: intentionally treat every thrown query or parsing error identically.

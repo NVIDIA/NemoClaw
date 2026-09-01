@@ -33,9 +33,10 @@ describe("inference set provider diagnostics", () => {
       bridgeNames: [],
       credentialNames: [],
     });
-    expect(
-      classifyGatewayProviderNames(["alpha-telegram-bridge", "alpha-slack-app"]),
-    ).toEqual({ bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"], credentialNames: [] });
+    expect(classifyGatewayProviderNames(["alpha-telegram-bridge", "alpha-slack-app"])).toEqual({
+      bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"],
+      credentialNames: [],
+    });
     expect(isBridgeProviderName("alpha-discord-bridge")).toBe(true);
     expect(isBridgeProviderName("nvidia-prod")).toBe(false);
   });
@@ -66,6 +67,10 @@ describe("inference set provider diagnostics", () => {
     {
       name: "nonzero status",
       capture: () => ({ status: 17, output: "query-secret" }),
+    },
+    {
+      name: "unsafe provider name",
+      capture: () => ({ status: 0, output: "alpha\n\u001b]52;c;YXR0YWNr\u0007" }),
     },
   ])("uses the static fallback for $name", ({ capture }) => {
     const captureOpenshell = vi.fn(capture);

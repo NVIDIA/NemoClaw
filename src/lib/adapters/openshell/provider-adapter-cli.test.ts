@@ -90,6 +90,26 @@ describe("CLI OpenShell provider adapter", () => {
     });
   });
 
+  it.each([
+    ["OSC control", "alpha\n\u001b]52;c;YXR0YWNr\u0007"],
+    ["invalid name", "alpha\nbad/name"],
+  ])(
+    "rejects unsafe provider inventory output before returning names: %s (#9806)",
+    async (_case, output) => {
+      const adapter = createCliOpenShellProviderAdapter({
+        run: () => captured(0, output),
+      });
+
+      await expect(adapter.listProviders({ target: selectedOpenShellGateway() })).resolves.toEqual({
+        ok: false,
+        error: {
+          kind: "schema",
+          message: "OpenShell returned an invalid provider inventory.",
+        },
+      });
+    },
+  );
+
   it("passes credential values only through the child environment (#9806)", async () => {
     const run = vi.fn<RunProviderCommand>(() => captured(0));
     const adapter = createCliOpenShellProviderAdapter({ run });
@@ -412,7 +432,19 @@ describe("CLI OpenShell provider adapter", () => {
     const run = vi
       .fn()
       .mockReturnValueOnce(captured(1, "", "provider profile not found"))
-      .mockReturnValueOnce(captured(0));
+      .mockReturnValueOnce(captured(0))
+      .mockReturnValueOnce(
+        captured(
+          0,
+          JSON.stringify({
+            id: "openai",
+            credentials: [],
+            endpoints: [],
+            binaries: [],
+            inference_capable: true,
+          }),
+        ),
+      );
     const adapter = createCliOpenShellProviderAdapter({ run });
 
     await expect(
@@ -426,6 +458,7 @@ describe("CLI OpenShell provider adapter", () => {
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "profile", "export", "openai", "--output", "json"],
       ["provider", "profile", "import", "--file", "/repo/provider-profiles/openai.yaml"],
+      ["provider", "profile", "export", "openai", "--output", "json"],
     ]);
   });
 

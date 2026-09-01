@@ -238,15 +238,21 @@ export function ensureEndpointlessProviderProfile(input: {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
-
-  const exported = exportProfile();
-  if (exported.status === 0) {
-    return profileHasExpectedCredentialBoundary(commandStdout(exported), {
+  const validateExportedProfile = (
+    result: ReturnType<EndpointlessProviderProfileRunner>,
+  ): EndpointlessProviderProfileResult => {
+    if (result.status !== 0) return { ok: false, reason: "export-failed" };
+    return profileHasExpectedCredentialBoundary(commandStdout(result), {
       id: input.profileId,
       inferenceCapable: input.inferenceCapable,
     })
       ? { ok: true }
       : { ok: false, reason: "incompatible" };
+  };
+
+  const exported = exportProfile();
+  if (exported.status === 0) {
+    return validateExportedProfile(exported);
   }
 
   if (!Number.isInteger(exported.status)) {
@@ -266,26 +272,10 @@ export function ensureEndpointlessProviderProfile(input: {
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     },
   );
-  if (imported.status === 0) return { ok: true };
-
-  const importOutput = commandOutput(imported);
-  if (!/already exists/iu.test(importOutput)) {
+  if (imported.status !== 0 && !/already exists/iu.test(commandOutput(imported))) {
     return { ok: false, reason: "import-failed" };
   }
-
-  const racedExport = exportProfile();
-  if (racedExport.status !== 0) {
-    return { ok: false, reason: "export-failed" };
-  }
-  if (
-    !profileHasExpectedCredentialBoundary(commandStdout(racedExport), {
-      id: input.profileId,
-      inferenceCapable: input.inferenceCapable,
-    })
-  ) {
-    return { ok: false, reason: "incompatible" };
-  }
-  return { ok: true };
+  return validateExportedProfile(exportProfile());
 }
 
 /** Validate or import the endpointless OpenAI profile through the OpenShell adapter. */
