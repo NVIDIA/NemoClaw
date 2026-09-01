@@ -101,6 +101,7 @@ const proxyServers = portMappings.map(([listenPort, upstreamPort]) => {
 });
 
 const readinessServer = net.createServer(async (client) => {
+  client.on("error", () => client.destroy());
   const ready = (
     await Promise.all(portMappings.map(([, upstreamPort]) => upstreamAcceptsConnection(upstreamPort)))
   ).every(Boolean);
