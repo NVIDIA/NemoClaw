@@ -47,7 +47,7 @@ describe("OpenShell endpointless provider profiles", () => {
       `\n  ✗ OpenShell provider profile '${PROFILE_ID}' already exists but does not match NemoClaw's endpointless inference contract.`,
       "    Remove the conflicting profile, then retry this command.",
     ],
-  ] as const)("returns recovery guidance for a %s profile result", (reason, summary, action) => {
+  ] as const)("returns recovery guidance for a %s profile result (#9806)", (reason, summary, action) => {
     expect(endpointlessProviderProfileFailureMessages(reason)).toEqual([summary, action]);
   });
 

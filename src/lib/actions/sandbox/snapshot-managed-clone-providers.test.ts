@@ -271,7 +271,7 @@ function prepareWithBinding(input: {
 
 describe("managed clone provider transaction", () => {
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-    "keeps the %s transaction provider-neutral, secret-free, and deeply frozen",
+    "keeps the %s transaction provider-neutral, secret-free, and deeply frozen (#8931)",
     (agent) => {
       const { prepared } = prepareWithBinding({ agent });
 

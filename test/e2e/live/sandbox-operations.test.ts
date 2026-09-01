@@ -690,7 +690,7 @@ async function assertGatewayRecovery(
 }
 
 test(
-  "credentials reset removes a provider attached during sandbox rebuild",
+  "credentials reset removes a provider attached during sandbox rebuild (#9806)",
   {
     timeout: 45 * 60_000,
     meta: {
