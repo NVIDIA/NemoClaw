@@ -1808,11 +1808,12 @@ function canRemoveScopedOpenShellResources(
         ? "Refusing scoped gateway cleanup because its sandbox namespace cannot be proven."
         : "Refusing gateway cleanup because the configured state directory's sandbox namespace cannot be proven.",
     );
-    if (!runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()) {
-      runtime.warn(
-        "If onboarding used a gateway state override, rerun with NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<absolute-path> set to its original resolved directory.",
-      );
-    }
+    const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
+    runtime.warn(
+      configuredStateDir
+        ? `Gateway port ${String(GATEWAY_PORT)} is using OpenShell state directory ${JSON.stringify(configuredStateDir)}. Verify that it is the original resolved onboarding directory, then rerun uninstall.`
+        : `If onboarding for gateway port ${String(GATEWAY_PORT)} used a gateway state override, rerun with NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<absolute-path> set to its original resolved directory.`,
+    );
     return false;
   }
   if (runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()) {

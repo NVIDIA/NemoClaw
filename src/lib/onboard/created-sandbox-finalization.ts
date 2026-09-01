@@ -583,6 +583,7 @@ type OnboardSandboxRegistrationOptions = {
 type OnboardGatewayBinding = {
   readonly gatewayName: string;
   readonly gatewayPort: number;
+  readonly openshellGatewayStateDir?: string | null;
 };
 type OnboardPreparedPolicy = Pick<
   managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,

@@ -529,6 +529,7 @@ export function registerSandbox(
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
+      openshellGatewayStateDir: entry.openshellGatewayStateDir ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
       reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
     };

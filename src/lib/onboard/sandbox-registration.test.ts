@@ -88,6 +88,18 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("records the resolved custom OpenShell gateway state directory (#10665)", () => {
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+        openshellGatewayStateDir: "/home/tester/gateways/custom-19080",
+      }),
+    );
+
+    expect(entry.openshellGatewayStateDir).toBe("/home/tester/gateways/custom-19080");
+  });
+
   it("records explicit OpenClaw identity for a managed workload receipt (#9356)", () => {
     const workload = managedWorkloadReceipt("openclaw");
     const entry = buildCreatedSandboxRegistryEntry(

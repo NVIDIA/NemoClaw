@@ -153,6 +153,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  /** Resolved custom OpenShell gateway state directory used when this sandbox was onboarded. */
+  openshellGatewayStateDir?: string | null;
 }
 
 export type SandboxWorkloadReceipt =
