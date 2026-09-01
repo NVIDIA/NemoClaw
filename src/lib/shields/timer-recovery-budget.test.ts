@@ -12,8 +12,27 @@ import {
   withMcpLifecycleLock,
 } from "../state/mcp-lifecycle-lock";
 
+type RestoreResult = {
+  status: number;
+  verification?: {
+    snapshotSha256: string;
+    readback: { source: "OpenShell live base policy"; verifiedAt: string };
+  };
+};
+
+const successfulRestore = (): RestoreResult => ({
+  status: 0,
+  verification: {
+    snapshotSha256: "a".repeat(64),
+    readback: {
+      source: "OpenShell live base policy",
+      verifiedAt: "2026-09-01T00:00:00.000Z",
+    },
+  },
+});
+
 const shieldsIndexMock = vi.hoisted(() => ({
-  applyShieldsPolicySnapshot: vi.fn((): { status: number } => ({ status: 0 })),
+  applyShieldsPolicySnapshot: vi.fn<() => RestoreResult>(),
   completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn(),
   prepareAutoRestoreTransitionTakeover: vi.fn(),
@@ -32,7 +51,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-recovery-budget-"));
     stateDir = path.join(tmpHome, ".nemoclaw", "state");
     vi.stubEnv("HOME", tmpHome);
-    shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementation(() => ({ status: 0 }));
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue(successfulRestore());
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -73,7 +92,12 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     return { args: args!, lockPath, markerPath, sandboxName, timer };
   }
 
-  function readAuditEntries(): Array<{ action: string; error?: string; warning?: string }> {
+  function readAuditEntries(): Array<{
+    action: string;
+    error?: string;
+    warning?: string;
+    [key: string]: unknown;
+  }> {
     return fs
       .readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")
       .trim()
@@ -167,7 +191,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     const { args, lockPath, timer } = await createFixture(sandboxName);
     const containmentPath = `${lockPath}.containment`;
     const deadlinePath = `${lockPath}.deadline`;
-    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue({ status: 0 });
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue(successfulRestore());
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
@@ -210,6 +234,15 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
       expect(fs.existsSync(containmentPath)).toBe(false);
       expect(readAuditEntries()).not.toContainEqual(
         expect.objectContaining({ action: "shields_up_failed" }),
+      );
+      expect(readAuditEntries()).toContainEqual(
+        expect.objectContaining({
+          action: "shields_auto_restore",
+          resulting_posture: "up",
+          policy_snapshot_sha256: "a".repeat(64),
+          policy_readback_source: "OpenShell live base policy",
+          policy_readback_at: "2026-09-01T00:00:00.000Z",
+        }),
       );
     } finally {
       releaseOwner();

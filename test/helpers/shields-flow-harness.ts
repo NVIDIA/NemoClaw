@@ -27,9 +27,11 @@ export function bindLivePolicyMutationContext(
 ): MockInstance[] {
   return [
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
-    vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
+    vi.spyOn(policy, "verifyAppliedPolicyDocument").mockReturnValue({
+      source: "OpenShell live base policy",
+      verifiedAt: "2026-09-01T00:00:00.000Z",
+    }),
   ];
 }
 
@@ -45,7 +47,6 @@ export type ShieldsFlowHarness = {
   logSpy: MockInstance;
   policyStateSpy: MockInstance;
   policyVerificationSpy: MockInstance;
-  policyRecoveryAuthoritySpy: MockInstance;
   policySetBodies: string[];
   runCaptureSpy: MockInstance;
   runSpy: MockInstance;
@@ -369,13 +370,13 @@ export function createShieldsFlowHarness(
   const policyStateSpy = vi
     .spyOn(policy, "inspectPolicyMutationContext")
     .mockReturnValue(policyMutationAuthority);
-  const policyRecoveryAuthoritySpy = vi
-    .spyOn(policy, "inspectPolicyMutationContext")
-    .mockReturnValue(policyMutationAuthority);
   vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(policyMutationAuthority);
   const policyVerificationSpy = vi
     .spyOn(policy, "verifyAppliedPolicyDocument")
-    .mockImplementation(() => undefined);
+    .mockReturnValue({
+      source: "OpenShell live base policy",
+      verifiedAt: "2026-09-01T00:00:00.000Z",
+    });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
   });
@@ -648,7 +649,6 @@ export function createShieldsFlowHarness(
     logSpy,
     policyStateSpy,
     policyVerificationSpy,
-    policyRecoveryAuthoritySpy,
     policySetBodies,
     runCaptureSpy,
     runSpy,

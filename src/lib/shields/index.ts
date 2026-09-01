@@ -4323,7 +4323,38 @@ interface ShieldsPolicySnapshotRestoreOptions {
   runPolicySet?: typeof run;
 }
 
-type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run>;
+interface ShieldsPolicyRestoreVerification {
+  snapshotSha256: string;
+  readback: ReturnType<typeof verifyAppliedPolicyDocument>;
+}
+
+interface VerifiedShieldsPostureEvidence {
+  policy?: ShieldsPolicyRestoreVerification;
+  configLockVerifiedAt?: string;
+}
+
+type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run> & {
+  verification?: ShieldsPolicyRestoreVerification;
+};
+
+function reportVerifiedShieldsPosture(
+  sandboxName: string,
+  evidence: VerifiedShieldsPostureEvidence,
+): void {
+  console.log("  Shields: UP (lockdown active)");
+  if (evidence.policy) {
+    console.log(`  Policy restored from snapshot: sha256:${evidence.policy.snapshotSha256}`);
+    console.log(
+      `  Verified by: ${evidence.policy.readback.source} read-back at ${evidence.policy.readback.verifiedAt}`,
+    );
+  }
+  if (evidence.configLockVerifiedAt) {
+    console.log(
+      `  Config lock: re-confirmed after settle window at ${evidence.configLockVerifiedAt}`,
+    );
+  }
+  console.log(`  Lockdown active for ${sandboxName}`);
+}
 
 function restoreShieldsDelta(
   snapshotPolicy: string,
@@ -4431,7 +4462,16 @@ function applyShieldsPolicySnapshot(
       { ignoreError: true },
     );
     rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
-    if (result.status === 0) verifyAppliedPolicyDocument(sandboxName, restoredPolicy, context);
+    if (result.status === 0) {
+      const readback = verifyAppliedPolicyDocument(sandboxName, restoredPolicy, context);
+      return {
+        ...result,
+        verification: {
+          snapshotSha256: snapshotBinding.sha256,
+          readback,
+        },
+      };
+    }
     return result;
   } finally {
     cleanupTempDir(stagedPath, "nemoclaw-shields-restore");
@@ -4542,6 +4582,8 @@ interface LockdownActivationResult {
   error?: string;
   chattrApplied?: boolean;
   fileHashes?: { [path: string]: string };
+  verification?: ShieldsPolicyRestoreVerification;
+  configLockVerifiedAt?: string;
 }
 
 function activateLockdownFromSnapshot(
@@ -4574,6 +4616,12 @@ function activateLockdownFromSnapshot(
     return {
       ok: false,
       error: `policy restore exited with status ${String(restoreStatus)}`,
+    };
+  }
+  if (!restoreResult.verification) {
+    return {
+      ok: false,
+      error: "policy restore completed without live read-back evidence",
     };
   }
 
@@ -4611,6 +4659,8 @@ function activateLockdownFromSnapshot(
     ok: true,
     chattrApplied: relock.lastResult.chattrApplied,
     fileHashes: relock.lastResult.fileHashes,
+    verification: restoreResult.verification,
+    configLockVerifiedAt: new Date().toISOString(),
   };
 }
 
@@ -4740,6 +4790,17 @@ function recoverExpiredAutoRestoreInline(
     restored_by: "auto_timer",
     policy_snapshot: snapshotPath,
     restored_at: nowIso,
+    resulting_posture: "up",
+    ...(activation.verification
+      ? {
+          policy_snapshot_sha256: activation.verification.snapshotSha256,
+          policy_readback_source: activation.verification.readback.source,
+          policy_readback_at: activation.verification.readback.verifiedAt,
+        }
+      : {}),
+    ...(activation.configLockVerifiedAt
+      ? { config_lock_verified_at: activation.configLockVerifiedAt }
+      : {}),
   });
   return { attempted: true, restored: true };
 }
@@ -5942,14 +6003,17 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       fileHashes: lockResult.fileHashes,
     });
     clearTimerMarker(sandboxName);
+    const configLockVerifiedAt = new Date().toISOString();
     appendAuditEntry({
       action: "shields_up",
       sandbox: sandboxName,
-      timestamp: new Date().toISOString(),
+      timestamp: configLockVerifiedAt,
       restored_by: "operator",
       reason: "drift remediation",
+      resulting_posture: "up",
+      config_lock_verified_at: configLockVerifiedAt,
     });
-    console.log(`  Lockdown re-applied for ${sandboxName}`);
+    reportVerifiedShieldsPosture(sandboxName, { configLockVerifiedAt });
     return;
   }
 
@@ -5982,6 +6046,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     chattrApplied: boolean;
     fileHashes: { [path: string]: string };
   } | null = null;
+  let verifiedPostureEvidence: VerifiedShieldsPostureEvidence | null = null;
   if (snapshotPath) {
     console.log("  Restoring restrictive policy from snapshot...");
     const activation = activateLockdownFromSnapshot(
@@ -6012,10 +6077,19 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       }
       return failShieldsCommand(activation.error ?? "unknown restore error", opts.throwOnError);
     }
-    if (activation.fileHashes && typeof activation.chattrApplied === "boolean") {
+    if (
+      activation.fileHashes &&
+      typeof activation.chattrApplied === "boolean" &&
+      activation.verification &&
+      activation.configLockVerifiedAt
+    ) {
       snapshotLockResult = {
         chattrApplied: activation.chattrApplied,
         fileHashes: activation.fileHashes,
+      };
+      verifiedPostureEvidence = {
+        policy: activation.verification,
+        configLockVerifiedAt: activation.configLockVerifiedAt,
       };
     }
   } else {
@@ -6047,6 +6121,12 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       chattrApplied: lockResult.chattrApplied,
       fileHashes: lockResult.fileHashes,
     });
+    verifiedPostureEvidence = { configLockVerifiedAt: new Date().toISOString() };
+  }
+
+  if (!verifiedPostureEvidence) {
+    console.error("  ERROR: Shields posture evidence is incomplete; the UP state was not committed.");
+    return failShieldsCommand("Verified Shields posture evidence is missing", opts.throwOnError);
   }
 
   // 3. Calculate duration
@@ -6087,12 +6167,23 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     duration_seconds: durationSeconds,
     policy_snapshot: snapshotPath,
     reason: state.shieldsDownReason ?? undefined,
+    resulting_posture: "up",
+    ...(verifiedPostureEvidence.policy
+      ? {
+          policy_snapshot_sha256: verifiedPostureEvidence.policy.snapshotSha256,
+          policy_readback_source: verifiedPostureEvidence.policy.readback.source,
+          policy_readback_at: verifiedPostureEvidence.policy.readback.verifiedAt,
+        }
+      : {}),
+    ...(verifiedPostureEvidence.configLockVerifiedAt
+      ? { config_lock_verified_at: verifiedPostureEvidence.configLockVerifiedAt }
+      : {}),
   });
 
   // 6. Output
   const mins = Math.floor(durationSeconds / 60);
   const secs = durationSeconds % 60;
-  console.log(`  Lockdown active for ${sandboxName}`);
+  reportVerifiedShieldsPosture(sandboxName, verifiedPostureEvidence);
   console.log(
     `  Duration unlocked: ${mins}m ${secs}s | Reason: ${state.shieldsDownReason ?? "not specified"}`,
   );

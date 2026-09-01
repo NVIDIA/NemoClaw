@@ -12,8 +12,15 @@ import {
   withMcpLifecycleLock,
 } from "../state/mcp-lifecycle-lock";
 
+type TimerPolicyRestoreResult = { status: number; verification?: ReturnType<typeof verifiedPolicyRestore>["verification"] };
 const shieldsIndexMock = vi.hoisted(() => ({
-  applyShieldsPolicySnapshot: vi.fn((): { status: number } => ({ status: 0 })),
+  applyShieldsPolicySnapshot: vi.fn((): TimerPolicyRestoreResult => ({
+    status: 0,
+    verification: {
+      snapshotSha256: "a".repeat(64),
+      readback: { source: "OpenShell live base policy", verifiedAt: "2026-09-01T00:00:00.000Z" },
+    },
+  })),
   completeAutoRestoreTransition: vi.fn(() => true),
   hermesProviderLockConfirmation: vi.fn() as unknown,
   lockAgentConfig: vi.fn() as unknown,
@@ -23,7 +30,13 @@ const shieldsIndexMock = vi.hoisted(() => ({
 }));
 
 const PROCESS_TOKEN = "a".repeat(32);
-
+function verifiedPolicyRestore() {
+  const verification = {
+    snapshotSha256: "a".repeat(64),
+    readback: { source: "OpenShell live base policy" as const, verifiedAt: "2026-09-01T00:00:00.000Z" },
+  };
+  return { status: 0, verification };
+}
 interface TimerTestOptions {
   retryDelayMs?: number;
   maxRestoreAttempts?: number;
@@ -53,7 +66,7 @@ describe("shields timer authorization", () => {
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-timer-"));
     vi.stubEnv("HOME", tmpHome);
-    shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementation(() => ({ status: 0 }));
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue(verifiedPolicyRestore());
     shieldsIndexMock.hermesProviderLockConfirmation = vi.fn(() => undefined);
     shieldsIndexMock.lockAgentConfig = vi.fn();
     shieldsIndexMock.resolveHermesShieldsProtocol = vi.fn(() => "sealed-plan-v1");
@@ -190,6 +203,17 @@ describe("shields timer authorization", () => {
       writeMarker,
     };
   }
+
+  it("retries when a successful policy command has no read-back evidence", async () => {
+    const timer = await import("./timer");
+    const fixture = createFailedRestoreFixture("missing-evidence", timer.parseTimerArgs);
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue({ status: 0 });
+
+    await invokeTimerAndExpectRetry(timer.runRestoreTimer, fixture.args);
+
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalled();
+    expect(shieldsIndexMock.completeAutoRestoreTransition).not.toHaveBeenCalled();
+  });
 
   it("does not restore or rewrite state when marker is missing", async () => {
     const timer = await import("./timer");
@@ -480,9 +504,7 @@ describe("shields timer authorization", () => {
         status: 17,
       };
     });
-    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValueOnce({
-      status: 0,
-    });
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValueOnce(verifiedPolicyRestore());
     const args = timer.parseTimerArgs([
       sandboxName,
       snapshotPath,
@@ -726,9 +748,7 @@ describe("shields timer authorization", () => {
         command: "shields auto-restore",
         takeoverToken: PROCESS_TOKEN,
       });
-      return {
-        status: 0,
-      };
+      return verifiedPolicyRestore();
     });
 
     const exitCode = await (async () => {
@@ -789,7 +809,7 @@ describe("shields timer authorization", () => {
     );
     shieldsIndexMock.applyShieldsPolicySnapshot
       .mockReturnValueOnce({ status: 1 })
-      .mockReturnValue({ status: 0 });
+      .mockReturnValue(verifiedPolicyRestore());
     const args = timer.parseTimerArgs([
       sandboxName,
       snapshotPath,

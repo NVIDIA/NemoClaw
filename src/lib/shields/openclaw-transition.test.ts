@@ -755,7 +755,15 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       });
       expect(fs.existsSync(before.timerPath)).toBe(false);
       expect(harness.auditSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ action: "shields_auto_restore", sandbox: "openclaw" }),
+        expect.objectContaining({
+          action: "shields_auto_restore",
+          sandbox: "openclaw",
+          resulting_posture: "up",
+          policy_snapshot_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          policy_readback_source: "OpenShell live base policy",
+          policy_readback_at: "2026-09-01T00:00:00.000Z",
+          config_lock_verified_at: expect.any(String),
+        }),
       );
       expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
         "Cannot accept equivalent shields down request without live auto-restore timer authority.",

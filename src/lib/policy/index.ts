@@ -871,11 +871,16 @@ function policySetFailure(
   );
 }
 
+export interface PolicyVerificationEvidence {
+  source: "OpenShell live base policy";
+  verifiedAt: string;
+}
+
 export function verifyAppliedPolicyDocument(
   sandboxName: string,
   desiredPolicyDocument: string,
   previous: PolicyMutationContext,
-): void {
+): PolicyVerificationEvidence {
   const readback = inspectPolicyDocumentReadback(sandboxName, desiredPolicyDocument, previous);
   if (readback === "unavailable") {
     throw new PolicyObservationError(
@@ -887,6 +892,10 @@ export function verifyAppliedPolicyDocument(
       `NemoClaw applied the sandbox policy for '${sandboxName}', but the resulting base policy did not match the requested policy. The policy update is incomplete.`,
     );
   }
+  return {
+    source: "OpenShell live base policy",
+    verifiedAt: new Date().toISOString(),
+  };
 }
 
 function inspectPolicyDocumentReadback(

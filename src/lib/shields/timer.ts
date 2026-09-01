@@ -391,6 +391,18 @@ async function runRestoreTimerWithBudget(
             exitCode = 1;
             return "retry";
           }
+          if (!result.verification) {
+            appendAudit({
+              action: "shields_up_failed",
+              sandbox: args.sandboxName,
+              timestamp: new Date().toISOString(),
+              restored_by: "auto_timer",
+              error: "Policy restore completed without live read-back evidence",
+            });
+            exitCode = 1;
+            return "retry";
+          }
+          const policyVerification = result.verification;
 
           // Destroy and force-restore can revoke this marker while a slow
           // policy restore is already in flight. Stop before the next sandbox
@@ -410,6 +422,7 @@ async function runRestoreTimerWithBudget(
           let lockVerified = true;
           let lockedChattr: boolean | null = null;
           let lockedHashes: { [path: string]: string } | null = null;
+          let configLockVerifiedAt: string | undefined;
           if (args.configPath) {
             const lockTarget = shields.resolvePersistedAutoRestoreTarget(args.sandboxName, args);
             if (!lockTarget) {
@@ -458,6 +471,7 @@ async function runRestoreTimerWithBudget(
                 if (relock.ok && relock.lastResult) {
                   lockedChattr = relock.lastResult.chattrApplied;
                   lockedHashes = relock.lastResult.fileHashes;
+                  configLockVerifiedAt = new Date().toISOString();
                 } else {
                   lockVerified = false;
                   appendAudit({
@@ -517,6 +531,11 @@ async function runRestoreTimerWithBudget(
               restored_by: "auto_timer",
               policy_snapshot: args.snapshotPath,
               scheduled_restore_at: args.restoreAtIso,
+              resulting_posture: "up",
+              policy_snapshot_sha256: policyVerification.snapshotSha256,
+              policy_readback_source: policyVerification.readback.source,
+              policy_readback_at: policyVerification.readback.verifiedAt,
+              ...(configLockVerifiedAt ? { config_lock_verified_at: configLockVerifiedAt } : {}),
             });
             restoreCompleted = true;
             exitCode = 0;

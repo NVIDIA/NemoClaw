@@ -42,6 +42,11 @@ export interface ShieldsAuditEntry {
   error?: string;
   warning?: string;
   lock_verified?: boolean;
+  resulting_posture?: "up";
+  policy_snapshot_sha256?: string;
+  policy_readback_source?: "OpenShell live base policy";
+  policy_readback_at?: string;
+  config_lock_verified_at?: string;
 }
 
 /**

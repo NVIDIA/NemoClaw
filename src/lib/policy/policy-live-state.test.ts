@@ -46,6 +46,7 @@ import {
   removePreset,
   restoreBaselineEntry,
   setPolicyDocument,
+  verifyAppliedPolicyDocument,
 } from "./index";
 
 const sandboxName = "live-policy";
@@ -88,6 +89,33 @@ describe("live OpenShell policy mutations", () => {
     );
     expect(inspectPolicyMutationContext(sandboxName, "inspect policy")).not.toHaveProperty(
       "authority",
+    );
+  });
+
+  it("returns the live read-back source and time when the applied policy matches", () => {
+    const context = inspectPolicyMutationContext(sandboxName, "verify policy");
+    const before = Date.now();
+
+    const evidence = verifyAppliedPolicyDocument(sandboxName, livePolicy, context);
+
+    expect(evidence.source).toBe("OpenShell live base policy");
+    expect(Date.parse(evidence.verifiedAt)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(evidence.verifiedAt)).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("throws when applied policy read-back differs or is unavailable", () => {
+    const context = inspectPolicyMutationContext(sandboxName, "verify policy");
+    const desiredPolicy = YAML.stringify({ version: 1, network_policies: { expected: {} } });
+
+    expect(() => verifyAppliedPolicyDocument(sandboxName, desiredPolicy, context)).toThrow(
+      /did not match the requested policy/u,
+    );
+
+    mocks.captureSandboxBasePolicy.mockImplementation(() => {
+      throw new PolicyObservationError("forced read-back failure");
+    });
+    expect(() => verifyAppliedPolicyDocument(sandboxName, desiredPolicy, context)).toThrow(
+      /could not verify the resulting base policy/u,
     );
   });
 

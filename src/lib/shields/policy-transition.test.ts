@@ -11,6 +11,7 @@ import {
   createShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
+import { PolicyObservationError } from "../adapters/openshell/policy-state";
 
 const requireSource = createRequire(import.meta.url);
 const SHIELDS_MODULE = "./index.js";
@@ -57,7 +58,10 @@ function mockLivePolicy(sandboxName: string): void {
   vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(receipt);
   vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(receipt);
   vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(receipt);
-  vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
+  vi.spyOn(policy, "verifyAppliedPolicyDocument").mockReturnValue({
+    source: "OpenShell live base policy",
+    verifiedAt: "2026-09-01T00:00:00.000Z",
+  });
 }
 
 describe("shields policy transition", () => {
@@ -1084,5 +1088,126 @@ describe("shields-down rollback flow", () => {
       "Config did not reach the mutable-default state; fail-closed lockdown was restored",
     );
     expect(output).not.toContain("scheduled auto-restore remains authoritative");
+  });
+});
+
+describe("verified Shields posture reporting", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-verified-posture-"));
+    vi.stubEnv("HOME", tmpDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    for (const modulePath of [
+      SHIELDS_MODULE,
+      "./timer-bound-lock.js",
+      TRANSITION_LOCK_MODULE,
+      "./permissive-runtime.js",
+      "../actions/sandbox/mcp-bridge-policy.js",
+      "../cli/branding.js",
+    ]) {
+      delete require.cache[requireSource.resolve(modulePath)];
+    }
+  });
+
+  it("reports the verified Shields posture after restoring a restrictive snapshot", () => {
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      confirmOpenClawInodeFlags: true,
+    });
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "verified posture output",
+      throwOnError: true,
+    });
+    const state = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"), "utf-8"),
+    ) as { shieldsPolicySnapshot: { sha256: string } };
+    harness.logSpy.mockClear();
+
+    harness.shieldsUp("openclaw", { throwOnError: true });
+
+    const output = harness.logSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain("Shields: UP (lockdown active)");
+    expect(output).toContain(
+      `Policy restored from snapshot: sha256:${state.shieldsPolicySnapshot.sha256}`,
+    );
+    expect(output).toContain(
+      "Verified by: OpenShell live base policy read-back at 2026-09-01T00:00:00.000Z",
+    );
+    expect(output).toMatch(
+      /Config lock: re-confirmed after settle window at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.]\d{3}Z/u,
+    );
+    expect(harness.auditSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "shields_up",
+        resulting_posture: "up",
+        policy_snapshot_sha256: state.shieldsPolicySnapshot.sha256,
+        policy_readback_source: "OpenShell live base policy",
+        policy_readback_at: "2026-09-01T00:00:00.000Z",
+        config_lock_verified_at: expect.any(String),
+      }),
+    );
+  });
+
+  it("reports the verified config lock after repairing lockdown drift", () => {
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      confirmOpenClawInodeFlags: true,
+    });
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: false,
+        chattrApplied: false,
+        fileHashes: {
+          "/sandbox/.openclaw/openclaw.json": "a".repeat(64),
+          "/sandbox/.openclaw/.config-hash": "a".repeat(64),
+        },
+      }),
+    );
+
+    harness.shieldsUp("openclaw", { throwOnError: true });
+
+    const output = harness.logSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain("Shields: UP (lockdown active)");
+    expect(output).toMatch(/Config lock: re-confirmed after settle window at .+Z/u);
+    expect(output).not.toContain("Lockdown re-applied");
+    expect(harness.auditSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "shields_up",
+        resulting_posture: "up",
+        config_lock_verified_at: expect.any(String),
+      }),
+    );
+  });
+
+  it("does not report an UP posture when restored policy read-back fails", () => {
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      confirmOpenClawInodeFlags: true,
+    });
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "failed read-back",
+      throwOnError: true,
+    });
+    harness.logSpy.mockClear();
+    harness.policyVerificationSpy.mockImplementation(() => {
+      throw new PolicyObservationError("forced policy read-back failure");
+    });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /forced policy read-back failure/u,
+    );
+
+    const output = harness.logSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).not.toContain("Shields: UP");
+    expect(output).not.toContain("Policy restored from snapshot:");
+    expect(output).not.toContain("Verified by:");
   });
 });
