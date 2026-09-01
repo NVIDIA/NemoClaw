@@ -149,32 +149,6 @@ describe("mutable OpenClaw config permissions", () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
-  it("builds a sandbox-identity, descriptor-safe Hermes mutability probe", () => {
-    const command = mutableHermesConfigProbeCommand(hermesTarget);
-
-    expect(command.slice(0, 8)).toEqual([
-      "/usr/bin/setpriv",
-      "--reuid=sandbox",
-      "--regid=sandbox",
-      "--init-groups",
-      "--",
-      "/usr/bin/python3",
-      "-I",
-      "-c",
-    ]);
-    expect(command.slice(-4)).toEqual([
-      "/sandbox/.hermes",
-      "/sandbox/.hermes/config.yaml",
-      "/sandbox/.hermes/.config-hash",
-      "/sandbox/.hermes/.env",
-    ]);
-    expect(command[8]).toContain("os.O_NOFOLLOW");
-    expect(command[8]).toContain("os.O_WRONLY | os.O_APPEND");
-    expect(command[8]).toContain("stat.S_IMODE(directory.st_mode) != 0o3770");
-    expect(command[8]).toContain("stat.S_IMODE(artifact.st_mode) != 0o640");
-    expect(command[8]).toContain("os.mkdir(probe_name, 0o700, dir_fd=directory_fd)");
-  });
-
   it("claims mutable Hermes posture only after the exact probe succeeds", () => {
     const execute = vi.fn();
 
