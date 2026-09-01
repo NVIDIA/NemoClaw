@@ -577,11 +577,7 @@ export function slackCredentialBindingEvidence(
   const botEndpoints: readonly SlackRestEndpointExpectation[] = [
     { host: "slack.com", provider: `${sandboxName}-slack-bridge`, rules: broadBotRules },
     { host: "api.slack.com", provider: `${sandboxName}-slack-bridge`, rules: broadBotRules },
-    {
-      host: "hooks.slack.com",
-      provider: `${sandboxName}-slack-bridge`,
-      rules: [{ method: "POST", path: "/**" }],
-    },
+    { host: "hooks.slack.com", provider: `${sandboxName}-slack-bridge`, rules: broadBotRules },
   ];
   const expectedRestEndpoints = [appEndpoint, ...botEndpoints];
   const matchesExpectedRoute = (
@@ -957,7 +953,7 @@ node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
       SANDBOX_NAME,
       providerName,
       api.port,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
     ],
     {
       artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
