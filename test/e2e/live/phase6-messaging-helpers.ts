@@ -22,9 +22,12 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
+import {
+  isNvidiaEndpointRateLimitFailure,
+  runSecondaryCleanup,
+} from "./messaging-providers-helpers.ts";
 
-export { expectExitZero, REPO_ROOT, resultText };
+export { expectExitZero, REPO_ROOT, resultText, runSecondaryCleanup };
 
 export const CLI = process.env.NEMOCLAW_CLI_BIN ?? CLI_ENTRYPOINT;
 
@@ -67,14 +70,6 @@ export function phase6Env(options: {
 
 export function redactionValues(apiKey: string | undefined): string[] {
   return [apiKey].filter((value): value is string => typeof value === "string" && value.length > 0);
-}
-
-export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup and diagnostics must not hide primary test failures.
-  }
 }
 
 export async function precleanSandbox(
