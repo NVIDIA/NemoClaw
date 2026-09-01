@@ -145,8 +145,7 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   $$nemoclaw <sandbox-name> policy get > current-policy.yaml
   ```
 
-  NemoClaw parses the policy, strips the OpenShell metadata header, and replaces literal credentials with `[STRIPPED_BY_MIGRATION]`.
-  Replace every marker with a supported OpenShell credential binding or resolver placeholder before you apply the file.
+  NemoClaw parses the policy, strips the OpenShell metadata header, and replaces literal credentials with `[STRIPPED_BY_MIGRATION]`. Replace every marker with a supported OpenShell credential binding or resolver placeholder before you apply the file.
   NemoClaw exits nonzero if it cannot validate the base policy.
   Do not use `--raw` for a file that you plan to reapply.
 
@@ -265,8 +264,7 @@ Use `$$nemoclaw <name> policy add` or `policy remove` for NemoClaw presets and c
 NemoClaw merges the new policy with the live policy and reapplies presets during rebuilds.
 
 Use `openshell policy update` for precise live endpoint or REST rule changes.
-Use `$$nemoclaw <name> policy get` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the complete base policy.
-Replace every `[STRIPPED_BY_MIGRATION]` marker before you apply the file.
+Use `$$nemoclaw <name> policy get` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the complete base policy. Replace every `[STRIPPED_BY_MIGRATION]` marker before you apply the file.
 Use `openshell policy get --full <name>` only to inspect the effective policy, including provider-composed rules.
 
 ### Move Workspace Files

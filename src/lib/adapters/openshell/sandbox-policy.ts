@@ -4,7 +4,6 @@
 import type { OpenShellGatewayTarget, OpenShellSandboxResult } from "./sandbox-observer";
 import type { OpenShellPolicyInspection } from "../../policy/merge";
 
-/** The base policy is mutable input. The effective policy includes provider composition. */
 export type OpenShellSandboxPolicyScope = "base" | "effective";
 
 export type OpenShellSandboxPolicyRead = Readonly<{
@@ -12,53 +11,41 @@ export type OpenShellSandboxPolicyRead = Readonly<{
   appliedRevision: number | null;
 }>;
 
-export type ReadOpenShellSandboxPolicyRequest = Readonly<{
-  target: OpenShellGatewayTarget;
-  sandboxName: string;
-  scope: OpenShellSandboxPolicyScope;
-  timeoutMs?: number;
-}>;
-
-export type InspectOpenShellSandboxPolicyRequest = Readonly<{
+type OpenShellSandboxPolicyRequest = Readonly<{
   target: OpenShellGatewayTarget;
   sandboxName: string;
   timeoutMs?: number;
 }>;
 
-export type ReadOpenShellSandboxPolicyRevisionRequest = Readonly<{
-  target: OpenShellGatewayTarget;
-  sandboxName: string;
-  revision: number;
-  timeoutMs?: number;
-}>;
+export type ReadOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
+  Readonly<{ scope: OpenShellSandboxPolicyScope }>;
+
+export type InspectOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest;
+
+export type ReadOpenShellSandboxPolicyRevisionRequest = OpenShellSandboxPolicyRequest &
+  Readonly<{ revision: number }>;
 
 export type OpenShellSandboxPolicyRevisionRead = Readonly<{
   document: string;
   revision: number;
 }>;
 
-/** Transport-neutral policy reads used by NemoClaw actions. */
-export interface OpenShellSandboxPolicyReader {
-  readSandboxPolicy(
+type PolicyResult<Async extends boolean, Value> = Async extends true
+  ? Promise<OpenShellSandboxResult<Value>>
+  : OpenShellSandboxResult<Value>;
+
+interface OpenShellSandboxPolicyReaderContract<Async extends boolean> {
+  readSandboxPolicy: (
     request: ReadOpenShellSandboxPolicyRequest,
-  ): Promise<OpenShellSandboxResult<OpenShellSandboxPolicyRead>>;
-  inspectSandboxPolicy(
+  ) => PolicyResult<Async, OpenShellSandboxPolicyRead>;
+  inspectSandboxPolicy: (
     request: InspectOpenShellSandboxPolicyRequest,
-  ): Promise<OpenShellSandboxResult<OpenShellPolicyInspection>>;
-  readSandboxPolicyRevision(
+  ) => PolicyResult<Async, OpenShellPolicyInspection>;
+  readSandboxPolicyRevision: (
     request: ReadOpenShellSandboxPolicyRevisionRequest,
-  ): Promise<OpenShellSandboxResult<OpenShellSandboxPolicyRevisionRead>>;
+  ) => PolicyResult<Async, OpenShellSandboxPolicyRevisionRead>;
 }
 
-/** Synchronous policy reads for existing transactional mutation paths. */
-export interface SyncOpenShellSandboxPolicyReader {
-  readSandboxPolicy(
-    request: ReadOpenShellSandboxPolicyRequest,
-  ): OpenShellSandboxResult<OpenShellSandboxPolicyRead>;
-  inspectSandboxPolicy(
-    request: InspectOpenShellSandboxPolicyRequest,
-  ): OpenShellSandboxResult<OpenShellPolicyInspection>;
-  readSandboxPolicyRevision(
-    request: ReadOpenShellSandboxPolicyRevisionRequest,
-  ): OpenShellSandboxResult<OpenShellSandboxPolicyRevisionRead>;
-}
+export type OpenShellSandboxPolicyReader = OpenShellSandboxPolicyReaderContract<true>;
+
+export type SyncOpenShellSandboxPolicyReader = OpenShellSandboxPolicyReaderContract<false>;

@@ -31,6 +31,9 @@ const resolveOpenshellModule = requireForTest(
 const policyStateModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "policy-state.ts"),
 ) as typeof import("../../../src/lib/adapters/openshell/policy-state");
+const policyReaderModule = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "sandbox-policy-cli.ts"),
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-policy-cli");
 const registryForTest = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
 ) as typeof import("../../../src/lib/state/registry");
@@ -48,10 +51,16 @@ function requirePresetContent(content: string | null): string {
 
 describe("policies", () => {
   beforeEach(() => {
-    vi.spyOn(policyStateModule, "inspectSandboxPolicy").mockReturnValue({
-      policySource: "sandbox",
-      effectivePolicy: {},
-      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+    vi.spyOn(
+      policyReaderModule.syncCliOpenShellSandboxPolicyReader,
+      "inspectSandboxPolicy",
+    ).mockReturnValue({
+      ok: true,
+      value: {
+        policySource: "sandbox",
+        effectivePolicy: {},
+        policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+      },
     });
     vi.spyOn(policyStateModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
       SANDBOX_IDENTITY,

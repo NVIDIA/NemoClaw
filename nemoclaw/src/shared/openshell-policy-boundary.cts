@@ -9,52 +9,38 @@ export type OpenShellPolicyMapping = Record<string, unknown>;
 
 export type OpenShellSandboxPolicyReadScope = "base" | "effective";
 
-/** Build one sandbox policy read without selecting an OpenShell executable. */
-export function buildOpenShellSandboxPolicyReadArgs(input: {
+type SandboxPolicyTarget = {
   readonly sandboxName: string;
   readonly gatewayName?: string;
-  readonly scope: OpenShellSandboxPolicyReadScope;
-}): string[] {
+};
+
+function sandboxPolicyGetArgs(input: SandboxPolicyTarget, flags: readonly string[]): string[] {
   return [
     "policy",
     "get",
     ...(input.gatewayName ? ["-g", input.gatewayName] : []),
-    input.scope === "base" ? "--base" : "--full",
+    ...flags,
     input.sandboxName,
   ];
+}
+
+/** Build one sandbox policy read without selecting an OpenShell executable. */
+export function buildOpenShellSandboxPolicyReadArgs(input: SandboxPolicyTarget & {
+  readonly scope: OpenShellSandboxPolicyReadScope;
+}): string[] {
+  return sandboxPolicyGetArgs(input, [input.scope === "base" ? "--base" : "--full"]);
 }
 
 /** Build one machine-readable effective-policy inspection. */
-export function buildOpenShellSandboxPolicyInspectionArgs(input: {
-  readonly sandboxName: string;
-  readonly gatewayName?: string;
-}): string[] {
-  return [
-    "policy",
-    "get",
-    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
-    "--full",
-    "--output",
-    "json",
-    input.sandboxName,
-  ];
+export function buildOpenShellSandboxPolicyInspectionArgs(input: SandboxPolicyTarget): string[] {
+  return sandboxPolicyGetArgs(input, ["--full", "--output", "json"]);
 }
 
 /** Build one immutable sandbox base-policy revision read. */
-export function buildOpenShellSandboxPolicyRevisionReadArgs(input: {
-  readonly sandboxName: string;
-  readonly gatewayName?: string;
+export function buildOpenShellSandboxPolicyRevisionReadArgs(input: SandboxPolicyTarget & {
   readonly revision: number;
 }): string[] {
-  return [
-    "policy",
-    "get",
-    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
-    "--rev",
-    String(input.revision),
-    "--base",
-    input.sandboxName,
-  ];
+  return sandboxPolicyGetArgs(input, ["--rev", String(input.revision), "--base"]);
 }
 
 export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {

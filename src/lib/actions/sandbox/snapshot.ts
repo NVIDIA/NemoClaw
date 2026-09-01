@@ -5,7 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
-import { readSandboxPolicyWithCapture } from "../../adapters/openshell/policy-state";
+import {
+  createSyncCliOpenShellSandboxPolicyReader,
+  namedOpenShellGateway,
+} from "../../adapters/openshell/sandbox-policy-cli";
 import {
   captureOpenshell,
   getOpenshellBinary,
@@ -382,9 +385,10 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const policyRead = readSandboxPolicyWithCapture({
+  const policyRead = createSyncCliOpenShellSandboxPolicyReader({
     capture: (args, options) => captureOpenshell(args, options),
-    gatewayName,
+  }).readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
     sandboxName: srcEntry.name,
     scope: "base",
   });

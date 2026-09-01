@@ -49,9 +49,10 @@ const {
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
 const {
+  createSyncCliOpenShellSandboxPolicyReader,
   formatOpenShellPolicyRecoveryAction,
-  readSandboxPolicyWithCapture,
-}: typeof import("../adapters/openshell/policy-state") = require("../adapters/openshell/policy-state");
+  namedOpenShellGateway,
+}: typeof import("../adapters/openshell/sandbox-policy-runtime") = require("../adapters/openshell/sandbox-policy-runtime");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
   buildOpenshellCommand,
@@ -164,7 +165,7 @@ function assertShieldsPolicyMutationContext(
 }
 
 function readShieldsBasePolicy(sandboxName: string, gatewayName: string) {
-  return readSandboxPolicyWithCapture({
+  return createSyncCliOpenShellSandboxPolicyReader({
     capture: (args: string[]) => {
       try {
         const output = runCapture(buildOpenshellCommand(args));
@@ -178,7 +179,8 @@ function readShieldsBasePolicy(sandboxName: string, gatewayName: string) {
         };
       }
     },
-    gatewayName,
+  }).readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
     sandboxName,
     scope: "base",
   });

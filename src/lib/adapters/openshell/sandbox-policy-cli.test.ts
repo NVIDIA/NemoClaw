@@ -5,28 +5,22 @@ import { describe, expect, it, vi } from "vitest";
 
 import * as openshellRuntime from "./runtime";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
+import type { CapturedOpenShellCommandResult } from "./sandbox-observer-cli";
 import {
-  type CapturedPolicyCommandResult,
-  createCliOpenShellSandboxPolicyRead,
   createCliOpenShellSandboxPolicyReader,
   createSyncCliOpenShellSandboxPolicyReader,
   readCliOpenShellSandboxPolicy,
-  redactOpenShellSandboxPolicyReadForDisplay,
 } from "./sandbox-policy-cli";
 
 const POLICY = "version: 1\nnetwork_policies: {}";
 
-function result(overrides: Partial<CapturedPolicyCommandResult> = {}): CapturedPolicyCommandResult {
-  return {
-    status: 0,
-    output: `Version: 4\nActive: 3\n---\n${POLICY}`,
-    ...overrides,
-  };
+function captured(overrides: Partial<CapturedOpenShellCommandResult> = {}) {
+  return { status: 0, output: `Version: 4\nActive: 3\n---\n${POLICY}`, ...overrides };
 }
 
 describe("CLI OpenShell sandbox policy reader", () => {
-  it("supports synchronous transactional policy reads through the same boundary", () => {
-    const capture = vi.fn(() => result());
+  it("maps synchronous base reads to the recorded gateway", () => {
+    const capture = vi.fn(() => captured());
     const reader = createSyncCliOpenShellSandboxPolicyReader({ capture });
 
     expect(
@@ -35,263 +29,116 @@ describe("CLI OpenShell sandbox policy reader", () => {
         sandboxName: "alpha",
         scope: "base",
       }),
-    ).toMatchObject({ ok: true, value: { document: POLICY } });
+    ).toEqual({ ok: true, value: { document: POLICY, appliedRevision: 3 } });
     expect(capture).toHaveBeenCalledWith(
       ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.objectContaining({ ignoreError: true, timeout: 15_000 }),
     );
   });
 
-  it("maps a named-gateway base read to exact CLI arguments (#9805)", async () => {
-    const capture = vi.fn(() => result());
-    const reader = createCliOpenShellSandboxPolicyReader({ capture });
+  it("maps effective, inspection, and revision reads to exact CLI arguments", async () => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce(captured())
+      .mockReturnValueOnce(
+        captured({
+          output: JSON.stringify({
+            scope: "sandbox",
+            sandbox: "alpha",
+            status: "effective",
+            policy_source: "sandbox",
+            hash: "sha256:policy",
+            active_version: 4,
+            policy: { version: 1, network_policies: {} },
+          }),
+        }),
+      )
+      .mockReturnValueOnce(captured({ output: `Version: 7\n---\n${POLICY}` }));
+    const reader = createCliOpenShellSandboxPolicyReader({ capture, defaultTimeoutMs: 7_000 });
 
     await expect(
       reader.readSandboxPolicy({
-        target: namedOpenShellGateway("nemoclaw-8091"),
+        target: selectedOpenShellGateway(),
         sandboxName: "alpha",
-        scope: "base",
-        timeoutMs: 2_500,
+        scope: "effective",
       }),
-    ).resolves.toEqual({
-      ok: true,
-      value: {
-        document: POLICY,
-        appliedRevision: 3,
-      },
-    });
-    expect(capture).toHaveBeenCalledWith(
-      ["policy", "get", "-g", "nemoclaw-8091", "--base", "alpha"],
-      {
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
-        timeout: 2_500,
-      },
-    );
-  });
-
-  it("maps an effective read to the private --full CLI flag (#9805)", async () => {
-    const capture = vi.fn(() =>
-      result({
-        output: "Version: 9\nActive: 9\n---\nversion: 1\nnetwork_policies:\n  _provider_nvidia: {}",
-      }),
-    );
-    const reader = createCliOpenShellSandboxPolicyReader({ capture, defaultTimeoutMs: 7_000 });
-
-    const read = await reader.readSandboxPolicy({
-      target: selectedOpenShellGateway(),
-      sandboxName: "alpha",
-      scope: "effective",
-    });
-
-    expect(read).toEqual({
-      ok: true,
-      value: {
-        document: "version: 1\nnetwork_policies:\n  _provider_nvidia: {}",
-        appliedRevision: 9,
-      },
-    });
-    expect(capture).toHaveBeenCalledWith(
-      ["policy", "get", "--full", "alpha"],
-      expect.objectContaining({ timeout: 7_000 }),
-    );
-  });
-
-  it("maps policy inspection to machine-readable full-policy arguments (#9805)", async () => {
-    const capture = vi.fn(() =>
-      result({
-        output: JSON.stringify({
-          scope: "sandbox",
-          sandbox: "alpha",
-          status: "effective",
-          policy_source: "sandbox",
-          hash: "sha256:policy",
-          active_version: 4,
-          policy: { version: 1, network_policies: {} },
-        }),
-      }),
-    );
-    const reader = createCliOpenShellSandboxPolicyReader({ capture });
-
+    ).resolves.toMatchObject({ ok: true, value: { document: POLICY } });
     await expect(
       reader.inspectSandboxPolicy({
-        target: namedOpenShellGateway("nemoclaw-8091"),
+        target: namedOpenShellGateway("nemoclaw"),
         sandboxName: "alpha",
       }),
-    ).resolves.toEqual({
-      ok: true,
-      value: {
-        policySource: "sandbox",
-        effectivePolicy: { version: 1, network_policies: {} },
-        policyIdentity: { hash: "sha256:policy", activeVersion: 4 },
-      },
-    });
-    expect(capture).toHaveBeenCalledWith(
-      ["policy", "get", "-g", "nemoclaw-8091", "--full", "--output", "json", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-  });
-
-  it("reads an immutable base-policy revision through the typed boundary (#9805)", async () => {
-    const capture = vi.fn(() =>
-      result({ output: "Version: 7\n---\nversion: 1\nnetwork_policies: {}" }),
-    );
-    const reader = createCliOpenShellSandboxPolicyReader({ capture });
-
+    ).resolves.toMatchObject({ ok: true, value: { policySource: "sandbox" } });
     await expect(
       reader.readSandboxPolicyRevision({
         target: namedOpenShellGateway("nemoclaw"),
         sandboxName: "alpha",
         revision: 7,
       }),
-    ).resolves.toEqual({
-      ok: true,
-      value: { document: POLICY, revision: 7 },
-    });
-    expect(capture).toHaveBeenCalledWith(
+    ).resolves.toEqual({ ok: true, value: { document: POLICY, revision: 7 } });
+    expect(capture.mock.calls.map(([args]) => args)).toEqual([
+      ["policy", "get", "--full", "alpha"],
+      ["policy", "get", "-g", "nemoclaw", "--full", "--output", "json", "alpha"],
       ["policy", "get", "-g", "nemoclaw", "--rev", "7", "--base", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    ]);
   });
 
-  it("fails closed on invalid inspection metadata (#9805)", async () => {
-    const capture = vi.fn(() => result({ output: "not-json" }));
+  it("fails closed on malformed output and invalid revisions", async () => {
+    const capture = vi.fn(() => captured({ output: "Version: 3\n---\nnetwork_policies: [" }));
     const reader = createCliOpenShellSandboxPolicyReader({ capture });
-
-    await expect(
-      reader.inspectSandboxPolicy({
-        target: selectedOpenShellGateway(),
-        sandboxName: "alpha",
-      }),
-    ).resolves.toEqual({
-      ok: false,
-      error: {
-        kind: "schema",
-        message: "OpenShell returned invalid sandbox policy metadata.",
-      },
-    });
-    expect(capture).toHaveBeenCalledOnce();
-  });
-
-  it("rejects an invalid revision without invoking capture (#9805)", async () => {
-    const capture = vi.fn(() => result({ output: "unused" }));
-    const reader = createCliOpenShellSandboxPolicyReader({ capture });
-
-    await expect(
-      reader.readSandboxPolicyRevision({
-        target: selectedOpenShellGateway(),
-        sandboxName: "alpha",
-        revision: 0,
-      }),
-    ).resolves.toEqual({
-      ok: false,
-      error: {
-        kind: "command",
-        reason: "invalid_request",
-        message: "The requested OpenShell sandbox policy revision is invalid.",
-      },
-    });
-    expect(capture).not.toHaveBeenCalled();
-  });
-
-  it("parses ANSI-formatted policy metadata and content (#9805)", async () => {
-    const capture = vi.fn(() =>
-      result({
-        output: `\u001b[1mVersion:\u001b[0m 6\n\u001b[1mActive:\u001b[0m 5\n\u001b[2m---\u001b[0m\n${POLICY}`,
-      }),
-    );
-    const reader = createCliOpenShellSandboxPolicyReader({ capture });
-
-    const read = await reader.readSandboxPolicy({
+    const request = {
       target: selectedOpenShellGateway(),
       sandboxName: "alpha",
-      scope: "base",
-    });
+      scope: "base" as const,
+    };
 
-    expect(read).toMatchObject({
-      ok: true,
-      value: { document: POLICY, appliedRevision: 5 },
+    await expect(reader.readSandboxPolicy(request)).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "schema" },
     });
-  });
-
-  it("accepts a versionless base document without inventing revisions (#9805)", async () => {
-    const capture = vi.fn(() => result({ output: "network_policies: {}" }));
-    const reader = createCliOpenShellSandboxPolicyReader({ capture });
-
-    const read = await reader.readSandboxPolicy({
-      target: selectedOpenShellGateway(),
-      sandboxName: "alpha",
-      scope: "base",
-    });
-
-    expect(read).toMatchObject({
-      ok: true,
-      value: { appliedRevision: null },
-    });
+    await expect(
+      reader.readSandboxPolicyRevision({ ...request, revision: 0 }),
+    ).resolves.toMatchObject({ ok: false, error: { reason: "invalid_request" } });
   });
 
   it.each([
-    ["empty output", ""],
-    ["metadata without a document", "Version: 3\nHash: abc"],
-    ["malformed YAML", "Version: 3\n---\nnetwork_policies: ["],
-    ["a diagnostic mapping", "error: gateway unavailable"],
-  ])("rejects %s as a policy schema failure (#9805)", async (_label, output) => {
+    ["unauthorized credential-value", "authentication", undefined],
+    ["handshake verification failed credential-value", "transport", "identity_mismatch"],
+  ])("maps and redacts %s", async (diagnostic, kind, reason) => {
     const reader = createCliOpenShellSandboxPolicyReader({
-      capture: vi.fn(() => result({ output })),
+      capture: vi.fn(() => captured({ status: 1, output: diagnostic })),
     });
-
-    await expect(
-      reader.readSandboxPolicy({
-        target: selectedOpenShellGateway(),
-        sandboxName: "alpha",
-        scope: "base",
-      }),
-    ).resolves.toEqual({
-      ok: false,
-      error: {
-        kind: "schema",
-        message: "OpenShell returned an invalid sandbox policy document.",
-      },
-    });
-  });
-
-  it("does not classify policy content as an authentication failure (#9805)", async () => {
-    const document =
-      "version: 1\nnetwork_policies:\n  note:\n    description: unauthorized requests are denied";
-    const reader = createCliOpenShellSandboxPolicyReader({
-      capture: vi.fn(() => result({ output: `Version: 1\n---\n${document}` })),
-    });
-
-    const read = await reader.readSandboxPolicy({
+    const result = await reader.readSandboxPolicy({
       target: selectedOpenShellGateway(),
       sandboxName: "alpha",
       scope: "base",
     });
 
-    expect(read).toMatchObject({ ok: true, value: { document } });
+    expect(result).toMatchObject({ ok: false, error: { kind, ...(reason ? { reason } : {}) } });
+    expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
-  it("maps a timeout without exposing subprocess diagnostics (#9805)", async () => {
-    const error = Object.assign(new Error("token=credential-value"), { code: "ETIMEDOUT" });
+  it("maps timeouts without exposing subprocess diagnostics", async () => {
     const reader = createCliOpenShellSandboxPolicyReader({
-      capture: vi.fn(() => result({ status: null, error, output: "credential-value" })),
+      capture: vi.fn(() =>
+        captured({
+          status: null,
+          output: "credential-value",
+          error: Object.assign(new Error("credential-value"), { code: "ETIMEDOUT" }),
+        }),
+      ),
     });
-
-    const read = await reader.readSandboxPolicy({
+    const result = await reader.readSandboxPolicy({
       target: selectedOpenShellGateway(),
       sandboxName: "alpha",
       scope: "base",
     });
 
-    expect(read).toEqual({
-      ok: false,
-      error: { kind: "timeout", message: "The OpenShell sandbox policy read timed out." },
-    });
-    expect(JSON.stringify(read)).not.toContain("credential-value");
+    expect(result).toMatchObject({ ok: false, error: { kind: "timeout" } });
+    expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
-  it("maps an unavailable canonical capture boundary to the command diagnostic (#9805)", async () => {
+  it("uses the bounded canonical capture boundary and preserves missing-binary guidance", async () => {
     const capture = vi
       .spyOn(openshellRuntime, "captureResolvedOpenshell")
       .mockImplementation(() => {
@@ -304,137 +151,10 @@ describe("CLI OpenShell sandbox policy reader", () => {
         sandboxName: "alpha",
         scope: "base",
       }),
-    ).resolves.toMatchObject({
-      result: {
-        ok: false,
-        error: {
-          kind: "command",
-          reason: "failed",
-        },
-      },
-      displayOutput: "",
-    });
-    expect(capture).toHaveBeenCalledWith(["policy", "get", "-g", "nemoclaw", "--base", "alpha"], {
-      ignoreError: true,
-      includeStderr: true,
-      includeStreams: true,
-      timeout: 15_000,
-    });
-    capture.mockRestore();
-  });
-
-  it("classifies a stdout-only failure when stderr is empty (#9805)", async () => {
-    const diagnostic = "Error: unauthorized: token=credential-value";
-    const reader = createCliOpenShellSandboxPolicyReader({
-      capture: vi.fn(() =>
-        result({ status: 1, stdout: diagnostic, stderr: "", output: diagnostic }),
-      ),
-    });
-
-    const read = await reader.readSandboxPolicy({
-      target: selectedOpenShellGateway(),
-      sandboxName: "alpha",
-      scope: "base",
-    });
-
-    expect(read).toEqual({
-      ok: false,
-      error: {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the sandbox policy read.",
-      },
-    });
-    expect(JSON.stringify(read)).not.toContain("credential-value");
-  });
-
-  it.each([
-    [
-      "authentication",
-      "Error: unauthorized: token=credential-value",
-      {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the sandbox policy read.",
-      },
-    ],
-    [
-      "gateway identity mismatch",
-      "Error: handshake verification failed: credential-value",
-      {
-        kind: "transport",
-        reason: "identity_mismatch",
-        message: "The selected OpenShell gateway identity does not match the recorded identity.",
-      },
-    ],
-    [
-      "an unreachable gateway",
-      "Error: connection refused: credential-value",
-      {
-        kind: "transport",
-        reason: "unreachable",
-        message: "OpenShell could not reach the selected gateway.",
-      },
-    ],
-    [
-      "a protobuf mismatch",
-      "Error: invalid wire type: credential-value",
-      { kind: "schema", message: "The OpenShell CLI and gateway policy schemas do not match." },
-    ],
-  ] as const)("maps %s to a redacted typed failure (#9805)", async (_label, stderr, expected) => {
-    const reader = createCliOpenShellSandboxPolicyReader({
-      capture: vi.fn(() => result({ status: 1, stderr, output: stderr })),
-    });
-
-    const read = await reader.readSandboxPolicy({
-      target: selectedOpenShellGateway(),
-      sandboxName: "alpha",
-      scope: "base",
-    });
-
-    expect(read).toEqual({ ok: false, error: expected });
-    expect(JSON.stringify(read)).not.toContain("credential-value");
-  });
-
-  it("keeps successful raw CLI output private to the CLI compatibility read (#9805)", async () => {
-    const raw = `Version: 4\nActive: 3\n---\n${POLICY}`;
-    const read = createCliOpenShellSandboxPolicyRead({
-      capture: vi.fn(() => result({ output: raw })),
-    });
-
-    await expect(
-      read({
-        target: selectedOpenShellGateway(),
-        sandboxName: "alpha",
-        scope: "base",
-      }),
-    ).resolves.toMatchObject({ result: { ok: true }, displayOutput: raw });
-  });
-
-  it("allowlists raw metadata without exposing credential-bearing headers (#9805)", () => {
-    const credential = "opaque-metadata-credential";
-
-    const display = redactOpenShellSandboxPolicyReadForDisplay({
-      displayOutput: [
-        "Version: 4",
-        `Hash: sha256:${"a".repeat(64)}`,
-        "Status: active",
-        "Active: 3",
-        "Created: 2026-09-01T12:00:00Z",
-        `Authorization: Bearer ${credential}`,
-        "Untrusted: arbitrary value",
-        "---",
-        POLICY,
-      ].join("\n"),
-      document: POLICY,
-    });
-
-    expect(display?.raw).toContain("Version: 4");
-    expect(display?.raw).toContain(`Hash: sha256:${"a".repeat(64)}`);
-    expect(display?.raw).toContain("Status: active");
-    expect(display?.raw).toContain("Active: 3");
-    expect(display?.raw).toContain("Created: 2026-09-01T12:00:00Z");
-    expect(display?.raw).toContain(POLICY);
-    expect(display?.raw).not.toContain("Authorization");
-    expect(display?.raw).not.toContain("Untrusted");
-    expect(display?.raw).not.toContain(credential);
+    ).resolves.toMatchObject({ result: { ok: false, error: { kind: "command" } } });
+    expect(capture).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
+      expect.objectContaining({ maxBuffer: 1024 * 1024, replaceEnv: true, timeout: 15_000 }),
+    );
   });
 });

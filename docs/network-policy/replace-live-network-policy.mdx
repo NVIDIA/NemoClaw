@@ -41,9 +41,7 @@ Add entries under `network_policies` and keep the existing `version` field.
 Preserve every baseline and preset entry that the sandbox still needs.
 
 <Warning title="Replace Redaction Markers">
-Do not apply a file that contains `[STRIPPED_BY_MIGRATION]`.
-Replace every marker with a supported OpenShell credential binding or resolver placeholder before you continue.
-Applying the marker as a literal value can break credential delivery for the sandbox.
+Do not apply a file that contains `[STRIPPED_BY_MIGRATION]`. Replace every marker with a supported OpenShell credential binding or resolver placeholder; applying the marker as a literal value can break credential delivery.
 </Warning>
 
 The `openshell policy set` command accepts a raw policy file.

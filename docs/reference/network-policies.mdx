@@ -282,8 +282,7 @@ This workflow requires OpenShell 0.0.72+ for `policy get --base` and `policy set
 $$nemoclaw <sandbox-name> policy get > current-policy.yaml
 ```
 
-NemoClaw parses the policy, strips the OpenShell metadata header, and replaces literal credentials with `[STRIPPED_BY_MIGRATION]`.
-Replace every marker with a supported OpenShell credential binding or resolver placeholder before you apply the file.
+NemoClaw parses the policy, strips the OpenShell metadata header, and replaces literal credentials with `[STRIPPED_BY_MIGRATION]`. Replace every marker with a supported OpenShell credential binding or resolver placeholder before you apply the file.
 NemoClaw exits nonzero if it cannot validate the base policy.
 Do not add `--raw` when you plan to edit and reapply the file.
 

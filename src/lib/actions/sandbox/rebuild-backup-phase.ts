@@ -172,7 +172,11 @@ export function runRebuildBackupPhase(
   const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
   if (retainedPolicy && !isSandboxPolicyCredentialFree(retainedPolicy)) {
     return input.bail(
-      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Keep the backup for manual data recovery. Retire the failed rebuild state with \`nemoclaw ${input.sandboxName} destroy --force\`, then create a fresh sandbox under a new name by replacing \`<new-sandbox>\` in \`nemoclaw onboard --name <new-sandbox>\`. Do not discard the handoff and retry rebuild.`,
+      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Recovery:\n` +
+        `  1. Keep the backup and policy handoff for manual data recovery.\n` +
+        `  2. Restore access to recorded gateway '${input.gatewayName}', select it with \`openshell gateway select ${input.gatewayName}\`, and confirm \`openshell status\` is healthy.\n` +
+        `  3. Only then run \`nemoclaw ${input.sandboxName} destroy --force\` and confirm OpenShell reports the sandbox deleted. If deletion is unconfirmed, preserve the recovery state and restore gateway access before retrying cleanup.\n` +
+        "  4. Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`. Do not discard the handoff and retry rebuild.",
     );
   }
   if (retainedPolicy && backupManifest && retainedHandoff) {

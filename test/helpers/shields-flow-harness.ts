@@ -8,7 +8,7 @@ import path from "node:path";
 import { expect, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
 import { buildMcpBridgePolicyYaml } from "../../src/lib/actions/sandbox/mcp-bridge-policy-render";
-import type { SandboxPolicyInspection } from "../../src/lib/adapters/openshell/policy-state";
+import type { OpenShellPolicyInspection as SandboxPolicyInspection } from "../../src/lib/policy/merge";
 import type { AgentConfigTarget } from "../../src/lib/sandbox/agent-config";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
@@ -292,9 +292,6 @@ export function createShieldsFlowHarness(
   const policy = requireDist("../policy/index.js");
   const agentConfig = requireDist("../sandbox/agent-config.js");
   const registry = requireDist("../state/registry.js");
-  const policyState = requireDist(
-    "../adapters/openshell/policy-state.js",
-  ) as typeof import("../../src/lib/adapters/openshell/policy-state.js");
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
@@ -400,7 +397,6 @@ export function createShieldsFlowHarness(
     effectivePolicy: YAML.parse(livePolicyYaml) as Record<string, unknown>,
     policyIdentity: { hash: "managed-policy-hash", activeVersion: 1 },
   };
-  vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue(policyInspection);
   const gatewayName = options.sandboxEntry?.gatewayName ?? "nemoclaw";
   const sandboxName = options.sandboxName ?? "openclaw";
   const policyMutationAuthority = () => ({

@@ -183,7 +183,14 @@ export function isConfigValue(value: unknown): value is ConfigValue {
 function scrubConfigValue(value: unknown): unknown {
   if (typeof value === "string") {
     if (isSafeCredentialPlaceholder(value)) return value;
-    return valueLooksLikeSecret(value) ? CREDENTIAL_PLACEHOLDER : value;
+    let hasUrlCredentials = false;
+    try {
+      const url = new URL(value);
+      hasUrlCredentials = url.username !== "" || url.password !== "";
+    } catch {
+      // Non-URL configuration strings continue through the normal secret patterns.
+    }
+    return hasUrlCredentials || valueLooksLikeSecret(value) ? CREDENTIAL_PLACEHOLDER : value;
   }
   return stripCredentials(value);
 }

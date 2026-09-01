@@ -32,20 +32,12 @@ const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
 function mockLivePolicy(sandboxName: string): MockInstance {
   const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
-  const policyState = requireSource(
-    "../adapters/openshell/policy-state.js",
-  ) as typeof import("../adapters/openshell/policy-state.js");
   const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: sandboxName,
     openshellDriver: "docker",
   });
   vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-  vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue({
-    policySource: "sandbox",
-    effectivePolicy: { version: 1, network_policies: {} },
-    policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
-  });
   const receipt = {
     gatewayName: "nemoclaw",
     basePolicyDocument: "version: 1\nnetwork_policies: {}\n",

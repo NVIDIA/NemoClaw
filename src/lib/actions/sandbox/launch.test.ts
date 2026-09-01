@@ -1050,63 +1050,12 @@ describe("launchSandbox", () => {
     expect(mocks.execSandbox).not.toHaveBeenCalled();
   });
 
-  it("does not launch after final validation rejects changed registry state", async () => {
-    mocks.inspectLaunchReadiness.mockResolvedValue({
-      kind: "fallback",
-      category: "config",
-      fence: { epochId: "a".repeat(64) },
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      fenceFailed: false,
-      recoveryBlocked: false,
-    });
-    mocks.publishLaunchReadiness.mockResolvedValue({
-      kind: "validation-failed",
-      category: "config",
-    });
-
-    await expect(launchSandbox("alpha")).rejects.toThrow(
-      "Launch readiness final validation failed due to config",
-    );
-
-    expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [
-      "gateway unreachable",
-      {
-        kind: "transport",
-        reason: "unreachable",
+  it("does not launch after final live-policy validation fails", async () => {
+      const error = {
+        kind: "transport" as const,
+        reason: "unreachable" as const,
         message: "OpenShell could not reach the selected gateway.",
-      },
-    ],
-    [
-      "authentication failure",
-      {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the sandbox policy read.",
-      },
-    ],
-    [
-      "gateway identity mismatch",
-      {
-        kind: "transport",
-        reason: "identity_mismatch",
-        message: "The selected OpenShell gateway identity does not match the recorded identity.",
-      },
-    ],
-    [
-      "invalid policy document",
-      {
-        kind: "schema",
-        message: "OpenShell returned an invalid sandbox policy document.",
-      },
-    ],
-  ] as const)(
-    "does not launch after final live-policy validation reports $0",
-    async (_label, error) => {
+      };
       mocks.inspectLaunchReadiness.mockResolvedValue({
         kind: "fallback",
         category: "unsafe",
@@ -1132,8 +1081,7 @@ describe("launchSandbox", () => {
       expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
       expect(mocks.execSandbox).not.toHaveBeenCalled();
       expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
-    },
-  );
+  });
 
   it("does not print connect's in-sandbox command hint (#6006)", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);

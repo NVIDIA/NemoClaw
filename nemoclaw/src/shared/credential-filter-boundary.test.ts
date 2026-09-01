@@ -100,6 +100,12 @@ describe("shared credential filter", () => {
     expect(valueLooksLikeSecret("keep-me")).toBe(false);
   });
 
+  it("strips URL userinfo from non-credential fields", () => {
+    expect(stripCredentials({ host: "https://operator:opaque-value@api.example" })).toEqual({
+      host: CREDENTIAL_PLACEHOLDER,
+    });
+  });
+
   it.each([
     ["token prefix", TOKEN_PREFIX_PATTERNS],
     ["structured token", STRUCTURED_TOKEN_PATTERNS],

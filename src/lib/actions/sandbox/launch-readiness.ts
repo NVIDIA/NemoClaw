@@ -4,8 +4,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
-import { readSandboxPolicyWithCapture } from "../../adapters/openshell/policy-state";
-import type { OpenShellSandboxError } from "../../adapters/openshell/sandbox-observer";
+import {
+  createSyncCliOpenShellSandboxPolicyReader,
+  namedOpenShellGateway,
+  type OpenShellSandboxError,
+} from "../../adapters/openshell/sandbox-policy-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
 import {
@@ -656,13 +659,14 @@ function validateLivePolicy(
   deps: LaunchReadinessDeps,
 ): void {
   const capture = deps.capture ?? captureLaunchReadiness;
-  const result = readSandboxPolicyWithCapture({
+  const result = createSyncCliOpenShellSandboxPolicyReader({
     capture: (args, options) =>
       capture(args, {
         ...options,
         maxBuffer: LIVE_POLICY_MAX_BYTES,
       }),
-    gatewayName,
+  }).readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
     sandboxName,
     scope: "effective",
   });

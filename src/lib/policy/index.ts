@@ -12,14 +12,11 @@ import YAML from "yaml";
 
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import {
-  captureSandboxBasePolicy,
-  captureSandboxBasePolicyRevision,
-  captureSandboxEffectivePolicy,
-  inspectSandboxPolicy,
+  namedOpenShellGateway,
   PolicyObservationError,
-  readSandboxPolicyWithCapture,
-  type SandboxPolicyInspection,
-} from "../adapters/openshell/policy-state";
+  syncCliOpenShellSandboxPolicyReader,
+  type OpenShellSandboxResult,
+} from "../adapters/openshell/sandbox-policy-runtime";
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
@@ -51,6 +48,7 @@ import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./g
 import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
+  type OpenShellPolicyInspection,
   withoutProviderComposedPolicies,
 } from "./merge";
 import { classifyPolicySetResult, type PolicySetOutcome } from "./policy-set-outcome";
@@ -626,14 +624,53 @@ function policyObservationError(error: unknown): string {
 
 export interface PolicyMutationContext {
   readonly gatewayName: string;
-  readonly inspection: SandboxPolicyInspection;
+  readonly inspection: OpenShellPolicyInspection;
   readonly basePolicyDocument?: string;
 }
 
 interface LivePolicyBoundary {
   readonly gatewayName: string;
-  readonly inspection: SandboxPolicyInspection;
+  readonly inspection: OpenShellPolicyInspection;
   readonly basePolicyDocument: string;
+}
+
+function requirePolicyObservation<T>(result: OpenShellSandboxResult<T>): T {
+  if (result.ok) return result.value;
+  const punctuation = /[.!?]$/u.test(result.error.message) ? "" : ".";
+  throw new PolicyObservationError(
+    `OpenShell sandbox policy inspection failed: ${result.error.message}${punctuation} Policy-dependent operations must stop.`,
+    { policyReadError: result.error },
+  );
+}
+
+function readLivePolicyDocument(
+  sandboxName: string,
+  gatewayName: string,
+  scope: "base" | "effective",
+  timeoutMs?: number,
+): string {
+  return requirePolicyObservation(
+    syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+      target: namedOpenShellGateway(gatewayName),
+      sandboxName,
+      scope,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    }),
+  ).document;
+}
+
+function readLivePolicyRevision(
+  sandboxName: string,
+  gatewayName: string,
+  revision: number,
+): string {
+  return requirePolicyObservation(
+    syncCliOpenShellSandboxPolicyReader.readSandboxPolicyRevision({
+      target: namedOpenShellGateway(gatewayName),
+      sandboxName,
+      revision,
+    }),
+  ).document;
 }
 
 function inspectLivePolicyBoundary(
@@ -676,11 +713,11 @@ function inspectLivePolicyBoundary(
       `Refusing to ${operation}: the sandbox gateway is unavailable or invalid.`,
     );
   }
-  const inspection = inspectSandboxPolicy({
-    sandboxName,
-    gatewayName,
-  });
-  const basePolicyDocument = captureSandboxBasePolicy(sandboxName, gatewayName);
+  const target = namedOpenShellGateway(gatewayName);
+  const inspection = requirePolicyObservation(
+    syncCliOpenShellSandboxPolicyReader.inspectSandboxPolicy({ target, sandboxName }),
+  );
+  const basePolicyDocument = readLivePolicyDocument(sandboxName, gatewayName, "base");
   return { gatewayName, inspection, basePolicyDocument };
 }
 
@@ -870,7 +907,7 @@ function inspectPolicyDocumentReadback(
 ): "matched" | "different" | "unavailable" {
   try {
     return policyDocumentsMatch(
-      captureSandboxBasePolicy(sandboxName, previous.gatewayName),
+      readLivePolicyDocument(sandboxName, previous.gatewayName, "base"),
       desiredPolicyDocument,
     )
       ? "matched"
@@ -1001,7 +1038,7 @@ export function setPolicyDocument(
     }
 
     const originalDocument =
-      context.basePolicyDocument ?? captureSandboxBasePolicy(sandboxName, context.gatewayName);
+      context.basePolicyDocument ?? readLivePolicyDocument(sandboxName, context.gatewayName, "base");
     const originalVersion = context.inspection.policyIdentity.activeVersion;
     const { outcome, status } = submitComposedPolicy(
       sandboxName,
@@ -1030,7 +1067,7 @@ export function setPolicyDocument(
       process.exit(1);
     }
     const observedDocument =
-      observed.basePolicyDocument ?? captureSandboxBasePolicy(sandboxName, observed.gatewayName);
+      observed.basePolicyDocument ?? readLivePolicyDocument(sandboxName, observed.gatewayName, "base");
     const observedVersion = observed.inspection.policyIdentity.activeVersion;
     const requestedIsCurrent = policyDocumentsMatch(observedDocument, requestedDocument);
     const concurrentRevision = observedVersion > originalVersion + 1;
@@ -1054,7 +1091,7 @@ export function setPolicyDocument(
     let externalDocument: string;
     try {
       externalDocument = requestedIsCurrent
-        ? captureSandboxBasePolicyRevision(sandboxName, context.gatewayName, observedVersion - 1)
+        ? readLivePolicyRevision(sandboxName, context.gatewayName, observedVersion - 1)
         : observedDocument;
       const rebased = rebasePolicyDocumentOntoConcurrentEdit(
         originalDocument,
@@ -1919,7 +1956,7 @@ function readCurrentSandboxPolicy(sandboxName: string, gatewayName?: string): st
     const selectedGateway =
       gatewayName ?? resolveSandboxGatewayName(registry.getSandbox(sandboxName));
     return (
-      parseCurrentPolicyOrEmpty(captureSandboxBasePolicy(sandboxName, selectedGateway)) || null
+      parseCurrentPolicyOrEmpty(readLivePolicyDocument(sandboxName, selectedGateway, "base")) || null
     );
   } catch {
     return null;
@@ -2771,7 +2808,7 @@ function getGatewayPresets(sandboxName: string, timeoutMs?: number): string[] | 
   const builtins = inspectGatewayPresetNames({
     readPolicy: () => {
       try {
-        return captureSandboxEffectivePolicy(sandboxName, gatewayName, timeoutMs);
+        return readLivePolicyDocument(sandboxName, gatewayName, "effective", timeoutMs);
       } catch {
         return "";
       }

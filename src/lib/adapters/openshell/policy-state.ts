@@ -15,18 +15,9 @@ import {
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyInspection,
 } from "../../policy/merge";
-import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 export { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import * as openshellRuntime from "./runtime";
-import {
-  createSyncCliOpenShellSandboxPolicyReader,
-  type SyncCapturePolicyCommand,
-} from "./sandbox-policy-cli";
-import {
-  namedOpenShellGateway,
-  selectedOpenShellGateway,
-  type OpenShellSandboxError,
-} from "./sandbox-observer";
+import { type OpenShellSandboxError } from "./sandbox-observer";
 import { fingerprintOpenShellSandboxLiveIdentity } from "./sandbox-identity";
 const POLICY_STATE_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_STATE_CAPTURE_TIMEOUT_MS = 30_000;
@@ -61,11 +52,6 @@ export function isPolicyObservationError(error: unknown): error is PolicyObserva
       error.code === POLICY_OBSERVATION_ERROR_CODE &&
       typeof error.message === "string")
   );
-}
-
-interface SandboxPolicyInspectionOptions {
-  readonly sandboxName: string;
-  readonly gatewayName?: string;
 }
 
 interface ActiveGlobalPolicyInspectionOptions {
@@ -135,53 +121,6 @@ function captureBoundedOpenShell(
   }
 }
 
-/** Read one policy document through the canonical synchronous CLI boundary. */
-export function readSandboxPolicyWithCapture(input: {
-  readonly capture: SyncCapturePolicyCommand;
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly scope: "base" | "effective";
-  readonly timeoutMs?: number;
-}): ReturnType<ReturnType<typeof createSyncCliOpenShellSandboxPolicyReader>["readSandboxPolicy"]> {
-  assertNoOpenShellGatewayEndpointOverride();
-  const sandboxName = validatePolicyName(input.sandboxName, "sandbox name");
-  const gatewayName = validatePolicyName(input.gatewayName, "gateway name");
-  return createSyncCliOpenShellSandboxPolicyReader({ capture: input.capture }).readSandboxPolicy({
-    target: namedOpenShellGateway(gatewayName),
-    sandboxName,
-    scope: input.scope,
-    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-  });
-}
-
-function captureSandboxPolicyDocument(input: {
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly scope: "base" | "effective";
-  readonly timeoutMs?: number;
-}): string {
-  const result = readSandboxPolicyWithCapture({
-    ...input,
-    capture: (args, options) =>
-      captureBoundedOpenShell(args, "sandbox", { gatewayName: input.gatewayName }, options.timeout),
-  });
-  if (!result.ok) failInspection("sandbox", result.error);
-  return result.value.document;
-}
-
-function createBoundSandboxPolicyReader(gatewayName?: string) {
-  if (gatewayName !== undefined) assertNoOpenShellGatewayEndpointOverride();
-  return createSyncCliOpenShellSandboxPolicyReader({
-    capture: (args, options) =>
-      captureBoundedOpenShell(args, "sandbox", { gatewayName }, options.timeout),
-    defaultTimeoutMs: POLICY_STATE_CAPTURE_TIMEOUT_MS,
-  });
-}
-
-function sandboxPolicyTarget(gatewayName?: string) {
-  return gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway();
-}
-
 function capturePolicyCommand(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
@@ -212,22 +151,6 @@ function capturePolicyCommand(
   return { output: result.output, stdout: result.stdout, stderr: result.stderr };
 }
 
-/** Inspect the effective policy source for one live sandbox. */
-export function inspectSandboxPolicy({
-  sandboxName,
-  gatewayName,
-}: SandboxPolicyInspectionOptions): SandboxPolicyInspection {
-  const validatedSandboxName = validatePolicyName(sandboxName, "sandbox name");
-  const validatedGatewayName =
-    gatewayName === undefined ? undefined : validatePolicyName(gatewayName, "gateway name");
-  const result = createBoundSandboxPolicyReader(validatedGatewayName).inspectSandboxPolicy({
-    target: sandboxPolicyTarget(validatedGatewayName),
-    sandboxName: validatedSandboxName,
-  });
-  if (!result.ok) failInspection("sandbox", result.error);
-  return result.value;
-}
-
 /** Inspect active global policy presence without assigning absent policy ownership. */
 export function inspectActiveGlobalPolicy({
   gatewayName,
@@ -255,50 +178,6 @@ export function inspectActiveGlobalPolicy({
       error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
     );
   }
-}
-
-/** Read one sandbox base policy through the same bounded OpenShell adapter. */
-export function captureSandboxBasePolicy(sandboxName: string, gatewayName: string): string {
-  return captureSandboxPolicyDocument({
-    sandboxName,
-    gatewayName,
-    scope: "base",
-    timeoutMs: POLICY_STATE_CAPTURE_TIMEOUT_MS,
-  });
-}
-
-/** Read one effective sandbox policy through the shared typed CLI boundary. */
-export function captureSandboxEffectivePolicy(
-  sandboxName: string,
-  gatewayName: string,
-  timeoutMs?: number,
-): string {
-  return captureSandboxPolicyDocument({
-    sandboxName,
-    gatewayName,
-    scope: "effective",
-    timeoutMs: timeoutMs ?? POLICY_STATE_CAPTURE_TIMEOUT_MS,
-  });
-}
-
-/** Read one immutable base-policy revision through the selected gateway. */
-export function captureSandboxBasePolicyRevision(
-  sandboxName: string,
-  gatewayName: string,
-  revision: number,
-): string {
-  if (!Number.isSafeInteger(revision) || revision < 1) {
-    failInspection("sandbox", "the requested policy revision is invalid");
-  }
-  const validatedSandboxName = validatePolicyName(sandboxName, "sandbox name");
-  const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
-  const result = createBoundSandboxPolicyReader(validatedGatewayName).readSandboxPolicyRevision({
-    target: namedOpenShellGateway(validatedGatewayName),
-    sandboxName: validatedSandboxName,
-    revision,
-  });
-  if (!result.ok) failInspection("sandbox", result.error);
-  return result.value.document;
 }
 
 /** Read and fingerprint one sandbox ID without exposing the ID in diagnostics. */
@@ -386,8 +265,3 @@ export function assertObservedPolicyRequirements({
     );
   }
 }
-
-export const policyStateInternals = {
-  captureMaxBytes: POLICY_STATE_CAPTURE_MAX_BYTES,
-  captureTimeoutMs: POLICY_STATE_CAPTURE_TIMEOUT_MS,
-};

@@ -1885,11 +1885,7 @@ After OpenShell confirms deletion of a sandbox that owns managed llama.cpp, `des
 
 ### `$$nemoclaw <name> policy get`
 
-Export the sandbox's OpenShell base policy as parsed YAML.
-The command runs `openshell policy get --base`, parses the policy, replaces literal credential values with `[STRIPPED_BY_MIGRATION]`, and strips the OpenShell metadata header.
-The output is suitable for review and editing.
-Before you use the file with `openshell policy set`, replace every redaction marker with a supported OpenShell credential binding or resolver placeholder.
-The command exits nonzero when OpenShell fails, returns an empty response, or returns content that is not valid policy YAML.
+Export the sandbox's OpenShell base policy as parsed YAML. The command runs `openshell policy get --base`, strips the metadata header, and replaces literal credential values with `[STRIPPED_BY_MIGRATION]`. Before using the file with `openshell policy set`, replace every marker with a supported OpenShell credential binding or resolver placeholder. The command exits nonzero for an OpenShell failure, empty response, or invalid policy YAML.
 
 ```bash
 $$nemoclaw my-assistant policy get > current-policy.yaml

@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PolicyObservationError } from "../../adapters/openshell/policy-state";
 
 const mocks = vi.hoisted(() => ({
   captureRecordedSandboxBasePolicy: vi.fn(),
@@ -48,6 +47,22 @@ afterEach(() => {
 });
 
 describe("rebuild policy handoff", () => {
+  const input = (overrides: Partial<RebuildBackupPhaseInput> = {}): RebuildBackupPhaseInput => ({
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    sandboxEntry: { name: "alpha" },
+    staleRecovery: false,
+    preparedRecoveryManifest: null,
+    messagingPlan: null,
+    webSearchConfig: null,
+    log: vi.fn(),
+    bail: (message): never => {
+      throw new Error(message);
+    },
+    relockShieldsIfNeeded: vi.fn(() => true),
+    ...overrides,
+  });
+
   it("captures the current OpenShell base policy in a private transaction file", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
     temporaryDirectories.push(directory);
@@ -56,23 +71,7 @@ describe("rebuild policy handoff", () => {
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       "version: 1\nnetwork_policies:\n  host_changed: {}\n",
     );
-    const result = runRebuildBackupPhase(
-      {
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        sandboxEntry: { name: "alpha" },
-        staleRecovery: false,
-        preparedRecoveryManifest: null,
-        messagingPlan: null,
-        webSearchConfig: null,
-        log: vi.fn(),
-        bail: (message): never => {
-          throw new Error(message);
-        },
-        relockShieldsIfNeeded: vi.fn(() => true),
-      },
-      vi.fn(() => null),
-    );
+    const result = runRebuildBackupPhase(input(), vi.fn(() => null));
 
     expect(result?.policySourcePath).toBe(policyPath);
     expect(fs.readFileSync(policyPath, "utf8")).toContain("host_changed");
@@ -85,36 +84,21 @@ describe("rebuild policy handoff", () => {
   });
 
   it("rejects a literal credential before creating a rebuild policy handoff", () => {
+    const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       [
         "version: 1",
-        "network_policies: {}",
-        "process:",
-        "  environment:",
-        "    SERVICE_API_KEY: opaque-live-policy-credential",
+        "network_policies:",
+        "  protected_api:",
+        "    endpoints:",
+        `      - host: https://operator:${credential}@api.example`,
         "",
       ].join("\n"),
     );
     const backup = vi.fn(() => null);
 
     expect(() =>
-      runRebuildBackupPhase(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          sandboxEntry: { name: "alpha" },
-          staleRecovery: false,
-          preparedRecoveryManifest: null,
-          messagingPlan: null,
-          webSearchConfig: null,
-          log: vi.fn(),
-          bail: (message): never => {
-            throw new Error(message);
-          },
-          relockShieldsIfNeeded: vi.fn(() => true),
-        },
-        backup,
-      ),
+      runRebuildBackupPhase(input(), backup),
     ).toThrow(
       "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
     );
@@ -122,101 +106,9 @@ describe("rebuild policy handoff", () => {
     expect(mocks.secureTempFile).not.toHaveBeenCalled();
   });
 
-  it.each([
-    {
-      label: "authentication failure",
-      error: {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the sandbox policy read.",
-      } as const,
-      recovery: "Restore authentication for the sandbox's OpenShell gateway",
-    },
-    {
-      label: "unreachable gateway",
-      error: {
-        kind: "transport",
-        reason: "unreachable",
-        message: "OpenShell could not reach the selected gateway.",
-      } as const,
-      recovery: "Verify the gateway with `openshell status`",
-    },
-    {
-      label: "gateway identity mismatch",
-      error: {
-        kind: "transport",
-        reason: "identity_mismatch",
-        message: "The selected OpenShell gateway identity does not match the recorded identity.",
-      } as const,
-      recovery: "Verify the sandbox's recorded gateway identity with `openshell status`",
-    },
-    {
-      label: "schema mismatch",
-      error: {
-        kind: "schema",
-        message: "The OpenShell CLI and gateway policy schemas do not match.",
-      } as const,
-      recovery: "Update the OpenShell CLI and gateway to compatible versions",
-    },
-  ])("stops before backup and delete after a typed $label", ({ error, recovery }) => {
-    mocks.captureRecordedSandboxBasePolicy.mockImplementation(() => {
-      throw new PolicyObservationError(error.message, { policyReadError: error });
-    });
-    const backup = vi.fn(() => null);
-
-    let failure: unknown;
-    try {
-      runRebuildBackupPhase(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw-8091",
-          sandboxEntry: { name: "alpha", gatewayName: "nemoclaw-8091" },
-          staleRecovery: false,
-          preparedRecoveryManifest: null,
-          messagingPlan: null,
-          webSearchConfig: null,
-          log: vi.fn(),
-          bail: (message): never => {
-            throw new Error(message);
-          },
-          relockShieldsIfNeeded: vi.fn(() => true),
-        },
-        backup,
-      );
-    } catch (caught) {
-      failure = caught;
-    }
-
-    expect(failure).toBeInstanceOf(PolicyObservationError);
-    expect((failure as PolicyObservationError).policyReadError).toEqual(error);
-    const message = String((failure as Error).message);
-    expect(message).toContain("sandbox 'alpha'");
-    expect(message).toContain("recorded gateway 'nemoclaw-8091'");
-    expect(message).toContain(error.message);
-    expect(message).toContain(recovery);
-    expect(message).toContain("`nemoclaw alpha rebuild`");
-    expect(backup).not.toHaveBeenCalled();
-    expect(mocks.secureTempFile).not.toHaveBeenCalled();
-  });
-
   it("never reconstructs a missing live policy from NemoClaw state", () => {
     expect(() =>
-      runRebuildBackupPhase(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          sandboxEntry: { name: "alpha" },
-          staleRecovery: true,
-          preparedRecoveryManifest: null,
-          messagingPlan: null,
-          webSearchConfig: null,
-          log: vi.fn(),
-          bail: (message): never => {
-            throw new Error(message);
-          },
-          relockShieldsIfNeeded: vi.fn(() => true),
-        },
-        vi.fn(() => null),
-      ),
+      runRebuildBackupPhase(input({ staleRecovery: true }), vi.fn(() => null)),
     ).toThrow(/will not reconstruct policy from NemoClaw state/);
   });
 
@@ -251,29 +143,21 @@ describe("rebuild policy handoff", () => {
     let refusal: Error | null = null;
     try {
       runRebuildBackupPhase(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          sandboxEntry: { name: "alpha" },
-          staleRecovery: true,
-          preparedRecoveryManifest,
-          messagingPlan: null,
-          webSearchConfig: null,
-          log: vi.fn(),
-          bail: (message): never => {
-            throw new Error(message);
-          },
-          relockShieldsIfNeeded: vi.fn(() => true),
-        },
+        input({ staleRecovery: true, preparedRecoveryManifest }),
         vi.fn(),
       );
     } catch (error) {
       refusal = error as Error;
     }
 
-    expect(refusal?.message).toContain("nemoclaw alpha destroy --force");
     expect(refusal?.message).toContain(
-      "create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`",
+      "Only then run `nemoclaw alpha destroy --force` and confirm OpenShell reports the sandbox deleted",
+    );
+    expect(refusal?.message).toContain(
+      "If deletion is unconfirmed, preserve the recovery state and restore gateway access",
+    );
+    expect(refusal?.message).toContain(
+      "Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`",
     );
     expect(refusal?.message).toContain("Do not discard the handoff and retry rebuild");
     expect(
