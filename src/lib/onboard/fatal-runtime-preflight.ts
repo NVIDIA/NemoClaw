@@ -143,6 +143,19 @@ function printReadinessFailure(
   }
 }
 
+// The projection records why it could not evaluate the host, but the capability
+// list alone cannot say so: the collapse files its reason as evidence and as a
+// warning-severity `host.probe.inconclusive` finding, and admission reports only
+// blocking findings. Name the reason the same way the gateway gate already does,
+// so an unconfirmed capability list is never the whole message (#10670).
+const ACTIONABLE_HOST_EVIDENCE_IDS = new Set(["host.probe.failure", "host.probe.stale"]);
+
+function printHostReadinessEvidence(report: Pick<SystemReadinessReport, "evidence">): void {
+  for (const entry of report.evidence) {
+    if (ACTIONABLE_HOST_EVIDENCE_IDS.has(entry.id)) console.error(`  ${entry.summary}`);
+  }
+}
+
 function printGatewayReadinessEvidence(gateway: GatewayReadinessProjection): void {
   const actionableEvidenceIds = new Set([
     "gateway.attachment.failure",
@@ -197,6 +210,7 @@ export function assertOnboardSystemReadiness(
     printJetsonNvidiaRuntimeUnavailableError();
   } else {
     printReadinessFailure(readinessReport, admission.findingIds, admission.capabilityIds);
+    printHostReadinessEvidence(readinessReport);
   }
   printRemediationActions(
     jetsonRuntimeMissing

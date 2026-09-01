@@ -431,6 +431,54 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(report.provenance.observedAt).toBe(observedAt);
   });
 
+  it("names the host evidence behind an unconfirmed capability list (#10670)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const collapsed: SystemReadinessReport = {
+      schemaVersion: "1.1.0",
+      status: "inconclusive",
+      exitCode: 3,
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: "2026-08-31T12:00:00.000Z",
+      },
+      observations: [],
+      capabilities: [{ id: "host.docker.available", state: "unknown" }],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.probe.inconclusive",
+          severity: "warning",
+          summary: "Host observations could not be collected safely.",
+        },
+      ],
+      evidence: [
+        {
+          id: "host.probe.stale",
+          summary:
+            "Host observations exceeded their safe reuse window: 41234ms old against a 30000ms window.",
+        },
+      ],
+    };
+
+    expect(() =>
+      assertOnboardSystemReadiness(collapsed, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: true,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("could not confirm required capabilities: host.docker.available");
+    expect(output).toContain(
+      "exceeded their safe reuse window: 41234ms old against a 30000ms window",
+    );
+  });
+
   it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
     "allows Podman only when the portable profile is explicit",
     () => {
