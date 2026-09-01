@@ -1398,6 +1398,21 @@ RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
     && chmod 640 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 
+# Leave every Shields-managed Hermes path in the exact mutable posture that
+# the host verifies before a same-posture Shields Down transition. Hermes
+# setup and the image build probes create nested entries with upstream modes;
+# normalize the complete reviewed plan after the final state write, then make
+# the image build fail if ownership, permissions, or mutation flags drift.
+RUN /usr/local/lib/nemoclaw/state-dir-guard.py unlock \
+        --config-dir /sandbox/.hermes \
+        --plan-file /usr/local/share/nemoclaw/state-lock-plan.json \
+    && /usr/local/lib/nemoclaw/state-dir-guard.py verify-mutable \
+        --config-dir /sandbox/.hermes \
+        --plan-file /usr/local/share/nemoclaw/state-lock-plan.json \
+        --mutable-top-level-file /sandbox/.hermes/config.yaml \
+        --mutable-top-level-file /sandbox/.hermes/.env \
+        --mutable-top-level-file /sandbox/.hermes/.config-hash
+
 # Keep the shared NemoClaw state root consistent across every shipped agent.
 # The root-owned sticky directory protects the managed-startup transaction
 # receipt while leaving the named plugin state directories sandbox-writable.
