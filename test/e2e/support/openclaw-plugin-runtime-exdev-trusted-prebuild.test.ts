@@ -187,6 +187,48 @@ function commandResult(exitCode = 0, stderr = ""): ShellProbeResult {
 }
 
 describe("trusted EXDEV fixture image cleanup", () => {
+  it("keeps gateway registration through managed destroy and continues through its failure", async () => {
+    const calls: string[] = [];
+    const cleanup = new CleanupRegistry();
+    const host = {
+      cleanupGatewayRegistration: vi.fn(async () => {
+        calls.push("gateway");
+      }),
+      cleanupSandbox: vi.fn(async () => {
+        calls.push("managed-sandbox");
+        throw new Error("managed destroy failed");
+      }),
+      command: vi.fn(async (_command: string, args: string[]) => {
+        calls.push(`image:${args.at(-1)}`);
+        return commandResult();
+      }),
+    };
+    const images = registerTrustedPluginFixtureImageCleanup({
+      cleanup,
+      environment: { PATH: "/usr/bin" },
+      host,
+    });
+    const image = trustedExdevImageRef("cleanup-order");
+    images.track(image, "v1");
+    cleanup.trackGateway(host, "nemoclaw");
+    cleanup.trackDisposable("delete OpenShell sandbox fixture-sandbox", () => {
+      calls.push("direct-sandbox");
+    });
+    cleanup.trackSandbox(host, "fixture-sandbox");
+
+    const result = await cleanup.runAll();
+
+    expect(calls).toEqual(["managed-sandbox", "direct-sandbox", "gateway", `image:${image}`]);
+    expect(result).toEqual({
+      failures: [{ message: "managed destroy failed", name: "destroy sandbox fixture-sandbox" }],
+      passed: [
+        "delete OpenShell sandbox fixture-sandbox",
+        "remove gateway nemoclaw",
+        "remove trusted EXDEV fixture images",
+      ],
+    });
+  });
+
   it("reclaims an image whose immutable identity assertion fails in LIFO order", async () => {
     const calls: string[] = [];
     const cleanup = new CleanupRegistry();

@@ -416,11 +416,17 @@ test(
       skip,
     );
 
-    // Cleanup is LIFO: delete the sandbox before reclaiming its exact image tags.
+    // Cleanup is LIFO: managed destroy runs while the gateway is registered,
+    // then direct OpenShell deletion provides a fallback before gateway and image cleanup.
     const trustedFixtureImages = registerTrustedPluginFixtureImageCleanup({
       cleanup,
       environment: liveEnv(),
       host,
+    });
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-trusted-exdev-gateway-nemoclaw",
+      env: liveEnv(),
+      timeoutMs: 60_000,
     });
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
@@ -458,13 +464,6 @@ test(
     const openshell = await installAndResolveOpenShell(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
-    );
-    cleanup.add("remove trusted EXDEV fixture gateway nemoclaw", () =>
-      host.cleanupGatewayRegistration("nemoclaw", {
-        artifactName: "cleanup-trusted-exdev-gateway-nemoclaw",
-        env: liveEnv(),
-        timeoutMs: 60_000,
-      }),
     );
     const openshellWrapper = createOpenShellTrustedImageWrapper({
       driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,

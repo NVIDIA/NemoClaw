@@ -52,7 +52,7 @@ function validWorkflow(): OpenClawPluginRuntimeExdevWorkflow {
           },
           {
             name: "Prepare E2E workspace",
-            uses: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@05fa6b810017752ab21148cb7e9d82d12a88c92f",
+            uses: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75",
           },
           {
             name: "Run OpenClaw cross-device plugin lifecycle live test",
@@ -70,7 +70,7 @@ function validWorkflow(): OpenClawPluginRuntimeExdevWorkflow {
           {
             name: "Upload OpenClaw cross-device plugin lifecycle artifacts",
             if: "always()",
-            uses: "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@05fa6b810017752ab21148cb7e9d82d12a88c92f",
+            uses: "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
           },
         ],
       },
@@ -80,6 +80,7 @@ function validWorkflow(): OpenClawPluginRuntimeExdevWorkflow {
 describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
   it("rejects arbitrary work while Docker Hub credentials are live", () => {
     const workflow = validWorkflow();
+    expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toEqual([]);
     const steps = workflow.jobs[JOB_NAME].steps!;
     const revokeIndex = steps.findIndex(
       (step) => step.name === "Remove Docker auth before current-checkout fixture",
@@ -96,6 +97,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
 
   it("rejects trust-boundary mutations", () => {
     const workflow = validWorkflow();
+    expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toEqual([]);
     const job = workflow.jobs[JOB_NAME];
     job["runs-on"] = "self-hosted";
     job["timeout-minutes"] = 60;
