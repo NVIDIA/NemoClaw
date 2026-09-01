@@ -70,7 +70,8 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   runOpenshell: testState.runOpenshell,
 }));
 
-vi.mock("../../src/lib/gateway-runtime-action", () => ({
+vi.mock("../../src/lib/gateway-runtime-action", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/gateway-runtime-action")>()),
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
 }));
 
@@ -665,6 +666,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     );
 
     expect(message).toMatch(/changed its MCP gateway authority.*different target/i);
+    expect(message).toContain("NemoClaw did not delete the original sandbox");
+    expect(message).toContain("Retry after the recorded OpenShell gateway is stable");
     expect(registry.getSandbox("alpha")).toEqual(before);
     expect(testState.calls).toEqual([]);
     expect(testState.adapterCalls).toEqual([]);

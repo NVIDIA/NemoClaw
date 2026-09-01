@@ -381,7 +381,9 @@ describe("rebuild destroy phase", () => {
         relockShieldsIfNeeded: vi.fn(() => true),
         onDeleted: vi.fn(),
       }),
-    ).rejects.toThrow("Rebuild delete target does not match the frozen OpenShell target");
+    ).rejects.toThrow(
+      "Rebuild delete target does not match the frozen OpenShell target. NemoClaw did not delete the original sandbox. Retry after the recorded OpenShell gateway is stable.",
+    );
 
     expectNoSandboxDelete(mocks.runOpenshell);
   });
@@ -489,12 +491,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);

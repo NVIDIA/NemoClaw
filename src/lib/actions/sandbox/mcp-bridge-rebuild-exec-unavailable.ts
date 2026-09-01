@@ -144,7 +144,7 @@ async function inspectReadOnlyRecoveryState(
       currentRuntimeSelection.localTlsDir !== expectedRuntimeSelection.localTlsDir)
   ) {
     throw new McpBridgeError(
-      `Sandbox '${sandboxName}' changed its MCP gateway authority before host-side rebuild recovery could inspect providers. Refusing to continue on a different target.`,
+      `Sandbox '${sandboxName}' changed its MCP gateway authority before host-side rebuild recovery could inspect providers. Refusing to continue on a different target. NemoClaw did not delete the original sandbox. Retry after the recorded OpenShell gateway is stable.`,
     );
   }
   const providerRuntimeSelection = expectedRuntimeSelection ?? currentRuntimeSelection;
