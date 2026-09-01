@@ -30,11 +30,10 @@ import {
   runAdvisorSandboxAsync,
   runOpenShellAdvisorCommand,
   verifyAdvisorGitWorktree,
-  writeUnavailableAdvisorArtifacts,
 } from "../../../tools/pr-review-advisor/openshell.mts";
-import { runPrReviewAdvisorAnalysis } from "../../../tools/pr-review-advisor/run-analysis.mts";
 import {
   publishSpecialistJobSummary,
+  runAdvisorSpecialist,
   runAdvisorSpecialistCommand,
   type AdvisorSpecialistLifecycle,
 } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
@@ -63,6 +62,7 @@ function advisorEnvironment(): NodeJS.ProcessEnv {
   for (const name of ["pr-review-advisor-context", "pr-review-advisor-tools"]) {
     fs.mkdirSync(path.join(runnerTemp, name));
   }
+  fs.mkdirSync(path.join(runnerTemp, "pr-review-advisor-context", "specialist"));
   return {
     ADVISOR_DIR: advisorDirectory,
     ADVISOR_WORKDIR: workDirectory,
@@ -135,6 +135,86 @@ describe("PR review advisor specialist lifecycle", () => {
     );
   });
 
+  it("publishes the hosted specialist summary after lifecycle completion", async () => {
+    const workspace = temporaryDirectory();
+    const artifactDirectory = "pr-review-specialist-behavior";
+    const artifactPath = path.join(workspace, "artifacts", artifactDirectory);
+    const jobSummary = path.join(workspace, "job-summary.md");
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(jobSummary, "Existing summary.\n");
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => undefined,
+      run: () => undefined,
+      download: () =>
+        void fs.writeFileSync(
+          path.join(artifactPath, "pr-review-behavior-summary.md"),
+          "# Behavior specialist\n\nNo behavior finding.\n",
+        ),
+      remove: () => undefined,
+    };
+
+    await runAdvisorSpecialistCommand(
+      "analysis",
+      {
+        GITHUB_STEP_SUMMARY: jobSummary,
+        GITHUB_WORKSPACE: workspace,
+        PR_REVIEW_ADVISOR_ARTIFACT_DIR: artifactDirectory,
+        PR_REVIEW_ADVISOR_INTEREST: "behavior",
+      },
+      lifecycle,
+    );
+
+    expect(fs.readFileSync(jobSummary, "utf8")).toBe(
+      "Existing summary.\n# Behavior specialist\n\nNo behavior finding.\n",
+    );
+  });
+
+  it("does not publish a specialist summary after cancellation during cleanup", async () => {
+    const workspace = temporaryDirectory();
+    const artifactDirectory = "pr-review-specialist-behavior";
+    const artifactPath = path.join(workspace, "artifacts", artifactDirectory);
+    const jobSummary = path.join(workspace, "job-summary.md");
+    let receive!: (signal: NodeJS.Signals) => void;
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(jobSummary, "Existing summary.\n");
+    fs.writeFileSync(
+      path.join(artifactPath, "pr-review-behavior-summary.md"),
+      "# Behavior specialist\n\nNo behavior finding.\n",
+    );
+    const restore = vi.fn();
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => undefined,
+      run: () => undefined,
+      download: () => undefined,
+      remove: () => receive("SIGTERM"),
+    };
+
+    await runAdvisorSpecialistCommand(
+      "analysis",
+      {
+        GITHUB_STEP_SUMMARY: jobSummary,
+        GITHUB_WORKSPACE: workspace,
+        PR_REVIEW_ADVISOR_ARTIFACT_DIR: artifactDirectory,
+        PR_REVIEW_ADVISOR_INTEREST: "behavior",
+      },
+      lifecycle,
+      {
+        listen: (handler) => {
+          receive = handler;
+          return () => undefined;
+        },
+        restore,
+      },
+    );
+
+    expect(fs.readFileSync(jobSummary, "utf8")).toBe("Existing summary.\n");
+    expect(restore).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("rejects a specialist summary symlink without publishing its target", () => {
     const workspace = temporaryDirectory();
     const artifactDirectory = "pr-review-specialist-behavior";
@@ -157,10 +237,30 @@ describe("PR review advisor specialist lifecycle", () => {
     expect(fs.readFileSync(jobSummary, "utf8")).toBe("Existing summary.\n");
   });
 
+  it("runs only preparation for the prepare command", async () => {
+    const env = { SANDBOX_NAME: "prepare-test" };
+    const calls: string[] = [];
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async (received) => void calls.push(received === env ? "prepare" : "wrong-env"),
+      startGateway: () => {
+        calls.push("gateway");
+        return undefined;
+      },
+      create: () => void calls.push("create"),
+      run: () => void calls.push("run"),
+      download: () => void calls.push("download"),
+      remove: () => void calls.push("remove"),
+    };
+
+    await runAdvisorSpecialistCommand("prepare", env, lifecycle);
+
+    expect(calls).toEqual(["prepare"]);
+  });
+
   it("keeps local specialist analysis independent from GitHub job summaries", async () => {
     const calls: string[] = [];
     const lifecycle: AdvisorSpecialistLifecycle = {
-      prepare: async () => undefined,
+      prepare: async () => void calls.push("prepare"),
       startGateway: () => ({ configure: Promise.resolve() }),
       create: () => void calls.push("create"),
       run: () => void calls.push("run"),
@@ -170,43 +270,154 @@ describe("PR review advisor specialist lifecycle", () => {
 
     await runAdvisorSpecialistCommand(
       "analysis",
-      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1" },
+      {},
       lifecycle,
     );
 
     expect(calls).toEqual(["create", "run", "download", "remove"]);
   });
 
+  it.each([
+    { failedStage: "configure", expectedDownload: false },
+    { failedStage: "create", expectedDownload: false },
+    { failedStage: "run", expectedDownload: false },
+    { failedStage: "execution", expectedDownload: false },
+    { failedStage: "download", expectedDownload: true },
+    { failedStage: "validate", expectedDownload: true },
+  ])("fails closed and cleans owned resources after $failedStage failure", async ({
+    failedStage,
+    expectedDownload,
+  }) => {
+    let sandboxOwned = false;
+    let analysisActive = false;
+    let gatewayStopped = false;
+    let downloaded = false;
+    let removeCalls = 0;
+    const failures: Record<string, () => never> = {
+      [failedStage]: () => {
+        throw new Error(`${failedStage} failed`);
+      },
+    };
+    const fail = (stage: string): void => failures[stage]?.();
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({
+        configure: Promise.resolve().then(() => fail("configure")),
+        stop: async () => void (gatewayStopped = true),
+      }),
+      create: () => {
+        sandboxOwned = true;
+        fail("create");
+      },
+      run: () => {
+        fail("run");
+        analysisActive = true;
+        return {
+          completion:
+            failedStage === "execution"
+              ? Promise.resolve().then(() => {
+                  analysisActive = false;
+                  throw new Error("execution failed");
+                })
+              : Promise.resolve().then(() => void (analysisActive = false)),
+          cancel: () => void (analysisActive = false),
+        };
+      },
+      download: () => {
+        downloaded = true;
+        fail("download");
+      },
+      remove: () => {
+        removeCalls += 1;
+        sandboxOwned = false;
+      },
+    };
+
+    await expect(
+      runAdvisorSpecialist({
+        env: { PR_REVIEW_ADVISOR_INTEREST: "behavior", SANDBOX_NAME: "failure-test" },
+        lifecycle,
+        validate: () => fail("validate"),
+      }),
+    ).rejects.toThrow(`${failedStage} failed`);
+    expect({ analysisActive, downloaded, gatewayStopped, sandboxOwned }).toEqual({
+      analysisActive: false,
+      downloaded: expectedDownload,
+      gatewayStopped: true,
+      sandboxOwned: false,
+    });
+    expect(removeCalls).toBe(failedStage === "configure" ? 0 : 1);
+  });
+
+  it("preserves the primary failure when cleanup also fails", async () => {
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => undefined,
+      run: () => {
+        throw new Error("execution setup failed");
+      },
+      download: () => undefined,
+      remove: () => {
+        throw new Error("sandbox cleanup failed");
+      },
+    };
+
+    await expect(
+      runAdvisorSpecialist({
+        env: { PR_REVIEW_ADVISOR_INTEREST: "behavior", SANDBOX_NAME: "failure-test" },
+        lifecycle,
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("execution setup failed"),
+      cause: expect.objectContaining({ message: expect.stringContaining("execution setup failed") }),
+      errors: [
+        expect.objectContaining({ message: expect.stringContaining("execution setup failed") }),
+        expect.objectContaining({ message: expect.stringContaining("sandbox cleanup failed") }),
+      ],
+    });
+  });
+
   it("cancels active analysis, cleans owned resources, and restores termination (#10611)", async () => {
     const calls: string[] = [];
+    const sandboxNames: string[] = [];
     let receive!: (signal: NodeJS.Signals) => void;
     let interrupt!: () => void;
     const completion = new Promise<void>(
       (_resolve, reject) => (interrupt = () => reject(new Error("analysis stopped by SIGTERM"))),
     );
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const restore = vi.fn();
+    const restore = vi.fn(() => void calls.push("restore"));
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
       startGateway: () => ({
         configure: Promise.resolve(),
         stop: async () => void calls.push("gateway"),
       }),
-      create: () => void calls.push("create"),
-      run: () => ({
+      create: (env) => {
+        calls.push("create");
+        sandboxNames.push(env.SANDBOX_NAME as string);
+      },
+      run: (env) => {
+        sandboxNames.push(env.SANDBOX_NAME as string);
+        return {
         completion,
         cancel: () => {
           calls.push("cancel");
           interrupt();
         },
-      }),
+      };
+      },
       download: () => void calls.push("download"),
-      remove: () => void calls.push("sandbox"),
+      remove: (env) => {
+        calls.push("sandbox");
+        sandboxNames.push(env.SANDBOX_NAME as string);
+      },
     };
 
     const command = runAdvisorSpecialistCommand(
       "analysis",
-      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1", SANDBOX_NAME: "signal-test" },
+      { SANDBOX_NAME: "signal-test" },
       lifecycle,
       {
         listen: (handler) => {
@@ -220,7 +431,8 @@ describe("PR review advisor specialist lifecycle", () => {
     receive("SIGTERM");
     await command;
 
-    expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners"]);
+    expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners", "restore"]);
+    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[A-Za-z0-9_-]{12}$/u), sandboxNames[0], sandboxNames[0]]);
     expect(restore).toHaveBeenCalledWith("SIGTERM");
     expect(stderr).not.toHaveBeenCalled();
     expect(calls).not.toContain("download");
@@ -230,8 +442,9 @@ describe("PR review advisor specialist lifecycle", () => {
     let receive!: (signal: NodeJS.Signals) => void;
     let finish!: () => void;
     const credential = "cleanup-secret";
-    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const restore = vi.fn();
+    const events: string[] = [];
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => void events.push("diagnostic"));
+    const restore = vi.fn(() => void events.push("restore"));
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
       startGateway: () => ({ configure: Promise.resolve(), stop: async () => undefined }),
@@ -252,7 +465,6 @@ describe("PR review advisor specialist lifecycle", () => {
     const command = runAdvisorSpecialistCommand(
       "analysis",
       {
-        PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1",
         PR_REVIEW_ADVISOR_API_KEY: credential,
         SANDBOX_NAME: "residual-sandbox",
       },
@@ -270,52 +482,11 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("execution cleanup"));
-    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("residual-sandbox"));
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[A-Za-z0-9_-]{12}/u));
     expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
+    expect(events).toEqual(["diagnostic", "restore"]);
     expect(restore).toHaveBeenCalledWith("SIGHUP");
   });
-
-  it.each([
-    ["enabled", "1", ["prepare", "configure", "create", "run", "download", "remove"]],
-    ["disabled", "0", ["prepare", "unavailable"]],
-  ])(
-    "keeps prior preparation credential-free before %s analysis",
-    async (_case, enabled, expected) => {
-      const calls: string[] = [];
-      const lifecycle: AdvisorSpecialistLifecycle = {
-        prepare: async (env) => {
-          expect(env.OPENAI_API_KEY).toBeUndefined();
-          expect(env.PR_REVIEW_ADVISOR_API_KEY).toBeUndefined();
-          calls.push("prepare");
-        },
-        startGateway: (env) => {
-          expect(env.OPENAI_API_KEY).toBe("analysis-secret");
-          expect(env.GH_TOKEN).toBeUndefined();
-          expect(env.GITHUB_TOKEN).toBeUndefined();
-          calls.push("configure");
-          return { configure: Promise.resolve() };
-        },
-        create: () => void calls.push("create"),
-        run: () => void calls.push("run"),
-        download: () => void calls.push("download"),
-        remove: () => void calls.push("remove"),
-        unavailable: () => void calls.push("unavailable"),
-      };
-
-      await runAdvisorSpecialistCommand(
-        "prepare",
-        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled },
-        lifecycle,
-      );
-      await runAdvisorSpecialistCommand(
-        "analysis",
-        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled, OPENAI_API_KEY: "analysis-secret" },
-        lifecycle,
-      );
-
-      expect(calls).toEqual(expected);
-    },
-  );
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
@@ -822,35 +993,6 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
-  it.each(["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"])(
-    "writes unavailable artifacts through a credential-free trusted host fallback [case %#]",
-    (name) => {
-      const env = advisorEnvironment();
-      env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
-      const tools = advisorTools();
-
-      writeUnavailableAdvisorArtifacts(env, tools);
-
-      expect(tools.run).toHaveBeenCalledTimes(1);
-      const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
-      expect(command).toBe(process.execPath);
-      expect(args).toEqual([
-        "--experimental-strip-types",
-        "--no-warnings",
-        path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
-      ]);
-      expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-      expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe(
-        "provider configuration failed",
-      );
-      expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
-        path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
-      );
-
-      expect(options.env[name]).toBeUndefined();
-    },
-  );
-
   it("creates, runs, downloads, and deletes the sandbox without host credentials", async () => {
     const env = advisorEnvironment();
     env.GIT_DIR = "/untrusted/ambient-git-dir";
@@ -918,6 +1060,14 @@ describe("PR review advisor OpenShell wrapper", () => {
           {
             type: "bind",
             source: fs.realpathSync(
+              path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "specialist"),
+            ),
+            target: "/pr-workdir/.pr-review-advisor-context",
+            read_only: true,
+          },
+          {
+            type: "bind",
+            source: fs.realpathSync(
               path.join(env.RUNNER_TEMP as string, "pr-review-advisor-tools"),
             ),
             target: "/pr-review-advisor-tools",
@@ -944,12 +1094,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     ]);
     expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
 
-    const runArgs =
-      vi
-        .mocked(tools.runAsync)
-        .mock.calls.find(([, args]) =>
-          args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
-        )?.[1] ?? [];
+    const runArgs = vi.mocked(tools.runAsync).mock.calls[0]?.[1] ?? [];
     expect(runArgs).toEqual(
       expect.arrayContaining([
         "sandbox",
@@ -962,11 +1107,12 @@ describe("PR review advisor OpenShell wrapper", () => {
         "/pr-workdir",
         "PR_REVIEW_ADVISOR_API_KEY=unused",
         "PR_REVIEW_ADVISOR_BASE_URL=https://inference.local/v1",
+        "PR_REVIEW_ADVISOR_CONTEXT_DIR=/pr-workdir/.pr-review-advisor-context",
         "PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH=/pr-review-advisor-context/github-context.json",
         "GIT_DIR=/pr-workdir/.git",
         "GIT_WORK_TREE=/pr-workdir",
         "TARGET_REPO=NVIDIA/NemoClaw",
-        "/advisor/tools/pr-review-advisor/run-analysis.mts",
+        "/advisor/tools/pr-review-advisor/run-specialist.mts",
         "--base",
         "target/base",
         "--head",
@@ -1015,68 +1161,6 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
   });
 
-  it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", async () => {
-    const env = advisorEnvironment();
-    const sessionDirectory = path.join(
-      env.ADVISOR_WORKDIR as string,
-      ".pr-review-advisor-sessions",
-    );
-    const sessionAlias = path.join(env.GITHUB_WORKSPACE as string, "specialist-sessions-alias");
-    fs.mkdirSync(sessionDirectory);
-    const sessionEntries = Object.fromEntries(
-      ADVISOR_INTERESTS.map((interest) => [interest, interest]),
-    );
-    Object.entries(sessionEntries).forEach(([interest, id]) =>
-      fs.writeFileSync(
-        path.join(sessionDirectory, `pr-review-${interest}-session.jsonl`),
-        `${JSON.stringify({ type: "session", id })}\n`,
-      ),
-    );
-    fs.symlinkSync(sessionDirectory, sessionAlias, "dir");
-    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionAlias;
-    env.PR_REVIEW_ADVISOR_INTEREST = "behavior";
-    const tools = advisorTools();
-
-    createAdvisorSandbox(env, tools);
-    await runAdvisorSandboxAsync(env, tools).completion;
-
-    const calls = vi.mocked(tools.run).mock.calls;
-    const createArgs =
-      calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
-    const driverConfigIndex = createArgs.indexOf("--driver-config-json");
-    const driverConfig = JSON.parse(createArgs[driverConfigIndex + 1] as string);
-    expect(
-      driverConfig.docker.mounts.filter(
-        (mount: { target?: string }) => mount.target === "/pr-workdir",
-      ),
-    ).toEqual([expect.objectContaining({ read_only: true })]);
-    const runArgs =
-      vi
-        .mocked(tools.runAsync)
-        .mock.calls.find(([, args]) =>
-          args.includes("/advisor/tools/pr-review-advisor/run-specialist.mts"),
-        )?.[1] ?? [];
-    expect(runArgs).toContain(
-      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
-    );
-    expect(runArgs.slice(-4)).toEqual(["--base", "target/base", "--head", "HEAD"]);
-    expect(runArgs).not.toContain(expect.stringContaining("session-reader"));
-  });
-
-  it("rejects a specialist session alias outside the fixed workdir input (#9963)", () => {
-    const env = advisorEnvironment();
-    const outsideDirectory = path.join(env.GITHUB_WORKSPACE as string, "outside-sessions");
-    const outsideAlias = path.join(env.ADVISOR_WORKDIR as string, "outside-sessions-alias");
-    fs.mkdirSync(outsideDirectory);
-    fs.symlinkSync(outsideDirectory, outsideAlias, "dir");
-    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = outsideAlias;
-    const tools = advisorTools();
-
-    expect(() => createAdvisorSandbox(env, tools)).toThrow(
-      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
-    );
-    expect(tools.run).not.toHaveBeenCalled();
-  });
 
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {
     const env = advisorEnvironment();

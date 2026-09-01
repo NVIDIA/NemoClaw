@@ -76,6 +76,8 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("sandbox delete") && normalized.includes("my-assistant")) {
     if (createdSandbox?.state.lifecycleState === "created") createdSandbox.delete();
   }
+  const sandboxResult = createdSandbox?.run(command) ?? null;
+  if (sandboxResult !== null) return sandboxResult;
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");
@@ -89,8 +91,7 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  const sandboxResult = createdSandbox?.run(command) ?? null;
-  return sandboxResult ?? { status: 0 };
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as onboardSession from "./state/onboard-session";
+import { getSelectedGatewayName } from "./actions/sandbox/gateway-target";
 import type { ListSandboxesCommandDeps, SandboxEntry } from "./inventory";
 import { getLiveGatewayInference } from "./inference/live";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
@@ -83,6 +84,7 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
     getLiveInference: () => {
       try {
         return getLiveGatewayInference(captureOpenshell, {
+          gatewayName: getSelectedGatewayName(),
           timeout: OPENSHELL_PROBE_TIMEOUT_MS,
         }).inference;
       } catch {
