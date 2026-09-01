@@ -426,12 +426,12 @@ async function inspectDockerJson(
   }
 }
 
-async function inspectOpenShellBridge(
+async function inspectOpenShellBridgeAddress(
   host: HostCliClient,
   kind: FakeDockerApiKind,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
-): Promise<{ address: string; networkName: string }> {
+): Promise<string> {
   const networkName =
     env.OPENSHELL_DOCKER_NETWORK_NAME ??
     process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
@@ -465,7 +465,7 @@ async function inspectOpenShellBridge(
   ) {
     throw new Error("OpenShell Docker network must expose exactly one IPv4 bridge gateway");
   }
-  return { address: gateways[0]!, networkName };
+  return gateways[0]!;
 }
 
 export async function runSandboxShell(
@@ -717,8 +717,12 @@ export async function startFakeDockerApi(
     env: NodeJS.ProcessEnv;
   },
 ): Promise<FakeDockerApi> {
-  const { address: openshellBridgeAddress, networkName: openshellNetwork } =
-    await inspectOpenShellBridge(host, options.kind, options.env, options.redactionValues);
+  const openshellBridgeAddress = await inspectOpenShellBridgeAddress(
+    host,
+    options.kind,
+    options.env,
+    options.redactionValues,
+  );
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
   const fixtureDir = path.join(dir, "fixture");
@@ -728,6 +732,7 @@ export async function startFakeDockerApi(
   const container = uniqueContainerName(options.containerPrefix);
   const proxyContainer = uniqueContainerName(`${options.containerPrefix}-proxy`);
   const network = uniqueContainerName("nemoclaw-fake-api-network");
+  const publicationNetwork = uniqueContainerName("nemoclaw-fake-api-publication");
   const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
   let credentialMounts: Array<{ envName: string; hostPath: string; containerPath: string }>;
   try {
@@ -774,6 +779,38 @@ export async function startFakeDockerApi(
     });
     if (remove.exitCode !== 0 && !/No such network:/iu.test(resultText(remove))) {
       expectExitZero(remove, `remove fake ${options.kind} API network ${network}`);
+    }
+  });
+
+  const publicationNetworkCreate = await runHost(
+    host,
+    "docker",
+    ["network", "create", "--driver", "bridge", publicationNetwork],
+    {
+      artifactName: `create-fake-${options.kind}-api-publication-network`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  try {
+    expectExitZero(publicationNetworkCreate, `create fake ${options.kind} API publication network`);
+  } catch (error) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+  cleanup(`remove ${publicationNetwork}`, async () => {
+    const remove = await runHost(host, "docker", ["network", "rm", publicationNetwork], {
+      artifactName: `cleanup-${publicationNetwork}`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 60_000,
+    });
+    if (remove.exitCode !== 0 && !/No such network:/iu.test(resultText(remove))) {
+      expectExitZero(
+        remove,
+        `remove fake ${options.kind} API publication network ${publicationNetwork}`,
+      );
     }
   });
 
@@ -865,9 +902,10 @@ export async function startFakeDockerApi(
   });
 
   // Docker ignores `-p` mappings when a container starts on an internal network.
-  // Start the credential-free proxy on the OpenShell bridge so its ports can bind
-  // only to that bridge's gateway, then attach it to the private API network.
-  // The credential-bearing API remains attached only to the private network.
+  // Start the credential-free proxy on a dedicated publication bridge so the
+  // OpenShell gateway can reach its bridge-bound ports without a same-network
+  // hairpin, then attach it to the private API network. The credential-bearing
+  // API remains attached only to the private network.
   const proxyStart = await runHost(
     host,
     "docker",
@@ -878,7 +916,7 @@ export async function startFakeDockerApi(
       "--name",
       proxyContainer,
       "--network",
-      openshellNetwork,
+      publicationNetwork,
       ...containerPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
@@ -935,7 +973,7 @@ export async function startFakeDockerApi(
     })),
   );
   for (const { role, networks } of networkInspections) {
-    const expectedNetworks = role === "api" ? [network] : [openshellNetwork, network];
+    const expectedNetworks = role === "api" ? [network] : [publicationNetwork, network];
     if (
       typeof networks !== "object" ||
       networks === null ||
@@ -1076,17 +1114,12 @@ export async function applyFakeApiPolicy(options: {
   for (const binary of options.binaries) args.push("--binary", binary);
   args.push("--wait");
 
-  const result = await runHost(
-    options.host,
-    options.host.openshellCommandPath,
-    args,
-    {
-      artifactName: options.artifactName,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
+  const result = await runHost(options.host, options.host.openshellCommandPath, args, {
+    artifactName: options.artifactName,
+    env: options.env,
+    redactionValues: options.redactionValues,
+    timeoutMs: 120_000,
+  });
   expectExitZero(result, options.artifactName);
 
   const binding = await runHost(

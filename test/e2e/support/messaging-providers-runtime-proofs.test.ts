@@ -52,7 +52,6 @@ const FAKE_SLACK_APP_TOKEN = "xapp-fake-slack-port-test";
 const FAKE_SLACK_BOT_TOKEN = "xoxb-fake-slack-port-test";
 const STDERR_TAIL_LIMIT = 4_096;
 const OPENSHELL_BRIDGE_ADDRESS = "172.18.0.1";
-const OPENSHELL_NETWORK_NAME = "openshell-docker";
 const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
   {
     Driver: "bridge",
@@ -247,7 +246,7 @@ function fakeDockerHost(
   networkInspect = OPENSHELL_NETWORK_INSPECT,
   proxyOnDefaultBridge = false,
 ): HostCliClient {
-  let network = "";
+  let privateNetwork = "";
   let proxyContainer = "";
   let proxyPrimaryNetwork = "";
   let proxyConnectedToInternal = false;
@@ -265,10 +264,13 @@ function fakeDockerHost(
                 case "inspect":
                   return successfulCommand(networkInspect);
                 case "create":
-                  network = args.at(-1) ?? "";
+                  privateNetwork = args.includes("--internal")
+                    ? (args.at(-1) ?? "")
+                    : privateNetwork;
                   return successfulCommand();
                 case "connect":
-                  proxyConnectedToInternal = args[2] === network && args[3] === proxyContainer;
+                  proxyConnectedToInternal =
+                    args[2] === privateNetwork && args[3] === proxyContainer;
                   return successfulCommand();
                 default:
                   return successfulCommand();
@@ -298,9 +300,9 @@ function fakeDockerHost(
                         ? {
                             ...(proxyOnDefaultBridge ? { bridge: {} } : {}),
                             [proxyPrimaryNetwork]: {},
-                            ...(proxyConnectedToInternal ? { [network]: {} } : {}),
+                            ...(proxyConnectedToInternal ? { [privateNetwork]: {} } : {}),
                           }
-                        : { [network]: {} },
+                        : { [privateNetwork]: {} },
                     ),
                   )
                 : successfulCommand(
@@ -545,6 +547,9 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(artifactNames).toContainEqual(
       expect.stringMatching(/^cleanup-nemoclaw-fake-api-network-/u),
     );
+    expect(artifactNames).toContainEqual(
+      expect.stringMatching(/^cleanup-nemoclaw-fake-api-publication-/u),
+    );
   });
 
   it("collects diagnostics when published fake API proxy ports do not carry traffic", async () => {
@@ -557,6 +562,7 @@ describe("messaging provider installed-runtime proofs", () => {
     let apiContainer = "";
     let proxyContainer = "";
     let network = "";
+    let publicationNetwork = "";
     const runner: CommandRunner = {
       async run(command, options) {
         const invocation = [command.command, ...command.args];
@@ -567,6 +573,9 @@ describe("messaging provider installed-runtime proofs", () => {
             return successfulShellResult(invocation, OPENSHELL_NETWORK_INSPECT);
           case "create-fake-slack-api-network":
             network = invocation.at(-1) ?? "";
+            return successfulShellResult(invocation);
+          case "create-fake-slack-api-publication-network":
+            publicationNetwork = invocation.at(-1) ?? "";
             return successfulShellResult(invocation);
           case "start-fake-slack-api": {
             apiContainer = invocation[invocation.indexOf("--name") + 1] ?? "";
@@ -584,7 +593,7 @@ describe("messaging provider installed-runtime proofs", () => {
           case "prove-fake-slack-api-proxy-internal-network":
             return successfulShellResult(
               invocation,
-              JSON.stringify({ [OPENSHELL_NETWORK_NAME]: {}, [network]: {} }),
+              JSON.stringify({ [publicationNetwork]: {}, [network]: {} }),
             );
           case "prove-fake-slack-api-internal-only":
             return successfulShellResult(invocation);
@@ -688,23 +697,31 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("publishes the proxy from the OpenShell bridge and connects it to the private API", async () => {
+  it("publishes through a dedicated bridge and connects the proxy to the private API", async () => {
     const calls: string[][] = [];
     const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
     const cleanup: Array<() => Promise<void>> = [];
+    const cleanupNames: string[] = [];
 
     try {
-      const api = await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
-        kind: "discord-gateway",
-        imageScript: "fake-discord-gateway-api.cjs",
-        containerPrefix: "fake-discord-gateway",
-        portEnv: "FAKE_API_PORT",
-        portFileEnv: "FAKE_API_PORT_FILE",
-        captureFileEnv: "FAKE_API_CAPTURE_FILE",
-        credentialEnv: {},
-        redactionValues: [],
-        env: {},
-      });
+      const api = await startFakeDockerApi(
+        host,
+        (name, run) => {
+          cleanupNames.push(name);
+          cleanup.push(run);
+        },
+        {
+          kind: "discord-gateway",
+          imageScript: "fake-discord-gateway-api.cjs",
+          containerPrefix: "fake-discord-gateway",
+          portEnv: "FAKE_API_PORT",
+          portFileEnv: "FAKE_API_PORT_FILE",
+          captureFileEnv: "FAKE_API_CAPTURE_FILE",
+          credentialEnv: {},
+          redactionValues: [],
+          env: {},
+        },
+      );
       expect(api.port).toBe("32100");
       const proxyRun = calls.find(
         (invocation) =>
@@ -713,13 +730,27 @@ describe("messaging provider installed-runtime proofs", () => {
           invocation.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
       );
       expect(proxyRun).toBeDefined();
-      expect(proxyRun?.[proxyRun.indexOf("--network") + 1]).toBe(OPENSHELL_NETWORK_NAME);
-      const privateNetwork = calls
-        .find(
-          (invocation) =>
-            invocation[0] === "docker" && invocation[1] === "network" && invocation[2] === "create",
-        )
+      const networkCreates = calls.filter(
+        (invocation) =>
+          invocation[0] === "docker" && invocation[1] === "network" && invocation[2] === "create",
+      );
+      expect(networkCreates).toHaveLength(2);
+      const privateNetwork = networkCreates
+        .find((invocation) => invocation.includes("--internal"))
         ?.at(-1);
+      const publicationCreate = networkCreates.find(
+        (invocation) => !invocation.includes("--internal"),
+      );
+      const publicationNetwork = publicationCreate?.at(-1);
+      expect(publicationCreate?.slice(0, -1)).toEqual([
+        "docker",
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+      ]);
+      expect(proxyRun?.[proxyRun.indexOf("--network") + 1]).toBe(publicationNetwork);
+      expect(proxyRun).not.toContain("openshell-docker");
       const proxyContainer = proxyRun?.[proxyRun.indexOf("--name") + 1];
       expect(calls).toContainEqual([
         "docker",
@@ -728,11 +759,23 @@ describe("messaging provider installed-runtime proofs", () => {
         privateNetwork,
         proxyContainer,
       ]);
+      expect(cleanupNames).toEqual([
+        expect.stringMatching(/^remove nemoclaw-fake-api-network-/u),
+        expect.stringMatching(/^remove nemoclaw-fake-api-publication-/u),
+        expect.stringMatching(/^remove fake-discord-gateway-/u),
+        expect.stringMatching(/^remove fake-discord-gateway-proxy-/u),
+      ]);
     } finally {
       await cleanup
         .reverse()
         .reduce((previous, action) => previous.then(action), Promise.resolve());
     }
+    expect(
+      calls.filter(
+        (invocation) =>
+          invocation[0] === "docker" && invocation[1] === "network" && invocation[2] === "rm",
+      ),
+    ).toHaveLength(2);
   });
 
   it("mounts fake API credentials without placing their values in Docker arguments", async () => {
@@ -770,8 +813,16 @@ describe("messaging provider installed-runtime proofs", () => {
       const credentialMount = apiRun?.find((argument) => argument.endsWith(mountSuffix));
       expect(credentialMount).toBeDefined();
       credentialFile = credentialMount!.slice(0, -mountSuffix.length);
-      expect(fs.statSync(credentialFile).mode & 0o777).toBe(0o600);
-      expect(fs.readFileSync(credentialFile, "utf8")).toBe(sentinel);
+      const credentialFd = fs.openSync(
+        credentialFile,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+      );
+      try {
+        expect(fs.fstatSync(credentialFd).mode & 0o777).toBe(0o600);
+        expect(fs.readFileSync(credentialFd, "utf8")).toBe(sentinel);
+      } finally {
+        fs.closeSync(credentialFd);
+      }
     } finally {
       await cleanup
         .reverse()
