@@ -7,6 +7,7 @@ import YAML from "yaml";
 
 import type { McpBridgeEntry } from "../../state/registry";
 import * as policies from "../../policy";
+import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
@@ -187,6 +188,11 @@ export async function prepareMcpBridgesForRebuild(
   if (!policyHandoff) {
     throw new McpBridgeError(
       `Could not capture the live OpenShell policy before MCP teardown for sandbox '${sandboxName}'.`,
+    );
+  }
+  if (!isSandboxPolicyCredentialFree(policyHandoff)) {
+    throw new McpBridgeError(
+      `Cannot prepare the MCP rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
     );
   }
   const expectedTeardownPolicy = policyWithoutManagedMcpEntries(policyHandoff, entries);
