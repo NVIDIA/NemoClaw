@@ -241,8 +241,9 @@ export function collectPlatformIdentity(
       fastOsReleasePath: options.fastOsReleasePath,
       pciDevicesPath: options.pciDevicesPath,
     });
-    if (n1xIdentity.qualified) nvidiaPlatform = "n1x";
-    if (n1xIdentity.candidate) {
+    if (n1xIdentity.fastOsPlatform === "spark") nvidiaPlatform = "spark";
+    else if (n1xIdentity.qualified) nvidiaPlatform = "n1x";
+    if (n1xIdentity.candidate && n1xIdentity.fastOsPlatform !== "spark") {
       return {
         nvidiaPlatform,
         productName,

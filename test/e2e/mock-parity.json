@@ -237,8 +237,9 @@
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
+      "liveSources": ["test/e2e/live/external-gateway-health-helpers.ts"],
       "fast": [
-        "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+        "test/e2e/support/external-gateway-health-process.test.ts",
         "test/install/reviewed-npm-archive.test.ts"
       ]
     },
@@ -536,6 +537,7 @@
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
         "test/e2e/live/mcp-bridge-cleanup.ts",
+        "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
@@ -626,7 +628,11 @@
     },
     {
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"],
       "fast": [
+        "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
+        "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

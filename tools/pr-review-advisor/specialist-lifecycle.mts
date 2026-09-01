@@ -69,7 +69,7 @@ export async function runAdvisorSpecialist(input: {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
   const env = {
     ...input.env,
-    SANDBOX_NAME: `pr-adv-${randomBytes(9).toString("base64url")}`,
+    SANDBOX_NAME: `pr-adv-${randomBytes(6).toString("hex")}`,
   };
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]>;
   let sandbox = false;
