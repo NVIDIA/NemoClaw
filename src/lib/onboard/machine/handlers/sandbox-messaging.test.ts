@@ -191,10 +191,7 @@ function discordPlan(
   };
 }
 
-function withChannelDisabled(
-  plan: SandboxMessagingPlan,
-  channelId: string,
-): SandboxMessagingPlan {
+function withChannelDisabled(plan: SandboxMessagingPlan, channelId: string): SandboxMessagingPlan {
   return {
     ...plan,
     channels: plan.channels.map((channel) =>
@@ -405,7 +402,12 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv, note: vi.fn(), providerMatchesGatewayCredential: () => false, writePlanToEnv: vi.fn() },
+      {
+        clearPlanEnv,
+        note: vi.fn(),
+        providerMatchesGatewayCredential: () => false,
+        writePlanToEnv: vi.fn(),
+      },
       plan,
     );
 
@@ -531,6 +533,35 @@ describe("reconcileReusedSandboxMessaging", () => {
       expect.any(String),
       "DISCORD_BOT_TOKEN",
     );
+  });
+
+  it("disables a Slack channel when one required gateway credential is missing (#10660)", () => {
+    const plan = slackPlan(
+      hashCredential("previous-slack-bot-token") ?? "",
+      hashCredential("previous-slack-app-token") ?? "",
+    );
+    vi.stubEnv("SLACK_BOT_TOKEN", "");
+    vi.stubEnv("SLACK_APP_TOKEN", "");
+    const writePlanToEnv = vi.fn();
+    const providerMatchesGatewayCredential = vi.fn(
+      (_name: string, _type: string, credentialEnv: string) => credentialEnv === "SLACK_BOT_TOKEN",
+    );
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "openclaw" },
+      {
+        clearPlanEnv: vi.fn(),
+        note: vi.fn(),
+        providerMatchesGatewayCredential,
+        writePlanToEnv,
+      },
+      plan,
+    );
+    const disabledPlan = withChannelDisabled(plan, "slack");
+
+    expect(result).toEqual({ plan: disabledPlan, selectedChannels: [], changed: true });
+    expect(writePlanToEnv).toHaveBeenCalledWith(disabledPlan);
   });
 
   it("keeps an in-sandbox QR channel in a reused sandbox selection (#9283)", () => {
@@ -812,7 +843,9 @@ describe("reconcileSandboxMessaging plan authority", () => {
     // input; a channel the environment no longer configures must not re-enter
     // the selection, or its egress preset is re-applied.
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
-    expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure discord"));
+    expect(deps.note).toHaveBeenCalledWith(
+      expect.stringContaining("No host inputs configure discord"),
+    );
     expect(deps.clearPlanEnv).toHaveBeenCalledOnce();
     expect(deps.writePlanToEnv).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: null, selectedChannels: [] });
