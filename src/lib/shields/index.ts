@@ -47,12 +47,12 @@ const {
   isPolicyObservationError,
   recheckPolicyMutationContext,
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
+  formatOpenShellPolicyRecoveryAction,
 } = require("../policy");
 const {
   createSyncCliOpenShellSandboxPolicyReader,
-  formatOpenShellPolicyRecoveryAction,
   namedOpenShellGateway,
-}: typeof import("../adapters/openshell/sandbox-policy-runtime") = require("../adapters/openshell/sandbox-policy-runtime");
+}: typeof import("../adapters/openshell/sandbox-policy-cli") = require("../adapters/openshell/sandbox-policy-cli");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
   buildOpenshellCommand,

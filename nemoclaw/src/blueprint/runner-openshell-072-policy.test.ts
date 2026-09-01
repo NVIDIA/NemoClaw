@@ -169,6 +169,25 @@ describe("blueprint policy convenience", () => {
     expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
   });
 
+  it("verifies policy additions before creating the inference provider or route", async () => {
+    await actionApply("default", blueprint());
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    const policySet = commands.findIndex((command) => command.startsWith("policy set "));
+    const policyVerification = commands.findIndex(
+      (command, index) =>
+        index > policySet &&
+        command === "policy get -g test-gateway --full --output json test-sandbox",
+    );
+    const providerCreate = commands.findIndex((command) => command.startsWith("provider create "));
+    const inferenceSet = commands.findIndex((command) => command.startsWith("inference set "));
+
+    expect(policySet).toBeGreaterThanOrEqual(0);
+    expect(policyVerification).toBeGreaterThan(policySet);
+    expect(providerCreate).toBeGreaterThan(policyVerification);
+    expect(inferenceSet).toBeGreaterThan(providerCreate);
+  });
+
   it("rebases additions when an unrelated host edit races the initial base-policy read", async () => {
     mutateBasePolicyOnRead = 2;
     mutateBasePolicy = () => {
@@ -266,6 +285,9 @@ describe("blueprint policy convenience", () => {
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       /Failed to apply policy additions: write rejected/,
     );
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands.some((command) => command.startsWith("provider create "))).toBe(false);
+    expect(commands.some((command) => command.startsWith("inference set "))).toBe(false);
   });
 
   it("fails closed when policy inspection throws", async () => {

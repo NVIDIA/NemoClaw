@@ -18,7 +18,7 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import {
-  captureRebuildPolicySource,
+  captureRebuildPolicyDocument,
   clearRebuildPolicyHandoff,
   type RebuildBackupManifest,
   runRebuildBackupPhase,
@@ -281,15 +281,9 @@ async function rebuildSandboxUnlocked(
         }
       };
       const capturePolicyHandoff = (): boolean => {
-        const capturedPath = captureRebuildPolicySource(
-          sandboxName,
-          recreateOptions.targetGatewayName,
+        return publishPolicyHandoff(
+          captureRebuildPolicyDocument(sandboxName, recreateOptions.targetGatewayName),
         );
-        try {
-          return publishPolicyHandoff(fs.readFileSync(capturedPath, "utf8"));
-        } finally {
-          cleanupTempDir(capturedPath, "nemoclaw-rebuild-policy");
-        }
       };
 
       // Validate the completed backup artifact produced above, not the mutable live

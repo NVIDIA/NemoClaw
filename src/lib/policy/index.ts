@@ -10,14 +10,17 @@ import readline from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-// Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import {
+  openshellNotFoundDiagnosticLines,
   namedOpenShellGateway,
-  PolicyObservationError,
   syncCliOpenShellSandboxPolicyReader,
+  tryResolveOpenshellBinary,
   type OpenShellSandboxResult,
-} from "../adapters/openshell/sandbox-policy-runtime";
-import * as openshellResolveModule from "../adapters/openshell/resolve";
+} from "../adapters/openshell/sandbox-policy-cli";
+import {
+  formatOpenShellPolicyRecoveryAction,
+  PolicyObservationError,
+} from "../adapters/openshell/policy-state";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
 import {
@@ -576,8 +579,8 @@ function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
  * `spawnSync openshell ENOENT` (issue #4224).
  */
 function assertOpenshellResolvable(options: { nonFatal?: boolean } = {}): boolean {
-  if (openshellResolveModule.resolveOpenshell()) return true;
-  for (const line of openshellResolveModule.openshellNotFoundDiagnosticLines()) {
+  if (tryResolveOpenshellBinary()) return true;
+  for (const line of openshellNotFoundDiagnosticLines()) {
     console.error(line);
   }
   if (options.nonFatal) return false;
@@ -1038,7 +1041,8 @@ export function setPolicyDocument(
     }
 
     const originalDocument =
-      context.basePolicyDocument ?? readLivePolicyDocument(sandboxName, context.gatewayName, "base");
+      context.basePolicyDocument ??
+      readLivePolicyDocument(sandboxName, context.gatewayName, "base");
     const originalVersion = context.inspection.policyIdentity.activeVersion;
     const { outcome, status } = submitComposedPolicy(
       sandboxName,
@@ -1067,7 +1071,8 @@ export function setPolicyDocument(
       process.exit(1);
     }
     const observedDocument =
-      observed.basePolicyDocument ?? readLivePolicyDocument(sandboxName, observed.gatewayName, "base");
+      observed.basePolicyDocument ??
+      readLivePolicyDocument(sandboxName, observed.gatewayName, "base");
     const observedVersion = observed.inspection.policyIdentity.activeVersion;
     const requestedIsCurrent = policyDocumentsMatch(observedDocument, requestedDocument);
     const concurrentRevision = observedVersion > originalVersion + 1;
@@ -1956,7 +1961,8 @@ function readCurrentSandboxPolicy(sandboxName: string, gatewayName?: string): st
     const selectedGateway =
       gatewayName ?? resolveSandboxGatewayName(registry.getSandbox(sandboxName));
     return (
-      parseCurrentPolicyOrEmpty(readLivePolicyDocument(sandboxName, selectedGateway, "base")) || null
+      parseCurrentPolicyOrEmpty(readLivePolicyDocument(sandboxName, selectedGateway, "base")) ||
+      null
     );
   } catch {
     return null;
@@ -2964,6 +2970,7 @@ export {
   excludeBaselineEntry,
   extractPresetEntries,
   filterSetupPolicyPresets,
+  formatOpenShellPolicyRecoveryAction,
   getAppliedPresets,
   getGatewayPresets,
   getOpenClawNpmCompatibilityState,

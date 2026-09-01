@@ -1628,6 +1628,12 @@ export async function actionApply(
 
     persistRunPlan();
 
+    if (Object.keys(policyAdditions).length > 0) {
+      progress(30, "Applying policy additions");
+      await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);
+    }
+    assertBlueprintPolicyRequirements(await requireLivePolicy(), policyAdditions);
+
     if (runtimeIdentityConfig) {
       const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
         gateway: policyGateway.name,
@@ -1669,7 +1675,7 @@ export async function actionApply(
           (inferenceCfg.timeout_secs === undefined ||
             activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
       }
-      progress(30, "Configuring runtime identity");
+      progress(40, "Configuring runtime identity");
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
       persistRunPlan();
     }
@@ -1796,13 +1802,7 @@ export async function actionApply(
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
     }
 
-    if (Object.keys(policyAdditions).length > 0) {
-      progress(78, "Applying policy additions");
-      await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);
-    }
-
     progress(85, "Saving run state");
-    assertBlueprintPolicyRequirements(await requireLivePolicy(), policyAdditions);
     persistRunPlan();
 
     progress(100, "Apply complete");

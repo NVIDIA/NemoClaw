@@ -210,6 +210,26 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
   });
 
+  it("publishes the delete-edge policy recapture without a transient source file", async () => {
+    let recreatedPolicy = "";
+    const secureTempFile = vi.spyOn(tempFiles, "secureTempFile");
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {},
+      onboard: (_session, options) => {
+        recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(recreatedPolicy).toContain("host_preserved");
+    expect(
+      secureTempFile.mock.calls.filter(([prefix]) => prefix === "nemoclaw-rebuild-policy"),
+    ).toEqual([]);
+  });
+
   it("does not report rebuild success when inner onboarding returns a failure code (#10394)", async ({
     onTestFinished,
   }) => {

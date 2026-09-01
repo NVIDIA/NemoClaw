@@ -15,7 +15,7 @@ import {
 import { isValidName } from "../../sandbox-name-contract";
 import { stripCredentials } from "../../security/credential-filter";
 import { stripAnsi } from "./client";
-import { openshellNotFoundDiagnosticLines } from "./command-argv";
+import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
 import * as openshellPolicyRuntime from "./runtime";
 import type { OpenShellSandboxResult } from "./sandbox-observer";
 import {
@@ -36,6 +36,8 @@ import type {
 export { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 export type { OpenShellSandboxError, OpenShellSandboxResult } from "./sandbox-observer";
 export type { OpenShellSandboxPolicyReader } from "./sandbox-policy";
+
+export { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary };
 
 type SyncCapturePolicyCommand = (
   ...args: Parameters<CaptureOpenShellCommand>

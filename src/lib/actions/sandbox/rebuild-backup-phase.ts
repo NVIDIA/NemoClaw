@@ -60,16 +60,7 @@ function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): 
   return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
-export function captureRebuildPolicySource(
-  sandboxName: string,
-  gatewayName: string,
-  policySourcePath?: string,
-): string {
-  const policy = captureRebuildPolicyDocument(sandboxName, gatewayName);
-  return writeRebuildPolicySource(policy, policySourcePath);
-}
-
-function captureRebuildPolicyDocument(sandboxName: string, gatewayName: string): string {
+export function captureRebuildPolicyDocument(sandboxName: string, gatewayName: string): string {
   let policy: string;
   try {
     policy = captureRecordedSandboxBasePolicy(
