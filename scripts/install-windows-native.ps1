@@ -15,7 +15,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Install', 'Repair', 'Uninstall')]
+    [ValidateSet('Install', 'Repair', 'Recover', 'Uninstall')]
     [string]$Action = 'Install',
 
     [string]$ManifestPath,
@@ -198,15 +198,13 @@ function Read-DistributionManifest {
     }
     $destinations = @{}
     $resolvedFiles = @()
-    $omittedOptionalDestinations = @()
     foreach ($entry in @($manifest.files)) {
         Assert-ExactProperties -Value $entry -Properties @(
-            'destination', 'required', 'sha256', 'source'
+            'destination', 'sha256', 'source'
         ) -Label 'Distribution file entry'
         $source = Resolve-SafeRelativePath -Value $entry.source -Label 'Distribution source'
         $destination = Resolve-SafeRelativePath -Value $entry.destination -Label 'Distribution destination'
-        if ($entry.required -isnot [bool] -or $entry.sha256 -isnot [string] -or
-            $entry.sha256 -cnotmatch $script:Sha256Pattern) {
+        if ($entry.sha256 -isnot [string] -or $entry.sha256 -cnotmatch $script:Sha256Pattern) {
             Fail-NativeWindowsInstall 'Distribution file entry identity is invalid.'
         }
         $destinationKey = $destination.ToLowerInvariant()
@@ -220,11 +218,7 @@ function Read-DistributionManifest {
             Fail-NativeWindowsInstall 'Distribution source escapes the payload root.'
         }
         if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-            if ($entry.required) {
-                Fail-NativeWindowsInstall "Required distribution source is missing: $source"
-            }
-            $omittedOptionalDestinations += $destination
-            continue
+            Fail-NativeWindowsInstall "Distribution source is missing: $source"
         }
         $sourcePath = Resolve-ExistingRegularFile -Path $sourcePath -Label "Distribution source '$source'"
         $actualDigest = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -254,7 +248,6 @@ function Read-DistributionManifest {
         PayloadRoot = $payloadDirectory
         Architecture = $nativeArchitecture
         Files = @($resolvedFiles)
-        OmittedOptionalDestinations = @($omittedOptionalDestinations | Sort-Object)
     }
 }
 
@@ -264,12 +257,51 @@ function Test-InstalledFiles {
         [Parameter(Mandatory)][Array]$Files
     )
 
+    $expectedFiles = @{}
+    $expectedDirectories = @{}
     foreach ($file in $Files) {
-        $target = Join-Path $VersionRoot $file.Destination
-        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+        $expectedFiles[$file.Destination.ToLowerInvariant()] = $file.Sha256
+        $segments = @($file.Destination.Split('\'))
+        for ($index = 1; $index -lt $segments.Count; $index++) {
+            $directory = ($segments[0..($index - 1)] -join '\').ToLowerInvariant()
+            $expectedDirectories[$directory] = $true
+        }
+    }
+
+    $observedFiles = @{}
+    $observedDirectories = @{}
+    $pendingDirectories = [Collections.Generic.Stack[string]]::new()
+    $pendingDirectories.Push($VersionRoot)
+    while ($pendingDirectories.Count -gt 0) {
+        $directory = $pendingDirectories.Pop()
+        foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Fail-NativeWindowsInstall "Installed candidate contains a reparse point: $($item.FullName)"
+            }
+            $relativePath = $item.FullName.Substring($VersionRoot.Length + 1).ToLowerInvariant()
+            if ($item.PSIsContainer) {
+                $observedDirectories[$relativePath] = $true
+                $pendingDirectories.Push($item.FullName)
+            } else {
+                $observedFiles[$relativePath] = $item.FullName
+            }
+        }
+    }
+    if ($observedFiles.Count -ne $expectedFiles.Count -or
+        $observedDirectories.Count -ne $expectedDirectories.Count) {
+        return $false
+    }
+    foreach ($expectedDirectory in $expectedDirectories.Keys) {
+        if (-not $observedDirectories.ContainsKey($expectedDirectory)) {
             return $false
         }
-        Assert-NoReparsePoint -Path $target -Label "Installed file '$($file.Destination)'"
+    }
+    foreach ($file in $Files) {
+        $target = Join-Path $VersionRoot $file.Destination
+        if (-not $observedFiles.ContainsKey($file.Destination.ToLowerInvariant()) -or
+            -not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            return $false
+        }
         if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.Sha256) {
             return $false
         }
@@ -293,6 +325,36 @@ function Write-JsonAtomic {
     } else {
         [IO.File]::Move($temporary, $Path)
     }
+}
+
+function Write-RepairRecoveryRecord {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Action,
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$VersionRoot,
+        [Parameter(Mandatory)][string]$BackupRoot,
+        [AllowNull()][string]$FailedReplacementRoot,
+        [Parameter(Mandatory)][string]$PublishError,
+        [Parameter(Mandatory)][string]$RollbackError
+    )
+
+    Write-JsonAtomic -Path $Path -Value ([pscustomobject]@{
+        receiptVersion = 1
+        classification = 'qualification-only'
+        installRoot = $Root
+        openshell = [pscustomobject]@{
+            repository = $script:TrustedOpenShellRepository
+            pullRequest = $script:TrustedOpenShellPullRequest
+            revision = $script:TrustedOpenShellRevision
+        }
+        action = $Action
+        versionRoot = $VersionRoot
+        backupRoot = $BackupRoot
+        failedReplacementRoot = $FailedReplacementRoot
+        publishError = $PublishError
+        rollbackError = $RollbackError
+    })
 }
 
 function Publish-Distribution {
@@ -344,16 +406,18 @@ function Publish-Distribution {
                         [IO.Directory]::Move($backupRoot, $versionRoot)
                     }
                 } catch {
-                    Write-JsonAtomic -Path $recoveryPath -Value ([pscustomobject]@{
-                        receiptVersion = 1
-                        action = 'restore-prior-version'
-                        versionRoot = $versionRoot
-                        backupRoot = $backupRoot
-                        failedReplacementRoot = $null
-                        publishError = $publishError
-                        rollbackError = $_.Exception.Message
-                    })
-                    Fail-NativeWindowsInstall "Repair publication and rollback failed. Recovery authority: $recoveryPath"
+                    $recoveryParameters = @{
+                        Path = $recoveryPath
+                        Action = 'restore-prior-version'
+                        Root = $Root
+                        VersionRoot = $versionRoot
+                        BackupRoot = $backupRoot
+                        FailedReplacementRoot = $null
+                        PublishError = $publishError
+                        RollbackError = $_.Exception.Message
+                    }
+                    Write-RepairRecoveryRecord @recoveryParameters
+                    Fail-NativeWindowsInstall "Repair publication and rollback failed. Run Recover with the same manifest, payload, and install root. Recovery authority: $recoveryPath"
                 }
                 Fail-NativeWindowsInstall "Repair publication failed and the prior version was restored: $publishError"
             }
@@ -366,16 +430,18 @@ function Publish-Distribution {
                     [IO.Directory]::Move($backupRoot, $versionRoot)
                     [IO.Directory]::Delete($failedReplacementRoot, $true)
                 } catch {
-                    Write-JsonAtomic -Path $recoveryPath -Value ([pscustomobject]@{
-                        receiptVersion = 1
-                        action = 'restore-prior-version-and-remove-replacement'
-                        versionRoot = $versionRoot
-                        backupRoot = $backupRoot
-                        failedReplacementRoot = $failedReplacementRoot
-                        publishError = $cleanupError
-                        rollbackError = $_.Exception.Message
-                    })
-                    Fail-NativeWindowsInstall "Repair backup cleanup and rollback failed. Recovery authority: $recoveryPath"
+                    $recoveryParameters = @{
+                        Path = $recoveryPath
+                        Action = 'restore-prior-version-and-remove-replacement'
+                        Root = $Root
+                        VersionRoot = $versionRoot
+                        BackupRoot = $backupRoot
+                        FailedReplacementRoot = $failedReplacementRoot
+                        PublishError = $cleanupError
+                        RollbackError = $_.Exception.Message
+                    }
+                    Write-RepairRecoveryRecord @recoveryParameters
+                    Fail-NativeWindowsInstall "Repair backup cleanup and rollback failed. Run Recover with the same manifest, payload, and install root. Recovery authority: $recoveryPath"
                 }
                 Fail-NativeWindowsInstall "Repair could not retire the prior backup, so the prior version was restored. Release file locks and retry Repair. Backup cleanup error: $cleanupError"
             }
@@ -403,7 +469,7 @@ function Invoke-InstallOrRepair {
     $root = Resolve-InstallRoot -Path $InstallRoot
     $repairRecoveryPath = Join-Path $root 'repair-recovery.json'
     if (Test-Path -LiteralPath $repairRecoveryPath -PathType Leaf) {
-        Fail-NativeWindowsInstall "Unresolved repair state must be reconciled before installation: $repairRecoveryPath"
+        Fail-NativeWindowsInstall "Unresolved repair state blocks installation. Run Recover with the same manifest, payload, and install root: $repairRecoveryPath"
     }
     $distribution = Read-DistributionManifest -Path $ManifestPath -Root $PayloadRoot
     $versionRoot = Publish-Distribution -Distribution $distribution -Root $root -Repair $Repair
@@ -429,7 +495,6 @@ function Invoke-InstallOrRepair {
         installRoot = $root
         versionRoot = $versionRoot
         files = $installedFiles
-        omittedOptionalDestinations = @($distribution.OmittedOptionalDestinations)
     }
     Write-JsonAtomic -Path $receiptPath -Value $receipt
     if ($Json) {
@@ -439,11 +504,92 @@ function Invoke-InstallOrRepair {
     }
 }
 
+function Resolve-RecoveryAuxiliaryPath {
+    param(
+        [AllowNull()]$Value,
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Prefix,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+    if ($Value -isnot [string]) {
+        Fail-NativeWindowsInstall "$Label is invalid."
+    }
+    $resolved = [IO.Path]::GetFullPath($Value).TrimEnd('\')
+    if ((Split-Path -Parent $resolved) -cne $Root -or
+        (Split-Path -Leaf $resolved) -cnotmatch "^$([regex]::Escape($Prefix))[a-f0-9]{32}$") {
+        Fail-NativeWindowsInstall "$Label is outside its owned recovery namespace."
+    }
+    return $resolved
+}
+
+function Invoke-Recover {
+    if ([string]::IsNullOrWhiteSpace($ManifestPath) -or [string]::IsNullOrWhiteSpace($PayloadRoot)) {
+        Fail-NativeWindowsInstall 'ManifestPath and PayloadRoot are required for Recover.'
+    }
+    $root = Resolve-InstallRoot -Path $InstallRoot
+    $distribution = Read-DistributionManifest -Path $ManifestPath -Root $PayloadRoot
+    $recoveryPath = Resolve-ExistingRegularFile -Path (Join-Path $root 'repair-recovery.json') -Label 'Repair recovery authority'
+    try {
+        $recovery = Get-Content -LiteralPath $recoveryPath -Raw | ConvertFrom-Json
+    } catch {
+        Fail-NativeWindowsInstall 'Repair recovery authority is not valid JSON.'
+    }
+    Assert-ExactProperties -Value $recovery -Properties @(
+        'action', 'backupRoot', 'classification', 'failedReplacementRoot', 'installRoot',
+        'openshell', 'publishError', 'receiptVersion', 'rollbackError', 'versionRoot'
+    ) -Label 'Repair recovery authority'
+    Assert-ExactProperties -Value $recovery.openshell -Properties @(
+        'pullRequest', 'repository', 'revision'
+    ) -Label 'Recovery OpenShell authority'
+    if ($recovery.receiptVersion -ne 1 -or $recovery.classification -cne 'qualification-only' -or
+        $recovery.installRoot -cne $root -or
+        $recovery.action -cnotin @('restore-prior-version', 'restore-prior-version-and-remove-replacement') -or
+        $recovery.openshell.repository -cne $script:TrustedOpenShellRepository -or
+        $recovery.openshell.pullRequest -ne $script:TrustedOpenShellPullRequest -or
+        $recovery.openshell.revision -cne $script:TrustedOpenShellRevision) {
+        Fail-NativeWindowsInstall 'Repair recovery authority identity is invalid.'
+    }
+
+    $versionName = "openshell-pr$($script:TrustedOpenShellPullRequest)-$($script:TrustedOpenShellRevision.Substring(0, 12))-$($distribution.Architecture)"
+    $expectedVersionRoot = [IO.Path]::GetFullPath((Join-Path (Join-Path $root 'versions') $versionName)).TrimEnd('\')
+    $recordedVersionRoot = [IO.Path]::GetFullPath([string]$recovery.versionRoot).TrimEnd('\')
+    if ($recordedVersionRoot -cne $expectedVersionRoot) {
+        Fail-NativeWindowsInstall 'Repair recovery version root does not match the pinned distribution.'
+    }
+    $backupParameters = @{
+        Value = $recovery.backupRoot
+        Root = $root
+        Prefix = '.backup-'
+        Label = 'Recovery backup root'
+    }
+    $backupRoot = Resolve-RecoveryAuxiliaryPath @backupParameters
+    $replacementParameters = @{
+        Value = $recovery.failedReplacementRoot
+        Root = $root
+        Prefix = '.replacement-'
+        Label = 'Recovery replacement root'
+    }
+    $replacementRoot = Resolve-RecoveryAuxiliaryPath @replacementParameters
+
+    foreach ($ownedDirectory in (@($recordedVersionRoot, $backupRoot, $replacementRoot) | Select-Object -Unique)) {
+        if ($ownedDirectory -and (Test-Path -LiteralPath $ownedDirectory -PathType Container)) {
+            Assert-NoReparsePoint -Path $ownedDirectory -Label 'Recorded recovery directory'
+            [IO.Directory]::Delete($ownedDirectory, $true)
+        }
+    }
+    [IO.File]::Delete($recoveryPath)
+    Invoke-InstallOrRepair -Repair $false
+}
+
 function Invoke-Uninstall {
     $root = Resolve-InstallRoot -Path $InstallRoot
     $repairRecoveryPath = Join-Path $root 'repair-recovery.json'
     if (Test-Path -LiteralPath $repairRecoveryPath -PathType Leaf) {
-        Fail-NativeWindowsInstall "Unresolved repair state must be reconciled before uninstall: $repairRecoveryPath"
+        Fail-NativeWindowsInstall "Unresolved repair state blocks uninstall. Run Recover with the same manifest, payload, and install root: $repairRecoveryPath"
     }
     $receiptPath = Resolve-ExistingRegularFile -Path (Join-Path $root $script:ReceiptFileName) -Label 'Install receipt'
     try {
@@ -453,7 +599,7 @@ function Invoke-Uninstall {
     }
     Assert-ExactProperties -Value $receipt -Properties @(
         'architecture', 'classification', 'files', 'installerSha256', 'installRoot',
-        'manifestSha256', 'omittedOptionalDestinations', 'openshell', 'platform',
+        'manifestSha256', 'openshell', 'platform',
         'receiptVersion', 'versionRoot'
     ) -Label 'Install receipt'
     Assert-ExactProperties -Value $receipt.openshell -Properties @(
@@ -511,5 +657,6 @@ function Invoke-Uninstall {
 switch ($Action) {
     'Install' { Invoke-InstallOrRepair -Repair $false }
     'Repair' { Invoke-InstallOrRepair -Repair $true }
+    'Recover' { Invoke-Recover }
     'Uninstall' { Invoke-Uninstall }
 }

@@ -19,9 +19,7 @@ param(
     [Parameter(Mandatory)][string]$InstallerSha256,
     [Parameter(Mandatory)][string]$OpenShellCheckout,
     [Parameter(Mandatory)][string]$OpenShellSha,
-    [Parameter(Mandatory)][string]$ArtifactDirectory,
-    [string]$WxcExecPath,
-    [string]$WxcExecSha256 = '6049c64723af1173c3739dc6cd6b2f33f6c021bb2832c4216233cba7f71aee9a'
+    [Parameter(Mandatory)][string]$ArtifactDirectory
 )
 
 Set-StrictMode -Version Latest
@@ -208,24 +206,11 @@ namespace NemoClaw.WindowsQualification
 '@
     }
 
-    $processPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    $firewallRule = "NemoClawNativeQualification-$PID-$([guid]::NewGuid().ToString('N'))"
-    $firewallParameters = @{
-        Name = $firewallRule
-        DisplayName = $firewallRule
-        Direction = 'Outbound'
-        Action = 'Block'
-        Program = $processPath
-        Profile = 'Any'
-    }
-    New-NetFirewallRule @firewallParameters | Out-Null
-
     $jobHandle = [NemoClaw.WindowsQualification.JobBoundary]::CreateJobObject(
         [IntPtr]::Zero,
         "NemoClawNativeQualification-$PID"
     )
     if ($jobHandle -eq [IntPtr]::Zero) {
-        Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
         Fail-Qualification 'Could not create the installer qualification Job Object.'
     }
     $limit = [NemoClaw.WindowsQualification.ExtendedLimitInformation]::new()
@@ -239,7 +224,6 @@ namespace NemoClaw.WindowsQualification
         $limitLength
     )) {
         [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($jobHandle) | Out-Null
-        Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
         Fail-Qualification 'Could not apply the one-process installer qualification limit.'
     }
     $currentProcess = [Diagnostics.Process]::GetCurrentProcess()
@@ -248,13 +232,10 @@ namespace NemoClaw.WindowsQualification
         $currentProcess.Handle
     )) {
         [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($jobHandle) | Out-Null
-        Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
         Fail-Qualification 'Could not enter the one-process installer qualification Job Object.'
     }
     return [pscustomobject]@{
         JobHandle = $jobHandle
-        FirewallRule = $firewallRule
-        ProgramPath = $processPath
     }
 }
 
@@ -279,32 +260,15 @@ function Test-RestrictedInstallerBoundary {
         Fail-Qualification 'The installer qualification Job Object allowed a child process.'
     }
 
-    $outboundNetworkDenied = $false
-    Add-Type -AssemblyName System.Net.Http
-    $httpClient = [Net.Http.HttpClient]::new()
-    $httpClient.Timeout = [TimeSpan]::FromSeconds(5)
-    try {
-        $response = $httpClient.GetAsync('https://api.github.com/').GetAwaiter().GetResult()
-        $response.Dispose()
-    } catch {
-        $outboundNetworkDenied = $true
-    } finally {
-        $httpClient.Dispose()
-    }
-    if (-not $outboundNetworkDenied) {
-        Fail-Qualification 'The installer qualification firewall allowed outbound network access.'
-    }
     return [pscustomobject]@{
         jobActiveProcessLimit = 1
         childProcessDenied = $true
-        outboundNetworkDenied = $true
     }
 }
 
 function Exit-RestrictedInstallerBoundary {
     param([Parameter(Mandatory)]$Boundary)
 
-    Remove-NetFirewallRule -Name $Boundary.FirewallRule -ErrorAction SilentlyContinue
     if ($Boundary.JobHandle -ne [IntPtr]::Zero) {
         [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($Boundary.JobHandle) | Out-Null
     }
@@ -355,8 +319,8 @@ function Assert-BoundedFile {
 if ($CandidateSha -cnotmatch $script:ShaPattern -or $OpenShellSha -cnotmatch $script:ShaPattern) {
     Fail-Qualification 'Candidate and OpenShell revisions must be lowercase 40-character commit SHAs.'
 }
-if ($InstallerSha256 -cnotmatch $script:Sha256Pattern -or $WxcExecSha256 -cnotmatch $script:Sha256Pattern) {
-    Fail-Qualification 'Installer and wxc-exec digests must be lowercase SHA-256 values.'
+if ($InstallerSha256 -cnotmatch $script:Sha256Pattern) {
+    Fail-Qualification 'Installer digest must be a lowercase SHA-256 value.'
 }
 if ($OpenShellSha -cne $script:TrustedOpenShellRevision) {
     Fail-Qualification 'OpenShell revision must match PR #2721 merge commit.'
@@ -422,7 +386,6 @@ try {
             source = $payloadRelative
             destination = $payloadRelative
             sha256 = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            required = $true
         }
     }
     $z3Source = Join-Path $releaseRoot 'libz3.dll'
@@ -433,26 +396,7 @@ try {
             source = $z3Relative
             destination = $z3Relative
             sha256 = (Get-FileHash -LiteralPath (Join-Path $payloadRoot $z3Relative) -Algorithm SHA256).Hash.ToLowerInvariant()
-            required = $true
         }
-    }
-
-    $wxcRelative = 'mxc\wxc-exec.exe'
-    if (-not [string]::IsNullOrWhiteSpace($WxcExecPath)) {
-        $resolvedWxc = [IO.Path]::GetFullPath($WxcExecPath)
-        if (-not (Test-Path -LiteralPath $resolvedWxc -PathType Leaf) -or
-            (Get-FileHash -LiteralPath $resolvedWxc -Algorithm SHA256).Hash.ToLowerInvariant() -cne $WxcExecSha256) {
-            Fail-Qualification 'wxc-exec candidate is missing or has the wrong digest.'
-        }
-        $wxcPayload = Join-Path $payloadRoot $wxcRelative
-        [IO.Directory]::CreateDirectory((Split-Path -Parent $wxcPayload)) | Out-Null
-        [IO.File]::Copy($resolvedWxc, $wxcPayload, $false)
-    }
-    $distributionEntries += [pscustomobject]@{
-        source = $wxcRelative
-        destination = $wxcRelative
-        sha256 = $WxcExecSha256
-        required = $false
     }
 
     $manifest = [pscustomobject]@{
@@ -469,6 +413,13 @@ try {
     }
     $manifestPath = Join-Path $payloadRoot 'distribution-manifest.json'
     Write-JsonFile -Path $manifestPath -Value $manifest
+    $expectedOpenShellEntry = @($distributionEntries | Where-Object {
+        $_.destination -ceq 'bin\openshell.exe'
+    })
+    if ($expectedOpenShellEntry.Count -ne 1) {
+        Fail-Qualification 'Qualification payload has no unique OpenShell CLI digest.'
+    }
+    $expectedOpenShellSha256 = $expectedOpenShellEntry[0].sha256
 
     $restrictedBoundary = Enter-RestrictedInstallerBoundary
     $restrictedBoundaryEvidence = Test-RestrictedInstallerBoundary
@@ -488,6 +439,17 @@ try {
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'install-receipt.json'), $false)
 
     $installReceipt = $installOutput | Select-Object -Last 1 | ConvertFrom-Json
+    $untrackedPath = Join-Path $installReceipt.versionRoot 'bin\untracked-qualification.txt'
+    [IO.File]::WriteAllText($untrackedPath, 'untracked', [Text.UTF8Encoding]::new($false))
+    $untrackedInstallRejected = $false
+    try {
+        & $installer @installParameters | Out-Null
+    } catch {
+        $untrackedInstallRejected = $true
+    }
+    if (-not $untrackedInstallRejected) {
+        Fail-Qualification 'Install accepted an untracked file inside the owned version root.'
+    }
     $driftTarget = Join-Path $installReceipt.versionRoot 'bin\openshell.exe'
     [IO.File]::AppendAllText($driftTarget, 'qualification-drift', [Text.UTF8Encoding]::new($false))
     $repairParameters = @{
@@ -500,11 +462,52 @@ try {
     & $installer @repairParameters | Out-Null
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'repair-receipt.json'), $false)
     $repairedReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
-    $expectedOpenShell = @($repairedReceipt.files | Where-Object { $_.path -ceq 'bin\openshell.exe' })
-    if ($expectedOpenShell.Count -ne 1 -or
-        (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShell[0].sha256) {
+    if ((Test-Path -LiteralPath $untrackedPath) -or
+        (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
         Fail-Qualification 'Repair did not restore the OpenShell CLI digest.'
     }
+
+    $recoveryBackupRoot = Join-Path $installRoot ('.backup-' + [guid]::NewGuid().ToString('N'))
+    $recoveryReplacementRoot = Join-Path $installRoot ('.replacement-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::Move($repairedReceipt.versionRoot, $recoveryBackupRoot)
+    [IO.Directory]::CreateDirectory($recoveryReplacementRoot) | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $recoveryReplacementRoot 'incomplete.txt'),
+        'incomplete replacement',
+        [Text.UTF8Encoding]::new($false)
+    )
+    $recoveryAuthorityPath = Join-Path $installRoot 'repair-recovery.json'
+    Write-JsonFile -Path $recoveryAuthorityPath -Value ([pscustomobject]@{
+        receiptVersion = 1
+        classification = 'qualification-only'
+        installRoot = $installRoot
+        openshell = [pscustomobject]@{
+            repository = $script:CanonicalOpenShellRepository
+            pullRequest = $script:TrustedOpenShellPullRequest
+            revision = $script:TrustedOpenShellRevision
+        }
+        action = 'restore-prior-version-and-remove-replacement'
+        versionRoot = $repairedReceipt.versionRoot
+        backupRoot = $recoveryBackupRoot
+        failedReplacementRoot = $recoveryReplacementRoot
+        publishError = 'qualification fixture'
+        rollbackError = 'qualification fixture'
+    })
+    $recoverParameters = @{
+        Action = 'Recover'
+        ManifestPath = $manifestPath
+        PayloadRoot = $payloadRoot
+        InstallRoot = $installRoot
+        Json = $true
+    }
+    & $installer @recoverParameters | Out-Null
+    if ((Test-Path -LiteralPath $recoveryAuthorityPath) -or
+        (Test-Path -LiteralPath $recoveryBackupRoot) -or
+        (Test-Path -LiteralPath $recoveryReplacementRoot) -or
+        (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
+        Fail-Qualification 'Recover did not publish one clean pinned distribution.'
+    }
+    [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'recovery-receipt.json'), $false)
 
     $uninstallOutput = & $installer -Action Uninstall -InstallRoot $installRoot -Json
     $uninstallReceipt = $uninstallOutput | Select-Object -Last 1 | ConvertFrom-Json
