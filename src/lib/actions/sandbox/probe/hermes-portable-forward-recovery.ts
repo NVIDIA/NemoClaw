@@ -17,23 +17,47 @@ type CommandResult = {
   readonly status?: number | null;
 };
 
-type ForwardState =
-  | "absent"
-  | "healthy"
-  | "occupied"
-  | "stale-reachable"
-  | "stale-unreachable";
-type ForwardTimingStage = "list" | "settle" | "start" | "stop";
+type ForwardState = "absent" | "healthy" | "occupied" | "stale-reachable" | "stale-unreachable";
+type ForwardTimingStage =
+  | "authority"
+  | "list"
+  | "parse"
+  | "reachability"
+  | "rollback"
+  | "settle"
+  | "sleep"
+  | "start"
+  | "stop";
+
+type ForwardPortOutcome = ForwardState | "unobserved";
+
+export interface HermesPortableForwardPortTimingEvidence {
+  readonly port: number;
+  readonly observationCount: number;
+  readonly reachabilityCount: number;
+  readonly outcome: ForwardPortOutcome;
+}
 
 export interface HermesPortableForwardRecoveryTimingEvidence {
   readonly listMs: number;
   readonly listCount: number;
+  readonly parseMs: number;
+  readonly parseCount: number;
+  readonly currentnessMs: number;
+  readonly currentnessCount: number;
+  readonly tcpMs: number;
+  readonly tcpCount: number;
+  readonly sleepMs: number;
+  readonly sleepCount: number;
   readonly stopMs: number;
   readonly stopCount: number;
   readonly startMs: number;
   readonly startCount: number;
   readonly settleMs: number;
   readonly settleCount: number;
+  readonly rollbackMs: number;
+  readonly rollbackCount: number;
+  readonly portOutcomes: readonly HermesPortableForwardPortTimingEvidence[];
   readonly totalMs: number;
   readonly result: "proved" | "failed";
 }
@@ -113,14 +137,31 @@ function safeTimingNow(now: () => number): number | null {
   }
 }
 
-function createForwardTimingRecorder(timing?: HermesPortableForwardRecoveryTiming): {
+function createForwardTimingRecorder(
+  ports: readonly number[],
+  timing?: HermesPortableForwardRecoveryTiming,
+): {
   readonly finish: (result: HermesPortableForwardRecoveryTimingEvidence["result"]) => void;
   readonly measure: <T>(stage: ForwardTimingStage, operation: () => T) => T;
+  readonly observePort: (port: number, outcome: ForwardState) => void;
+  readonly observeReachability: (port: number) => void;
 } {
   const now = timing?.now ?? (() => performance.now());
   const startedAt = safeTimingNow(now);
   const durations = new Map<ForwardTimingStage, number>();
   const counts = new Map<ForwardTimingStage, number>();
+  const portEvidence = new Map(
+    ports.map((port) => [
+      port,
+      {
+        port,
+        observationCount: 0,
+        reachabilityCount: 0,
+        outcome: "unobserved" as ForwardPortOutcome,
+      },
+    ]),
+  );
+  const measurements: { childMs: number; startedAt: number | null }[] = [];
   let finished = false;
   const elapsed = (start: number | null, end: number | null): number => {
     if (start === null || end === null) return 0;
@@ -129,18 +170,18 @@ function createForwardTimingRecorder(timing?: HermesPortableForwardRecoveryTimin
   };
   return Object.freeze({
     measure<T>(stage: ForwardTimingStage, operation: () => T): T {
-      const stageStartedAt = safeTimingNow(now);
-      counts.set(stage, (counts.get(stage) ?? 0) + 1);
+      const measurement = { childMs: 0, startedAt: safeTimingNow(now) };
+      measurements.push(measurement);
+      counts.set(stage, Math.min(9_999_999, (counts.get(stage) ?? 0) + 1));
       try {
         return operation();
       } finally {
-        durations.set(
-          stage,
-          Math.min(
-            9_999_999,
-            (durations.get(stage) ?? 0) + elapsed(stageStartedAt, safeTimingNow(now)),
-          ),
-        );
+        measurements.pop();
+        const inclusiveMs = elapsed(measurement.startedAt, safeTimingNow(now));
+        const exclusiveMs = Math.max(0, inclusiveMs - measurement.childMs);
+        durations.set(stage, Math.min(9_999_999, (durations.get(stage) ?? 0) + exclusiveMs));
+        const parent = measurements.at(-1);
+        if (parent) parent.childMs = Math.min(9_999_999, parent.childMs + inclusiveMs);
       }
     },
     finish(result): void {
@@ -152,18 +193,44 @@ function createForwardTimingRecorder(timing?: HermesPortableForwardRecoveryTimin
           Object.freeze({
             listMs: durations.get("list") ?? 0,
             listCount: counts.get("list") ?? 0,
+            parseMs: durations.get("parse") ?? 0,
+            parseCount: counts.get("parse") ?? 0,
+            currentnessMs: durations.get("authority") ?? 0,
+            currentnessCount: counts.get("authority") ?? 0,
+            tcpMs: durations.get("reachability") ?? 0,
+            tcpCount: counts.get("reachability") ?? 0,
+            sleepMs: durations.get("sleep") ?? 0,
+            sleepCount: counts.get("sleep") ?? 0,
             stopMs: durations.get("stop") ?? 0,
             stopCount: counts.get("stop") ?? 0,
             startMs: durations.get("start") ?? 0,
             startCount: counts.get("start") ?? 0,
             settleMs: durations.get("settle") ?? 0,
             settleCount: counts.get("settle") ?? 0,
+            rollbackMs: durations.get("rollback") ?? 0,
+            rollbackCount: counts.get("rollback") ?? 0,
+            portOutcomes: Object.freeze(
+              ports.map((port) => Object.freeze({ ...portEvidence.get(port)! })),
+            ),
             totalMs: elapsed(startedAt, safeTimingNow(now)),
             result,
           }),
         );
       } catch {
         // Timing output must not change forward recovery.
+      }
+    },
+    observePort(port, outcome): void {
+      const evidence = portEvidence.get(port);
+      if (evidence) {
+        evidence.observationCount = Math.min(9_999_999, evidence.observationCount + 1);
+        evidence.outcome = outcome;
+      }
+    },
+    observeReachability(port): void {
+      const evidence = portEvidence.get(port);
+      if (evidence) {
+        evidence.reachabilityCount = Math.min(9_999_999, evidence.reachabilityCount + 1);
       }
     },
   });
@@ -214,10 +281,18 @@ function parseStrictForwardList(output: unknown) {
   return parseForwardList(lines.join("\n"));
 }
 
-function requireCurrent(input: HermesPortableForwardRecoveryInput, rollback: boolean): void {
+function requireCurrent(
+  input: HermesPortableForwardRecoveryInput,
+  rollback: boolean,
+  timing?: ReturnType<typeof createForwardTimingRecorder>,
+): void {
   try {
-    if (rollback) input.deps.assertRollbackCurrent();
-    else input.deps.assertCurrent();
+    const assertCurrent = () => {
+      if (rollback) input.deps.assertRollbackCurrent();
+      else input.deps.assertCurrent();
+    };
+    if (timing) timing.measure("authority", assertCurrent);
+    else assertCurrent();
   } catch {
     failure(rollback ? "restoration-unproved" : "authority-drift");
   }
@@ -228,7 +303,7 @@ function captureForwardEntries(
   rollback: boolean,
   timing?: ReturnType<typeof createForwardTimingRecorder>,
 ) {
-  requireCurrent(input, rollback);
+  requireCurrent(input, rollback, timing);
   let result: CommandResult;
   try {
     const capture = rollback ? input.deps.captureRollbackList : input.deps.captureCurrentList;
@@ -239,11 +314,12 @@ function captureForwardEntries(
     if (error instanceof HermesPortableForwardRecoveryError) throw error;
     failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
   }
-  requireCurrent(input, rollback);
+  requireCurrent(input, rollback, timing);
   if (result.error || result.status !== 0) {
     failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
   }
-  const entries = parseStrictForwardList(result.output);
+  const parse = () => parseStrictForwardList(result.output);
+  const entries = timing ? timing.measure("parse", parse) : parse();
   if (!entries) failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
   return entries;
 }
@@ -260,32 +336,34 @@ function observeForwards(
     const portEntries = entries.filter((entry) => entry.port === String(port));
     if (portEntries.some((entry) => entry.sandboxName !== input.sandboxName)) {
       states.set(port, "occupied");
+      timing?.observePort(port, "occupied");
       continue;
     }
     if (portEntries.length > 1) {
       failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
     }
     const entry = portEntries[0];
-    requireCurrent(input, rollback);
+    requireCurrent(input, rollback, timing);
     let portReachable: boolean;
     try {
-      portReachable = reachable(port);
+      timing?.observeReachability(port);
+      const probe = () => reachable(port);
+      portReachable = timing ? timing.measure("reachability", probe) : probe();
     } catch {
       failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
     }
-    requireCurrent(input, rollback);
-    if (entry) {
-      states.set(
-        port,
-        isLiveSandboxForwardStatus(entry.status) && portReachable
-          ? "healthy"
-          : portReachable
-            ? "stale-reachable"
-            : "stale-unreachable",
-      );
-    } else {
-      states.set(port, portReachable ? "occupied" : "absent");
-    }
+    requireCurrent(input, rollback, timing);
+    const state: ForwardState = entry
+      ? isLiveSandboxForwardStatus(entry.status) && portReachable
+        ? "healthy"
+        : portReachable
+          ? "stale-reachable"
+          : "stale-unreachable"
+      : portReachable
+        ? "occupied"
+        : "absent";
+    states.set(port, state);
+    timing?.observePort(port, state);
   }
   return states;
 }
@@ -315,13 +393,13 @@ function invokeMutation(
   args: readonly string[],
   timing: ReturnType<typeof createForwardTimingRecorder>,
 ): void {
-  requireCurrent(input, false);
+  requireCurrent(input, false, timing);
   try {
     timing.measure(stage, () => input.deps.runCurrentMutation(args, input.operationTimeoutMs));
   } catch (error) {
     throw normalizeFailure(error);
   }
-  requireCurrent(input, false);
+  requireCurrent(input, false, timing);
 }
 
 function readClock(now: () => number, previous?: number): number {
@@ -356,20 +434,29 @@ function settleStartedPort(
       const current = readClock(now, previous);
       previous = current;
       if (current >= deadline) break;
-      sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
+      timing.measure("sleep", () =>
+        sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current)),
+      );
     }
     failure("recovery-failed");
   });
 }
 
-function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): void {
+function rollbackPort(
+  input: HermesPortableForwardRecoveryInput,
+  port: number,
+  timing?: ReturnType<typeof createForwardTimingRecorder>,
+): void {
   try {
-    requireCurrent(input, true);
-    input.deps.runRollbackMutation(
-      ["forward", "stop", String(port), input.sandboxName, "--gateway", input.gatewayName],
-      input.operationTimeoutMs,
-    );
-    requireCurrent(input, true);
+    requireCurrent(input, true, timing);
+    const mutate = () =>
+      input.deps.runRollbackMutation(
+        ["forward", "stop", String(port), input.sandboxName, "--gateway", input.gatewayName],
+        input.operationTimeoutMs,
+      );
+    if (timing) timing.measure("rollback", mutate);
+    else mutate();
+    requireCurrent(input, true, timing);
   } catch {
     failure("restoration-unproved");
   }
@@ -382,7 +469,7 @@ function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): 
   for (let observation = 0; observation < FORWARD_SETTLEMENT_MAX_OBSERVATIONS; observation += 1) {
     let state: ForwardState | undefined;
     try {
-      state = observeForwards(input, true).get(port);
+      state = observeForwards(input, true, timing).get(port);
     } catch {
       failure("restoration-unproved");
     }
@@ -393,7 +480,9 @@ function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): 
     const current = readClock(now, previous);
     previous = current;
     if (current >= deadline) break;
-    sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
+    const wait = () => sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
+    if (timing) timing.measure("sleep", wait);
+    else wait();
   }
   failure("restoration-unproved");
 }
@@ -401,8 +490,9 @@ function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): 
 function rollbackTouchedPorts(
   input: HermesPortableForwardRecoveryInput,
   touchedPorts: readonly number[],
+  timing?: ReturnType<typeof createForwardTimingRecorder>,
 ): void {
-  for (const port of [...touchedPorts].reverse()) rollbackPort(input, port);
+  for (const port of [...touchedPorts].reverse()) rollbackPort(input, port, timing);
 }
 
 function retainForwardRecovery(
@@ -430,7 +520,7 @@ function retainForwardRecovery(
 export function prepareHermesPortableLaunchForwards(
   input: HermesPortableForwardRecoveryInput,
 ): PreparedHermesPortableForwardRecovery {
-  const timing = createForwardTimingRecorder(input.timing);
+  const timing = createForwardTimingRecorder(input.ports, input.timing);
   const touchedPorts: number[] = [];
   try {
     validatePorts(input);
@@ -438,7 +528,7 @@ export function prepareHermesPortableLaunchForwards(
     requireNoOccupied(initial);
     const missing = input.ports.filter((port) => initial.get(port) !== "healthy");
     if (missing.length === 0) {
-      requireCurrent(input, false);
+      requireCurrent(input, false, timing);
       timing.finish("proved");
       return retainForwardRecovery(input, touchedPorts, { kind: "verified", restoredPorts: [] });
     }
@@ -477,7 +567,7 @@ export function prepareHermesPortableLaunchForwards(
     if (input.ports.some((port) => final.get(port) !== "healthy")) {
       failure("recovery-failed");
     }
-    requireCurrent(input, false);
+    requireCurrent(input, false, timing);
     timing.finish("proved");
     return retainForwardRecovery(input, touchedPorts, {
       kind: "restored",
@@ -487,7 +577,7 @@ export function prepareHermesPortableLaunchForwards(
     let normalized = normalizeFailure(error);
     try {
       if (touchedPorts.length > 0) {
-        rollbackTouchedPorts(input, touchedPorts);
+        rollbackTouchedPorts(input, touchedPorts, timing);
       }
     } catch {
       normalized = new HermesPortableForwardRecoveryError("restoration-unproved");

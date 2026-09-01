@@ -725,7 +725,7 @@ function writeHermesPortableForwardRecoveryTiming(
   evidence: HermesPortableForwardRecoveryTimingEvidence,
 ): void {
   console.log(
-    `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} total=${String(evidence.totalMs)}ms result=${evidence.result}`,
+    `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} parse=${String(evidence.parseMs)}ms parseCount=${String(evidence.parseCount)} currentness=${String(evidence.currentnessMs)}ms currentnessCount=${String(evidence.currentnessCount)} tcp=${String(evidence.tcpMs)}ms tcpCount=${String(evidence.tcpCount)} sleep=${String(evidence.sleepMs)}ms sleepCount=${String(evidence.sleepCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} rollback=${String(evidence.rollbackMs)}ms rollbackCount=${String(evidence.rollbackCount)} ports=${evidence.portOutcomes.map((port) => `${String(port.port)}:${String(port.observationCount)}:${String(port.reachabilityCount)}:${port.outcome}`).join(",")} total=${String(evidence.totalMs)}ms result=${evidence.result}`,
   );
 }
 

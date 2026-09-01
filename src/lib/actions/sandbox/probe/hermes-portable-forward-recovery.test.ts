@@ -165,7 +165,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
   });
 
-  it("records command counts and overlapping settlement timing for an absent forward", () => {
+  it("records additive stage timing and per-port observations for an absent forward (#10822)", () => {
     const fixture = createRecoveryFixture();
     const capture = fixture.input.deps.captureCurrentList;
     const runMutation = fixture.input.deps.runCurrentMutation;
@@ -193,15 +193,50 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(onComplete).toHaveBeenCalledWith({
       listMs: 4,
       listCount: 2,
+      parseMs: 0,
+      parseCount: 2,
+      currentnessMs: 0,
+      currentnessCount: 11,
+      tcpMs: 0,
+      tcpCount: 2,
+      sleepMs: 0,
+      sleepCount: 0,
       stopMs: 0,
       stopCount: 0,
       startMs: 5,
       startCount: 1,
-      settleMs: 2,
+      settleMs: 0,
       settleCount: 1,
+      rollbackMs: 0,
+      rollbackCount: 0,
+      portOutcomes: [
+        { port: 18_789, observationCount: 2, reachabilityCount: 2, outcome: "healthy" },
+      ],
       totalMs: 9,
       result: "proved",
     });
+  });
+
+  it("reports only bounded numeric and fixed-enum timing metadata (#10822)", () => {
+    const fixture = createRecoveryFixture({
+      listOutput: "SANDBOX BIND PORT PID STATUS\nsecret-sandbox 127.0.0.1 18789 12345 running",
+    });
+    const onComplete = vi.fn();
+    Object.assign(fixture.input, { timing: { onComplete } });
+
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      expect.objectContaining({ failure: "forward-occupied" }),
+    );
+    const serialized = JSON.stringify(onComplete.mock.calls[0]?.[0]);
+    expect(serialized).not.toMatch(/secret-sandbox|127\.0\.0\.1|12345|nemoclaw|alpha/u);
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: "failed",
+        portOutcomes: [
+          { port: 18_789, observationCount: 1, reachabilityCount: 0, outcome: "occupied" },
+        ],
+      }),
+    );
   });
 
   it("keeps timing output outside forward recovery behavior", () => {
@@ -229,9 +264,8 @@ describe("Hermes Portable probe-only forward recovery", () => {
     const runMutation = fixture.input.deps.runCurrentMutation;
     const captureRollbackList = fixture.input.deps.captureRollbackList;
     const rollbackSequence: string[] = [];
-    const onComplete = vi.fn(
-      (evidence: { readonly result: "proved" | "failed" }) =>
-        rollbackSequence.push(`timing:${evidence.result}`),
+    const onComplete = vi.fn((evidence: { readonly result: "proved" | "failed" }) =>
+      rollbackSequence.push(`timing:${evidence.result}`),
     );
     Object.assign(fixture.input.deps, {
       runCurrentMutation: runThen(runMutation, "start", () => {
@@ -258,7 +292,14 @@ describe("Hermes Portable probe-only forward recovery", () => {
     ]);
     expect(fixture.records.has(18_789)).toBe(false);
     expect(onComplete).toHaveBeenCalledWith(
-      expect.objectContaining({ result: "failed", startCount: 1 }),
+      expect.objectContaining({
+        result: "failed",
+        startCount: 1,
+        rollbackCount: 1,
+        portOutcomes: [
+          { port: 18_789, observationCount: 2, reachabilityCount: 2, outcome: "absent" },
+        ],
+      }),
     );
     expect(rollbackSequence.at(-1)).toBe("timing:failed");
   });
@@ -589,7 +630,7 @@ describe("Hermes Portable connect composition", () => {
       /forwardAction=restored result=ready/,
     );
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
-      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 stop=0ms stopCount=0 start=\d+ms startCount=1 settle=\d+ms settleCount=1 total=\d+ms result=proved/u,
+      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 parse=\d+ms parseCount=2 currentness=\d+ms currentnessCount=11 tcp=\d+ms tcpCount=2 sleep=0ms sleepCount=0 stop=0ms stopCount=0 start=\d+ms startCount=1 settle=\d+ms settleCount=1 rollback=0ms rollbackCount=0 ports=18789:2:2:healthy total=\d+ms result=proved/u,
     );
   });
 
@@ -623,7 +664,7 @@ describe("Hermes Portable connect composition", () => {
       /forwardAction=restored result=ready/,
     );
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
-      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 stop=\d+ms stopCount=1 start=\d+ms startCount=1 settle=\d+ms settleCount=1 total=\d+ms result=proved/u,
+      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 parse=\d+ms parseCount=2 currentness=\d+ms currentnessCount=13 tcp=\d+ms tcpCount=2 sleep=0ms sleepCount=0 stop=\d+ms stopCount=1 start=\d+ms startCount=1 settle=\d+ms settleCount=1 rollback=0ms rollbackCount=0 ports=18789:2:2:healthy total=\d+ms result=proved/u,
     );
   });
 
