@@ -525,15 +525,18 @@ export function stopAll(opts: ServiceOptions = {}): void {
     warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
   }
 
+  let ollamaCleanupIncomplete = false;
   try {
     const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
     const cleanup = unloadOllamaModels();
     if (cleanup && !cleanup.ok) {
+      ollamaCleanupIncomplete = true;
       warn(
         `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; repair Ollama and retry this command.`,
       );
     }
   } catch (error) {
+    ollamaCleanupIncomplete = true;
     warn(
       `Ollama model cleanup failed unexpectedly: ${error instanceof Error ? error.message : String(error)}. Retry this command after repairing Ollama.`,
     );
@@ -578,7 +581,11 @@ export function stopAll(opts: ServiceOptions = {}): void {
     return;
   }
 
-  info("All services stopped.");
+  if (ollamaCleanupIncomplete) {
+    info("Host services stopped; Ollama model cleanup remains incomplete.");
+  } else {
+    info("All services stopped.");
+  }
 }
 
 /**

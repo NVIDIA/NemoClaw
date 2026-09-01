@@ -634,6 +634,8 @@ describe("stopAll", () => {
 
     expect(output).toContain("Ollama model cleanup failed at http://host.docker.internal:11434");
     expect(output).toContain("saved local route was retained");
+    expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
+    expect(output).not.toContain("All services stopped");
   });
 });
 

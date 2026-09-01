@@ -217,4 +217,52 @@ describe("Ollama local provider sandbox-facing model gate", () => {
     expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
     expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
   });
+
+  it("restores the prior cleanup route when provider-owned proof mismatches", async () => {
+    const rollbackPersistedOllamaHost = vi.fn();
+    const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          providerOwnedInferenceProof: {
+            protocol: "openai-chat-completions",
+            model: "ollama/wrong-model",
+            toolCallingRequired: true,
+          },
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost,
+          },
+        }),
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
+  });
+
+  it("restores the prior cleanup route when model validation fails", async () => {
+    const rollbackPersistedOllamaHost = vi.fn();
+    const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({
+              ok: false,
+              message: "model validation failed",
+            }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost,
+          },
+        }),
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
+  });
 });

@@ -60,7 +60,7 @@ describe("runOllamaRestartRecovery", () => {
     }));
 
     const stderr = writes.join("");
-    expect(stderr).toContain("Checking Ollama model readiness after daemon restart");
+    expect(stderr).toContain("Checking whether the Ollama model is loaded");
     expect(stderr).toContain("Ollama warm-up for 'qwen3.6:35b'");
     expect(stderr).toContain("timed out");
     expect(stderr).toContain("at http://host.docker.internal:11434");
@@ -93,9 +93,9 @@ describe("runOllamaRestartRecovery", () => {
 
   it.each([
     ["already-loaded", "Ollama model 'qwen3.6:35b' is already loaded"],
-    ["unreachable", "Ollama was unreachable during the restart check"],
+    ["unreachable", "Ollama was unreachable during the model check"],
     ["missing-model", "No Ollama model is recorded for this sandbox"],
-    ["not-ollama", "Checking Ollama model readiness after daemon restart"],
+    ["not-ollama", "Checking whether the Ollama model is loaded"],
   ] as const)("handles the %s skip reason", (reason, message) => {
     const { writes, proc } = makeProcMock();
 

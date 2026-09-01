@@ -239,6 +239,7 @@ describe("Windows-host Ollama transport", () => {
         "--rm",
         "--add-host",
         "host.openshell.internal:host-gateway",
+        "http://host.openshell.internal:11434/api/tags",
       ]),
     );
   });

@@ -73,7 +73,7 @@ function reportRecovery(
       break;
     case "unreachable":
       proc.stderr.write(
-        "  Ollama was unreachable during the restart check; continuing to OpenClaw dispatch.\n",
+        "  Ollama was unreachable during the model check; continuing to OpenClaw dispatch.\n",
       );
       break;
     case "missing-model":
@@ -96,7 +96,7 @@ export function runOllamaRestartRecovery(
   proc: OllamaRestartRecoveryProcess,
   recoverOllama: OllamaRestartRecoveryFn = maybeWarmOllamaAfterDaemonRestart,
 ): void {
-  proc.stderr.write("  Checking Ollama model readiness after daemon restart...\n");
+  proc.stderr.write("  Checking whether the Ollama model is loaded...\n");
   try {
     reportRecovery(route, recoverOllama(route), proc);
   } catch {

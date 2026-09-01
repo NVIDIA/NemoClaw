@@ -1250,7 +1250,10 @@ export function getLocalProviderContainerReachabilityCheck(
       // requires a Bearer token on every endpoint (#3338) and the ephemeral
       // probe container doesn't carry one, but the goal here is connectivity
       // not authorisation.
-      const containerPort = getOllamaContainerPort();
+      const containerPort =
+        getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL
+          ? OLLAMA_PORT
+          : getOllamaContainerPort();
       if (responseMode === "body" && containerPort !== OLLAMA_PORT) return null;
       return [
         "docker",

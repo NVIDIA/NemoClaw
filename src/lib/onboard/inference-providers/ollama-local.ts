@@ -158,6 +158,7 @@ export async function setupOllamaLocalInference(
       providerOwnedInferenceProof.model !== normalizeHostLocalOllamaModelRef(model) ||
       providerOwnedInferenceProof.toolCallingRequired !== !allowToolsIncompatible
     ) {
+      rollbackCleanupRoute();
       error("  Provider-owned Ollama proof does not match the accepted model capability request.");
       return exitProcess(1);
     }
@@ -169,6 +170,7 @@ export async function setupOllamaLocalInference(
       allowToolsIncompatible,
     );
     if (!probe.ok) {
+      rollbackCleanupRoute();
       error(`  ${probe.message}`);
       return exitProcess(1);
     }
