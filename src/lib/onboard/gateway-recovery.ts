@@ -27,7 +27,7 @@ import { isGatewayHealthy } from "../state/gateway";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { envInt } from "./env";
 import { resolveGatewayName, resolveGatewayPortFromName } from "./gateway-binding";
-import { formatGatewayHealthWaitLimit } from "./gateway-health-wait";
+import { formatGatewayHealthWaitLimit, getGatewayHealthWaitConfig } from "./gateway-health-wait";
 import { isGatewayHttpReady } from "./gateway-http-readiness";
 import { getContainerRuntime } from "./local-inference-topology";
 import {
@@ -133,26 +133,6 @@ function getDefaultGatewayClusterContainerState(gatewayName: string): string {
     .trim()
     .toLowerCase();
   return state || "missing";
-}
-
-function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
-  const isArm64 = process.arch === "arm64";
-  const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
-  const standardInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
-  const extendedCount = envInt("NEMOCLAW_GATEWAY_START_POLL_COUNT", standardCount);
-  const extendedInterval = envInt("NEMOCLAW_GATEWAY_START_POLL_INTERVAL", standardInterval);
-  const normalizedState = String(containerState || "")
-    .trim()
-    .toLowerCase();
-  const normalizedContainerState = normalizedState || "missing";
-  const useExtendedWait = normalizedContainerState !== "missing";
-
-  return {
-    count: useExtendedWait ? extendedCount : standardCount,
-    interval: useExtendedWait ? extendedInterval : standardInterval,
-    extended: useExtendedWait,
-    containerState: normalizedContainerState,
-  };
 }
 
 function getGatewayRecoveryWaitBudgetMs(pollCount: number, pollIntervalSeconds: number): number {

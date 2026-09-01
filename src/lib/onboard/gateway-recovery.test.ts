@@ -235,6 +235,21 @@ describe("gateway recovery", () => {
     expect(deps.sleepSeconds).toHaveBeenNthCalledWith(2, 0);
   });
 
+  it("uses the shared extended health configuration for an existing gateway container (#10652)", async () => {
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "1");
+    vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "0");
+    vi.stubEnv("NEMOCLAW_GATEWAY_START_POLL_COUNT", "3");
+    vi.stubEnv("NEMOCLAW_GATEWAY_START_POLL_INTERVAL", "0");
+    const deps = createDeps({ getGatewayClusterContainerState: () => "running starting" });
+
+    await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
+      "did not become ready within the configured 3 immediate health probes",
+    );
+
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledTimes(9);
+    expect(deps.sleepSeconds).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects non-canonical gateway recovery names before invoking OpenShell", async () => {
     const deps = createDeps();
 

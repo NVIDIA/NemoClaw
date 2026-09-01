@@ -31,6 +31,7 @@ import {
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
   parseManagedImageOpenShellE2eInputs,
+  removeManagedImageSandboxIfOwned,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
@@ -301,6 +302,80 @@ describe("protected managed-image runtime contract", () => {
       removeManagedImageGatewayStateIfSafe(stateDir, { failed: [], ownershipFailures: [] }, 0),
     ).toBe(true);
     expect(fs.existsSync(stateDir)).toBe(false);
+  });
+
+  it("refuses to delete a same-name replacement during managed-image cleanup (#10652)", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "Name: managed-openclaw\nId: sandbox-replacement\nPhase: Ready\n",
+      stderr: "",
+    }));
+    const runCommand = vi.fn(() => SUCCESS_WITHOUT_OUTPUT);
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+
+    expect(
+      removeManagedImageSandboxIfOwned(
+        {
+          openshellArgv: (argv: readonly string[]) => ["openshell", ...argv],
+          runOpenshell,
+        } as never,
+        input,
+        "sandbox-created-by-harness",
+        {},
+        runCommand,
+      ),
+    ).toBe("refusing managed-image sandbox cleanup because its durable identity changed");
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw", VALID_SANDBOX],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("deletes only after exact durable-ID comparison and verifies absence (#10652)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "Name: managed-openclaw\nId: sandbox-created-by-harness\nPhase: Ready\n",
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "sandbox not found" });
+    const runCommand = vi.fn(() => SUCCESS_WITHOUT_OUTPUT);
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+
+    expect(
+      removeManagedImageSandboxIfOwned(
+        {
+          openshellArgv: (argv: readonly string[]) => ["openshell", ...argv],
+          runOpenshell,
+        } as never,
+        input,
+        "sandbox-created-by-harness",
+        {},
+        runCommand,
+      ),
+    ).toBeNull();
+    expect(runCommand).toHaveBeenCalledWith(
+      ["openshell", "sandbox", "delete", "-g", "nemoclaw", VALID_SANDBOX],
+      {},
+      15_000,
+    );
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
 
   it("distinguishes the running image from exact quiescent rollback retention (#7744)", () => {
@@ -725,10 +800,7 @@ describe("protected managed-image runtime contract", () => {
     ).toThrow(/cannot be combined/u);
   });
 
-  it("keeps rollback cleanup distinct from initial readiness", () => {
-    expect(managedImageOpenShellCommittedProbe()).toContain(
-      "managed-startup-shared-state-transaction-v1",
-    );
+  it("keeps rollback cleanup distinct from initial readiness (#10652)", () => {
     expect(
       parseManagedImageOpenShellE2eInputs([
         "--agent",
@@ -740,5 +812,22 @@ describe("protected managed-image runtime contract", () => {
         "--inject-bootstrap-completion-failure",
       ]),
     ).toMatchObject({ failureInjection: "bootstrap-completion" });
+
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-committed-probe-"));
+    try {
+      const probe = managedImageOpenShellCommittedProbe({ rootPath: fixtureRoot });
+      const completed = spawnSync("/bin/sh", ["-eu", "-c", probe], { encoding: "utf8" });
+      expect(completed.status, completed.stderr).toBe(0);
+
+      const retainedTransaction = managedProbeFixturePath(
+        fixtureRoot,
+        "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
+      );
+      fs.mkdirSync(retainedTransaction, { recursive: true });
+      const incomplete = spawnSync("/bin/sh", ["-eu", "-c", probe], { encoding: "utf8" });
+      expect(incomplete.status).not.toBe(0);
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 });

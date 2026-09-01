@@ -518,10 +518,18 @@ export function managedImageOpenShellProbe(
   ].join("\n");
 }
 
-export function managedImageOpenShellCommittedProbe(): string {
+export function managedImageOpenShellCommittedProbe(
+  options: { readonly rootPath?: string } = {},
+): string {
+  const transactionPath = options.rootPath
+    ? path.join(
+        path.resolve(options.rootPath),
+        "var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
+      )
+    : "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1";
   return [
     "set -eu",
-    "test ! -e /var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
+    `test ! -e ${JSON.stringify(transactionPath)}`,
   ].join("\n");
 }
 
@@ -900,6 +908,74 @@ export function assertFailedSandboxOwnerCleanupRetention(
   }
 }
 
+function queryManagedImageSandboxIdentity(
+  onboard: Pick<OnboardModule, "runOpenshell">,
+  input: Pick<Inputs, "sandbox">,
+  env: NodeJS.ProcessEnv,
+): { readonly result: ManagedImageCommandResult; readonly sandboxId: string | null } {
+  const result = onboard.runOpenshell(
+    ["sandbox", "get", "-g", GATEWAY_NAME, input.sandbox],
+    {
+      ignoreError: true,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  return {
+    result,
+    sandboxId: result.status === 0 ? parseOpenShellSandboxId(String(result.stdout ?? "")) : null,
+  };
+}
+
+function assertManagedImageSandboxIdentity(
+  onboard: Pick<OnboardModule, "runOpenshell">,
+  input: Pick<Inputs, "sandbox">,
+  expectedSandboxId: string,
+  env: NodeJS.ProcessEnv,
+  operation: string,
+): void {
+  const observed = queryManagedImageSandboxIdentity(onboard, input, env);
+  if (observed.sandboxId !== expectedSandboxId) {
+    throw new Error(
+      `managed-image sandbox durable identity changed before ${operation}; refusing the post-create effect`,
+    );
+  }
+}
+
+export function removeManagedImageSandboxIfOwned(
+  onboard: Pick<OnboardModule, "openshellArgv" | "runOpenshell">,
+  input: Pick<Inputs, "sandbox">,
+  expectedSandboxId: string | null,
+  env: NodeJS.ProcessEnv,
+  runCommand: ManagedImageCommandRunner = commandResult,
+): string | null {
+  const observed = queryManagedImageSandboxIdentity(onboard, input, env);
+  if (!expectedSandboxId) {
+    return observed.result.status === 0
+      ? "refusing managed-image sandbox cleanup because no durable sandbox ID was captured"
+      : null;
+  }
+  if (observed.sandboxId === null) {
+    return "refusing managed-image sandbox cleanup because its durable identity is unavailable";
+  }
+  if (observed.sandboxId !== expectedSandboxId) {
+    return "refusing managed-image sandbox cleanup because its durable identity changed";
+  }
+
+  const remove = runCommand(
+    onboard.openshellArgv(["sandbox", "delete", "-g", GATEWAY_NAME, input.sandbox]),
+    env,
+    15_000,
+  );
+  if (remove.status !== 0) {
+    return `OpenShell sandbox cleanup failed with status ${String(remove.status)}`;
+  }
+  const verification = queryManagedImageSandboxIdentity(onboard, input, env);
+  return verification.result.status === 0 || verification.sandboxId !== null
+    ? "OpenShell sandbox cleanup did not prove exact absence"
+    : null;
+}
+
 async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
   input: Inputs,
   afterLocalInference?: (context: ManagedImageOpenShellE2eProbeContext) => Promise<T> | T,
@@ -922,6 +998,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 
   let onboard: OnboardModule | null = null;
   let ownedContainerId: string | null = null;
+  let ownedSandboxId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
   let failureInjectionQualified = false;
   let probeEvidence: T | undefined;
@@ -1074,6 +1151,26 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             agentIdentity: managedImageRuntimeIdentity(input.agent),
             intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
           }),
+          verifyCreatedSandboxBeforeEffects(identity) {
+            if (ownedSandboxId && ownedSandboxId !== identity.sandboxId) {
+              throw new Error("managed-image create returned more than one durable sandbox identity");
+            }
+            ownedSandboxId = identity.sandboxId;
+          },
+          revalidateVerifiedSandboxBeforeEffect(operation) {
+            if (!ownedSandboxId) {
+              throw new Error(
+                `managed-image sandbox durable identity is unavailable before ${operation}`,
+              );
+            }
+            assertManagedImageSandboxIdentity(
+              onboard!,
+              input,
+              ownedSandboxId,
+              launch.sandboxEnv,
+              operation,
+            );
+          },
           ...startupPlan,
         },
         {
@@ -1107,6 +1204,10 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         ) {
           throw error;
         }
+        if (ownedSandboxId && ownedSandboxId !== rollbackError.sandboxId) {
+          throw error;
+        }
+        ownedSandboxId = rollbackError.sandboxId;
         assertFailedBootstrapOwnerCleanupRetention(
           input,
           networkName,
@@ -1187,11 +1288,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     hasPrimaryError = true;
   } finally {
     if (onboard) {
-      commandResult(
-        onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
+      const sandboxCleanupError = removeManagedImageSandboxIfOwned(
+        onboard,
+        input,
+        ownedSandboxId,
         process.env,
-        15_000,
       );
+      if (sandboxCleanupError) cleanupErrors.push(sandboxCleanupError);
     }
     const gatewayStop = stopHostGatewayProcesses(
       {},
