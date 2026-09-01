@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 import * as policyOwner from "../../../src/lib/policy/index.ts";
+
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
