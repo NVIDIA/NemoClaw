@@ -169,6 +169,17 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "
 const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
 const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
+const BLUEPRINT_KEYS = new Set([
+  "version",
+  "min_openshell_version",
+  "max_openshell_version",
+  "min_openclaw_version",
+  "digest",
+  "profiles",
+  "description",
+  "openshell_target",
+  "components",
+]);
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
@@ -354,7 +365,7 @@ function isInferenceProfile(value: unknown): value is InferenceProfile {
 }
 
 function isBlueprint(value: unknown): value is Blueprint {
-  if (!isPlainObject(value)) {
+  if (!isPlainObject(value) || !Object.keys(value).every((key) => BLUEPRINT_KEYS.has(key))) {
     return false;
   }
 

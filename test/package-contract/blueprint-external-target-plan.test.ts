@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { rootCertificates } from "node:tls";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..");
@@ -195,287 +195,351 @@ describe("packaged Blueprint Runner npm cache", () => {
   });
 });
 
-describe("packaged Blueprint Runner external target", () => {
-  it(
-    "executes the installed package command and fails before effects when the SDK is absent (#9872)",
-    { timeout: 240_000 },
-    () => {
-      const fixtureRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-external-target-package-"),
+type RunnerResult = Readonly<{
+  evidence: ProbeEvidence;
+  result: SpawnSyncReturns<string>;
+  safeDiagnostics: string;
+}>;
+
+describe.sequential("packaged Blueprint Runner external target", () => {
+  let ambientRoot: string;
+  let blueprintFile: string;
+  let blueprintRoot: string;
+  let disabledSdk: string;
+  let evidencePath: string;
+  let fixtureRoot: string;
+  let installedBinary: string;
+  let installedSdk: string;
+  let privateAuthenticationPath: string;
+  let privateCaPath: string;
+  let privateValues: string[];
+  let runRunner: (argv: string[]) => RunnerResult;
+  let validBlueprint: string;
+  let validBlueprintDocument: Record<string, unknown>;
+
+  beforeAll(() => {
+    fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-external-target-package-"));
+    const archiveRoot = path.join(fixtureRoot, "archive");
+    const consumerRoot = path.join(fixtureRoot, "consumer");
+    const installRoot = path.join(fixtureRoot, "install");
+    const runtimeRoot = path.join(fixtureRoot, "runtime");
+    blueprintRoot = path.join(runtimeRoot, "blueprint");
+    const privateRoot = path.join(runtimeRoot, "private-inputs");
+    ambientRoot = path.join(runtimeRoot, "ambient-home");
+    privateCaPath = path.join(privateRoot, "private-ca.pem");
+    privateAuthenticationPath = path.join(privateRoot, "private-authentication");
+    evidencePath = path.join(runtimeRoot, "probe-evidence.json");
+
+    fs.mkdirSync(archiveRoot, { recursive: true });
+    const pack = spawnSync(
+      "npm",
+      ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
+      { cwd: REPOSITORY_ROOT, encoding: "utf8", env: npmEnvironment() },
+    );
+    assertCommandSucceeded(pack, "root package archive creation");
+    const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));
+    expect(archives).toHaveLength(1);
+    const archive = path.join(archiveRoot, archives[0]!);
+
+    fs.mkdirSync(installRoot, { recursive: true });
+    const extract = spawnSync("tar", ["-xzf", archive, "--strip-components=1", "-C", installRoot], {
+      encoding: "utf8",
+      env: npmEnvironment(),
+    });
+    assertCommandSucceeded(extract, "root package archive extraction");
+    fs.copyFileSync(
+      path.join(REPOSITORY_ROOT, "package-lock.json"),
+      path.join(installRoot, "package-lock.json"),
+    );
+    const install = spawnSync("npm", ["ci", "--ignore-scripts", "--offline", "--omit=dev"], {
+      cwd: installRoot,
+      encoding: "utf8",
+      env: npmEnvironment(),
+    });
+    assertCommandSucceeded(install, "locked installation of the packed Runner graph");
+
+    fs.mkdirSync(consumerRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(consumerRoot, "package.json"),
+      JSON.stringify({ name: "nemoclaw-blueprint-runner-consumer", private: true }),
+    );
+    const consumerInstall = spawnSync(
+      "npm",
+      [
+        "install",
+        "--ignore-scripts",
+        "--offline",
+        "--omit=dev",
+        "--no-save",
+        "--package-lock=false",
+        installRoot,
+      ],
+      {
+        cwd: consumerRoot,
+        encoding: "utf8",
+        env: { ...npmEnvironment(), NEMOCLAW_INSTALLING: "1" },
+      },
+    );
+    assertCommandSucceeded(consumerInstall, "offline consumer installation of the packed Runner");
+
+    installedBinary = path.join(consumerRoot, "node_modules", ".bin", "nemoclaw-blueprint-runner");
+    installedSdk = packagePath(consumerRoot, OPENSHELL_SDK_PACKAGE);
+    disabledSdk = `${installedSdk}.disabled`;
+
+    fs.mkdirSync(blueprintRoot, { recursive: true });
+    fs.mkdirSync(privateRoot, { recursive: true });
+    fs.mkdirSync(path.join(ambientRoot, ".config", "openshell"), { recursive: true });
+    fs.writeFileSync(privateCaPath, CA_PEM);
+    fs.writeFileSync(privateAuthenticationPath, PRIVATE_AUTHENTICATION_CONTENTS);
+    fs.writeFileSync(
+      path.join(ambientRoot, ".config", "openshell", "gateway.env"),
+      PRIVATE_AMBIENT_CONTENTS,
+    );
+    blueprintFile = path.join(blueprintRoot, "blueprint.yaml");
+    validBlueprintDocument = {
+      version: "1.0.0",
+      min_openshell_version: "0.0.106",
+      max_openshell_version: "0.0.106",
+      openshell_target: {
+        endpoint: "https://192.0.2.1:8443",
+        workspace: "default",
+        expected_release: "0.0.106",
+        lifecycle: "external",
+        trust: { ca_file: privateCaPath },
+        authentication: { credential_file: privateAuthenticationPath },
+      },
+    };
+    validBlueprint = YAML.stringify(validBlueprintDocument);
+
+    const probePath = path.join(installRoot, "runtime-probe.mjs");
+    writeRuntimeProbe(probePath);
+    privateValues = [
+      fixtureRoot,
+      privateCaPath,
+      privateAuthenticationPath,
+      PRIVATE_AUTHENTICATION_CONTENTS,
+      PRIVATE_AMBIENT_CONTENTS,
+      "BEGIN CERTIFICATE",
+    ];
+    runRunner = (argv: string[]) => {
+      fs.rmSync(evidencePath, { force: true });
+      const result = spawnSync(installedBinary, argv, {
+        cwd: runtimeRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: ambientRoot,
+          NODE_OPTIONS: `--import=${probePath}`,
+          NEMOCLAW_BLUEPRINT_PATH: blueprintRoot,
+          NEMOCLAW_TEST_AMBIENT_ROOT: ambientRoot,
+          NEMOCLAW_TEST_AUTHENTICATION_FILE: privateAuthenticationPath,
+          NEMOCLAW_TEST_EVIDENCE_FILE: evidencePath,
+          XDG_CONFIG_HOME: path.join(ambientRoot, ".config"),
+        },
+      });
+      const safeDiagnostics = privateValues.reduce(
+        (output, value) => output.replaceAll(value, "[redacted]"),
+        commandOutput(result),
       );
-      const archiveRoot = path.join(fixtureRoot, "archive");
-      const consumerRoot = path.join(fixtureRoot, "consumer");
-      const installRoot = path.join(fixtureRoot, "install");
-      const runtimeRoot = path.join(fixtureRoot, "runtime");
-      const blueprintRoot = path.join(runtimeRoot, "blueprint");
-      const privateRoot = path.join(runtimeRoot, "private-inputs");
-      const ambientRoot = path.join(runtimeRoot, "ambient-home");
-      const privateCaPath = path.join(privateRoot, "private-ca.pem");
-      const privateAuthenticationPath = path.join(privateRoot, "private-authentication");
-      const evidencePath = path.join(runtimeRoot, "probe-evidence.json");
+      expect(
+        fs.existsSync(evidencePath),
+        `packaged runner did not write probe evidence:\n${safeDiagnostics}`,
+      ).toBe(true);
+      const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as ProbeEvidence;
+      return { evidence, result, safeDiagnostics };
+    };
+  }, 240_000);
 
-      try {
-        fs.mkdirSync(archiveRoot, { recursive: true });
-        const pack = spawnSync(
-          "npm",
-          ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
-          { cwd: REPOSITORY_ROOT, encoding: "utf8", env: npmEnvironment() },
-        );
-        assertCommandSucceeded(pack, "root package archive creation");
-        const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));
-        expect(archives).toHaveLength(1);
-        const archive = path.join(archiveRoot, archives[0]!);
+  beforeEach(() => {
+    fs.mkdirSync(blueprintRoot, { recursive: true });
+    fs.mkdirSync(path.dirname(privateCaPath), { recursive: true });
+    fs.mkdirSync(path.join(ambientRoot, ".config", "openshell"), { recursive: true });
+    fs.writeFileSync(privateCaPath, CA_PEM);
+    fs.writeFileSync(privateAuthenticationPath, PRIVATE_AUTHENTICATION_CONTENTS);
+    fs.writeFileSync(
+      path.join(ambientRoot, ".config", "openshell", "gateway.env"),
+      PRIVATE_AMBIENT_CONTENTS,
+    );
+    fs.writeFileSync(blueprintFile, validBlueprint);
+  });
 
-        fs.mkdirSync(installRoot, { recursive: true });
-        const extract = spawnSync(
-          "tar",
-          ["-xzf", archive, "--strip-components=1", "-C", installRoot],
-          { encoding: "utf8", env: npmEnvironment() },
-        );
-        assertCommandSucceeded(extract, "root package archive extraction");
-        fs.copyFileSync(
-          path.join(REPOSITORY_ROOT, "package-lock.json"),
-          path.join(installRoot, "package-lock.json"),
-        );
-        const install = spawnSync("npm", ["ci", "--ignore-scripts", "--offline", "--omit=dev"], {
-          cwd: installRoot,
-          encoding: "utf8",
-          env: npmEnvironment(),
-        });
-        assertCommandSucceeded(install, "locked installation of the packed Runner graph");
+  afterAll(() => {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  });
 
-        fs.mkdirSync(consumerRoot, { recursive: true });
-        fs.writeFileSync(
-          path.join(consumerRoot, "package.json"),
-          JSON.stringify({ name: "nemoclaw-blueprint-runner-consumer", private: true }),
-        );
-        const consumerInstall = spawnSync(
-          "npm",
-          [
-            "install",
-            "--ignore-scripts",
-            "--offline",
-            "--omit=dev",
-            "--no-save",
-            "--package-lock=false",
-            installRoot,
-          ],
-          {
-            cwd: consumerRoot,
-            encoding: "utf8",
-            env: { ...npmEnvironment(), NEMOCLAW_INSTALLING: "1" },
-          },
-        );
-        assertCommandSucceeded(
-          consumerInstall,
-          "offline consumer installation of the packed Runner",
-        );
+  function expectPrivateValuesRedacted(result: SpawnSyncReturns<string>): void {
+    expect(privateValues.some((value) => commandOutput(result).includes(value))).toBe(false);
+  }
 
-        const installedPackage = installRoot;
-        const installedBinary = path.join(
-          consumerRoot,
-          "node_modules",
-          ".bin",
-          "nemoclaw-blueprint-runner",
-        );
+  it("rejects a missing packaged blueprint before effects (#9872)", () => {
+    // Setup
+    const hiddenBlueprint = `${blueprintFile}.hidden`;
+    fs.renameSync(blueprintFile, hiddenBlueprint);
 
-        fs.mkdirSync(blueprintRoot, { recursive: true });
-        fs.mkdirSync(privateRoot, { recursive: true });
-        fs.mkdirSync(path.join(ambientRoot, ".config", "openshell"), { recursive: true });
-        fs.writeFileSync(privateCaPath, CA_PEM);
-        fs.writeFileSync(privateAuthenticationPath, PRIVATE_AUTHENTICATION_CONTENTS);
-        fs.writeFileSync(
-          path.join(ambientRoot, ".config", "openshell", "gateway.env"),
-          PRIVATE_AMBIENT_CONTENTS,
-        );
-        const blueprintFile = path.join(blueprintRoot, "blueprint.yaml");
-        const validBlueprintDocument = {
-          version: "1.0.0",
-          min_openshell_version: "0.0.106",
-          max_openshell_version: "0.0.106",
-          openshell_target: {
-            endpoint: "https://192.0.2.1:8443",
-            workspace: "default",
-            expected_release: "0.0.106",
-            lifecycle: "external",
-            trust: { ca_file: privateCaPath },
-            authentication: { credential_file: privateAuthenticationPath },
-          },
-        };
-        const validBlueprint = YAML.stringify(validBlueprintDocument);
-        fs.writeFileSync(blueprintFile, validBlueprint);
+    // Action
+    const execution = runRunner(["status", "--external-target"]);
+    fs.renameSync(hiddenBlueprint, blueprintFile);
 
-        const probePath = path.join(installedPackage, "runtime-probe.mjs");
-        writeRuntimeProbe(probePath);
-        const privateValues = [
-          fixtureRoot,
-          privateCaPath,
-          privateAuthenticationPath,
-          PRIVATE_AUTHENTICATION_CONTENTS,
-          PRIVATE_AMBIENT_CONTENTS,
-          "BEGIN CERTIFICATE",
-        ];
-        const runRunner = (argv: string[]) => {
-          fs.rmSync(evidencePath, { force: true });
-          const result = spawnSync(installedBinary, argv, {
-            cwd: runtimeRoot,
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              HOME: ambientRoot,
-              NODE_OPTIONS: `--import=${probePath}`,
-              NEMOCLAW_BLUEPRINT_PATH: blueprintRoot,
-              NEMOCLAW_TEST_AMBIENT_ROOT: ambientRoot,
-              NEMOCLAW_TEST_AUTHENTICATION_FILE: privateAuthenticationPath,
-              NEMOCLAW_TEST_EVIDENCE_FILE: evidencePath,
-              XDG_CONFIG_HOME: path.join(ambientRoot, ".config"),
-            },
-          });
-          const safeDiagnostics = privateValues.reduce(
-            (output, value) => output.replaceAll(value, "[redacted]"),
-            commandOutput(result),
-          );
-          expect(
-            fs.existsSync(evidencePath),
-            `packaged runner did not write probe evidence:\n${safeDiagnostics}`,
-          ).toBe(true);
-          const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as ProbeEvidence;
-          return { evidence, result, safeDiagnostics };
-        };
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain("blueprint.yaml not found");
+    expect(execution.result.stderr).not.toContain(blueprintRoot);
+    expectStableSingleLineDiagnostic(execution.result.stderr);
+    expect(execution.evidence).toEqual({ effects: [] });
+    expectPrivateValuesRedacted(execution.result);
+  });
 
-        const hiddenBlueprint = `${blueprintFile}.hidden`;
-        fs.renameSync(blueprintFile, hiddenBlueprint);
-        const missingBlueprint = runRunner(["status", "--external-target"]);
-        fs.renameSync(hiddenBlueprint, blueprintFile);
-        expect(missingBlueprint.result.status, missingBlueprint.safeDiagnostics).toBe(1);
-        expect(missingBlueprint.result.stderr).toContain("blueprint.yaml not found");
-        expect(missingBlueprint.result.stderr).not.toContain(blueprintRoot);
-        expectStableSingleLineDiagnostic(missingBlueprint.result.stderr);
-        expect(missingBlueprint.evidence).toEqual({ effects: [] });
+  it("rejects malformed packaged blueprint YAML before effects (#9872)", () => {
+    // Setup
+    fs.writeFileSync(
+      blueprintFile,
+      `openshell_target:\n  trust:\n    ca_file: [${privateCaPath}\u001b[31m`,
+    );
 
-        fs.writeFileSync(
-          blueprintFile,
-          `openshell_target:\n  trust:\n    ca_file: [${privateCaPath}\u001b[31m`,
-        );
-        const malformedBlueprint = runRunner(["status", "--external-target"]);
-        expect(malformedBlueprint.result.status, malformedBlueprint.safeDiagnostics).toBe(1);
-        expect(malformedBlueprint.result.stderr).toContain("blueprint.yaml contains invalid YAML");
-        expect(malformedBlueprint.result.stderr).not.toContain(privateCaPath);
-        expectStableSingleLineDiagnostic(malformedBlueprint.result.stderr);
-        expect(malformedBlueprint.evidence).toEqual({ effects: [] });
+    // Action
+    const execution = runRunner(["status", "--external-target"]);
 
-        fs.writeFileSync(blueprintFile, privateCaPath);
-        const invalidBlueprint = runRunner(["status", "--external-target"]);
-        expect(invalidBlueprint.result.status, invalidBlueprint.safeDiagnostics).toBe(1);
-        expect(invalidBlueprint.result.stderr).toContain(
-          "blueprint.yaml must contain a YAML mapping with valid nested component shapes",
-        );
-        expect(invalidBlueprint.result.stderr).not.toContain(privateCaPath);
-        expectStableSingleLineDiagnostic(invalidBlueprint.result.stderr);
-        expect(invalidBlueprint.evidence).toEqual({ effects: [] });
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain("blueprint.yaml contains invalid YAML");
+    expect(execution.result.stderr).not.toContain(privateCaPath);
+    expectStableSingleLineDiagnostic(execution.result.stderr);
+    expect(execution.evidence).toEqual({ effects: [] });
+    expectPrivateValuesRedacted(execution.result);
+  });
 
-        fs.writeFileSync(blueprintFile, validBlueprint);
-        const invalidAction = runRunner([`\u001b[31m${privateCaPath}\u202e`]);
-        expect(invalidAction.result.status, invalidAction.safeDiagnostics).toBe(1);
-        expect(invalidAction.result.stderr).toContain(
-          "Unknown action. Use: plan, apply, status, reconcile, rollback, snapshots",
-        );
-        expect(invalidAction.result.stderr).not.toContain(privateCaPath);
-        expectStableSingleLineDiagnostic(invalidAction.result.stderr);
-        expect(invalidAction.evidence).toEqual({ effects: [] });
+  it("rejects a packaged blueprint without a mapping before effects (#9872)", () => {
+    // Setup
+    fs.writeFileSync(blueprintFile, privateCaPath);
 
-        const installedSdk = packagePath(installRoot, OPENSHELL_SDK_PACKAGE);
-        const disabledSdk = `${installedSdk}.disabled`;
-        fs.renameSync(installedSdk, disabledSdk);
-        const absentStatus = runRunner(["status", "--external-target"]);
-        fs.renameSync(disabledSdk, installedSdk);
-        expect(absentStatus.result.status, absentStatus.safeDiagnostics).toBe(1);
-        expect(absentStatus.result.stderr).toContain(
-          "The approved OpenShell SDK 0.0.106 is unavailable.",
-        );
-        expect(absentStatus.result.stderr).not.toContain("NemoClaw could not reach");
-        expect(absentStatus.evidence).toEqual({ effects: [] });
+    // Action
+    const execution = runRunner(["status", "--external-target"]);
 
-        const presentStatus = runRunner(["status", "--external-target"]);
-        expect(presentStatus.result.status, presentStatus.safeDiagnostics).toBe(1);
-        expect(presentStatus.result.stderr).toContain(
-          "NemoClaw could not reach the external OpenShell target.",
-        );
-        expect(presentStatus.evidence).toEqual({ effects: ["network"] });
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain(
+      "blueprint.yaml must contain a YAML mapping with valid nested component shapes",
+    );
+    expect(execution.result.stderr).not.toContain(privateCaPath);
+    expectStableSingleLineDiagnostic(execution.result.stderr);
+    expect(execution.evidence).toEqual({ effects: [] });
+    expectPrivateValuesRedacted(execution.result);
+  });
 
-        fs.writeFileSync(
-          blueprintFile,
-          YAML.stringify({
-            ...validBlueprintDocument,
-            min_openshell_version: "0.0.105",
-            openshell_target: {
-              ...validBlueprintDocument.openshell_target,
-              expected_release: "0.0.105",
-            },
-          }),
-        );
-        const unsupportedReleasePlan = runRunner(["plan"]);
-        expect(unsupportedReleasePlan.result.status, unsupportedReleasePlan.safeDiagnostics).toBe(
-          1,
-        );
-        expect(unsupportedReleasePlan.result.stderr).toContain(
-          "external OpenShell target expected_release must be 0.0.106",
-        );
-        expect(unsupportedReleasePlan.result.stdout).not.toContain("openshell_target");
-        expect(unsupportedReleasePlan.evidence.effects).toEqual([]);
-        fs.writeFileSync(blueprintFile, validBlueprint);
+  it("rejects an invalid packaged runner action before effects (#9872)", () => {
+    // Setup
+    const invalidAction = `\u001b[31m${privateCaPath}\u202e`;
 
-        const plan = runRunner(["plan"]);
-        expect(plan.result.status, plan.safeDiagnostics).toBe(0);
-        expect(plan.evidence.effects).toEqual([]);
-        const planStart = plan.result.stdout.indexOf("{");
-        expect(planStart).toBeGreaterThan(-1);
-        expect(JSON.parse(plan.result.stdout.slice(planStart))).toEqual({
-          run_id: expect.stringMatching(/^nc-\d{8}-\d{6}-[0-9a-f]{8}$/u),
-          openshell_target: {
-            endpoint: "https://192.0.2.1:8443",
-            workspace: "default",
-            expected_release: "0.0.106",
-            lifecycle: "external",
-            authentication_source: "file",
-            ca_fingerprint: `sha256:${createHash("sha256")
-              .update(new X509Certificate(CA_PEM).raw)
-              .digest("hex")}`,
-          },
-          dry_run: false,
-        });
+    // Action
+    const execution = runRunner([invalidAction]);
 
-        const apply = runRunner(["apply"]);
-        expect(apply.result.status, apply.safeDiagnostics).toBe(1);
-        expect(apply.result.stderr).toContain(
-          "External OpenShell target apply is not available until typed readiness and inventory are implemented.",
-        );
-        expect(apply.evidence.effects).toEqual([]);
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain(
+      "Unknown action. Use: plan, apply, status, reconcile, rollback, snapshots",
+    );
+    expect(execution.result.stderr).not.toContain(privateCaPath);
+    expectStableSingleLineDiagnostic(execution.result.stderr);
+    expect(execution.evidence).toEqual({ effects: [] });
+    expectPrivateValuesRedacted(execution.result);
+  });
 
-        const publicOutput = [
-          absentStatus.result.stdout,
-          absentStatus.result.stderr,
-          presentStatus.result.stdout,
-          presentStatus.result.stderr,
-          unsupportedReleasePlan.result.stdout,
-          unsupportedReleasePlan.result.stderr,
-          plan.result.stdout,
-          plan.result.stderr,
-          apply.result.stdout,
-          apply.result.stderr,
-          missingBlueprint.result.stdout,
-          missingBlueprint.result.stderr,
-          malformedBlueprint.result.stdout,
-          malformedBlueprint.result.stderr,
-          invalidBlueprint.result.stdout,
-          invalidBlueprint.result.stderr,
-          invalidAction.result.stdout,
-          invalidAction.result.stderr,
-        ].join("\n");
-        expect(privateValues.some((value) => publicOutput.includes(value))).toBe(false);
-      } finally {
-        fs.rmSync(fixtureRoot, { recursive: true, force: true });
-      }
-    },
-  );
+  it("fails before effects when the packaged OpenShell SDK is absent (#9872)", () => {
+    // Setup
+    fs.renameSync(installedSdk, disabledSdk);
+
+    // Action
+    const execution = runRunner(["status", "--external-target"]);
+    fs.renameSync(disabledSdk, installedSdk);
+
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain("The approved OpenShell SDK 0.0.106 is unavailable.");
+    expect(execution.result.stderr).not.toContain("NemoClaw could not reach");
+    expect(execution.evidence).toEqual({ effects: [] });
+    expectPrivateValuesRedacted(execution.result);
+  });
+
+  it("uses the packaged OpenShell SDK for external target status (#9872)", () => {
+    // Setup
+    const expectedDiagnostic = "NemoClaw could not reach the external OpenShell target.";
+
+    // Action
+    const execution = runRunner(["status", "--external-target"]);
+
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain(expectedDiagnostic);
+    expect(execution.evidence).toEqual({ effects: ["network"] });
+    expectPrivateValuesRedacted(execution.result);
+  });
+
+  it("rejects an unsupported external target release before effects (#9872)", () => {
+    // Setup
+    fs.writeFileSync(
+      blueprintFile,
+      YAML.stringify({
+        ...validBlueprintDocument,
+        min_openshell_version: "0.0.105",
+        openshell_target: {
+          ...(validBlueprintDocument.openshell_target as Record<string, unknown>),
+          expected_release: "0.0.105",
+        },
+      }),
+    );
+
+    // Action
+    const execution = runRunner(["plan"]);
+
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain(
+      "external OpenShell target expected_release must be 0.0.106",
+    );
+    expect(execution.result.stdout).not.toContain("openshell_target");
+    expect(execution.evidence).toEqual({ effects: [] });
+    expectPrivateValuesRedacted(execution.result);
+  });
+
+  it("prints the packaged external target plan without effects (#9872)", () => {
+    // Setup
+    const expectedFingerprint = `sha256:${createHash("sha256").update(new X509Certificate(CA_PEM).raw).digest("hex")}`;
+
+    // Action
+    const execution = runRunner(["plan"]);
+
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(0);
+    expect(execution.evidence).toEqual({ effects: [] });
+    const planStart = execution.result.stdout.indexOf("{");
+    expect(planStart).toBeGreaterThan(-1);
+    expect(JSON.parse(execution.result.stdout.slice(planStart))).toEqual({
+      run_id: expect.stringMatching(/^nc-\d{8}-\d{6}-[0-9a-f]{8}$/u),
+      openshell_target: {
+        endpoint: "https://192.0.2.1:8443",
+        workspace: "default",
+        expected_release: "0.0.106",
+        lifecycle: "external",
+        authentication_source: "file",
+        ca_fingerprint: expectedFingerprint,
+      },
+      dry_run: false,
+    });
+    expectPrivateValuesRedacted(execution.result);
+  });
+
+  it("rejects packaged external target apply before effects (#9872)", () => {
+    // Setup
+    const expectedDiagnostic =
+      "External OpenShell target apply is not available until typed readiness and inventory are implemented.";
+
+    // Action
+    const execution = runRunner(["apply"]);
+
+    // Result
+    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
+    expect(execution.result.stderr).toContain(expectedDiagnostic);
+    expect(execution.evidence).toEqual({ effects: [] });
+    expectPrivateValuesRedacted(execution.result);
+  });
 });

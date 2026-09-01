@@ -173,6 +173,31 @@ describe("Blueprint Runner external OpenShell target", () => {
     },
   );
 
+  it.each([
+    ["planning", ["plan"]],
+    ["status", ["status", "--external-target"]],
+  ])(
+    "rejects an unknown top-level field before external target %s reads or observation",
+    async (_action, argv) => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({ ...externalTargetBlueprint(), unknown_top_level_field: true }),
+      );
+
+      await expect(runMain(argv)).rejects.toThrow(
+        "blueprint.yaml must contain a YAML mapping with valid nested component shapes",
+      );
+
+      expect(fsMocks.readFileSync).toHaveBeenCalledOnce();
+      expect(fsMocks.readFileSync).toHaveBeenCalledWith("blueprint.yaml", "utf-8");
+      expect(
+        externalTargetBoundaryMocks.buildSanitizedExternalOpenShellTargetPlan,
+      ).not.toHaveBeenCalled();
+      expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).not.toHaveBeenCalled();
+      expect(observeHealth).not.toHaveBeenCalled();
+    },
+  );
+
   it("emits only the sanitized plan without subprocess or network calls (#9872)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");
     vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", "/private/ambient-gateway-management.json");
