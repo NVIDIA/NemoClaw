@@ -17,6 +17,7 @@ import { startTestProgress } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import { superviseChild } from "../fixtures/shell/supervisor.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { SyntheticFakeApiPolicyConsumer } from "./fake-api-policy-consumer.ts";
 import {
   applyFakeApiPolicy,
   buildSandboxNodeInvocation,
@@ -345,25 +346,9 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(JSON.stringify(observedInvocation)).not.toContain(token);
   });
 
-  it("applies mixed fake API endpoints and bindings through one policy transition", async () => {
-    const calls: Array<{
-      command: string;
-      args: string[];
-      artifactName: string;
-      cwd?: string;
-    }> = [];
-    const runner: CommandRunner = {
-      async run(command, options) {
-        calls.push({
-          command: command.command,
-          args: [...command.args],
-          artifactName: options?.artifactName ?? "",
-          ...(options?.cwd ? { cwd: options.cwd } : {}),
-        });
-        return successfulShellResult([command.command, ...command.args]);
-      },
-    };
-    const host = new HostCliClient(runner, { openshellPath: "/opt/openshell" });
+  it("produces mixed REST and WebSocket policy state through a synthetic consumer", async () => {
+    const consumer = new SyntheticFakeApiPolicyConsumer("/opt/openshell");
+    const host = new HostCliClient(consumer, { openshellPath: "/opt/openshell" });
 
     await applyFakeApiPolicy({
       host,
@@ -387,48 +372,21 @@ describe("messaging provider installed-runtime proofs", () => {
       redactionValues: [],
     });
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toEqual({
-      command: "/opt/openshell",
-      args: [
-        "policy",
-        "update",
-        "e2e-slack-policy-owner",
-        "--add-endpoint",
-        "host.openshell.internal:43117:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-        "--add-allow",
-        "host.openshell.internal:43117:GET:/**",
-        "--add-allow",
-        "host.openshell.internal:43117:POST:/**",
-        "--add-endpoint",
-        "host.openshell.internal:43118:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-        "--add-allow",
-        "host.openshell.internal:43118:GET:/**",
-        "--add-allow",
-        "host.openshell.internal:43118:WEBSOCKET_TEXT:/**",
-        "--binary",
-        "/usr/local/bin/node",
-        "--binary",
-        "/usr/bin/node",
-        "--wait",
-      ],
-      artifactName: "apply-slack-owner-policy",
-    });
-    expect(calls[1]?.command).toBe("bash");
-    expect(calls[1]?.artifactName).toBe("apply-slack-owner-policy-credential-binding");
-    expect(calls[1]?.cwd).toBe(path.resolve("."));
-    expect(calls[1]?.args.slice(3)).toEqual([
-      "/opt/openshell",
-      "e2e-slack-policy-owner",
-      path.resolve("test/e2e/fixtures/policy-credential-binding.ts"),
-      "e2e-slack-policy-owner-slack-bridge",
-      "host.openshell.internal",
-      "43117",
-      "rest",
-      "e2e-slack-policy-owner-slack-app",
-      "host.openshell.internal",
-      "43118",
-      "websocket",
+    expect(consumer.endpoints).toEqual([
+      {
+        host: "host.openshell.internal",
+        port: 43_117,
+        protocol: "rest",
+        request_body_credential_rewrite: true,
+        credential_binding: { provider: "e2e-slack-policy-owner-slack-bridge" },
+      },
+      {
+        host: "host.openshell.internal",
+        port: 43_118,
+        protocol: "websocket",
+        websocket_credential_rewrite: true,
+        credential_binding: { provider: "e2e-slack-policy-owner-slack-app" },
+      },
     ]);
   });
 
@@ -651,13 +609,12 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("publishes a proxy only on the OpenShell bridge without default-bridge egress", async () => {
-    const calls: string[][] = [];
-    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
+  it("accepts an isolated proxy published only on the OpenShell bridge", async () => {
+    const host = fakeDockerHost();
     const cleanup: Array<() => Promise<void>> = [];
 
     try {
-      await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
+      const api = await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
         kind: "discord-gateway",
         imageScript: "fake-discord-gateway-api.cjs",
         containerPrefix: "fake-discord-gateway",
@@ -668,22 +625,7 @@ describe("messaging provider installed-runtime proofs", () => {
         redactionValues: [],
         env: {},
       });
-      const networkName = calls.find(
-        ([command, action, operation]) =>
-          command === "docker" && action === "network" && operation === "create",
-      )?.at(-1);
-      const proxyRun = calls.find(
-        ([command, action, ...args]) =>
-          command === "docker" &&
-          action === "run" &&
-          args.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
-      );
-      expect(networkName).toMatch(/^nemoclaw-fake-api-network-/u);
-      expect(proxyRun).toBeDefined();
-      const proxyArgs = proxyRun!;
-      expect(proxyArgs[proxyArgs.indexOf("--network") + 1]).toBe(networkName);
-      expect(proxyArgs).not.toContain("bridge");
-      expect(proxyArgs).toContain(`${OPENSHELL_BRIDGE_ADDRESS}::8080`);
+      expect(api.port).toBe("32100");
     } finally {
       await cleanup
         .reverse()

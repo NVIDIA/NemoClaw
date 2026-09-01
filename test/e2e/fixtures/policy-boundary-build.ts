@@ -24,6 +24,6 @@ export async function requireSuccessfulPolicyBoundaryBuild(
     [result.stderr, result.stdout, result.error?.message].filter(Boolean).join("\n"),
   );
   throw new Error(
-    `Policy boundary build ${failureReason(result)}; see redacted diagnostic artifact: ${diagnosticPath}`,
+    `Policy boundary build ${failureReason(result)}; see diagnostic artifact: ${diagnosticPath}`,
   );
 }
