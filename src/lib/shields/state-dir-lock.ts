@@ -326,6 +326,7 @@ function runHostStateDirGuard(
   configDir: string,
   plan: AgentStateLockPlan,
   mutableTopLevelFiles: string[] = [],
+  mutableServiceUsers: string[] = [],
 ): string[] {
   let input: string;
   try {
@@ -345,6 +346,7 @@ function runHostStateDirGuard(
     "--plan-json",
     JSON.stringify(plan),
     ...mutableTopLevelFiles.flatMap((file) => ["--mutable-top-level-file", file]),
+    ...mutableServiceUsers.flatMap((user) => ["--mutable-service-user", user]),
   ];
   return parseGuardOutput(action, privileged.run(command, input));
 }
@@ -378,6 +380,7 @@ export function verifyStateDirMutablePosture(
   plan: AgentStateLockPlan,
   stateLockPlanInImage: boolean,
   mutableTopLevelFiles: string[] = [],
+  mutableServiceUsers: string[] = [],
 ): string[] {
   const compatibilityIssues = stateLockPlanCompatibilityIssues(
     privileged,
@@ -385,7 +388,14 @@ export function verifyStateDirMutablePosture(
     stateLockPlanInImage,
   );
   if (compatibilityIssues.length > 0) return compatibilityIssues;
-  return runHostStateDirGuard(privileged, "verify-mutable", configDir, plan, mutableTopLevelFiles);
+  return runHostStateDirGuard(
+    privileged,
+    "verify-mutable",
+    configDir,
+    plan,
+    mutableTopLevelFiles,
+    mutableServiceUsers,
+  );
 }
 
 // Apply and independently verify the complete recursive state-dir posture.

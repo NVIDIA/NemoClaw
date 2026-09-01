@@ -1464,6 +1464,7 @@ function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentCo
       requireStateLockPlan(target),
       target.stateLockPlanInImage,
       [target.configPath, ...(target.sensitiveFiles || [])],
+      ["gateway"],
     ),
   ];
   if (issues.length > 0) throw new Error(`Config not unlocked: ${issues.join(", ")}`);

@@ -1217,6 +1217,7 @@ describe("legacy Hermes shields compatibility", () => {
         }),
         true,
         [target.configPath, ...(target.sensitiveFiles || [])],
+        ["gateway"],
       );
       expect(vi.mocked(console.log).mock.calls.flat().map(String).join("\n")).toContain(
         "NOT CONFIGURED (default mutable state)",

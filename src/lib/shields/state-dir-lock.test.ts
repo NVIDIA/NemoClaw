@@ -257,7 +257,7 @@ describe("recursive state-dir lock host wiring", () => {
       verifyStateDirMutablePosture(privileged, "/sandbox/.hermes", PLAN, true, [
         "/sandbox/.hermes/config.yaml",
         "/sandbox/.hermes/.credentials.json",
-      ]),
+      ], ["gateway"]),
     ).toEqual([]);
     expect(calls).toHaveLength(3);
     expect(calls[2]?.cmd).toEqual([
@@ -277,6 +277,8 @@ describe("recursive state-dir lock host wiring", () => {
       "/sandbox/.hermes/config.yaml",
       "--mutable-top-level-file",
       "/sandbox/.hermes/.credentials.json",
+      "--mutable-service-user",
+      "gateway",
     ]);
   });
 
