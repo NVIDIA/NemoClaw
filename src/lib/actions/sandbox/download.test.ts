@@ -161,20 +161,6 @@ describe("downloadFromSandbox", () => {
     expect(publishMock).not.toHaveBeenCalled();
   });
 
-  it("walks a directory source without following symbolic links (#10636)", async () => {
-    captureMock.mockReturnValue({ status: 0, output: "dir" });
-
-    await downloadFromSandbox({
-      sandboxName: "alpha",
-      sandboxPath: "/sandbox/mydir",
-      hostDest: "./o",
-    });
-
-    const probeScript = captureMock.mock.calls[0]?.[0]?.at(-3) as string;
-    expect(probeScript).toContain('find "$root" ! -type d ! -type f -print -quit');
-    expect(probeScript).toContain("unsafe-member");
-  });
-
   it.runIf(process.platform !== "win32")(
     "executes the directory probe for expression-like relative paths (#10636)",
     async () => {
@@ -199,8 +185,10 @@ describe("downloadFromSandbox", () => {
           { encoding: "utf8" },
         );
       const clean = runProbe('mkdir -- "$tmp/-payload"');
+      // Live target: find -L would classify the member as a file; physical
+      // traversal must still report unsafe-member.
       const unsafe = runProbe(
-        'mkdir -- "$tmp/-payload"; ln -s missing "$tmp/-payload/linked.txt"',
+        'touch "$tmp/target"; mkdir -- "$tmp/-payload"; ln -s "$tmp/target" "$tmp/-payload/linked.txt"',
       );
 
       expect({ status: clean.status, stdout: clean.stdout, stderr: clean.stderr }).toEqual({
