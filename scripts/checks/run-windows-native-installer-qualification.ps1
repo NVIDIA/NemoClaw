@@ -226,7 +226,7 @@ function Stop-ProcessStartAudit {
     Unregister-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue
 }
 
-function Assert-ProhibitedProcessesAbsent {
+function Get-ProhibitedProcessSnapshot {
     param([Parameter(Mandatory)][string]$Phase)
 
     $prohibited = @('bash', 'docker', 'dockerd', 'wsl')
@@ -234,15 +234,14 @@ function Assert-ProhibitedProcessesAbsent {
         $name = $_.ProcessName.ToLowerInvariant()
         $prohibited -ccontains $name -or $name.StartsWith('com.docker') -or $name.StartsWith('ubuntu')
     })
-    if ($found.Count -ne 0) {
-        Fail-Qualification "A prohibited WSL or Docker process exists during the $Phase check."
-    }
     return [pscustomobject]@{
         phase = $Phase
-        wslAbsent = $true
-        bashAbsent = $true
-        dockerAbsent = $true
-        ubuntuAbsent = $true
+        processes = @($found | ForEach-Object {
+            [pscustomobject]@{
+                processId = $_.Id
+                processName = $_.ProcessName
+            }
+        } | Sort-Object processId)
     }
 }
 
@@ -492,7 +491,7 @@ try {
     }
     [IO.File]::Delete($controlSentinel)
 
-    $preExecution = Assert-ProhibitedProcessesAbsent -Phase 'pre-execution'
+    $preExecution = Get-ProhibitedProcessSnapshot -Phase 'pre-execution'
     $volumeRootRejected = $false
     try {
         & $installer -Action Uninstall -InstallRoot ([IO.Path]::GetPathRoot($installRoot)) | Out-Null
@@ -655,7 +654,15 @@ try {
         installRoot = $installRoot
         finalAbsence = $true
     }
-    $postExecution = Assert-ProhibitedProcessesAbsent -Phase 'post-execution'
+    $postExecution = Get-ProhibitedProcessSnapshot -Phase 'post-execution'
+    $baselineProcessIds = @($preExecution.processes | ForEach-Object { $_.processId })
+    $newProhibitedProcesses = @($postExecution.processes | Where-Object {
+        $baselineProcessIds -notcontains $_.processId
+    })
+    if ($newProhibitedProcesses.Count -ne 0) {
+        $newNames = @($newProhibitedProcesses | ForEach-Object { $_.processName } | Sort-Object -Unique) -join ', '
+        Fail-Qualification "A new prohibited WSL or Docker process appeared during installer qualification: $newNames"
+    }
     $installerAuditRecords = @(Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds 1000)
     $installerDescendantStarts = @(Get-AuditedDescendantStarts -Records $installerAuditRecords -RootProcessId $PID)
     if ($installerDescendantStarts.Count -ne 0) {
@@ -683,6 +690,7 @@ try {
         calibratedChildProbe = $childProbeControl
         calibratedDescendantStarts = $controlDescendantStarts
         installerDescendantStarts = $installerDescendantStarts
+        newProhibitedProcesses = $newProhibitedProcesses
         preExecution = $preExecution
         postExecution = $postExecution
     })
