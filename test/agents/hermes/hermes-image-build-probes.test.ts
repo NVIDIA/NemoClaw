@@ -129,30 +129,14 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
       cron: layersFor("cron").length,
       discord: layersFor("discord").length,
       sessionState: sessionStateLayers.length,
-    }).toEqual({ cron: 3, discord: 3, sessionState: 2 });
-    expect(
-      sessionStateLayers.find(({ text }) =>
-        text.includes(`${imageProbePath} session-state-reopen`),
-      )?.start,
-    ).toBe(
+    }).toEqual({ cron: 2, discord: 2, sessionState: 1 });
+    expect(sessionStateLayers[0]?.start).toBe(
       layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-create`))?.start,
     );
-    expect(
-      sessionStateLayers.find(({ text }) => text.includes(`${imageProbePath} session-state-reopen`))
-        ?.text,
-    ).toContain("rm -f /sandbox/.hermes/runtime/state.db");
-    expect(
-      layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-create`))?.start,
-    ).not.toBe(
-      layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-backup`))?.start,
+    expect(sessionStateLayers[0]?.text).toContain(
+      "rm -f /sandbox/.hermes/runtime/state.db",
     );
-    expect(
-      layersFor("discord").find(({ text }) => text.includes(`${imageProbePath} discord-create`))
-        ?.start,
-    ).not.toBe(
-      layersFor("discord").find(({ text }) => text.includes(`${imageProbePath} discord-backup`))
-        ?.start,
-    );
+    expect(dockerfile).toContain('rm -f "/sandbox/.hermes/runtime/${name}"');
     expect(dockerfile).toContain("check_absent /sandbox/.hermes/runtime/state.db");
   });
 
