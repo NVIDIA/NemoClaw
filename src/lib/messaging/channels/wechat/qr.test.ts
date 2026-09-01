@@ -114,7 +114,10 @@ function makePendingStreamingBodyFetch(): {
   return { fetch, bodyStarted, cancelRequested };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("encodeIlinkClientVersion", () => {
   it("packs SemVer parts into iLink's uint32 layout", () => {
@@ -211,6 +214,9 @@ describe("fetchWechatQrSession", () => {
       padding: "x".repeat(WECHAT_ILINK_MAX_RESPONSE_BYTES),
     });
     const { fetch, usedTextFallback } = makeStreamingBodyFetch(oversizedBody);
+    vi.spyOn(ReadableStreamDefaultReader.prototype, "releaseLock").mockImplementation(() => {
+      throw new Error("release failed");
+    });
     const error = await fetchWechatQrSession({ fetch }).catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({

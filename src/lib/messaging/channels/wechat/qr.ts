@@ -209,8 +209,8 @@ async function readBoundedResponseText(
     } finally {
       try {
         reader.releaseLock();
-      } catch (err) {
-        if (!signal.aborted) throw err;
+      } catch {
+        // Preserve the response read result.
       }
     }
     const joined = new Uint8Array(bytes);
