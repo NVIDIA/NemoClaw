@@ -5,6 +5,7 @@ import { redact } from "../security/redact";
 import { cliName } from "./branding";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
 
+/** Format recovery without authorizing mutable-name deletion or an unsafe onboarding retry. */
 export function formatRetainedSandboxRecoveryMessage(input: {
   sandboxName: string;
   gatewayName: string;
@@ -24,8 +25,10 @@ export function formatRetainedSandboxRecoveryMessage(input: {
     createAttemptEvidence +
     `Durable sandbox identity fingerprint: ${input.sandboxIdentityFingerprint}. ` +
     `NemoClaw stopped before owning-gateway publication and identity verification completed for sandbox '${input.sandboxName}' through gateway '${input.gatewayName}'. ` +
-    `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy' to use the retained identity. ` +
-    "If OpenShell still reports the sandbox present, preserve the recovery record. Give the create-attempt label to an OpenShell administrator for identity-bound removal, then rerun destroy."
+    `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy'. ` +
+    "If OpenShell reports the sandbox present, the command removes nothing and preserves the recovery record. " +
+    "Give the create-attempt label to an OpenShell administrator for identity-bound removal. " +
+    `After OpenShell confirms removal, run '${cliName()} ${input.sandboxName} destroy --yes' to reconcile the recovery record.`
   );
 }
 

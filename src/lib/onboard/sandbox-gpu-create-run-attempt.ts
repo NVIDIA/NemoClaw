@@ -375,19 +375,6 @@ function checkSandboxExecutableReadiness(
     : "probe_failed";
 }
 
-function stopAfterReadyTerminationTimeout(
-  createResult: StreamSandboxCreateResult,
-  sandboxId: string | null,
-  persistRecovery: (sandboxIdentityFingerprint: string) => void,
-  sandboxName: string,
-): void {
-  if (!createResult?.readyTerminationTimedOut || !sandboxId) return;
-  persistRecovery(fingerprintSandboxRecreateValue(sandboxId));
-  throw new Error(
-    `OpenShell create client did not exit after Ready for sandbox '${sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`,
-  );
-}
-
 class ManagedBootstrapCreateStreamFailure extends Error {
   constructor(readonly result: Awaited<ReturnType<typeof streamSandboxCreate>>) {
     super("Managed bootstrap held workload did not complete its create stream.");
@@ -704,12 +691,14 @@ export function createSandboxGpuCreateAttemptRunner(
                 : undefined,
           }),
       );
-      stopAfterReadyTerminationTimeout(
-        createResult,
-        readyCheckCreatedSandboxId,
-        persistIdentitySettlementRecovery,
-        input.sandboxName,
-      );
+      if (createResult.readyTerminationTimedOut && readyCheckCreatedSandboxId) {
+        persistIdentitySettlementRecovery(
+          fingerprintSandboxRecreateValue(readyCheckCreatedSandboxId),
+        );
+        throw new Error(
+          `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`,
+        );
+      }
       return createResult;
     };
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
