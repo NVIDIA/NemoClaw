@@ -24,6 +24,35 @@ import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-
 import { buildOpenshellExecArgs } from "../../../src/lib/actions/sandbox/exec.ts";
 import { canRun, runWrapper, VALIDATOR, WRAPPER } from "../../helpers/hermes-wrapper-harness.ts";
 
+function runUnmodifiedWrapperWithTrustedPython(
+  dir: string,
+  args: string[],
+  trustedPythonCandidates: string[],
+) {
+  const wrapper = path.join(dir, "hermes-wrapper.py");
+  const validator = path.join(dir, "validate-env-secret-boundary.py");
+  const realHermes = path.join(dir, "hermes.real");
+  fs.copyFileSync(WRAPPER, wrapper);
+  fs.copyFileSync(VALIDATOR, validator);
+  fs.writeFileSync(realHermes, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+  const candidates = `(${trustedPythonCandidates.map((value) => JSON.stringify(value)).join(", ")},)`;
+  const driver = [
+    "import runpy, sys",
+    "module = runpy.run_path(sys.argv[1], run_name='nemoclaw_wrapper_fixture')",
+    "namespace = module['main'].__globals__",
+    `namespace['_TRUSTED_PYTHON3'] = ${candidates}`,
+    "namespace['_resolve_real_hermes'] = lambda: sys.argv[2]",
+    "namespace['_resolve_guard'] = lambda: sys.argv[3]",
+    "namespace['os'].geteuid = lambda: 1000",
+    "raise SystemExit(module['main'](sys.argv[4:]))",
+  ].join("; ");
+  return spawnSync("python3", ["-I", "-c", driver, wrapper, realHermes, validator, ...args], {
+    encoding: "utf-8",
+    timeout: 10_000,
+    env: { PATH: process.env.PATH ?? "", HOME: dir },
+  });
+}
+
 describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   // Surface a hard error in CI when the prerequisites are missing instead of
   // silently skipping — a green CI run that never executed any wrapper test
@@ -217,12 +246,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   });
 
   it("invokes the runtime-env validator with python3 -I (isolated mode)", () => {
-    // Redirect `_TRUSTED_PYTHON3` at a stub python3 that records its argv, so
-    // a regression that drops `-I` from the runtime-env invocation fails via
-    // real exec rather than source inspection. `-I` matters because it
-    // disables PYTHONPATH / PYTHONHOME / user-site startup hooks that a
-    // hostile runtime environment could otherwise use to load attacker-
-    // controlled code before the validator runs.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-"));
     try {
       const argvLog = path.join(dir, "argv.log");
@@ -232,22 +255,11 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(argvLog)}\nexit 1\n`,
         { mode: 0o755 },
       );
-      const wrapperSrc = fs
-        .readFileSync(WRAPPER, "utf-8")
-        .replace(
-          /_TRUSTED_PYTHON3 = \([\s\S]*?\)/,
-          `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`,
-        );
-      fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
-      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-      const run = spawnSync(path.join(dir, "hermes"), ["gateway", "run"], {
-        encoding: "utf-8",
-        timeout: 10_000,
-        env: { PATH: process.env.PATH ?? "", HOME: dir },
-      });
+      const run = runUnmodifiedWrapperWithTrustedPython(
+        dir,
+        ["gateway", "run"],
+        [stubPython],
+      );
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
@@ -258,9 +270,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   });
 
   it("invokes the config-show masker with python3 -I (isolated mode)", () => {
-    // Same behavioural check for `mask-config-output`. Two maskers spawn (one
-    // per Hermes stream) so the log captures the first one's argv; that is
-    // sufficient to prove `-I` reached the argv construction.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-mask-"));
     try {
       const argvLog = path.join(dir, "argv.log");
@@ -275,22 +284,11 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      const wrapperSrc = fs
-        .readFileSync(WRAPPER, "utf-8")
-        .replace(
-          /_TRUSTED_PYTHON3 = \([\s\S]*?\)/,
-          `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`,
-        );
-      fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
-      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-      const run = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
-        encoding: "utf-8",
-        timeout: 10_000,
-        env: { PATH: process.env.PATH ?? "", HOME: dir },
-      });
+      const run = runUnmodifiedWrapperWithTrustedPython(
+        dir,
+        ["config", "show"],
+        [stubPython],
+      );
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
@@ -301,43 +299,26 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   });
 
   it("refuses gateway and config show with exit 127 when no trusted python3 interpreter exists", () => {
-    // `_resolve_trusted_python3()` scans a fixed absolute-path list; when
-    // every candidate is missing, `_run_gateway_guard()` and
-    // `_run_config_show()` must exit 127 with a `[SECURITY]` message rather
-    // than fall back to a PATH-resolved python3. Rewrite the tuple to point
-    // at paths guaranteed not to exist, run both entrypoints, and assert
-    // the fail-closed contract stays intact.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-no-python-"));
     try {
       const missingA = path.join(dir, "missing-python3-a");
       const missingB = path.join(dir, "missing-python3-b");
       const missingC = path.join(dir, "missing-python3-c");
-      const wrapperSrc = fs
-        .readFileSync(WRAPPER, "utf-8")
-        .replace(
-          /_TRUSTED_PYTHON3 = \([\s\S]*?\)/,
-          `_TRUSTED_PYTHON3 = (${JSON.stringify(missingA)}, ${JSON.stringify(missingB)}, ${JSON.stringify(missingC)})`,
-        );
-      fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
-      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-
-      const gatewayRun = spawnSync(path.join(dir, "hermes"), ["gateway", "run"], {
-        encoding: "utf-8",
-        timeout: 10_000,
-        env: { PATH: process.env.PATH ?? "", HOME: dir, SLACK_BOT_TOKEN: "" },
-      });
+      const candidates = [missingA, missingB, missingC];
+      const gatewayRun = runUnmodifiedWrapperWithTrustedPython(
+        dir,
+        ["gateway", "run"],
+        candidates,
+      );
       expect(gatewayRun.status).toBe(127);
       expect(gatewayRun.stderr).toContain("[SECURITY]");
       expect(gatewayRun.stderr).toContain("no python3 at a trusted absolute path");
 
-      const configRun = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
-        encoding: "utf-8",
-        timeout: 10_000,
-        env: { PATH: process.env.PATH ?? "", HOME: dir },
-      });
+      const configRun = runUnmodifiedWrapperWithTrustedPython(
+        dir,
+        ["config", "show"],
+        candidates,
+      );
       expect(configRun.status).toBe(127);
       expect(configRun.stderr).toContain("[SECURITY]");
       expect(configRun.stderr).toContain("no python3 at a trusted absolute path");
