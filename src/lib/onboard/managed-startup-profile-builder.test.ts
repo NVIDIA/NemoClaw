@@ -562,6 +562,7 @@ describe("buildManagedStartupProfile", () => {
     ["https://hermes.example.test:18789", "https://hermes.example.test:18789"],
     ["https://secure-link.example/", "https://secure-link.example"],
     ["http://127.0.0.1:18789", "http://127.0.0.1:18789"],
+    ["http://127.0.0.2:18789", "http://127.0.0.2:18789"],
   ])(
     "accepts the Hermes browser URL %s at the durable profile boundary",
     (browserUrl, expectedBrowserUrl) => {

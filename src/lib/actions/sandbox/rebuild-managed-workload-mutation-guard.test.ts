@@ -231,5 +231,29 @@ describe("managed workload rebuild mutation guard", () => {
       mapManagedStartupProfileToAgentEnvironment(prepared.replacementProfile.profile, {})
         .runtimeEnvironment.CHAT_UI_URL,
     ).toBe(browserUrl);
+
+    const loopbackBrowserUrl = "http://127.0.0.2:18789/dashboard";
+    const loopbackPrepared = prepareManagedRebuildProfileHandoff({
+      catalogHandoff: {
+        ...catalogHandoff,
+        previousProfile: {
+          ...catalogHandoff.previousProfile,
+          dashboard: { ...previousDashboard, browserUrl: loopbackBrowserUrl },
+        },
+      },
+      targetConfig,
+      recreateOptions,
+      messagingPlan: null,
+      environment,
+    });
+
+    expect(loopbackPrepared.replacementProfile.profile.dashboard).toMatchObject({
+      browserUrl: "http://127.0.0.2:29443/dashboard",
+      publicPort: 29_443,
+    });
+    expect(
+      mapManagedStartupProfileToAgentEnvironment(loopbackPrepared.replacementProfile.profile, {})
+        .runtimeEnvironment.CHAT_UI_URL,
+    ).toBe("http://127.0.0.2:29443/dashboard");
   });
 });

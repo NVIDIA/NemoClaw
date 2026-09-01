@@ -4,10 +4,10 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { isLoopbackDashboardUrl } from "../../dashboard/url.ts";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
-import { isLoopbackDashboardUrl } from "./dashboard-url.ts";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.

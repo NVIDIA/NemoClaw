@@ -4,13 +4,13 @@
 import { createHash } from "node:crypto";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
+import { rebindLoopbackDashboardUrlPort } from "../../dashboard/url";
 import { resolveContextWindowForModel } from "../../inference/context-window";
 import { rebindSandboxMessagingPlanForClone } from "../../messaging/clone-rebind";
 import { isValidName } from "../../name-validation";
 import { DEFAULT_TOOL_DISCLOSURE } from "../../tool-disclosure";
 import { resolveManagedStartupInferenceRoute } from "../inference-route";
 import { validateManagedStartupCorporateCaTransport } from "./application";
-import { isLoopbackDashboardUrl } from "./dashboard-url";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -111,10 +111,6 @@ function urlAtPort(raw: string, port: number): string {
   }
   parsed.port = String(port);
   return parsed.toString();
-}
-
-function browserUrlAtPort(raw: string, port: number): string {
-  return isLoopbackDashboardUrl(raw) ? urlAtPort(raw, port) : raw;
 }
 
 function requireCurrentString(value: unknown, label: string): string {
@@ -283,7 +279,7 @@ function currentSourceDashboard(
       url: urlAtPort(profile.dashboard.url, publicPort),
       ...(profile.dashboard.browserUrl === undefined
         ? {}
-        : { browserUrl: browserUrlAtPort(profile.dashboard.browserUrl, publicPort) }),
+        : { browserUrl: rebindLoopbackDashboardUrlPort(profile.dashboard.browserUrl, publicPort) }),
       publicPort,
       internalPort,
       tuiEnabled: current.hermesDashboardTui === true,
@@ -393,7 +389,12 @@ function destinationDashboard(
         url: urlAtPort(dashboard.url, destinationDashboardPort),
         ...(dashboard.browserUrl === undefined
           ? {}
-          : { browserUrl: browserUrlAtPort(dashboard.browserUrl, destinationDashboardPort) }),
+          : {
+              browserUrl: rebindLoopbackDashboardUrlPort(
+                dashboard.browserUrl,
+                destinationDashboardPort,
+              ),
+            }),
       };
     }
     const port = requireDestinationPort(destinationDashboardPort, profile.agent);
@@ -402,7 +403,7 @@ function destinationDashboard(
       url: urlAtPort(dashboard.url, port),
       ...(dashboard.browserUrl === undefined
         ? {}
-        : { browserUrl: browserUrlAtPort(dashboard.browserUrl, port) }),
+        : { browserUrl: rebindLoopbackDashboardUrlPort(dashboard.browserUrl, port) }),
       publicPort: port,
     };
   }

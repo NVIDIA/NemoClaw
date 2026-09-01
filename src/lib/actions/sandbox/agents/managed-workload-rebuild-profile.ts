@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rebindLoopbackDashboardUrlPort } from "../../../dashboard/url";
 import { resolveContextWindowForModel } from "../../../inference/context-window";
 import type { SandboxMessagingPlan } from "../../../messaging";
 import { shouldManageDashboardForAgent } from "../../../onboard/dashboard-runtime";
 import { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
 import { resolveManagedStartupInferenceRoute } from "../../../onboard/inference-route";
-import { isLoopbackDashboardUrl } from "../../../onboard/managed-startup/dashboard-url";
 import {
   type ManagedWorkloadRebuildCatalogHandoff,
   type ManagedWorkloadRebuildHandoff,
@@ -50,16 +50,6 @@ export function resolveManagedRebuildOpenClawReasoningEffort(
     : "default";
 }
 
-function dashboardUrlAtPort(raw: string, port: number): string {
-  const url = new URL(raw);
-  url.port = String(port);
-  return url.toString();
-}
-
-function dashboardBrowserUrlAtPort(raw: string, port: number): string {
-  return isLoopbackDashboardUrl(raw) ? dashboardUrlAtPort(raw, port) : raw;
-}
-
 /** Render the exact replacement profile while the old managed workload remains authoritative. */
 export function prepareManagedRebuildProfileHandoff(input: {
   readonly catalogHandoff: ManagedWorkloadRebuildCatalogHandoff;
@@ -96,7 +86,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
   const chatUiUrl = manageDashboard
     ? previousHermesBrowserUrl === undefined
       ? `http://127.0.0.1:${String(effectiveDashboardPort)}`
-      : dashboardBrowserUrlAtPort(previousHermesBrowserUrl, effectiveDashboardPort)
+      : rebindLoopbackDashboardUrlPort(previousHermesBrowserUrl, effectiveDashboardPort)
     : "";
   const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,

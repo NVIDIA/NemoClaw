@@ -352,6 +352,32 @@ describe("rebindManagedStartupProfileForClone", () => {
     });
   });
 
+  it("rebinds a Hermes browser URL across the IPv4 loopback range", () => {
+    const input = hermesInput();
+    const dashboard = input.dashboard as Extract<
+      typeof input.dashboard,
+      { readonly agent: "hermes" }
+    >;
+    const rebound = rebind(
+      buildManagedStartupProfile({
+        ...input,
+        dashboard: {
+          ...dashboard,
+          browserUrl: "http://127.0.0.2:19189",
+        },
+      }),
+      "hermes",
+      21_189,
+    );
+
+    expect(rebound.profile.dashboard).toMatchObject({
+      url: "http://127.0.0.1:21189",
+      browserUrl: "http://127.0.0.2:21189",
+      publicPort: 21_189,
+      internalPort: 29_189,
+    });
+  });
+
   it("refuses to clone an enabled Hermes dashboard without a recorded browser URL", () => {
     const input = hermesInput();
     const built = buildManagedStartupProfile(input);
