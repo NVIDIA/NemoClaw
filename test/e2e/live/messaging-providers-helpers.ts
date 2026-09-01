@@ -357,14 +357,6 @@ export function messagingEnv(): MessagingEnv {
   return { env, tokens, telegramIds, telegramAllowlistKey, slackIds, wechatAccount };
 }
 
-export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup and diagnostics should not hide the primary failure.
-  }
-}
-
 export async function precleanMessagingResources(
   host: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox">,
   sandbox: Pick<SandboxClient, "cleanupSandbox">,
