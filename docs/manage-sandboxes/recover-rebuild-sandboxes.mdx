@@ -337,32 +337,34 @@ NemoClaw fails closed when the selected gateway, replacement settings, durable s
 
 A same-name recreation started by `$$nemoclaw onboard` uses the same replacement journal. If that recreation is interrupted after the `Journaled replacement` message, rerun the original onboarding command with the same target settings. The active replacement can continue without adding `--resume`. Use `--resume` for interrupted onboarding steps that occur before a replacement journal exists.
 
-If an archive command preserves at least one state directory, NemoClaw keeps the usable entries and reports the manifest-defined paths that could not be archived. If a manifest-declared state file fails, NemoClaw stops before deleting the original sandbox even when it preserved state directories, unless you explicitly pass `--force`. If every state directory fails, NemoClaw stops before deleting the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
+If any manifest-declared state directory or state file cannot be archived, NemoClaw reports each failed path and stops before deleting the original sandbox.
+This fail-closed behavior also applies to `rebuild --force`, even when the backup contains other usable entries.
+When an incomplete snapshot contains captured entries, NemoClaw retains it at the printed path but excludes it from `snapshot list` and snapshot restore selection.
+The retained snapshot may contain unsanitized credentials.
+Do not restore, copy, or share it.
+Do not edit its manifest or try to make it selectable.
+Repair access to the original sandbox state, then rerun the rebuild.
+Remove the incomplete host-side snapshot only after you verify that the original sandbox or a later complete snapshot contains every required state item.
 
-<Warning>
-  `rebuild --force` can continue when no state directory was preserved or a manifest-declared state
-  file failed. NemoClaw restores any entries captured in the partial backup; if nothing usable was
-  captured, it recreates the sandbox from recorded registry metadata without restoring prior sandbox
-  state. Use this recovery path only when losing the state that could not be backed up is
-  acceptable. When a sandbox with managed MCP servers cannot run a pre-mutation no-op, explicit
-  `--force` uses its complete bridge entries plus exact provider and target identities to preserve
-  MCP intent without scrubbing the unreachable in-sandbox adapter. Every bridge entry must record
-  the adapter for the sandbox's recorded agent. NemoClaw rechecks that read-only bridge snapshot
-  immediately before deletion and stops if the target, registry, provider, or recorded gateway
-  changed. Policy is not part of that ownership proof; the independently captured live OpenShell
-  policy is handed to replacement creation unchanged. NemoClaw sends the delete request and every
-  deletion-confirmation lookup to the sandbox's exact recorded gateway. Across every rebuild path,
-  NemoClaw does not attempt to stop the local NIM through the delete attempt, and cleanup is
-  attempted on a best-effort basis only after deletion is positively confirmed. After a nonzero
-  delete, an explicit missing result converges as deleted. A `Ready` or `Running` result triggers an
-  attempt to restore prepared MCP state and any shields lockdown that rebuild temporarily opened.
-  NemoClaw reports any MCP or shields restoration failure and does not present the operation as a
-  successful rollback. Any partial or unreachable result remains ambiguous. NemoClaw preserves the
-  MCP ownership and rebuild-recovery records, does not attempt to stop NIM, skips the rebuild
-  process's immediate shields relock, and does not claim that the original sandbox is intact.
-  Inspect the live sandbox and gateway state before retrying recovery. This recovery also stops for
-  incomplete MCP adds or ambiguous ownership; an error after a successful no-op does not fall back
-  to the host-side path.
+<Warning title="Forced Rebuild Scope">
+  `rebuild --force` skips the confirmation prompt.
+  When a sandbox with managed MCP servers cannot run a pre-mutation no-op, NemoClaw can use bounded host-side recovery when you pass `--force`.
+  This path requires complete bridge entries plus exact provider and target identities, and it does not scrub the unreachable in-sandbox adapter.
+  Every bridge entry must record the adapter for the sandbox's recorded agent.
+  NemoClaw rechecks that read-only bridge snapshot immediately before deletion and stops if the target, registry, provider, or recorded gateway changed.
+  Policy is not part of that ownership proof.
+  The independently captured live OpenShell policy is handed to replacement creation unchanged.
+  NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
+  Across every rebuild path, NemoClaw does not attempt to stop the local NVIDIA NIM through the delete attempt.
+  Cleanup is attempted on a best-effort basis only after deletion is positively confirmed.
+  After a nonzero delete, an explicit missing result converges as deleted.
+  A `Ready` or `Running` result triggers an attempt to restore prepared MCP state and any lockdown that rebuild temporarily relaxed.
+  NemoClaw reports any MCP or lockdown restoration failure and does not present the operation as a successful rollback.
+  Any partial or unreachable result remains ambiguous.
+  NemoClaw preserves the MCP ownership and rebuild-recovery records, does not attempt to stop NIM, skips the rebuild process's immediate lockdown restoration, and does not claim that the original sandbox is intact.
+  Inspect the live sandbox and gateway state before retrying recovery.
+  This recovery also stops for incomplete MCP adds or ambiguous ownership.
+  An error after a successful no-op does not fall back to the host-side path.
 </Warning>
 
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation. A detached auto-lock timer remains the recovery authority until NemoClaw commits a successful shields-up state, including when the host rebuild process exits unexpectedly.

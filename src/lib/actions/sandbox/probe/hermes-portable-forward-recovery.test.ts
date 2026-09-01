@@ -200,6 +200,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
       settleMs: 2,
       settleCount: 1,
       totalMs: 9,
+      result: "proved",
     });
   });
 
@@ -226,11 +227,23 @@ describe("Hermes Portable probe-only forward recovery", () => {
   it("rolls back a possibly started forward when detached mutation transport throws", () => {
     const fixture = createRecoveryFixture();
     const runMutation = fixture.input.deps.runCurrentMutation;
+    const captureRollbackList = fixture.input.deps.captureRollbackList;
+    const rollbackSequence: string[] = [];
+    const onComplete = vi.fn(
+      (evidence: { readonly result: "proved" | "failed" }) =>
+        rollbackSequence.push(`timing:${evidence.result}`),
+    );
     Object.assign(fixture.input.deps, {
       runCurrentMutation: runThen(runMutation, "start", () => {
         throw new Error("detached mutation transport canary");
       }),
+      captureRollbackList: (args: readonly string[], timeout: number) => {
+        const result = captureRollbackList(args, timeout);
+        rollbackSequence.push("rollback-list");
+        return result;
+      },
     });
+    Object.assign(fixture.input, { timing: { onComplete } });
 
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
       expect.objectContaining({ failure: "recovery-failed" }),
@@ -244,6 +257,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
       "nemoclaw",
     ]);
     expect(fixture.records.has(18_789)).toBe(false);
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ result: "failed", startCount: 1 }),
+    );
+    expect(rollbackSequence.at(-1)).toBe("timing:failed");
   });
 
   it("rejects a returned nonzero start without the exact settled owner", () => {
@@ -533,6 +550,7 @@ describe("Hermes Portable connect composition", () => {
       expect.objectContaining({
         assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
       }),
+      expect.objectContaining({ onComplete: expect.any(Function) }),
     );
     const startCall = harness.runOpenshellSpy.mock.calls.find(
       ([args]) => Array.isArray(args) && args[0] === "forward" && args[1] === "start",
@@ -679,6 +697,9 @@ describe("Hermes Portable connect composition", () => {
       "Probe complete: launch readiness is healthy",
     );
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
+      /Hermes Portable forward recovery timing: .*listCount=1 .*result=failed/u,
+    );
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && ["start", "stop"].includes(String(args[1])),

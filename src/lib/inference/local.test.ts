@@ -1016,7 +1016,7 @@ describe("local inference helpers", () => {
     expect(getDefaultOllamaModel(null, mockCapture)).toBe(DEFAULT_OLLAMA_MODEL);
   });
 
-  it("falls back to the first listed ollama model when the default is absent", () => {
+  it("breaks ties among unregistered models by list order when the default is absent", () => {
     let call = 0;
     const mockCapture = () => {
       call += 1;
@@ -1077,11 +1077,8 @@ describe("local inference helpers", () => {
     ).toBe("qwen3.5:9b");
   });
 
-  it("filters installed-model selection by memory fit", async () => {
+  it("selects the largest registered installed model that fits (#10103)", async () => {
     const { getDefaultOllamaModel: gdom } = await import("./local");
-    // Even though nemotron-3-nano:30b is installed, it does not fit a host
-    // with only 12 GiB available — the selector must downgrade to a fitting
-    // installed model rather than blindly returning DEFAULT_OLLAMA_MODEL.
     const installed = () =>
       JSON.stringify({
         models: [{ name: "qwen3.5:9b" }, { name: "nemotron-3-nano:30b" }],
@@ -1089,6 +1086,12 @@ describe("local inference helpers", () => {
     expect(
       gdom({ type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 }, installed),
     ).toBe("qwen3.5:9b");
+    const gpu = { type: "nvidia", totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB };
+    const list = (n: string[]) => () => JSON.stringify({ models: n.map((name) => ({ name })) });
+    expect(gdom(gpu, list([DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]))).toBe(
+      QWEN3_6_OLLAMA_MODEL,
+    );
+    expect(gdom(gpu, list(["some-unmanaged-pull:latest", "qwen3.5:9b"]))).toBe("qwen3.5:9b");
   });
 
   it("resolveNonInteractiveOllamaModel respects unknown tags and downgrades known oversize ones", async () => {

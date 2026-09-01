@@ -34,10 +34,6 @@ export function canSandboxGatewayRouteRealign(
   return result.ok || isAdvisoryProviderModelRouteConflict(result);
 }
 
-export function buildGatewayInferenceGetArgs(gatewayName: string): string[] {
-  return ["inference", "get", "-g", gatewayName];
-}
-
 export function buildGatewayInferenceSetArgs(
   gatewayName: string,
   provider: string,

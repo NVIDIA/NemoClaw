@@ -34,6 +34,38 @@ const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
+const MANAGED_SOURCE_CONDITION =
+  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
+const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
+  [
+    "set -euo pipefail",
+    'catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"',
+    'rm -f -- "$catalog_path"',
+    'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
+    'case "$selection" in',
+    "  base-cohort)",
+    '    [[ ! -e "$catalog_path" && ! -L "$catalog_path" ]] || {',
+    '      echo "::error::base-cohort selection produced a candidate catalog" >&2',
+    "      exit 1",
+    "    }",
+    "    ;;",
+    "  candidate-catalog)",
+    '    [[ -f "$catalog_path" && ! -L "$catalog_path" && -s "$catalog_path" ]] || {',
+    '      echo "::error::exact PR managed-image catalog is invalid" >&2',
+    "      exit 1",
+    "    }",
+    '    catalog="$(jq -ce . "$catalog_path")"',
+    "    (( ${#catalog} <= 65536 )) || {",
+    '      echo "::error::exact PR managed-image catalog exceeds the output limit" >&2',
+    "      exit 1",
+    "    }",
+    '    printf \'catalog=%s\\n\' "$catalog" >>"$GITHUB_OUTPUT"',
+    '    echo "::notice::Jetson dispatch is unavailable because the exact PR managed-image catalog qualifies linux/amd64 only."',
+    "    ;;",
+    '  *) echo "::error::PR managed-image selection is invalid" >&2; exit 1 ;;',
+    "esac",
+    'printf \'selection=%s\\n\' "$selection" >>"$GITHUB_OUTPUT"',
+  ].join("\n") + "\n";
 const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
@@ -287,9 +319,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     (step) => step.name === "Authenticate manual PR dispatch",
   );
   const checkoutIndex = steps.findIndex((step) => step.name === "Check out E2E candidate");
-  const managedCatalogResolverIndex = steps.findIndex(
-    (step) => step.id === "resolve_pr_managed_image_catalog",
-  );
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
   const credentialAuthorizationIndex = steps.findIndex(
     (step) => step.name === "Authorize E2E credentials",
@@ -310,51 +339,26 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
 
-  const managedCatalogResolver =
-    managedCatalogResolverIndex >= 0 ? steps[managedCatalogResolverIndex] : {};
   if (
-    matrixJob.outputs?.managed_image_catalog !==
-      "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}" ||
-    managedCatalogResolverIndex <= authenticationIndex ||
-    managedCatalogResolverIndex >= checkoutIndex ||
-    managedCatalogResolver.if !==
-      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
-    managedCatalogResolver.shell !== "bash" ||
-    !isDeepStrictEqual(managedCatalogResolver.env, {
-      BASE_SHA: "${{ inputs.base_sha }}",
-      CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
-      CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-      PR_NUMBER: "${{ inputs.pr_number }}",
-    })
+    matrixJob.outputs?.managed_image_catalog !== undefined ||
+    steps.some((step) => step.id === "resolve_pr_managed_image_catalog")
   ) {
-    errors.push("Manual PR managed-image catalog must be authenticated before candidate checkout");
-  }
-  const managedCatalogResolverSource = String(managedCatalogResolver.run ?? "");
-  for (const fragment of [
-    "tools/e2e/pr-managed-image-publication.mts",
-    "catalog=",
-    "catalog_sha256=",
-  ]) {
-    if (!managedCatalogResolverSource.includes(fragment)) {
-      errors.push(`Manual PR managed-image catalog resolver must retain ${fragment}`);
-    }
+    errors.push("Manual PR E2E must not resolve an exact candidate managed-image catalog");
   }
 
   const packageCli = packageIndex >= 0 ? steps[packageIndex] : {};
   const packageSource = String(packageCli.run ?? "");
   if (
     packageIndex <= prepareIndex ||
-    packageCli.env?.MANAGED_IMAGE_CATALOG !==
-      "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}" ||
-    packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !==
-      "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}" ||
-    !packageSource.includes("# BEGIN exact managed-image catalog staging") ||
-    !packageSource.includes("# END exact managed-image catalog staging") ||
-    !packageSource.includes("trusted PR managed-image catalog changed after authentication") ||
-    !packageSource.includes("packaged PR managed-image catalog does not match trusted output")
+    workflow.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    workflow.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
+    matrixJob.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    matrixJob.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
+    packageCli.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
+    packageSource.includes("pr-managed-image-catalog.json")
   ) {
-    errors.push("Manual PR managed-image catalog must be sealed into the CLI artifact");
+    errors.push("Manual PR CLI packaging must not accept obsolete managed-image catalog authority");
   }
 
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
@@ -387,7 +391,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == refs/heads/*',
+    '"$WORKFLOW_REF" == "refs/heads/main"',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
@@ -498,7 +502,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
-    '"$REF" == refs/heads/*',
+    '"$REF" == "refs/heads/main"',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
@@ -660,16 +664,15 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     outputs: {
       dcode_base_contract: "${{ steps.validate_dcode_base.outputs.contract }}",
       dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
-      managed_image_artifact_provenance: "${{ steps.download_managed_cohort.outputs.provenance }}",
-      managed_image_cohort: "${{ steps.validate_managed_cohort.outputs.cohort }}",
       managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
       managed_image_revision: "${{ steps.validate_managed_cohort.outputs.revision }}",
-      managed_image_run_attempt: "${{ steps.validate_managed_cohort.outputs.run_attempt }}",
-      managed_image_run_id: "${{ steps.validate_managed_cohort.outputs.run_id }}",
+      managed_image_catalog: "${{ steps.select_pr_source.outputs.catalog }}",
+      workload_source: "managed-image",
     },
     permissions: {
       actions: "read",
       contents: "read",
+      "pull-requests": "read",
     },
     steps: [
       {
@@ -703,16 +706,31 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         },
       },
       {
+        id: "select_pr_source",
+        name: "Resolve exact PR managed-image publication",
+        if: "${{ inputs.pr_number != '' }}",
+        env: {
+          BASE_SHA: "${{ inputs.base_sha }}",
+          CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
+          CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+          GITHUB_TOKEN: "${{ github.token }}",
+          PR_NUMBER: "${{ inputs.pr_number }}",
+        },
+        shell: "bash",
+        run: PR_MANAGED_IMAGE_RESOLVER_SCRIPT,
+      },
+      {
         id: "publication",
-        name: "Select complete base and managed-image publication",
+        name: "Select base and optional managed-image publication",
         env: {
           EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_HISTORY_ALLOW_NON_HEAD:
             "${{ steps.publication_mode.outputs.allow_non_head }}",
-          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
+          REQUIRE_MANAGED_IMAGE_PUBLICATION:
+            "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || '1' }}",
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
-            "${{ steps.publication_mode.outputs.select_nearest_successful }}",
+            "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || steps.publication_mode.outputs.select_nearest_successful }}",
         },
         shell: "bash",
         run: [
@@ -750,6 +768,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "download_managed_cohort",
         name: "Download immutable managed-image cohort contract",
+        if: MANAGED_SOURCE_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_ARTIFACT_KIND: "managed-image-cohort",
@@ -762,6 +781,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "validate_managed_cohort",
         name: "Validate immutable managed-image cohort contract",
+        if: MANAGED_SOURCE_CONDITION,
         env: {
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
@@ -795,19 +815,44 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (
     cloudOnboard.env?.E2E_MANAGED_IMAGE_REVISION !==
-    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+    "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
-    errors.push(
-      "cloud-onboard must use the selected managed-image revision when no exact PR catalog is present",
-    );
+    errors.push("cloud-onboard must use the selected managed-image revision");
+  }
+  if (
+    cloudOnboard.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON !==
+    "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
+  ) {
+    errors.push("cloud-onboard must use the exact PR managed-image catalog");
   }
   if (
     live.env?.E2E_MANAGED_IMAGE_REVISION !==
-    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+    "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
-    errors.push(
-      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
-    );
+    errors.push("live stock onboarding must use the selected managed-image revision");
+  }
+  if (
+    live.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON !==
+    "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
+  ) {
+    errors.push("live stock onboarding must use the exact PR managed-image catalog");
+  }
+  for (const jobName of [
+    "mcp-bridge",
+    "openshell-credential-generation-window",
+    "mcp-bridge-dev",
+    "hermes-e2e",
+    "hermes-gpu-startup",
+    "cloud-onboard",
+    "messaging-providers",
+  ]) {
+    const consumer = workflow.jobs[jobName] ?? {};
+    if (
+      consumer.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON !==
+      "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
+    ) {
+      errors.push(`${jobName} must use the exact PR managed-image catalog`);
+    }
   }
   for (const jobName of [
     "catalogue-standard",
@@ -822,22 +867,20 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     }
     if (
       catalogue.with?.managed_image_revision !==
-      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+      "${{ needs.base-image-publication.outputs.managed_image_revision }}"
     ) {
-      errors.push(
-        `${jobName} must use the selected managed-image revision when no exact PR catalog is present`,
-      );
+      errors.push(`${jobName} must use the selected managed-image revision`);
     }
     if (
       catalogue.with?.managed_image_catalog !==
-      "${{ needs.generate-matrix.outputs.managed_image_catalog }}"
+      "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
     ) {
-      errors.push(`${jobName} must pass the selected exact PR managed-image catalog`);
+      errors.push(`${jobName} must use the exact PR managed-image catalog`);
     }
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
+    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
     errors.push("live DCode must use the selected immutable base reference");
   }
@@ -849,7 +892,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     .filter(Boolean);
   const liveSteps = live.steps ?? [];
   if (
-    evidence.if !== "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}" ||
+    evidence.if !==
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' }}" ||
     evidence.env?.BASE_CONTRACT !==
       "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
     !String(evidence.run ?? "").includes("dcode-base-image.json") ||
@@ -894,9 +938,9 @@ const STOCK_ONBOARDING_CATALOGUE_JOBS = [
 ] as const;
 
 const MANAGED_IMAGE_REVISION_EXPRESSION =
-  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}";
+  "${{ needs.base-image-publication.outputs.managed_image_revision }}";
 const MANAGED_IMAGE_RECEIPT_EXPRESSION =
-  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}";
+  "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
 
 /** Require publication success and one exact cohort revision for every stock onboarding job. */
 export function validateStockOnboardingPublicationBoundary(workflow: OperationsWorkflow): string[] {
@@ -1453,10 +1497,32 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     errors.push("Unified advisor must not auto-dispatch workflows");
   }
   const specialistEnv = advisor.jobs?.["review-specialists"]?.env ?? {};
-  const expectedBaseRef = "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
-  const expectedHeadRef = "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
+  const expectedBaseRef =
+    "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
+  const expectedHeadRef =
+    "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
   if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
     errors.push("Unified advisor specialists must retain target refs through execution");
+  }
+  const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
+  const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");
+  const specialistSteps = advisor.jobs?.["review-specialists"]?.steps ?? [];
+  const contextDownload = specialistSteps.find(
+    (step) => step.name === "Download GitHub review context",
+  );
+  const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
+  const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
+  if (
+    contextUpload?.with?.name !== contextArtifactName ||
+    contextDownload?.with?.name !== contextArtifactName ||
+    contextUpload?.with?.overwrite !== true
+  ) {
+    errors.push("Unified advisor context artifact must survive failed-job and full reruns");
+  }
+  if (
+    specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}"
+  ) {
+    errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
   }
 }
 

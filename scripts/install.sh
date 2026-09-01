@@ -4541,11 +4541,12 @@ n1x_fastos_release_metadata_is_trusted() {
 
 n1x_fastos_release_contents_are_valid() {
   local contents=${1:-}
+  local expected_name=${2:-'N1x FASTOS'}
   local line="" name_count=0
   [[ "$contents" != *$'\r'* ]] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-      'NAME="N1x FASTOS"') ((name_count += 1)) ;;
+      "NAME=\"${expected_name}\"") ((name_count += 1)) ;;
       NAME=*) return 1 ;;
     esac
   done <<<"$contents"
@@ -4564,6 +4565,11 @@ n1x_opened_fastos_release_has_nul() {
 }
 
 n1x_fastos_release_is_trusted() {
+  fastos_release_is_trusted_for_name 'N1x FASTOS'
+}
+
+fastos_release_is_trusted_for_name() {
+  local expected_name=${1:?expected FastOS marker name is required}
   local marker="" before="" opened="" after="" contents=""
   marker="$(n1x_fastos_release_path)"
   [ -e "$marker" ] && [ ! -L "$marker" ] || return 1
@@ -4606,19 +4612,22 @@ n1x_fastos_release_is_trusted() {
   contents="$(head -c $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)"
   exec 9<&-
   [ "${#contents}" -le "$N1X_FASTOS_RELEASE_MAX_BYTES" ] || return 1
-  n1x_fastos_release_contents_are_valid "$contents"
+  n1x_fastos_release_contents_are_valid "$contents" "$expected_name"
+}
+
+spark_fastos_release_is_trusted() {
+  fastos_release_is_trusted_for_name 'DGX SPARK FASTOS'
 }
 
 n1x_pci_identity_is_valid() {
-  local vendor="" device="" pci_class=""
+  local vendor="" pci_class=""
   vendor="$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')"
-  device="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
-  pci_class="$(printf "%s" "${3:-}" | tr '[:upper:]' '[:lower:]')"
-  [[ "$vendor" = "0x10de" && "$device" = "0x2e2a" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
+  pci_class="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "$vendor" = "0x10de" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
 }
 
 n1x_has_pci_gpu() {
-  local pci_root="" pci_device="" vendor="" device="" pci_class="" scanned=0
+  local pci_root="" pci_device="" vendor="" pci_class="" scanned=0
   pci_root="$(n1x_pci_devices_path)"
   [ -d "$pci_root" ] || return 1
   for pci_device in "$pci_root"/*; do
@@ -4626,15 +4635,13 @@ n1x_has_pci_gpu() {
     ((scanned += 1))
     [ "$scanned" -le 256 ] || return 1
     vendor="$(head -c 65 "$pci_device/vendor" 2>/dev/null)" || continue
-    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
     pci_class="$(head -c 65 "$pci_device/class" 2>/dev/null)" || continue
-    if [ "${#vendor}" -gt 64 ] || [ "${#device}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
+    if [ "${#vendor}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
       continue
     fi
     vendor="${vendor//[[:space:]]/}"
-    device="${device//[[:space:]]/}"
     pci_class="${pci_class//[[:space:]]/}"
-    n1x_pci_identity_is_valid "$vendor" "$device" "$pci_class" && return 0
+    n1x_pci_identity_is_valid "$vendor" "$pci_class" && return 0
   done
   return 1
 }
@@ -4666,6 +4673,10 @@ detect_express_platform() {
       return
       ;;
   esac
+  if spark_fastos_release_is_trusted; then
+    printf "DGX Spark"
+    return
+  fi
   if is_station_gb300_product "$model"; then
     release_state="$(classify_dgx_station_release)"
     case "$release_state" in
@@ -5392,6 +5403,31 @@ express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 
+# Select the accepted N1x WSL llama.cpp candidate only when Windows product
+# identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
+# all match. Later readiness still requires container GPU proof before launch.
+express_wsl_can_use_n1x_managed_llama_cpp() {
+  express_wsl_can_use_windows_host_ollama || return 1
+  [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
+  command_exists timeout || return 1
+  command_exists powershell.exe || return 1
+  command_exists nvidia-smi || return 1
+
+  local product_name=""
+  local memory_mb=""
+  product_name="$(timeout 10s powershell.exe -NoProfile -NonInteractive -Command '(Get-CimInstance Win32_ComputerSystem).Model' 2>/dev/null | tr -d '\r' | head -n 1)"
+  case "$product_name" in
+    *"RTX Spark N1X"*) ;;
+    *) return 1 ;;
+  esac
+
+  memory_mb="$(timeout 10s nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  case "$memory_mb" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$memory_mb" -ge 48000 ]
+}
+
 # True when a readable Docker configuration decides the context but no Node.js can
 # parse it yet. The express prompt runs before install_nodejs, so treating that
 # window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
@@ -5407,8 +5443,14 @@ express_wsl_docker_context_needs_node() {
 
 # Choose between Windows-host and WSL-local Ollama, or defer when only the
 # missing Node.js runtime blocks the decision.
-select_express_wsl_ollama_provider() {
+select_express_wsl_provider() {
   _EXPRESS_WSL_PROVIDER_PENDING=""
+  unset NEMOCLAW_LLAMACPP_RECIPE
+  if express_wsl_can_use_n1x_managed_llama_cpp; then
+    export NEMOCLAW_PROVIDER=install-llama-cpp
+    export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
+    return 0
+  fi
   if express_wsl_can_use_windows_host_ollama; then
     export NEMOCLAW_PROVIDER=install-windows-ollama
     return 0
@@ -5425,13 +5467,18 @@ select_express_wsl_ollama_provider() {
 resolve_pending_express_wsl_provider() {
   [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
   _EXPRESS_WSL_PROVIDER_PENDING=""
-  if express_wsl_can_use_windows_host_ollama; then
-    export NEMOCLAW_PROVIDER=install-windows-ollama
-    info "Express install will configure Windows-host Ollama through host.docker.internal."
-  else
-    export NEMOCLAW_PROVIDER=install-ollama
-    info "Express install will configure WSL-local Ollama."
-  fi
+  select_express_wsl_provider
+  case "${NEMOCLAW_PROVIDER:-}" in
+    install-llama-cpp)
+      info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
+      ;;
+    install-windows-ollama)
+      info "Express install will configure Windows-host Ollama through host.docker.internal."
+      ;;
+    *)
+      info "Express install will configure WSL-local Ollama."
+      ;;
+  esac
 }
 
 select_spark_express_inference() {
@@ -5517,7 +5564,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      select_express_wsl_ollama_provider
+      select_express_wsl_provider
       ;;
   esac
 }
@@ -5999,10 +6046,14 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      if express_wsl_can_use_windows_host_ollama; then
+      if express_wsl_can_use_n1x_managed_llama_cpp; then
+        show_hf_authentication="1"
+        inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
+        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
+      elif express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
       elif express_wsl_docker_context_needs_node; then
-        inference_summary="local Ollama, selected once the installed Node.js runtime reads the Docker configuration"
+        inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
       fi

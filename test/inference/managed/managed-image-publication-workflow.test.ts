@@ -17,7 +17,6 @@ import {
   runManagedImagePromotion,
   runPublicationBarrier,
 } from "../../helpers/managed-image-publication-barrier";
-import { publicationBoundaryErrors } from "../../helpers/managed-image-publication-workflow-boundary";
 import {
   baseImagePlatformCallers,
   baseImagePublishers,
@@ -110,7 +109,6 @@ describe("complete managed-image publication workflow", () => {
       baseWorkflow.jobs?.["publish-managed-images"],
       "base-image workflow is missing the managed-image publisher",
     );
-    expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
     expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
     const validationRun =
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
@@ -120,30 +118,6 @@ describe("complete managed-image publication workflow", () => {
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
     expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
-    const weakenedWorkflow = structuredClone(managedWorkflow);
-    const weakenedValidation = step(
-      managedPublisher(weakenedWorkflow),
-      "Validate exact managed image before promotion",
-    );
-    weakenedValidation.run = weakenedValidation.run?.replace(
-      "!fs.lstatSync(manifestPath).isFile()",
-      "false",
-    );
-    expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
-      "exact managed image validation is missing lstatSync(manifestPath).isFile()",
-    );
-    const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
-    const projectRootWeakenedValidation = step(
-      managedPublisher(projectRootWeakenedWorkflow),
-      "Validate exact managed image before promotion",
-    );
-    projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
-      'path.join(nodeModulesRoot, ...name.split("/"))',
-      "",
-    );
-    expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
-      'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
-    );
     expect(publisher).toMatchObject({
       needs: [
         "build-and-push-hermes",
@@ -442,30 +416,9 @@ describe("complete managed-image publication workflow", () => {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
-    const resolveBase = required(
-      step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run,
-      "PR base resolution is missing",
+    expect(step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run).toBe(
+      "scripts/checks/resolve-managed-pr-base.sh",
     );
-    expect(resolveBase).toContain('.platform.architecture == "amd64"');
-    expect(resolveBase).toContain(
-      'git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"',
-    );
-    expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
-    expect(resolveBase).toContain("--provenance=false");
-    expect(resolveBase).toContain("--sbom=false");
-    expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
-    expect(resolveBase).toContain('--output "type=docker,dest=${local_base_archive}"');
-    expect(resolveBase).toContain('--output "type=oci,dest=${local_base_oci_archive}"');
-    expect(resolveBase).toContain('docker load --input "$local_base_archive"');
-    expect(resolveBase).toContain('tar -C "$local_base_oci" -xf "$local_base_oci_archive"');
-    expect(resolveBase).toContain("if length == 1 then .[0].digest");
-    expect(resolveBase).toContain(
-      'printf \'oci=%s@%s\\n\' "$local_base_oci" "$local_base_oci_digest"',
-    );
-    expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
-    expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
-
-    expect(localBaseBuild.if).toBe("steps.base.outputs.local == 'true'");
     expect(registryBaseBuild.if).toBe("steps.base.outputs.local != 'true'");
     const localBuild = required(localBaseBuild.run, "PR managed image local build is missing");
     expect(localBuild).toContain("docker build");
@@ -736,24 +689,6 @@ describe("complete managed-image publication workflow", () => {
     expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
   });
 
-  it("keeps the activation proof outside mocked runtime boundaries (#7744)", () => {
-    const source = fs.readFileSync(
-      path.join(repoRoot, "test/e2e/live/managed-image-activation-e2e-helpers.ts"),
-      "utf8",
-    );
-    expect(source).toContain("await host.nemoclaw(");
-    expect(source).toContain("await lifecycle.restartGatewayRuntime(");
-    expect(source).toContain("await runAgentTurn(");
-    expect(source).toContain("await sandbox.cleanupSandbox(");
-    expect(source).toContain("assertNoDockerfileBuild(trace);");
-    expect(source).toContain("await lifecycle.stopGatewayRuntime()");
-    expect(source).toContain("await host.cleanupGatewayRegistration(GATEWAY");
-    expect(source).toContain("startFakeOpenAiCompatibleServer");
-    expect(source).not.toContain("runSandboxGpuCreateFlow");
-    expect(source).not.toContain("createDockerManagedBootstrapAdapter");
-    expect(source).not.toMatch(/\bvi\.(?:fn|mock|spyOn)\b/u);
-  });
-
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const resolver = required(
@@ -958,7 +893,7 @@ fi
     const steps = publisher.steps ?? [];
 
     [...steps, ...(promoter.steps ?? [])]
-      .filter((candidate) => candidate.uses)
+      .filter((candidate) => candidate.uses && !candidate.uses.startsWith("./"))
       .forEach((action) => {
         expect(action.uses, action.name).toMatch(fullShaAction);
       });
@@ -985,36 +920,14 @@ fi
 
     const guard = step(publisher, "Validate production build args");
     const releaseIdentity = step(publisher, "Resolve managed image release identity");
-    const build = step(publisher, "Build and push managed image by digest");
     const validate = step(publisher, "Validate exact managed image before promotion");
     const evidence = step(publisher, "Capture exact managed image publication evidence");
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
-    expect(steps.indexOf(guard)).toBeLessThan(steps.indexOf(build));
     expect(releaseIdentity.id).toBe("release");
     expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('--build-arg "TARGETARCH=${target_arch}"');
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
-    expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
-    expect(build.with).toMatchObject({
-      context: ".",
-      file: "${{ matrix.dockerfile }}",
-      platforms: "${{ matrix.platform }}",
-      "build-args":
-        "BASE_IMAGE=${{ steps.base.outputs.ref }}\nTARGETARCH=${{ matrix.arch }}\nNEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1\nNEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root\n",
-      provenance: "mode=max",
-      sbom: true,
-    });
-    expect(build.with?.push).toBeUndefined();
-    expect(build.with?.tags).toBeUndefined();
-    expect(build.with?.labels).toContain("org.opencontainers.image.revision=${{ github.sha }}");
-    expect(build.with?.labels).toContain(
-      "org.opencontainers.image.version=${{ steps.release.outputs.value }}",
-    );
-    expect(build.with?.labels).toContain("io.nvidia.nemoclaw.managed-image.contract=1");
-    expect(build.with?.labels).toContain(
-      "io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}",
-    );
 
     const base = step(publisher, "Validate exact base image contract");
     expect(base.run).toContain(".platformReferences[$platform]");

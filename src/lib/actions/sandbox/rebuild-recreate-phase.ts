@@ -3,11 +3,13 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
+import { normalizeProcessExitCode } from "../../core/process-exit";
 import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
 import { sameGatewayOwner } from "../../onboard/gateway-ownership";
 import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
+import { isOnboardDeferredExitError } from "../../onboard/session-bootstrap";
 import * as shields from "../../shields";
 import { decisionSelected, isDecisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
@@ -37,7 +39,7 @@ import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-import { printRebuildShieldsRecovery, type RebuildShieldsWindow } from "./rebuild-shields";
+import type { RebuildShieldsWindow } from "./rebuild-shields";
 
 export interface RebuildRecreatePhaseInput {
   sandboxName: string;
@@ -242,19 +244,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
   );
 
-  // Intercept process.exit so a failed inner onboard can preserve the backup
-  // and durable retry state instead of terminating the outer transaction.
   let onboardFailed = false;
   let onboardExitCode = 1;
-  const savedExit = process.exit;
-  process.exit = ((code) => {
-    onboardFailed = true;
-    onboardExitCode = typeof code === "number" ? code : 1;
-    const error = new Error(`onboard exited with code ${onboardExitCode}`);
-    error.name = "RebuildOnboardExit";
-    throw error;
-  }) as typeof process.exit;
-
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
@@ -279,6 +270,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   }
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
+  const savedExitCode = process.exitCode;
+  process.exitCode = undefined;
   try {
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
@@ -289,19 +282,34 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
-    log("onboard() returned successfully");
+    const returnedExitCode = normalizeProcessExitCode(process.exitCode);
+    if (returnedExitCode !== 0) {
+      onboardFailed = true;
+      onboardExitCode = returnedExitCode;
+      log(`onboard() returned with exit code ${returnedExitCode}`);
+      console.error(
+        `  ${_RD}Sandbox recreate error:${R} Inner onboarding completed with exit code ${returnedExitCode}.`,
+      );
+    } else {
+      log("onboard() returned successfully");
+    }
   } catch (error) {
     onboardFailed = true;
     const message = describeRebuildOnboardFailure(error);
-    const name = error instanceof Error ? error.name : "";
-    if (name !== "RebuildOnboardExit") {
+    if (isOnboardDeferredExitError(error)) {
+      onboardExitCode = error.code;
+      log(`onboard() exited with code ${onboardExitCode}`);
+      console.error(
+        `  ${_RD}Sandbox recreate error:${R} Inner onboarding exited with code ${onboardExitCode}.`,
+      );
+    } else {
       log(`onboard() threw: ${message}`);
       console.error(
         `  ${_RD}Sandbox recreate error:${R} ${onboardSession.redactSensitiveText(message) ?? "Inner onboarding failed."}`,
       );
     }
   } finally {
-    process.exit = savedExit;
+    process.exitCode = savedExitCode;
     restoreRebuildBaseImageOverride();
     restoreAmbientRecreateEnv();
     if (previousSandboxName === undefined) delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -356,7 +364,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
       );
     }
-    printRebuildShieldsRecovery(sandboxName, rebuildShieldsWindow, CLI_NAME);
+    if (rebuildShieldsWindow.wasLocked) {
+      console.error(`    ${backupManifest ? 4 : 3}. Restore shields lockdown:`);
+      console.error(`       ${CLI_NAME} ${sandboxName} shields up`);
+    }
     console.error("");
     relockShieldsIfNeeded(false);
     bail(
