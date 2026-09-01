@@ -14,6 +14,7 @@ import {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import {
   baseImageInputsChanged,
+  collectPaginated,
   githubRequest,
   parseBaseImagePushPaths,
 } from "./base-image-publication.mts";
@@ -367,10 +368,9 @@ export async function resolvePrManagedImageCatalog(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}`),
   );
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`;
   const run = selectManagedImagePublicationRun(
-    await request(
-      `/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`,
-    ),
+    await collectPaginated(request, runsPath, "workflow_runs"),
     { headSha: input.candidateSha, prNumber: input.prNumber, workflowId },
   );
 

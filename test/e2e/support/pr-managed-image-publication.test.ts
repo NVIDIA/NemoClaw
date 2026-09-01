@@ -107,6 +107,7 @@ function candidateRequest(options: {
   readonly changedPath?: string;
   readonly imageChanged: boolean;
   readonly run?: unknown;
+  readonly runPages?: readonly unknown[];
   readonly artifactHeadSha?: string;
   readonly artifactRunAttempt?: number;
   readonly artifactRunId?: number;
@@ -158,11 +159,12 @@ function candidateRequest(options: {
         state: "active",
       },
     ],
-    [
-      `/repos/${CANONICAL_REPOSITORY}/actions/workflows/managed-images.yaml/runs?event=pull_request&head_sha=${CANDIDATE_SHA}&per_page=100`,
-      options.run ?? workflowRun(),
-    ],
   ]);
+  const runsPath = `/repos/${CANONICAL_REPOSITORY}/actions/workflows/managed-images.yaml/runs?event=pull_request&head_sha=${CANDIDATE_SHA}&per_page=100`;
+  const runPages = options.runPages ?? [options.run ?? workflowRun()];
+  for (const [index, page] of runPages.entries()) {
+    responses.set(`${runsPath}&page=${index + 1}`, page);
+  }
   for (const [index, agent] of SHIPPED_MANAGED_IMAGE_AGENTS.entries()) {
     const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}`;
     const archive = artifactZip([
@@ -358,6 +360,60 @@ describe("exact PR managed-image publication", () => {
     expect(request).not.toHaveBeenCalledWith(
       expect.stringContaining(`/actions/runs/${RUN_ID}/artifacts`),
     );
+  });
+
+  it("selects a successful exact-candidate Images run beyond the first API page", async () => {
+    const laterRunId = RUN_ID + 200;
+    const failedRuns = Array.from({ length: 100 }, (_, index) =>
+      workflowRunRecord({ conclusion: "failure", id: RUN_ID + index }),
+    );
+    const request = vi.fn(
+      candidateRequest({
+        artifactRunId: laterRunId,
+        imageChanged: true,
+        runPages: [
+          { total_count: 101, workflow_runs: failedRuns },
+          {
+            total_count: 101,
+            workflow_runs: [workflowRunRecord({ id: laterRunId })],
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      resolvePrManagedImageCatalog(resolverInput(), request, (identity) =>
+        downloadContract(identity, `ghrun-${laterRunId}-1`),
+      ),
+    ).resolves.toBe("candidate-catalog");
+    expect(request).toHaveBeenCalledWith(expect.stringContaining("per_page=100&page=2"));
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining(`/actions/runs/${laterRunId}/artifacts`),
+    );
+  });
+
+  it("fails closed when the exact-candidate Images run count keeps changing", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      workflowRunRecord({ conclusion: "failure", id: RUN_ID + index }),
+    );
+    const pages = Array.from({ length: 3 }).flatMap(() => [
+      { total_count: 101, workflow_runs: firstPage },
+      {
+        total_count: 102,
+        workflow_runs: [workflowRunRecord({ id: RUN_ID + 200 })],
+      },
+    ]);
+    const fallback = candidateRequest({ imageChanged: true });
+    const runsPath = `/repos/${CANONICAL_REPOSITORY}/actions/workflows/managed-images.yaml/runs?event=pull_request&head_sha=${CANDIDATE_SHA}&per_page=100`;
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        resolverInput(),
+        (requestPath) =>
+          requestPath.startsWith(runsPath) ? Promise.resolve(pages.shift()) : fallback(requestPath),
+        downloadContract,
+      ),
+    ).rejects.toThrow("workflow run total_count changed during 3 pagination attempts");
   });
 
   it("rejects candidate contracts from another workflow run cohort", async () => {
