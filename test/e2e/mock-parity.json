@@ -69,7 +69,10 @@
     },
     {
       "live": "test/e2e/live/pi-agent-qualification.test.ts",
-      "liveSources": ["test/e2e/live/onboard-interactive-pty.ts"],
+      "liveSources": [
+        "test/e2e/live/onboard-interactive-pty.ts",
+        "test/e2e/live/pi-agent-qualification-events.ts"
+      ],
       "fast": [
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
@@ -142,7 +145,8 @@
       "live": "test/e2e/live/full-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/agent-turn-latency-helpers.ts",
-        "test/e2e/live/full-e2e-inference-probe.ts"
+        "test/e2e/live/full-e2e-inference-probe.ts",
+        "test/e2e/live/full-e2e-workload-evidence.ts"
       ],
       "fast": [
         "test/e2e/support/hosted-inference.test.ts",
@@ -151,6 +155,7 @@
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
@@ -255,7 +260,8 @@
     },
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
-      "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
+      "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts"],
+      "fast": ["test/e2e/support/dashboard-connect-handoff.test.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
@@ -328,6 +334,7 @@
     },
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+      "liveSources": ["test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"],
       "fast": [
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -529,7 +536,9 @@
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
         "test/e2e/live/mcp-bridge-cleanup.ts",
-        "test/e2e/live/mcp-bridge-sandbox.ts"
+        "test/e2e/live/mcp-bridge-sandbox.ts",
+        "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
@@ -539,13 +548,16 @@
         "src/lib/actions/sandbox/mcp-bridge-provider.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/e2e-redaction-entry.test.ts",
         "test/e2e/support/mcp-bridge-cleanup.test.ts",
         "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
         "test/e2e/support/mcp-bridge-reliability.test.ts",
+        "test/e2e/support/mcp-bridge-sandbox.test.ts",
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
-        "test/e2e/support/mcp-workflow-boundary.test.ts"
+        "test/e2e/support/mcp-workflow-boundary.test.ts",
+        "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts"
       ]
     },
     {
@@ -559,6 +571,10 @@
     },
     {
       "live": "test/e2e/live/messaging-providers.test.ts",
+      "liveSources": [
+        "test/e2e/live/messaging-providers-helpers.ts",
+        "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
+      ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
@@ -569,7 +585,9 @@
         "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/agents/openclaw/runtime/nemoclaw-start-wechat-placeholder.test.ts",
+        "test/onboarding/effective-policy-contracts.test.ts"
       ]
     },
     {
@@ -748,6 +766,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "liveSources": [
+        "test/e2e/live/channels-stop-start-config-state.ts",
         "test/e2e/live/channels-stop-start-googlechat-proof.ts",
         "test/e2e/live/channels-stop-start-helpers.ts",
         "test/e2e/live/channels-stop-start-plan-state.ts"

@@ -417,6 +417,108 @@ describe("MCP lifecycle lock acquisition", () => {
     });
   });
 
+  it("releases an asynchronous deadline generation when authority changes after publication", async () => {
+    const processToken = "3".repeat(32);
+    const replacementToken = "4".repeat(32);
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    writeTimerMarker(processToken);
+    const realLink = fs.promises.link.bind(fs.promises);
+    vi.spyOn(fs.promises, "link").mockImplementationOnce(async (candidatePath, targetPath) => {
+      await realLink(candidatePath, targetPath);
+      writeTimerMarker(replacementToken);
+    });
+
+    await expect(
+      withMcpLifecycleDeadlineFence(SANDBOX_NAME, processToken, operation, options()),
+    ).rejects.toThrow("Auto-restore authority changed");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("releases a synchronous deadline generation when authority changes after publication", () => {
+    const processToken = "5".repeat(32);
+    const replacementToken = "6".repeat(32);
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    writeTimerMarker(processToken);
+    const realLinkSync = fs.linkSync.bind(fs);
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((candidatePath, targetPath) => {
+      realLinkSync(candidatePath, targetPath);
+      writeTimerMarker(replacementToken);
+    });
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, options()),
+    ).toThrow("Auto-restore authority changed");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("releases an ambiguously published async main generation after authority changes", async () => {
+    const processToken = "7".repeat(32);
+    const replacementToken = "8".repeat(32);
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    writeTimerMarker(processToken);
+    const realLink = fs.promises.link.bind(fs.promises);
+    vi.spyOn(fs.promises, "link")
+      .mockImplementationOnce((candidatePath, targetPath) => realLink(candidatePath, targetPath))
+      .mockImplementationOnce(async (candidatePath, targetPath) => {
+        await realLink(candidatePath, targetPath);
+        writeTimerMarker(replacementToken);
+        vi.spyOn(fs.promises, "stat").mockRejectedValueOnce(
+          new Error("publication reconciliation unavailable"),
+        );
+        throw new Error("publication reply lost");
+      });
+
+    await expect(
+      withMcpLifecycleDeadlineFence(SANDBOX_NAME, processToken, operation, options()),
+    ).rejects.toThrow("Auto-restore authority changed");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+  });
+
+  it("releases an ambiguously published sync main generation after authority changes", () => {
+    const processToken = "9".repeat(32);
+    const replacementToken = "a".repeat(32);
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    writeTimerMarker(processToken);
+    const realLinkSync = fs.linkSync.bind(fs);
+    vi.spyOn(fs, "linkSync")
+      .mockImplementationOnce((candidatePath, targetPath) =>
+        realLinkSync(candidatePath, targetPath),
+      )
+      .mockImplementationOnce((candidatePath, targetPath) => {
+        realLinkSync(candidatePath, targetPath);
+        writeTimerMarker(replacementToken);
+        vi.spyOn(fs, "statSync").mockImplementationOnce(() => {
+          throw new Error("publication reconciliation unavailable");
+        });
+        throw new Error("publication reply lost");
+      });
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, options()),
+    ).toThrow("Auto-restore authority changed");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+  });
+
   it("does not strand asynchronous recovery behind an expired legacy marker", async () => {
     writeTimerMarker(undefined, new Date(Date.now() - 1_000).toISOString());
 
@@ -624,6 +726,61 @@ describe("MCP lifecycle lock acquisition", () => {
     ).toBe("complete");
     expect(fs.existsSync(paths.lockPath)).toBe(false);
     expect(fs.existsSync(paths.containmentPath)).toBe(false);
+  });
+
+  it("uses completed auto-restore authority when the canonical timer marker is unavailable", () => {
+    const processToken = "e".repeat(32);
+    const paths = writeStructuredCompletedContainment(processToken);
+    const assertAuthority = vi.fn();
+
+    expect(
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, () => "complete", {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority,
+        },
+      }),
+    ).toBe("complete");
+    expect(assertAuthority).toHaveBeenCalled();
+    expect(fs.existsSync(paths.lockPath)).toBe(false);
+    expect(fs.existsSync(paths.containmentPath)).toBe(false);
+  });
+
+  it("cleans an ambiguously published main generation before refusing completed recovery authority", () => {
+    const processToken = "e".repeat(32);
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    let authorityCurrent = true;
+    const assertAuthority = vi.fn(() => expect(authorityCurrent).toBe(true));
+    const realLinkSync = fs.linkSync.bind(fs);
+    vi.spyOn(fs, "linkSync")
+      .mockImplementationOnce((candidatePath, targetPath) =>
+        realLinkSync(candidatePath, targetPath),
+      )
+      .mockImplementationOnce((candidatePath, targetPath) => {
+        realLinkSync(candidatePath, targetPath);
+        authorityCurrent = false;
+        vi.spyOn(fs, "statSync").mockImplementationOnce(() => {
+          throw new Error("publication reconciliation unavailable");
+        });
+        throw new Error("publication reply lost");
+      });
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority,
+        },
+      }),
+    ).toThrow("Auto-restore authority changed");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
   });
 
   it("preserves structured containment when its protected generation is absent", () => {

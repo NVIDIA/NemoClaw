@@ -246,6 +246,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
     writeFixture(path.join("scripts", "lib", "clean_runtime_shell_env_shim.py"));
     writeFixture(path.join("scripts", "lib", "normalize_mutable_config_perms.py"));
+    writeFixture(path.join("scripts", "lib", "refresh-openclaw-wechat-placeholder.py"));
     writeFixture(
       path.join("src", "lib", "messaging", "applier", "build", "messaging-build-applier.mts"),
     );

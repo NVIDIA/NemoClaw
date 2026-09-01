@@ -45,6 +45,7 @@ export interface HermesPortablePodmanAuthorityDeps {
 
 export interface HermesPortablePodmanCommandAuthority {
   readonly engine: PodmanBoundContainerEngine;
+  readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
 }
 
@@ -52,6 +53,7 @@ export interface HermesPortablePodmanOperationEngines {
   readonly hostDoctor: PodmanBoundContainerEngine;
   readonly hostLocalInference: PodmanBoundContainerEngine;
   readonly sandboxLifecycle: PodmanBoundContainerEngine;
+  readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
 }
 
@@ -154,16 +156,19 @@ function createHermesPortablePodmanOperationCommandAuthority(
       : {}),
     ...(deps.assertSocketAuthority ? { assertAuthority: deps.assertSocketAuthority } : {}),
   });
-  const assertCurrent = (): void => {
+  const assertTransactionCurrent = (): void => {
     requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
     buildHermesPortablePodmanEnvironment(runtimeAuthority, sourceEnv);
     requireResolvedExecutable(authority, sourceEnv, deps);
     assertPodmanExecutableAuthority(authority.executable, deps.executableAuthorityDeps);
     engine.assertAuthority();
-    if (operation === "state-mutation") qualifyExactMatrix(engine, deps);
-    engine.assertAuthority();
   };
-  return Object.freeze({ engine, assertCurrent });
+  const assertCurrent = (): void => {
+    assertTransactionCurrent();
+    if (operation === "state-mutation") qualifyExactMatrix(engine, deps);
+    assertTransactionCurrent();
+  };
+  return Object.freeze({ engine, assertTransactionCurrent, assertCurrent });
 }
 
 export function createHermesPortablePodmanCommandAuthority(
@@ -178,6 +183,24 @@ export function createHermesPortablePodmanCommandAuthority(
     socketAuthority,
     runtimeAuthority,
     "state-mutation",
+    sourceEnv,
+    deps,
+  );
+}
+
+/** Bind one receipt-owned inference inspection without running the Podman behavior matrix. */
+export function createHermesPortablePodmanInferenceInspectionAuthority(
+  authority: HermesPortablePodmanExecutableAuthority,
+  socketAuthority: PodmanSocketAuthority,
+  runtimeAuthority: CheckpointPortableRuntimeAuthority,
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+  deps: HermesPortablePodmanAuthorityDeps = {},
+): HermesPortablePodmanCommandAuthority {
+  return createHermesPortablePodmanOperationCommandAuthority(
+    authority,
+    socketAuthority,
+    runtimeAuthority,
+    "host-local-inference",
     sourceEnv,
     deps,
   );
@@ -214,6 +237,12 @@ export function createHermesPortablePodmanOperationEngines(
     hostDoctor: hostDoctor.engine,
     hostLocalInference: hostLocalInference.engine,
     sandboxLifecycle: sandboxLifecycle.engine,
+    assertTransactionCurrent: () => {
+      matrixAuthority.assertTransactionCurrent();
+      hostDoctor.assertTransactionCurrent();
+      hostLocalInference.assertTransactionCurrent();
+      sandboxLifecycle.assertTransactionCurrent();
+    },
     assertCurrent: () => {
       matrixAuthority.assertCurrent();
       hostDoctor.assertCurrent();

@@ -333,7 +333,7 @@ describe("global oclif command adapters", () => {
         expect.any(String),
         "inference:get",
       );
-      expect(mocks.runInferenceGet).toHaveBeenCalledWith({ quiet: true });
+      expect(mocks.runInferenceGet).toHaveBeenCalledWith({ cliName: "nemoclaw", quiet: true });
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
         provider: "nvidia-prod",
         model: "nvidia/model-a",

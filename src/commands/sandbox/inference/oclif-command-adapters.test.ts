@@ -141,7 +141,11 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     try {
       await SandboxInferenceGetCommand.run(["alpha", "--json"], rootDir);
 
-      expect(mocks.runInferenceGet).toHaveBeenCalledWith({ quiet: true, sandboxName: "alpha" });
+      expect(mocks.runInferenceGet).toHaveBeenCalledWith({
+        cliName: "nemoclaw",
+        quiet: true,
+        sandboxName: "alpha",
+      });
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
         provider: "llama-cpp-local",
         model: "muse-glimmer",

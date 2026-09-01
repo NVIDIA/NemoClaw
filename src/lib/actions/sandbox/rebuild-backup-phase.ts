@@ -31,7 +31,6 @@ export interface RebuildBackupPhaseInput {
   preparedRecoveryManifest: RebuildBackupManifest;
   messagingPlan: SandboxMessagingPlan | null;
   webSearchConfig: WebSearchConfig | null;
-  force?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
@@ -39,7 +38,6 @@ export interface RebuildBackupPhaseInput {
 
 export interface RebuildBackupPhaseResult {
   backupManifest: RebuildBackupManifest;
-  backupWasForceSkipped: boolean;
   policySourcePath: string;
 }
 
@@ -106,7 +104,6 @@ export function runRebuildBackupPhase(
       input.log,
       input.relockShieldsIfNeeded,
       input.bail,
-      { force: input.force },
     );
   if (backupManifest === undefined) return null;
   if (
@@ -117,9 +114,6 @@ export function runRebuildBackupPhase(
   ) {
     return bailForUnsafeOpenClawPluginProvenance(input);
   }
-  const backupWasForceSkipped =
-    input.force === true && !input.staleRecovery && backupManifest === null;
-
   const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
   if (input.staleRecovery && !retainedPolicy) {
     return input.bail(
@@ -146,7 +140,6 @@ export function runRebuildBackupPhase(
       if (!handoff) throw new Error("rebuild policy handoff was not published");
       return {
         backupManifest,
-        backupWasForceSkipped,
         policySourcePath: fs.realpathSync(path.join(backupManifest.backupPath, handoff.file)),
       };
     } catch (error) {
@@ -157,5 +150,5 @@ export function runRebuildBackupPhase(
       cleanupTempDir(policySourcePath, "nemoclaw-rebuild-policy");
     }
   }
-  return { backupManifest, backupWasForceSkipped, policySourcePath };
+  return { backupManifest, policySourcePath };
 }

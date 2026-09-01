@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ArtifactSink } from "./artifacts.ts";
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
+import {
+  CANDIDATE_AGENT_FEATURE_ENV,
+  CANDIDATE_QUALIFICATION_RECEIPT_ENV,
+} from "../../../src/lib/agent/candidate.ts";
+import { CUA_FEATURE_ENV } from "../../../src/lib/cua/feature.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
@@ -40,6 +46,26 @@ export interface ShellProbeOutputEvent {
 
 export type { TrustedShellCommand, TrustedShellCommandInput } from "./shell/trusted-command.ts";
 export { trustedShellCommand } from "./shell/trusted-command.ts";
+
+export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const targetId = input.E2E_TARGET_ID ?? process.env.E2E_TARGET_ID;
+  const source = input.E2E_WORKLOAD_SOURCE ?? process.env.E2E_WORKLOAD_SOURCE;
+  if (!targetId || source !== "local-dockerfile" || input.NEMOCLAW_FROM_DOCKERFILE) return input;
+  const agentName = input.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT ?? "openclaw";
+  const agent = loadAgent(agentName, {
+    [CANDIDATE_AGENT_FEATURE_ENV]:
+      input[CANDIDATE_AGENT_FEATURE_ENV] ?? process.env[CANDIDATE_AGENT_FEATURE_ENV],
+    [CANDIDATE_QUALIFICATION_RECEIPT_ENV]:
+      input[CANDIDATE_QUALIFICATION_RECEIPT_ENV] ??
+      process.env[CANDIDATE_QUALIFICATION_RECEIPT_ENV],
+    [CUA_FEATURE_ENV]: input[CUA_FEATURE_ENV] ?? process.env[CUA_FEATURE_ENV],
+  });
+  const dockerfilePath = agent.dockerfilePath ?? agent.legacyPaths?.dockerfile;
+  if (!dockerfilePath) {
+    throw new Error(`Agent '${agent.name}' has no Dockerfile for local E2E workload source.`);
+  }
+  return { ...input, NEMOCLAW_FROM_DOCKERFILE: dockerfilePath };
+}
 
 export interface ShellProbeResult {
   command: string[];
@@ -216,10 +242,10 @@ export class ShellProbe {
     const startedAtMs = Date.now();
     const commandOutputObserver =
       options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
-    const commandEnv: NodeJS.ProcessEnv = {
+    const commandEnv = resolveLiveE2eWorkloadSourceEnv({
       ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
       ...(options.env ?? {}),
-    };
+    });
     const child = spawnObservedChild(command, args, {
       activityLabel: `command: ${activityName}`,
       progress: this.progress,
