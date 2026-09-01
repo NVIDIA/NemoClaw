@@ -103,6 +103,8 @@ const durableRecoveryWriterFailures = [
     },
   ],
 ] as const;
+const ALPHA_SANDBOX_IDENTITY_FINGERPRINT =
+  "8174fa2a5d65755138d8339e086c03d736633130b22dca10952e80e74750c01d";
 
 function expectNoSandboxDelete(deps: ReturnType<typeof createGpuFlowDeps>): void {
   expect(
@@ -165,7 +167,7 @@ function createCommittedReadinessPersistenceFixture() {
   const input = noGpuInput();
   input.resumeVerifiedCreate = {
     route: "none",
-    liveIdentityFingerprint: fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+    liveIdentityFingerprint: ALPHA_SANDBOX_IDENTITY_FINGERPRINT,
     createAttemptNonce: "a".repeat(62),
   };
   input.verifyCreatedSandboxBeforeEffects = vi.fn();
@@ -319,7 +321,7 @@ describe("created sandbox identity gate", () => {
   it("retains exact recovery when committed managed readiness does not return (#9211)", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const sandboxId = "alpha-sandbox-id";
-    const sandboxIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+    const sandboxIdentityFingerprint = ALPHA_SANDBOX_IDENTITY_FINGERPRINT;
     const input = noGpuInput();
     input.resumeVerifiedCreate = {
       route: "none",
@@ -927,7 +929,7 @@ describe("created sandbox identity gate", () => {
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringMatching(/OpenShell detail: .*permission denied: NVIDIA_API_KEY=<REDACTED>/u),
-      fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      ALPHA_SANDBOX_IDENTITY_FINGERPRINT,
       nonce,
     );
     const recoveryMessage =
@@ -963,9 +965,9 @@ describe("created sandbox identity gate", () => {
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining(
-        `Durable sandbox identity fingerprint: ${fingerprintSandboxRecreateValue("alpha-sandbox-id")}`,
+        `Durable sandbox identity fingerprint: ${ALPHA_SANDBOX_IDENTITY_FINGERPRINT}`,
       ),
-      fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      ALPHA_SANDBOX_IDENTITY_FINGERPRINT,
       nonce,
     );
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
@@ -1003,9 +1005,9 @@ describe("created sandbox identity gate", () => {
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining(
-        `Durable sandbox identity fingerprint: ${fingerprintSandboxRecreateValue("alpha-sandbox-id")}`,
+        `Durable sandbox identity fingerprint: ${ALPHA_SANDBOX_IDENTITY_FINGERPRINT}`,
       ),
-      fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      ALPHA_SANDBOX_IDENTITY_FINGERPRINT,
       nonce,
     );
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
@@ -1197,7 +1199,7 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     const nonce = readNonce();
-    const fingerprint = fingerprintSandboxRecreateValue("alpha-sandbox-id");
+    const fingerprint = ALPHA_SANDBOX_IDENTITY_FINGERPRINT;
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringMatching(
         new RegExp(
