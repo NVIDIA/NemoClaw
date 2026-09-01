@@ -3,6 +3,7 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import { runDeepAgentsAdapterCommand } from "./mcp-bridge-adapter-deepagents-command";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import {
   DEEPAGENTS_LEGACY_CONFIG_HELPERS,
   DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
@@ -180,6 +181,7 @@ export function buildDeepAgentsMcpRemoveCommand(
 export function unregisterDeepAgentsAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): AdapterRemovalOutcome {
   const stdout = runDeepAgentsAdapterCommand(
@@ -187,6 +189,7 @@ export function unregisterDeepAgentsAdapter(
     entry,
     buildDeepAgentsMcpRemoveCommand(entry, options.force === true, options.teardown === true),
     `Deep Agents Code MCP config removal failed for '${entry.server}'.`,
+    runtimeSelection,
     options,
   );
   const marker = stdout.match(/NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=(removed|absent|unowned)/);

@@ -48,7 +48,11 @@ let providerInspectionState = "present";
 let providerCredentialKey = "GITHUB_TOKEN";
 let persistedCredentialRevision = "v11";
 const hermesIntentPayloads = [];
-providerCommands.runOpenshellProviderCommand = (args) => {
+const providerCommandRuntimeSelections = [];
+providerCommands.runOpenshellProviderCommand = (args, options) => {
+  if (options?.runtimeSelection) {
+    providerCommandRuntimeSelections.push(options.runtimeSelection);
+  }
   if (args[0] === "provider" && args[1] === "get") {
     if (providerInspectionState === "absent") {
       return { status: 1, stdout: "", stderr: "provider not found" };
@@ -87,6 +91,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 let activePolicyState = "match";
 policies.getPresetContentGatewayState = () => activePolicyState;
 const executedSandboxCommands = [];
+const executedSandboxOptions = [];
 let providerCredentialObservation = "v11";
 let credentialObservationCount = 0;
 processRecovery.executeSandboxExecCommand = () => {
@@ -97,8 +102,9 @@ processRecovery.executeSandboxExecCommand = () => {
     stderr: "",
   };
 };
-processRecovery.executeSandboxCommand = (sandboxName, command) => {
+processRecovery.executeSandboxCommand = (sandboxName, command, options) => {
   executedSandboxCommands.push(command);
+  executedSandboxOptions.push(options);
   if (command.includes("NEMOCLAW_MCP_PROBE")) {
     const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
     if (!resultMarker) throw new Error("credential probe result marker missing");
@@ -141,6 +147,8 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
   mcp: { bridges: { github: {
     server: "github",
     agent: "openclaw",
@@ -668,15 +676,32 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     hasDiscovery: !!status.toolDiscovery,
     probeCommands: executedSandboxCommands.filter((c) => c.includes("NEMOCLAW_MCP_PROBE")).length,
     discoveryCommands: executedSandboxCommands.filter((c) => c.includes("mcp-tool-discovery-runtime")).length,
+    selections: executedSandboxOptions.map((options) => options?.runtimeSelection),
   }));
 `,
     );
-    expect(JSON.parse(stdout)).toEqual({
+    const payload = JSON.parse(stdout) as {
+      discoveryCommands: number;
+      hasDiscovery: boolean;
+      hasResolution: boolean;
+      probeCommands: number;
+      selections: Array<{ gatewayName?: string; workspace?: string }>;
+    };
+    expect(payload).toEqual({
       hasResolution: true,
       hasDiscovery: true,
       probeCommands: 1,
       discoveryCommands: 1,
+      selections: expect.arrayContaining([
+        expect.objectContaining({ gatewayName: "nemoclaw-9090", workspace: "default" }),
+      ]),
     });
+    expect(
+      payload.selections.every(
+        (selection) =>
+          selection.gatewayName === "nemoclaw-9090" && selection.workspace === "default",
+      ),
+    ).toBe(true);
   });
 
   it("requires a named server for --tools and renders the discovered names (#6901)", () => {
@@ -748,6 +773,36 @@ describe("MCP add post-add credential-resolution probe", () => {
       ),
     ).toBe(true);
     expect(payload.exitCode).toBe(0);
+  });
+
+  it("reuses the add target for the post-add status probe (#10514)", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-add-target-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
+  const addRuntimeSelection = {
+    gatewayName: "nemoclaw-9090",
+    workspace: "default",
+    localTlsDir: "/authority/tls",
+  };
+  addRestart.addMcpBridge = async () => addRuntimeSelection;
+  await bridge.dispatchMcpBridgeCommand("alpha", [
+    "add", "github", "--url", "https://api.githubcopilot.com/mcp/", "--env", "GITHUB_TOKEN",
+  ]);
+  const commandSelections = executedSandboxOptions
+    .map((options) => options?.runtimeSelection)
+    .filter(Boolean);
+  const observedSelections = [...providerCommandRuntimeSelections, ...commandSelections];
+  process.stdout.write(JSON.stringify({
+    observedCount: observedSelections.length,
+    reused: observedSelections.every((selection) => selection === addRuntimeSelection),
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as { observedCount: number; reused: boolean };
+    expect(payload.observedCount).toBeGreaterThan(0);
+    expect(payload.reused).toBe(true);
   });
 
   it("skips post-add probe traffic when policy verification is absent, drifted, or unknown (#6379)", () => {

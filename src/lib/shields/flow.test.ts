@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -14,9 +13,14 @@ import {
   createShieldsFlowHarness,
   managedMcpPolicy,
   managedMcpSandbox,
+  timerAuthorityFixtures,
   type ShieldsFlowHarnessOptions,
+  writeActivePolicyTransition,
+  writeBoundPolicySnapshot,
+  writeExpiredShieldsFixture,
   writeShieldsTimerAuthorizationProof,
 } from "../../../test/helpers/shields-flow-harness";
+import { GATEWAY_PORT } from "../core/ports";
 
 const requireDist = createRequire(import.meta.url);
 const shieldsModulePath = "./index.js";
@@ -28,107 +32,6 @@ const currentProcessStartIdentity = (
 
 function createHarness(options: ShieldsFlowHarnessOptions = {}) {
   return createShieldsFlowHarness(requireDist, tmpDir, options);
-}
-
-function writeBoundPolicySnapshot(
-  snapshotPath: string,
-  content = "version: 1\nnetwork_policies:\n  test: {}\n",
-) {
-  fs.writeFileSync(snapshotPath, content, { mode: 0o600 });
-  fs.chmodSync(snapshotPath, 0o600);
-  const metadata = fs.statSync(snapshotPath);
-  return {
-    schemaVersion: 1 as const,
-    path: snapshotPath,
-    sha256: createHash("sha256").update(content).digest("hex"),
-    size: Buffer.byteLength(content),
-    mode: 0o600,
-    uid: metadata.uid,
-    gid: metadata.gid,
-    nlink: 1 as const,
-  };
-}
-
-function writeActivePolicyTransition(
-  stateDir: string,
-  sandboxName: string,
-  processToken: string,
-  snapshotPath: string,
-  snapshotPolicy: ReturnType<typeof writeBoundPolicySnapshot>,
-): void {
-  const forwardPolicy = writeBoundPolicySnapshot(
-    path.join(stateDir, `policy-forward-${processToken.slice(0, 8)}.yaml`),
-  );
-  fs.writeFileSync(
-    path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`),
-    JSON.stringify({
-      version: 1,
-      phase: "active",
-      ownerPid: 2_147_483_647,
-      ownerStartIdentity: "test-timer-owner",
-      processToken,
-      sandboxName,
-      snapshotPath,
-      snapshotPolicy,
-      forwardPolicy,
-    }),
-    { mode: 0o600 },
-  );
-}
-
-const timerAuthorityFixtures: ReadonlyArray<readonly [string, (markerPath: string) => void]> = [
-  ["missing", () => undefined],
-  ["malformed", (markerPath) => fs.writeFileSync(markerPath, "{not-json")],
-];
-
-function writeExpiredShieldsFixture(
-  processToken: string,
-  reason: string,
-  ownerState: "dead" | "live",
-) {
-  const liveOwner = ownerState === "live";
-  const sandboxName = "openclaw";
-  const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-  const snapshotPath = path.join(stateDir, `snapshot-${processToken.slice(0, 8)}.yaml`);
-  const timerMarkerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-  const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
-  fs.mkdirSync(stateDir, { recursive: true });
-  const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
-  fs.writeFileSync(
-    path.join(stateDir, `shields-${sandboxName}.json`),
-    JSON.stringify({
-      shieldsDown: true,
-      shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-      shieldsDownTimeout: 60,
-      shieldsDownReason: reason,
-      shieldsDownPolicy: "permissive",
-      shieldsPolicySnapshotPath: snapshotPath,
-      shieldsPolicySnapshot: snapshotPolicy,
-    }),
-  );
-  fs.writeFileSync(
-    timerMarkerPath,
-    JSON.stringify({
-      pid: liveOwner ? 2_147_483_647 : 4242,
-      sandboxName,
-      snapshotPath,
-      restoreAt: new Date(Date.now() - 60_000).toISOString(),
-      processToken,
-    }),
-  );
-  fs.writeFileSync(
-    transitionLockPath,
-    JSON.stringify({
-      version: 1,
-      sandboxName,
-      pid: liveOwner ? process.pid : 4242,
-      processStartIdentity: liveOwner ? currentProcessStartIdentity : "dead-timer",
-      command: liveOwner ? "shields down" : "shields auto-restore",
-      acquiredAtMs: Date.now() - 60_000,
-      takeoverToken: processToken,
-    }),
-  );
-  return { stateDir, timerMarkerPath, transitionLockPath };
 }
 
 describe("shields command flow", () => {
@@ -532,6 +435,8 @@ describe("shields command flow", () => {
       const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
       const timerControl = requireDist("./timer-control.js");
       const { stateDir, timerMarkerPath, transitionLockPath } = writeExpiredShieldsFixture(
+        tmpDir,
+        currentProcessStartIdentity,
         processToken,
         "long lifecycle operation",
         "dead",
@@ -1331,7 +1236,13 @@ describe("shields command flow", () => {
       stateDir,
       timerMarkerPath,
       transitionLockPath: lockPath,
-    } = writeExpiredShieldsFixture(processToken, "coverage", "dead");
+    } = writeExpiredShieldsFixture(
+      tmpDir,
+      currentProcessStartIdentity,
+      processToken,
+      "coverage",
+      "dead",
+    );
     vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
       const failDeadTimerProbe = () => {
         const error = new Error("timer is gone") as NodeJS.ErrnoException;
@@ -1365,6 +1276,8 @@ describe("shields command flow", () => {
     const mainLockPath = lifecycleLock.getMcpLifecycleLockPath("openclaw");
     const containmentPath = `${mainLockPath}.containment`;
     const { timerMarkerPath, transitionLockPath } = writeExpiredShieldsFixture(
+      tmpDir,
+      currentProcessStartIdentity,
       processToken,
       "containment write failure coverage",
       "dead",
@@ -1419,7 +1332,13 @@ describe("shields command flow", () => {
       const processToken = "8".repeat(32);
       const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
       const containmentPath = `${lifecycleLock.getMcpLifecycleLockPath(sandboxName)}.containment`;
-      writeExpiredShieldsFixture(processToken, "takeover exhaustion coverage", "live");
+      writeExpiredShieldsFixture(
+        tmpDir,
+        currentProcessStartIdentity,
+        processToken,
+        "takeover exhaustion coverage",
+        "live",
+      );
       const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
       const harness = createHarness();
 
@@ -1451,7 +1370,13 @@ describe("shields command flow", () => {
       const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
       const mainLockPath = lifecycleLock.getMcpLifecycleLockPath(sandboxName);
       const containmentPath = `${mainLockPath}.containment`;
-      writeExpiredShieldsFixture(processToken, "containment write failure coverage", "live");
+      writeExpiredShieldsFixture(
+        tmpDir,
+        currentProcessStartIdentity,
+        processToken,
+        "containment write failure coverage",
+        "live",
+      );
       const waitSpy = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
       let containmentAttempts = 0;
       const harness = createHarness({
@@ -1481,4 +1406,69 @@ describe("shields command flow", () => {
       );
     },
   );
+
+  it("pins policy commands and the auto-restore timer to the selected target", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/tmp/hostile-tls");
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "recorded-workspace",
+      localTlsDir: "/tmp/recorded-tls",
+    };
+    let timerOptions: { env?: NodeJS.ProcessEnv } | undefined;
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      fork: (...args: unknown[]) => {
+        timerOptions = args[2] as { env?: NodeJS.ProcessEnv };
+        return {
+          pid: 4242,
+          disconnect: () => undefined,
+          unref: () => undefined,
+          send: () => true,
+          kill: () => true,
+        };
+      },
+    });
+
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "selected target coverage",
+      runtimeSelection,
+      throwOnError: true,
+    });
+
+    const policyCalls = [...harness.runCaptureSpy.mock.calls, ...harness.runSpy.mock.calls].filter(
+      ([command]) => Array.isArray(command) && command.includes("policy"),
+    );
+    const selectedCall = {
+      gateway: runtimeSelection.gatewayName,
+      workspace: runtimeSelection.workspace,
+      localTlsDir: runtimeSelection.localTlsDir,
+      replaceEnv: true,
+    };
+    expect(policyCalls.length).toBeGreaterThan(0);
+    expect(
+      policyCalls.map(([, options]) => ({
+        gateway: options.env.OPENSHELL_GATEWAY,
+        workspace: options.env.OPENSHELL_WORKSPACE,
+        localTlsDir: options.env.OPENSHELL_LOCAL_TLS_DIR,
+        replaceEnv: options.replaceEnv,
+      })),
+    ).toEqual(Array(policyCalls.length).fill(selectedCall));
+    expect(timerOptions).toMatchObject({
+      env: {
+        OPENSHELL_GATEWAY: runtimeSelection.gatewayName,
+        OPENSHELL_WORKSPACE: runtimeSelection.workspace,
+        OPENSHELL_LOCAL_TLS_DIR: runtimeSelection.localTlsDir,
+      },
+    });
+    expect(timerOptions?.env?.NEMOCLAW_GATEWAY_PORT).toBe(String(GATEWAY_PORT));
+    expect(harness.policyStateSpy).toHaveBeenCalledWith(
+      "openclaw",
+      "lower Shields",
+      runtimeSelection.gatewayName,
+      runtimeSelection,
+    );
+  });
 });

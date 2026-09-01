@@ -7,6 +7,7 @@ import {
   captureRecordedSandboxBasePolicy,
   parseCurrentPolicy,
 } from "../../policy/index";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { runCapture } from "../../runner";
 
 export interface PolicyGetResult {
@@ -17,12 +18,16 @@ export interface PolicyGetResult {
 /** Read the round-trippable OpenShell base policy and strip its metadata header. */
 export function getSandboxPolicy(
   sandboxName: string,
-  options: { recordedGatewayOperation?: string } = {},
+  options: {
+    recordedGatewayOperation?: string;
+    runtimeSelection?: OpenShellRuntimeSelection;
+  } = {},
 ): PolicyGetResult {
   if (options.recordedGatewayOperation) {
     const yaml = captureRecordedSandboxBasePolicy(
       sandboxName,
       options.recordedGatewayOperation,
+      options.runtimeSelection,
     );
     return { raw: yaml, yaml };
   }

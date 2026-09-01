@@ -17,7 +17,9 @@ import {
   deleteProvider,
   detachMissingProviderReference,
   detachProvider,
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
+  type McpProviderInspectionRuntimeSelection,
   providerMatchesManagedCredential,
   providerShapeDetail,
   waitForDetachedMcpCredential,
@@ -56,7 +58,11 @@ function requiresProviderDetachBeforeAdapterCleanup(entry: McpBridgeEntry): bool
 
 function assertExactMcpRemoveProvider(
   entry: McpBridgeEntry,
-  options: { allowMissing: boolean; force?: boolean },
+  options: {
+    allowMissing: boolean;
+    force?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): void {
   assertPersistedAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
@@ -64,7 +70,7 @@ function assertExactMcpRemoveProvider(
       `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing destructive cleanup of same-name provider '${entry.providerName}'. Remove the legacy bridge with --force only after independently cleaning that provider.`,
     );
   }
-  const inspection = inspectMcpProvider(entry.providerName);
+  const inspection = inspectMcpProvider(entry.providerName, options.runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
@@ -195,6 +201,7 @@ async function removeMcpBridgeUnlocked(
     console.log(`  Cancelled incomplete MCP add for '${server}' on sandbox '${sandboxName}'.`);
     return "cancelledPreparedAdd";
   }
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   // Cleanup follows the adapter persisted with the bridge. Requiring the
   // sandbox's current agent to still advertise MCP support would strand old
   // resources after an agent/capability migration.
@@ -208,15 +215,15 @@ async function removeMcpBridgeUnlocked(
   // entry on an image that predates the managed launcher marker. Hermes still
   // performs its host-side shields preflight here, before any provider, policy,
   // attachment, or adapter side effect.
-  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
-  await ensureSandboxGatewaySelected(sandboxName);
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter, providerRuntimeSelection);
+  await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];
   let providerOwnershipProved = !entry.providerName;
   let providerWasMissing = false;
   if (entry.providerName) {
     if (!entry.providerId) {
-      const inspection = inspectMcpProvider(entry.providerName);
+      const inspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
       if (inspection.exists === false) {
         // With no live provider there is no global object to adopt or destroy.
         // This lets an operator independently remove a legacy/orphan provider,
@@ -232,7 +239,7 @@ async function removeMcpBridgeUnlocked(
         failures.push(detail);
       }
     } else {
-      const inspection = inspectMcpProvider(entry.providerName);
+      const inspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
       if (inspection.exists === false) {
         providerOwnershipProved = true;
         providerWasMissing = true;
@@ -268,7 +275,7 @@ async function removeMcpBridgeUnlocked(
     detachBeforeAdapterCleanup
   ) {
     try {
-      detachMissingProviderReference(sandboxName, entry);
+      detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
       missingProviderReferenceDetached = true;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -284,7 +291,10 @@ async function removeMcpBridgeUnlocked(
         ? missingProviderReferenceDetached
           ? "detached"
           : "unknown"
-        : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+        : detachProvider(sandboxName, entry, {
+            allowLegacyGeneric: true,
+            runtimeSelection: providerRuntimeSelection,
+          });
       providerDetachedBeforeAdapterCleanup = detachOutcome !== "unknown";
       if (!providerDetachedBeforeAdapterCleanup) {
         throw new McpBridgeError(
@@ -310,11 +320,16 @@ async function removeMcpBridgeUnlocked(
       // this probe precedes every provider/policy/adapter side effect. Hermes
       // retains its helper/lifecycle validation; Deep Agents intentionally
       // skips only the marker that an older image cannot expose.
-      assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
+      assertAgentMcpTeardownRuntimeCapability(
+        sandboxName,
+        adapter,
+        providerRuntimeSelection,
+      );
       const adapterRemoval = unregisterAgentAdapter(
         sandboxName,
         (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
         entry,
+        providerRuntimeSelection,
         {
           force: options.force === true,
           envValues: adapterEnvValues,
@@ -333,6 +348,7 @@ async function removeMcpBridgeUnlocked(
             (candidate) => candidate.server !== server,
           ),
           managedServerNames: sandbox.mcp?.managedServerNames,
+          runtimeSelection: providerRuntimeSelection,
         });
       }
     } catch (error) {
@@ -345,7 +361,9 @@ async function removeMcpBridgeUnlocked(
   let policyCleanupProved = false;
   if (adapterCleanupProved) {
     try {
-      removeGeneratedPolicy(sandboxName, entry);
+      removeGeneratedPolicy(sandboxName, entry, {
+        runtimeSelection: providerRuntimeSelection,
+      });
       policyCleanupProved = true;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -368,11 +386,14 @@ async function removeMcpBridgeUnlocked(
       if (providerWasMissing) {
         detachOutcome = missingProviderReferenceDetached
           ? "detached"
-          : detachMissingProviderReference(sandboxName, entry);
+          : detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
       } else {
         detachOutcome = providerDetachedBeforeAdapterCleanup
           ? "detached"
-          : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+          : detachProvider(sandboxName, entry, {
+              allowLegacyGeneric: true,
+              runtimeSelection: providerRuntimeSelection,
+            });
       }
       if (detachOutcome !== "unknown") {
         // A missing provider has no credential left to revoke. Its stock CLI
@@ -380,7 +401,7 @@ async function removeMcpBridgeUnlocked(
         // skipping a fresh-exec probe lets cleanup proceed even if another
         // unrelated provider reference is also dangling.
         if (!providerWasMissing && !providerDetachedBeforeAdapterCleanup) {
-          waitForDetachedMcpCredential(sandboxName, entry);
+          waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         }
         reservationCleanupProved = true;
       }
@@ -409,10 +430,12 @@ async function removeMcpBridgeUnlocked(
       assertExactMcpRemoveProvider(entry, {
         allowMissing: false,
         force: options.force,
+        runtimeSelection: providerRuntimeSelection,
       });
       deleteProvider(entry, {
         allowLegacyGeneric: true,
         allowMissing: options.force === true || entry.addState === "preflighted",
+        runtimeSelection: providerRuntimeSelection,
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -161,6 +162,111 @@ export function writeShieldsTimerAuthorizationProof(
     }),
     { mode: 0o600 },
   );
+}
+
+export function writeBoundPolicySnapshot(
+  snapshotPath: string,
+  content = "version: 1\nnetwork_policies:\n  test: {}\n",
+) {
+  fs.writeFileSync(snapshotPath, content, { mode: 0o600 });
+  fs.chmodSync(snapshotPath, 0o600);
+  const metadata = fs.statSync(snapshotPath);
+  return {
+    schemaVersion: 1 as const,
+    path: snapshotPath,
+    sha256: createHash("sha256").update(content).digest("hex"),
+    size: Buffer.byteLength(content),
+    mode: 0o600,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    nlink: 1 as const,
+  };
+}
+
+export function writeActivePolicyTransition(
+  stateDir: string,
+  sandboxName: string,
+  processToken: string,
+  snapshotPath: string,
+  snapshotPolicy: ReturnType<typeof writeBoundPolicySnapshot>,
+): void {
+  const forwardPolicy = writeBoundPolicySnapshot(
+    path.join(stateDir, `policy-forward-${processToken.slice(0, 8)}.yaml`),
+  );
+  fs.writeFileSync(
+    path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`),
+    JSON.stringify({
+      version: 1,
+      phase: "active",
+      ownerPid: 2_147_483_647,
+      ownerStartIdentity: "test-timer-owner",
+      processToken,
+      sandboxName,
+      snapshotPath,
+      snapshotPolicy,
+      forwardPolicy,
+    }),
+    { mode: 0o600 },
+  );
+}
+
+export const timerAuthorityFixtures: ReadonlyArray<
+  readonly [string, (markerPath: string) => void]
+> = [
+  ["missing", () => undefined],
+  ["malformed", (markerPath) => fs.writeFileSync(markerPath, "{not-json")],
+];
+
+export function writeExpiredShieldsFixture(
+  tmpDir: string,
+  currentProcessStartIdentity: string | null,
+  processToken: string,
+  reason: string,
+  ownerState: "dead" | "live",
+) {
+  const liveOwner = ownerState === "live";
+  const sandboxName = "openclaw";
+  const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+  const snapshotPath = path.join(stateDir, `snapshot-${processToken.slice(0, 8)}.yaml`);
+  const timerMarkerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+  const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
+  fs.mkdirSync(stateDir, { recursive: true });
+  const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+  fs.writeFileSync(
+    path.join(stateDir, `shields-${sandboxName}.json`),
+    JSON.stringify({
+      shieldsDown: true,
+      shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+      shieldsDownTimeout: 60,
+      shieldsDownReason: reason,
+      shieldsDownPolicy: "permissive",
+      shieldsPolicySnapshotPath: snapshotPath,
+      shieldsPolicySnapshot: snapshotPolicy,
+    }),
+  );
+  fs.writeFileSync(
+    timerMarkerPath,
+    JSON.stringify({
+      pid: liveOwner ? 2_147_483_647 : 4242,
+      sandboxName,
+      snapshotPath,
+      restoreAt: new Date(Date.now() - 60_000).toISOString(),
+      processToken,
+    }),
+  );
+  fs.writeFileSync(
+    transitionLockPath,
+    JSON.stringify({
+      version: 1,
+      sandboxName,
+      pid: liveOwner ? process.pid : 4242,
+      processStartIdentity: liveOwner ? currentProcessStartIdentity : "dead-timer",
+      command: liveOwner ? "shields down" : "shields auto-restore",
+      acquiredAtMs: Date.now() - 60_000,
+      takeoverToken: processToken,
+    }),
+  );
+  return { stateDir, timerMarkerPath, transitionLockPath };
 }
 
 function throwHarnessError(error: Error): never {

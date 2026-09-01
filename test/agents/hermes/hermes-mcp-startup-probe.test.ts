@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
+  getSandbox: vi.fn(),
   isShieldsDown: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
   sleepMs: vi.fn(),
@@ -26,6 +27,11 @@ vi.mock("../../../src/lib/core/wait", () => ({
   waitUntil: mocks.waitUntil,
 }));
 
+vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/state/registry")>()),
+  getSandbox: mocks.getSandbox,
+}));
+
 vi.mock("../../../src/lib/shields", () => ({
   isShieldsDown: mocks.isShieldsDown,
 }));
@@ -40,11 +46,21 @@ function runHermesProbe(
   shieldsDown = true,
   supervisorResults: SupervisorResult[] = [],
 ) {
+  const runtimeSelection = {
+    gatewayName: "nemoclaw-8091",
+    workspace: "default",
+  } as const;
   let calls = 0;
   let recoveryCalls = 0;
   const recoveryActions: Array<{ action: string; timeout: number }> = [];
 
-  mocks.runOpenshellProviderCommand.mockImplementation(() => results[calls++]);
+  mocks.runOpenshellProviderCommand.mockImplementation((_args, options) => {
+    expect(options?.runtimeSelection).toEqual({
+      gatewayName: "nemoclaw-8091",
+      workspace: "default",
+    });
+    return results[calls++];
+  });
   mocks.executeGatewaySupervisorAction.mockImplementation(
     (_sandbox: string, action: string, timeout: number) => {
       recoveryActions.push({ action, timeout });
@@ -70,7 +86,7 @@ function runHermesProbe(
 
   let message = "";
   try {
-    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config");
+    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config", runtimeSelection);
   } catch (error) {
     message = error instanceof Error ? error.message : String(error);
   }
@@ -80,6 +96,11 @@ function runHermesProbe(
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.getSandbox.mockReturnValue({
+    agent: "hermes",
+    gatewayName: "nemoclaw-8091",
+    name: "hermes-box",
+  });
 });
 
 const starting: ProbeResult = {
@@ -158,16 +179,19 @@ describe("Hermes managed MCP startup probe", () => {
     "GATEWAY_HEALTH_TIMEOUT",
     "SUPERVISOR_TIMEOUT",
     "SUPERVISOR_BUSY",
-  ])("fails typed managed-recovery integrity refusal %s without another sandbox probe", (marker) => {
-    const result = runHermesProbe([starting, starting, starting, ready], true, [
-      { status: 1, stdout: "", stderr: marker },
-    ]);
+  ])(
+    "fails typed managed-recovery integrity refusal %s without another sandbox probe",
+    (marker) => {
+      const result = runHermesProbe([starting, starting, starting, ready], true, [
+        { status: 1, stdout: "", stderr: marker },
+      ]);
 
-    expect(result.calls).toBe(3);
-    expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
-    expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
-    expect(result.message).toContain(marker);
-  });
+      expect(result.calls).toBe(3);
+      expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
+      expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
+      expect(result.message).toContain(marker);
+    },
+  );
 
   it.each([
     {

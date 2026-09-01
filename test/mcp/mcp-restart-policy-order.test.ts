@@ -21,11 +21,17 @@ process.env.FIRST_MCP_TOKEN = "first-host-only-secret";
 process.env.SECOND_MCP_TOKEN = "second-host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 
 const providerCalls = [];
 let policyApplyCalls = 0;
@@ -78,7 +84,9 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       };
     }
     const entry = Object.values(entries).find((candidate) => candidate.providerName === args[2]);
-    if (!entry) return { status: 1, stdout: "", stderr: "NotFound: provider" };
+    if (!entry) {
+      return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
+    }
     return {
       status: 0,
       stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + (updatedProviders.has(entry.providerName) ? "2" : "1") + "\nCredential keys: " + entry.env[0] + "\n",
@@ -170,11 +178,17 @@ process.env.HOME = ${JSON.stringify(home)};
 process.env.MCP_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 
 let resourceVersion = 1;
 let registeredProviderGets = 0;
@@ -294,5 +308,48 @@ bridge.restartMcpBridge("alpha", "example").then(
     expect(payload.registeredProviderGets).toBe(1);
     expect(payload.proofScripts).toHaveLength(6);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
+  });
+
+  it("returns the OpenClaw no-server result before resolving runtime authority (#10514)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-empty-"));
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => {
+  throw new Error("runtime selection resolved before the local no-server result");
+};
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+});
+const lines = [];
+const originalLog = console.log;
+console.log = (...args) => lines.push(args.join(" "));
+require("./src/lib/actions/sandbox/mcp-bridge.js").restartMcpBridge("alpha").then(
+  () => {
+    console.log = originalLog;
+    process.stdout.write(JSON.stringify({ lines }));
+  },
+  (error) => {
+    console.log = originalLog;
+    console.error(error);
+    process.exit(1);
+  },
+);
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+      timeout: 30_000,
+    });
+    fs.rmSync(home, { recursive: true, force: true });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      lines: ["  No MCP servers for sandbox 'alpha'."],
+    });
   });
 });

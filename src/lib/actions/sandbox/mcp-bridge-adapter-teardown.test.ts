@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getSandboxAgent: vi.fn(),
   getSandboxPolicy: vi.fn(),
   getSandboxOrThrow: vi.fn(),
+  inspectExactMcpDestroyProvider: vi.fn(),
   inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
@@ -42,6 +43,10 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertNoProviderCredentialCollisions: vi.fn(),
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
   detachProvider: vi.fn(),
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
+    gatewayName: "nemoclaw-8091",
+    workspace: "default",
+  })),
   inspectMcpProvider: mocks.inspectMcpProvider,
   preflightMcpEntryTargets: vi.fn(),
   waitForDetachedMcpCredential: vi.fn(),
@@ -50,7 +55,7 @@ vi.mock("./mcp-bridge-provider", () => ({
 vi.mock("./mcp-bridge-destroy-preflight", () => ({
   cloneMcpBridgeEntry: vi.fn((entry: McpBridgeEntry) => ({ ...entry, env: [...entry.env] })),
   discardSafeIncompleteMcpAdds: mocks.discardSafeIncompleteMcpAdds,
-  inspectExactMcpDestroyProvider: vi.fn(),
+  inspectExactMcpDestroyProvider: mocks.inspectExactMcpDestroyProvider,
 }));
 
 vi.mock("./mcp-bridge-policy", () => ({
@@ -94,6 +99,7 @@ import { prepareMcpBridgesForRebuild } from "./mcp-bridge-rebuild";
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 
 const sandbox = { agent: "hermes" } as SandboxEntry;
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
 const entry: McpBridgeEntry = {
   server: "github",
   agent: "hermes",
@@ -118,6 +124,13 @@ describe("MCP adapter teardown rollback", () => {
       yaml: "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
     });
     mocks.getSandboxOrThrow.mockReset().mockReturnValue(sandbox);
+    mocks.inspectExactMcpDestroyProvider.mockReset().mockReturnValue({
+      credentialKeys: ["GITHUB_TOKEN"],
+      exists: true,
+      id: entry.providerId,
+      resourceVersion: 12,
+      type: "nemoclaw-mcp-v1",
+    });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
@@ -148,6 +161,7 @@ describe("MCP adapter teardown rollback", () => {
         "alpha",
         "hermes-config",
         expect.objectContaining({ ...entry, credentialRevision: "v12" }),
+        runtimeSelection,
         {},
         "v13",
         {
@@ -169,11 +183,35 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
 
-    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry)).toThrow(
+    expect(() =>
+      scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection),
+    ).toThrow(
       "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
     expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
     expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
+  });
+
+  it("recovers the recorded gateway before initial destroy provider inspection (#10514)", async () => {
+    const events: string[] = [];
+    mocks.ensureSandboxGatewaySelected.mockImplementation(async () => {
+      events.push("gateway-selected");
+    });
+    mocks.inspectExactMcpDestroyProvider.mockImplementation(() => {
+      events.push("provider-inspected");
+      return {
+        credentialKeys: ["GITHUB_TOKEN"],
+        exists: true,
+        id: entry.providerId,
+        resourceVersion: 12,
+        type: "nemoclaw-mcp-v1",
+      };
+    });
+
+    await expect(prepareMcpBridgesForDestroy("alpha")).rejects.toThrow(
+      "forced lifecycle failure after adapter scrub",
+    );
+    expect(events.slice(0, 2)).toEqual(["gateway-selected", "provider-inspected"]);
   });
 });

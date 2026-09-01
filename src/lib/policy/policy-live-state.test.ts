@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   resolveOpenshell: vi.fn(),
   run: vi.fn(),
   runCapture: vi.fn(),
+  submitSandboxPolicyFile: vi.fn(),
 }));
 
 vi.mock("../adapters/openshell/policy-state", async (importOriginal) => ({
@@ -23,6 +24,7 @@ vi.mock("../adapters/openshell/policy-state", async (importOriginal) => ({
   captureSandboxBasePolicy: mocks.captureSandboxBasePolicy,
   captureSandboxBasePolicyRevision: mocks.captureSandboxBasePolicyRevision,
   inspectSandboxPolicy: mocks.inspectSandboxPolicy,
+  submitSandboxPolicyFile: mocks.submitSandboxPolicyFile,
 }));
 vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/openshell/resolve")>()),
@@ -56,7 +58,15 @@ describe("live OpenShell policy mutations", () => {
   let livePolicy: string;
 
   beforeEach(() => {
-    for (const mock of Object.values(mocks)) mock.mockReset();
+    vi.unstubAllEnvs();
+    mocks.captureSandboxBasePolicy.mockReset();
+    mocks.captureSandboxBasePolicyRevision.mockReset();
+    mocks.getSandbox.mockReset();
+    mocks.inspectSandboxPolicy.mockReset();
+    mocks.resolveOpenshell.mockReset();
+    mocks.run.mockReset();
+    mocks.runCapture.mockReset();
+    mocks.submitSandboxPolicyFile.mockReset();
     livePolicy = YAML.stringify({
       version: 1,
       network_policies: { host_approval: hostEntry },
@@ -75,6 +85,10 @@ describe("live OpenShell policy mutations", () => {
     mocks.run.mockImplementation((command: readonly string[]) => {
       const policyIndex = command.indexOf("--policy");
       livePolicy = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+      return { status: 0 };
+    });
+    mocks.submitSandboxPolicyFile.mockImplementation((_sandboxName: string, policyFile: string) => {
+      livePolicy = fs.readFileSync(policyFile, "utf8");
       return { status: 0 };
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -99,6 +113,53 @@ describe("live OpenShell policy mutations", () => {
 
     expect(removePreset(sandboxName, "weather", { nonFatal: true })).toBe(true);
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
+  });
+
+  it("pins selected policy mutations to the recorded OpenShell target (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    mocks.getSandbox.mockReturnValue({
+      name: sandboxName,
+      gatewayName: "nemoclaw-9090",
+    });
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-9090",
+      localTlsDir: "/recorded/tls",
+      workspace: "default",
+    };
+
+    expect(
+      applyPresetContent(sandboxName, "weather", preset, {
+        nonFatal: true,
+        runtimeSelection,
+      }),
+    ).toBe(true);
+    expect(
+      removePreset(sandboxName, "weather", {
+        nonFatal: true,
+        presetContent: preset,
+        runtimeSelection,
+      }),
+    ).toBe(true);
+
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.submitSandboxPolicyFile).toHaveBeenCalledTimes(2);
+    expect(mocks.submitSandboxPolicyFile).toHaveBeenNthCalledWith(
+      1,
+      sandboxName,
+      expect.any(String),
+      runtimeSelection,
+    );
+    expect(mocks.submitSandboxPolicyFile).toHaveBeenNthCalledWith(
+      2,
+      sandboxName,
+      expect.any(String),
+      runtimeSelection,
+    );
   });
 
   it("does not overwrite a host edit that races a prepared full-policy update", () => {

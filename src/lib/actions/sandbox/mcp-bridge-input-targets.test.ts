@@ -209,7 +209,12 @@ replace(processRecovery, "executeSandboxExecCommand", () => ({
   stdout: "v1\\n",
   stderr: "",
 }));
-registry.registerSandbox({ name: "alpha", agent: "openclaw" });
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+});
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "local",
   url: "https://mcp.corp.example/mcp",

@@ -11,9 +11,14 @@ const mocks = vi.hoisted(() => ({
   assertMcpDestroySnapshotCurrent: vi.fn(),
   detachProvider: vi.fn(),
   discardSafeIncompleteMcpAdds: vi.fn(),
+  getMcpProviderInspectionRuntimeSelection: vi.fn(),
   getSandboxOrThrow: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
   restoreExistingMcpBridgeRuntime: vi.fn(),
+  runtimeSelection: {
+    gatewayName: "nemoclaw-19080",
+    workspace: "default",
+  },
   scrubManagedMcpAdapterOrThrow: vi.fn(),
   updateSandbox: vi.fn(),
   waitForDetachedMcpCredential: vi.fn(),
@@ -45,6 +50,12 @@ const PENDING_SANDBOX = {
   ...SANDBOX,
   mcp: { bridges: { github: ENTRY }, destroyPendingAt: "2026-08-27T00:00:00Z" },
 };
+const PREPARED_ADD_ENTRY = { ...ENTRY, addState: "prepared" as const };
+const PREPARED_ADD_SANDBOX = {
+  name: "alpha",
+  agent: "openclaw",
+  mcp: { bridges: { github: PREPARED_ADD_ENTRY } },
+};
 
 vi.mock("./mcp-bridge-adapter-teardown", () => ({
   rollbackScrubbedMcpAdapters: vi.fn(() => []),
@@ -66,6 +77,7 @@ vi.mock("./mcp-bridge-destroy-preflight", () => ({
 vi.mock("./mcp-bridge-provider", () => ({
   deleteProvider: vi.fn(),
   detachProvider: mocks.detachProvider,
+  getMcpProviderInspectionRuntimeSelection: mocks.getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider: vi.fn(() => ({ exists: false })),
   waitForDetachedMcpCredential: mocks.waitForDetachedMcpCredential,
 }));
@@ -120,7 +132,29 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
     mocks.waitForDetachedMcpCredential.mockReset();
     mocks.updateSandbox.mockReset().mockReturnValue(SANDBOX);
     mocks.getSandboxOrThrow.mockReset().mockReturnValue(SANDBOX);
+    mocks.getMcpProviderInspectionRuntimeSelection
+      .mockReset()
+      .mockReturnValue(mocks.runtimeSelection);
     mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(SANDBOX);
+  });
+
+  it("cancels a prepared-only add before resolving runtime authority (#10514)", async () => {
+    mocks.getSandboxOrThrow.mockReturnValue(PREPARED_ADD_SANDBOX);
+    mocks.discardSafeIncompleteMcpAdds.mockResolvedValue({ name: "alpha", agent: "openclaw" });
+    mocks.getMcpProviderInspectionRuntimeSelection.mockImplementation(() => {
+      throw new Error("runtime selection resolved for prepared-only destroy cleanup");
+    });
+
+    await expect(prepareMcpBridgesForDestroy("alpha")).resolves.toMatchObject({
+      entries: [],
+      runtimeSelection: undefined,
+    });
+
+    expect(mocks.getMcpProviderInspectionRuntimeSelection).not.toHaveBeenCalled();
+    expect(mocks.assertMcpAdapterConfigMutationsAllowed).not.toHaveBeenCalled();
+    expect(mocks.discardSafeIncompleteMcpAdds).toHaveBeenCalledWith("alpha", PREPARED_ADD_SANDBOX, {
+      runtimeSelection: undefined,
+    });
   });
 
   it("rethrows a config-mutation refusal without --force and touches nothing", async () => {
@@ -138,6 +172,13 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
       throw new Error(SHIELDS_REFUSAL);
     });
     const preparation = await prepareMcpBridgesForDestroy("alpha", { force: true });
+    expect(preparation.runtimeSelection).toEqual(mocks.runtimeSelection);
+    expect(mocks.assertMcpAdapterConfigMutationsAllowed).toHaveBeenCalledWith(
+      "alpha",
+      SANDBOX,
+      [ENTRY],
+      mocks.runtimeSelection,
+    );
     expect(preparation.adapterScrubSkipped).toBe(true);
     expect(preparation.scrubbedAdapterEntries).toEqual([]);
     expect(preparation.detachedProviderEntries).toEqual([]);
@@ -205,6 +246,19 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
     // Regression lock: --force must not silently degrade a destroy that can
     // still clean the retained volume properly.
     const preparation = await prepareMcpBridgesForDestroy("alpha", { force: true });
+    expect(preparation.runtimeSelection).toEqual(mocks.runtimeSelection);
+    expect(mocks.assertMcpAdapterConfigMutationsAllowed).toHaveBeenCalledWith(
+      "alpha",
+      SANDBOX,
+      [ENTRY],
+      mocks.runtimeSelection,
+    );
+    expect(mocks.assertMcpAdapterTeardownRuntimeCapabilities).toHaveBeenCalledWith(
+      "alpha",
+      SANDBOX,
+      [ENTRY],
+      mocks.runtimeSelection,
+    );
     expect(preparation.adapterScrubSkipped).toBeUndefined();
     expect(mocks.scrubManagedMcpAdapterOrThrow).toHaveBeenCalledTimes(1);
     expect(preparation.scrubbedAdapterEntries).toHaveLength(1);

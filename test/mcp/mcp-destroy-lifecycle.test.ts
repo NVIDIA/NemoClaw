@@ -49,6 +49,7 @@ const testState = vi.hoisted(() => {
     removePreset: vi.fn(),
     runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" } as const,
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
     warnUnpreservedUserManagedFiles: vi.fn(),
@@ -69,7 +70,8 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   runOpenshell: testState.runOpenshell,
 }));
 
-vi.mock("../../src/lib/gateway-runtime-action", () => ({
+vi.mock("../../src/lib/gateway-runtime-action", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/gateway-runtime-action")>()),
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
 }));
 
@@ -85,6 +87,11 @@ vi.mock("../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: testState.executeGatewaySupervisorAction,
   executeSandboxCommand: testState.executeSandboxCommand,
   executeSandboxExecCommand: testState.executeSandboxExecCommand,
+}));
+
+vi.mock("../../src/lib/actions/sandbox/mcp-bridge-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider")>()),
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => testState.runtimeSelection),
 }));
 
 vi.mock("../../src/lib/actions/sandbox/policy-get", () => ({
@@ -647,6 +654,31 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.removePreset).not.toHaveBeenCalled();
   });
 
+  it("rejects changed gateway authority before exec-unavailable provider inspection (#10514)", async () => {
+    registerAlphaGithubBridge();
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha", {
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
+    );
+
+    expect(message).toContain(
+      "Recorded OpenShell target gateway 'nemoclaw-19080' no longer matches observed target gateway 'nemoclaw'",
+    );
+    expect(message).toContain("NemoClaw did not delete the original sandbox");
+    expect(message).toContain(
+      "Restore recorded gateway 'nemoclaw-19080', confirm it is healthy, then retry",
+    );
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
   it("rejects a credential-key collision during host-side rebuild recovery (#9388)", async () => {
     registerAlphaGithubBridge();
     testState.providers.set("example-api", {
@@ -923,7 +955,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     registry.updateSandbox("alpha", { gatewayPort: 19080 });
 
     expect(() => preparation.assertDeleteEdgeUnchanged?.()).toThrow(
-      /changed its recorded gateway/i,
+      "changed its recorded gateway after host-side rebuild preflight from 'nemoclaw' to 'nemoclaw-19080'. NemoClaw did not delete the original sandbox. Restore recorded gateway 'nemoclaw', confirm it is healthy, then retry.",
     );
     expect(registry.getSandbox("alpha")?.gatewayPort).toBe(19080);
     expect(testState.adapterCalls).toEqual([]);

@@ -9,13 +9,23 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import {
   HERMES_PROVIDER_CAPABILITY_PATH as CAPABILITY_PATH,
+  HERMES_TEST_GUARD as HERMES_GUARD,
+  HERMES_TEST_PYTHON as HERMES_PYTHON,
+  commandFromCall,
   createFailingCapabilityProbeResponse,
   createHermesShieldsProviderConsumerHarness,
   createRetainedUnlockSimulation,
   createTimerAuthorizationSender,
   createTransitionFailureForPosture,
+  forwardPolicyFailureFixtures,
   hermesProviderConsumerSandbox as sandbox,
   hermesProviderConsumerTarget as target,
+  hermesTestStateLockPlan as STATE_LOCK_PLAN,
+  hermesTestTarget as hermesTarget,
+  isHermesGuardAction as isGuardAction,
+  isInlinePython,
+  isIsolatedInlinePython,
+  isRuntimeStateMutationCapabilityProbe,
   writeBoundForwardPolicy,
   writeBoundPolicySnapshot,
   writeTimerAuthorizationProof,
@@ -26,10 +36,6 @@ import { testTimeout } from "../../../test/helpers/timeouts";
 
 const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
-const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
-const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
-const RUNTIME_STATE_MUTATION_CAPABILITY =
-  "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json";
 const LOCK_TOKEN = "a".repeat(64);
 const OLD_GUARD_HELP = "usage: guard {ensure-api-key,refresh-hashes,provider-placeholders}";
 const PARTIAL_GUARD_HELP = "begin-shields-transition --rollback-shields-mode";
@@ -57,129 +63,6 @@ const CURRENT_GUARD_HELP = [
 ].join(" ");
 
 type ShieldsModule = typeof import("./index");
-
-const STATE_LOCK_PLAN = {
-  version: 1 as const,
-  readOnlyRoots: ["skills"],
-  confidentialRoots: ["pairing"],
-  readOnlyPrefixes: [],
-  confidentialPrefixes: [],
-  writableSubpaths: [],
-};
-
-function hermesTarget() {
-  return {
-    agentName: "hermes",
-    configPath: "/sandbox/.hermes/config.yaml",
-    configDir: "/sandbox/.hermes",
-    format: "yaml",
-    configFile: "config.yaml",
-    sensitiveFiles: ["/sandbox/.hermes/.env", "/sandbox/.hermes/.config-hash"],
-    stateLockPlan: STATE_LOCK_PLAN,
-    stateLockPlanInImage: true,
-  };
-}
-
-function commandFromCall(call: unknown[]): string[] {
-  return call[0] as string[];
-}
-
-function isGuardAction(cmd: string[], action: string): boolean {
-  const guardIndex = cmd.indexOf(HERMES_GUARD);
-  return guardIndex >= 0 && cmd[guardIndex + 1] === action;
-}
-
-function isInlinePython(cmd: string[]): boolean {
-  return cmd[0] === "python3" && cmd.includes("-c");
-}
-
-function isIsolatedInlinePython(cmd: string[]): boolean {
-  return isInlinePython(cmd) && cmd[1] === "-I" && cmd[2] === "-c";
-}
-
-function isRuntimeStateMutationCapabilityProbe(cmd: string[]): boolean {
-  return (
-    cmd[0] === HERMES_PYTHON &&
-    cmd[1] === "-I" &&
-    cmd[2] === "-c" &&
-    cmd[3]?.includes("os.lstat") === true &&
-    cmd.at(-1) === RUNTIME_STATE_MUTATION_CAPABILITY
-  );
-}
-
-type ForwardPolicyFailureSetup = (input: {
-  readonly forwardPolicyPath: string;
-  readonly routeSpy: MockInstance;
-  readonly timerPath: string;
-}) => void;
-
-type ForwardPolicyFailureAssertion = (input: {
-  readonly routeSpy: MockInstance;
-  readonly runSpy: MockInstance;
-  readonly transitionPath: string;
-  readonly transitionSpy: MockInstance;
-}) => void;
-
-function removeForwardPolicy({
-  forwardPolicyPath,
-}: Parameters<ForwardPolicyFailureSetup>[0]): void {
-  fs.rmSync(forwardPolicyPath);
-}
-
-function tamperForwardPolicy({
-  forwardPolicyPath,
-}: Parameters<ForwardPolicyFailureSetup>[0]): void {
-  fs.writeFileSync(forwardPolicyPath, "tampered\n", { mode: 0o600 });
-}
-
-function replaceTimerDuringRoute({
-  routeSpy,
-  timerPath,
-}: Parameters<ForwardPolicyFailureSetup>[0]): void {
-  routeSpy.mockImplementation(() => {
-    const marker = JSON.parse(fs.readFileSync(timerPath, "utf-8"));
-    fs.writeFileSync(
-      timerPath,
-      JSON.stringify({ ...marker, timerProcessStartIdentity: "replacement-timer-start" }),
-    );
-    return { ok: true, attempts: 1, httpStatus: 200 };
-  });
-}
-
-function expectForwardPolicyRejectedBeforeMutation({
-  routeSpy,
-  runSpy,
-  transitionSpy,
-}: Parameters<ForwardPolicyFailureAssertion>[0]): void {
-  expect(runSpy).not.toHaveBeenCalled();
-  expect(transitionSpy).not.toHaveBeenCalled();
-  expect(routeSpy).not.toHaveBeenCalled();
-}
-
-function expectTimerReplacementRejectedAfterMutation({
-  routeSpy,
-  runSpy,
-  transitionPath,
-  transitionSpy,
-}: Parameters<ForwardPolicyFailureAssertion>[0]): void {
-  expect(runSpy).toHaveBeenCalled();
-  expect(transitionSpy).toHaveBeenCalled();
-  expect(routeSpy).toHaveBeenCalledTimes(1);
-  expect(fs.existsSync(transitionPath)).toBe(true);
-}
-
-const forwardPolicyFailureFixtures: ReadonlyArray<
-  readonly [string, ForwardPolicyFailureSetup, RegExp, ForwardPolicyFailureAssertion]
-> = [
-  ["missing", removeForwardPolicy, /forward policy/u, expectForwardPolicyRejectedBeforeMutation],
-  ["tampered", tamperForwardPolicy, /forward policy/u, expectForwardPolicyRejectedBeforeMutation],
-  [
-    "timer-replaced",
-    replaceTimerDuringRoute,
-    /auto-restore authority changed|timer generation/iu,
-    expectTimerReplacementRejectedAfterMutation,
-  ],
-];
 
 describe("legacy Hermes shields compatibility", () => {
   let homeDir: string;

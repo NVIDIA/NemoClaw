@@ -33,6 +33,9 @@ import {
   type McpAttachedCredentialRevision,
   observeMcpCredentialRevision,
 } from "./mcp-bridge-provider-readiness";
+import {
+  type McpProviderInspectionRuntimeSelection,
+} from "./mcp-bridge-provider-inspection";
 import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
 
 const STABLE_CREDENTIAL_REVISION_OBSERVATIONS = 3;
@@ -70,14 +73,15 @@ export function inspectAgentAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): AdapterRegistrationInspection {
   switch (adapter) {
     case "mcporter":
-      return inspectOpenClawAdapterRegistration(sandboxName, entry);
+      return inspectOpenClawAdapterRegistration(sandboxName, entry, runtimeSelection);
     case "hermes-config":
-      return inspectHermesAdapterRegistration(sandboxName, entry);
+      return inspectHermesAdapterRegistration(sandboxName, entry, runtimeSelection);
     case "deepagents-config":
-      return inspectDeepAgentsAdapterRegistration(sandboxName, entry);
+      return inspectDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection);
   }
 }
 
@@ -102,13 +106,14 @@ export function inspectAgentAdapterRegistration(
 export function assertAgentMcpConfigMutationAllowed(
   sandboxName: string,
   adapter: AgentMcpAdapter,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): void {
   switch (adapter) {
     case "hermes-config":
-      assertHermesMcpConfigMutationAllowed(sandboxName);
+      assertHermesMcpConfigMutationAllowed(sandboxName, runtimeSelection);
       return;
     case "mcporter":
-      assertOpenClawMcpConfigMutationAllowed(sandboxName);
+      assertOpenClawMcpConfigMutationAllowed(sandboxName, runtimeSelection);
       return;
     case "deepagents-config":
       return;
@@ -118,13 +123,14 @@ export function assertAgentMcpConfigMutationAllowed(
 export function assertAgentMcpMutationRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   switch (adapter) {
     case "deepagents-config":
-      assertDeepAgentsMcpMutationRuntimeCapability(sandboxName);
+      assertDeepAgentsMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
       return;
     case "hermes-config":
-      assertHermesMcpMutationRuntimeCapability(sandboxName);
+      assertHermesMcpMutationRuntimeCapability(sandboxName, runtimeSelection);
       return;
     case "mcporter":
       return;
@@ -141,10 +147,11 @@ export function assertAgentMcpMutationRuntimeCapability(
 export function assertAgentMcpTeardownRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
-  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter, runtimeSelection);
   if (adapter === "hermes-config") {
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }
 
@@ -152,6 +159,7 @@ export function registerAgentAdapter(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   options: {
     replaceExisting?: boolean;
@@ -164,6 +172,7 @@ export function registerAgentAdapter(
       registerOpenClawAdapter(
         sandboxName,
         entry,
+        runtimeSelection,
         envValues,
         options.replaceExisting === true,
         options.credentialRevision,
@@ -173,6 +182,7 @@ export function registerAgentAdapter(
       registerHermesAdapter(
         sandboxName,
         entry,
+        runtimeSelection,
         envValues,
         options.replaceExisting === true,
         options.credentialRevision,
@@ -182,6 +192,7 @@ export function registerAgentAdapter(
       registerDeepAgentsAdapter(
         sandboxName,
         entry,
+        runtimeSelection,
         envValues,
         options.replaceExisting === true,
         options.teardownRollback === true,
@@ -196,6 +207,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string>,
   initialCredentialRevision: McpAttachedCredentialRevision,
   options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
@@ -211,7 +223,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
     registration <= MAX_CREDENTIAL_REVISION_REGISTRATIONS;
     registration += 1
   ) {
-    registerAgentAdapter(sandboxName, adapter, entry, envValues, {
+    registerAgentAdapter(sandboxName, adapter, entry, runtimeSelection, envValues, {
       replaceExisting,
       teardownRollback: options.teardownRollback === true,
       credentialRevision,
@@ -221,7 +233,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
     let observedRevision: McpAttachedCredentialRevision | undefined;
     const stable = waitForMcpBridgeCondition(
       () => {
-        const observation = observeMcpCredentialRevision(sandboxName, entry);
+        const observation = observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
         if (observation === "absent" || observation === "canonical") {
           throw mcpAdapterCredentialRevisionUnavailableError(entry.server);
         }
@@ -259,16 +271,17 @@ export function unregisterAgentAdapter(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): AdapterRemovalOutcome {
   switch (adapter) {
     case "mcporter":
-      unregisterOpenClawAdapter(sandboxName, entry, options);
+      unregisterOpenClawAdapter(sandboxName, entry, runtimeSelection, options);
       return "removed";
     case "hermes-config":
-      unregisterHermesAdapter(sandboxName, entry, options);
+      unregisterHermesAdapter(sandboxName, entry, runtimeSelection, options);
       return "removed";
     case "deepagents-config":
-      return unregisterDeepAgentsAdapter(sandboxName, entry, options);
+      return unregisterDeepAgentsAdapter(sandboxName, entry, runtimeSelection, options);
   }
 }

@@ -30,6 +30,11 @@ import {
 } from "./mcp-bridge-adapters";
 import { assertOpenClawMcpConfigMutationAllowed } from "./mcp-bridge-adapter-openclaw";
 
+const runtimeSelection = {
+  gatewayName: "nemoclaw-19080",
+  workspace: "default",
+};
+
 // #10469: Mcporter's managed project config is
 // `/sandbox/.openclaw/workspace/config/mcporter.json`, and `workspace` is a
 // `readOnlyRoots` entry in `agents/openclaw/state-lock-plan.json`. With shields
@@ -44,21 +49,21 @@ describe("OpenClaw MCP config mutation posture (#10469)", () => {
 
   it("allows a mutation while the config is mutable", () => {
     mocks.isShieldsDown.mockReturnValue(true);
-    expect(() => assertOpenClawMcpConfigMutationAllowed("alpha")).not.toThrow();
-    expect(mocks.isShieldsDown).toHaveBeenCalledWith("alpha", false);
+    expect(() => assertOpenClawMcpConfigMutationAllowed("alpha", runtimeSelection)).not.toThrow();
+    expect(mocks.isShieldsDown).toHaveBeenCalledWith("alpha", false, runtimeSelection);
   });
 
   it("refuses a mutation while Shields are up and keeps the posture probe read-only (#10469)", () => {
     mocks.isShieldsDown.mockReturnValue(false);
-    expect(() => assertOpenClawMcpConfigMutationAllowed("alpha")).toThrow(
+    expect(() => assertOpenClawMcpConfigMutationAllowed("alpha", runtimeSelection)).toThrow(
       /shields up or an unreadable shields posture/,
     );
-    expect(() => assertOpenClawMcpConfigMutationAllowed("alpha")).toThrow(
+    expect(() => assertOpenClawMcpConfigMutationAllowed("alpha", runtimeSelection)).toThrow(
       '`nemoclaw alpha shields down --timeout 15m --reason "MCP maintenance"`',
     );
     // `false` keeps the probe read-only: a mutation preflight must never repair
     // the posture it is inspecting.
-    expect(mocks.isShieldsDown).toHaveBeenCalledWith("alpha", false);
+    expect(mocks.isShieldsDown).toHaveBeenCalledWith("alpha", false, runtimeSelection);
   });
 });
 
@@ -69,19 +74,25 @@ describe("assertAgentMcpConfigMutationAllowed adapter routing", () => {
 
   it("routes the mcporter adapter through the OpenClaw posture check", () => {
     mocks.isShieldsDown.mockReturnValue(false);
-    expect(() => assertAgentMcpConfigMutationAllowed("alpha", "mcporter")).toThrow(
+    expect(() =>
+      assertAgentMcpConfigMutationAllowed("alpha", "mcporter", runtimeSelection),
+    ).toThrow(
       /OpenClaw sandbox 'alpha' has shields up/,
     );
   });
 
   it("lets the mcporter adapter through once the config is mutable", () => {
     mocks.isShieldsDown.mockReturnValue(true);
-    expect(() => assertAgentMcpConfigMutationAllowed("alpha", "mcporter")).not.toThrow();
+    expect(() =>
+      assertAgentMcpConfigMutationAllowed("alpha", "mcporter", runtimeSelection),
+    ).not.toThrow();
   });
 
   it("keeps the Hermes adapter on its own posture check", () => {
     mocks.isShieldsDown.mockReturnValue(false);
-    expect(() => assertAgentMcpConfigMutationAllowed("alpha", "hermes-config")).toThrow(
+    expect(() =>
+      assertAgentMcpConfigMutationAllowed("alpha", "hermes-config", runtimeSelection),
+    ).toThrow(
       /Hermes sandbox 'alpha' has shields up/,
     );
   });
@@ -92,7 +103,9 @@ describe("assertAgentMcpConfigMutationAllowed adapter routing", () => {
     // refuses there as well. `--force` does not bypass it: the ownership state
     // is preserved for a retry once shields are down.
     mocks.isShieldsDown.mockReturnValue(false);
-    expect(() => assertAgentMcpTeardownRuntimeCapability("alpha", "mcporter")).toThrow(
+    expect(() =>
+      assertAgentMcpTeardownRuntimeCapability("alpha", "mcporter", runtimeSelection),
+    ).toThrow(
       /OpenClaw sandbox 'alpha' has shields up/,
     );
   });
@@ -102,7 +115,9 @@ describe("assertAgentMcpConfigMutationAllowed adapter routing", () => {
     // any recursive state lock — the agent ships no `state-lock-plan.json` — and
     // teardown of a legacy entry must stay possible on an older image.
     mocks.isShieldsDown.mockReturnValue(false);
-    expect(() => assertAgentMcpConfigMutationAllowed("alpha", "deepagents-config")).not.toThrow();
+    expect(() =>
+      assertAgentMcpConfigMutationAllowed("alpha", "deepagents-config", runtimeSelection),
+    ).not.toThrow();
     expect(mocks.isShieldsDown).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@ import {
   assertAgentMcpTeardownRuntimeCapability,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter } from "./mcp-bridge-contracts";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
 
 function adaptersForEntries(
@@ -26,9 +27,10 @@ export function assertMcpAdapterMutationRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }
 
@@ -42,9 +44,10 @@ export function assertMcpAdapterConfigMutationsAllowed(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): void {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
+    assertAgentMcpConfigMutationAllowed(sandboxName, adapter, runtimeSelection);
   }
 }
 
@@ -52,8 +55,9 @@ export function assertMcpAdapterTeardownRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
+    assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }
