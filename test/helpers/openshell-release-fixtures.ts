@@ -284,6 +284,20 @@ export const V00116_CHECKSUM_MANIFESTS = new Map([
     `0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz\n959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz\n`,
   ],
 ]);
+export const V00116_CHECKSUM_MANIFEST_SHA256 = new Map([
+  [
+    "openshell-checksums-sha256.txt",
+    "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e",
+  ],
+  [
+    "openshell-gateway-checksums-sha256.txt",
+    "572d80ded99fab0c2cf75f8108c62ab3e8455356b3c3b38de1be98806a2440e9",
+  ],
+  [
+    "openshell-sandbox-checksums-sha256.txt",
+    "0cb63b3b4436214224872c1ba245bda0d92d904822aa4f28015081269f398f93",
+  ],
+]);
 export const V00116_ASSET_DIGESTS = new Map([
   ...[...V00116_CHECKSUM_MANIFESTS.values()].flatMap((contents) =>
     contents

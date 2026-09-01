@@ -242,6 +242,15 @@ fi
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
+    v0.0.116:openshell-checksums-sha256.txt)
+      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+      ;;
+    v0.0.116:openshell-gateway-checksums-sha256.txt)
+      printf '%s\n' "572d80ded99fab0c2cf75f8108c62ab3e8455356b3c3b38de1be98806a2440e9"
+      ;;
+    v0.0.116:openshell-sandbox-checksums-sha256.txt)
+      printf '%s\n' "0cb63b3b4436214224872c1ba245bda0d92d904822aa4f28015081269f398f93"
+      ;;
     v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
       printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
       ;;
@@ -1055,6 +1064,16 @@ fi
 
 info "Verifying SHA-256 checksum..."
 select_sha_cmd
+if [ "$RELEASE_TAG" != "dev" ]; then
+  for checksum_file in "${CHECKSUM_FILES[@]}"; do
+    expected_sha="$(openshell_pinned_sha256 "$RELEASE_TAG" "$checksum_file")" \
+      || fail "No NemoClaw-pinned SHA-256 for OpenShell $RELEASE_TAG checksum manifest $checksum_file"
+    actual_sha="$(file_sha256 "$tmpdir/$checksum_file")" \
+      || fail "No SHA-256 tool available (sha256sum/shasum)"
+    [ "$actual_sha" = "$expected_sha" ] \
+      || fail "OpenShell checksum manifest $checksum_file does not match NemoClaw-pinned $RELEASE_TAG digest"
+  done
+fi
 for i in "${!ASSETS[@]}"; do
   asset_name="${ASSETS[$i]}"
   checksum_file="${CHECKSUM_FILES[$i]}"
