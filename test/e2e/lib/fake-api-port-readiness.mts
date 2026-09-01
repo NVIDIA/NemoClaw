@@ -24,6 +24,7 @@ function urlHost(host: string): string {
 
 async function probeHttp(host: string, port: number): Promise<void> {
   const response = await fetch(`http://${urlHost(host)}:${port}/__nemoclaw_e2e_port_traffic`, {
+    redirect: "error",
     signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
   });
   if (!response.ok) {

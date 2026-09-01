@@ -358,12 +358,14 @@ export function messagingEnv(): MessagingEnv {
   return { env, tokens, telegramIds, telegramAllowlistKey, slackIds, wechatAccount };
 }
 
-export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Ignore best-effort cleanup failures; later setup or assertions report the actionable failure.
-  }
+const SECONDARY_CLEANUP_ALREADY_ABSENT =
+  /\bNotFound\b|\bNot Found\b|(?:sandbox|gateway|provider)[^\n]*(?:does not exist|not found|not present)|no (?:such |active )?(?:sandbox|gateway|provider)|No gateway metadata found|Run 'nemoclaw onboard' to create one/iu;
+
+export async function runSecondaryCleanup(run: () => Promise<ShellProbeResult>): Promise<void> {
+  const result = await run();
+  if (result.exitCode === 0 || SECONDARY_CLEANUP_ALREADY_ABSENT.test(resultText(result))) return;
+  const artifact = result.artifacts.result || "redacted cleanup command artifact";
+  throw new Error(`secondary cleanup failed; see ${artifact} for redacted command output`);
 }
 
 export async function runHost(

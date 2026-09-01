@@ -358,12 +358,24 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(JSON.stringify(observedInvocation)).not.toContain(token);
   });
 
-  it("does not propagate a secondary cleanup failure", async () => {
+  it("accepts absent secondary cleanup results and reports other failures", async () => {
+    const cleanupResult = (stderr: string, artifact: string): ShellProbeResult => ({
+      ...successfulShellResult(["openshell", "sandbox", "delete", "fixture"]),
+      exitCode: 1,
+      stderr,
+      artifacts: { stdout: "", stderr: "", result: artifact },
+    });
+
     await expect(
-      runSecondaryCleanup(async () => {
-        throw new Error("secondary cleanup failure");
-      }),
+      runSecondaryCleanup(async () => cleanupResult("Sandbox 'fixture' does not exist.", "")),
     ).resolves.toBeUndefined();
+    await expect(
+      runSecondaryCleanup(async () =>
+        cleanupResult("permission denied", "artifacts/cleanup-failed.result.json"),
+      ),
+    ).rejects.toThrow(
+      "secondary cleanup failed; see artifacts/cleanup-failed.result.json for redacted command output",
+    );
   });
 
   it("produces mixed REST and WebSocket policy state through a minimal consumer", async () => {
