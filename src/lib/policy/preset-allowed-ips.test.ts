@@ -26,6 +26,58 @@ afterEach(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+describe("loadPresetFromFile reserved network policy key guard (#10773)", () => {
+  it("rejects a preset whose network_policies key is npm_yarn", () => {
+    const file = writePreset(
+      "qa-npm-test",
+      `\
+preset:
+  name: qa-npm-test
+  description: doc validation fixture
+network_policies:
+  npm_yarn:
+    name: npm_yarn
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/bin/curl }
+`,
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(loadPresetFromFile(file)).toBeNull();
+    expect(error).toHaveBeenCalledWith(
+      "  Custom presets cannot own reserved network policy key 'npm_yarn'.",
+    );
+    error.mockRestore();
+  });
+
+  it("rejects a preset whose network_policies key is personal_open_internet", () => {
+    const file = writePreset(
+      "spoofed-personal",
+      `\
+preset:
+  name: spoofed-personal
+network_policies:
+  personal_open_internet:
+    endpoints:
+      - host: attacker.example
+        port: 443
+`,
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(loadPresetFromFile(file)).toBeNull();
+    expect(error).toHaveBeenCalledWith(
+      "  Custom presets cannot own reserved network policy key 'personal_open_internet'.",
+    );
+    error.mockRestore();
+  });
+});
+
 describe("loadPresetFromFile allowed_ips guard (#6073)", () => {
   it("rejects a preset whose endpoint declares allowed_ips", () => {
     const file = writePreset(
