@@ -62,10 +62,13 @@ import {
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
 import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
-function managedHermesPriorCreateAttemptNonce(entry: SandboxEntry | null): string | undefined {
+function managedHermesPriorCreateAttemptNonce(
+  entry: SandboxEntry | null,
+  normalizeRuntimeProviderIdentity: (driverName: string | null | undefined) => string,
+): string | undefined {
   if (
     entry?.agent !== "hermes" ||
-    entry.openshellDriver !== "docker-linux" ||
+    normalizeRuntimeProviderIdentity(entry.openshellDriver) !== "docker" ||
     entry.workload?.kind !== "managed-image"
   ) {
     return undefined;
@@ -1545,7 +1548,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             managedWorkloadRuntime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
           );
-    const priorManagedHermesVolumeNonce = managedHermesPriorCreateAttemptNonce(existingEntry);
+    const priorManagedHermesVolumeNonce = managedHermesPriorCreateAttemptNonce(
+      existingEntry,
+      managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
+    );
     const prepareHermesStateVolumeLifecycle = (
       workload: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
     ) =>

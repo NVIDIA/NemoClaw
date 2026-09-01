@@ -212,6 +212,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const runtime = requireSource("../../adapters/openshell/runtime.js");
   const destroyGateway = requireSource("./destroy-gateway.js");
   const credentialStore = requireSource("../../credentials/store.js");
+  const hermesStateVolume = requireSource(
+    "../../onboard/managed-workload/hermes-state-volume.js",
+  );
   const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireSource("../../inference/nim.js");
   const ollamaProxy = requireSource("../../inference/ollama/proxy.js");
@@ -570,10 +573,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     () => undefined,
   );
   const removeManagedHermesStateVolumeSpy = vi
-    .spyOn(sandboxProviderCleanup, "removeManagedHermesStateVolume")
+    .spyOn(hermesStateVolume, "removeManagedHermesStateVolume")
     .mockReturnValue(options.managedHermesStateVolumeCleanupResult ?? { status: "not-applicable" });
   const removeRetainedManagedHermesStateVolumeSpy = vi
-    .spyOn(sandboxProviderCleanup, "removeRetainedManagedHermesStateVolume")
+    .spyOn(hermesStateVolume, "removeRetainedManagedHermesStateVolume")
     .mockReturnValue(
       options.retainedManagedHermesStateVolumeCleanupResult ?? { status: "absent" },
     );

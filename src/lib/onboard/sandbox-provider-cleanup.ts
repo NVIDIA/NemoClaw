@@ -6,31 +6,16 @@ import { listMessagingBridgeProfiles } from "./messaging-bridge-provider";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
 export {
+  removeManagedHermesStateVolume,
+  removeRetainedManagedHermesStateVolume,
+} from "./managed-workload/hermes-state-volume";
+export {
   applyExtraProviderReconciliation,
   type ExtraProviderReconciliationPlan,
   planRegisteredExtraProviders,
   type ReconcileExtraProvidersDeps,
   reconcileRegisteredExtraProviders,
 } from "./extra-provider-reconciliation";
-export function removeRetainedManagedHermesStateVolume(
-  sandboxName: string,
-  retained: { readonly name: string; readonly createAttemptNonce: string },
-  deps: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeDeps = {},
-) {
-  const volumeModule =
-    require("./managed-workload/hermes-state-volume") as typeof import("./managed-workload/hermes-state-volume");
-  return volumeModule.removeRetainedManagedHermesStateVolume(sandboxName, retained, deps);
-}
-
-export function removeManagedHermesStateVolume(
-  context: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeContext,
-  deps: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeDeps = {},
-): import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeCleanupResult {
-  const volumeModule =
-    require("./managed-workload/hermes-state-volume") as typeof import("./managed-workload/hermes-state-volume");
-  return volumeModule.removeManagedHermesStateVolume(context, deps);
-}
-
 export type SandboxProviderRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,

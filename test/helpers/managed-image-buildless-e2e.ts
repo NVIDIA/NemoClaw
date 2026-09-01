@@ -145,6 +145,7 @@ const catalogTemplate = ${JSON.stringify(catalog)};
 const catalogRelease = ${JSON.stringify(CATALOG_RELEASE)};
 const model = ${JSON.stringify(MODEL)};
 const provider = ${JSON.stringify(PROVIDER)};
+const sourceCreateAttemptNonce = "a".repeat(62);
 const catalogCalls = [];
 const forbiddenCalls = [];
 const managedBootstrapCalls = [];
@@ -160,6 +161,7 @@ let managedHermesVolume = recreate ? {
     "io.nvidia.nemoclaw.hermes-state.schema": "1",
     "io.nvidia.nemoclaw.hermes-state.sandbox": sandboxName,
     "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+    "io.nvidia.nemoclaw.hermes-state.create-attempt": sourceCreateAttemptNonce,
   },
 } : null;
 
@@ -526,6 +528,7 @@ const sourceEntry = recreate ? fixtureMocks.sandboxLifecycleFixture({
   model,
   provider,
   toolDisclosure: "progressive",
+  createAttemptNonce: sourceCreateAttemptNonce,
   workload: {
     schemaVersion: 1,
     kind: "managed-image",
