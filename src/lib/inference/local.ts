@@ -224,7 +224,12 @@ export function getResolvedOllamaHost(): string {
   return _resolvedOllamaHost ?? OLLAMA_LOCALHOST;
 }
 
-/** Persist the accepted local Ollama route for later CLI processes. */
+/**
+ * Persist the accepted host-global Ollama route for later CLI processes.
+ * `ollama-local` is one gateway provider backed by one host auth proxy, so all
+ * sandboxes using that provider share the same daemon target. Discovery probes
+ * this receipt first and changes it only after the recorded target is stale.
+ */
 export function persistResolvedOllamaHost(
   host: string = getResolvedOllamaHost(),
   stateRoot: string = resolveSharedLocalAdapterStateRoot(),

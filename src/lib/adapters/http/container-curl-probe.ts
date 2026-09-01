@@ -11,7 +11,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
+export const CONTAINER_REACHABILITY_IMAGE =
+  "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661";
 const MAX_CONTAINER_CURL_STDOUT_BYTES = 8 * 1024 * 1024 + 256;
 const HTTP_STATUS_MARKER_PREFIX = "\n__NEMOCLAW_CONTAINER_HTTP_STATUS_";
 

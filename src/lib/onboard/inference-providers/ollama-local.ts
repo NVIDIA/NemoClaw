@@ -22,7 +22,6 @@ export async function setupOllamaLocalInference(
     validateLocalProvider,
     getLocalProviderBaseUrl,
     applyLocalInferenceRoute,
-    getOllamaWarmupCommand,
     run,
     shouldFrontOllamaWithProxy,
     ensureOllamaAuthProxy,
@@ -166,11 +165,7 @@ export async function setupOllamaLocalInference(
     let probe: ReturnType<typeof localInference.validateOllamaModelWithToolsOverride>;
     try {
       log(`  Priming Ollama model: ${model}`);
-      if (localInference.runOllamaWarmup) {
-        localInference.runOllamaWarmup(model, run);
-      } else {
-        run(getOllamaWarmupCommand(model), { ignoreError: true });
-      }
+      localInference.runOllamaWarmup(model, run);
       probe = localInference.validateOllamaModelWithToolsOverride(model, allowToolsIncompatible);
     } catch (probeError) {
       rollbackCleanupRoute();

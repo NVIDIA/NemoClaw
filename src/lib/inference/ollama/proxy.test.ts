@@ -487,7 +487,7 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
       expect.arrayContaining([
         "run",
         "--rm",
-        "curlimages/curl:8.10.1",
+        "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661",
         "-X",
         "POST",
         "Content-Type: application/json",
