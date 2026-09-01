@@ -85,33 +85,71 @@ function optionValue(args: string[], option: string): string {
 function fakePublishedPorts(containerPorts: readonly number[], hostAddress: string) {
   return Object.fromEntries(
     containerPorts.map((containerPort) => {
-      const hostPort =
-        containerPort === 8081 ? "32101" : containerPort === 8080 ? "32100" : "32079";
-      return [String(containerPort) + "/tcp", [{ HostIp: hostAddress, HostPort: hostPort }]];
+      return [
+        String(containerPort) + "/tcp",
+        [{ HostIp: hostAddress, HostPort: fakeHostPort(containerPort) }],
+      ];
     }),
   );
 }
+
+function fakeHostPort(containerPort: number): string {
+  return containerPort === 8081 ? "32101" : containerPort === 8080 ? "32100" : "32079";
+}
+
+function publishedPortsFromRun(run: string[], publishedAddress?: string) {
+  return Object.fromEntries(
+    optionValues(run, "-p").map((publication) => {
+      const [commandAddress, containerPort] = publication.split("::");
+      return [
+        `${containerPort}/tcp`,
+        [
+          {
+            HostIp: publishedAddress ?? commandAddress,
+            HostPort: fakeHostPort(Number(containerPort)),
+          },
+        ],
+      ];
+    }),
+  );
+}
+
+type MissingProxyControl =
+  | "--cap-drop"
+  | "--pids-limit"
+  | "--read-only"
+  | "--security-opt"
+  | "internal-network";
 
 function fakeDockerInspect(
   calls: string[][],
   options: {
     apiPublished: boolean;
-    proxyContainerPorts: readonly number[];
+    missingProxyControl?: MissingProxyControl;
     proxyEnvironment: readonly string[];
-    publishedAddress: string;
+    publishedAddress?: string;
   },
 ): string {
   const [apiRun, proxyRun] = calls.filter((call) => call[0] === "run") as [string[], string[]];
   const apiContainer = optionValue(apiRun, "--name");
   const proxyContainer = optionValue(proxyRun, "--name");
-  const network = optionValue(apiRun, "--network");
+  const apiNetwork = optionValue(apiRun, "--network");
+  const connectedProxyNetworks = calls
+    .filter((call) => call[0] === "network" && call[1] === "connect" && call[3] === proxyContainer)
+    .map((call) => call[2]!);
+  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks].filter(
+    (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
+  );
   return JSON.stringify([
     {
       Name: "/" + apiContainer,
       HostConfig: {},
       NetworkSettings: {
-        Networks: { [network]: {} },
-        Ports: options.apiPublished ? fakePublishedPorts([8080], "0.0.0.0") : {},
+        Networks: { [apiNetwork]: {} },
+        Ports: {
+          ...publishedPortsFromRun(apiRun),
+          ...(options.apiPublished ? fakePublishedPorts([8080], "0.0.0.0") : {}),
+        },
       },
     },
     {
@@ -120,14 +158,22 @@ function fakeDockerInspect(
       },
       Name: "/" + proxyContainer,
       HostConfig: {
-        CapDrop: ["ALL"],
-        PidsLimit: 32,
-        ReadonlyRootfs: true,
-        SecurityOpt: ["no-new-privileges"],
+        CapDrop:
+          options.missingProxyControl === "--cap-drop" ? [] : optionValues(proxyRun, "--cap-drop"),
+        PidsLimit:
+          options.missingProxyControl === "--pids-limit"
+            ? undefined
+            : Number(optionValue(proxyRun, "--pids-limit")),
+        ReadonlyRootfs:
+          options.missingProxyControl !== "--read-only" && proxyRun.includes("--read-only"),
+        SecurityOpt:
+          options.missingProxyControl === "--security-opt"
+            ? []
+            : optionValues(proxyRun, "--security-opt"),
       },
       NetworkSettings: {
-        Networks: { bridge: {}, [network]: {} },
-        Ports: fakePublishedPorts(options.proxyContainerPorts, options.publishedAddress),
+        Networks: Object.fromEntries(proxyNetworks.map((network) => [network, {}])),
+        Ports: publishedPortsFromRun(proxyRun, options.publishedAddress),
       },
     },
   ]);
@@ -136,7 +182,7 @@ function fakeDockerInspect(
 function fakeDockerHost(
   options: {
     apiPublished?: boolean;
-    proxyContainerPorts?: readonly number[];
+    missingProxyControl?: MissingProxyControl;
     proxyEnvironment?: readonly string[];
     publishedAddress?: string;
     networkInspect?: string;
@@ -156,9 +202,7 @@ function fakeDockerHost(
   const commands: Array<{ command: string; args: string[] }> = [];
   const containers = new Set<string>();
   const networks = new Set<string>();
-  const publishedAddress = options.publishedAddress ?? OPENSHELL_BRIDGE_ADDRESS;
   const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
-  const proxyContainerPorts = options.proxyContainerPorts ?? [FAKE_API_PROXY_READINESS_PORT, 8080];
   let proxyRunning = options.proxyRunning !== false;
   const dockerCommand = (args: string[]) => {
     const executedArgs = [...args];
@@ -166,12 +210,19 @@ function fakeDockerHost(
     switch (executedArgs[0]) {
       case "network":
         switch (executedArgs[1]) {
-          case "inspect":
+          case "inspect": {
+            const createdNetwork = calls.find(
+              (call) =>
+                call[0] === "network" && call[1] === "create" && call.at(-1) === executedArgs[2],
+            );
             return successfulCommand(
               executedArgs[2] === "openshell-docker"
                 ? networkInspect
-                : JSON.stringify([{ Driver: "bridge", Internal: true }]),
+                : JSON.stringify([
+                    { Driver: "bridge", Internal: createdNetwork?.includes("--internal") === true },
+                  ]),
             );
+          }
           case "create":
             networks.add(executedArgs.at(-1)!);
             return successfulCommand();
@@ -196,9 +247,9 @@ function fakeDockerHost(
             ? successfulCommand(
                 fakeDockerInspect(calls, {
                   apiPublished: options.apiPublished === true,
-                  proxyContainerPorts,
+                  missingProxyControl: options.missingProxyControl,
                   proxyEnvironment: options.proxyEnvironment ?? [],
-                  publishedAddress,
+                  publishedAddress: options.publishedAddress,
                 }),
               )
             : executedArgs[2] === "{{json .State}}"
@@ -215,16 +266,19 @@ function fakeDockerHost(
               `${container.includes("-proxy-") ? "proxy" : "api"} diagnostic logs\n`,
             );
       }
-      case "port":
-        return successfulCommand(
-          `${publishedAddress}:${
-            executedArgs[2] === "8081/tcp"
-              ? "32101"
-              : executedArgs[2] === `${String(FAKE_API_PROXY_READINESS_PORT)}/tcp`
-                ? "32079"
-                : "32100"
-          }\n`,
+      case "port": {
+        const containerPort = Number(executedArgs[2]!.replace(/\/tcp$/u, ""));
+        const proxyRun = calls.filter((call) => call[0] === "run").at(-1)!;
+        const publication = optionValues(proxyRun, "-p").find((value) =>
+          value.endsWith(`::${String(containerPort)}`),
         );
+        const commandAddress = publication?.split("::")[0];
+        return publication === undefined
+          ? failedCommand(`No public port for ${String(containerPort)}/tcp`)
+          : successfulCommand(
+              `${options.publishedAddress ?? commandAddress}:${fakeHostPort(containerPort)}\n`,
+            );
+      }
       default:
         return successfulCommand();
     }
@@ -363,10 +417,27 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
+  it.each([
+    { label: "capability drop", control: "--cap-drop" },
+    { label: "PID limit", control: "--pids-limit" },
+    { label: "read-only root", control: "--read-only" },
+    { label: "security option", control: "--security-opt" },
+    { label: "internal-network attachment", control: "internal-network" },
+  ] as const)("rejects Docker state missing the proxy $label", async ({ control }) => {
+    const { host } = fakeDockerHost({ missingProxyControl: control });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
+        /Docker topology did not preserve isolation/u,
+      );
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
   it("returns distinct Slack REST and websocket ports from accepted Docker state", async () => {
-    const { host } = fakeDockerHost({
-      proxyContainerPorts: [FAKE_API_PROXY_READINESS_PORT, 8080, 8081],
-    });
+    const { host } = fakeDockerHost();
     const cleanup: CleanupAction[] = [];
 
     try {
