@@ -445,10 +445,20 @@ describe("messaging provider installed-runtime proofs", () => {
       const trafficCheck = runFakeSlackPortTrafficCheck(fixture);
       expect(trafficCheck.status).toBe(1);
       expect(trafficCheck.stderr).toContain("WebSocket port traffic timed out");
-      const traffic = fs.readFileSync(fixture.captureFile, "utf8");
-      expect(traffic).toContain('"event":"websocket-upgrade"');
-      expect(traffic).toContain('"messageType":"nemoclaw_port_traffic_probe"');
-      expect(traffic).not.toContain('"event":"websocket-port-traffic-reply"');
+      const traffic = readFakeSlackCapture(fixture.captureFile);
+      expect(traffic).toContainEqual(
+        expect.objectContaining({ event: "websocket-upgrade", path: "/socket-mode" }),
+      );
+      expect(traffic).toContainEqual(
+        expect.objectContaining({
+          event: "websocket-message",
+          messageType: "nemoclaw_port_traffic_probe",
+          path: "/socket-mode",
+        }),
+      );
+      expect(traffic).not.toContainEqual(
+        expect.objectContaining({ event: "websocket-port-traffic-reply" }),
+      );
     } finally {
       await fixture.stop();
     }
