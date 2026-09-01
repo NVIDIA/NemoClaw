@@ -229,7 +229,10 @@ describe("release candidate evidence commands", () => {
     expect(evidence).toContain("Every release candidate requires this evidence.");
     expect(evidence).toContain("Validate Existing Launchable Evidence");
     expect(evidence).not.toContain("Optional Launchable E2E Evidence");
+    expect(evidence).toContain("Stop before confirmation when the inspector");
+    expect(evidence).toContain("cannot replace this required candidate evidence");
     expect(evidence).not.toContain("Skip unless the maintainer cites Launchable evidence");
+    expect(evidence).not.toContain("not a tag gate");
   });
 
   it("uses maintainer-visible coverage instead of an empty-patch receipt", () => {

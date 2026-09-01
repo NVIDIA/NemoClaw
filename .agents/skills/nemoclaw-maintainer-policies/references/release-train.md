@@ -72,9 +72,10 @@ At cutoff:
 6. Show the candidate's documentation coverage and required image evidence. If the maintainer
    requests documentation work, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
    generate a new plan, and show the evidence for the new candidate.
-7. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
-8. Build the Markdown release brief from the range and evidence.
-9. Cut the release tag only with the plan's explicit maintainer confirmation.
+7. Require successful canonical Launchable evidence for the candidate.
+8. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
+9. Build the Markdown release brief from the range and evidence.
+10. Cut the release tag only with the plan's explicit maintainer confirmation.
 
 Merges may continue after planning. Keep the planned candidate when it remains an ancestor of
 `origin/main`, the previous release has not changed, and its own required evidence remains valid.
@@ -88,8 +89,8 @@ requires every managed publisher, and validates the immutable Deep Agents Code b
 Record the E2E workflow and aggregate-job URLs and the run attempt; do not repeat its publisher
 queries in the tag skill.
 
-The general E2E decision cannot waive required image evidence. A successful `Release
-qualification` aggregate does not replace the candidate result.
+The general E2E decision cannot waive required image or canonical Launchable evidence. A successful
+`Release qualification` aggregate does not replace either candidate result.
 
 ## General E2E Decision
 

@@ -370,8 +370,8 @@ Record these values:
 
 Every release candidate requires this evidence. Follow
 [Validate Existing Launchable Evidence](../../nemoclaw-maintainer-e2e/references/launchable-evidence.md)
-and record its canonical handoff in the release brief. Launchable evidence remains operational
-context, not a tag gate.
+and record its canonical handoff in the release brief. Stop before confirmation when the inspector
+fails. The general E2E decision cannot replace this required candidate evidence.
 
 If the base-image aggregate is missing or failed, repair or rerun the affected publisher workflow
 and verifier. The general E2E decision cannot replace required image evidence.

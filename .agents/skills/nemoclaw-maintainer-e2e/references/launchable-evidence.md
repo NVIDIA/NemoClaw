@@ -77,6 +77,8 @@ Return:
 - verified cleanup time.
 
 If cleanup is not confirmed, the error reports the workspace name, ID, status, and check time.
-Use that recovery handoff to remove the workspace through the trusted Brev boundary. Then rotate or
-revoke every credential exposed to that workspace.
+Report that recovery handoff and stop. Do not remove the workspace unless the recovery procedure
+validates workflow ownership. Rotate or revoke `NVIDIA_INFERENCE_API_KEY`, which candidate code in
+the guest could read. Rotate or revoke the host-side `BREV_API_KEY` and
+`NEMOCLAW_IMAGE_DISPATCH_TOKEN` if the trusted host boundary was compromised.
 Do not report successful Launchable evidence until absence is confirmed.

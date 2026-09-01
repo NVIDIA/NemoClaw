@@ -59,8 +59,9 @@ GitHub-hosted runner. Later trusted steps and processes in that job can read the
 does not delete it explicitly. Runner teardown discards the ephemeral filesystem.
 
 The credentials remain valid until they expire or an administrator revokes them in their issuing
-services. If cleanup fails, remove the recorded Brev workspace. Rotate or revoke each credential to
-remove later access.
+services. If cleanup fails, report the recovery identity and stop. Delete no workspace until the
+recovery procedure validates workflow ownership. Rotate or revoke exposed credentials as described
+in [Validate Existing Launchable Evidence](references/launchable-evidence.md).
 
 The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the standing Launchable.
 Keep it equal to the Launchable ID in the default URL owned by

@@ -209,12 +209,28 @@ describe("Launchable evidence inspection", () => {
         workspaceName: "workspace",
         workspaceId: "ws-1",
         status,
+        checkedAt: verifiedAt,
         verifiedAt,
       }),
     });
     expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
     expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
       `workspace=workspace id=ws-1 status=${status} checkedAt=${expected}`,
+    );
+  });
+  it.each([
+    [undefined, "record is missing or malformed"],
+    ["not json", "record is missing or malformed"],
+  ])("preserves workspace identity when cleanup data is %s (#10798)", (cleanup, reason) => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(
+      runCli(
+        ["--candidate", SHA],
+        reader(undefined, undefined, files({ "cleanup.json": cleanup })),
+      ),
+    ).toBe(1);
+    expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
+      `cleanup ${reason}: workspace=workspace id=ws-1 status=<missing> checkedAt=<missing>`,
     );
   });
 });

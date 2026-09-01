@@ -146,8 +146,7 @@ export function validateLaunchableEvidence(
   files: ArtifactFiles,
 ): Receipt {
   if (!SHA.test(candidate)) fail("candidate must be a lowercase 40-character SHA");
-  const launchable = json(files["launchable-e2e.json"], "launchable-e2e.json"),
-    cleanup = json(files["cleanup.json"], "cleanup.json");
+  const launchable = json(files["launchable-e2e.json"], "launchable-e2e.json");
   const log = files["full-e2e.log"];
   if (log === undefined) fail("artifact is missing full-e2e.log");
   if (log.length === 0) fail("full-e2e.log is empty");
@@ -173,20 +172,32 @@ export function validateLaunchableEvidence(
     fail("boot runtime state is invalid");
   if (launchable.fullE2e !== "passed") fail("fullE2e must be passed");
   const name = text(workspace.name, "workspace.name"),
-    id = text(workspace.id, "workspace.id");
-  if (cleanup.workspaceName !== name || cleanup.workspaceId !== id)
-    fail("cleanup workspace does not match launchable workspace");
-  const cleanupStatus = text(cleanup.status, "cleanup.status"),
+    id = text(workspace.id, "workspace.id"),
+    recovery = (reason: string, status = "<missing>", checkedAt = "<missing>"): never =>
+      fail(`cleanup ${reason}: workspace=${name} id=${id} status=${status} checkedAt=${checkedAt}`);
+  let cleanup: JsonRecord;
+  try {
+    cleanup = json(files["cleanup.json"], "cleanup.json");
+  } catch {
+    return recovery("record is missing or malformed");
+  }
+  const cleanupStatus =
+      typeof cleanup.status === "string" && cleanup.status.length > 0
+        ? cleanup.status
+        : "<missing>",
     checkedAt =
-      typeof cleanup.verifiedAt === "string" && cleanup.verifiedAt.length > 0
-        ? cleanup.verifiedAt
+      typeof cleanup.checkedAt === "string" && cleanup.checkedAt.length > 0
+        ? cleanup.checkedAt
         : "<missing>";
-  if (cleanupStatus !== "ABSENT")
-    fail(
-      `cleanup incomplete: workspace=${name} id=${id} status=${cleanupStatus} checkedAt=${checkedAt}`,
-    );
-  if (checkedAt === "<missing>") fail("cleanup.verifiedAt must be a nonempty string");
-  const verifiedAt = checkedAt;
+  if (cleanup.workspaceName !== name || cleanup.workspaceId !== id)
+    return recovery("workspace mismatch", cleanupStatus, checkedAt);
+  if (cleanupStatus !== "ABSENT") return recovery("incomplete", cleanupStatus, checkedAt);
+  let verifiedAt: string;
+  try {
+    verifiedAt = text(cleanup.verifiedAt, "cleanup.verifiedAt");
+  } catch {
+    return recovery("verifiedAt is missing", cleanupStatus, checkedAt);
+  }
   if (!UTC.test(verifiedAt) || Number.isNaN(Date.parse(verifiedAt)))
     fail("cleanup.verifiedAt must be an ISO 8601 UTC timestamp");
   return {

@@ -15,7 +15,7 @@ dispatches. Do not improvise tag, push, version-bump, or other release-state Git
 
 Treat these as separate states:
 
-- **Tag can be cut:** the release entry and required image checks pass.
+- **Tag can be cut:** the release entry, required image checks, and canonical Launchable evidence pass.
   The maintainer chooses to proceed with the displayed documentation coverage and general E2E state.
   The release brief records both decisions and contains no unresolved prompts.
 - **Tag cut:** the remote signed tag exists and peels to the planned candidate.
@@ -35,6 +35,7 @@ Treat these as separate states:
   later commits and PRs, review and check state, changed paths, and open managed docs PRs.
 - Record the maintainer's documentation decision in the signed release brief.
 - Require applicable GHCR base and managed-image publication evidence.
+- Require successful canonical Launchable evidence for the candidate. Stop before confirmation when the inspector fails.
 - Treat E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
   maintainer run focused tests, run the full suite, or proceed with the displayed status.
 - Record every displayed or requested E2E result and the decision in the release brief, the signed
