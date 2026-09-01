@@ -31,6 +31,7 @@ import {
   createRuntimeProviderBundleRegistry,
   requireRuntimeProviderHostLocalInferenceOperation,
 } from "./registry";
+import { clearStoppedSandboxStateWithEngine } from "./stopped-sandbox-state-cleanup";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const CONTAINER_ID = "a".repeat(64);
@@ -398,6 +399,51 @@ describe("managed Podman runtime provider", () => {
       30_000,
     );
   });
+
+  it.each([CONTAINER_ID, `sha256:${CONTAINER_ID}`])(
+    "accepts the cleanup image ID format returned by the container engine (%s)",
+    (imageId) => {
+      const stateResource = {
+        type: "volume" as const,
+        source: "openclaw-state",
+        target: "/sandbox/.openclaw",
+      };
+      const observe = vi.fn(() => ({
+        target: { resourceHandle: CONTAINER_ID, running: false, stateResource },
+      }));
+      const capture = vi.fn((args: readonly string[]) => {
+        switch (args[0]) {
+          case "image":
+            return { status: 0, stdout: `${imageId}\n`, stderr: "" };
+          case "inspect":
+            return { status: 1, stdout: "", stderr: "No such container" };
+          case "create":
+            return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+          case "start":
+          case "rm":
+            return { status: 0, stdout: "", stderr: "" };
+          default:
+            return { status: 125, stdout: "", stderr: `unexpected command: ${args.join(" ")}` };
+        }
+      });
+
+      expect(
+        clearStoppedSandboxStateWithEngine(
+          "podman-cleanup",
+          ["/sandbox/.openclaw/openclaw-weixin"],
+          { capture, observe },
+        ),
+      ).toEqual({ cleared: true });
+      expect(observe).toHaveBeenCalledTimes(3);
+      expect(capture.mock.calls[0]?.[0]).toEqual([
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        expect.stringContaining("node:22-trixie-slim"),
+      ]);
+    },
+  );
 
   it("is available through the production-selectable registry", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([

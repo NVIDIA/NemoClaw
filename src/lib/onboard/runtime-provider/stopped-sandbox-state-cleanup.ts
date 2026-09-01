@@ -245,7 +245,11 @@ export function clearStoppedSandboxStateWithEngine(
   const target = observed.target;
   if (target.running) return failure("runtime-not-stopped");
   const image = engine.capture(["image", "inspect", "--format", "{{.Id}}", CLEANUP_IMAGE]);
-  if (image.status !== 0 || image.error || !/^sha256:[a-f0-9]{64}\s*$/u.test(image.stdout)) {
+  if (
+    image.status !== 0 ||
+    image.error ||
+    !/^(?:sha256:)?[a-f0-9]{64}$/u.test(image.stdout.trim())
+  ) {
     return failure("cleanup-helper-image-unavailable");
   }
   const name = helperName(sandboxName);
