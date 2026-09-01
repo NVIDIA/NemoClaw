@@ -469,6 +469,7 @@
     },
     {
       "live": "test/e2e/live/hermes-discord.test.ts",
+      "liveSources": ["test/e2e/live/policy-credential-binding.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -582,7 +583,8 @@
       "live": "test/e2e/live/messaging-providers.test.ts",
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
-        "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
+        "test/e2e/live/messaging-providers-wechat-runtime-proof.ts",
+        "test/e2e/live/policy-credential-binding.ts"
       ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
@@ -591,6 +593,7 @@
         "src/lib/onboard/providers.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
+        "test/e2e/support/policy-credential-binding.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -615,7 +618,10 @@
     },
     {
       "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-pairing-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/policy-credential-binding.ts"
+      ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -655,7 +661,10 @@
     },
     {
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-pairing-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/policy-credential-binding.ts"
+      ],
       "fast": [
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",

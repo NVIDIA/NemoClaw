@@ -49,7 +49,10 @@ function localCommandHost(
   };
 }
 
-function fakeOpenShell(policy: string): {
+function fakeOpenShell(
+  policy: string,
+  overrides: { readbackPolicy?: string; recheckPolicy?: string } = {},
+): {
   appliedPolicy: string;
   callsFile: string;
   env: NodeJS.ProcessEnv;
@@ -61,7 +64,11 @@ function fakeOpenShell(policy: string): {
   const basePolicy = path.join(tempDir, "base-policy.yaml");
   const appliedPolicy = path.join(tempDir, "applied-policy.yaml");
   const callsFile = path.join(tempDir, "calls");
+  const readbackPolicy = path.join(tempDir, "readback-policy.yaml");
+  const recheckPolicy = path.join(tempDir, "recheck-policy.yaml");
   fs.writeFileSync(basePolicy, policy);
+  fs.writeFileSync(readbackPolicy, overrides.readbackPolicy ?? policy);
+  fs.writeFileSync(recheckPolicy, overrides.recheckPolicy ?? policy);
   fs.writeFileSync(
     executable,
     [
@@ -70,7 +77,13 @@ function fakeOpenShell(policy: string): {
       'case "${1-}:${2-}" in',
       "  policy:get)",
       `    printf 'get\\n' >>"$FAKE_OPENSHELL_CALLS"`,
-      `    cat "$FAKE_OPENSHELL_BASE_POLICY"`,
+      `    get_count=$(grep -c '^get$' "$FAKE_OPENSHELL_CALLS")`,
+      `    case "$get_count" in`,
+      '      2) source="${FAKE_OPENSHELL_RECHECK_POLICY:-$FAKE_OPENSHELL_BASE_POLICY}" ;;',
+      '      3) source="${FAKE_OPENSHELL_READBACK_POLICY:-$FAKE_OPENSHELL_APPLIED_POLICY}" ;;',
+      `      *) source="$FAKE_OPENSHELL_BASE_POLICY" ;;`,
+      `    esac`,
+      `    cat "$source"`,
       "    ;;",
       "  policy:set)",
       `    printf 'set\\n' >>"$FAKE_OPENSHELL_CALLS"`,
@@ -91,6 +104,8 @@ function fakeOpenShell(policy: string): {
       FAKE_OPENSHELL_APPLIED_POLICY: appliedPolicy,
       FAKE_OPENSHELL_BASE_POLICY: basePolicy,
       FAKE_OPENSHELL_CALLS: callsFile,
+      ...(overrides.readbackPolicy ? { FAKE_OPENSHELL_READBACK_POLICY: readbackPolicy } : {}),
+      ...(overrides.recheckPolicy ? { FAKE_OPENSHELL_RECHECK_POLICY: recheckPolicy } : {}),
     },
     executable,
   };
@@ -129,7 +144,7 @@ function runBinding(policyFile: string, protocol = "websocket") {
   );
 }
 
-describe("E2E policy credential binding", () => {
+describe("binds a credential to exactly one policy endpoint", () => {
   beforeAll(async () => {
     const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
       encoding: "utf8",
@@ -279,7 +294,7 @@ describe("E2E policy credential binding", () => {
   });
 
   it.each(["rest", "websocket"] as const)(
-    "applies the shared host transaction for the %s endpoint",
+    "binds only the %s endpoint when REST and WebSocket share a host and port",
     async (protocol) => {
       const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]));
 
@@ -295,7 +310,12 @@ describe("E2E policy credential binding", () => {
         artifactName: `bind-${protocol}-policy-credential`,
       });
 
-      expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual(["get", "set"]);
+      expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
+        "get",
+        "get",
+        "set",
+        "get",
+      ]);
       const endpoints = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8")).network_policies
         .fake.endpoints as Array<Record<string, unknown>>;
       expect(endpoints.find((endpoint) => endpoint.protocol === protocol)).toHaveProperty(
@@ -327,5 +347,80 @@ describe("E2E policy credential binding", () => {
 
     expect(fs.readFileSync(fake.callsFile, "utf8").trim()).toBe("get");
     expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
+  });
+
+  it("does not set a policy when the sandbox base changes during credential binding", async () => {
+    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
+      recheckPolicy: endpointPolicy(["rest"]),
+    });
+
+    await expect(
+      applyPolicyCredentialBinding({
+        host: localCommandHost(fake.executable),
+        sandboxName: "e2e-policy-transaction",
+        providerName: "e2e-policy-provider",
+        endpointHost: "host.docker.internal",
+        endpointPort: 43117,
+        protocol: "rest",
+        env: fake.env,
+        redactionValues: [],
+        artifactName: "bind-concurrently-changed-policy-credential",
+      }),
+    ).rejects.toThrow("sandbox base policy changed while preparing the credential binding");
+
+    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual(["get", "get"]);
+    expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
+  });
+
+  it("fails when policy readback does not contain the requested credential binding", async () => {
+    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
+      readbackPolicy: endpointPolicy(["rest", "websocket"]),
+    });
+
+    await expect(
+      applyPolicyCredentialBinding({
+        host: localCommandHost(fake.executable),
+        sandboxName: "e2e-policy-transaction",
+        providerName: "e2e-policy-provider",
+        endpointHost: "host.docker.internal",
+        endpointPort: 43117,
+        protocol: "rest",
+        env: fake.env,
+        redactionValues: [],
+        artifactName: "bind-mismatched-policy-readback",
+      }),
+    ).rejects.toThrow("applied policy did not match the requested credential binding");
+
+    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
+      "get",
+      "get",
+      "set",
+      "get",
+    ]);
+  });
+
+  it("maps the shared live transaction to every credential-binding consumer", () => {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.resolve(import.meta.dirname, "../mock-parity.json"), "utf8"),
+    ) as {
+      entries: Array<{ fast?: string[]; live: string; liveSources?: string[] }>;
+    };
+    const consumers = [
+      "test/e2e/live/hermes-discord.test.ts",
+      "test/e2e/live/messaging-providers.test.ts",
+      "test/e2e/live/openclaw-discord-pairing.test.ts",
+      "test/e2e/live/openclaw-slack-pairing.test.ts",
+    ];
+
+    expect(
+      consumers.map((live) => {
+        const entry = manifest.entries.find((candidate) => candidate.live === live);
+        return {
+          fast: entry?.fast?.includes("test/e2e/support/policy-credential-binding.test.ts"),
+          live,
+          source: entry?.liveSources?.includes("test/e2e/live/policy-credential-binding.ts"),
+        };
+      }),
+    ).toEqual(consumers.map((live) => ({ fast: true, live, source: true })));
   });
 });

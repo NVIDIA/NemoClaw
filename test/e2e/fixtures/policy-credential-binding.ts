@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
@@ -19,6 +20,16 @@ const policyBoundary = (
   "default" in policyBoundaryModule ? policyBoundaryModule.default : policyBoundaryModule
 ) as typeof policyBoundaryModule;
 const { parseOpenShellPolicy } = policyBoundary;
+
+export function assertPolicyDocumentsEqual(
+  expectedFile: string,
+  actualFile: string,
+  message: string,
+): void {
+  const expected = parseOpenShellPolicy(fs.readFileSync(expectedFile, "utf8")).policy;
+  const actual = parseOpenShellPolicy(fs.readFileSync(actualFile, "utf8")).policy;
+  if (!isDeepStrictEqual(actual, expected)) throw new Error(message);
+}
 
 export function bindPolicyEndpointCredential(
   policyFile: string,
@@ -56,7 +67,18 @@ export function bindPolicyEndpointCredential(
 }
 
 function main(): void {
-  const [policyFile, providerName, host, rawPort, protocol] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  if (args[0] === "--assert-equal") {
+    const [, expectedFile, actualFile, message] = args;
+    if (!expectedFile || !actualFile || !message) {
+      throw new Error(
+        "usage: policy-credential-binding --assert-equal <expected-policy> <actual-policy> <message>",
+      );
+    }
+    assertPolicyDocumentsEqual(expectedFile, actualFile, message);
+    return;
+  }
+  const [policyFile, providerName, host, rawPort, protocol] = args;
   if (!policyFile || !providerName || !host || !rawPort || !protocol) {
     throw new Error(
       "usage: policy-credential-binding <policy-file> <provider> <host> <port> <protocol>",

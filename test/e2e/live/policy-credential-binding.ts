@@ -23,11 +23,21 @@ export async function applyPolicyCredentialBinding(options: {
     [
       "-lc",
       String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
-"$1" policy set --policy "$policy_file" --wait "$2"`,
+original_policy="$(mktemp)"
+desired_policy="$(mktemp)"
+rechecked_policy="$(mktemp)"
+applied_policy="$(mktemp)"
+trap 'rm -f "$original_policy" "$desired_policy" "$rechecked_policy" "$applied_policy"' EXIT
+"$1" policy get --base "$2" >"$original_policy"
+cp "$original_policy" "$desired_policy"
+node --import tsx "$7" "$desired_policy" "$3" "$4" "$5" "$6"
+"$1" policy get --base "$2" >"$rechecked_policy"
+node --import tsx "$7" --assert-equal "$original_policy" "$rechecked_policy" \
+  "sandbox base policy changed while preparing the credential binding; refusing to apply a stale policy"
+"$1" policy set --policy "$desired_policy" --wait "$2"
+"$1" policy get --base "$2" >"$applied_policy"
+node --import tsx "$7" --assert-equal "$desired_policy" "$applied_policy" \
+  "applied policy did not match the requested credential binding"`,
       "bind-policy-endpoint-credential",
       options.host.openshellCommandPath,
       options.sandboxName,
