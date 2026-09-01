@@ -4,7 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+} from "../adapters/openshell/provider-adapter";
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
@@ -12,6 +15,7 @@ import {
   isBridgeProviderName,
   recoverGatewayForCredentialMutationOrExit,
 } from "../credentials/command-support";
+import { gatewayStartGuidance } from "../gateway-start-guidance";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
@@ -79,6 +83,32 @@ function bundledProviderProfilePath(type: string): string {
   return path.join(ROOT, "nemoclaw-blueprint", "provider-profiles", `${type.toLowerCase()}.yaml`);
 }
 
+function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): string[] {
+  switch (error.kind) {
+    case "authentication":
+      return ["  Restore OpenShell authentication for the selected gateway, then retry."];
+    case "timeout":
+      return ["  Confirm the selected OpenShell gateway is available, then retry."];
+    case "schema":
+      return ["  Update OpenShell with scripts/install-openshell.sh, then retry."];
+    case "validation":
+      return ["  Restore the bundled provider profile from this NemoClaw release, then retry."];
+    case "transport":
+      switch (error.reason) {
+        case "unreachable":
+          return [`  ${gatewayStartGuidance()}`, "  Then retry this command."];
+        case "identity_mismatch":
+          return [
+            "  Re-select the intended OpenShell gateway and restore its recorded identity, then retry.",
+          ];
+        case "process_start":
+          return ["  Repair OpenShell with scripts/install-openshell.sh, then retry."];
+      }
+    case "command":
+      return ["  Fix the reported OpenShell provider-profile error, then retry."];
+  }
+}
+
 async function ensureBundledProviderProfile(
   type: string,
   providerAdapter: OpenShellProviderAdapter,
@@ -96,12 +126,13 @@ async function ensureBundledProviderProfile(
     return fail([
       `  OpenShell provider profile '${type}' does not match NemoClaw's checked-in credential boundary.`,
       "  Remove the conflicting provider profile, then retry this command.",
+      `  ${result.error.message}`,
     ]);
   }
   return fail([
     `  Could not import bundled provider profile '${type}'.`,
-    "  Update OpenShell with scripts/install-openshell.sh and retry.",
-    ...(result.error.message ? [`  ${result.error.message}`] : []),
+    ...bundledProviderProfileRecoveryLines(result.error),
+    `  ${result.error.message}`,
   ]);
 }
 

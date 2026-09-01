@@ -5,7 +5,10 @@ import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+} from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
 import { runCredentialsListAction } from "./credentials/list";
@@ -183,6 +186,77 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "authentication",
+      {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the provider operation.",
+      },
+      ["  Restore OpenShell authentication for the selected gateway, then retry."],
+    ],
+    [
+      "unreachable gateway",
+      {
+        kind: "transport",
+        reason: "unreachable",
+        message: "OpenShell could not reach the selected gateway.",
+      },
+      ["  Start the gateway again with `nemoclaw onboard`.", "  Then retry this command."],
+    ],
+    [
+      "timeout",
+      { kind: "timeout", message: "The OpenShell provider operation timed out." },
+      ["  Confirm the selected OpenShell gateway is available, then retry."],
+    ],
+    [
+      "schema mismatch",
+      {
+        kind: "schema",
+        message: "The OpenShell CLI and gateway provider schemas do not match.",
+      },
+      ["  Update OpenShell with scripts/install-openshell.sh, then retry."],
+    ],
+    [
+      "invalid bundled profile",
+      {
+        kind: "validation",
+        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
+      },
+      ["  Restore the bundled provider profile from this NemoClaw release, then retry."],
+    ],
+  ] satisfies ReadonlyArray<readonly [string, OpenShellProviderError, readonly string[]]>)(
+    "gives actionable recovery for a typed %s profile import failure (#9806)",
+    async (_case, error, recoveryLines) => {
+      vi.stubEnv("OPENAI_API_KEY", "host-only-value");
+      const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] =
+        async () => ({
+          ok: false,
+          error,
+        });
+      const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
+
+      const result = await runCredentialsAddAction(
+        {
+          provider: "openai-prod",
+          type: "openai",
+          credentials: ["OPENAI_API_KEY"],
+          configPairs: [],
+          fromExisting: false,
+        },
+        { providerAdapter: adapter },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.failureLines).toEqual([
+        "  Could not import bundled provider profile 'openai'.",
+        ...recoveryLines,
+        `  ${error.message}`,
+      ]);
+      expect(adapter.createProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not create from existing credentials when profile identity is unverified (#9806)", async () => {
     const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] =
@@ -530,6 +604,51 @@ describe("credential actions use typed OpenShell provider results", () => {
       "  Provider 'custom-provider' is already absent from the OpenShell gateway. Local state was cleaned up.",
     );
     expect(result.outputLines.join("\n")).not.toContain("Detach it with");
+    expect(detachProvider).toHaveBeenCalledOnce();
+    expect(forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
+  });
+
+  it("reports rebuild guidance when concurrent deletion follows a successful detach (#9806)", async () => {
+    const forgetExtraProvider = vi.fn(() => true);
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      recordExtraProvider: () => true,
+      forgetExtraProvider,
+      listManagedMcpCredentialReservations: () => [],
+    });
+    const deleteProvider = vi
+      .fn<OpenShellProviderAdapter["deleteProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider remains attached",
+          attachedSandboxes: ["alpha"],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      });
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
+      ok: true,
+    }));
+    const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+    const result = await runCredentialsResetAction(
+      { provider: "custom-provider", confirmed: true },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.outputLines).toContain(
+      "  Provider 'custom-provider' is already absent from the OpenShell gateway. Local state was cleaned up.",
+    );
+    expect(result.outputLines).toContain(
+      "  Provider 'custom-provider' was detached from sandbox(es): alpha during removal.",
+    );
+    expect(result.outputLines).toContain("    nemoclaw alpha rebuild");
     expect(detachProvider).toHaveBeenCalledOnce();
     expect(forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
   });

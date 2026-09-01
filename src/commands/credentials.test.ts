@@ -373,7 +373,7 @@ describe("credentials oclif adapter source coverage", () => {
     ]);
   });
 
-  it("reports caller-neutral guidance when OpenAI profile import fails", async () => {
+  it("reports profile recovery guidance when OpenAI profile import fails", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
     mocks.runOpenshellProviderCommand.mockReturnValueOnce({
       status: 1,
@@ -394,7 +394,7 @@ describe("credentials oclif adapter source coverage", () => {
       "Could not import bundled provider profile 'openai'",
     );
     expect(result.failureLines.join("\n")).toContain(
-      "Update OpenShell with scripts/install-openshell.sh and retry",
+      "Fix the reported OpenShell provider-profile error, then retry",
     );
     expect(result.failureLines.join("\n")).not.toContain("onboarding");
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();

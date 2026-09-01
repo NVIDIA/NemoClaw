@@ -73,6 +73,18 @@ function fail(failureLines: readonly string[]): CredentialsResetResult {
   return { exitCode: 1, outputLines: [], failureLines };
 }
 
+function detachedSandboxGuidance(key: string, sandboxes: readonly string[]): string[] {
+  const detachedSandboxes = [...new Set(sandboxes)];
+  return detachedSandboxes.length === 0
+    ? []
+    : [
+        "",
+        `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")} during removal.`,
+        "  After registering the replacement provider, rebuild each detached sandbox:",
+        ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
+      ];
+}
+
 export async function runCredentialsResetAction(
   input: CredentialsResetInput,
   deps: CredentialsResetDeps = {},
@@ -122,6 +134,7 @@ export async function runCredentialsResetAction(
         ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
         : `  Provider '${key}' is already absent from the OpenShell gateway.`,
       `  Re-run '${CLI_NAME} onboard' to enter a new value.`,
+      ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
     ]);
   }
 
@@ -139,20 +152,12 @@ export function formatResetOutcome(
 ): { ok: boolean; lines: string[] } {
   const onboardHint = `  Re-run '${CLI_NAME} onboard' to enter a new value.`;
   if (recovery.ok) {
-    const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
     return {
       ok: true,
       lines: [
         `  Removed provider '${key}' from the OpenShell gateway.`,
         onboardHint,
-        ...(detachedSandboxes.length === 0
-          ? []
-          : [
-              "",
-              `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")} during removal.`,
-              "  After registering the replacement provider, rebuild each detached sandbox:",
-              ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
-            ]),
+        ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
       ],
     };
   }
