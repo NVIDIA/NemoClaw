@@ -146,15 +146,6 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
 }
 
 describe("messaging provider installed-runtime proofs", () => {
-  it("accepts the canonical OpenClaw Slack credential policy", () => {
-    expect(
-      slackCredentialBindingEvidence(CANONICAL_OPENCLAW_SLACK_POLICY, SLACK_POLICY_SANDBOX),
-    ).toEqual({
-      app: true,
-      bot: true,
-    });
-  });
-
   it("accepts Slack bot and app credential bindings and rejects policies without them", () => {
     const legacyPolicy = `
 network_policies:

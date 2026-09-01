@@ -607,11 +607,7 @@ export async function issuePairingRequest(options: {
   const script = options.channel === "slack" ? SLACK_PAIRING_SCRIPT : DISCORD_PAIRING_SCRIPT;
   const args =
     options.channel === "slack"
-      ? [
-          options.fakeSlackPort ?? "",
-          options.fakeSlackWebSocketPort ?? "",
-          PAIRING_USER.slack,
-        ]
+      ? [options.fakeSlackPort ?? "", options.fakeSlackWebSocketPort ?? "", PAIRING_USER.slack]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
   return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
