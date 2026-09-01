@@ -7,7 +7,6 @@ import {
   NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH,
 } from "../../sandbox-name-contract";
-import { buildGlobalPolicyGetFullJsonArgs, buildGlobalPolicyListArgs } from "../../policy/commands";
 import {
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
@@ -234,16 +233,19 @@ export function inspectActiveGlobalPolicy({
 }: ActiveGlobalPolicyInspectionOptions = {}): ActiveGlobalPolicyInspection {
   const validatedGatewayName =
     gatewayName === undefined ? undefined : validatePolicyName(gatewayName, "gateway name");
-  const history = capturePolicyCommand(buildGlobalPolicyListArgs(validatedGatewayName), "global", {
-    gatewayName: validatedGatewayName,
-  });
+  const gatewayArgs = validatedGatewayName ? ["-g", validatedGatewayName] : [];
+  const history = capturePolicyCommand(
+    ["policy", "list", ...gatewayArgs, "--global", "--limit", "1"],
+    "global",
+    { gatewayName: validatedGatewayName },
+  );
   const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
   if (historyState === "absent") return { state: "absent" };
   if (historyState === "invalid") {
     failInspection("global", "OpenShell returned invalid global policy history");
   }
   const raw = capturePolicyCommand(
-    buildGlobalPolicyGetFullJsonArgs(validatedGatewayName),
+    ["policy", "get", ...gatewayArgs, "--global", "--full", "--output", "json"],
     "global",
     { gatewayName: validatedGatewayName },
   ).stdout;
