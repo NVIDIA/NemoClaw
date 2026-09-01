@@ -66,7 +66,8 @@ ps() { printf '%s %s %s bash bash prepare-dgx-station-host.sh --check\n' "$EUID"
 ss() { :; }
 docker() { return 1; }
 sudo() {
-  if [[ "$1" == "-n" ]]; then shift; fi
+  [[ "$1" == "-n" ]] || return 1
+  shift
   case "$*" in
     'docker ps -aq --no-trunc'|'docker ps -q --no-trunc') return 0 ;;
     *) return 1 ;;
