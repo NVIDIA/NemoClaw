@@ -968,7 +968,14 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     expect(stoppedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
     expect(stoppedBackupManifest.backedUpDirs).toEqual(expect.arrayContaining(["workspace"]));
 
-    // The stopped backup above is the recovery source, so recreate without taking another live backup.
+    const restartAfterStoppedBackup = await host.command("nemoclaw", [SANDBOX_NAME, "start"], {
+      artifactName: "phase-10-restart-after-stopped-backup",
+      env: commandEnv(),
+      timeoutMs: 5 * 60_000,
+    });
+    expect(restartAfterStoppedBackup.exitCode, resultText(restartAfterStoppedBackup)).toBe(0);
+
+    // Rebuild still requires its own strict pre-delete backup, so restore SSH transport first.
     const rebuildAfterStoppedBackup = await host.command(
       "nemoclaw",
       [SANDBOX_NAME, "rebuild", "--yes", "--force"],

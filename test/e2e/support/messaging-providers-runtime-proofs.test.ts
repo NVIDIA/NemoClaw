@@ -56,7 +56,7 @@ function successfulCommand(stdout = "") {
   };
 }
 
-function fakeDockerHost(publishedAddress = "127.0.0.1"): {
+function fakeDockerHost(publishedAddress = "0.0.0.0"): {
   calls: string[][];
   host: HostCliClient;
 } {
@@ -85,10 +85,10 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
 
 describe("messaging provider installed-runtime proofs", () => {
   it.each([
-    ["discord-gateway", ["127.0.0.1::8080"], ["8080/tcp"]],
-    ["slack", ["127.0.0.1::8080", "127.0.0.1::8081"], ["8080/tcp", "8081/tcp"]],
+    ["discord-gateway", ["0.0.0.0::8080"], ["8080/tcp"]],
+    ["slack", ["0.0.0.0::8080", "0.0.0.0::8081"], ["8080/tcp", "8081/tcp"]],
   ] as const)(
-    "proxies the isolated fake %s API through loopback-only ephemeral ports",
+    "proxies the isolated fake %s API through host-reachable ephemeral ports",
     async (kind, expectedPublications, expectedPortQueries) => {
       const { calls, host } = fakeDockerHost();
       const cleanup: CleanupAction[] = [];
@@ -137,8 +137,8 @@ describe("messaging provider installed-runtime proofs", () => {
     },
   );
 
-  it("rejects a fake API proxy port that Docker publishes beyond loopback", async () => {
-    const { host } = fakeDockerHost("0.0.0.0");
+  it("rejects a fake API proxy port that is published only on loopback", async () => {
+    const { host } = fakeDockerHost("127.0.0.1");
     const cleanup: CleanupAction[] = [];
 
     try {
@@ -154,7 +154,7 @@ describe("messaging provider installed-runtime proofs", () => {
           redactionValues: [],
           env: {},
         }),
-      ).rejects.toThrow(/did not bind only to 127\.0\.0\.1/u);
+      ).rejects.toThrow(/did not bind to host-reachable 0\.0\.0\.0/u);
     } finally {
       await runCleanup(cleanup);
     }

@@ -792,7 +792,7 @@ export async function startFakeDockerApi(
       proxyContainer,
       "--network",
       "bridge",
-      ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
+      ...containerPorts.flatMap((port) => ["-p", `0.0.0.0::${String(port)}`]),
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -840,9 +840,9 @@ export async function startFakeDockerApi(
       },
     );
     expectExitZero(result, `read fake ${options.kind} API proxy port`);
-    const hostPort = result.stdout.trim().match(/^127\.0\.0\.1:(\d+)$/u)?.[1];
+    const hostPort = result.stdout.trim().match(/^0\.0\.0\.0:(\d+)$/u)?.[1];
     if (!hostPort) {
-      throw new Error(`fake ${options.kind} API proxy port did not bind only to 127.0.0.1`);
+      throw new Error(`fake ${options.kind} API proxy port did not bind to host-reachable 0.0.0.0`);
     }
     return hostPort;
   };
