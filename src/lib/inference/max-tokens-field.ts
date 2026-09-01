@@ -39,6 +39,25 @@ export function resolveProbeReplyTokens(provider: string | null | undefined): nu
   return provider === "gemini-api" ? GEMINI_PROBE_REPLY_TOKENS : MIN_PROBE_REPLY_TOKENS;
 }
 
+/**
+ * Resolves an explicit onboarding probe reply budget when callers supply only
+ * provider identity. Only Gemini receives a provider-derived override; other
+ * providers stay undefined so model-specific budgets such as DeepSeek V4 Pro's
+ * 8192 path remain authoritative in `getChatCompletionsProbePayload`.
+ */
+export function resolveOnboardingProbeReplyBudget(options: {
+  replyBudget?: number;
+  provider?: string | null;
+}): number | undefined {
+  if (options.replyBudget !== undefined) {
+    return options.replyBudget;
+  }
+  if (options.provider === "gemini-api") {
+    return resolveProbeReplyTokens(options.provider);
+  }
+  return undefined;
+}
+
 // Matched by prefix rather than exact id: Azure OpenAI deployments append
 // version/suffix segments (e.g. "gpt-5.4", "gpt-5.4-turbo") and callers may or
 // may not include a provider prefix ("azure/gpt-5.4").

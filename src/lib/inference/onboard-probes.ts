@@ -70,7 +70,7 @@ const {
 } = require("./probe-retry");
 const { probeAnthropicEndpoint } = require("./probe-anthropic");
 const { probeOpenAiLikeEndpointWithValidationSession } = require("./openai-validation-session");
-const { resolveProbeReplyTokens } = require("./max-tokens-field");
+const { resolveOnboardingProbeReplyBudget } = require("./max-tokens-field");
 const {
   getChatCompletionsProbePayload,
   getChatCompletionsToolProbePayload,
@@ -657,6 +657,7 @@ function runDoubledTimeoutChatCompletionsRetry({
   options,
   baseUrl,
   authConfig,
+  replyBudget,
 }) {
   const platformOptions = getProbeTimingOptions(options);
   const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
@@ -676,7 +677,7 @@ function runDoubledTimeoutChatCompletionsRetry({
     JSON.stringify(
       getChatCompletionsProbePayload(model, {
         useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
-        replyBudget: options.replyBudget,
+        replyBudget,
       }),
     ),
     `${baseUrl}/chat/completions`,
@@ -705,9 +706,7 @@ function runDoubledTimeoutChatCompletionsRetry({
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
-  const replyBudget =
-    options.replyBudget ??
-    (options.provider === "gemini-api" ? resolveProbeReplyTokens(options.provider) : undefined);
+  const replyBudget = resolveOnboardingProbeReplyBudget(options);
   if (isHijackedDockerInternalUrl(endpointUrl) && options.allowHostDockerInternal !== true) {
     return getHostDockerInternalProbeFailure();
   }
@@ -1085,6 +1084,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         options,
         baseUrl,
         authConfig,
+        replyBudget,
       });
       if (retryResult.ok) {
         return { ok: true, api: "openai-completions", label: "Chat Completions API" };
@@ -1141,9 +1141,7 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
-  const replyBudget =
-    options.replyBudget ??
-    (options.provider === "gemini-api" ? resolveProbeReplyTokens(options.provider) : undefined);
+  const replyBudget = resolveOnboardingProbeReplyBudget(options);
   const sessionProbeOptions = {
     ...options,
     ...(validationTiming ? { validationTiming } : {}),
