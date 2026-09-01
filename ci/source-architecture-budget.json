@@ -59,7 +59,7 @@
   },
   "allowedCycles": [],
   "maxRootFiles": {
-    "src/lib/onboard": 305,
+    "src/lib/onboard": 304,
     "src/lib/actions": 18,
     "src/lib/actions/sandbox": 182,
     "src/lib/state": 39,

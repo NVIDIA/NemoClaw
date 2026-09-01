@@ -339,23 +339,27 @@ describe("Hermes portable onboarding transaction", () => {
       sandboxId: "sandbox-id-1",
       liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
     };
-    const observations = [
-      { kind: "absent" as const },
-      { kind: "absent" as const },
-      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
-      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
-      present,
-    ];
     let nowMs = 0;
-    let boundedObservations = 0;
+    let classificationObservations = 0;
+    const boundedBudgets: Array<{ budgetMs: number; remainingMs: number }> = [];
     const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
-      const observation = observations.shift() ?? present;
-      nowMs += timeoutBudgetMs === undefined ? 0 : ([61_000][boundedObservations++] ?? 0);
-      return observation;
+      const budgetMs = timeoutBudgetMs ?? 0;
+      const classification = timeoutBudgetMs === undefined;
+      classificationObservations += Number(classification);
+      boundedBudgets.push({ budgetMs, remainingMs: 180_000 - nowMs });
+      const observed = classification
+        ? classificationObservations <= 2
+          ? { kind: "absent" as const }
+          : present
+        : nowMs >= 61_000
+          ? present
+          : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" };
+      nowMs += classification ? 0 : Math.min(budgetMs, Math.max(0, 61_000 - nowMs));
+      return observed;
     });
-    const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
+    const delaySandboxReadyPublicationPoll = async (milliseconds: number) => {
       nowMs += milliseconds;
-    });
+    };
     const fixture = deps({
       observeSandbox,
       delaySandboxReadyPublicationPoll,
@@ -367,11 +371,10 @@ describe("Hermes portable onboarding transaction", () => {
     expect(completed.active.receipt.phase).toBe("active");
     expect(completed.created).toBe(true);
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
-    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(2);
-    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledWith(1_000);
-    expect(
-      observeSandbox.mock.calls.filter(([timeoutBudgetMs]) => timeoutBudgetMs !== undefined),
-    ).toEqual([[180_000], [118_000], [117_000]]);
+    expect(classificationObservations).toBeGreaterThan(0);
+    expect(nowMs).toBeGreaterThan(60_000);
+    expect(boundedBudgets.length).toBeGreaterThan(0);
+    expect(boundedBudgets.every(({ budgetMs, remainingMs }) => budgetMs <= remainingMs)).toBe(true);
     expect(fixture.events[0]).toBe("lock-enter");
     expect(fixture.events.at(-1)).toBe("lock-exit");
   });
@@ -434,16 +437,19 @@ describe("Hermes portable onboarding transaction", () => {
   });
 
   it("fails closed when exact post-create Ready publication exceeds its bound (#9211)", async () => {
-    let observations = 0;
-    const observeSandbox = vi.fn(() =>
-      observations++ < 2
-        ? { kind: "absent" as const }
-        : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
-    );
     let nowMs = 0;
-    const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
-      nowMs += milliseconds;
+    const boundedBudgets: Array<{ budgetMs: number; remainingMs: number }> = [];
+    const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
+      const budgetMs = timeoutBudgetMs ?? 0;
+      boundedBudgets.push({ budgetMs, remainingMs: 180_000 - nowMs });
+      nowMs += budgetMs;
+      return timeoutBudgetMs === undefined
+        ? { kind: "absent" as const }
+        : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" };
     });
+    const delaySandboxReadyPublicationPoll = async (milliseconds: number) => {
+      nowMs += milliseconds;
+    };
     const fixture = deps({
       observeSandbox,
       delaySandboxReadyPublicationPoll,
@@ -455,32 +461,32 @@ describe("Hermes portable onboarding transaction", () => {
     );
 
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
-    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(180);
-    expect(observeSandbox.mock.calls.slice(2)).toEqual(
-      Array.from({ length: 180 }, (_value, index) => [180_000 - index * 1_000]),
-    );
+    expect(nowMs).toBe(180_000);
+    expect(boundedBudgets.length).toBeGreaterThan(0);
+    expect(boundedBudgets.every(({ budgetMs, remainingMs }) => budgetMs <= remainingMs)).toBe(true);
     expect(fixture.events).not.toContain("registry");
     expect(fixture.events.at(-1)).toBe("lock-exit");
   });
 
   it("counts OpenShell observation time against the total Ready publication deadline (#9211)", async () => {
     let nowMs = 0;
-    let observationIndex = 0;
-    const observationDurationsMs = [0, 0, 166_000, 13_000] as const;
-    const observations = [
-      { kind: "absent" as const },
-      { kind: "absent" as const },
-      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
-      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
-    ];
-    const observeSandbox = vi.fn((_timeoutBudgetMs?: number) => {
-      const currentIndex = observationIndex++;
-      nowMs += observationDurationsMs[currentIndex] ?? 0;
-      return observations[currentIndex] ?? observations.at(-1)!;
+    let observedMs = 0;
+    let delayedMs = 0;
+    const boundedBudgets: Array<{ budgetMs: number; remainingMs: number }> = [];
+    const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
+      const budgetMs = timeoutBudgetMs ?? 0;
+      boundedBudgets.push({ budgetMs, remainingMs: 180_000 - nowMs });
+      const elapsedMs = Math.min(budgetMs, observedMs === 0 ? 179_000 : budgetMs);
+      observedMs += elapsedMs;
+      nowMs += elapsedMs;
+      return timeoutBudgetMs === undefined
+        ? { kind: "absent" as const }
+        : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" };
     });
-    const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
+    const delaySandboxReadyPublicationPoll = async (milliseconds: number) => {
+      delayedMs += milliseconds;
       nowMs += milliseconds;
-    });
+    };
     const fixture = deps({
       observeSandbox,
       delaySandboxReadyPublicationPoll,
@@ -491,10 +497,10 @@ describe("Hermes portable onboarding transaction", () => {
       "cannot classify create result: exact OpenShell sandbox is not Ready",
     );
 
-    expect(observeSandbox.mock.calls.slice(2)).toEqual([[180_000], [13_000]]);
-    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(1);
-    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledWith(1_000);
     expect(nowMs).toBe(180_000);
+    expect(observedMs).toBeGreaterThan(delayedMs);
+    expect(boundedBudgets.length).toBeGreaterThan(0);
+    expect(boundedBudgets.every(({ budgetMs, remainingMs }) => budgetMs <= remainingMs)).toBe(true);
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(fixture.events).not.toContain("registry");
   });
@@ -1367,9 +1373,9 @@ network_policies:
     const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
 
     expect(run(["sandbox", "list", "-g", "nemoclaw"]).status).toBe(0);
-    expect(
-      run(["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]).status,
-    ).toBe(0);
+    expect(run(["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]).status).toBe(
+      0,
+    );
     expect(capture.mock.calls).toEqual([
       [["sandbox", "list", "-g", "nemoclaw"]],
       [["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]],

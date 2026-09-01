@@ -21,13 +21,10 @@ import {
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
+import { redact, redactFullWithUrls } from "../security/redact";
 import { isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
-import {
-  redactCreatedSandboxFailureDiagnostic,
-  reportSandboxCreateFailure,
-} from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
@@ -99,6 +96,36 @@ function createPostCreateReadinessDeadline(
 
 function remainingPostCreateReadinessMs(deadline: PostCreateReadinessDeadline): number {
   return Math.max(0, deadline.deadlineMs - deadline.now());
+}
+
+function redactCreatedSandboxFailureDiagnostic(value: string, limit: number): string {
+  return redactFullWithUrls(value).replace(/\s+/gu, " ").trim().slice(0, limit);
+}
+
+function reportSandboxCreateFailure(options: {
+  readonly sandboxName: string;
+  readonly createStatus: number;
+  readonly createOutput: string;
+  readonly restoreBackupPath: string | null;
+  readonly createArgs: readonly string[];
+  readonly printCreateFailureDiagnostics: (
+    sandboxName: string,
+    options: { backupPath: string | null },
+  ) => void;
+}): never {
+  const redactedCreateOutput = redact(options.createOutput);
+  console.error("");
+  console.error(`  Sandbox creation failed (exit ${options.createStatus}).`);
+  if (options.createOutput) {
+    console.error("");
+    console.error(redactedCreateOutput);
+  }
+  options.printCreateFailureDiagnostics(options.sandboxName, {
+    backupPath: options.restoreBackupPath,
+  });
+  console.error("  Try:  openshell sandbox list        # check gateway state");
+  printSandboxCreateRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
+  return process.exit(options.createStatus === 0 ? 1 : options.createStatus);
 }
 
 async function streamSandboxCreateWithPublicImageCredentialIsolation(
@@ -398,6 +425,7 @@ async function confirmManagedRuntimeCommitReadiness(options: {
   readonly deps: SandboxGpuCreateFlowDeps;
   readonly sandboxId: string | null;
   readonly createAttemptNonce: string | null;
+  readonly deadline: PostCreateReadinessDeadline;
 }): Promise<void> {
   const { input, deps, sandboxId } = options;
   if (!sandboxId) return;
@@ -406,7 +434,7 @@ async function confirmManagedRuntimeCommitReadiness(options: {
   );
   const committedReadiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
     sandboxName: input.sandboxName,
-    timeoutSecs: input.sandboxReadyTimeoutSecs,
+    timeoutSecs: remainingPostCreateReadinessMs(options.deadline) / 1_000,
     observer: deps.sandboxObserver,
     target: { kind: "named", gatewayName: input.gatewayName },
     stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
@@ -419,6 +447,7 @@ async function confirmManagedRuntimeCommitReadiness(options: {
         getRemainingMs,
       ),
     sleep: deps.sleep,
+    now: options.deadline.now,
   });
   if (committedReadiness.ready) return;
   console.error("");
@@ -455,23 +484,28 @@ async function requireManagedBootstrapCreatedSandboxReady(options: {
   readonly deps: SandboxGpuCreateFlowDeps;
   readonly createAttemptNonce: string | null;
   readonly persistIdentitySettlementRecovery: () => void;
+  readonly deadline: PostCreateReadinessDeadline;
 }): Promise<void> {
-  const observation = await sandboxReadinessTracing.observeOpenShellSandbox(
-    options.deps.sandboxObserver,
-    { kind: "named", gatewayName: options.input.gatewayName },
-    options.input.sandboxName,
-    SANDBOX_READY_PROBE_TIMEOUT_MS,
+  const readiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+    sandboxName: options.input.sandboxName,
+    timeoutSecs: remainingPostCreateReadinessMs(options.deadline) / 1_000,
+    observer: options.deps.sandboxObserver,
+    target: { kind: "named", gatewayName: options.input.gatewayName },
+    stableReadyPolls: 1,
+    sleep: options.deps.sleep,
+    now: options.deadline.now,
+  });
+  if (readiness.ready) return;
+  if (options.createAttemptNonce) options.persistIdentitySettlementRecovery();
+  throw new Error(
+    sandboxReadinessTracing
+      .formatCreatedSandboxReadinessFailureMessage(
+        options.input.sandboxName,
+        readiness,
+        options.input.sandboxReadyTimeoutSecs,
+      )
+      .trimStart(),
   );
-  if (!observation.ok) {
-    if (options.createAttemptNonce) options.persistIdentitySettlementRecovery();
-    throw new Error(
-      `Managed bootstrap create completed, but NemoClaw could not observe the sandbox. ${observation.error.message}`,
-    );
-  }
-  if (observation.value.state !== "present" || observation.value.sandbox.readiness !== "ready") {
-    if (options.createAttemptNonce) options.persistIdentitySettlementRecovery();
-    throw new Error("Managed bootstrap create completed without an authoritative Ready sandbox.");
-  }
 }
 
 function resolveCreateAttemptNonce(
@@ -1015,6 +1049,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 deps,
                 createAttemptNonce,
                 persistIdentitySettlementRecovery,
+                deadline: requirePostCreateReadinessDeadline(),
               });
             }
             let sandboxId: string;
@@ -1143,21 +1178,14 @@ export function createSandboxGpuCreateAttemptRunner(
         } as const;
       } else {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-        reportSandboxCreateFailure(
-          {
-            sandboxName: input.sandboxName,
-            createStatus: createResult.status,
-            createOutput: createResult.output,
-            restoreBackupPath: input.restoreBackupPath,
-            createArgs: input.prebuild.createArgs,
-          },
-          {
-            printCreateFailureDiagnostics,
-            printRecoveryHints: printSandboxCreateRecoveryHints,
-            error: (message) => console.error(message),
-            exitProcess: (code) => process.exit(code),
-          },
-        );
+        reportSandboxCreateFailure({
+          sandboxName: input.sandboxName,
+          createStatus: createResult.status,
+          createOutput: createResult.output,
+          restoreBackupPath: input.restoreBackupPath,
+          createArgs: input.prebuild.createArgs,
+          printCreateFailureDiagnostics,
+        });
       }
     }
     if (!createdSandboxVerified && deferPostCreateEffects) {
@@ -1395,6 +1423,7 @@ export function createSandboxGpuCreateAttemptRunner(
         deps,
         sandboxId: managedBootstrap ? verifiedCreatedSandboxId : null,
         createAttemptNonce,
+        deadline: requirePostCreateReadinessDeadline(),
       });
     if (!input.sandboxGpuConfig.sandboxGpuEnabled) {
       await confirmCommittedRuntimeReadiness();

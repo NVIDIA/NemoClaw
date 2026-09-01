@@ -405,8 +405,8 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
     expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", "nemoclaw"],
-      READY_CHECK_OPTIONS,
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
+      { ignoreError: false },
     );
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
@@ -942,10 +942,15 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("redacts create errors and preserves their exact nonzero status (#6110)", async () => {
+  it("redacts hard create errors and preserves diagnostics, hints, and status (#6110)", async () => {
     mocks.streamSandboxCreate.mockResolvedValueOnce({
       status: 19,
-      output: "provider failed with NVIDIA_API_KEY=super-secret-create-value",
+      output: [
+        "provider failed with NVIDIA_API_KEY=super-secret-create-value",
+        "github ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+        "openai sk-abcdefghijklmnopqrstuvwxyz1234567890",
+        "aws AKIAABCDEFGHIJKLMNOP", // gitleaks:allow
+      ].join("\n"),
       sawProgress: true,
     });
     const exit = mockExit(19);
@@ -957,7 +962,13 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(exit).toHaveBeenCalledWith(19);
     expect(output).toMatch(/NVIDIA_API_KEY=[^\n]*\*+/);
-    expect(output).not.toContain("super-secret-create-value");
+    expect(output).not.toMatch(
+      /super-secret-create-value|ghp_abcdefghijklmnopqrstuvwxyz1234567890|sk-abcdefghijklmnopqrstuvwxyz1234567890|AKIAABCDEFGHIJKLMNOP/u, // gitleaks:allow
+    );
+    expect(output).toContain("Try:  openshell sandbox list");
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
   });
 
   it("does not retry compatibility for a non-GPU native readiness failure (#6110)", async () => {

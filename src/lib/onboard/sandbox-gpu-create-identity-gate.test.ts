@@ -132,6 +132,7 @@ function noGpuInput() {
 function attachManagedBootstrap(
   input: ReturnType<typeof noGpuInput>,
   patch: ReturnType<typeof createGpuPatchFixture>,
+  mode: { freshCreate?: boolean } = {},
 ): void {
   input.managedBootstrap = {
     bootstrapIdentity: "b".repeat(64),
@@ -140,14 +141,20 @@ function attachManagedBootstrap(
       identity: { id: "mxc" },
       bootstrap: {
         createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
-        createLifecycle: (options: { launchArgv: readonly string[] }) => ({
-          launchArgv: options.launchArgv,
+        createLifecycle: (lifecycleOptions: {
+          launchArgv: readonly string[];
+          heldWorkloadArgv: readonly string[];
+          bootstrapIdentity: string;
+        }) => ({
+          launchArgv: lifecycleOptions.launchArgv,
           patch,
           recoverUnfinished: async () => null,
           prepareNetwork: async () => undefined,
-          runCreate: async () => {
-            throw new Error("resumed create must not launch");
-          },
+          runCreate: mode.freshCreate
+            ? async <T>(
+                start: (held: typeof lifecycleOptions) => Promise<{ readonly value: T }>,
+              ): Promise<T> => (await start(lifecycleOptions)).value
+            : async () => Promise.reject(new Error("resumed create must not launch")),
         }),
       },
     },
@@ -316,6 +323,87 @@ describe("created sandbox identity gate", () => {
     expectNoSandboxDelete(deps);
   });
 
+  it("waits through managed bootstrap publication beyond the former five-second probe (#10652)", async () => {
+    const actualTracing = await vi.importActual<typeof import("./sandbox-readiness-tracing")>(
+      "./sandbox-readiness-tracing",
+    );
+    let nonce = "";
+    let nowMs = 1_000;
+    const input = noGpuInput();
+    input.sandboxReadyTimeoutSecs = 20;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    attachManagedBootstrap(input, createGpuPatchFixture(), { freshCreate: true });
+    mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    deps.publicationNow = () => nowMs;
+    vi.mocked(deps.sleep).mockImplementation((seconds) => {
+      nowMs += seconds * 1_000;
+    });
+    let readyObservations = 0;
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+      args[1] !== "list"
+        ? "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n"
+        : nowMs < 7_000
+          ? "alpha Pending"
+          : readyObservations++ === 0
+            ? "alpha Ready"
+            : sandboxListJson("alpha-sandbox-id", {
+                [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+              }),
+    );
+    mocks.waitForCreatedSandboxReadyWithTrace
+      .mockImplementationOnce((options) =>
+        actualTracing.waitForCreatedSandboxReadyWithTrace(options),
+      )
+      .mockResolvedValue({ ready: true, reason: "ready", failurePhase: null });
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+    expect(nowMs).toBeGreaterThanOrEqual(7_000);
+    const firstReadiness = mocks.waitForCreatedSandboxReadyWithTrace.mock.calls[0]?.[0];
+    expect(firstReadiness?.timeoutSecs).toBe(20);
+    expect(firstReadiness?.now).toBe(deps.publicationNow);
+    expect(firstReadiness?.stableReadyPolls).toBe(1);
+  });
+
+  it("shares managed bootstrap time with post-commit readiness (#10652)", async () => {
+    let nonce = "";
+    let nowMs = 0;
+    const input = noGpuInput();
+    input.sandboxReadyTimeoutSecs = 10;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    attachManagedBootstrap(input, patch, { freshCreate: true });
+    mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    deps.publicationNow = () => nowMs;
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+      args[1] === "list"
+        ? sandboxListJson("alpha-sandbox-id", {
+            [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+          })
+        : "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    );
+    const readinessTimeouts: number[] = [];
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(async (options) => {
+      readinessTimeouts.push(options.timeoutSecs);
+      nowMs += [3_000, 2_000, 0][readinessTimeouts.length - 1] ?? 0;
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+    expect(readinessTimeouts).toEqual([10, 7, 5]);
+    expect(
+      mocks.waitForCreatedSandboxReadyWithTrace.mock.calls.map(([options]) => options.now),
+    ).toEqual([deps.publicationNow, deps.publicationNow, deps.publicationNow]);
+    expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+  });
+
   it("retains exact recovery when committed managed readiness does not return (#9211)", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const sandboxId = "alpha-sandbox-id";
@@ -481,9 +569,7 @@ describe("created sandbox identity gate", () => {
     expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expectNoSandboxDelete(deps);
-    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain(
-      "portable-secret",
-    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("portable-secret");
     expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
       "Sandbox 'alpha' created",
     );
