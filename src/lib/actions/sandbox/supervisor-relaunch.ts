@@ -86,6 +86,7 @@ function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
 function reconstructSupervisorLaunchCommand(
   sandboxName: string,
   entry: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  quiet: boolean,
   deps: ManagedSupervisorRelaunchDeps,
 ): string[] | null {
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
@@ -106,6 +107,12 @@ function reconstructSupervisorLaunchCommand(
       deps.readManagedWorkloadAuthority ?? readManagedWorkloadAuthority;
     const profile = readWorkloadAuthority(entry)?.profile;
     if (profile?.dashboard.agent !== "hermes" || profile.dashboard.browserUrl === undefined) {
+      if (!quiet) {
+        console.error("  Trusted container recovery stopped because the Hermes dashboard profile");
+        console.error(
+          "  has no recorded browser URL. Rerun onboarding before retrying recovery.",
+        );
+      }
       return null;
     }
     chatUiUrl = profile.dashboard.browserUrl;
@@ -151,7 +158,7 @@ export function relaunchManagedSupervisorSession(
   if (!entry) return null;
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
   if (driver !== null && driver !== "docker" && driver !== "vm") return null;
-  const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, deps);
+  const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, quiet, deps);
   if (startupCommand === null) return null;
 
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;

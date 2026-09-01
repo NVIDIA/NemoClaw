@@ -97,7 +97,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "prepare the rootless container runtime",
   "verify immutable non-force network removal",
   "build and publish the sandbox image",
-  "prepare the already-patched Hermes base",
+  "prepare the staged Hermes build context",
   "build and publish the staged Hermes image",
   "verify Hermes accepts the configured external Host",
   "start the pinned Podman gateway",
@@ -322,8 +322,6 @@ async function main(progress: TestProgress): Promise<void> {
   let disposableNetworkSubnet: string | null = null;
   let disposableNetworkInterface: string | null = null;
   let hermesImageId: string | null = null;
-  let hermesPatchedBaseRef: string | null = null;
-  let hermesPatchedBaseImageId: string | null = null;
   let hermesContextRetired = false;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
@@ -458,7 +456,7 @@ async function main(progress: TestProgress): Promise<void> {
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
 
-    progress.phase("prepare the already-patched Hermes base");
+    progress.phase("prepare the staged Hermes build context");
     const hermesContextStateDir = path.join(root, "hermes-build-state");
     fs.mkdirSync(hermesContextStateDir, { mode: 0o700 });
     const hermesContextInput = {
@@ -486,69 +484,6 @@ async function main(progress: TestProgress): Promise<void> {
         log: console.log,
       });
       cleanupHermesTemporaryBuildContext = hermesTemporaryBuildContext.cleanupBuildCtx;
-      const stagedDockerfileSource = fs.readFileSync(
-        hermesTemporaryBuildContext.stagedDockerfile,
-        "utf-8",
-      );
-      const baseImageArgument = stagedDockerfileSource.match(/^ARG BASE_IMAGE=(.+)$/mu);
-      assert.ok(baseImageArgument?.[1], "The staged Hermes Dockerfile must declare BASE_IMAGE.");
-      const patchedBaseContext = fs.mkdtempSync(
-        path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX),
-      );
-      fs.chmodSync(patchedBaseContext, 0o700);
-      try {
-        const patchedBaseInputDir = path.join(patchedBaseContext, "agents", "hermes");
-        fs.mkdirSync(patchedBaseInputDir, { recursive: true, mode: 0o700 });
-        fs.copyFileSync(
-          path.join(
-            hermesTemporaryBuildContext.buildCtx,
-            "agents",
-            "hermes",
-            "dashboard-external-host.patch",
-          ),
-          path.join(patchedBaseInputDir, "dashboard-external-host.patch"),
-        );
-        const patchedBaseDockerfile = path.join(patchedBaseContext, "Dockerfile");
-        fs.writeFileSync(
-          patchedBaseDockerfile,
-          [
-            `ARG BASE_IMAGE=${baseImageArgument[1]}`,
-            `FROM \${BASE_IMAGE}`,
-            "COPY agents/hermes/dashboard-external-host.patch /tmp/hermes-dashboard-external-host.patch",
-            "RUN git -C /opt/hermes apply --check --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch \\",
-            "    && git -C /opt/hermes apply --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch \\",
-            "    && rm /tmp/hermes-dashboard-external-host.patch",
-            "",
-          ].join("\n"),
-          { encoding: "utf-8", mode: 0o600 },
-        );
-        const patchedBasePrebuild = await prebuildSandboxImageIfEligible({
-          buildCtx: patchedBaseContext,
-          buildId: `patched-base-${sourceRevision.slice(0, 12)}`,
-          createArgs: ["--from", patchedBaseDockerfile, "--name", "hermes-patched-base"],
-          sandboxName: "hermes-patched-base",
-          dockerDriverGateway: true,
-          env: process.env,
-          origin: "generated",
-          log: console.log,
-        });
-        assert.ok(patchedBasePrebuild.imageRef, "The patched Hermes base was not built.");
-        assert.ok(patchedBasePrebuild.imageId, "The patched Hermes base identity was not proven.");
-        hermesPatchedBaseRef = patchedBasePrebuild.imageRef;
-        hermesPatchedBaseImageId = patchedBasePrebuild.imageId;
-      } finally {
-        fs.rmSync(patchedBaseContext, { recursive: true, force: true });
-      }
-      const stagedDockerfileWithPatchedBase = stagedDockerfileSource.replace(
-        /^ARG BASE_IMAGE=.+$/mu,
-        `ARG BASE_IMAGE=${hermesPatchedBaseRef}`,
-      );
-      assert.notEqual(stagedDockerfileWithPatchedBase, stagedDockerfileSource);
-      fs.writeFileSync(
-        hermesTemporaryBuildContext.stagedDockerfile,
-        stagedDockerfileWithPatchedBase,
-        { encoding: "utf-8", mode: 0o600 },
-      );
 
       progress.phase("build and publish the staged Hermes image");
       const hermesPrebuild = await prebuildSandboxImageIfEligible({
@@ -615,14 +550,10 @@ async function main(progress: TestProgress): Promise<void> {
         hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
       } finally {
         try {
-          hermesPatchedBaseRef && run("podman", ["image", "rm", "--force", hermesPatchedBaseRef]);
+          assert.equal(cleanupHermesTemporaryBuildContext(), true);
         } finally {
-          try {
-            assert.equal(cleanupHermesTemporaryBuildContext(), true);
-          } finally {
-            hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
-            assert.equal(hermesContextRetired, true);
-          }
+          hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
+          assert.equal(hermesContextRetired, true);
         }
       }
     }
@@ -780,7 +711,6 @@ async function main(progress: TestProgress): Promise<void> {
           registry: { id: currentRegistry.Id, ip: PORTABLE_REGISTRY_IP },
           hermesPortableImage: {
             imageId: hermesImageId,
-            patchedBaseImageId: hermesPatchedBaseImageId,
             stagedContextRetired: hermesContextRetired,
           },
           authenticatedGatewayRoute: true,
