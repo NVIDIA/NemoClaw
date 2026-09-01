@@ -288,6 +288,7 @@ describe("created sandbox identity gate", () => {
       "did not return to Ready after its managed runtime commit",
     );
 
+    expect(patch.commitAfterReady).toHaveBeenCalledOnce();
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("did not return to executable Ready state"),
       sandboxIdentityFingerprint,
@@ -310,49 +311,37 @@ describe("created sandbox identity gate", () => {
     expect(recoveryOutput).not.toContain("After OpenShell confirms the sandbox is absent");
   });
 
-  it("blocks committed-readiness recovery when durable persistence returns false (#9211)", async () => {
-    const { deps, error, input, patch } = createCommittedReadinessPersistenceFixture();
-    const persist = vi.fn(() => false);
-    input.persistRetainedSandboxRecovery = persist;
+  it.each([
+    ["returns false", () => false],
+    [
+      "throws",
+      () => {
+        throw new Error("durable writer failed");
+      },
+    ],
+  ])(
+    "blocks committed-readiness recovery when durable persistence %s (#9211)",
+    async (_name, writer) => {
+      const { deps, error, input, patch } = createCommittedReadinessPersistenceFixture();
+      const persist = vi.fn(writer);
+      input.persistRetainedSandboxRecovery = persist;
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "the recovery-only session remains blocked",
-    );
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+        "the recovery-only session remains blocked",
+      );
 
-    expect(persist).toHaveBeenCalledOnce();
-    expect(error.mock.calls.flat().join("\n")).toContain(
-      "The recovery-only session remains blocked until its durable recovery record can be saved.",
-    );
-    expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
-    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
-  });
-
-  it("blocks committed-readiness recovery when durable persistence throws (#9211)", async () => {
-    const { deps, error, input, patch } = createCommittedReadinessPersistenceFixture();
-    const persist = vi.fn(() => {
-      throw new Error("durable writer failed");
-    });
-    input.persistRetainedSandboxRecovery = persist;
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "the recovery-only session remains blocked",
-    );
-
-    expect(persist).toHaveBeenCalledOnce();
-    expect(error.mock.calls.flat().join("\n")).toContain(
-      "The recovery-only session remains blocked until its durable recovery record can be saved.",
-    );
-    expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
-    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
-  });
+      expect(persist).toHaveBeenCalledOnce();
+      expect(error.mock.calls.flat().join("\n")).toContain(
+        "The recovery-only session remains blocked until its durable recovery record can be saved.",
+      );
+      expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
+      expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+      expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+    },
+  );
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
     const events: string[] = [];
@@ -832,6 +821,43 @@ describe("created sandbox identity gate", () => {
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
     expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+  });
+
+  it("stops publication probing on a non-transient OpenShell failure (#9833)", async () => {
+    let nonce = "";
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+    vi.mocked(deps.runOpenshell).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "permission denied: NVIDIA_API_KEY=nvapi-publication-secret",
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "OpenShell could not verify publication",
+    );
+
+    expect(deps.sleep).not.toHaveBeenCalled();
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/OpenShell detail: .*permission denied: NVIDIA_API_KEY=<REDACTED>/u),
+      fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      nonce,
+    );
+    const recoveryMessage =
+      vi.mocked(input.persistRetainedSandboxRecovery!).mock.calls[0]?.[0] ?? "";
+    expect(recoveryMessage).not.toContain("nvapi-publication-secret");
   });
 
   it("rejects a different owner-scoped sandbox identity before post-create effects (#9833)", async () => {
