@@ -36,4 +36,17 @@ describe("sandbox help", () => {
       expect(command.out).not.toContain("inference get inference get");
     },
   );
+
+  it(
+    "renders policy subcommand help instead of an oclif command-not-found error",
+    testTimeoutOptions(15_000),
+    ({ testHome }) => {
+      const result = runWithEnv("my-assistant policy --help", testHome.environment());
+
+      expect(result.code).toBe(0);
+      expect(result.out).toContain("my-assistant policy add");
+      expect(result.out).toContain("my-assistant policy list");
+      expect(result.out).not.toContain("command sandbox:policy not found");
+    },
+  );
 });
