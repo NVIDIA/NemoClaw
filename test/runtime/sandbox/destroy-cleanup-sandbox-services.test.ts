@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CleanupSandboxServicesDeps } from "../../../src/lib/actions/sandbox/destroy.js";
 import { cleanupSandboxServices } from "../../../src/lib/actions/sandbox/destroy.js";
+import { ollamaModelRefsMatch } from "../../../src/lib/inference/ollama/model-discovery.js";
 import { SANDBOX_PROVIDER_SUFFIXES } from "../../../src/lib/onboard/sandbox-provider-cleanup.js";
 
 type SandboxLike = { name?: string; model?: string | null; provider?: string | null } | null;
@@ -30,6 +31,7 @@ function buildDeps(
       | "loadPendingOllamaModelCleanup"
       | "clearPendingOllamaModelCleanup"
       | "withOllamaModelOwnershipLock"
+      | "ollamaModelRefsMatch"
       | "runOpenshell"
       | "rmSync"
       | "stopGooglechatWebhookTunnel"
@@ -68,6 +70,7 @@ function buildDeps(
       loadPendingOllamaModelCleanup: vi.fn(() => []),
       clearPendingOllamaModelCleanup: vi.fn(),
       withOllamaModelOwnershipLock: (operation) => operation(),
+      ollamaModelRefsMatch,
       runOpenshell: vi.fn(() => ({ status: 0 })),
       rmSync: vi.fn(),
       stopGooglechatWebhookTunnel: vi.fn(() => "/tmp/nemoclaw-services-regression-2717-googlechat"),

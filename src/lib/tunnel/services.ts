@@ -557,7 +557,8 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       .slice(0, 300);
     ollamaCleanupError = new Error(
       `Ollama model cleanup failed unexpectedly: ${detail || "unknown error"}. ` +
-        "Retry this command after repairing Ollama.",
+        "The saved local route was retained; restore access to the saved local Ollama " +
+        "endpoint, then retry this command.",
       { cause: error },
     );
     warn(ollamaCleanupError.message);

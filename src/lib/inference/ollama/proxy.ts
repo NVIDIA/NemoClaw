@@ -1719,6 +1719,7 @@ export {
   killStaleProxy,
   loadPendingOllamaModelCleanup,
   noAuthProxy,
+  ollamaModelRefsMatch,
   persistAndProbeOllamaProxy,
   persistProxyToken,
   prepareOllamaModel,

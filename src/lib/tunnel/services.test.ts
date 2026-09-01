@@ -647,21 +647,26 @@ describe("stopAll", () => {
   });
 
   it("propagates an unexpected Ollama cleanup failure after stopping services (#10553)", () => {
+    const clearPendingOllamaModelCleanup = vi.fn();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     expect(() =>
       stopAll({
         pidDir,
+        sandboxName: "test-box",
         unloadOllamaModels: () => {
           throw new Error("transport failed\nwith unbounded detail");
         },
+        clearPendingOllamaModelCleanup,
       }),
     ).toThrow("Ollama model cleanup failed unexpectedly: transport failed with unbounded detail");
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();
 
+    expect(output).toContain("restore access to the saved local Ollama endpoint");
     expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
     expect(output).not.toContain("All services stopped");
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
   });
 });
 

@@ -176,20 +176,12 @@ export type CleanupSandboxServicesDeps = {
     releasedModels?: readonly string[],
   ) => void;
   withOllamaModelOwnershipLock?: <T>(operation: () => T) => T;
+  ollamaModelRefsMatch?: (left: string, right: string) => boolean;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
 };
-
-function sameOllamaModelRef(left: string, right: string): boolean {
-  const normalize = (model: string) => {
-    const ref = model.trim();
-    const lastSegment = ref.slice(ref.lastIndexOf("/") + 1);
-    return ref && !lastSegment.includes(":") ? `${ref}:latest` : ref;
-  };
-  return normalize(left) === normalize(right);
-}
 
 type ShieldsTimerNeutralizeResult = {
   warnings?: string[];
@@ -282,6 +274,14 @@ export function cleanupSandboxServices(
       };
       return proxy.withOllamaModelOwnershipLock(operation);
     });
+  const ollamaModelRefsMatch =
+    deps.ollamaModelRefsMatch ??
+    ((left: string, right: string) => {
+      const proxy = require("../../inference/ollama/proxy") as {
+        ollamaModelRefsMatch(leftModel: string, rightModel: string): boolean;
+      };
+      return proxy.ollamaModelRefsMatch(left, right);
+    });
   const runOpenshell =
     deps.runOpenshell ??
     ((args: string[], opts?: Record<string, unknown>) => {
@@ -351,8 +351,10 @@ export function cleanupSandboxServices(
         ...(sb?.provider?.includes("ollama") && currentModel ? [currentModel] : []),
       ].filter(
         (model, index, models) =>
-          models.findIndex((candidate) => sameOllamaModelRef(candidate, model)) === index &&
-          !peers.some((candidate) => candidate.model && sameOllamaModelRef(model, candidate.model)),
+          models.findIndex((candidate) => ollamaModelRefsMatch(candidate, model)) === index &&
+          !peers.some(
+            (candidate) => candidate.model && ollamaModelRefsMatch(model, candidate.model),
+          ),
       );
       if (candidates.length === 0) return;
       ollamaCleanup = unloadOllamaModels(candidates);
