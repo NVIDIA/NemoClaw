@@ -217,6 +217,40 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(command.join(" ")).not.toContain("recovery-secret");
   });
 
+  it("refuses Hermes supervisor recovery without a recorded browser URL", () => {
+    const deps = baseDeps({
+      getSandbox: vi.fn(() => ({
+        name: "alpha",
+        agent: "hermes",
+        dashboardPort: 19189,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19189,
+        hermesDashboardInternalPort: 8643,
+        openshellDriver: "docker",
+      })),
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 19189,
+          }) as never,
+      ),
+      resolveDashboardPort: vi.fn(() => 19189),
+      readManagedWorkloadAuthority: vi.fn(
+        () =>
+          ({
+            agent: "hermes",
+            profile: { dashboard: { agent: "hermes" } },
+          }) as never,
+      ),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.resolveContainer).not.toHaveBeenCalled();
+    expect(deps.recreate).not.toHaveBeenCalled();
+  });
+
   it("retries only transport-level state backup failures after a container restart", () => {
     const backupState = vi
       .fn()

@@ -105,9 +105,10 @@ function reconstructSupervisorLaunchCommand(
     const readWorkloadAuthority =
       deps.readManagedWorkloadAuthority ?? readManagedWorkloadAuthority;
     const profile = readWorkloadAuthority(entry)?.profile;
-    chatUiUrl =
-      (profile?.dashboard.agent === "hermes" ? profile.dashboard.browserUrl : undefined) ??
-      loopbackDashboardUrl;
+    if (profile?.dashboard.agent !== "hermes" || profile.dashboard.browserUrl === undefined) {
+      return null;
+    }
+    chatUiUrl = profile.dashboard.browserUrl;
   }
   const { envArgs } = buildSandboxRuntimeEnvArgs({
     agent,
