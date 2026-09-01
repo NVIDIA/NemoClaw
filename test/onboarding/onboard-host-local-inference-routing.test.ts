@@ -499,6 +499,7 @@ describe("onboard host-local inference routing", () => {
           localInference: {
             validateOllamaModelWithToolsOverride: legacyOllamaProof,
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost: () => () => {},
           },
           verifyInferenceRoute: verify,
           verifyOnboardInferenceSmoke: smoke,

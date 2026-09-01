@@ -1050,6 +1050,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         localInference: {
           validateOllamaModelWithToolsOverride: () => ({ ok: true }),
           validateSandboxFacingOllamaModel: () => ({ ok: true }),
+          persistResolvedOllamaHost: () => () => {},
           clearPersistedOllamaHostIfUnused: options.clearPersistedOllamaHostIfUnused,
           loadPendingOllamaModelCleanup: options.loadPendingOllamaModelCleanup ?? (() => []),
           persistPendingOllamaModelCleanup: options.persistPendingOllamaModelCleanup ?? (() => {}),

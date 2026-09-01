@@ -532,6 +532,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
 
   let ollamaCleanupIncomplete = false;
   let ollamaCleanup: OllamaUnloadResult | undefined;
+  let ollamaCleanupError: Error | undefined;
   if (opts.cleanupOllamaModels !== false) {
     try {
       const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
@@ -553,21 +554,23 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       }
     } catch (error) {
       ollamaCleanupIncomplete = true;
-      const detail = error instanceof Error ? error.message : String(error);
-      ollamaCleanup = {
-        ok: false,
-        outcome: "discovery-failed",
-        endpoint: "the saved local Ollama endpoint",
-        selectedModels: [],
-        discoveries: [],
-        requests: [],
-        message: detail,
-      };
-      warn(
-        `Ollama model cleanup failed unexpectedly: ${detail}. The saved local route was retained; restore access to the saved local Ollama endpoint, then retry this command.`,
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      ollamaCleanupError = new Error(
+        `Ollama model cleanup failed unexpectedly: ${detail || "unknown error"}. ` +
+          "The saved local route was retained; restore access to the saved local Ollama " +
+          "endpoint, then retry this command.",
+        { cause: error },
       );
+      warn(ollamaCleanupError.message);
     }
   }
+  const finishOllamaCleanup = (): OllamaUnloadResult | void => {
+    if (ollamaCleanupError) throw ollamaCleanupError;
+    return ollamaCleanup;
+  };
 
   // Stop host-side services only when their state directory is explicit or
   // derived from a trusted sandbox name. An invalid requested sandbox must not
@@ -600,12 +603,12 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
     info("Host services stopped; managed gateway not released.");
-    return ollamaCleanup;
+    return finishOllamaCleanup();
   }
 
   if (gatewayOutcome === "unconfirmed") {
     info("Host services stopped; managed gateway release was not confirmed.");
-    return ollamaCleanup;
+    return finishOllamaCleanup();
   }
 
   if (ollamaCleanupIncomplete) {
@@ -613,7 +616,7 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   } else {
     info("All services stopped.");
   }
-  return ollamaCleanup;
+  return finishOllamaCleanup();
 }
 
 /**

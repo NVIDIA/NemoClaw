@@ -95,9 +95,9 @@ export async function setupOllamaLocalInference(
       await persistAndProbeOllamaProxy(proxyToken);
     }
   }
-  let rollbackPersistedOllamaHost: (() => void) | undefined;
+  let rollbackPersistedOllamaHost: () => void;
   try {
-    rollbackPersistedOllamaHost = localInference.persistResolvedOllamaHost?.() ?? undefined;
+    rollbackPersistedOllamaHost = localInference.persistResolvedOllamaHost();
   } catch (persistError) {
     error(
       `  Could not stage the selected local Ollama route for later stop/destroy cleanup: ${
@@ -108,7 +108,7 @@ export async function setupOllamaLocalInference(
   }
   const rollbackCleanupRoute = (): boolean => {
     try {
-      rollbackPersistedOllamaHost?.();
+      rollbackPersistedOllamaHost();
       return true;
     } catch (rollbackError) {
       error(

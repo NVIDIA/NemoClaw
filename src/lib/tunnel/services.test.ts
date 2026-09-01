@@ -666,27 +666,26 @@ describe("stopAll", () => {
     expect(output).not.toContain("All services stopped");
   });
 
-  it("returns a failed cleanup result when Ollama cleanup throws", () => {
+  it("propagates an unexpected Ollama cleanup failure after stopping services (#10553)", () => {
     const clearPendingOllamaModelCleanup = vi.fn();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const result = stopAll({
-      pidDir,
-      sandboxName: "test-box",
-      unloadOllamaModels: () => {
-        throw new Error("synthetic cleanup exception");
-      },
-      clearPendingOllamaModelCleanup,
-    });
+    expect(() =>
+      stopAll({
+        pidDir,
+        sandboxName: "test-box",
+        unloadOllamaModels: () => {
+          throw new Error("transport failed\nwith unbounded detail");
+        },
+        clearPendingOllamaModelCleanup,
+      }),
+    ).toThrow("Ollama model cleanup failed unexpectedly: transport failed with unbounded detail");
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();
 
-    expect(result).toMatchObject({
-      ok: false,
-      outcome: "discovery-failed",
-      message: "synthetic cleanup exception",
-    });
     expect(output).toContain("restore access to the saved local Ollama endpoint");
+    expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
+    expect(output).not.toContain("All services stopped");
     expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
   });
 });

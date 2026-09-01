@@ -313,6 +313,7 @@ describe("createProviderReviewDeps", () => {
         localInference: {
           validateOllamaModelWithToolsOverride: () => ({ ok: true }),
           validateSandboxFacingOllamaModel: () => ({ ok: true }),
+          persistResolvedOllamaHost: () => () => {},
         },
         OLLAMA_PROXY_CREDENTIAL_ENV: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       },

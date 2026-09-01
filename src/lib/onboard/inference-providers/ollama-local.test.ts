@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CONTAINER_REACHABILITY_IMAGE,
   getOllamaWarmupCommand,
+  loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  persistResolvedOllamaHost,
   resetOllamaHostCache,
   runOllamaWarmup,
   setResolvedOllamaHost,
@@ -22,7 +27,12 @@ const SANDBOX_ENDPOINT_MISMATCH =
   "sandbox reaches through http://host.openshell.internal:11434 does not serve it " +
   "(reported models: qwen3.5:2b, gemma4:26b).";
 
-function deps(overrides: Partial<OllamaDeps> = {}): OllamaDeps {
+type OllamaDepsOverrides = Omit<Partial<OllamaDeps>, "localInference"> & {
+  localInference?: Partial<OllamaDeps["localInference"]>;
+};
+
+function deps(overrides: OllamaDepsOverrides = {}): OllamaDeps {
+  const { localInference, ...rest } = overrides;
   return {
     runOpenshell: vi.fn(() => ({ status: 0 })),
     upsertProvider: vi.fn(() => ({ ok: true })),
@@ -48,9 +58,11 @@ function deps(overrides: Partial<OllamaDeps> = {}): OllamaDeps {
     localInference: {
       validateOllamaModelWithToolsOverride: () => ({ ok: true }),
       validateSandboxFacingOllamaModel: () => ({ ok: true }),
+      persistResolvedOllamaHost: () => () => {},
+      ...localInference,
     },
     OLLAMA_PROXY_CREDENTIAL_ENV: CREDENTIAL_ENV,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -109,30 +121,32 @@ describe("Ollama local provider sandbox-facing model gate", () => {
 
   it("records the route when the sandbox endpoint serves the model", async () => {
     const upsertProvider = vi.fn(() => ({ ok: true }));
-    const persistResolvedOllamaHost = vi.fn();
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-provider-route-"));
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    try {
+      await expect(
+        setupOllamaLocalInference(
+          { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+          deps({
+            upsertProvider,
+            localInference: {
+              persistResolvedOllamaHost: () => persistResolvedOllamaHost(undefined, stateRoot),
+            },
+          }),
+        ),
+      ).resolves.toEqual({ done: false });
 
-    await expect(
-      setupOllamaLocalInference(
-        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
-        deps({
-          upsertProvider,
-          localInference: {
-            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
-            validateSandboxFacingOllamaModel: () => ({ ok: true }),
-            persistResolvedOllamaHost,
-          },
-        }),
-      ),
-    ).resolves.toEqual({ done: false });
-
-    expect(upsertProvider).toHaveBeenCalledWith(
-      "ollama-local",
-      "openai",
-      CREDENTIAL_ENV,
-      "http://host.openshell.internal:11434/v1",
-      { [CREDENTIAL_ENV]: "ollama" },
-    );
-    expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
+      expect(upsertProvider).toHaveBeenCalledWith(
+        "ollama-local",
+        "openai",
+        CREDENTIAL_ENV,
+        "http://host.openshell.internal:11434/v1",
+        { [CREDENTIAL_ENV]: "ollama" },
+      );
+      expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("dispatches Windows-host warm-up through Docker Desktop", async () => {
@@ -155,7 +169,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
                 isolatedCredentialConfig: true,
                 cleanup,
               })),
-            persistResolvedOllamaHost: vi.fn(),
+            persistResolvedOllamaHost: vi.fn(() => () => {}),
           },
         }),
       ),
