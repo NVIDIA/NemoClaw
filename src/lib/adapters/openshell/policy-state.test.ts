@@ -183,12 +183,18 @@ describe("OpenShell policy observation", () => {
     } catch (error) {
       observed = error;
     }
+    const message = (observed as Error).message;
+    const detailMatch =
+      /OpenShell detail: (?<detail>.*)\. Policy-dependent operations must stop\.$/u.exec(message);
+    const detail = detailMatch?.groups?.detail ?? "";
     expect(isPolicyObservationError(observed)).toBe(true);
-    expect((observed as Error).message).toContain("invalid peer certificate: BadSignature");
-    expect((observed as Error).message).toContain("Policy-dependent operations must stop");
-    expect((observed as Error).message).not.toContain("policy-output-secret-canary");
-    expect((observed as Error).message).not.toContain("policy-output-tail-canary");
-    expect((observed as Error).message).not.toContain("\u001b");
+    expect(message).toContain("invalid peer certificate: BadSignature");
+    expect(message).toContain("Policy-dependent operations must stop");
+    expect(detail).not.toBe("");
+    expect(detail.length).toBeLessThanOrEqual(240);
+    expect(message).not.toContain("policy-output-secret-canary");
+    expect(message).not.toContain("policy-output-tail-canary");
+    expect(message).not.toContain("\u001b");
   });
 
   it("validates required entries while allowing unrelated host changes", () => {
