@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "module";
+import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dockerMocks = vi.hoisted(() => ({
@@ -15,6 +17,30 @@ vi.mock("../adapters/docker", async (importOriginal) => ({
 }));
 
 import * as nim from "./nim";
+
+const require = createRequire(import.meta.url);
+const NIM_DIST_PATH = require.resolve("./nim");
+const RUNNER_PATH = require.resolve("../runner");
+
+// Reloads ./nim with its runner mocked, so detectGpu() can be exercised
+// against a scripted nvidia-smi output without a real GPU. Mirrors the
+// identical helper in nim.test.ts.
+function loadNimWithMockedRunner(runCapture: Mock) {
+  const runner = require(RUNNER_PATH);
+  const originalRunCapture = runner.runCapture;
+
+  delete require.cache[NIM_DIST_PATH];
+  runner.runCapture = runCapture;
+  const nimModule = require(NIM_DIST_PATH);
+
+  return {
+    nimModule,
+    restore() {
+      delete require.cache[NIM_DIST_PATH];
+      runner.runCapture = originalRunCapture;
+    },
+  };
+}
 
 describe("NIM memory selection", () => {
   beforeEach(() => {
@@ -50,6 +76,33 @@ describe("NIM memory selection", () => {
         unifiedMemory: false,
       }),
     ).toBe(0);
+  });
+
+  it("detectGpu preserves a genuine zero free memory reading, distinct from unparseable", () => {
+    // A GPU fully occupied by another workload legitimately reports 0 free
+    // MB. detectGpu() must not collapse that into the same "unknown" state
+    // as an unparseable `[N/A]` reading, or nimUsableMemoryMB() falls back
+    // to totalMemoryMB and treats a saturated GPU as fully free.
+    const runCapture = vi.fn((cmd: string | string[]) =>
+      Array.isArray(cmd) &&
+      cmd[0] === "nvidia-smi" &&
+      cmd.some((a: string) => a.includes("name,memory.total"))
+        ? "NVIDIA H100 80GB HBM3, 81920, 0\n"
+        : "",
+    );
+    const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+    try {
+      const result = nimModule.detectGpu();
+      expect(result).toMatchObject({
+        type: "nvidia",
+        name: "NVIDIA H100 80GB HBM3",
+        totalMemoryMB: 81920,
+      });
+      expect(result?.availableMemoryMB).toBe(0);
+    } finally {
+      restore();
+    }
   });
 
   it("uses total memory when free memory is unavailable", () => {
