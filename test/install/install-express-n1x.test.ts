@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer N1x Express preview", () => {
   it("offers one single-host managed-vLLM path (#8574)", () => {
@@ -136,13 +137,15 @@ detect_express_platform
   });
 
   it("preserves harness-owned environment paths", () => {
-    const result = runInstallerSourced(`
-[ "$HOME" != "/forbidden" ]
-[ "$PATH" != "/forbidden" ]
-[ "$INSTALLER_UNDER_TEST" != "/forbidden" ]
-`, { HOME: "/forbidden", PATH: "/forbidden", INSTALLER_UNDER_TEST: "/forbidden" });
+    const result = runInstallerSourced(
+      `printf '%s\n%s\n%s\n' "$HOME" "$PATH" "$INSTALLER_UNDER_TEST"`,
+      { HOME: "/forbidden", PATH: "/forbidden", INSTALLER_UNDER_TEST: "/forbidden" },
+    );
 
     expect(result.result.status, result.output).toBe(0);
+    expect(result.result.stdout).toBe(
+      `${result.home}\n${TEST_SYSTEM_PATH}\n${INSTALLER_PAYLOAD}\n`,
+    );
   });
 
   it.each([
