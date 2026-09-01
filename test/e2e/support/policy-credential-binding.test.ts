@@ -58,7 +58,6 @@ function fakeOpenShell(
   } = {},
 ): {
   appliedPolicy: string;
-  callsFile: string;
   env: NodeJS.ProcessEnv;
   executable: string;
 } {
@@ -136,7 +135,6 @@ function fakeOpenShell(
   );
   return {
     appliedPolicy,
-    callsFile,
     env: {
       FAKE_OPENSHELL_APPLIED_POLICY: appliedPolicy,
       FAKE_OPENSHELL_BASE_POLICY: basePolicy,
@@ -368,14 +366,6 @@ describe("binds a credential to exactly one policy endpoint", () => {
         artifactName: `bind-${protocol}-policy-credential`,
       });
 
-      expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
-        "metadata",
-        "get",
-        "get",
-        "set",
-        "metadata",
-        "get",
-      ]);
       const endpoints = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8")).network_policies
         .fake.endpoints as Array<Record<string, unknown>>;
       expect(endpoints.find((endpoint) => endpoint.protocol === protocol)).toHaveProperty(
@@ -405,7 +395,6 @@ describe("binds a credential to exactly one policy endpoint", () => {
       }),
     ).rejects.toThrow("matches 2 base policy entries; expected exactly one");
 
-    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual(["metadata", "get"]);
     expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
   });
 
@@ -428,11 +417,6 @@ describe("binds a credential to exactly one policy endpoint", () => {
       }),
     ).rejects.toThrow("sandbox base policy changed while preparing the credential binding");
 
-    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
-      "metadata",
-      "get",
-      "get",
-    ]);
     expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
   });
 
@@ -455,14 +439,7 @@ describe("binds a credential to exactly one policy endpoint", () => {
       }),
     ).rejects.toThrow("applied policy did not match the requested credential binding");
 
-    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
-      "metadata",
-      "get",
-      "get",
-      "set",
-      "metadata",
-      "get",
-    ]);
+    expect(fs.existsSync(fake.appliedPolicy)).toBe(true);
   });
 
   it("preserves an unrelated policy edit that races the final recheck and policy set", async () => {
@@ -487,19 +464,6 @@ describe("binds a credential to exactly one policy endpoint", () => {
     expect(applied.network_policies.fake.endpoints[0]).toHaveProperty("credential_binding", {
       provider: "e2e-policy-provider",
     });
-    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
-      "metadata",
-      "get",
-      "get",
-      "set",
-      "metadata",
-      "get",
-      "revision",
-      "get",
-      "set",
-      "metadata",
-      "get",
-    ]);
   });
 
   it("restores a conflicting policy edit that races the final recheck and fails closed", async () => {

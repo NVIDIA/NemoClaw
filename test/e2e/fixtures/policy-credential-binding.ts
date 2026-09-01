@@ -21,16 +21,6 @@ const policyBoundary = (
 ) as typeof policyBoundaryModule;
 const { parseOpenShellPolicy } = policyBoundary;
 
-export function assertPolicyDocumentsEqual(
-  expectedFile: string,
-  actualFile: string,
-  message: string,
-): void {
-  const expected = parseOpenShellPolicy(fs.readFileSync(expectedFile, "utf8")).policy;
-  const actual = parseOpenShellPolicy(fs.readFileSync(actualFile, "utf8")).policy;
-  if (!isDeepStrictEqual(actual, expected)) throw new Error(message);
-}
-
 export function bindPolicyEndpointCredential(
   policyFile: string,
   providerName: string,
@@ -94,16 +84,6 @@ export function policyDocumentWithEndpointCredentialBinding(
 
 function main(): void {
   const args = process.argv.slice(2);
-  if (args[0] === "--assert-equal") {
-    const [, expectedFile, actualFile, message] = args;
-    if (!expectedFile || !actualFile || !message) {
-      throw new Error(
-        "usage: policy-credential-binding --assert-equal <expected-policy> <actual-policy> <message>",
-      );
-    }
-    assertPolicyDocumentsEqual(expectedFile, actualFile, message);
-    return;
-  }
   const [policyFile, providerName, host, rawPort, protocol] = args;
   if (!policyFile || !providerName || !host || !rawPort || !protocol) {
     throw new Error(

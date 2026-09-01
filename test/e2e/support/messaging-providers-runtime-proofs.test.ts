@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
+import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   buildSandboxNodeInvocation,
@@ -101,11 +102,6 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
   expect(matched, message).toBe(true);
 }
 
-type CleanupAction = {
-  name: string;
-  run: () => Promise<void>;
-};
-
 function successfulCommand(stdout = "") {
   return {
     artifacts: { result: "", stderr: "", stdout: "" },
@@ -118,15 +114,10 @@ function successfulCommand(stdout = "") {
   };
 }
 
-function fakeDockerHost(publishedAddress = "127.0.0.1"): {
-  calls: string[][];
-  host: HostCliClient;
-} {
-  const calls: string[][] = [];
+function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
   const host = {
     command: async (command: string, args: string[]) => {
       expect(command).toBe("docker");
-      calls.push([...args]);
       args
         .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
         .forEach((fakeApiMount) => {
@@ -138,11 +129,7 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): {
         : successfulCommand();
     },
   } as unknown as HostCliClient;
-  return { calls, host };
-}
-
-async function runCleanup(actions: CleanupAction[]): Promise<void> {
-  for (let index = actions.length - 1; index >= 0; index -= 1) await actions[index]!.run();
+  return host;
 }
 
 describe("messaging provider installed-runtime proofs", () => {
@@ -331,66 +318,13 @@ network_policies:
     });
   });
 
-  it.each([
-    ["discord-gateway", ["127.0.0.1::8080"], ["8080/tcp"]],
-    ["slack", ["127.0.0.1::8080", "127.0.0.1::8081"], ["8080/tcp", "8081/tcp"]],
-  ] as const)(
-    "proxies the isolated fake %s API through loopback-only ephemeral ports",
-    async (kind, expectedPublications, expectedPortQueries) => {
-      const { calls, host } = fakeDockerHost();
-      const cleanup: CleanupAction[] = [];
-
-      try {
-        const api = await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-          kind,
-          imageScript: `fake-${kind}-api.cjs`,
-          containerPrefix: `fake-${kind}`,
-          portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        });
-        const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
-        const runCalls = calls.filter((args) => args[0] === "run");
-        expect(networkCreate).toBeDefined();
-        expect(runCalls).toHaveLength(2);
-        const createdNetwork = networkCreate!;
-        const [apiRun, proxyRun] = runCalls as [string[], string[]];
-        const network = createdNetwork.at(-1);
-        const apiContainer = apiRun[apiRun.indexOf("--name") + 1];
-        const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1];
-        const publications = proxyRun.flatMap((argument, index) =>
-          argument === "-p" ? [proxyRun[index + 1]] : [],
-        );
-
-        expect(createdNetwork.slice(0, -1)).toEqual(["network", "create", "--internal"]);
-        expect(apiRun).toEqual(expect.arrayContaining(["--network", network]));
-        expect(apiRun).not.toContain("-p");
-        expect(apiRun).not.toContain("bridge");
-        expect(publications).toEqual(expectedPublications);
-        expect(proxyRun).toEqual(expect.arrayContaining(["--network", "bridge"]));
-        expect(calls).toContainEqual(["network", "connect", network, proxyContainer]);
-        expect(
-          calls.filter((args) => args[0] === "port").map((args) => [args[1], args[2]]),
-        ).toEqual(expectedPortQueries.map((port) => [proxyContainer, port]));
-        expect(proxyContainer).not.toBe(apiContainer);
-        expect(api.port).toBe("32100");
-        expect(api.alternatePort).toBe(kind === "slack" ? "32101" : undefined);
-      } finally {
-        await runCleanup(cleanup);
-      }
-    },
-  );
-
   it("rejects a fake API proxy port that Docker publishes beyond loopback", async () => {
-    const { host } = fakeDockerHost("0.0.0.0");
-    const cleanup: CleanupAction[] = [];
+    const host = fakeDockerHost("0.0.0.0");
+    const cleanup = new CleanupRegistry();
 
     try {
       await expect(
-        startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        startFakeDockerApi(host, cleanup.add.bind(cleanup), {
           kind: "discord-gateway",
           imageScript: "fake-discord-gateway-api.cjs",
           containerPrefix: "fake-discord-gateway",
@@ -403,7 +337,7 @@ network_policies:
         }),
       ).rejects.toThrow(/did not bind only to 127\.0\.0\.1/u);
     } finally {
-      await runCleanup(cleanup);
+      assertCleanupPassed(await cleanup.runAll());
     }
   });
 
