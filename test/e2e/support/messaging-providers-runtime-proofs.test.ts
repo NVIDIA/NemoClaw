@@ -616,7 +616,7 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("publishes an internal-only proxy without default-bridge egress", async () => {
+  it("publishes a proxy only on the OpenShell bridge without default-bridge egress", async () => {
     const calls: string[][] = [];
     const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
     const cleanup: Array<() => Promise<void>> = [];
