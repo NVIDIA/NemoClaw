@@ -269,7 +269,9 @@ describe("live OpenShell policy mutations", () => {
     expect(YAML.parse(livePolicy)).toEqual(YAML.parse(concurrentRevision));
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit_6");
     expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("The latest external policy is being restored"),
+      expect.stringContaining(
+        "NemoClaw is restoring the latest external policy, and this update will not apply",
+      ),
     );
   });
 
@@ -355,7 +357,14 @@ describe("live OpenShell policy mutations", () => {
       "request_body_credential_rewrite",
     );
     expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("openshell policy get live-policy"),
+      expect.stringContaining(
+        "After the command finishes, run `openshell policy get -g nemoclaw --full live-policy`",
+      ),
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Run `openshell policy get -g nemoclaw --full live-policy` to inspect the effective policy",
+      ),
     );
   });
 

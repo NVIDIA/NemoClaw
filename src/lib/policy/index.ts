@@ -990,6 +990,10 @@ function rebasePolicyDocumentOntoConcurrentEdit(
   return { document: YAML.stringify(merged), conflicts };
 }
 
+function effectivePolicyInspectionCommand(sandboxName: string, gatewayName: string): string {
+  return `openshell policy get -g ${gatewayName} --full ${sandboxName}`;
+}
+
 /**
  * Apply a composed policy document while optionally keeping control in the
  * caller on failure. Lifecycle code that owns compensating actions must use
@@ -1026,6 +1030,10 @@ export function setPolicyDocument(
   let recoveryOnly = false;
   let reconciliationAttempts = 0;
   let recoveryAttempts = 0;
+  const inspectEffectivePolicy = effectivePolicyInspectionCommand(
+    sandboxName,
+    context.gatewayName,
+  );
 
   const submissionAttempts = POLICY_RECONCILE_ATTEMPTS + POLICY_RECOVERY_ATTEMPTS + 2;
   for (let attempt = 1; attempt <= submissionAttempts; attempt += 1) {
@@ -1079,7 +1087,7 @@ export function setPolicyDocument(
         if (!recoveryOnly) return true;
         console.error(
           `  The latest external policy was restored for sandbox '${sandboxName}'. ` +
-            `Run \`openshell policy get ${sandboxName}\` to inspect the effective policy before you retry.`,
+            `This update did not apply. Run \`${inspectEffectivePolicy}\` to inspect the effective policy, then rerun the command.`,
         );
         return false;
       }
@@ -1110,7 +1118,7 @@ export function setPolicyDocument(
         if (!requestedIsCurrent) {
           console.error(
             `  The external policy changed again while NemoClaw restored sandbox '${sandboxName}'. ` +
-              `The latest external policy remains active. Run \`openshell policy get ${sandboxName}\` to inspect the effective policy before you retry.`,
+              `The latest external policy remains active, and this update did not apply. Run \`${inspectEffectivePolicy}\` to inspect the effective policy, then rerun the command.`,
           );
           return false;
         }
@@ -1145,14 +1153,14 @@ export function setPolicyDocument(
         requestedDocument = externalDocument;
         console.error(
           `  The current OpenShell policy changed in the same fields while NemoClaw prepared ${operation}. ` +
-            "The external policy is being restored; rerun the command against the current policy.",
+            `NemoClaw is restoring the latest external policy, and this update will not apply. After the command finishes, run \`${inspectEffectivePolicy}\` to inspect the effective policy. Then rerun the command against that policy.`,
         );
       } else if (reconciliationAttempts > POLICY_RECONCILE_ATTEMPTS) {
         recoveryOnly = true;
         requestedDocument = externalDocument;
         console.error(
           `  Refusing to ${operation}: the current OpenShell policy kept changing while NemoClaw reconciled the requested update. ` +
-            "The latest external policy is being restored; rerun the command against the current policy.",
+            `NemoClaw is restoring the latest external policy, and this update will not apply. After the command finishes, run \`${inspectEffectivePolicy}\` to inspect the effective policy. Then rerun the command against that policy.`,
         );
       } else {
         requestedDocument = rebased.document;
@@ -1166,7 +1174,7 @@ export function setPolicyDocument(
 
   console.error(
     `  Could not confirm ${operation}: the current OpenShell policy remained unstable after ${String(recoveryAttempts)} recovery attempt(s). ` +
-      `Run \`openshell policy get ${sandboxName}\` to inspect the effective policy before you retry.`,
+      `Run \`${inspectEffectivePolicy}\` to inspect the effective policy, then rerun the command.`,
   );
   if (options.nonFatal) return false;
   process.exit(1);
