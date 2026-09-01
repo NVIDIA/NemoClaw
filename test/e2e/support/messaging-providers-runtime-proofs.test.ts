@@ -496,48 +496,6 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("binds and probes the credential-free proxy through the OpenShell bridge", async () => {
-    const calls: string[][] = [];
-    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
-    const cleanup: Array<() => Promise<void>> = [];
-
-    try {
-      await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
-        kind: "slack",
-        imageScript: "fake-slack-api.cjs",
-        containerPrefix: "fake-slack",
-        portEnv: "FAKE_SLACK_API_PORT",
-        portFileEnv: "FAKE_SLACK_API_PORT_FILE",
-        captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-        expectedEnv: {},
-        redactionValues: [],
-        env: {},
-      });
-      const proxyRun = calls.find(
-        (call) =>
-          call[0] === "docker" &&
-          call[1] === "run" &&
-          call.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
-      );
-      expect(proxyRun).toBeDefined();
-      expect(
-        proxyRun!.flatMap((argument, index) => (argument === "-p" ? [proxyRun![index + 1]] : [])),
-      ).toEqual([`${OPENSHELL_BRIDGE_ADDRESS}::8080`, `${OPENSHELL_BRIDGE_ADDRESS}::8081`]);
-      expect(calls).toContainEqual([
-        "node",
-        "--experimental-strip-types",
-        FAKE_API_PORT_TRAFFIC,
-        OPENSHELL_BRIDGE_ADDRESS,
-        "32100",
-        "32101",
-      ]);
-    } finally {
-      await cleanup
-        .reverse()
-        .reduce((previous, action) => previous.then(action), Promise.resolve());
-    }
-  });
-
   it("rejects a fake API proxy port that Docker publishes beyond the OpenShell bridge", async () => {
     const host = fakeDockerHost("0.0.0.0");
     const cleanup: Array<() => Promise<void>> = [];

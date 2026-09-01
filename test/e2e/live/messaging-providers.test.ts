@@ -58,12 +58,7 @@ import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-run
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-const SANDBOX_BACKUP_ROOT = path.join(
-  os.homedir(),
-  ".nemoclaw",
-  "rebuild-backups",
-  SANDBOX_NAME,
-);
+const SANDBOX_BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SANDBOX_NAME);
 
 test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
@@ -518,12 +513,14 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
 
     const config = await readOpenClawConfig(sandbox, redactionValues);
-    ([
-      ["M6a", "telegram", "telegram"],
-      ["M6b", "discord", "discord"],
-      ["M6c", "slack", "slack"],
-      ["M6d", "whatsapp", "whatsapp"],
-    ] as const).forEach(([assertionId, channel, plugin]) => {
+    (
+      [
+        ["M6a", "telegram", "telegram"],
+        ["M6b", "discord", "discord"],
+        ["M6c", "slack", "slack"],
+        ["M6d", "whatsapp", "whatsapp"],
+      ] as const
+    ).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
       check(
         pluginEnabled(config, plugin),
@@ -590,8 +587,8 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       Boolean(
         whatsappHealth &&
-          typeof whatsappHealth === "object" &&
-          (whatsappHealth as Record<string, unknown>).enabled === false,
+        typeof whatsappHealth === "object" &&
+        (whatsappHealth as Record<string, unknown>).enabled === false,
       ),
       "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session",
     );
@@ -648,12 +645,14 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const parsedRuntime = JSON.parse(runtimeChannels) as {
       chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
     };
-    ([
-      ["M6e", "telegram", "default"],
-      ["M6f", "discord", "default"],
-      ["M6g", "slack", "default"],
-      ["M6i", "openclaw-weixin", state.wechatAccount],
-    ] as const).forEach(([assertionId, channel, accountId]) => {
+    (
+      [
+        ["M6e", "telegram", "default"],
+        ["M6f", "discord", "default"],
+        ["M6g", "slack", "default"],
+        ["M6i", "openclaw-weixin", state.wechatAccount],
+      ] as const
+    ).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
       check(
         entry?.installed === true &&
@@ -897,6 +896,18 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
+    const slackRestTrafficProof = lastJsonLine(
+      fakeSlack.captureFile,
+      (row) => row.event === "request" && row.path === "/__nemoclaw_e2e_port_traffic",
+    );
+    const slackWebsocketTrafficProof = lastJsonLine(
+      fakeSlack.captureFile,
+      (row) => row.event === "websocket-port-traffic-reply" && row.path === "/socket-mode",
+    );
+    check(
+      slackRestTrafficProof !== undefined && slackWebsocketTrafficProof !== undefined,
+      "M-S14: bridge-published proxy carried real REST and WebSocket traffic to fake Slack",
+    );
     await applyRestRewritePolicy(host, fakeSlack, state.env, redactionValues);
     expect(
       fakeSlack.alternatePort,
