@@ -194,7 +194,7 @@ function scopedArgs(
   ];
 }
 
-function parseProfileCredentialKeys(output: string): string[] | null {
+function parseProfileCredentialKeys(output: string, expectedProfileId: string): string[] | null {
   let profile: unknown;
   try {
     profile = JSON.parse(output);
@@ -202,6 +202,7 @@ function parseProfileCredentialKeys(output: string): string[] | null {
     return null;
   }
   if (typeof profile !== "object" || profile === null || Array.isArray(profile)) return null;
+  if (Reflect.get(profile, "id") !== expectedProfileId) return null;
   const credentials = Reflect.get(profile, "credentials");
   if (!Array.isArray(credentials)) return null;
   const keys = new Set<string>();
@@ -345,7 +346,10 @@ export function createCliOpenShellProviderAdapter(
     );
     const error = commandError(result);
     if (error) return failure(error);
-    const credentialKeys = parseProfileCredentialKeys(bufferOrStringToText(result.stdout));
+    const credentialKeys = parseProfileCredentialKeys(
+      bufferOrStringToText(result.stdout),
+      request.profileType,
+    );
     return credentialKeys
       ? success({ credentialKeys })
       : failure({

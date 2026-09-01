@@ -456,6 +456,7 @@ describe("CLI OpenShell provider adapter", () => {
       captured(
         0,
         JSON.stringify({
+          id: "custom",
           credentials: [{ env_vars: ["ZETA_TOKEN", "ALPHA_TOKEN"] }, { env_vars: ["ALPHA_TOKEN"] }],
         }),
       ),
@@ -480,6 +481,25 @@ describe("CLI OpenShell provider adapter", () => {
   it("returns a schema failure for an invalid provider profile (#9806)", async () => {
     const adapter = createCliOpenShellProviderAdapter({
       run: () => captured(0, "not-json"),
+    });
+
+    await expect(
+      adapter.inspectProviderProfile({
+        target: selectedOpenShellGateway(),
+        profileType: "custom",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "schema", message: "OpenShell returned an invalid provider profile." },
+    });
+  });
+
+  it.each([
+    ["missing", { credentials: [{ env_vars: ["CUSTOM_TOKEN"] }] }],
+    ["mismatched", { id: "other", credentials: [{ env_vars: ["CUSTOM_TOKEN"] }] }],
+  ])("rejects a provider profile with a %s identity (#9806)", async (_case, profile) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, JSON.stringify(profile)),
     });
 
     await expect(

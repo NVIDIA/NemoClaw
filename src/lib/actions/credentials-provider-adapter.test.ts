@@ -180,6 +180,36 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
+  it("does not create from existing credentials when profile identity is unverified (#9806)", async () => {
+    const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] =
+      async () => ({
+        ok: false,
+        error: {
+          kind: "schema",
+          message: "OpenShell returned an invalid provider profile.",
+        },
+      });
+    const adapter = providerAdapter({ inspectProviderProfile: vi.fn(inspectProviderProfile) });
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "generic",
+        credentials: [],
+        configPairs: [],
+        fromExisting: true,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
+    );
+    expect(result.failureLines).toContain("  OpenShell returned an invalid provider profile.");
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
     const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({
       ok: true,
