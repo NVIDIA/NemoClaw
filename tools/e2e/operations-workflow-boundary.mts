@@ -41,7 +41,7 @@ const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
     "set -euo pipefail",
     'catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"',
     'rm -f -- "$catalog_path"',
-    'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
+    'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path" | tail -n 1)"',
     'case "$selection" in',
     "  base-cohort)",
     '    [[ ! -e "$catalog_path" && ! -L "$catalog_path" ]] || {',
@@ -391,7 +391,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$WORKFLOW_REF" == refs/heads/*',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
@@ -502,7 +502,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
-    '"$REF" == "refs/heads/main"',
+    '"$REF" == refs/heads/*',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',

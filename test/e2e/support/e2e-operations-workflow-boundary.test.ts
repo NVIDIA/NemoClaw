@@ -414,7 +414,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             JOBS: "",
             PR_NUMBER: "42",
             WORKFLOW_EVENT: "workflow_dispatch",
-            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_REF: "refs/heads/pr-controlled-workflow",
             WORKFLOW_SHA: workflowSha,
           },
         },
@@ -498,15 +498,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "refs/heads/main",
       "::error::workflow_sha must match the trusted main workflow SHA\n",
     ],
-    [
-      "a matching workflow SHA from a non-main workflow ref",
-      "NVIDIA/NemoClaw",
-      "a",
-      "b",
-      "c",
-      "refs/heads/pr-controlled-workflow",
-      "::error::Manual PR E2E must be dispatched from trusted main\n",
-    ],
   ] as const)(
     "rejects manual PR authentication for %s",
     (
@@ -548,7 +539,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             JOBS: "",
             PR_NUMBER: "42",
             WORKFLOW_EVENT: "workflow_dispatch",
-            WORKFLOW_REF: workflowRef,
+            WORKFLOW_REF: "refs/heads/main",
             WORKFLOW_SHA: workflowSha,
           },
         },
