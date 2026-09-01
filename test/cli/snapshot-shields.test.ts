@@ -39,6 +39,7 @@ describe("CLI dispatch", () => {
       expect(parent.out).not.toContain("$ nemoclaw sandbox snapshot");
       expect(parent.out).toContain("alpha snapshot create");
       expect(parent.out).toContain("alpha snapshot list");
+      expect(parent.out).toContain("alpha snapshot restore");
 
       const list = runWithEnv("alpha snapshot list --help", testHome.environment());
       expect(list.code).toBe(0);
@@ -52,9 +53,7 @@ describe("CLI dispatch", () => {
 
       const restore = runWithEnv("alpha snapshot restore --help", testHome.environment());
       expect(restore.code).toBe(0);
-      expect(restore.out).toContain(
-        "$ nemoclaw alpha snapshot restore [selector] [--to <dst>]",
-      );
+      expect(restore.out).toContain("$ nemoclaw alpha snapshot restore [selector] [--to <dst>]");
       expect(restore.out).not.toContain("$ nemoclaw sandbox snapshot restore");
     },
   );

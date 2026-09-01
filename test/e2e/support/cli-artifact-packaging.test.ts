@@ -8,8 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { CLI_ARTIFACT_PACKAGE_STEP } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
-import { readWorkflow, type Workflow } from "../../helpers/e2e-workflow-contract";
+import { CLI_ARTIFACT_PACKAGE_SCRIPT } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
 
 type CatalogInput = "absent" | "file" | "symlink";
 
@@ -68,15 +67,25 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   }).trim();
 
   const dist = path.join(workspace, "dist");
+  const packagedRunner = path.join(dist, "nemoclaw");
   const shared = path.join(workspace, "nemoclaw", "dist", "shared");
-  fs.mkdirSync(dist);
+  fs.mkdirSync(path.join(dist, "lib"), { recursive: true });
+  fs.mkdirSync(path.join(packagedRunner, "blueprint"), { recursive: true });
   fs.mkdirSync(shared, { recursive: true });
   fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("fixture");\n');
+  fs.writeFileSync(path.join(dist, "lib", "blueprint-runner.js"), 'console.log("fixture");\n');
+  fs.writeFileSync(path.join(packagedRunner, "package.json"), '{"type":"module"}\n');
+  fs.writeFileSync(
+    path.join(packagedRunner, "blueprint", "runner.js"),
+    'console.log("fixture");\n',
+  );
   fs.writeFileSync(
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({ nemoclawVersion: "0.0.0", sourceRevision: candidateSha })}\n`,
   );
   for (const boundary of [
+    "openshell-gateway-health-sdk.js",
+    "openshell-observation-boundary.cjs",
     "openshell-policy-boundary.cjs",
     "sandbox-name.cjs",
     "snapshot-sanitizer-boundary.cjs",
@@ -87,12 +96,7 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   const catalog = path.join(dist, "e2e-managed-image-catalog.json");
   CATALOG_INPUT_WRITERS[catalogInput](catalog);
 
-  const workflow = readWorkflow() as Workflow;
-  const packageStep = workflow.jobs["generate-matrix"]?.steps?.find(
-    (step) => step.name === CLI_ARTIFACT_PACKAGE_STEP,
-  );
-  expect(packageStep?.run).toEqual(expect.any(String));
-  const result = spawnSync("bash", ["-c", packageStep!.run!], {
+  const result = spawnSync("bash", [path.resolve(CLI_ARTIFACT_PACKAGE_SCRIPT)], {
     cwd: workspace,
     encoding: "utf8",
     env: {

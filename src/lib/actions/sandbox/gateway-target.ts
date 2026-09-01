@@ -18,8 +18,12 @@ export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | nul
   return sb ? resolveSandboxGatewayName(sb) : null;
 }
 
+export function getSelectedGatewayName(): string {
+  return resolveGatewayName(GATEWAY_PORT);
+}
+
 export function getSandboxTargetGatewayName(sandboxName = ""): string {
-  return getKnownSandboxTargetGatewayName(sandboxName) ?? resolveGatewayName(GATEWAY_PORT);
+  return getKnownSandboxTargetGatewayName(sandboxName) ?? getSelectedGatewayName();
 }
 
 /** Resolve a gateway directly from the already-authoritative persisted row. */

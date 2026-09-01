@@ -1421,14 +1421,14 @@ describe("runner", () => {
       seedBlueprintFile();
     });
 
-    it("throws on unknown action with the raw invalid token", async () => {
+    it("throws a fixed diagnostic on an unknown action", async () => {
       store.clear();
-      await expect(main(["bogus"])).rejects.toThrow(/Unknown action 'bogus'/);
+      await expect(main(["bogus"])).rejects.toThrow(/Unknown action\. Use:/);
     });
 
-    it("throws on missing action with a clear marker", async () => {
+    it("throws on missing action", async () => {
       store.clear();
-      await expect(main([])).rejects.toThrow(/Unknown action '\(missing\)'/);
+      await expect(main([])).rejects.toThrow(/Unknown action\. Use:/);
     });
 
     it("parses plan with --profile and --dry-run", async () => {
