@@ -709,10 +709,10 @@ const {
 
 // Gateway state functions — delegated to src/lib/state/gateway.ts
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
-const waitForSandboxReady = sandboxReadinessTracing.createSandboxReadyWaiter({
-  runCaptureOpenshell,
-  isSandboxReady,
+const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
   isLinuxDockerDriverGatewayEnabled,
+  capture: captureOpenshell,
+  getGatewayName: () => GATEWAY_NAME,
   sleep: sleepSeconds,
 });
 const { hasStaleGateway, isSelectedGateway, isGatewayHealthy, getGatewayReuseState } =
@@ -1675,8 +1675,8 @@ const {
   readRecordedInferenceRoute,
   readRecordedProviderEndpoints,
 } = providerRecovery.createProviderRecoveryHelpers({
-  parseGatewayInference,
-  runCaptureOpenshell,
+  captureOpenshell,
+  selectedGatewayName: () => GATEWAY_NAME,
   warn: (message) => console.warn(message),
 });
 

@@ -30,6 +30,10 @@ const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   [".github/actions/ci-reviewed-npm-audit/**", /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u],
   [
+    ".github/actions/publish-managed-image-digest/**",
+    /^[.]github\/actions\/publish-managed-image-digest\/.+$/u,
+  ],
+  [
     ".github/actions/build-base-image-platform/**",
     /^[.]github\/actions\/build-base-image-platform\/.+$/u,
   ],

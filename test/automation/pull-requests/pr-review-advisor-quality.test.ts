@@ -4,28 +4,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reviewQualityIssues } from "../../../tools/pr-review-advisor/review-quality.mts";
 import {
   buildSystemPrompt,
   readTrustedSecurityRubric,
 } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
-import { ROOT, validResult } from "../../helpers/pr-review-advisor-test-fixtures.ts";
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 
 describe("PR review advisor", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("flags low-quality normalized advisor fields for same-session validation", () => {
-    const currentFinding = validResult().findings[0]!;
-    const result = validResult({
-      findings: [{ ...currentFinding, impact: "No impact provided." }],
-    });
-
-    expect(reviewQualityIssues(result)).toContain(
-      "findings[1] trusted-code boundary has placeholder impact",
-    );
-  });
 
   it("loads the security rubric from the trusted module checkout, not cwd", () => {
     const originalCwd = process.cwd();

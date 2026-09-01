@@ -4,6 +4,15 @@
   "version": "0.1.0",
   "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
+  "exports": {
+    "./lifecycle": {
+      "types": "./dist/lifecycle/index.d.ts",
+      "import": "./dist/lifecycle/index.js",
+      "require": "./dist/lifecycle/index.js",
+      "default": "./dist/lifecycle/index.js"
+    },
+    "./*": "./*"
+  },
   "bin": {
     "nemoclaw": "./bin/nemoclaw.js",
     "nemohermes": "./bin/nemohermes.js",

@@ -289,6 +289,28 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
+  it("classifies a trusted OEM DGX Spark FastOS marker as Spark rather than failed N1x (#10717)", () => {
+    const identityFiles = new Map([["/fixtures/product_name", "OEM GB10 system\n"]]);
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      fastOsReleasePath: "/fixtures/fastos-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile: (filePath) => identityFiles.get(filePath) ?? unexpectedFixturePath(filePath),
+      readdir: () => [],
+      openFile: () => 19,
+      statFileDescriptor: () => trustedMarkerStat({ size: 116 }),
+      readFileDescriptor: () => 'NAME="DGX SPARK FASTOS"\nVERSION="1.23.0"\n',
+      closeFileDescriptor: () => undefined,
+    });
+    const result = projectPlatformQualification(
+      input({ architecture: "arm64", hasNvidiaGpu: true, ...identity }),
+    );
+
+    expect(identity).toEqual({ nvidiaPlatform: "spark", productName: "OEM GB10 system" });
+    expect(qualification(result, "host.platform.dgx_spark")).toBe("qualified");
+    expect(result.findings.map(({ id }) => id)).not.toContain("host.platform.n1x_unqualified");
+  });
+
   it.each([
     ["wrong operating system", { platform: "darwin" }],
     ["wrong architecture", { architecture: "x64" }],
