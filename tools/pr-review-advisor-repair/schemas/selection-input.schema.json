@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor-repair/schemas/selection-input.schema.json",
+  "title": "PR Review Advisor repair Phase 0 selection input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "repository",
+    "prNumber",
+    "pullRequest",
+    "sourceHeadSha",
+    "baseSha",
+    "advisor",
+    "optIn",
+    "productScope",
+    "findings"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "repository": { "const": "NVIDIA/NemoClaw" },
+    "prNumber": { "type": "integer", "minimum": 1 },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "draft", "baseRef", "headRepository", "headRef"],
+      "properties": {
+        "state": { "const": "open" },
+        "draft": { "const": false },
+        "baseRef": { "const": "main" },
+        "headRepository": { "const": "NVIDIA/NemoClaw" },
+        "headRef": { "type": "string", "minLength": 1, "maxLength": 255 }
+      }
+    },
+    "sourceHeadSha": { "$ref": "#/$defs/sha" },
+    "baseSha": { "$ref": "#/$defs/sha" },
+    "advisor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflowSha", "runId", "runAttempt", "artifactIds"],
+      "properties": {
+        "workflowSha": { "$ref": "#/$defs/sha" },
+        "runId": { "type": "integer", "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "artifactIds": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "optIn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "actor", "headSha"],
+      "properties": {
+        "kind": { "const": "phase0-manual-dispatch" },
+        "actor": { "$ref": "#/$defs/identity" },
+        "headSha": { "$ref": "#/$defs/sha" }
+      }
+    },
+    "productScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "identity"],
+      "properties": {
+        "kind": { "enum": ["accepted-issue", "maintainer-decision"] },
+        "identity": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "identity": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repairClass", "summary", "path", "exclusions"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "repairClass": { "enum": ["source", "test", "documentation", "unsupported"] },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "path": { "type": ["string", "null"], "maxLength": 512 },
+        "exclusions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "ambiguous-intent",
+              "author-attestation",
+              "commit-verification",
+              "credential-access",
+              "dco",
+              "dependency-change",
+              "external-mutation",
+              "maintainer-decision",
+              "product-scope",
+              "unsupported-path"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

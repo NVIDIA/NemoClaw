@@ -1,0 +1,354 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Automation / PR Review Advisor Repair Phase 0
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open canonical PR number
+        required: true
+        type: number
+      advisor_run_id:
+        description: Successful exact-head PR Review Advisor run ID
+        required: true
+        type: string
+      product_scope_kind:
+        description: Accepted product-scope evidence type
+        required: true
+        type: choice
+        options:
+          - accepted-issue
+          - maintainer-decision
+      product_scope_identity:
+        description: Issue number, URL, or maintainer decision identity
+        required: true
+        type: string
+      findings_json:
+        description: Phase-0-only finding records with exact paths and exclusions
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pr-review-advisor-repair-phase0-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Select and bind Phase 0 repair inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      artifact_ids: ${{ steps.select.outputs.artifact_ids }}
+      attempt_key: ${{ steps.select.outputs.attempt_key }}
+      base_sha: ${{ steps.select.outputs.base_sha }}
+      head_ref: ${{ steps.select.outputs.head_ref }}
+      selected: ${{ steps.select.outputs.selected }}
+      selection_artifact_id: ${{ steps.upload-selection.outputs.artifact-id }}
+      source_head_sha: ${{ steps.select.outputs.source_head_sha }}
+    env:
+      AUDIT_OUTPUT_DIR: ${{ runner.temp }}/phase0-audit
+      SELECTION_OUTPUT_DIR: ${{ runner.temp }}/phase0-selection
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - id: gate
+        name: Record the emergency-switch decision
+        env:
+          ADVISOR_RUN_ID: ${{ inputs.advisor_run_id }}
+          FINDINGS_JSON: ${{ inputs.findings_json }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PHASE0_ENABLED: ${{ vars.ADVISOR_REPAIR_PHASE0_ENABLED == 'true' }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PRODUCT_SCOPE_IDENTITY: ${{ inputs.product_scope_identity }}
+          PRODUCT_SCOPE_KIND: ${{ inputs.product_scope_kind }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/audit.mts"
+
+      - name: Upload the attempt audit receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase0-attempt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.AUDIT_OUTPUT_DIR }}/attempt-receipt.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - id: select
+        name: Select eligible findings and exact Advisor artifacts
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        env:
+          ADVISOR_RUN_ID: ${{ inputs.advisor_run_id }}
+          FINDINGS_JSON: ${{ inputs.findings_json }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OUTPUT_DIR: ${{ env.SELECTION_OUTPUT_DIR }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PRODUCT_SCOPE_IDENTITY: ${{ inputs.product_scope_identity }}
+          PRODUCT_SCOPE_KIND: ${{ inputs.product_scope_kind }}
+          REPAIR_COMMAND: collect
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/select.mts"
+
+      - name: Download the exact Advisor artifact IDs
+        if: ${{ steps.select.outputs.selected == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.select.outputs.artifact_ids }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ inputs.advisor_run_id }}
+          path: ${{ runner.temp }}/advisor-artifacts
+          merge-multiple: false
+
+      - name: Validate every downloaded Advisor artifact
+        if: ${{ steps.select.outputs.selected == 'true' }}
+        env:
+          ADVISOR_ARTIFACT_DIR: ${{ runner.temp }}/advisor-artifacts
+          ARTIFACT_MANIFEST_FILE: ${{ env.SELECTION_OUTPUT_DIR }}/artifact-manifest.json
+          REPAIR_COMMAND: verify-artifacts
+          REPAIR_CONTEXT_FILE: ${{ env.SELECTION_OUTPUT_DIR }}/repair-context.json
+          SELECTION_FILE: ${{ env.SELECTION_OUTPUT_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/select.mts"
+
+      - id: upload-selection
+        name: Upload the bound Phase 0 selection
+        if: ${{ steps.select.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase0-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.SELECTION_OUTPUT_DIR }}/
+          if-no-files-found: error
+          retention-days: 1
+
+  repair:
+    name: Generate one offline Phase 0 patch
+    needs: collect
+    if: ${{ needs.collect.outputs.selected == 'true' && vars.ADVISOR_REPAIR_PHASE0_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      repair_artifact_id: ${{ steps.upload-repair.outputs.artifact-id }}
+    env:
+      CANDIDATE_DOWNLOAD_DIR: ${{ runner.temp }}/candidate-download
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
+      PROPOSAL_DOWNLOAD_DIR: ${{ runner.temp }}/proposal-download
+      REPAIR_ARTIFACT_DIR: ${{ runner.temp }}/repair-artifact
+      REPAIR_CONFIG_DIR: ${{ runner.temp }}/repair-config
+      REPAIR_EXPORT_DIR: ${{ runner.temp }}/repair-export
+      REPAIR_OUTPUT_DIR: ${{ runner.temp }}/repair-output
+      REPAIR_STAGING_DIR: ${{ runner.temp }}/repair-staging
+      SANDBOX_NAME: pr-repair-${{ github.run_id }}-${{ github.run_attempt }}
+      SELECTION_DIR: ${{ runner.temp }}/selection
+      SOURCE_CHECKOUT: ${{ github.workspace }}/source
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Checkout the exact selected PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ needs.collect.outputs.source_head_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Download the exact selection artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.collect.outputs.selection_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ github.run_id }}
+          path: ${{ env.SELECTION_DIR }}
+          merge-multiple: true
+
+      - name: Prepare the Git-free repair workspace
+        env:
+          REPAIR_COMMAND: prepare
+          REPAIR_CONTEXT_FILE: ${{ env.SELECTION_DIR }}/repair-context.json
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
+
+      - name: Install OpenShell
+        run: |
+          env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+
+      - name: Configure host-side OpenShell inference
+        env:
+          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
+          REPAIR_COMMAND: configure
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
+
+      - name: Create the credential-free offline sandbox
+        env:
+          REPAIR_COMMAND: create
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
+
+      - name: Run one Pi repair task without shell or test tools
+        env:
+          REPAIR_COMMAND: run
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
+
+      - name: Download the candidate tree and proposal receipt
+        env:
+          REPAIR_COMMAND: download
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
+
+      - name: Compute the patch in trusted host code
+        env:
+          REPAIR_COMMAND: export
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
+
+      - name: Delete the repair sandbox
+        if: always()
+        env:
+          REPAIR_COMMAND: delete
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
+
+      - id: upload-repair
+        name: Upload the untrusted proposal and host-generated patch
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase0-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.REPAIR_ARTIFACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 1
+
+  validate:
+    name: Validate the Phase 0 patch without publication
+    needs:
+      - collect
+      - repair
+    if: ${{ needs.repair.result == 'success' && needs.repair.outputs.repair_artifact_id != '' && vars.ADVISOR_REPAIR_PHASE0_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    env:
+      HOME: ${{ runner.temp }}/validation-host-home
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      REPAIR_DIR: ${{ runner.temp }}/repair
+      SELECTION_DIR: ${{ runner.temp }}/selection
+      SOURCE_CHECKOUT: ${{ github.workspace }}/source
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+      VALIDATION_ARTIFACT_DIR: ${{ runner.temp }}/validation-artifact
+      VALIDATION_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
+      VALIDATION_SANDBOX_NAME: pr-repair-validation-${{ github.run_id }}-${{ github.run_attempt }}
+      VALIDATION_STAGING_DIR: ${{ runner.temp }}/validation-staging
+      XDG_BIN_HOME: ${{ runner.temp }}/validation-host-home/.local/bin
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Checkout the exact selected PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ needs.collect.outputs.source_head_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Download the exact selection artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.collect.outputs.selection_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ github.run_id }}
+          path: ${{ env.SELECTION_DIR }}
+          merge-multiple: true
+
+      - name: Download the exact repair artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.repair.outputs.repair_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ github.run_id }}
+          path: ${{ env.REPAIR_DIR }}
+          merge-multiple: true
+
+      - name: Install OpenShell for secret-free validation
+        run: |
+          mkdir -p "$HOME" "$XDG_BIN_HOME"
+          env -u GITHUB_TOKEN -u GH_TOKEN -u OPENAI_API_KEY -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+
+      - name: Run trusted validation against the still-live exact head
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PROPOSAL_FILE: ${{ env.REPAIR_DIR }}/proposal.json
+          REPAIR_PATCH_FILE: ${{ env.REPAIR_DIR }}/repair.patch
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/validate.mts"
+
+      - name: Upload the trusted validation receipt and validated patch
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase0-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.VALIDATION_ARTIFACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14

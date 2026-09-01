@@ -53,6 +53,12 @@ export type OpenShellInferenceOptions = {
   providerName: string;
 };
 
+export type OpenShellGatewayOptions = {
+  enableBindMounts?: boolean;
+  gatewayId: string;
+  ownGateway?: boolean;
+};
+
 export type OpenShellUpload = {
   source: string;
   destination: string;
@@ -267,18 +273,19 @@ export type OwnedOpenShellInference = {
   stop: () => Promise<void>;
 };
 
-function startOpenShellInference(
-  env: NodeJS.ProcessEnv,
-  input: OpenShellInferenceOptions,
-  tools: OpenShellTools,
-): OwnedOpenShellInference {
-  validateIdentifier(input.gatewayId, "gatewayId");
-  validateIdentifier(input.modelId, "modelId");
-  validateIdentifier(input.providerName, "providerName");
+export type OwnedOpenShellGateway = {
+  ready: Promise<void>;
+  stop: () => Promise<void>;
+};
 
-  const providerApiKey = required(env.OPENAI_API_KEY, "OPENAI_API_KEY");
+function startOpenShellGateway(
+  env: NodeJS.ProcessEnv,
+  input: OpenShellGatewayOptions,
+  tools: OpenShellTools,
+): OwnedOpenShellGateway {
+  validateIdentifier(input.gatewayId, "gatewayId");
+
   const commandEnv = credentialFreeEnvironment(env);
-  const providerEnv = { ...commandEnv, OPENAI_API_KEY: providerApiKey };
   const gatewayDirectory = path.join(required(env.RUNNER_TEMP, "RUNNER_TEMP"), "openshell-gateway");
   const gatewayEndpoint = new URL(
     required(env.OPENSHELL_GATEWAY_ENDPOINT, "OPENSHELL_GATEWAY_ENDPOINT"),
@@ -311,7 +318,7 @@ function startOpenShellInference(
       logPath: path.join(gatewayDirectory, "gateway.log"),
     }) ?? (async () => undefined);
 
-  const configure = (async (): Promise<void> => {
+  const ready = (async (): Promise<void> => {
     try {
       for (let attempt = 0; attempt < 30; attempt += 1) {
         try {
@@ -322,6 +329,58 @@ function startOpenShellInference(
         }
       }
       tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+    } catch (error) {
+      if (input.ownGateway) {
+        try {
+          await stopGateway();
+        } catch (cleanupError) {
+          const primary = error instanceof Error ? error.message : String(error);
+          const cleanup =
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+          throw new Error(`${primary}; owned gateway cleanup also failed: ${cleanup}`, {
+            cause: error,
+          });
+        }
+      }
+      throw error;
+    }
+  })();
+  return { ready, stop: stopGateway };
+}
+
+export function startOwnedOpenShellGateway(
+  env: NodeJS.ProcessEnv,
+  input: Omit<OpenShellGatewayOptions, "ownGateway">,
+  tools: OpenShellTools = defaultOpenShellTools,
+): OwnedOpenShellGateway {
+  return startOpenShellGateway(env, { ...input, ownGateway: true }, tools);
+}
+
+function startOpenShellInference(
+  env: NodeJS.ProcessEnv,
+  input: OpenShellInferenceOptions,
+  tools: OpenShellTools,
+): OwnedOpenShellInference {
+  validateIdentifier(input.gatewayId, "gatewayId");
+  validateIdentifier(input.modelId, "modelId");
+  validateIdentifier(input.providerName, "providerName");
+
+  const providerApiKey = required(env.OPENAI_API_KEY, "OPENAI_API_KEY");
+  const commandEnv = credentialFreeEnvironment(env);
+  const providerEnv = { ...commandEnv, OPENAI_API_KEY: providerApiKey };
+  const gateway = startOpenShellGateway(
+    env,
+    {
+      enableBindMounts: input.enableBindMounts,
+      gatewayId: input.gatewayId,
+      ownGateway: input.ownGateway,
+    },
+    tools,
+  );
+
+  const configure = (async (): Promise<void> => {
+    try {
+      await gateway.ready;
       tools.run(
         "openshell",
         [
@@ -351,7 +410,7 @@ function startOpenShellInference(
     } catch (error) {
       if (input.ownGateway) {
         try {
-          await stopGateway();
+          await gateway.stop();
         } catch (cleanupError) {
           const primary = error instanceof Error ? error.message : String(error);
           const cleanup =
@@ -364,7 +423,7 @@ function startOpenShellInference(
       throw error;
     }
   })();
-  return { configure, stop: stopGateway };
+  return { configure, stop: gateway.stop };
 }
 
 export function startOwnedOpenShellInference(

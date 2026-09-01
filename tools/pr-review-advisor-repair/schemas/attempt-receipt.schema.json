@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor-repair/schemas/attempt-receipt.schema.json",
+  "title": "Trusted PR Review Advisor repair Phase 0 attempt receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "phase",
+    "repository",
+    "workflow",
+    "dispatch",
+    "emergencySwitch",
+    "outcome",
+    "reason"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "phase": { "const": "phase0-no-publication" },
+    "repository": { "const": "NVIDIA/NemoClaw" },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "runAttempt", "workflowSha"],
+      "properties": {
+        "runId": { "type": "integer", "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "workflowSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor",
+        "triggeringActor",
+        "prNumber",
+        "advisorRunId",
+        "productScopeKind",
+        "productScopeIdentity",
+        "findingsSha256"
+      ],
+      "properties": {
+        "actor": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "triggeringActor": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "prNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "advisorRunId": { "type": ["integer", "null"], "minimum": 1 },
+        "productScopeKind": { "type": "string", "maxLength": 64 },
+        "productScopeIdentity": { "type": "string", "maxLength": 256 },
+        "findingsSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "emergencySwitch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variable", "enabled"],
+      "properties": {
+        "variable": { "const": "ADVISOR_REPAIR_PHASE0_ENABLED" },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "outcome": { "enum": ["gate-enabled", "disabled"] },
+    "reason": {
+      "enum": [
+        "enabled",
+        "emergency-switch-disabled",
+        "workflow-rerun-disabled",
+        "dispatch-actor-mismatch"
+      ]
+    }
+  }
+}
