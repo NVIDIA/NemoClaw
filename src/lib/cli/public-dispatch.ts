@@ -299,16 +299,14 @@ function printSandboxScopeHint(action: string, remainingArgs: readonly string[])
   } else if (pendingNames.length > 0) {
     console.error(`  Sandbox setup is still pending: ${pendingNames.join(", ")}`);
     console.error("  Wait for onboarding to finish.");
-    console.error(
-      `  If onboarding stopped, run '${CLI_NAME} onboard --resume' after correcting the reported condition.`,
-    );
+    console.error(`  If onboarding stopped, run '${CLI_NAME} onboard --resume' to continue it.`);
   } else {
     console.error(`  Run '${CLI_NAME} onboard' to create one.`);
   }
   process.exit(1);
 }
 
-/** Recover a missing name before reporting an action-like first token as a grammar error. */
+/** Recover an explicit sandbox invocation before reporting an action-like name as a grammar error. */
 async function recoverRequestedSandboxIfNeeded(
   sandboxName: string,
   action: string,
@@ -316,6 +314,17 @@ async function recoverRequestedSandboxIfNeeded(
 ): Promise<void> {
   if (registry().getSandbox(sandboxName)) return;
   const namesSandboxAction = isKnownSandboxAction(sandboxName);
+  const hasExplicitSandboxAction =
+    rawArgsAfterSandboxName.length > 0 && isKnownSandboxAction(rawArgsAfterSandboxName[0] ?? "");
+
+  // An action-first diagnostic must stay read-only. Seeded registry recovery
+  // can select or start a gateway and persist entries, which is inappropriate
+  // for a bare action or registered multi-token route entered without a name.
+  // Keep recovery for an explicit action-name sandbox invocation such as
+  // `doctor status`, where `doctor` can be a real sandbox with a stale entry.
+  if (namesSandboxAction && !hasExplicitSandboxAction) {
+    printSandboxScopeHint(sandboxName, rawArgsAfterSandboxName);
+  }
   if (!namesSandboxAction && !isKnownSandboxAction(action)) return;
 
   validateName(sandboxName, "sandbox name");
