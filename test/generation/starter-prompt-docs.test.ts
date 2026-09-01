@@ -31,7 +31,7 @@ const repoRoot = path.resolve(__dirname, "../..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // Immutable-route tests resolve this Git commit and validate its prompt-asset blobs.
 // Digests independently identify the reviewed bytes for each routed asset.
-const promptAssetRevision = "8245a9bd90bab2299c32894989d8f0c73ca9c820";
+const promptAssetRevision = "e5934c3a05e70b1215ca3e621cb09f5cdee1e377";
 
 type PromptAsset = {
   path: string;
@@ -58,7 +58,7 @@ const promptAssets = {
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
-    "beb5ac3febad54b4751cceb644ac0b565a6dda28eca9ca6c1ea48025e296757f", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "7efd9a7d6046df3c5d542f4f4dafa3475040e43485aca756ee6a25e72f737648", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
 } as const;
 const platformPromptAssetRoutes = [
