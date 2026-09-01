@@ -133,10 +133,6 @@ async function applyHermesFakeDiscordPolicy(options: {
       "--add-allow",
       `${FAKE_DISCORD_HOST}:${options.api.port}:WEBSOCKET_TEXT:/**`,
       "--binary",
-      "/usr/local/bin/python3",
-      "--binary",
-      "/usr/bin/python3",
-      "--binary",
       "/opt/hermes/.venv/bin/python",
       "--wait",
     ],
@@ -158,7 +154,9 @@ policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
 node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
-"$1" policy set --policy "$policy_file" --wait "$2"`,
+"$1" policy set --policy "$policy_file" --wait "$2"
+"$1" policy get --base "$2" >"$policy_file"
+node --import tsx "$6" --assert-binaries "$policy_file" "$4" "$5" websocket /opt/hermes/.venv/bin/python`,
       "bind-hermes-fake-discord-policy",
       options.host.openshellCommandPath,
       options.sandboxName,
