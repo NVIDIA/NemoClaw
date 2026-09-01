@@ -96,7 +96,7 @@ describe("Windows-host Ollama transport", () => {
 
   it("probes persisted Windows-host health through Docker Desktop", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-health-"));
-    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const calls: (readonly string[])[] = [];
     try {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
       resetOllamaHostCache();
@@ -104,17 +104,13 @@ describe("Windows-host Ollama transport", () => {
 
       const result = probeLocalProviderHealth("ollama-local", {
         loadOllamaProxyTokenImpl: () => null,
-        ollamaSpawnSyncImpl: (command, args) => {
-          calls.push({ command, args });
-          const statusOutput = args[args.indexOf("-w") + 1].replace("%{http_code}", "200");
-          const stdout = `${JSON.stringify({ models: [] })}${statusOutput}`;
+        ollamaRunCaptureExImpl: (command) => {
+          calls.push(command);
           return {
-            pid: 1,
-            output: ["", stdout, ""],
-            stdout,
+            stdout: JSON.stringify({ models: [] }),
             stderr: "",
-            status: 0,
-            signal: null,
+            exitCode: 0,
+            timedOut: false,
           };
         },
       });
@@ -124,9 +120,9 @@ describe("Windows-host Ollama transport", () => {
         endpoint: "http://host.docker.internal:11434/api/tags",
       });
       expect(calls).toHaveLength(1);
-      expect(calls[0]).toMatchObject({ command: "docker" });
-      expect(calls[0]?.args).toEqual(
+      expect(calls[0]).toEqual(
         expect.arrayContaining([
+          "docker",
           "run",
           "--rm",
           CONTAINER_REACHABILITY_IMAGE,

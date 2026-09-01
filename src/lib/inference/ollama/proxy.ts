@@ -35,6 +35,7 @@ const {
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
+  loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   probeOllamaModelCapabilities,
   selectDefaultOllamaModel,
@@ -1648,11 +1649,16 @@ function unloadOllamaModels(
   };
 }
 
+function hasPersistedOllamaRoute(): boolean {
+  return loadPersistedOllamaHost() !== null;
+}
+
 export {
   checkOllamaModelToolSupport,
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   getOllamaPullTimeoutMs,
+  hasPersistedOllamaRoute,
   isProxyHealthy,
   killStaleProxy,
   noAuthProxy,

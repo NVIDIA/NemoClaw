@@ -6,7 +6,6 @@
  * health checks, and command generators for vLLM and Ollama.
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
@@ -33,7 +32,6 @@ import { buildSubprocessEnv } from "../subprocess-env";
 
 import {
   readLocalAdapterJsonFile,
-  LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES,
   removeLocalAdapterFile,
   resolveSharedLocalAdapterStateRoot,
   writeLocalAdapterJsonFile,
@@ -382,7 +380,7 @@ export interface LocalProviderHealthProbeOptions {
   model?: string | null;
   runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   /** Executes the translated Windows-host Docker probe. Injectable for transport tests. */
-  ollamaSpawnSyncImpl?: NonNullable<CurlProbeOptions["spawnSyncImpl"]>;
+  ollamaRunCaptureExImpl?: RunCaptureExFn;
   /**
    * Lets callers that perform their own Ollama auth-proxy check avoid the
    * legacy inline proxy subprobe. The inline subprobe is retained for status
@@ -423,19 +421,25 @@ function runLocalCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlPro
 function runOllamaLocalCurlProbe(
   argv: string[],
   host: string,
-  opts: CurlProbeOptions = {},
-  spawnSyncImpl: NonNullable<CurlProbeOptions["spawnSyncImpl"]> = spawnSync,
+  runCaptureExImpl: RunCaptureExFn = runCaptureEx,
 ): CurlProbeResult {
-  return runCurlProbe(argv, {
-    ...opts,
-    env: buildSubprocessEnv(),
-    maxResponseBytes: opts.maxResponseBytes ?? LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES,
-    replaceEnv: true,
-    spawnSyncImpl: (_command, args, spawnOptions) => {
-      const [executable, ...translatedArgs] = getOllamaApiCommand(args, host);
-      return spawnSyncImpl(executable, translatedArgs, spawnOptions);
-    },
-  });
+  const command = getOllamaApiCommand(buildValidatedCurlCommandArgs(["-f", ...argv]), host);
+  const result = runCaptureExImpl(command);
+  const ok = result.exitCode === 0;
+  const stderr = String(result.stderr ?? "");
+  return {
+    ok,
+    httpStatus: ok ? 200 : 0,
+    curlStatus: result.exitCode ?? 1,
+    body: result.stdout,
+    stderr,
+    message: ok
+      ? "HTTP 200"
+      : (stderr || result.stdout || `Docker Ollama probe exited ${String(result.exitCode)}`)
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 300),
+  };
 }
 
 export interface VllmModelsProbeOptions {
@@ -1102,8 +1106,8 @@ export function probeLocalProviderHealth(
   const runCurlProbeImpl =
     options.runCurlProbeImpl ??
     (provider === "ollama-local" && resolvedOllamaHost === OLLAMA_HOST_DOCKER_INTERNAL
-      ? (argv: string[], opts?: CurlProbeOptions) =>
-          runOllamaLocalCurlProbe(argv, resolvedOllamaHost, opts, options.ollamaSpawnSyncImpl)
+      ? (argv: string[]) =>
+          runOllamaLocalCurlProbe(argv, resolvedOllamaHost, options.ollamaRunCaptureExImpl)
       : runLocalCurlProbe);
   let result: CurlProbeResult;
   if (managedBinding) {
