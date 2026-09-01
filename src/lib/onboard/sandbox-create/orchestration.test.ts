@@ -410,17 +410,18 @@ describe("retained create recovery persistence", () => {
       expect(caught).toBeInstanceOf(AggregateError);
       expect(operation).toHaveBeenCalledOnce();
       expect(recordRecovery).toHaveBeenCalledOnce();
+      expect(exitHandlers).toHaveLength(1);
 
-      exitHandlers[0]();
+      exitHandlers[0]!();
       expect(recordRecovery).toHaveBeenCalledTimes(2);
       expect(operation).toHaveBeenCalledOnce();
 
-      exitHandlers[0]();
+      exitHandlers[0]!();
       expect(recordRecovery).toHaveBeenCalledTimes(2);
     },
   );
 
-  it("installs independent recovery retry owners for two operations from one factory (#10652)", async () => {
+  it("does not install retry handlers for operations without failed recovery writes (#10652)", async () => {
     const exitHandlers: Array<() => void> = [];
     const captureExitHandler = ((event: string | symbol, handler: (...args: unknown[]) => void) => {
       event === "exit" && exitHandlers.push(handler as () => void);
@@ -438,8 +439,18 @@ describe("retained create recovery persistence", () => {
       processOn.mockRestore();
     }
 
-    expect(exitHandlers).toHaveLength(2);
-    expect(exitHandlers[0]).not.toBe(exitHandlers[1]);
+    expect(exitHandlers).toHaveLength(0);
+  });
+
+  it("does not install a retry handler when recovery persistence succeeds (#10652)", () => {
+    const registerExitHandler = vi.fn();
+    const owner = installPostCreateRecoveryRetryOwner({ registerExitHandler });
+    const writer = vi.fn();
+
+    owner.record(writer);
+
+    expect(writer).toHaveBeenCalledOnce();
+    expect(registerExitHandler).not.toHaveBeenCalled();
   });
 
   it("retries both failed writers held by independent operation owners (#10652)", () => {
@@ -462,6 +473,8 @@ describe("retained create recovery persistence", () => {
     expect(() => owners[0]?.record(writers[0]!)).toThrow(/operation 1/u);
     expect(() => owners[1]?.record(writers[1]!)).toThrow(/operation 2/u);
     expect(writers.map((writer) => writer.mock.calls.length)).toEqual([1, 1]);
+    expect(exitHandlers).toHaveLength(2);
+    expect(exitHandlers[0]).not.toBe(exitHandlers[1]);
 
     exitHandlers.forEach((handler) => handler());
 

@@ -315,20 +315,32 @@ export function installPostCreateRecoveryRetryOwner(
   } = {},
 ): PostCreateRecoveryRetryOwner {
   let pending: (() => void) | null = null;
+  let exitHandlerRegistered = false;
   const log = options.log ?? ((message: string) => console.error(message));
-  const attemptPending = (propagateFailure: boolean): void => {
+  const register =
+    options.registerExitHandler ??
+    ((handler: () => void) => {
+      process.on("exit", handler);
+    });
+  const ensureExitHandler = (): void => {
+    if (exitHandlerRegistered) return;
+    register(() => attemptPending(false));
+    exitHandlerRegistered = true;
+  };
+  function attemptPending(propagateFailure: boolean): void {
     if (pending === null) return;
     const attempt = pending;
     try {
       attempt();
       if (pending === attempt) pending = null;
     } catch (error) {
+      ensureExitHandler();
       if (propagateFailure) throw error;
       log(
         "  NemoClaw still could not save the retained sandbox recovery record; the recovery-only session remains blocked for administrator recovery.",
       );
     }
-  };
+  }
   const owner: PostCreateRecoveryRetryOwner = {
     record(recordRecovery): void {
       attemptPending(true);
@@ -336,12 +348,6 @@ export function installPostCreateRecoveryRetryOwner(
       attemptPending(true);
     },
   };
-  const register =
-    options.registerExitHandler ??
-    ((handler: () => void) => {
-      process.on("exit", handler);
-    });
-  register(() => attemptPending(false));
   return owner;
 }
 
