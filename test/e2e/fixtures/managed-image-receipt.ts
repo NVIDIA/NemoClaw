@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  openRegularFileNoFollow,
+  type OpenRegularFile,
+} from "../../../src/lib/adapters/fs/regular-file.ts";
 import { DEFAULT_GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
 import {
   isShippedManagedImageAgent,
@@ -33,29 +36,16 @@ function readCandidateCatalog(
     throw new Error("stock onboarding requires a selected candidate managed-image catalog");
   }
 
-  let descriptor: number | null = null;
+  let candidateCatalog: OpenRegularFile | null = null;
   try {
     let parsed: unknown;
     if (selected.catalog) {
       parsed = selected.catalog;
     } else {
-      descriptor = fs.openSync(
-        selected.path,
-        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
-      );
-      const metadata = fs.fstatSync(descriptor);
-      const pathMetadata = fs.lstatSync(selected.path);
-      if (
-        pathMetadata.isSymbolicLink() ||
-        !metadata.isFile() ||
-        metadata.dev !== pathMetadata.dev ||
-        metadata.ino !== pathMetadata.ino ||
-        metadata.size < 2 ||
-        metadata.size > 64 * 1024
-      ) {
-        throw new Error();
-      }
-      parsed = JSON.parse(fs.readFileSync(descriptor, "utf8")) as unknown;
+      candidateCatalog = openRegularFileNoFollow(selected.path);
+      const metadata = candidateCatalog.stat();
+      if (metadata.size < 2 || metadata.size > 64 * 1024) throw new Error();
+      parsed = JSON.parse(candidateCatalog.readBytes(64 * 1024).toString("utf8")) as unknown;
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
     const catalog = parsed as Record<string, unknown>;
@@ -89,7 +79,7 @@ function readCandidateCatalog(
   } catch {
     throw new Error("stock onboarding candidate managed-image catalog is invalid");
   } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
+    candidateCatalog?.close();
   }
 }
 
@@ -229,9 +219,6 @@ export function assertStockManagedImageReceipt(options: {
   readonly sandboxName: string;
 }): StockManagedImageReceiptEvidence | null {
   const environment = options.environment ?? process.env;
-  const workloadSource =
-    environment.E2E_WORKLOAD_SOURCE?.trim() ?? process.env.E2E_WORKLOAD_SOURCE?.trim();
-  if (workloadSource === "local-dockerfile") return null;
   const revision = selectedManagedImageRevision(environment);
   const home = environment.HOME?.trim() || os.homedir();
   const registryPath = path.join(

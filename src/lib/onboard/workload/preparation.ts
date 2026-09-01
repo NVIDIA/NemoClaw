@@ -156,16 +156,16 @@ export function liveE2eManagedImageCatalog(
       "the live E2E managed-image catalog has conflicting authorities",
     );
   }
-  if (!inlineCatalog && !catalogPath) return null;
-  const revision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
-  if (!/^[0-9a-f]{40}$/u.test(revision)) {
-    throw new SandboxWorkloadPreparationError(
-      "the live E2E managed-image catalog requires an exact candidate revision",
-    );
-  }
   if (inlineCatalog) {
+    const revision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+    if (!/^[0-9a-f]{40}$/u.test(revision)) {
+      throw new SandboxWorkloadPreparationError(
+        "the live E2E managed-image catalog requires an exact candidate revision",
+      );
+    }
     return { catalog: parseInlineManagedImageCatalog(inlineCatalog), revision };
   }
+  if (!catalogPath) return null;
   try {
     fs.lstatSync(catalogPath);
   } catch (error) {
@@ -173,6 +173,12 @@ export function liveE2eManagedImageCatalog(
     throw new SandboxWorkloadPreparationError(
       "the live E2E managed-image catalog path could not be inspected",
       { cause: error },
+    );
+  }
+  const revision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  if (!/^[0-9a-f]{40}$/u.test(revision)) {
+    throw new SandboxWorkloadPreparationError(
+      "the live E2E managed-image catalog requires an exact candidate revision",
     );
   }
   return { path: catalogPath, revision };

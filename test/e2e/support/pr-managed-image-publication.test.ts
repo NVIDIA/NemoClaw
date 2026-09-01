@@ -23,6 +23,7 @@ import {
   assembleManagedImageCatalog,
   resolvePrManagedImageCatalog,
   selectManagedImagePublicationRun,
+  writeManagedImageCatalog,
 } from "../../../tools/e2e/pr-managed-image-publication.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
 
@@ -237,6 +238,29 @@ describe("exact PR managed-image publication", () => {
         SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
       ),
     );
+    expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("uses one serialization contract for assembled and resolved candidate catalogs", async () => {
+    const input = resolverInput();
+    await resolvePrManagedImageCatalog(
+      input,
+      candidateRequest({ imageChanged: true }),
+      downloadContract,
+    );
+
+    const assemblyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-assembly-"));
+    temporaryDirectories.push(assemblyRoot);
+    const contractPaths = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+      const contractPath = path.join(assemblyRoot, `${agent}.json`);
+      fs.writeFileSync(contractPath, JSON.stringify(contract(agent, index)), "utf8");
+      return contractPath;
+    });
+    const assembledPath = path.join(assemblyRoot, "assembled", "catalog.json");
+    writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath);
+
+    expect(fs.readFileSync(assembledPath)).toEqual(fs.readFileSync(input.outputPath));
+    expect(fs.statSync(assembledPath).mode & 0o777).toBe(0o600);
     expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
   });
 

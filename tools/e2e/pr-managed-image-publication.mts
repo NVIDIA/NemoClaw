@@ -109,6 +109,13 @@ export function writeManagedImageCatalog(
     (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
   );
   const catalog = assembleManagedImageCatalog(contracts, candidateSha);
+  writeValidatedManagedImageCatalog(catalog, outputPath);
+}
+
+function writeValidatedManagedImageCatalog(
+  catalog: ManagedImageContractCatalog,
+  outputPath: string,
+): void {
   fs.mkdirSync(path.dirname(path.resolve(outputPath)), { mode: 0o700, recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(catalog)}\n`, {
     encoding: "utf8",
@@ -365,12 +372,7 @@ export async function resolvePrManagedImageCatalog(
       );
     }
     const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
-    fs.mkdirSync(path.dirname(path.resolve(input.outputPath)), { mode: 0o700, recursive: true });
-    fs.writeFileSync(input.outputPath, `${JSON.stringify(catalog)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    });
+    writeValidatedManagedImageCatalog(catalog, input.outputPath);
     return "candidate-catalog";
   } finally {
     fs.rmSync(temporaryDirectory, { force: true, recursive: true });

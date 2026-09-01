@@ -205,6 +205,13 @@ describe("sandbox workload preparation", () => {
       expect(
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: path.join(fixtureRoot, "empty-workspace"),
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+        }),
+      ).toBeNull();
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
           NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: path.join(fixtureRoot, "missing.json"),
