@@ -391,7 +391,8 @@ describe("Windows-host Ollama transport", () => {
 
   it("keeps the Hermes context-window check fail-closed on an invalid Docker response (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const capture = vi.fn((_command: readonly string[]) =>
+    const capture = respondsOnlyThroughDockerDesktop(
+      "/api/ps",
       JSON.stringify({ models: [{ name: "qwen3.5:9b", context_length: "invalid" }] }),
     );
 
@@ -406,5 +407,15 @@ describe("Windows-host Ollama transport", () => {
       ok: false,
       message: expect.stringContaining("cannot verify the required 64000-token window"),
     });
+    expect(capture).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        CONTAINER_REACHABILITY_IMAGE,
+        "http://host.docker.internal:11434/api/ps",
+      ]),
+      expect.any(Object),
+    );
   });
 });

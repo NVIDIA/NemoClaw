@@ -106,7 +106,10 @@ describe("Windows Ollama helper", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(run, runCapture);
+    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(
+      run,
+      runCapture,
+    );
 
     try {
       expect(windows.setupWindowsOllamaWith0000Binding({ installedPath })).toBe(true);
@@ -122,8 +125,10 @@ describe("Windows Ollama helper", () => {
       expect(atomicsWaitSpy).toHaveBeenNthCalledWith(1, expect.any(Int32Array), 0, 0, 1000);
       expect(atomicsWaitSpy).toHaveBeenNthCalledWith(2, expect.any(Int32Array), 0, 0, 1000);
       expect(atomicsWaitSpy).toHaveBeenNthCalledWith(3, expect.any(Int32Array), 0, 0, 2000);
-      // The retired subprocess-sleep path must not be exercised.
-      expect(spawnSyncSpy).not.toHaveBeenCalled();
+      // Credential isolation may inspect the Docker context, but the retired
+      // subprocess-sleep path must remain unused.
+      expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
+      expect(spawnSyncSpy.mock.calls[0]?.slice(0, 2)).toEqual(["docker", ["context", "show"]]);
     } finally {
       restore();
       logSpy.mockRestore();
@@ -152,14 +157,59 @@ describe("Windows Ollama helper", () => {
         "5",
         "http://host.docker.internal:11434/api/tags",
       ],
-      { ignoreError: true },
+      expect.objectContaining({ ignoreError: true }),
     );
+  });
+
+  it("isolates Docker credentials while waiting for the Windows-host daemon", () => {
+    const run = vi.fn();
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const runCapture = vi.fn((command: string | string[], options?: { env?: NodeJS.ProcessEnv }) =>
+      Array.isArray(command) &&
+      command[0] === "docker" &&
+      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL &&
+      options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+        ? JSON.stringify({ models: [] })
+        : "",
+    );
+    const localInference = require(LOCAL_INFERENCE_PATH);
+    localInference.resetOllamaHostCache();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+
+    try {
+      expect(
+        windows.awaitWindowsOllamaReady({
+          prepareDockerEnvironment: () => ({
+            env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+            isolatedCredentialConfig: true,
+            cleanup,
+          }),
+        }),
+      ).toBe(true);
+      expect(localInference.getResolvedOllamaHost()).toBe("host.docker.internal");
+      expect(runCapture).toHaveBeenCalledWith(
+        expect.arrayContaining(["docker", "run", "--rm", WINDOWS_OLLAMA_TAGS_URL]),
+        expect.objectContaining({
+          ignoreError: true,
+          env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+        }),
+      );
+      expect(cleanup).toHaveBeenCalledOnce();
+    } finally {
+      localInference.resetOllamaHostCache();
+      restore();
+      logSpy.mockRestore();
+    }
   });
 
   it("skips the blocking wait for non-positive delays", () => {
     const run = vi.fn();
     const runCapture = vi.fn();
-    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(run, runCapture);
+    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(
+      run,
+      runCapture,
+    );
 
     try {
       windows.sleep(0);

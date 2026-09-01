@@ -6,9 +6,9 @@
 // Detection lives in onboard.ts; this module owns the action side.
 
 const { spawn } = require("child_process");
-const { dockerCapture } = require("../../adapters/docker/command");
 const { run, runCapture } = require("../../runner");
 const {
+  createOllamaApiCapture,
   getWindowsHostOllamaDockerReachabilityArgs,
   isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
@@ -120,13 +120,27 @@ function killWindowsOllamaProcesses(): void {
   );
 }
 
-function awaitWindowsOllamaReady(): boolean {
+function awaitWindowsOllamaReady(opts: { prepareDockerEnvironment?: () => unknown } = {}): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
+  const capture = createOllamaApiCapture(
+    runCapture,
+    OLLAMA_HOST_DOCKER_INTERNAL,
+    opts.prepareDockerEnvironment,
+  );
   for (let attempt = 0; attempt < 15; attempt++) {
     sleep(2);
-    const probe = dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
-      ignoreError: true,
-    });
+    const probe = capture(
+      [
+        "curl",
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
+      ],
+      { ignoreError: true },
+    );
     if (isValidOllamaTagsResponseBody(probe)) {
       setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
       return true;
