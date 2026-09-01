@@ -27,6 +27,7 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import {
   RESOURCE_LIMIT_CONNECT_BEGIN_MARKER,
   RESOURCE_LIMIT_CONNECT_END_MARKER,
@@ -39,6 +40,9 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
+const CREDENTIAL_PROVIDER = "e2e-sandbox-tavily";
+const CREDENTIAL_ENV_NAME = "TAVILY_API_KEY";
+const CREDENTIAL_VALUE = "e2e-sandbox-operations-provider-secret";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
@@ -149,6 +153,97 @@ async function onboardSandbox(
   return result;
 }
 
+async function resetCredentialProvider(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const reset = await host.nemoclaw(["credentials", "reset", CREDENTIAL_PROVIDER, "--yes"], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [CREDENTIAL_VALUE],
+    timeoutMs: 3 * 60_000,
+  });
+  expectExitZero(reset, `nemoclaw credentials reset ${CREDENTIAL_PROVIDER} --yes`);
+  expect(resultText(reset)).not.toContain(CREDENTIAL_VALUE);
+  return reset;
+}
+
+async function assertCredentialProviderAdapterLifecycle(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  cleanup: CleanupRegistry,
+  hosted: HostedInferenceConfig,
+): Promise<void> {
+  await resetCredentialProvider(host, "tc-sbx-14-clear-stale-credential-provider");
+  cleanup.add(`remove credential provider ${CREDENTIAL_PROVIDER}`, async () => {
+    await resetCredentialProvider(host, "cleanup-tc-sbx-14-credential-provider");
+  });
+
+  const add = await host.nemoclaw(
+    [
+      "credentials",
+      "add",
+      CREDENTIAL_PROVIDER,
+      "--type",
+      "tavily",
+      "--credential",
+      CREDENTIAL_ENV_NAME,
+    ],
+    {
+      artifactName: "tc-sbx-14-credentials-add",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        [CREDENTIAL_ENV_NAME]: CREDENTIAL_VALUE,
+      },
+      redactionValues: [CREDENTIAL_VALUE],
+      timeoutMs: 3 * 60_000,
+    },
+  );
+  expectExitZero(add, `nemoclaw credentials add ${CREDENTIAL_PROVIDER}`);
+  expect(resultText(add)).toContain(`Registered provider '${CREDENTIAL_PROVIDER}'`);
+  expect(resultText(add)).not.toContain(CREDENTIAL_VALUE);
+
+  const beforeRebuild = await host.nemoclaw(["credentials", "list"], {
+    artifactName: "tc-sbx-14-credentials-list-before-rebuild",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expectExitZero(beforeRebuild, "nemoclaw credentials list before rebuild");
+  expect(resultText(beforeRebuild)).toContain(CREDENTIAL_PROVIDER);
+
+  const rebuild = await host.nemoclaw([SANDBOX_A, "rebuild", "--yes"], {
+    artifactName: "tc-sbx-14-rebuild-with-credential-provider",
+    env: {
+      ...buildAvailabilityProbeEnv(),
+      ...hosted.env,
+    },
+    redactionValues: [hosted.apiKey, CREDENTIAL_VALUE],
+    timeoutMs: 20 * 60_000,
+  });
+  expectExitZero(rebuild, `nemoclaw ${SANDBOX_A} rebuild --yes`);
+  expect(resultText(rebuild)).not.toContain(CREDENTIAL_VALUE);
+
+  await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "present", {
+    artifactName: "tc-sbx-14-provider-attached-after-rebuild",
+    env: buildAvailabilityProbeEnv(),
+  });
+
+  const reset = await resetCredentialProvider(host, "tc-sbx-14-credentials-reset-attached");
+  expect(resultText(reset)).toContain(`Removed provider '${CREDENTIAL_PROVIDER}'`);
+  await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "absent", {
+    artifactName: "tc-sbx-14-provider-detached-after-reset",
+    env: buildAvailabilityProbeEnv(),
+  });
+
+  const afterReset = await host.nemoclaw(["credentials", "list"], {
+    artifactName: "tc-sbx-14-credentials-list-after-reset",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expectExitZero(afterReset, "nemoclaw credentials list after reset");
+  expect(resultText(afterReset)).not.toContain(CREDENTIAL_PROVIDER);
+}
+
 async function expectListed(host: HostCliClient, sandboxName: string, artifactName: string) {
   const list = await host.nemoclaw(["list"], {
     artifactName,
@@ -173,7 +268,6 @@ async function execInSandbox(
     timeoutMs,
   });
 }
-
 
 async function assertAgentCanAnswer(
   host: HostCliClient,
@@ -599,11 +693,12 @@ async function assertGatewayRecovery(
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {
-    timeout: 45 * 60_000,
+    timeout: 55 * 60_000,
     meta: {
       e2ePhases: [
         "confirm Docker and clear the sandbox operation fixtures",
         "onboard the primary sandbox",
+        "exercise credential provider adapter lifecycle",
         "validate connected shell resource limits",
         "exercise primary CLI inference and logs",
         "exercise terminal registry and process recovery",
@@ -636,6 +731,7 @@ test(
         "TC-SBX-11 sandboxes cannot reach each other by hostname",
         "TC-SBX-12 destroying the non-final sandbox preserves the survivor and final destroy releases the gateway port through the macOS default or explicit non-macOS cleanup",
         "TC-SBX-13 bare connect routes to the default sandbox and enforces login and interactive shell resource limits without startup diagnostics (#2173)",
+        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, attaches on rebuild, and detaches before deletion",
       ],
     });
 
@@ -651,6 +747,10 @@ test(
 
     progress.phase("onboard the primary sandbox");
     await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
+
+    artifacts.addRedactionValues([CREDENTIAL_VALUE]);
+    progress.phase("exercise credential provider adapter lifecycle");
+    await assertCredentialProviderAdapterLifecycle(host, sandbox, cleanup, hosted);
 
     progress.phase("validate connected shell resource limits");
     const connectRlimitSummary = await assertConnectResourceLimits(host);
