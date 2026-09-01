@@ -442,12 +442,26 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     active = loadProxyForDispatch({ host: "host.docker.internal", hasLocalCli: true });
 
-    await active.proxy.pullOllamaModel("qwen3.5:9b");
+    const result = await active.proxy.pullOllamaModel("qwen3.5:9b");
 
+    expect(result).toBe(true);
     expect(active.httpCommands.map((command) => command[0])).toContain("docker");
-    expect(active.httpCommands[0]).toEqual(
-      expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]),
+    const request = active.httpCommands[0];
+    expect(request).toEqual(
+      expect.arrayContaining([
+        "run",
+        "--rm",
+        "curlimages/curl:8.10.1",
+        "-X",
+        "POST",
+        "Content-Type: application/json",
+        "http://host.docker.internal:11434/api/pull",
+      ]),
     );
+    expect(JSON.parse(request[request.indexOf("-d") + 1])).toEqual({
+      model: "qwen3.5:9b",
+      stream: true,
+    });
     expect(active.cliCommands.map((command) => command[0])).not.toContain("bash");
   });
 

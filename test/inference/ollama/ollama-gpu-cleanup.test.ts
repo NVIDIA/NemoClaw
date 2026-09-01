@@ -91,13 +91,20 @@ describe("Ollama GPU cleanup", () => {
           outcome: "released",
           endpoint: "http://host.docker.internal:11434",
         });
+        const dockerCalls = calls.filter(({ command }) => command === "docker");
+        expect(dockerCalls).toHaveLength(3);
         expect(
-          calls.filter(({ command }) => command === "curl").map(({ args }) => args.at(-1)),
+          dockerCalls.map(({ args }) => args.at(-1)),
         ).toEqual([
           "http://host.docker.internal:11434/api/ps",
           "http://host.docker.internal:11434/api/generate",
           "http://host.docker.internal:11434/api/ps",
         ]);
+        dockerCalls.forEach(({ args }) => {
+          expect(args).toEqual(
+            expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]),
+          );
+        });
       },
       "host.docker.internal",
     );

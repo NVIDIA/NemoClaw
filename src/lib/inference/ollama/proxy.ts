@@ -1384,15 +1384,20 @@ function defaultReleaseSleep(milliseconds: number): void {
 function discoverResidentOllamaModels(
   attempt: number,
   selectedModels: readonly string[] | null,
+  releaseHost: string,
   releaseEndpoint: string,
   spawnSyncImpl: typeof spawnSync,
 ): OllamaModelDiscoveryEvidence {
   const endpoint = `${releaseEndpoint}/api/ps`;
+  const [command, ...args] = getOllamaApiCommand(
+    ["-sS", "--fail-with-body", "--max-time", "3", endpoint],
+    releaseHost,
+  );
   let result;
   try {
     result = spawnSyncImpl(
-      "curl",
-      ["-sS", "--fail-with-body", "--max-time", "3", endpoint],
+      command,
+      args,
       // #2616: env-sanitize so an ambient HTTP proxy cannot intercept the
       // loopback-only Ollama ownership and release checks.
       { encoding: "utf8", env: buildSubprocessEnv() },
@@ -1476,9 +1481,8 @@ function unloadOllamaModels(
   onlyModels?: readonly string[],
   options: OllamaUnloadOptions = {},
 ): OllamaUnloadResult {
-  const releaseEndpoint = buildLocalOllamaEndpoint(
-    options.getResolvedOllamaHost ?? getResolvedOllamaHost,
-  );
+  const releaseHost = (options.getResolvedOllamaHost ?? getResolvedOllamaHost)();
+  const releaseEndpoint = buildLocalOllamaEndpoint(() => releaseHost);
   const spawnSyncImpl = options.spawnSync ?? spawnSync;
   const sleepImpl = options.sleep ?? defaultReleaseSleep;
   const maxAttempts = Math.max(1, options.maxAttempts ?? OLLAMA_RELEASE_MAX_ATTEMPTS);
@@ -1489,7 +1493,13 @@ function unloadOllamaModels(
   let lastMatchedModels: readonly string[] = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const discovery = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
+    const discovery = discoverResidentOllamaModels(
+      attempt,
+      selectedModels,
+      releaseHost,
+      releaseEndpoint,
+      spawnSyncImpl,
+    );
     discoveries.push(discovery);
     if (discovery.error) {
       if (attempt < maxAttempts && transientCurlFailure(discovery.status)) {
@@ -1523,25 +1533,29 @@ function unloadOllamaModels(
     let retryRequest = false;
     for (const model of lastMatchedModels) {
       const endpoint = `${releaseEndpoint}/api/generate`;
+      const [command, ...args] = getOllamaApiCommand(
+        [
+          "-sS",
+          "--fail-with-body",
+          "-o",
+          "/dev/null",
+          "--max-time",
+          "3",
+          "-X",
+          "POST",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          JSON.stringify({ model, keep_alive: 0 }),
+          endpoint,
+        ],
+        releaseHost,
+      );
       let result;
       try {
         result = spawnSyncImpl(
-          "curl",
-          [
-            "-sS",
-            "--fail-with-body",
-            "-o",
-            "/dev/null",
-            "--max-time",
-            "3",
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            JSON.stringify({ model, keep_alive: 0 }),
-            endpoint,
-          ],
+          command,
+          args,
           { encoding: "utf8", env: buildSubprocessEnv() },
         );
       } catch (error) {
@@ -1582,7 +1596,13 @@ function unloadOllamaModels(
     }
 
     sleepImpl(OLLAMA_RELEASE_VERIFY_DELAY_MS);
-    const verification = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
+    const verification = discoverResidentOllamaModels(
+      attempt,
+      selectedModels,
+      releaseHost,
+      releaseEndpoint,
+      spawnSyncImpl,
+    );
     discoveries.push(verification);
     if (verification.error) {
       if (attempt < maxAttempts && transientCurlFailure(verification.status)) {

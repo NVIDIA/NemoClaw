@@ -1212,7 +1212,8 @@ describe("local inference helpers", () => {
   it("builds a background warmup command for ollama models", () => {
     const command = getOllamaWarmupCommand("nemotron-3-nano:30b");
     expect(command).toEqual(expect.arrayContaining(["bash", "-c"]));
-    expect(command[2]).toMatch(/^nohup curl -s http:\/\/127.0.0.1:11434\/api\/generate /);
+    expect(command[2]).toContain("'--connect-timeout' '10' '--max-time' '120'");
+    expect(command[2]).toContain("http://127.0.0.1:11434/api/generate");
     expect(command[2]).toMatch(/"model":"nemotron-3-nano:30b"/);
     expect(command[2]).toMatch(/"keep_alive":"15m"/);
   });

@@ -205,6 +205,14 @@ export function getOllamaApiCommand(
     : ["curl", ...curlArgs];
 }
 
+function createOllamaApiCapture(runCaptureImpl?: RunCaptureFn): RunCaptureFn {
+  const capture = runCaptureImpl ?? runCapture;
+  return (command, options) => {
+    const [executable, ...args] = command;
+    return capture(executable === "curl" ? getOllamaApiCommand(args) : command, options);
+  };
+}
+
 export function resetOllamaHostCache(): void {
   _resolvedOllamaHost = null;
 }
@@ -1538,7 +1546,11 @@ export function probeOllamaRuntimeModelStatus(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaRuntimeModelStatus {
-  return probeOllamaRuntimeModelStatusWithHost(model, getResolvedOllamaHost, runCaptureImpl);
+  return probeOllamaRuntimeModelStatusWithHost(
+    model,
+    getResolvedOllamaHost,
+    createOllamaApiCapture(runCaptureImpl),
+  );
 }
 
 export function resolveOllamaRuntimeContextWindow(
@@ -1550,7 +1562,7 @@ export function resolveOllamaRuntimeContextWindow(
     model,
     currentContextWindow,
     getResolvedOllamaHost,
-    runCaptureImpl,
+    createOllamaApiCapture(runCaptureImpl),
   );
 }
 
@@ -1559,9 +1571,15 @@ export { resetOllamaRuntimeContextWindowAutoState };
 /** Apply Ollama runtime context-window adoption using the resolved local host. */
 export function applyOllamaRuntimeContextWindow(
   selectedModel: string,
-  options: Pick<ApplyOllamaRuntimeContextWindowOptions, "contextWindowFloor"> = {},
+  options: Pick<
+    ApplyOllamaRuntimeContextWindowOptions,
+    "contextWindowFloor" | "env" | "logger" | "runCaptureImpl"
+  > = {},
 ): ApplyOllamaRuntimeContextWindowResult {
-  return applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost, options);
+  return applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost, {
+    ...options,
+    runCaptureImpl: createOllamaApiCapture(options.runCaptureImpl),
+  });
 }
 
 export function applyVllmRuntimeContextWindow(
@@ -1729,7 +1747,7 @@ export function selectDefaultOllamaModel(
     : pool[0];
 }
 
-export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
+export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"): string[] {
   const payload = JSON.stringify({
     model,
     prompt: "Hello, reply in less than 5 words",
@@ -1738,16 +1756,13 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
     options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
-  if (host !== OLLAMA_HOST_DOCKER_INTERNAL) {
-    return [
-      "bash",
-      "-c",
-      `nohup curl -s http://${host}:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
-    ];
-  }
-  const command = getOllamaApiCommand(
+  return getOllamaApiCommand(
     [
       "-s",
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "120",
       `http://${host}:${OLLAMA_PORT}/api/generate`,
       "-H",
       "Content-Type: application/json",
@@ -1756,6 +1771,10 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
     ],
     host,
   );
+}
+
+export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
+  const command = getOllamaWarmupRequestCommand(model, keepAlive);
   // backgrounding (nohup ... &) and output redirection require a shell wrapper.
   // The payload is safe: model name is JSON-serialized (escaping all special
   // chars) then shellQuote'd (single-quoted), so injection through model
@@ -1961,7 +1980,11 @@ export function probeOllamaModelCapabilities(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaCapabilities {
-  const metadata = fetchOllamaModelShowMetadata(model, getResolvedOllamaHost, runCaptureImpl);
+  const metadata = fetchOllamaModelShowMetadata(
+    model,
+    getResolvedOllamaHost,
+    createOllamaApiCapture(runCaptureImpl),
+  );
   if (!metadata.ok) {
     return {
       source: "unknown",
