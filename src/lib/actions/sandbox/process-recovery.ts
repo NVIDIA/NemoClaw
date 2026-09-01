@@ -46,9 +46,12 @@ import {
   resolveSandboxDashboardPort,
   resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
+  verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryInput,
   type HermesPortableForwardRecoveryResult,
+  type HermesPortableForwardRecoveryTimingEvidence,
+  type HermesPortableForwardVerificationResult,
   type PreparedHermesPortableForwardRecovery,
 } from "./forward-recovery";
 import {
@@ -91,11 +94,14 @@ export {
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,
+  verifyHermesPortableLaunchForwards,
 };
 export type {
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,
+  HermesPortableForwardRecoveryTimingEvidence,
+  HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 };
 export type {

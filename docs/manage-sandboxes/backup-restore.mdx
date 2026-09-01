@@ -122,7 +122,16 @@ Tag a snapshot with a human-readable label:
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
-When a directory or state file cannot be captured, `snapshot create` reports the failed items, removes the incomplete snapshot, and exits nonzero. `snapshot list` shows no new entry, so a later restore cannot select a capture that never completed. If removal fails, the command reports the listed snapshot path. Remove that directory manually before you run `snapshot restore` because the incomplete capture remains selectable.
+When a directory or state file cannot be captured, `snapshot create` reports the failed items, attempts to remove the incomplete snapshot, and exits nonzero.
+When cleanup succeeds, the command removes the incomplete snapshot.
+When cleanup fails, the command reports the retained snapshot path.
+The retained incomplete snapshot remains excluded from `snapshot list` and restore selection.
+The retained incomplete snapshot may contain unsanitized credentials.
+Do not restore, copy, share, or edit it.
+Repair access to the original sandbox state, then rerun `snapshot create`.
+Remove the retained directory only after you verify that the original sandbox or a complete snapshot contains every required state item.
+For a legacy snapshot whose manifest lacks a completion marker, NemoClaw excludes it from `snapshot list` and restore selection when any manifest-declared state file is absent from the snapshot directory.
+The state-file-presence check does not exclude an otherwise complete legacy snapshot when every declared state file is present or when its manifest declares no state files.
 
 ## Restore a Snapshot
 
