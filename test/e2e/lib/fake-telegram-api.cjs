@@ -7,12 +7,17 @@
 const fs = require("fs");
 const http = require("http");
 
+function readExpectedCredential(name) {
+  const file = process.env[`${name}_FILE`] || "";
+  return file ? fs.readFileSync(file, "utf8") : process.env[name] || "";
+}
+
 const host = process.env.FAKE_TELEGRAM_API_HOST || "0.0.0.0";
 const rawPort = process.env.FAKE_TELEGRAM_API_PORT || "0";
 const port = Number(rawPort);
 const portFile = process.env.FAKE_TELEGRAM_API_PORT_FILE || "";
 const captureFile = process.env.FAKE_TELEGRAM_API_CAPTURE_FILE || "";
-const expectedToken = process.env.FAKE_TELEGRAM_API_EXPECTED_TOKEN || "";
+const expectedToken = readExpectedCredential("FAKE_TELEGRAM_API_EXPECTED_TOKEN");
 const MAX_BODY_BYTES = 1024 * 1024;
 const PORT_TRAFFIC_PATH = "/__nemoclaw_e2e_port_traffic";
 const PORT_TRAFFIC_REPLY = "nemoclaw_port_traffic_reply";

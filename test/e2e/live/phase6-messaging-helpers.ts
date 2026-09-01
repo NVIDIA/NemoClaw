@@ -97,16 +97,6 @@ export async function precleanSandbox(
   );
 }
 
-export async function cleanupSandbox(
-  host: HostCliClient,
-  sandboxName: string,
-  env: NodeJS.ProcessEnv,
-  redactions: string[],
-  prefix: string,
-): Promise<void> {
-  await precleanSandbox(host, sandboxName, env, redactions, prefix);
-}
-
 export function trackSandboxCleanup(
   cleanup: CleanupRegistry,
   host: HostCliClient,

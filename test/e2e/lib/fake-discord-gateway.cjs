@@ -8,11 +8,16 @@ const crypto = require("crypto");
 const fs = require("fs");
 const net = require("net");
 
+function readExpectedCredential(name) {
+  const file = process.env[`${name}_FILE`] || "";
+  return file ? fs.readFileSync(file, "utf8") : process.env[name] || "";
+}
+
 const host = process.env.FAKE_DISCORD_GATEWAY_HOST || "0.0.0.0";
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT || "0");
 const portFile = process.env.FAKE_DISCORD_GATEWAY_PORT_FILE || "";
 const captureFile = process.env.FAKE_DISCORD_GATEWAY_CAPTURE_FILE || "";
-const expectedToken = process.env.FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN || "";
+const expectedToken = readExpectedCredential("FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN");
 const PORT_TRAFFIC_REQUEST_LINE = "GET /__nemoclaw_e2e_port_traffic HTTP/1.1";
 const PORT_TRAFFIC_REPLY = JSON.stringify({ type: "nemoclaw_port_traffic_reply" });
 

@@ -16,9 +16,9 @@ import {
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
 import {
-  cleanupSandbox,
   expectExitZero,
   phase6Env,
+  precleanSandbox,
   resultText,
   runSecondaryCleanup,
   sandboxSh,
@@ -79,7 +79,7 @@ export async function cleanupPairingSandbox(
   redactions: string[],
   prefix: string,
 ): Promise<void> {
-  await cleanupSandbox(host, sandboxName, env, redactions, prefix);
+  await precleanSandbox(host, sandboxName, env, redactions, prefix);
   await runSecondaryCleanup(() =>
     host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${prefix}-openshell-gateway-destroy`,
@@ -153,7 +153,7 @@ export async function startFakeDiscordGateway(
     portEnv: "FAKE_DISCORD_GATEWAY_PORT",
     portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
+    credentialEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
     env,
     redactionValues: redactions,
   });
@@ -174,9 +174,11 @@ export async function startFakeSlackApi(
     portEnv: "FAKE_SLACK_API_PORT",
     portFileEnv: "FAKE_SLACK_API_PORT_FILE",
     captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-    expectedEnv: {
+    credentialEnv: {
       FAKE_SLACK_API_EXPECTED_BOT_TOKEN: botToken,
       FAKE_SLACK_API_EXPECTED_APP_TOKEN: appToken,
+    },
+    fixtureEnv: {
       FAKE_SLACK_API_SOCKET_USER_ID: PAIRING_USER.slack,
     },
     env,

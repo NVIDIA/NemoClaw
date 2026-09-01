@@ -8,6 +8,11 @@ const fs = require("fs");
 const crypto = require("crypto");
 const http = require("http");
 
+function readExpectedCredential(name) {
+  const file = process.env[`${name}_FILE`] || "";
+  return file ? fs.readFileSync(file, "utf8") : process.env[name] || "";
+}
+
 const host = process.env.FAKE_SLACK_API_HOST || "0.0.0.0";
 const rawPort = process.env.FAKE_SLACK_API_PORT || "0";
 const port = Number(rawPort);
@@ -15,8 +20,8 @@ const rawWebsocketPort = process.env.FAKE_SLACK_API_WEBSOCKET_PORT || "0";
 const websocketPort = Number(rawWebsocketPort);
 const portFile = process.env.FAKE_SLACK_API_PORT_FILE || "";
 const captureFile = process.env.FAKE_SLACK_API_CAPTURE_FILE || "";
-const expectedBotToken = process.env.FAKE_SLACK_API_EXPECTED_BOT_TOKEN || "";
-const expectedAppToken = process.env.FAKE_SLACK_API_EXPECTED_APP_TOKEN || "";
+const expectedBotToken = readExpectedCredential("FAKE_SLACK_API_EXPECTED_BOT_TOKEN");
+const expectedAppToken = readExpectedCredential("FAKE_SLACK_API_EXPECTED_APP_TOKEN");
 const socketUserId = process.env.FAKE_SLACK_API_SOCKET_USER_ID || "U3730E2E";
 const socketChannelId = process.env.FAKE_SLACK_API_SOCKET_CHANNEL_ID || "D3730E2E";
 const socketTeamId = process.env.FAKE_SLACK_API_SOCKET_TEAM_ID || "T3730E2E";

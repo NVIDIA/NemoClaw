@@ -711,7 +711,8 @@ export async function startFakeDockerApi(
     portEnv: string;
     portFileEnv: string;
     captureFileEnv: string;
-    expectedEnv: Record<string, string>;
+    credentialEnv: Record<string, string>;
+    fixtureEnv?: Record<string, string>;
     redactionValues: string[];
     env: NodeJS.ProcessEnv;
   },
@@ -724,13 +725,32 @@ export async function startFakeDockerApi(
   );
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
-  const portFile = path.join(dir, "port");
-  const captureFile = path.join(dir, "capture.jsonl");
+  const fixtureDir = path.join(dir, "fixture");
+  const credentialDir = path.join(dir, "credentials");
+  const portFile = path.join(fixtureDir, "port");
+  const captureFile = path.join(fixtureDir, "capture.jsonl");
   const container = uniqueContainerName(options.containerPrefix);
   const proxyContainer = uniqueContainerName(`${options.containerPrefix}-proxy`);
   const network = uniqueContainerName("nemoclaw-fake-api-network");
   const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
-  fs.writeFileSync(captureFile, "");
+  let credentialMounts: Array<{ envName: string; hostPath: string; containerPath: string }>;
+  try {
+    fs.mkdirSync(fixtureDir, { mode: 0o700 });
+    fs.mkdirSync(credentialDir, { mode: 0o700 });
+    fs.writeFileSync(captureFile, "");
+    credentialMounts = Object.entries(options.credentialEnv).map(([key, value], index) => {
+      if (!/^[A-Z][A-Z0-9_]*$/u.test(key) || value.length === 0) {
+        throw new Error(`invalid fake ${options.kind} API credential input`);
+      }
+      const hostPath = path.join(credentialDir, String(index));
+      const containerPath = `/run/nemoclaw-fake-api-credentials/${String(index)}`;
+      fs.writeFileSync(hostPath, value, { mode: 0o600 });
+      return { envName: `${key}_FILE`, hostPath, containerPath };
+    });
+  } catch (error) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 
   const networkCreate = await runHost(
     host,
@@ -777,12 +797,15 @@ export async function startFakeDockerApi(
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
   if (options.kind === "slack") dockerArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
-  for (const [key, value] of Object.entries(options.expectedEnv)) {
+  for (const [key, value] of Object.entries(options.fixtureEnv ?? {})) {
     dockerArgs.push("-e", `${key}=${value}`);
+  }
+  for (const { envName, hostPath, containerPath } of credentialMounts) {
+    dockerArgs.push("-e", `${envName}=${containerPath}`, "-v", `${hostPath}:${containerPath}:ro`);
   }
   dockerArgs.push(
     "-v",
-    `${dir}:/tmp/fake`,
+    `${fixtureDir}:/tmp/fake`,
     "-v",
     `${FAKE_LIB_DIR}:/opt/nemoclaw-e2e:ro`,
     FAKE_API_IMAGE,
@@ -935,7 +958,9 @@ export async function startFakeDockerApi(
     options.env,
     options.redactionValues,
   );
-  const credentialNames = new Set(Object.keys(options.expectedEnv));
+  const credentialNames = new Set(
+    Object.keys(options.credentialEnv).flatMap((name) => [name, `${name}_FILE`]),
+  );
   if (
     !Array.isArray(proxyEnvironment) ||
     !proxyEnvironment.every((entry): entry is string => typeof entry === "string") ||

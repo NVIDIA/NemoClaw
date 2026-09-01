@@ -5,12 +5,17 @@
 import fs from "node:fs";
 import http from "node:http";
 
+function readExpectedCredential(name: string): string {
+  const file = process.env[`${name}_FILE`] ?? "";
+  return file ? fs.readFileSync(file, "utf8") : (process.env[name] ?? "");
+}
+
 const host = process.env.FAKE_WECHAT_API_HOST || "0.0.0.0";
 const rawPort = process.env.FAKE_WECHAT_API_PORT || "0";
 const port = Number(rawPort);
 const portFile = process.env.FAKE_WECHAT_API_PORT_FILE || "";
 const captureFile = process.env.FAKE_WECHAT_API_CAPTURE_FILE || "";
-const expectedToken = process.env.FAKE_WECHAT_API_EXPECTED_TOKEN || "";
+const expectedToken = readExpectedCredential("FAKE_WECHAT_API_EXPECTED_TOKEN");
 const expectedTarget = process.env.FAKE_WECHAT_API_EXPECTED_TARGET || "";
 const expectedText = process.env.FAKE_WECHAT_API_EXPECTED_TEXT || "";
 const MAX_BODY_BYTES = 1024 * 1024;

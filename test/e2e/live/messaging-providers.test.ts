@@ -890,7 +890,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       portEnv: "FAKE_SLACK_API_PORT",
       portFileEnv: "FAKE_SLACK_API_PORT_FILE",
       captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-      expectedEnv: {
+      credentialEnv: {
         FAKE_SLACK_API_EXPECTED_BOT_TOKEN: state.tokens.slackBot,
         FAKE_SLACK_API_EXPECTED_APP_TOKEN: state.tokens.slackApp,
       },
@@ -1064,7 +1064,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       portEnv: "FAKE_TELEGRAM_API_PORT",
       portFileEnv: "FAKE_TELEGRAM_API_PORT_FILE",
       captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
-      expectedEnv: {
+      credentialEnv: {
         FAKE_TELEGRAM_API_EXPECTED_TOKEN: state.tokens.telegram,
       },
       env: state.env,
@@ -1128,8 +1128,10 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       portEnv: "FAKE_WECHAT_API_PORT",
       portFileEnv: "FAKE_WECHAT_API_PORT_FILE",
       captureFileEnv: "FAKE_WECHAT_API_CAPTURE_FILE",
-      expectedEnv: {
+      credentialEnv: {
         FAKE_WECHAT_API_EXPECTED_TOKEN: state.tokens.wechat,
+      },
+      fixtureEnv: {
         FAKE_WECHAT_API_EXPECTED_TARGET: wechatMockTarget,
         FAKE_WECHAT_API_EXPECTED_TEXT: wechatMockText,
       },

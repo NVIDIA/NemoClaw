@@ -128,7 +128,7 @@ async function startHermesFakeDiscordGateway(
     portEnv: "FAKE_DISCORD_GATEWAY_PORT",
     portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
+    credentialEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
     env,
     redactionValues,
   });

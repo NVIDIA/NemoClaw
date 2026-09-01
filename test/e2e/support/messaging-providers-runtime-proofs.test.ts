@@ -493,7 +493,7 @@ describe("messaging provider installed-runtime proofs", () => {
           portEnv: "FAKE_SLACK_API_PORT",
           portFileEnv: "FAKE_SLACK_API_PORT_FILE",
           captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-          expectedEnv: {
+          credentialEnv: {
             FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-not-ready-test",
             FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-not-ready-test",
           },
@@ -604,7 +604,7 @@ describe("messaging provider installed-runtime proofs", () => {
           portEnv: "FAKE_SLACK_API_PORT",
           portFileEnv: "FAKE_SLACK_API_PORT_FILE",
           captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-          expectedEnv: {
+          credentialEnv: {
             FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-network-test",
             FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-network-test",
           },
@@ -662,7 +662,7 @@ describe("messaging provider installed-runtime proofs", () => {
           portEnv: "FAKE_API_PORT",
           portFileEnv: "FAKE_API_PORT_FILE",
           captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
+          credentialEnv: {},
           redactionValues: [],
           env: {},
         }),
@@ -686,7 +686,7 @@ describe("messaging provider installed-runtime proofs", () => {
         portEnv: "FAKE_API_PORT",
         portFileEnv: "FAKE_API_PORT_FILE",
         captureFileEnv: "FAKE_API_CAPTURE_FILE",
-        expectedEnv: {},
+        credentialEnv: {},
         redactionValues: [],
         env: {},
       });
@@ -696,6 +696,51 @@ describe("messaging provider installed-runtime proofs", () => {
         .reverse()
         .reduce((previous, action) => previous.then(action), Promise.resolve());
     }
+  });
+
+  it("mounts fake API credentials without placing their values in Docker arguments", async () => {
+    const calls: string[][] = [];
+    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
+    const cleanup: Array<() => Promise<void>> = [];
+    const sentinel = "123456:credential-must-not-enter-docker-argv";
+    let credentialFile = "";
+
+    try {
+      await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
+        kind: "telegram",
+        imageScript: "fake-telegram-api.cjs",
+        containerPrefix: "fake-telegram-credential-file",
+        portEnv: "FAKE_TELEGRAM_API_PORT",
+        portFileEnv: "FAKE_TELEGRAM_API_PORT_FILE",
+        captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
+        credentialEnv: { FAKE_TELEGRAM_API_EXPECTED_TOKEN: sentinel },
+        redactionValues: [sentinel],
+        env: {},
+      });
+
+      const apiRun = calls.find(
+        (invocation) =>
+          invocation[0] === "docker" &&
+          invocation[1] === "run" &&
+          !invocation.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
+      );
+      expect(apiRun).toBeDefined();
+      expect(JSON.stringify(apiRun)).not.toContain(sentinel);
+      expect(apiRun).toContain(
+        "FAKE_TELEGRAM_API_EXPECTED_TOKEN_FILE=/run/nemoclaw-fake-api-credentials/0",
+      );
+      const mountSuffix = ":/run/nemoclaw-fake-api-credentials/0:ro";
+      const credentialMount = apiRun?.find((argument) => argument.endsWith(mountSuffix));
+      expect(credentialMount).toBeDefined();
+      credentialFile = credentialMount!.slice(0, -mountSuffix.length);
+      expect(fs.statSync(credentialFile).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(credentialFile, "utf8")).toBe(sentinel);
+    } finally {
+      await cleanup
+        .reverse()
+        .reduce((previous, action) => previous.then(action), Promise.resolve());
+    }
+    expect(fs.existsSync(credentialFile)).toBe(false);
   });
 
   it("rejects a proxy that retains default-bridge egress", async () => {
@@ -711,7 +756,7 @@ describe("messaging provider installed-runtime proofs", () => {
           portEnv: "FAKE_API_PORT",
           portFileEnv: "FAKE_API_PORT_FILE",
           captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
+          credentialEnv: {},
           redactionValues: [],
           env: {},
         }),
@@ -744,7 +789,7 @@ describe("messaging provider installed-runtime proofs", () => {
         portEnv: "FAKE_API_PORT",
         portFileEnv: "FAKE_API_PORT_FILE",
         captureFileEnv: "FAKE_API_CAPTURE_FILE",
-        expectedEnv: {},
+        credentialEnv: {},
         redactionValues: [],
         env: { OPENSHELL_DOCKER_NETWORK_NAME: "configured-openshell-network" },
       }),
@@ -1176,7 +1221,9 @@ describe("messaging provider installed-runtime proofs", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-telegram-redaction-"));
     const portFile = path.join(dir, "port");
     const captureFile = path.join(dir, "capture.jsonl");
+    const credentialFile = path.join(dir, "expected-token");
     const token = "123456:SUPER-SECRET-TELEGRAM-TOKEN";
+    fs.writeFileSync(credentialFile, token, { mode: 0o600 });
     const child = spawn(process.execPath, [FAKE_TELEGRAM_API], {
       env: {
         ...process.env,
@@ -1184,7 +1231,7 @@ describe("messaging provider installed-runtime proofs", () => {
         FAKE_TELEGRAM_API_PORT: "0",
         FAKE_TELEGRAM_API_PORT_FILE: portFile,
         FAKE_TELEGRAM_API_CAPTURE_FILE: captureFile,
-        FAKE_TELEGRAM_API_EXPECTED_TOKEN: token,
+        FAKE_TELEGRAM_API_EXPECTED_TOKEN_FILE: credentialFile,
       },
       stdio: ["ignore", "ignore", "pipe"],
     });
