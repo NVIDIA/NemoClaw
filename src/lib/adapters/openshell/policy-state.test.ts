@@ -167,11 +167,12 @@ describe("OpenShell policy observation", () => {
   });
 
   it("reports a redacted mTLS failure and stops policy inspection (#10664)", () => {
-    vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue(
+    const spy = vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue(
       capture("", {
         status: 1,
         stderr:
           "\u001b[31minvalid peer certificate: BadSignature\u001b[0m\n" +
+          "gateway https://policy-user:policy-password@example.com failed\n" +
           "OPENAI_API_KEY=policy-output-secret-canary\n" +
           `${"x".repeat(400)}policy-output-tail-canary\n`,
       }) as never,
@@ -192,9 +193,13 @@ describe("OpenShell policy observation", () => {
     expect(message).toContain("Policy-dependent operations must stop");
     expect(detail).not.toBe("");
     expect(detail.length).toBeLessThanOrEqual(240);
+    expect(message).toContain("https://example.com/");
+    expect(message).not.toContain("policy-user");
+    expect(message).not.toContain("policy-password");
     expect(message).not.toContain("policy-output-secret-canary");
     expect(message).not.toContain("policy-output-tail-canary");
     expect(message).not.toContain("\u001b");
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it("validates required entries while allowing unrelated host changes", () => {
