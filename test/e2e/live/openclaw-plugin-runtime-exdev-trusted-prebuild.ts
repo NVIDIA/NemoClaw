@@ -156,26 +156,6 @@ export function registerTrustedPluginFixtureImageCleanup(options: {
   };
 }
 
-export function registerTrustedPluginFixtureGatewayCleanup(options: {
-  cleanup: CleanupRegistry;
-  environment: NodeJS.ProcessEnv;
-  host: Pick<HostCliClient, "command">;
-  openshellPath: string;
-}): void {
-  options.cleanup.add("destroy trusted EXDEV fixture gateway nemoclaw", async () => {
-    const result = await options.host.command(
-      options.openshellPath,
-      ["gateway", "destroy", "-g", "nemoclaw"],
-      {
-        artifactName: "cleanup-trusted-exdev-gateway-nemoclaw",
-        env: options.environment,
-        timeoutMs: 60_000,
-      },
-    );
-    assertExitZero(result, "destroy trusted EXDEV fixture gateway nemoclaw");
-  });
-}
-
 export function acceptTrustedPluginFixturePrebuild(options: {
   images: TrustedPluginFixtureImageCleanup;
   prebuild: SandboxPrebuildResult;

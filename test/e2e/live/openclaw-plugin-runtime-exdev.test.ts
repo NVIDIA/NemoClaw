@@ -24,11 +24,9 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
-import { assertOpenShellGatewayStopResult } from "./openshell-gateway-stop.ts";
 import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
-  registerTrustedPluginFixtureGatewayCleanup,
   registerTrustedPluginFixtureImageCleanup,
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
@@ -120,7 +118,11 @@ async function stopOpenShellGatewayBeforeInstall(
     env,
     timeoutMs: 60_000,
   });
-  assertOpenShellGatewayStopResult(stop);
+  const diagnostic = resultText(stop);
+  assert(
+    stop.exitCode === 0 || /^No gateway metadata found(?: for nemoclaw)?[.!]?$/i.test(diagnostic),
+    diagnostic,
+  );
 }
 
 type CustomPluginBuildContext = {
@@ -457,12 +459,13 @@ test(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
     );
-    registerTrustedPluginFixtureGatewayCleanup({
-      cleanup,
-      environment: liveEnv(),
-      host,
-      openshellPath: openshell.cli,
-    });
+    cleanup.add("remove trusted EXDEV fixture gateway nemoclaw", () =>
+      host.cleanupGatewayRegistration("nemoclaw", {
+        artifactName: "cleanup-trusted-exdev-gateway-nemoclaw",
+        env: liveEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
     const openshellWrapper = createOpenShellTrustedImageWrapper({
       driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
       realOpenshellPath: openshell.cli,

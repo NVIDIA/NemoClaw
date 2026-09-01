@@ -17,7 +17,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
   createOpenShellTrustedImageWrapper,
-  registerTrustedPluginFixtureGatewayCleanup,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
@@ -186,57 +185,6 @@ function commandResult(exitCode = 0, stderr = ""): ShellProbeResult {
     timedOut: false,
   };
 }
-
-describe("trusted EXDEV fixture gateway cleanup", () => {
-  it("executes the registered cleanup for only the named nemoclaw gateway", async () => {
-    const cleanup = new CleanupRegistry();
-    const host = { command: vi.fn(async () => commandResult()) };
-
-    registerTrustedPluginFixtureGatewayCleanup({
-      cleanup,
-      environment: { PATH: "/usr/bin" },
-      host,
-      openshellPath: "/opt/openshell/bin/openshell",
-    });
-
-    expect(await cleanup.runAll()).toEqual({
-      failures: [],
-      passed: ["destroy trusted EXDEV fixture gateway nemoclaw"],
-    });
-    expect(host.command).toHaveBeenCalledOnce();
-    expect(host.command).toHaveBeenCalledWith(
-      "/opt/openshell/bin/openshell",
-      ["gateway", "destroy", "-g", "nemoclaw"],
-      {
-        artifactName: "cleanup-trusted-exdev-gateway-nemoclaw",
-        env: { PATH: "/usr/bin" },
-        timeoutMs: 60_000,
-      },
-    );
-  });
-
-  it("reports the gateway command failure through CleanupRegistry", async () => {
-    const cleanup = new CleanupRegistry();
-    const host = { command: vi.fn(async () => commandResult(1, "gateway removal denied")) };
-
-    registerTrustedPluginFixtureGatewayCleanup({
-      cleanup,
-      environment: {},
-      host,
-      openshellPath: "openshell",
-    });
-
-    expect(await cleanup.runAll()).toEqual({
-      failures: [
-        {
-          message: expect.stringContaining("gateway removal denied"),
-          name: "destroy trusted EXDEV fixture gateway nemoclaw",
-        },
-      ],
-      passed: [],
-    });
-  });
-});
 
 describe("trusted EXDEV fixture image cleanup", () => {
   it("reclaims an image whose immutable identity assertion fails in LIFO order", async () => {
