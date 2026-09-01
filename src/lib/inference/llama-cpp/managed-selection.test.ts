@@ -17,6 +17,8 @@ const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-3
 const SPARK_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
 const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
 const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
+const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+const N1X_WSL_PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
 
 function readinessReport(
   preset: ManagedInferenceServingPreset,
@@ -172,6 +174,44 @@ describe("managed llama.cpp selection", () => {
         },
       },
     });
+  });
+
+  it("selects managed Qwen 3.6 on a qualifying N1x WSL host (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        report,
+      ),
+    ).toMatchObject({
+      kind: "selected",
+      selection: {
+        recipe: { metadata: { id: N1X_WSL_RECIPE_ID } },
+        preset: { metadata: { id: N1X_WSL_PRESET_ID } },
+      },
+    });
+  });
+
+  it("rejects the N1x WSL recipe without Docker Desktop GPU proof (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const withoutGpuProof = {
+      ...report,
+      capabilities: report.capabilities.map((capability) =>
+        capability.id === "host.platform.wsl_gpu_passthrough"
+          ? { ...capability, state: "absent" as const }
+          : capability,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        withoutGpuProof,
+      ),
+    ).toMatchObject({ kind: "rejected" });
   });
 
   it("selects the highest-priority compatible managed llama.cpp recipe", () => {
