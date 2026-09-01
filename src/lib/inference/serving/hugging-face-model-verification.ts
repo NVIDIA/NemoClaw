@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retryUntilAsync } from "../../core/retry";
 import type { ServingModelDefinition } from "./types";
 
 const HUGGING_FACE_ORIGIN = "https://huggingface.co";
@@ -10,6 +11,9 @@ const RETRY_DELAYS_MS = [250, 1_000] as const;
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 type HuggingFaceModelReference = Pick<ServingModelDefinition, "metadata" | "spec">;
+type VerificationAttempt =
+  | { readonly kind: "response"; readonly response: Pick<Response, "ok" | "status" | "statusText"> }
+  | { readonly kind: "error"; readonly error: unknown };
 
 export type HuggingFaceReferenceFetch = (
   input: string | URL,
@@ -20,13 +24,6 @@ export interface HuggingFaceModelVerificationOptions {
   readonly fetch?: HuggingFaceReferenceFetch;
   readonly sleep?: (delayMs: number) => Promise<void>;
   readonly timeoutMs?: number;
-}
-
-export interface VerifiedHuggingFaceModelReference {
-  readonly catalogModelId: string;
-  readonly modelId: string;
-  readonly revision: string;
-  readonly url: string;
 }
 
 function sleep(delayMs: number): Promise<void> {
@@ -61,64 +58,57 @@ function errorMessage(error: unknown): string {
 async function verifyReference(
   model: HuggingFaceModelReference,
   options: HuggingFaceModelVerificationOptions,
-): Promise<VerifiedHuggingFaceModelReference> {
+): Promise<void> {
   const { id: modelId, revision } = model.spec;
   const url = referenceUrl(modelId, revision);
   const fetchReference = options.fetch ?? fetch;
   const wait = options.sleep ?? sleep;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maxAttempts = RETRY_DELAYS_MS.length + 1;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const retryDelayMs = RETRY_DELAYS_MS[attempt];
-    let response: Pick<Response, "ok" | "status" | "statusText">;
-    try {
-      response = await fetchReference(url, {
-        method: "HEAD",
-        redirect: "follow",
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch (error) {
-      if (retryDelayMs === undefined) {
-        throw new Error(
-          `Could not verify Hugging Face model '${modelId}' at revision '${revision}' after ${attempt + 1} attempts: ${errorMessage(error)}`,
-          { cause: error },
-        );
+  const result = await retryUntilAsync<VerificationAttempt>(
+    async () => {
+      try {
+        return {
+          kind: "response",
+          response: await fetchReference(url, {
+            method: "HEAD",
+            redirect: "follow",
+            headers: { accept: "application/json" },
+            signal: AbortSignal.timeout(timeoutMs),
+          }),
+        };
+      } catch (error) {
+        return { kind: "error", error };
       }
-      await wait(retryDelayMs);
-      continue;
-    }
-    if (response.ok) {
-      return {
-        catalogModelId: model.metadata.id,
-        modelId,
-        revision,
-        url: url.href,
-      };
-    }
-    const canRetry = isTransientStatus(response.status) && retryDelayMs !== undefined;
-    if (!canRetry) {
-      const accessDetail =
-        response.status === 401 || response.status === 403
-          ? " The pinned config.json must be visible to credential-free pull request validation."
-          : "";
-      throw new Error(
-        `Hugging Face model '${modelId}' at revision '${revision}' returned HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.${accessDetail}`,
-      );
-    }
-    await wait(retryDelayMs);
-  }
+    },
+    {
+      accept: (attempt) =>
+        attempt.kind === "response" &&
+        (attempt.response.ok || !isTransientStatus(attempt.response.status)),
+      retryDelaysMs: RETRY_DELAYS_MS,
+      sleep: wait,
+    },
+  );
 
-  throw new Error(`Could not verify Hugging Face model '${modelId}'.`);
+  if (result.kind === "error") {
+    throw new Error(
+      `Could not verify Hugging Face model '${modelId}' at revision '${revision}' after ${RETRY_DELAYS_MS.length + 1} attempts: ${errorMessage(result.error)}`,
+      { cause: result.error },
+    );
+  }
+  if (result.response.ok) return;
+  const accessDetail =
+    result.response.status === 401 || result.response.status === 403
+      ? " The pinned config.json must be visible to credential-free pull request validation."
+      : "";
+  throw new Error(
+    `Hugging Face model '${modelId}' at revision '${revision}' returned HTTP ${result.response.status}${result.response.statusText ? ` ${result.response.statusText}` : ""}.${accessDetail}`,
+  );
 }
 
 /** Confirm that every catalog model exposes its pinned config on Hugging Face. */
 export async function verifyHuggingFaceModelReferences(
   models: readonly HuggingFaceModelReference[],
   options: HuggingFaceModelVerificationOptions = {},
-): Promise<readonly VerifiedHuggingFaceModelReference[]> {
-  const verified: VerifiedHuggingFaceModelReference[] = [];
-  for (const model of models) verified.push(await verifyReference(model, options));
-  return verified;
+): Promise<void> {
+  for (const model of models) await verifyReference(model, options);
 }

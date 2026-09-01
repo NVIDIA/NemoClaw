@@ -32,15 +32,17 @@ describe("Hugging Face model reference verification", () => {
     });
     const catalog = loadManagedInferenceCatalog();
 
-    const verified = await verifyHuggingFaceModelReferences(catalog.models, {
+    await verifyHuggingFaceModelReferences(catalog.models, {
       fetch: fetchReference,
       sleep: async () => {},
     });
 
-    expect(verified).toHaveLength(catalog.models.length);
-    expect(requests).toHaveLength(catalog.models.length);
-    expect(requests.every(({ url }) => url.startsWith("https://huggingface.co/"))).toBe(true);
-    expect(requests.every(({ url }) => url.endsWith("/config.json"))).toBe(true);
+    expect(requests.map(({ url }) => url)).toEqual(
+      catalog.models.map(
+        ({ spec }) =>
+          `https://huggingface.co/${spec.id}/resolve/${encodeURIComponent(spec.revision)}/config.json`,
+      ),
+    );
     expect(requests.every(({ init }) => init.method === "HEAD")).toBe(true);
     expect(requests.every(({ init }) => !new Headers(init.headers).has("authorization"))).toBe(
       true,
@@ -68,7 +70,20 @@ describe("Hugging Face model reference verification", () => {
 
     await expect(
       verifyHuggingFaceModelReferences([model()], { fetch: fetchReference, sleep: wait }),
-    ).resolves.toHaveLength(1);
+    ).resolves.toBeUndefined();
+    expect(fetchReference).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[250], [1_000]]);
+  });
+
+  it("retries transport failures with the bounded delay schedule", async () => {
+    const fetchReference: HuggingFaceReferenceFetch = vi.fn(async () => {
+      throw new Error("network unavailable");
+    });
+    const wait = vi.fn(async () => {});
+
+    await expect(
+      verifyHuggingFaceModelReferences([model()], { fetch: fetchReference, sleep: wait }),
+    ).rejects.toThrow(/after 3 attempts: network unavailable/u);
     expect(fetchReference).toHaveBeenCalledTimes(3);
     expect(wait.mock.calls).toEqual([[250], [1_000]]);
   });

@@ -6,11 +6,8 @@ import { verifyHuggingFaceModelReferences } from "../../src/lib/inference/servin
 
 async function main(): Promise<void> {
   const catalog = loadManagedInferenceCatalog();
-  const verified = await verifyHuggingFaceModelReferences(catalog.models);
-  for (const reference of verified) {
-    console.log(`Verified ${reference.modelId}@${reference.revision}`);
-  }
-  console.log(`Verified ${verified.length} Hugging Face model references.`);
+  await verifyHuggingFaceModelReferences(catalog.models);
+  console.log(`Verified ${catalog.models.length} Hugging Face model references.`);
 }
 
 main().catch((error: unknown) => {
