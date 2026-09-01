@@ -106,15 +106,17 @@ if ($authoringText -match '<\s*CustomAction\b' -or
     Fail-WindowsPackageBuild 'WiX authoring contains a prohibited custom-action or non-native execution path.'
 }
 
-$dotnetVersion = (& dotnet --version).Trim()
-if ($LASTEXITCODE -ne 0 -or $dotnetVersion -cne $script:ExpectedDotNetSdk) {
-    Fail-WindowsPackageBuild "dotnet SDK $($script:ExpectedDotNetSdk) is required."
-}
-
 [IO.Directory]::CreateDirectory($output) | Out-Null
 $intermediate = Join-Path $outputParent ('.windows-package-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($intermediate) | Out-Null
+$wixRoot = Join-Path $sourceRoot 'packaging\windows'
+Push-Location $wixRoot
 try {
+    $dotnetVersion = (& dotnet --version).Trim()
+    if ($LASTEXITCODE -ne 0 -or $dotnetVersion -cne $script:ExpectedDotNetSdk) {
+        Fail-WindowsPackageBuild "dotnet SDK $($script:ExpectedDotNetSdk) is required."
+    }
+
     $project = Join-Path $sourceRoot 'packaging\windows\NemoClaw.Bundle.wixproj'
     $buildArguments = @(
         'build', $project,
@@ -134,6 +136,7 @@ try {
         Fail-WindowsPackageBuild 'WiX build failed.'
     }
 } finally {
+    Pop-Location
     if (Test-Path -LiteralPath $intermediate -PathType Container) {
         [IO.Directory]::Delete($intermediate, $true)
     }
