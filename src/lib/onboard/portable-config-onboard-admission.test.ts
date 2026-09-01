@@ -113,6 +113,27 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     ).rejects.toThrow(/Unsafe portable authority directory/);
   });
 
+  it.each([
+    { name: "state", relativePath: ".nemoclaw" },
+    { name: "lifecycle receipt", relativePath: ".nemoclaw/portable-demo-lifecycle" },
+  ])(
+    "keeps the host $name directory owner-private during gateway-scoped onboarding",
+    async ({ relativePath }) => {
+      const gatewayStateDir = path.join(homeDir, ".nemoclaw/gateways/18000");
+      fs.mkdirSync(gatewayStateDir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(gatewayStateDir, 0o700);
+      const directory = path.join(homeDir, relativePath);
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      fs.chmodSync(directory, 0o755);
+      const operation = vi.fn(() => "onboarded");
+
+      await expect(
+        withPortableOnboardRetirementBoundary(boundary(gatewayStateDir), operation, deps),
+      ).rejects.toThrow(`Unsafe portable authority directory: ${directory}.`);
+      expect(operation).not.toHaveBeenCalled();
+    },
+  );
+
   it("names the failed property and its remedy when the refusal stands", async () => {
     const directory = makePortableConfigDir(0o755);
     writeLifecycleReceipt();
