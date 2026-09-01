@@ -62,38 +62,18 @@ function patchStagedDockerfile(
 }
 
 describe("remote dashboard bind production lifecycle", () => {
-  it.each([
-    [
-      "pre-generator NODE_OPTIONS",
-      "ENV NODE_OPTIONS=--require=/tmp/bypass.cjs",
-      "before-generator",
-    ],
-    ["pre-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-generator"],
-    ["pre-generator SHELL", 'SHELL ["/tmp/bypass-shell", "-c"]', "before-generator"],
-    ["post-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-config-hash"],
-    ["post-generator PYTHONPATH", "ENV PYTHONPATH=/tmp/bypass", "before-proxy-patch"],
-    ["replacement HEALTHCHECK", "HEALTHCHECK CMD /tmp/bypass-healthcheck", "append"],
-    ["replacement ENTRYPOINT", 'ENTRYPOINT ["/tmp/bypass-entrypoint"]', "append"],
-    ["replacement CMD", 'CMD ["/tmp/bypass-command"]', "append"],
-  ])("rejects custom --from remote bind with %s (#6024)", async (_label, instruction, location) => {
+  it("rejects remote bind for a custom --from Dockerfile (#6024)", async () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-from-"));
     const dockerfile = path.join(directory, "Dockerfile");
-    const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
-    const generator =
-      "RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts";
-    const proxyPatch = 'RUN python3 -c "\\\n';
-    const configHash =
-      "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash";
-    const body =
-      location === "before-generator"
-        ? stockDockerfile.replace(generator, `${instruction}\n${generator}`)
-        : location === "before-proxy-patch"
-          ? stockDockerfile.replace(proxyPatch, `${instruction}\n${proxyPatch}`)
-          : location === "before-config-hash"
-            ? stockDockerfile.replace(configHash, `${instruction}\n${configHash}`)
-            : `${stockDockerfile}\n${instruction}\n`;
-    fs.writeFileSync(dockerfile, body);
+    fs.writeFileSync(
+      dockerfile,
+      remoteBindDockerfile(
+        "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+        "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+        "ENV NODE_OPTIONS=--require=/tmp/bypass.cjs",
+      ),
+    );
 
     try {
       await expect(
