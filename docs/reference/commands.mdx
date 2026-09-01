@@ -3207,7 +3207,7 @@ $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_K
 | --- | --- |
 | `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
 | `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
-| `--config <K=V>` | Provider configuration pair. Repeatable |
+| `--config <K=V>` | Typed non-secret provider configuration. Supported: `OPENAI_BASE_URL=<http(s)://host/path>` with `--type openai`. URLs with credentials, query parameters, or fragments are rejected. Repeatable |
 | `--from-existing` | Load credentials and config from existing local state when no managed MCP server reserves credential keys |
 
 ### `$$nemoclaw credentials reset <PROVIDER>`

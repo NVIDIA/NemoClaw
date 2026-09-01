@@ -21,7 +21,11 @@ function result(
 
 describe("formatResetOutcome (#5560)", () => {
   it("reports a clean removal when no detach was needed", () => {
-    const outcome = formatResetOutcome("my-assistant-brave-search", result({ ok: true }));
+    const outcome = formatResetOutcome(
+      "my-assistant-brave-search",
+      result({ ok: true }),
+      "nemoclaw",
+    );
     expect(outcome.ok).toBe(true);
     expect(outcome.lines[0]).toContain("Removed provider 'my-assistant-brave-search'");
     expect(outcome.lines.join("\n")).toContain("onboard");
@@ -32,6 +36,7 @@ describe("formatResetOutcome (#5560)", () => {
     const outcome = formatResetOutcome(
       "my-assistant-brave-search",
       result({ ok: true, detachedSandboxes: ["alpha", "beta", "alpha"] }),
+      "nemoclaw",
     );
 
     expect(outcome.ok).toBe(true);
@@ -60,16 +65,19 @@ describe("formatResetOutcome (#5560)", () => {
           },
         ],
       }),
+      "nemoclaw-18080",
     );
     expect(outcome.ok).toBe(false);
     const text = outcome.lines.join("\n");
     expect(text).toContain("still attached to sandbox(es): my-assistant");
-    expect(text).toContain("openshell sandbox provider detach <sandbox> my-assistant-brave-search");
+    expect(text).toContain(
+      "openshell sandbox provider detach -g nemoclaw-18080 my-assistant my-assistant-brave-search",
+    );
     expect(text).toContain("FailedPrecondition");
   });
 
   it("hints when the argument looks like an env var name instead of a provider", () => {
-    const outcome = formatResetOutcome("BRAVE_API_KEY", result({ ok: false }));
+    const outcome = formatResetOutcome("BRAVE_API_KEY", result({ ok: false }), "nemoclaw");
     expect(outcome.ok).toBe(false);
     expect(outcome.lines.join("\n")).toContain("looks like a credential env variable name");
   });

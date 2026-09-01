@@ -9,7 +9,8 @@ export type OpenShellProviderCommandReason =
   | "failed"
   | "invalid_request"
   | "not_found"
-  | "profile_incompatible";
+  | "profile_incompatible"
+  | "uncertain";
 
 export type OpenShellProviderTransportReason =
   | "identity_mismatch"

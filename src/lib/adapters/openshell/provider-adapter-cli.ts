@@ -22,6 +22,7 @@ import {
   type OpenShellProviderResult,
 } from "./provider-adapter";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
+import { scopeGatewayOpenshellArgs } from "./gateway-scope";
 import {
   exportedProviderProfileMatchesContract,
   parseCheckedInProviderProfileContract,
@@ -118,7 +119,7 @@ function commandError(
   const output = commandOutput(result);
   const message = redactProviderDiagnostic(output, secrets);
   const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
-  if (errorCode === "ETIMEDOUT") {
+  if (errorCode === "ETIMEDOUT" || /\boperation timed out\b/iu.test(output)) {
     return { kind: "timeout", message: "The OpenShell provider operation timed out." };
   }
   if (errorCode === "ENOENT" || errorCode === "EACCES") {
@@ -126,6 +127,13 @@ function commandError(
       kind: "transport",
       reason: "process_start",
       message: "OpenShell could not start the provider operation.",
+    };
+  }
+  if (result.status === null) {
+    return {
+      kind: "command",
+      reason: "uncertain",
+      message: "OpenShell did not report whether the provider operation completed.",
     };
   }
   if (/invalid wire type|proto(?:buf)?(?: decode| schema| wire)/iu.test(output)) {
@@ -184,13 +192,9 @@ function scopedArgs(
   target: OpenShellGatewayTarget,
   gatewayFlagIndex = 2,
 ): string[] {
-  if (target.kind === "selected") return args;
-  return [
-    ...args.slice(0, gatewayFlagIndex),
-    "-g",
-    target.gatewayName,
-    ...args.slice(gatewayFlagIndex),
-  ];
+  return target.kind === "selected"
+    ? [...args]
+    : scopeGatewayOpenshellArgs(args, target.gatewayName, gatewayFlagIndex);
 }
 
 function parseProfileCredentialKeys(output: string, expectedProfileId: string): string[] | null {

@@ -82,9 +82,9 @@ describe("credential actions use typed OpenShell provider results", () => {
     const result = await runCredentialsAddAction(
       {
         provider: "custom-provider",
-        type: "generic",
+        type: "openai",
         credentials: ["CUSTOM_TOKEN"],
-        configPairs: ["region=us-west"],
+        configPairs: ["OPENAI_BASE_URL=https://api.openai.com/v1"],
         fromExisting: false,
       },
       { providerAdapter: adapter },
@@ -94,14 +94,68 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
       name: "custom-provider",
-      type: "generic",
+      type: "openai",
       credentials: [{ name: "CUSTOM_TOKEN", value: "credential-value" }],
-      config: [{ key: "region", value: "us-west" }],
+      config: [{ key: "OPENAI_BASE_URL", value: "https://api.openai.com/v1" }],
       fromExisting: false,
       timeoutMs: 30_000,
     });
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
+
+  it("rejects an untyped config value before provider creation (#9806)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+    const adapter = providerAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "generic",
+        credentials: ["CUSTOM_TOKEN"],
+        configPairs: ["region=ordinary-auth-value"],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  --config 'region' is not a supported non-secret setting for provider type 'generic'.",
+    );
+    expect(JSON.stringify(result)).not.toContain("ordinary-auth-value");
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["userinfo", "https://user:password-value@example.test/v1"],
+    ["query parameters", "https://example.test/v1?region=west"],
+    ["a fragment", "https://example.test/v1#fragment-value"],
+    ["a non-HTTP scheme", "file:///tmp/provider-value"],
+  ])(
+    "rejects an OpenAI base URL containing %s before provider creation (#9806)",
+    async (_case, baseUrl) => {
+      vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+      const adapter = providerAdapter();
+
+      const result = await runCredentialsAddAction(
+        {
+          provider: "custom-provider",
+          type: "openai",
+          credentials: ["CUSTOM_TOKEN"],
+          configPairs: [`OPENAI_BASE_URL=${baseUrl}`],
+          fromExisting: false,
+        },
+        { providerAdapter: adapter },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.failureLines).toContain(
+        "  --config 'OPENAI_BASE_URL' must be an absolute HTTP(S) URL without credentials, query parameters, or a fragment.",
+      );
+      expect(JSON.stringify(result)).not.toContain(baseUrl);
+      expect(adapter.createProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it("imports the bundled OpenAI profile through the provider adapter (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
@@ -162,7 +216,11 @@ describe("credential actions use typed OpenShell provider results", () => {
 
   it.each([
     {
-      case: "confirmed present",
+      case: "timed out and is confirmed present",
+      createError: {
+        kind: "timeout",
+        message: "The OpenShell provider operation timed out.",
+      } as const,
       inventory: { ok: true, value: { names: ["custom-provider"] } } as const,
       expectedLines: [
         "  OpenShell reports provider 'custom-provider' is registered; local provider ownership was preserved.",
@@ -171,13 +229,37 @@ describe("credential actions use typed OpenShell provider results", () => {
       forgetCalls: 0,
     },
     {
-      case: "confirmed absent",
+      case: "has no status and is confirmed present",
+      createError: {
+        kind: "command",
+        reason: "uncertain",
+        message: "OpenShell did not report whether the provider operation completed.",
+      } as const,
+      inventory: { ok: true, value: { names: ["custom-provider"] } } as const,
+      expectedLines: [
+        "  OpenShell reports provider 'custom-provider' is registered; local provider ownership was preserved.",
+        "  Rebuild the target sandbox (`nemoclaw <sandbox> rebuild`) to attach the provider.",
+      ],
+      forgetCalls: 0,
+    },
+    {
+      case: "has no status and is confirmed absent",
+      createError: {
+        kind: "command",
+        reason: "uncertain",
+        message: "OpenShell did not report whether the provider operation completed.",
+      } as const,
       inventory: { ok: true, value: { names: [] } } as const,
       expectedLines: ["  OpenShell confirms provider 'custom-provider' is absent."],
       forgetCalls: 1,
     },
     {
-      case: "still indeterminate",
+      case: "has no status and remains indeterminate",
+      createError: {
+        kind: "command",
+        reason: "uncertain",
+        message: "OpenShell did not report whether the provider operation completed.",
+      } as const,
       inventory: {
         ok: false,
         error: { kind: "timeout", message: "The provider inventory query timed out." },
@@ -189,48 +271,44 @@ describe("credential actions use typed OpenShell provider results", () => {
       ],
       forgetCalls: 0,
     },
-  ])(
-    "reconciles timed-out provider creation when the result is $case (#9806)",
-    async (testCase) => {
-      vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
-      const forgetExtraProvider = vi.fn(() => true);
-      setGlobalCliActionRuntimeHooksForTest({
-        recoverNamedGatewayRuntime: async () => ({ recovered: true }),
-        recordExtraProvider: () => true,
-        forgetExtraProvider,
-        listManagedMcpCredentialReservations: () => [],
-      });
-      const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
-        ok: false,
-        error: { kind: "timeout", message: "The OpenShell provider operation timed out." },
-      });
-      const listProviders: OpenShellProviderAdapter["listProviders"] = async () =>
-        testCase.inventory;
-      const adapter = providerAdapter({
-        createProvider: vi.fn(createProvider),
-        listProviders: vi.fn(listProviders),
-      });
+  ])("reconciles provider creation when the result $case (#9806)", async (testCase) => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+    const forgetExtraProvider = vi.fn(() => true);
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      recordExtraProvider: () => true,
+      forgetExtraProvider,
+      listManagedMcpCredentialReservations: () => [],
+    });
+    const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
+      ok: false,
+      error: testCase.createError,
+    });
+    const listProviders: OpenShellProviderAdapter["listProviders"] = async () => testCase.inventory;
+    const adapter = providerAdapter({
+      createProvider: vi.fn(createProvider),
+      listProviders: vi.fn(listProviders),
+    });
 
-      const result = await runCredentialsAddAction(
-        {
-          provider: "custom-provider",
-          type: "generic",
-          credentials: ["CUSTOM_TOKEN"],
-          configPairs: [],
-          fromExisting: false,
-        },
-        { providerAdapter: adapter },
-      );
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "generic",
+        credentials: ["CUSTOM_TOKEN"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
 
-      expect(result.exitCode).toBe(1);
-      expect(adapter.listProviders).toHaveBeenCalledWith({
-        target: { kind: "named", gatewayName: "nemoclaw" },
-        timeoutMs: 30_000,
-      });
-      expect(result.failureLines).toEqual(expect.arrayContaining(testCase.expectedLines));
-      expect(forgetExtraProvider).toHaveBeenCalledTimes(testCase.forgetCalls);
-    },
-  );
+    expect(result.exitCode).toBe(1);
+    expect(adapter.listProviders).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: 30_000,
+    });
+    expect(result.failureLines).toEqual(expect.arrayContaining(testCase.expectedLines));
+    expect(forgetExtraProvider).toHaveBeenCalledTimes(testCase.forgetCalls);
+  });
 
   it("does not create an OpenAI provider after profile import fails (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
@@ -857,10 +935,10 @@ describe("credential actions use typed OpenShell provider results", () => {
       "  'custom-provider' is still attached to sandbox(es): beta.",
     );
     expect(result.failureLines).toContain(
-      "  Detach it with 'openshell sandbox provider detach <sandbox> custom-provider'",
+      "    openshell sandbox provider detach -g nemoclaw beta custom-provider",
     );
     expect(result.failureLines).toContain(
-      "  for each, then re-run 'nemoclaw credentials reset custom-provider'.",
+      "  Then re-run 'nemoclaw credentials reset custom-provider'.",
     );
   });
 

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { scopeGatewayOpenshellArgs } from "../adapters/openshell/gateway-scope";
 import { createInferenceRouteHelpers } from "./inference-route";
 import {
   bindGatewayUpsertProvider,
   createRoutedResumeProviderUpsert,
   createGatewayScopedOpenshellRunner,
-  scopeGatewayOpenshellArgs,
   selectGatewayForFollowupOrExit,
 } from "./setup-inference";
 

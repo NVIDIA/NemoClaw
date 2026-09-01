@@ -50,6 +50,7 @@ const CONFIG_KEY_DENYLIST =
 const PROVIDER_NAME_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/i;
 const PROVIDER_TYPE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/i;
 const MAX_CONFIG_ENTRY_LENGTH = 4096;
+const MAX_PROVIDER_BASE_URL_LENGTH = 2048;
 
 function ok(successLines: readonly string[]): CredentialsAddResult {
   return { exitCode: 0, successLines, failureLines: [] };
@@ -75,6 +76,38 @@ function managedMcpCollisionFailure(
         "  Use a different credential key, or remove the managed MCP server before retrying.",
       ]);
     }
+  }
+  return null;
+}
+
+function typedProviderConfigFailure(type: string, key: string, value: string): string[] | null {
+  if (type.toLowerCase() !== "openai" || key !== "OPENAI_BASE_URL") {
+    return [
+      `  --config '${key}' is not a supported non-secret setting for provider type '${type}'.`,
+      "  Supported: --type openai with --config OPENAI_BASE_URL=<http(s)://host/path>.",
+      "  Use --from-existing for provider configuration already stored by OpenShell.",
+    ];
+  }
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(value);
+  } catch {
+    return [
+      "  --config 'OPENAI_BASE_URL' must be an absolute HTTP(S) URL without credentials, query parameters, or a fragment.",
+    ];
+  }
+  if (
+    value !== value.trim() ||
+    value.length > MAX_PROVIDER_BASE_URL_LENGTH ||
+    (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:") ||
+    baseUrl.username !== "" ||
+    baseUrl.password !== "" ||
+    baseUrl.search !== "" ||
+    baseUrl.hash !== ""
+  ) {
+    return [
+      "  --config 'OPENAI_BASE_URL' must be an absolute HTTP(S) URL without credentials, query parameters, or a fragment.",
+    ];
   }
   return null;
 }
@@ -146,7 +179,8 @@ async function ensureBundledProviderProfile(
 function isUncertainProviderCreateError(error: OpenShellProviderError): boolean {
   return (
     error.kind === "timeout" ||
-    (error.kind === "transport" && error.reason === "unreachable")
+    (error.kind === "transport" && error.reason === "unreachable") ||
+    (error.kind === "command" && error.reason === "uncertain")
   );
 }
 
@@ -244,6 +278,8 @@ export async function runCredentialsAddAction(
     }
   }
 
+  const config: Array<{ key: string; value: string }> = [];
+  const configKeys = new Set<string>();
   for (const entry of configPairs) {
     if (entry.length > MAX_CONFIG_ENTRY_LENGTH) {
       return fail([`  --config entry exceeds ${MAX_CONFIG_ENTRY_LENGTH} characters.`]);
@@ -274,6 +310,13 @@ export async function runCredentialsAddAction(
         ]);
       }
     }
+    if (configKeys.has(key)) {
+      return fail([`  --config '${key}' may be provided only once.`]);
+    }
+    const typedConfigFailure = typedProviderConfigFailure(type, key, value);
+    if (typedConfigFailure) return fail(typedConfigFailure);
+    configKeys.add(key);
+    config.push({ key, value });
   }
 
   const managedMcpReservations = listManagedMcpCredentialReservations();
@@ -325,11 +368,6 @@ export async function runCredentialsAddAction(
     }
     importedCredentialKeys = [...inspection.value.credentialKeys];
   }
-
-  const config = configPairs.map((configPair) => {
-    const separator = configPair.indexOf("=");
-    return { key: configPair.slice(0, separator), value: configPair.slice(separator + 1) };
-  });
 
   return withMcpCredentialOwnershipLock(async () => {
     const providerCredentialKeys = importedCredentialKeys ?? credentials;

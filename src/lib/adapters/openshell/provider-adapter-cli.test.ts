@@ -690,6 +690,12 @@ describe("CLI OpenShell provider adapter", () => {
       "OpenShell could not start the provider operation.",
       "process_start",
     ],
+    [
+      "command",
+      captured(null, "", "credential-value"),
+      "OpenShell did not report whether the provider operation completed.",
+      "uncertain",
+    ],
   ])(
     "maps %s failures without returning CLI diagnostics (#9806)",
     async (kind, result, message, reason) => {

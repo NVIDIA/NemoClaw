@@ -138,7 +138,7 @@ export async function runCredentialsResetAction(
     ]);
   }
 
-  const outcome = formatResetOutcome(key, recovery);
+  const outcome = formatResetOutcome(key, recovery, target.gatewayName);
   if (!outcome.ok) return fail(outcome.lines);
 
   forgetExtraProvider(key);
@@ -149,6 +149,7 @@ export async function runCredentialsResetAction(
 export function formatResetOutcome(
   key: string,
   recovery: CredentialsProviderDeleteWithRecoveryResult,
+  gatewayName: string,
 ): { ok: boolean; lines: string[] } {
   const onboardHint = `  Re-run '${CLI_NAME} onboard' to enter a new value.`;
   if (recovery.ok) {
@@ -187,8 +188,12 @@ export function formatResetOutcome(
         (failure) =>
           `  Could not detach provider '${key}' from sandbox '${failure.sandbox}': ${failure.error.message}`,
       ),
-      `  Detach it with 'openshell sandbox provider detach <sandbox> ${key}'`,
-      `  for each, then re-run '${CLI_NAME} credentials reset ${key}'.`,
+      "  Detach the provider from each remaining sandbox:",
+      ...stuckSandboxes.map(
+        (sandbox) =>
+          `    openshell sandbox provider detach -g ${gatewayName} ${sandbox} ${key}`,
+      ),
+      `  Then re-run '${CLI_NAME} credentials reset ${key}'.`,
     );
   }
   const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
