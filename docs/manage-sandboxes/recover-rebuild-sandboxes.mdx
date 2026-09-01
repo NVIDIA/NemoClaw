@@ -321,6 +321,8 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 Do not retry rebuild when a retained policy handoff contains a literal credential. Keep the backup and handoff for recovery. Restore or select the recorded gateway and confirm `openshell status` is healthy. Only then destroy the failed sandbox and confirm OpenShell reports it deleted:
 
 ```bash
+openshell gateway select <recorded-gateway>
+openshell status
 $$nemoclaw <sandbox-name> destroy --force
 ```
 

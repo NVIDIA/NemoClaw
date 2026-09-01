@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, type MockInstance, vi } from "vitest";
-import { livePolicyMutationContext } from "./shields-flow-harness";
+import { bindTypedPolicyWriter, livePolicyMutationContext } from "./shields-flow-harness";
 
 type RequireSource = NodeJS.Require;
 
@@ -249,6 +249,7 @@ export function createHermesUnsafeConfigHarness(
 
       const runner = requireSource("../runner.js");
       const policy = requireSource("../policy/index.js");
+      const policyAdapter = requireSource("../adapters/openshell/sandbox-policy-cli.js");
       const agentConfig = requireSource("../sandbox/agent-config.js");
       const registry = requireSource("../state/registry.js");
       const privilegedExec = requireSource("../sandbox/privileged-exec.js");
@@ -271,8 +272,11 @@ export function createHermesUnsafeConfigHarness(
       auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
       errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");
-      vi.spyOn(policy, "buildPolicySetCommand").mockImplementation(
-        (file: unknown, name: unknown) => ["policy", "set", String(file), String(name)],
+      bindTypedPolicyWriter(
+        policyAdapter,
+        (command, options) => runner.run(command, options),
+        undefined,
+        ["policy", "set"],
       );
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath);

@@ -21,6 +21,10 @@
 
 import { run, runCapture, validateName } from "../runner";
 import type { OpenShellSandboxError } from "../adapters/openshell/sandbox-observer";
+import type {
+  OpenShellSandboxPolicySetSubmission,
+  SyncOpenShellSandboxPolicyWriter,
+} from "../adapters/openshell/sandbox-policy";
 
 const fs = require("fs");
 const path = require("path");
@@ -40,18 +44,18 @@ const {
   withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
-  buildPolicySetCommand,
   verifyAppliedPolicyDocument,
   resolvePermissivePolicyPath,
   inspectPolicyMutationContext,
   isPolicyObservationError,
   recheckPolicyMutationContext,
-  rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
+  rejectFinalPolicySetSubmission: rejectFinalShieldsPolicySetSubmission,
   formatOpenShellPolicyRecoveryAction,
 } = require("../policy");
 const {
   createSyncCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
+  syncCliOpenShellSandboxPolicyWriter,
 }: typeof import("../adapters/openshell/sandbox-policy-cli") = require("../adapters/openshell/sandbox-policy-cli");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
@@ -4362,13 +4366,12 @@ interface ShieldsPolicySnapshotRestoreOptions {
   transitionProcessToken?: string;
   deadlineAuthoritative?: boolean;
   expiredTimerRecovery?: boolean;
-  buildPolicySet?: typeof buildPolicySetCommand;
   inspectPolicyContext?: typeof inspectPolicyMutationContext;
   readBasePolicy?: typeof readShieldsBasePolicy;
-  runPolicySet?: typeof run;
+  setPolicy?: SyncOpenShellSandboxPolicyWriter["setSandboxPolicy"];
 }
 
-type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run>;
+type ShieldsPolicySnapshotRestoreResult = OpenShellSandboxPolicySetSubmission;
 
 function restoreShieldsDelta(
   snapshotPolicy: string,
@@ -4477,15 +4480,12 @@ function applyShieldsPolicySnapshot(
   const stagedPath = secureTempFile("nemoclaw-shields-restore", ".yaml");
   try {
     fs.writeFileSync(stagedPath, restoredPolicy, { mode: 0o600 });
-    const result = (options.runPolicySet ?? run)(
-      (options.buildPolicySet ?? buildPolicySetCommand)(
-        stagedPath,
-        sandboxName,
-        context.gatewayName,
-      ),
-      { ignoreError: true },
-    );
-    rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
+    const result = (options.setPolicy ?? syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy)({
+      target: namedOpenShellGateway(context.gatewayName),
+      sandboxName,
+      policyPath: stagedPath,
+    });
+    rejectFinalShieldsPolicySetSubmission(result, "restore the Shields policy snapshot");
     if (result.status === 0) verifyAppliedPolicyDocument(sandboxName, restoredPolicy, context);
     return result;
   } finally {
@@ -4503,7 +4503,7 @@ function rollbackShieldsDown(
   cachedProtocol?: HermesShieldsProtocol,
 ): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
-  let rollbackResult: ReturnType<typeof run> | null = null;
+  let rollbackResult: ShieldsPolicySnapshotRestoreResult | null = null;
   try {
     rollbackResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath);
   } catch (error) {
@@ -4924,10 +4924,12 @@ function applyRecoveredShieldsDownForwardPolicy(
     "reapply the interrupted Shields down policy",
     policyContext,
   );
-  const result = run(buildPolicySetCommand(policyPath, sandboxName, policyContext.gatewayName), {
-    ignoreError: true,
+  const result = syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+    target: namedOpenShellGateway(policyContext.gatewayName),
+    sandboxName,
+    policyPath,
   });
-  rejectFinalShieldsPolicySetResult(result, "reapply the interrupted Shields down policy");
+  rejectFinalShieldsPolicySetSubmission(result, "reapply the interrupted Shields down policy");
   if (result.status !== 0) {
     throw new Error("Interrupted Shields down forward policy could not be reapplied");
   }
@@ -5557,21 +5559,20 @@ function shieldsDownWithoutHostLock(
 
   console.log(`  Applying ${policyName} policy...`);
   const appliedPolicyDocument = fs.readFileSync(policyPathForApply, "utf-8");
-  let policySetResult: ReturnType<typeof run>;
+  let policySetResult: OpenShellSandboxPolicySetSubmission;
   try {
     assertShieldsPolicyMutationContext(sandboxName, "apply the Shields down policy", policyContext);
-    policySetResult = run(
-      buildPolicySetCommand(policyPathForApply, sandboxName, policyContext.gatewayName),
-      {
-        ignoreError: true,
-      },
-    );
+    policySetResult = syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+      target: namedOpenShellGateway(policyContext.gatewayName),
+      sandboxName,
+      policyPath: policyPathForApply,
+    });
   } finally {
     cleanupRuntimePolicyFile();
   }
   let policyObservationFailure: unknown = null;
   try {
-    rejectFinalShieldsPolicySetResult(policySetResult, "apply the Shields down policy");
+    rejectFinalShieldsPolicySetSubmission(policySetResult, "apply the Shields down policy");
   } catch (error) {
     if (!isPolicyObservationError(error)) throw error;
     policyObservationFailure = error;

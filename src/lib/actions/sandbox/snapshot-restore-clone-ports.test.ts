@@ -224,6 +224,52 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
   });
 
+  it("refreshes the source policy after deleting a --force destination and before clone creation", async () => {
+    const initialPolicy = "version: 1\nnetwork_policies:\n  initial: {}\n";
+    const latestPolicy = "version: 1\nnetwork_policies:\n  host_edit: {}\n";
+    const policyRead = vi
+      .fn<() => f.OpenshellCaptureResult>()
+      .mockReturnValueOnce({ status: 0, output: initialPolicy })
+      .mockReturnValue({ status: 0, output: latestPolicy });
+    let createdPolicy = "";
+    f.getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "openclaw",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      dashboardPort: name === "alpha" ? 18790 : 18791,
+    }));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      `${args[0] ?? ""} ${args[1] ?? ""}` === "policy get"
+        ? policyRead()
+        : f.openshellResponses(args, {
+            "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+            "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+          }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.streamSandboxCreateMock.mockImplementation(async (_command, args) => {
+      createdPolicy = fs.readFileSync(String(args[args.indexOf("--policy") + 1]), "utf8");
+      return { status: 0, output: "", sawProgress: false, forcedReady: false };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", {
+      kind: "restore",
+      to: "beta",
+      force: true,
+      yes: true,
+    });
+
+    expect(f.lifecycleMock.events).toContain("delete");
+    expect(policyRead).toHaveBeenCalledTimes(2);
+    expect(createdPolicy).toBe(latestPolicy.trim());
+    expect(createdPolicy).not.toContain("initial");
+  });
+
   it("gives a Hermes clone its own API port instead of the source's (#8543)", async () => {
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation(

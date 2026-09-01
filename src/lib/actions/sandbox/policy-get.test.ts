@@ -13,6 +13,9 @@ import {
   createCliOpenShellSandboxPolicyRead,
   type CliOpenShellSandboxPolicyRead,
 } from "../../adapters/openshell/sandbox-policy-cli";
+import type { OpenShellSandboxError } from "../../adapters/openshell/sandbox-observer";
+import { PolicyObservationError } from "../../adapters/openshell/policy-state";
+import * as gatewayTarget from "./gateway-target";
 import { getSandboxPolicy } from "./policy-get";
 
 type FakeOpenShell = {
@@ -48,6 +51,10 @@ function createFakeOpenShell(output: string, exitCode = 0): FakeOpenShell {
       }),
   });
   return { argsPath, output, readPolicy };
+}
+
+function failedPolicyRead(error: OpenShellSandboxError): CliOpenShellSandboxPolicyRead {
+  return vi.fn(async () => ({ result: { ok: false as const, error }, displayOutput: "" }));
 }
 
 describe("getSandboxPolicy", () => {
@@ -125,4 +132,44 @@ describe("getSandboxPolicy", () => {
     expect(result.yaml).not.toContain(urlCredential);
   });
 
+  it.each([
+    [
+      "authentication",
+      {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox policy read.",
+      },
+      "Restore authentication for the sandbox's OpenShell gateway",
+    ],
+    [
+      "unreachable gateway",
+      {
+        kind: "transport",
+        reason: "unreachable",
+        message: "The sandbox's OpenShell gateway is unreachable.",
+      },
+      "Select the sandbox's recorded gateway first with `openshell gateway select nemoclaw-18080`. Verify the gateway with `openshell status`.",
+    ],
+    [
+      "schema mismatch",
+      { kind: "schema", message: "The OpenShell CLI and gateway policy schemas do not match." },
+      "Update the OpenShell CLI and gateway to compatible versions",
+    ],
+  ] as const)(
+    "preserves typed %s failures with gateway-specific recovery",
+    async (_label, error, recovery) => {
+      vi.spyOn(gatewayTarget, "getKnownSandboxTargetGatewayName").mockReturnValue("nemoclaw-18080");
+
+      const failure = await getSandboxPolicy("alpha", failedPolicyRead(error)).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(failure).toBeInstanceOf(PolicyObservationError);
+      expect(failure).toMatchObject({ policyReadError: error });
+      expect((failure as Error).message).toContain("sandbox 'alpha'");
+      expect((failure as Error).message).toContain("recorded gateway 'nemoclaw-18080'");
+      expect((failure as Error).message).toContain(recovery);
+      expect((failure as Error).message).toContain("`nemoclaw alpha policy get`");
+    },
+  );
 });

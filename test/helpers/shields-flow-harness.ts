@@ -219,6 +219,48 @@ function recordPolicySetBody(policySetBodies: string[], file: unknown): void {
   policySetBodies.push(fs.readFileSync(String(file), "utf-8"));
 }
 
+export function bindTypedPolicyWriter(
+  adapter: typeof import("../../src/lib/adapters/openshell/sandbox-policy-cli"),
+  execute: (
+    command: string[],
+    options: { ignoreError: true },
+  ) => {
+    status?: number | null;
+    stderr?: string | Buffer | null;
+    error?: Error | null;
+  },
+  policySetBodies?: string[],
+  commandPrefix: readonly string[] = ["openshell", "policy", "set"],
+): MockInstance {
+  return vi
+    .spyOn(adapter.syncCliOpenShellSandboxPolicyWriter, "setSandboxPolicy")
+    .mockImplementation((request) => {
+      if (policySetBodies) recordPolicySetBody(policySetBodies, request.policyPath);
+      const result = execute(
+        [
+          ...commandPrefix,
+          ...(request.target.kind === "named" ? ["-g", request.target.gatewayName] : []),
+        ],
+        { ignoreError: true },
+      );
+      const status = typeof result.status === "number" ? result.status : null;
+      return {
+        outcome: adapter.classifyCliOpenShellSandboxPolicySetResult({
+          status,
+          ...(result.error ? { error: result.error } : {}),
+          ...(result.stderr === null || result.stderr === undefined
+            ? {}
+            : {
+                stderr: Buffer.isBuffer(result.stderr)
+                  ? result.stderr.toString("utf8")
+                  : result.stderr,
+              }),
+        }),
+        status,
+      };
+    });
+}
+
 export function createShieldsFlowHarness(
   requireDist: NodeRequire,
   tmpDir: string,
@@ -290,6 +332,7 @@ export function createShieldsFlowHarness(
 
   const runner = requireDist("../runner.js");
   const policy = requireDist("../policy/index.js");
+  const policyAdapter = requireDist("../adapters/openshell/sandbox-policy-cli.js");
   const agentConfig = requireDist("../sandbox/agent-config.js");
   const registry = requireDist("../state/registry.js");
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
@@ -355,16 +398,10 @@ export function createShieldsFlowHarness(
       };
     });
   }
-  vi.spyOn(policy, "buildPolicySetCommand").mockImplementation(
-    (file: unknown, _sandbox, gateway) => {
-      recordPolicySetBody(policySetBodies, file);
-      return [
-        "openshell",
-        "policy",
-        "set",
-        ...(typeof gateway === "string" ? ["-g", gateway] : []),
-      ];
-    },
+  bindTypedPolicyWriter(
+    policyAdapter,
+    (command, runOptions) => runner.run(command, runOptions),
+    policySetBodies,
   );
   vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
   vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(

@@ -1415,7 +1415,7 @@ async function runSnapshotRestoreUnlocked(
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
-      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
+      let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
       try {
         if (targetExists) {
@@ -1428,6 +1428,18 @@ async function runSnapshotRestoreUnlocked(
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );
         }
+        const refreshedClonePolicy = await prepareSnapshotClonePolicy(
+          lockedSourceEntry,
+          targetSandbox,
+        );
+        if (clonePolicy.cleanup && !clonePolicy.cleanup()) {
+          refreshedClonePolicy.cleanup?.();
+          throw new SnapshotCommandError([
+            `Could not securely replace temporary clone policy '${clonePolicy.policyPath}'.`,
+            "Inspect the task-owned temporary directory before retrying the snapshot restore command.",
+          ]);
+        }
+        clonePolicy = refreshedClonePolicy;
         await autoCreateSandboxFromSource(
           sandboxName,
           targetSandbox,

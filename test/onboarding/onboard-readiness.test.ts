@@ -19,7 +19,6 @@ import {
   applyPreset,
   applyPresetContent,
   applyPresets,
-  buildPolicySetCommand,
   removePreset,
 } from "../../src/lib/policy";
 
@@ -140,25 +139,6 @@ describe("sandbox readiness parsing", () => {
 // Regression tests: WSL truncates hyphenated sandbox names during shell
 // argument parsing (e.g. "my-assistant" → "m").
 describe("WSL sandbox name handling", () => {
-  it("buildPolicySetCommand preserves hyphenated sandbox name as a separate argv element", () => {
-    const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-    expect(cmd).toContain("my-assistant");
-    // The sandbox name must be a discrete argv element, not concatenated into a shell string
-    expect(cmd[cmd.length - 1]).toBe("my-assistant");
-  });
-
-  it("buildPolicySetCommand preserves multi-hyphen names", () => {
-    const cmd = buildPolicySetCommand("/tmp/p.yaml", "my-dev-assistant-v2");
-    expect(cmd).toContain("my-dev-assistant-v2");
-  });
-
-  it("buildPolicySetCommand preserves single-char name", () => {
-    // If WSL truncates "my-assistant" to "m", the single-char name should
-    // still be passed through unchanged as an argv element
-    const cmd = buildPolicySetCommand("/tmp/p.yaml", "m");
-    expect(cmd).toContain("m");
-  });
-
   it("applyPreset rejects truncated/invalid sandbox name", () => {
     // Empty name
     expect(() => applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);

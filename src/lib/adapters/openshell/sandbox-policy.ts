@@ -17,6 +17,19 @@ type OpenShellSandboxPolicyRequest = Readonly<{
   timeoutMs?: number;
 }>;
 
+export type SetOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
+  Readonly<{ policyPath: string }>;
+
+export type OpenShellSandboxPolicySetOutcome =
+  | Readonly<{ kind: "applied" }>
+  | Readonly<{ kind: "rejected"; status: number; message: string }>
+  | Readonly<{ kind: "ambiguous"; detail: string }>;
+
+export type OpenShellSandboxPolicySetSubmission = Readonly<{
+  outcome: OpenShellSandboxPolicySetOutcome;
+  status: number | null;
+}>;
+
 export type ReadOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
   Readonly<{ scope: OpenShellSandboxPolicyScope }>;
 
@@ -49,3 +62,15 @@ interface OpenShellSandboxPolicyReaderContract<Async extends boolean> {
 export type OpenShellSandboxPolicyReader = OpenShellSandboxPolicyReaderContract<true>;
 
 export type SyncOpenShellSandboxPolicyReader = OpenShellSandboxPolicyReaderContract<false>;
+
+interface OpenShellSandboxPolicyWriterContract<Async extends boolean> {
+  setSandboxPolicy: (
+    request: SetOpenShellSandboxPolicyRequest,
+  ) => Async extends true
+    ? Promise<OpenShellSandboxPolicySetSubmission>
+    : OpenShellSandboxPolicySetSubmission;
+}
+
+export type OpenShellSandboxPolicyWriter = OpenShellSandboxPolicyWriterContract<true>;
+
+export type SyncOpenShellSandboxPolicyWriter = OpenShellSandboxPolicyWriterContract<false>;

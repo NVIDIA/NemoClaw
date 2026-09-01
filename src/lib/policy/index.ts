@@ -13,8 +13,12 @@ import YAML from "yaml";
 import {
   openshellNotFoundDiagnosticLines,
   namedOpenShellGateway,
+  selectedOpenShellGateway,
   syncCliOpenShellSandboxPolicyReader,
+  syncCliOpenShellSandboxPolicyWriter,
   tryResolveOpenshellBinary,
+  type OpenShellSandboxPolicySetOutcome,
+  type OpenShellSandboxPolicySetSubmission,
   type OpenShellSandboxResult,
 } from "../adapters/openshell/sandbox-policy-cli";
 import {
@@ -46,7 +50,6 @@ import {
   mergeBaselineEntryIntoPolicy,
   removeBaselineEntryFromPolicy,
 } from "./baseline-exclusion";
-import { buildPolicySetCommand } from "./commands";
 import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import {
   parseOpenShellPolicy,
@@ -54,7 +57,6 @@ import {
   type OpenShellPolicyInspection,
   withoutProviderComposedPolicies,
 } from "./merge";
-import { classifyPolicySetResult, type PolicySetOutcome } from "./policy-set-outcome";
 import {
   findUnexpectedExistingPolicyKey,
   PERSONAL_OPEN_INTERNET_PRESET_NAME,
@@ -571,8 +573,8 @@ function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
 }
 
 /**
- * Pre-spawn check used at command entry points before any
- * `run(buildPolicy*Command(...))`. If the binary cannot be resolved, prints
+ * Pre-spawn check used at command entry points before an OpenShell mutation.
+ * If the binary cannot be resolved, prints
  * every location checked and an install hint. Normal command entry points
  * exit nonzero; transactional lifecycle callers can request `nonFatal` and
  * retain control for rollback instead of surfacing the opaque
@@ -585,14 +587,6 @@ function assertOpenshellResolvable(options: { nonFatal?: boolean } = {}): boolea
   }
   if (options.nonFatal) return false;
   process.exit(1);
-}
-
-/**
- * `run` never sets an encoding, so `spawnSync` hands back stdio as a Buffer.
- */
-function decodePolicySetStream(stream: string | Buffer | null | undefined): string {
-  if (stream === null || stream === undefined) return "";
-  return typeof stream === "string" ? stream : stream.toString("utf-8");
 }
 
 /** Delete the private temp policy file and its directory, ignoring absence. */
@@ -610,15 +604,6 @@ function removeTempPolicyMaterial(tmpDir: string): void {
     throw tempPolicyRetentionError(tmpDir, error instanceof Error ? error.message : String(error));
   }
   if (fs.existsSync(tmpDir)) throw tempPolicyRetentionError(tmpDir, "the path still exists");
-}
-
-interface PolicySetSubmission {
-  readonly outcome: PolicySetOutcome;
-  /**
-   * The status the submission exited with, so a caller that ends the process
-   * still reports the code the runner would have reported.
-   */
-  readonly status: number | null;
 }
 
 function policyObservationError(error: unknown): string {
@@ -769,21 +754,11 @@ export function recheckPolicyMutationContext(
 }
 
 /** Reject a final OpenShell policy refusal without exposing raw diagnostics. */
-export function rejectFinalPolicySetResult(
-  result: ReturnType<typeof run>,
+export function rejectFinalPolicySetSubmission(
+  submission: OpenShellSandboxPolicySetSubmission,
   operation: string,
 ): void {
-  const captured = result as ReturnType<typeof run> & {
-    error?: Error;
-    stderr?: string | Buffer | null;
-  };
-  const outcome = classifyPolicySetResult({
-    status: typeof captured.status === "number" ? captured.status : null,
-    ...(captured.error ? { error: captured.error } : {}),
-    stderr: Buffer.isBuffer(captured.stderr)
-      ? captured.stderr.toString("utf8")
-      : (captured.stderr ?? null),
-  });
+  const outcome = submission.outcome;
   if (outcome.kind === "rejected") {
     throw new PolicyObservationError(
       `Refusing to ${operation}: OpenShell rejected the policy change: ${redact(outcome.message)}`,
@@ -826,17 +801,15 @@ function recheckLivePolicyForMutation(
  * Submit a composed policy document through a private temp file and classify
  * what OpenShell did with it.
  *
- * `policy set` runs with `ignoreError` because the runner otherwise calls
- * `process.exit` on a nonzero status, and `process.exit` does not unwind
- * `finally`: that is exactly how a failed submission left the composed
- * sandbox policy readable in `$TMPDIR` (#9206). Owning the temp material here
- * means it is gone before any caller decides to end the process.
+ * The typed policy writer captures nonzero results instead of ending the
+ * process. Owning the temp material here guarantees that it is removed before
+ * any caller decides how to handle the classified submission (#9206).
  */
 function submitComposedPolicy(
   sandboxName: string,
   policyDocument: string,
   gatewayName?: string,
-): PolicySetSubmission {
+): OpenShellSandboxPolicySetSubmission {
   // `mkdtempSync` creates nothing when it throws, so only the write and the
   // submission need the cleanup boundary. Writing inside it keeps a failed or
   // partial write from leaving the composed policy readable in $TMPDIR.
@@ -848,18 +821,11 @@ function submitComposedPolicy(
   try {
     const tmpFile = path.join(tmpDir, "policy.yaml");
     fs.writeFileSync(tmpFile, policyDocument, { encoding: "utf-8", mode: 0o600 });
-    const result = run(buildPolicySetCommand(tmpFile, sandboxName), {
-      ignoreError: true,
-      ...(gatewayName ? { env: { OPENSHELL_GATEWAY: gatewayName } } : {}),
+    return syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+      target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+      sandboxName,
+      policyPath: tmpFile,
     });
-    return {
-      outcome: classifyPolicySetResult({
-        status: result.status,
-        error: result.error,
-        stderr: decodePolicySetStream(result.stderr),
-      }),
-      status: result.status,
-    };
   } finally {
     removeTempPolicyMaterial(tmpDir);
   }
@@ -876,7 +842,7 @@ function submitComposedPolicy(
  */
 function policySetFailure(
   sandboxName: string,
-  outcome: Extract<PolicySetOutcome, { kind: "rejected" }>,
+  outcome: Extract<OpenShellSandboxPolicySetOutcome, { kind: "rejected" }>,
 ): Error {
   return new Error(
     `OpenShell rejected the policy for sandbox '${sandboxName}' (exit ${outcome.status}): ` +
@@ -2964,7 +2930,6 @@ export {
   applyPresetContent,
   applyPresets,
   assertOpenshellResolvable,
-  buildPolicySetCommand,
   clampSetupPolicyPresetNames,
   customPresetOwnsNetworkPolicyKey,
   excludeBaselineEntry,

@@ -28,14 +28,24 @@ import type {
   OpenShellSandboxPolicyRead,
   OpenShellSandboxPolicyReader,
   OpenShellSandboxPolicyRevisionRead,
+  OpenShellSandboxPolicySetOutcome,
+  OpenShellSandboxPolicySetSubmission,
+  OpenShellSandboxPolicyWriter,
   ReadOpenShellSandboxPolicyRequest,
   ReadOpenShellSandboxPolicyRevisionRequest,
+  SetOpenShellSandboxPolicyRequest,
   SyncOpenShellSandboxPolicyReader,
+  SyncOpenShellSandboxPolicyWriter,
 } from "./sandbox-policy";
 
 export { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 export type { OpenShellSandboxError, OpenShellSandboxResult } from "./sandbox-observer";
-export type { OpenShellSandboxPolicyReader } from "./sandbox-policy";
+export type {
+  OpenShellSandboxPolicyReader,
+  OpenShellSandboxPolicySetOutcome,
+  OpenShellSandboxPolicySetSubmission,
+  OpenShellSandboxPolicyWriter,
+} from "./sandbox-policy";
 
 export { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary };
 
@@ -43,6 +53,12 @@ type SyncCapturePolicyCommand = (
   ...args: Parameters<CaptureOpenShellCommand>
 ) => CapturedOpenShellCommandResult;
 type PolicyReaderDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
+type PolicyWriterDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
+type CapturedPolicySetCommandResult = Readonly<{
+  status: number | null;
+  stderr?: string | null;
+  error?: { readonly message?: string } | null;
+}>;
 
 export type CliOpenShellSandboxPolicyReadResult = Readonly<{
   result: OpenShellSandboxResult<OpenShellSandboxPolicyRead>;
@@ -61,6 +77,20 @@ const POLICY_READ_ERROR_MESSAGES = {
   timeout: "The OpenShell sandbox policy read timed out.",
   unavailable: () => openshellNotFoundDiagnosticLines().join("\n"),
 } as const;
+
+// These markers identify the torn-stream failure observed in #8991. OpenShell
+// renders transport and semantic failures with the same code/message shape, so
+// transport evidence must win before a diagnostic can be treated as final.
+const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
+  "h2 protocol error",
+  "http2 error",
+  "tonic::transport::error",
+];
+// Accept a final refusal only when the complete first diagnostic line carries
+// one FailedPrecondition frame. Later output can quote operator-supplied policy
+// text and therefore cannot provide authoritative status evidence.
+const AUTHORITATIVE_REFUSAL_PATTERN =
+  /^Error:\s+code:\s*'failed[ _]precondition',\s*message:\s*'([^'\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/iu;
 
 function metadataSection(output: string): string {
   const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(output);
@@ -145,6 +175,19 @@ function gatewayRequest(request: {
   };
 }
 
+function policySetArgs(request: SetOpenShellSandboxPolicyRequest): string[] {
+  const target = gatewayRequest(request);
+  return [
+    "policy",
+    "set",
+    ...(target.gatewayName ? ["-g", target.gatewayName] : []),
+    "--policy",
+    request.policyPath,
+    "--wait",
+    target.sandboxName,
+  ];
+}
+
 const policyReadArgs = (request: ReadOpenShellSandboxPolicyRequest) =>
   buildOpenShellSandboxPolicyReadArgs({ ...gatewayRequest(request), scope: request.scope });
 const policyInspectionArgs = (request: InspectOpenShellSandboxPolicyRequest) =>
@@ -166,6 +209,49 @@ function captureOptions(timeoutMs?: number, defaultTimeoutMs?: number) {
 
 function capturedOutput(captured: CapturedOpenShellCommandResult): string {
   return (captured.stdout ?? captured.output ?? "").trim();
+}
+
+function policySetDetail(captured: CapturedPolicySetCommandResult): string {
+  return [captured.error?.message, captured.stderr]
+    .map((part) => part?.trim() ?? "")
+    .filter((part) => part.length > 0)
+    .join("\n");
+}
+
+function authoritativeRefusalMessage(stderr: string | null | undefined): string | null {
+  const firstLine = stderr?.split("\n", 1)[0] ?? "";
+  const matched = firstLine.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim();
+  return matched ? matched : null;
+}
+
+export function classifyCliOpenShellSandboxPolicySetResult(
+  captured: CapturedPolicySetCommandResult,
+): OpenShellSandboxPolicySetOutcome {
+  const detail = policySetDetail(captured);
+  const ambiguous = (): OpenShellSandboxPolicySetOutcome => ({
+    kind: "ambiguous",
+    detail: detail || `openshell policy set exited with status ${String(captured.status)}`,
+  });
+  const normalizedDetail = detail.toLowerCase();
+  if (TRANSPORT_FAILURE_MARKERS.some((marker) => normalizedDetail.includes(marker))) {
+    return ambiguous();
+  }
+  // A clean exit alongside a spawn-level error is not proof of application.
+  if (captured.status === 0) return captured.error ? ambiguous() : { kind: "applied" };
+  // spawnSync uses null when the command may not have started or its result was
+  // lost, so only readback can resolve the resulting policy state.
+  if (captured.status === null) return ambiguous();
+  const message = authoritativeRefusalMessage(captured.stderr);
+  return message === null ? ambiguous() : { kind: "rejected", status: captured.status, message };
+}
+
+function parsePolicySet(
+  captured: CapturedOpenShellCommandResult,
+): OpenShellSandboxPolicySetSubmission {
+  return {
+    outcome: classifyCliOpenShellSandboxPolicySetResult(captured),
+    status: captured.status,
+  };
 }
 
 function parseCaptured<T>(
@@ -307,9 +393,44 @@ export function createSyncCliOpenShellSandboxPolicyReader(
   };
 }
 
+export function createCliOpenShellSandboxPolicyWriter(
+  deps: PolicyWriterDeps<CaptureOpenShellCommand>,
+): OpenShellSandboxPolicyWriter {
+  return {
+    setSandboxPolicy: async (request) => {
+      assertPolicyRequest(request);
+      return parsePolicySet(
+        await deps.capture(
+          policySetArgs(request),
+          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+        ),
+      );
+    },
+  };
+}
+
+export function createSyncCliOpenShellSandboxPolicyWriter(
+  deps: PolicyWriterDeps<SyncCapturePolicyCommand>,
+): SyncOpenShellSandboxPolicyWriter {
+  return {
+    setSandboxPolicy: (request) => {
+      assertPolicyRequest(request);
+      return parsePolicySet(
+        deps.capture(
+          policySetArgs(request),
+          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+        ),
+      );
+    },
+  };
+}
+
 export const readCliOpenShellSandboxPolicy = createCliOpenShellSandboxPolicyRead({
   capture: capturePolicyWithRunner,
 });
 export const syncCliOpenShellSandboxPolicyReader = createSyncCliOpenShellSandboxPolicyReader({
+  capture: capturePolicyWithRunner,
+});
+export const syncCliOpenShellSandboxPolicyWriter = createSyncCliOpenShellSandboxPolicyWriter({
   capture: capturePolicyWithRunner,
 });

@@ -7,6 +7,10 @@ import {
   readCliOpenShellSandboxPolicy,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import {
+  formatOpenShellPolicyRecoveryAction,
+  PolicyObservationError,
+} from "../../adapters/openshell/policy-state";
+import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
@@ -40,8 +44,21 @@ async function readSandboxPolicy(
     scope: "base",
   });
   if (!read.result.ok) {
-    throw new Error(
-      `Failed to retrieve base policy for sandbox '${sandboxName}'. ${read.result.error.message}`,
+    const policyReadError = read.result.error;
+    const recovery = formatOpenShellPolicyRecoveryAction(
+      policyReadError,
+      `nemoclaw ${sandboxName} policy get`,
+      recordedGatewayName ?? undefined,
+      recordedGatewayName
+        ? "Restore the sandbox's recorded OpenShell gateway."
+        : "Restore the selected OpenShell gateway.",
+    );
+    const gatewayContext = recordedGatewayName
+      ? `The policy read targeted the recorded gateway '${recordedGatewayName}'. `
+      : "";
+    throw new PolicyObservationError(
+      `Failed to retrieve base policy for sandbox '${sandboxName}'. ${policyReadError.message} ${gatewayContext}${recovery}`,
+      { policyReadError },
     );
   }
   const display = redactOpenShellSandboxPolicyReadForDisplay({

@@ -196,6 +196,7 @@ describe("legacy Hermes shields compatibility", () => {
 
     const runner = requireSource("../runner.js");
     const policy = requireSource("../policy/index.js");
+    const policyAdapter = requireSource("../adapters/openshell/sandbox-policy-cli.js");
     const agentConfig = requireSource("../sandbox/agent-config.js");
     const registry = requireSource("../state/registry.js");
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
@@ -234,14 +235,12 @@ describe("legacy Hermes shields compatibility", () => {
     spies.push(
       runSpy,
       vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n"),
-      vi
-        .spyOn(policy, "buildPolicySetCommand")
-        .mockImplementation((file: unknown, name: unknown) => [
-          "policy",
-          "set",
-          String(file),
-          String(name),
-        ]),
+      shieldsFlow.bindTypedPolicyWriter(
+        policyAdapter,
+        (command, options) => runner.run(command, options),
+        undefined,
+        ["policy", "set"],
+      ),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath),
       ...shieldsFlow.bindLivePolicyMutationContext(policy),
@@ -850,7 +849,8 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "crash retry",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
         }),
       );
       fs.writeFileSync(
@@ -878,7 +878,8 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "dead-provider-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath, snapshotPolicy,
+          snapshotPath,
+          snapshotPolicy,
           forwardPolicy,
         }),
       );

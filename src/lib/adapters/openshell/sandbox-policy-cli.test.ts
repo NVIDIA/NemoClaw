@@ -7,7 +7,9 @@ import * as openshellRuntime from "./runtime";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 import type { CapturedOpenShellCommandResult } from "./sandbox-observer-cli";
 import {
+  classifyCliOpenShellSandboxPolicySetResult,
   createCliOpenShellSandboxPolicyReader,
+  createSyncCliOpenShellSandboxPolicyWriter,
   createSyncCliOpenShellSandboxPolicyReader,
   readCliOpenShellSandboxPolicy,
 } from "./sandbox-policy-cli";
@@ -156,5 +158,100 @@ describe("CLI OpenShell sandbox policy reader", () => {
       ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
       expect.objectContaining({ maxBuffer: 1024 * 1024, replaceEnv: true, timeout: 15_000 }),
     );
+  });
+});
+
+describe("CLI OpenShell sandbox policy writer", () => {
+  it("maps a successful synchronous write to exact gateway-pinned arguments", () => {
+    const capture = vi.fn(() => captured({ output: "" }));
+    const writer = createSyncCliOpenShellSandboxPolicyWriter({ capture });
+
+    expect(
+      writer.setSandboxPolicy({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "my-dev-assistant-v2",
+        policyPath: "/tmp/policy.yaml",
+      }),
+    ).toEqual({ outcome: { kind: "applied" }, status: 0 });
+    expect(capture).toHaveBeenCalledWith(
+      [
+        "policy",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--policy",
+        "/tmp/policy.yaml",
+        "--wait",
+        "my-dev-assistant-v2",
+      ],
+      expect.objectContaining({ ignoreError: true, timeout: 15_000 }),
+    );
+  });
+
+  it("classifies an authoritative policy refusal without exposing it as a transport error", () => {
+    const stderr =
+      "Error: code: 'Failed precondition', message: 'network policy rejected', " +
+      "source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }";
+    const capture = vi.fn((_args: string[]) => captured({ status: 1, output: "", stderr }));
+    const writer = createSyncCliOpenShellSandboxPolicyWriter({
+      capture,
+    });
+
+    expect(
+      writer.setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        policyPath: "/tmp/policy.yaml",
+      }),
+    ).toEqual({
+      outcome: { kind: "rejected", status: 1, message: "network policy rejected" },
+      status: 1,
+    });
+    expect(capture.mock.calls[0]?.[0]).toEqual([
+      "policy",
+      "set",
+      "--policy",
+      "/tmp/policy.yaml",
+      "--wait",
+      "alpha",
+    ]);
+  });
+
+  it("rejects an invalid sandbox name before invoking OpenShell", () => {
+    const capture = vi.fn(() => captured({ output: "" }));
+    const writer = createSyncCliOpenShellSandboxPolicyWriter({ capture });
+
+    expect(() =>
+      writer.setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha; whoami",
+        policyPath: "/tmp/policy.yaml",
+      }),
+    ).toThrow("Invalid OpenShell sandbox name");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "an HTTP/2 reset",
+      captured({
+        status: 1,
+        output: "",
+        stderr: "Error: code: 'Internal error', message: 'h2 protocol error: http2 error'",
+      }),
+    ],
+    [
+      "a missing exit status",
+      captured({
+        status: null,
+        output: "",
+        error: Object.assign(new Error("spawnSync openshell ENOENT"), { code: "ENOENT" }),
+      }),
+    ],
+    ["an unstructured nonzero exit", captured({ status: 1, output: "", stderr: "refused" })],
+  ])("classifies %s as ambiguous", (_label, result) => {
+    expect(classifyCliOpenShellSandboxPolicySetResult(result)).toMatchObject({
+      kind: "ambiguous",
+    });
   });
 });
