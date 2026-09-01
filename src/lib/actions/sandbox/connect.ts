@@ -111,6 +111,7 @@ import {
 import type { HermesPortableLifecycleRecoveryTimingEvidence } from "../../onboard/experimental/hermes-portable-lifecycle";
 import {
   checkAndRecoverSandboxProcesses,
+  createHermesPortableForwardRecoveryInput,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
@@ -675,43 +676,17 @@ function hermesPortableForwardInputForConnectProbe(
     throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
   }
 
-  const capture = (args: readonly string[], timeout: number) => {
-    return captureResolvedOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      timeout,
-    });
-  };
-  const runMutation = (args: readonly string[], timeout: number) => {
-    return runOpenshell([...args], {
-      env: commandAuthority.env,
-      openshellBinary: commandAuthority.executablePath,
-      replaceEnv: true,
-      ignoreError: true,
-      stdio: "ignore",
-      timeout,
-    });
-  };
-
-  return {
-    intent: input.intent,
-    sandboxName: input.sandboxName,
+  return createHermesPortableForwardRecoveryInput({
+    assertCurrent: assertProductCurrent,
+    assertRollbackCurrent: assertCommandCurrent,
+    commandAuthority,
     gatewayName: input.authority.gatewayName,
-    operationTimeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    intent: input.intent,
+    onTiming: writeHermesPortableForwardRecoveryTiming,
     ports,
-    probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    timing: { onComplete: writeHermesPortableForwardRecoveryTiming },
-    deps: {
-      assertCurrent: assertProductCurrent,
-      assertRollbackCurrent: assertCommandCurrent,
-      captureCurrentList: capture,
-      captureRollbackList: capture,
-      runCurrentMutation: runMutation,
-      runRollbackMutation: runMutation,
-    },
-  } as const;
+    sandboxIdentityFingerprint: input.authority.entry.lifecycleLiveIdentityFingerprint ?? "",
+    sandboxName: input.sandboxName,
+  });
 }
 
 /** Restore the launch-readiness forwards through current Hermes command authority. */

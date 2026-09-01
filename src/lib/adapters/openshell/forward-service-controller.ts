@@ -8,6 +8,7 @@ import {
   type ForwardServiceInspection,
 } from "./forward-service-process";
 import type { ForwardServiceTarget } from "./forward-service";
+import type { OpenShellSubprocessRuntimeAuthority } from "./resolve-shared";
 import {
   listForwardServicePendingReceipts,
   listForwardServiceReceipts,
@@ -45,6 +46,8 @@ export interface ForwardServiceController {
 
 export interface ForwardServiceControllerDeps {
   readonly executable: () => string;
+  readonly runtimeAuthority?: OpenShellSubprocessRuntimeAuthority;
+  readonly sourceEnvironment?: NodeJS.ProcessEnv;
   readonly stateDirectory: string;
   readonly runExclusive: <T>(sandboxName: string, operation: () => T) => T;
 }
@@ -83,6 +86,8 @@ export function createForwardServiceController(
   deps: ForwardServiceControllerDeps,
 ): ForwardServiceController {
   const options = (sandboxName: string) => ({
+    ...(deps.runtimeAuthority ? { runtimeAuthority: deps.runtimeAuthority } : {}),
+    ...(deps.sourceEnvironment ? { sourceEnvironment: deps.sourceEnvironment } : {}),
     stateDirectory: deps.stateDirectory,
     runExclusive: <T>(operation: () => T): T => deps.runExclusive(sandboxName, operation),
   });

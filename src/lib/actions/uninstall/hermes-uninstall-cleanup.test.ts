@@ -15,6 +15,21 @@ const mocks = vi.hoisted(() => ({
     sandboxName: string;
   }>,
   stopAll: vi.fn(),
+  retireLegacy: vi.fn(),
+}));
+
+vi.mock("../../onboard/forward-service-migration", () => ({
+  requireProductionForwardServiceAuthority: (sandboxName: string) => ({
+    authority: {
+      gatewayName: "nemoclaw",
+      sandboxIdentityFingerprint: "c".repeat(64),
+      sandboxName,
+    },
+    migrated: false,
+    assertCurrent: vi.fn(),
+    assertLiveCurrent: vi.fn(),
+  }),
+  retireProductionLegacySandboxForwards: mocks.retireLegacy,
 }));
 
 vi.mock("../../adapters/openshell/forward-service-controller", () => ({
@@ -40,7 +55,13 @@ const registration = {
 describe("ForwardTcp uninstall cleanup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.receipts = [];
+    mocks.receipts = [
+      {
+        gatewayName: "nemoclaw",
+        sandboxIdentityFingerprint: "c".repeat(64),
+        sandboxName: "alpha",
+      },
+    ];
     mocks.pendingReceipts = [];
     mocks.stopAll.mockReturnValue(2);
   });

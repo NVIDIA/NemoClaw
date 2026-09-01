@@ -141,6 +141,8 @@ const sandboxEntry = {
   nimContainer: "alpha-nim",
   gatewayName: "nemoclaw-19080",
   gatewayPort: 19080,
+  lifecycleGeneration: "destroy-flow-generation",
+  lifecycleLiveIdentityFingerprint: "a".repeat(64),
 };
 
 export function sandboxListJson(names: string[]): string {

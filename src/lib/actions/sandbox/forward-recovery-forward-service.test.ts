@@ -16,7 +16,22 @@ const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   getSessionAgent: vi.fn(),
   isLocalForwardReachable: vi.fn(),
+  retireLegacy: vi.fn(),
   runOpenshell: vi.fn(),
+}));
+
+vi.mock("../../onboard/forward-service-migration", () => ({
+  requireProductionForwardServiceAuthority: () => ({
+    authority: {
+      gatewayName: "nemoclaw",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName: "alpha",
+    },
+    migrated: false,
+    assertCurrent: vi.fn(),
+    assertLiveCurrent: vi.fn(),
+  }),
+  retireProductionLegacySandboxForwards: mocks.retireLegacy,
 }));
 
 vi.mock("../../adapters/openshell/forward-service-controller", () => ({
@@ -138,68 +153,30 @@ describe("ForwardTcp runtime integration", () => {
     expect(mocks.captureOpenshell).not.toHaveBeenCalled();
   });
 
-  it("migrates a healthy legacy SSH forward to ForwardTcp", async () => {
-    mocks.getSandbox.mockReturnValue({
-      ...SANDBOX,
-      gatewayName: "nemoclaw-18080",
-      gatewayPort: 18_080,
-    });
+  it("migrates legacy SSH forwards before starting ForwardTcp", async () => {
     mocks.controller.inspect.mockReturnValue({
       disposition: "absent",
       ownsListener: false,
       reachable: false,
       receipt: null,
-    });
-    mocks.captureOpenshell.mockReturnValue({
-      status: 0,
-      output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 42 running",
     });
     const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
 
     expect(ensureSandboxPortForwardForPort("alpha", 18_789)).toBe(true);
     expect(mocks.controller.stop).not.toHaveBeenCalled();
     expect(mocks.controller.ensure).toHaveBeenCalledOnce();
-    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
-      ["forward", "list", "--gateway", "nemoclaw-18080"],
-      expect.anything(),
-    );
-    expect(mocks.runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "alpha", "--gateway", "nemoclaw-18080"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-    expect(
-      mocks.runOpenshell.mock.calls.some(([args]) => args[0] === "forward" && args[1] === "start"),
-    ).toBe(false);
-  });
-
-  it("does not migrate an undeclared user-managed legacy forward", async () => {
-    mocks.controller.inspect.mockReturnValue({
-      disposition: "absent",
-      ownsListener: false,
-      reachable: false,
-      receipt: null,
-    });
-    mocks.captureOpenshell.mockReturnValue({
-      status: 0,
-      output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 19000 42 running",
-    });
-    const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
-
-    expect(ensureSandboxPortForwardForPort("alpha", 19_000)).toBe(false);
-    expect(mocks.controller.stop).not.toHaveBeenCalled();
+    expect(mocks.retireLegacy).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("retires every registered ForwardTcp port during sandbox teardown", async () => {
     mocks.controller.stopAll.mockReturnValue(2);
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
 
     expect(
       teardownSandboxDashboardForward("alpha", {
         getSandbox: () => SANDBOX,
         isLocalForwardReachable: () => false,
-        runOpenshell,
       }),
     ).toBe(true);
 
@@ -208,7 +185,7 @@ describe("ForwardTcp runtime integration", () => {
       sandboxIdentityFingerprint: FINGERPRINT,
       sandboxName: "alpha",
     });
-    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.retireLegacy).toHaveBeenCalledOnce();
   });
 
   it("restores the complete declared ForwardTcp set after an intact delete rollback", async () => {
@@ -229,35 +206,27 @@ describe("ForwardTcp runtime integration", () => {
 
   it("reports a mixed legacy listener without using mutable-name cleanup", async () => {
     mocks.controller.stopAll.mockReturnValue(2);
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
 
     expect(
       teardownSandboxDashboardForward("alpha", {
         getSandbox: () => SANDBOX,
         isLocalForwardReachable: () => true,
-        runOpenshell,
       }),
     ).toBe(false);
-    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("uses gateway-scoped legacy cleanup only when no ForwardTcp receipt exists", async () => {
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
+  it("runs the legacy migration seam before receipt cleanup", async () => {
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
 
     expect(
       teardownSandboxDashboardForward("alpha", {
         getSandbox: () => SANDBOX,
         isLocalForwardReachable: () => false,
-        runOpenshell,
       }),
     ).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "alpha", "--gateway", "nemoclaw"],
-      expect.anything(),
-    );
+    expect(mocks.retireLegacy).toHaveBeenCalledOnce();
+    expect(mocks.controller.stopAll).toHaveBeenCalledOnce();
   });
 
   it("reports incomplete teardown when exact ForwardTcp authority is ambiguous", async () => {
@@ -266,14 +235,11 @@ describe("ForwardTcp runtime integration", () => {
     });
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
 
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     expect(
       teardownSandboxDashboardForward("alpha", {
         getSandbox: () => SANDBOX,
         isLocalForwardReachable: () => false,
-        runOpenshell,
       }),
     ).toBe(false);
-    expect(runOpenshell).not.toHaveBeenCalled();
   });
 });

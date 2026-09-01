@@ -3,19 +3,32 @@
 
 import { createForwardServiceController } from "../../adapters/openshell/forward-service-controller";
 import {
+  requireProductionForwardServiceAuthority,
+  retireProductionLegacySandboxForwards,
+} from "../../onboard/forward-service-migration";
+import {
   listForwardServicePendingReceipts,
   listForwardServiceReceipts,
 } from "../../adapters/openshell/forward-service-state";
 import type { ManagedHermesStateVolumeContext } from "../../onboard/managed-workload/hermes-state-volume";
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/access";
 import { removeManagedHermesStateVolume } from "../../onboard/sandbox-provider-cleanup";
+import { parseForwardList } from "../../state/sandbox-session";
 
 export { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 export { requiresManagedHermesStateVolume } from "../../onboard/managed-workload/hermes-state-volume";
 export type { ManagedHermesStateVolumeContext };
 
 interface ForwardServiceUninstallRuntime {
+  env?: NodeJS.ProcessEnv;
+  isPortFree?: (port: number) => boolean;
   log(message: string): void;
+  run?: (
+    command: string,
+    args: string[],
+    options?: { env?: NodeJS.ProcessEnv; stdio?: "ignore" | ["ignore", "pipe", "pipe"] },
+  ) => { status?: number | null; stdout?: string };
+  sleep?: (milliseconds: number) => void;
   warn(message: string): void;
 }
 
@@ -27,15 +40,61 @@ export function stopForwardServicesForUninstall(
   resolveGatewayName: (entry: Readonly<Record<string, unknown>>) => string,
 ): boolean {
   let receipts: ReturnType<typeof listForwardServiceReceipts>;
+  const authorities = new Map<
+    string,
+    ReturnType<typeof requireProductionForwardServiceAuthority>
+  >();
   try {
     receipts = listForwardServiceReceipts({ stateDirectory });
     const pending = listForwardServicePendingReceipts({ stateDirectory });
+    const selectedSandboxNames = new Set(
+      [...receipts, ...pending].map((receipt) => receipt.sandboxName),
+    );
+    const inspectedGateways = new Set<string>();
+    for (const entry of Object.values(registrations)) {
+      const gatewayName = resolveGatewayName(entry);
+      if (!runtime.run || inspectedGateways.has(gatewayName)) continue;
+      inspectedGateways.add(gatewayName);
+      const listed = runtime.run("openshell", ["forward", "list", "--gateway", gatewayName], {
+        env: runtime.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (listed.status !== 0) {
+        throw new Error(`legacy forward list failed for gateway '${gatewayName}'`);
+      }
+      for (const forward of parseForwardList(listed.stdout ?? "")) {
+        if (registrations[forward.sandboxName]) selectedSandboxNames.add(forward.sandboxName);
+      }
+    }
+    for (const sandboxName of selectedSandboxNames) {
+      const migration = requireProductionForwardServiceAuthority(sandboxName);
+      retireProductionLegacySandboxForwards(migration, {
+        capture: (gatewayName) => {
+          const result = runtime.run
+            ? runtime.run("openshell", ["forward", "list", "--gateway", gatewayName], {
+                env: runtime.env,
+                stdio: ["ignore", "pipe", "pipe"],
+              })
+            : { status: 0, stdout: "" };
+          return { status: result.status, output: result.stdout ?? "" };
+        },
+        isReachable: (port) => !(runtime.isPortFree?.(port) ?? true),
+        run: (gatewayName, targetSandboxName, port) =>
+          runtime.run?.(
+            "openshell",
+            ["forward", "stop", String(port), targetSandboxName, "--gateway", gatewayName],
+            { env: runtime.env, stdio: "ignore" },
+          ) ?? { status: 0 },
+        sleep: runtime.sleep,
+      });
+      authorities.set(sandboxName, migration);
+    }
     for (const receipt of [...receipts, ...pending]) {
-      const entry = registrations[receipt.sandboxName];
+      const authority = authorities.get(receipt.sandboxName)?.authority;
       if (
-        !entry ||
-        entry["lifecycleLiveIdentityFingerprint"] !== receipt.sandboxIdentityFingerprint ||
-        resolveGatewayName(entry) !== receipt.gatewayName
+        !authority ||
+        authority.sandboxIdentityFingerprint !== receipt.sandboxIdentityFingerprint ||
+        authority.gatewayName !== receipt.gatewayName
       ) {
         throw new Error(
           `receipt for sandbox '${receipt.sandboxName}' has no matching selected registry authority`,
@@ -61,20 +120,11 @@ export function stopForwardServicesForUninstall(
     // this complete plan, including this synchronous process cleanup.
     runExclusive: (_sandboxName, operation) => operation(),
   });
-  for (const [sandboxName, entry] of Object.entries(registrations)) {
-    const sandboxIdentityFingerprint = entry["lifecycleLiveIdentityFingerprint"];
-    if (
-      typeof sandboxIdentityFingerprint !== "string" ||
-      !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint)
-    ) {
-      continue;
-    }
+  for (const sandboxName of authorities.keys()) {
+    const authority = authorities.get(sandboxName)?.authority;
+    if (!authority) continue;
     try {
-      const stopped = controller.stopAll({
-        gatewayName: resolveGatewayName(entry),
-        sandboxIdentityFingerprint,
-        sandboxName,
-      });
+      const stopped = controller.stopAll(authority);
       if (stopped > 0) {
         runtime.log(
           `Stopped ${String(stopped)} ForwardTcp service${stopped === 1 ? "" : "s"} for sandbox '${sandboxName}'.`,

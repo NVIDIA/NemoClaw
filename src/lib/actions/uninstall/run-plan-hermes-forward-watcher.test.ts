@@ -94,13 +94,7 @@ function defaultRun(command: string, args: readonly string[]): RunResult {
 }
 
 function writeScopedGatewayState(home: string, port: number): void {
-  const stateDir = path.join(
-    home,
-    ".local",
-    "state",
-    "nemoclaw",
-    resolveGatewayStateDirName(port),
-  );
+  const stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
   fs.writeFileSync(
     path.join(stateDir, "openshell-gateway.toml"),
@@ -236,7 +230,7 @@ afterEach(() => {
 });
 
 describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
-  it("stops an owned exact-argv watcher and its sandbox-scoped forward", () => {
+  it("stops an owned exact-argv watcher without invoking legacy forward cleanup", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-7163-stop-"));
     try {
       const watcher = seedWatcher(path.join(tmpHome, ".nemoclaw"), "60642\n");
@@ -246,7 +240,7 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
       expect(outcome.exitCode).toBe(0);
       expect(harness.killed).toContain(60642);
       expect(harness.logs).toContain("Stopped Hermes forward watcher 60642");
-      expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, SANDBOX]);
+      expect(forwardStops(harness)).toEqual([]);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -277,7 +271,7 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
 
       expect(outcome.exitCode).toBe(0);
       expect(harness.killed).not.toContain(70642);
-      expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, SANDBOX]);
+      expect(forwardStops(harness)).toEqual([]);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -313,7 +307,7 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
 
       expect(outcome.exitCode).toBe(0);
       expect(harness.killed).toHaveLength(0);
-      expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, "stale-sandbox"]);
+      expect(forwardStops(harness)).toEqual([]);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -355,7 +349,7 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
 
       expect(outcome.exitCode).toBe(1);
       expect(harness.killed).not.toContain(92642);
-      expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, SANDBOX]);
+      expect(forwardStops(harness)).toEqual([]);
       expect(fs.existsSync(pidFile)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -422,10 +416,7 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
 
       expect(retry.exitCode).toBe(0);
       expect(harness.killed).toEqual([66642, 66642, 66642]);
-      expect(forwardStops(harness)).toEqual([
-        ["forward", "stop", PORT, SANDBOX],
-        ["forward", "stop", PORT, SANDBOX],
-      ]);
+      expect(forwardStops(harness)).toEqual([]);
       expect(fs.existsSync(watcher.pidFile)).toBe(false);
       expect(harness.logs).toContain("Claws retracted. Until next time.");
     } finally {
@@ -454,7 +445,7 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
     }
   });
 
-  it("returns nonzero when the sandbox-scoped forward stop fails", () => {
+  it("does not invoke the retired sandbox-scoped forward stop", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-7163-forward-"));
     try {
       const watcher = seedWatcher(path.join(tmpHome, ".nemoclaw"), "62642\n");
@@ -466,13 +457,11 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
       harness.deps.rmSync = fs.rmSync;
       const outcome = uninstall(tmpHome, harness);
 
-      expect(outcome.exitCode).toBe(1);
+      expect(outcome.exitCode).toBe(0);
       expect(harness.killed).toContain(62642);
-      expect(fs.existsSync(watcher.pidFile)).toBe(true);
-      expect(harness.warnings).toContain(
-        "Failed to stop Hermes forward for sandbox 'default-sandbox' on port 8642 (exit 7).",
-      );
-      expect(harness.logs).not.toContain("Claws retracted. Until next time.");
+      expect(fs.existsSync(watcher.pidFile)).toBe(false);
+      expect(forwardStops(harness)).toEqual([]);
+      expect(harness.logs).toContain("Claws retracted. Until next time.");
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -503,8 +492,7 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
       expect(outcome.exitCode).toBe(0);
       expect(harness.killed).toContain(63642);
       expect(harness.killed).not.toContain(64642);
-      expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, "selected-box"]);
-      expect(forwardStops(harness)).not.toContainEqual(["forward", "stop", PORT, "sibling-box"]);
+      expect(forwardStops(harness)).toEqual([]);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

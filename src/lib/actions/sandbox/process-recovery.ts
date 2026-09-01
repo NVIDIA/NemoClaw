@@ -37,6 +37,7 @@ import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   isSandboxForwardHealthy,
   prepareHermesPortableLaunchForwards,
@@ -91,6 +92,7 @@ export {
 } from "./forward-health";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
 export {
+  createHermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,
@@ -104,6 +106,7 @@ export type {
   HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 };
+
 export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,

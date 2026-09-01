@@ -10,11 +10,36 @@ function createFinalizationForwardHarness(options: {
   forwardList: string;
   listSandboxes: ListSandboxesFn;
 }) {
+  const sandboxes = options.listSandboxes().sandboxes;
+  const ownedPorts = new Set(
+    sandboxes
+      .map((sandbox) => sandbox.dashboardPort)
+      .filter((port): port is number => typeof port === "number" && port > 0),
+  );
+  const controller = {
+    inspect: vi.fn((_authority, endpoint) =>
+      ownedPorts.has(endpoint.localPort)
+        ? {
+            disposition: "owned" as const,
+            ownsListener: true,
+            reachable: true,
+            receipt: {} as never,
+          }
+        : { disposition: "absent" as const, ownsListener: false, reachable: false, receipt: null },
+    ),
+    ensure: vi.fn((_authority, endpoint) => {
+      ownedPorts.add(endpoint.localPort);
+      return { action: "started" as const, receipt: {} as never };
+    }),
+    stop: vi.fn(() => "absent" as const),
+    stopPort: vi.fn(() => "absent" as const),
+    stopAll: vi.fn(() => 0),
+  };
   const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
     status: 0,
   }));
   const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) =>
-    args.join(" ") === "forward list" ? options.forwardList : "",
+    args.join(" ").startsWith("forward list") ? options.forwardList : "",
   );
   const openshellArgv = vi.fn((args: string[]) => [process.execPath, "-e", "", ...args]);
   const helpers = createOnboardDashboardHelpers({
@@ -30,15 +55,43 @@ function createFinalizationForwardHarness(options: {
     sleep: vi.fn(),
     printAgentDashboardUi: vi.fn(),
     listSandboxes: options.listSandboxes,
+    getSandbox: (name) => {
+      const sandbox = sandboxes.find((entry) => entry.name === name);
+      return {
+        ...(sandbox ?? { name }),
+        gatewayName: "nemoclaw",
+        gatewayPort: GATEWAY_PORT,
+        lifecycleGeneration: "test-generation",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      };
+    },
+    forwardService: {
+      controller,
+      executable: () => "/usr/local/bin/openshell",
+      stateDirectory: "/private/test-state",
+      runExclusive: (_sandboxName, operation) => operation(),
+      resolveGatewayName: () => "nemoclaw",
+      migrateAuthority: (sandboxName) => ({
+        authority: {
+          gatewayName: "nemoclaw",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          sandboxName,
+        },
+        migrated: false,
+        assertCurrent: vi.fn(),
+        assertLiveCurrent: vi.fn(),
+      }),
+      retireLegacy: vi.fn(() => 0),
+    },
   });
-  return { helpers, runOpenshell, openshellArgv };
+  return { controller, helpers, runOpenshell, openshellArgv };
 }
 
 describe("finalization dashboard forward", () => {
   it("prefers the persisted registry port over the default dashboard port when CHAT_UI_URL is unset (#8970)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { helpers, openshellArgv } = createFinalizationForwardHarness({
+    const { controller, helpers, openshellArgv } = createFinalizationForwardHarness({
       forwardList:
         "SANDBOX BIND PORT PID STATUS\n" +
         "baseline 127.0.0.1 18789 42000 running\n" +
@@ -55,10 +108,12 @@ describe("finalization dashboard forward", () => {
       expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(18790);
       const warnings = warnSpy.mock.calls.map(([line]) => String(line)).join("\n");
       expect(warnings).not.toContain("is taken");
-      const startCalls = openshellArgv.mock.calls
-        .map(([args]) => args.join(" "))
-        .filter((line) => line.startsWith("forward start"));
-      expect(startCalls).toContainEqual("forward start --background 18790 reonboard-test");
+      expect(controller.ensure).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ localPort: 18_790, targetPort: 18_790 }),
+        expect.anything(),
+      );
+      expect(openshellArgv).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }

@@ -225,7 +225,7 @@ export function createHermesDashboardOnboardForwarding({
   env,
   ensureForward,
   note,
-  runOpenshell,
+  runOpenshell: _runOpenshell,
   getApiForwardPort,
   fail,
 }: {
@@ -243,6 +243,7 @@ export function createHermesDashboardOnboardForwarding({
       console.error(`  ${message}`);
       process.exit(1);
     });
+  void _runOpenshell;
   const resolveStateForPort = (effectivePort: number) =>
     resolveHermesDashboardOnboardState({ agentName, effectivePort, env, fail: failWithMessage });
 
@@ -258,27 +259,14 @@ export function createHermesDashboardOnboardForwarding({
       note,
       rollbackSandbox: (targetSandbox, revalidateRollback) => {
         const apiPort = Number(getApiForwardPort());
-        if (ensureForward.stop && Number.isInteger(apiPort)) {
-          ensureForward.stop(targetSandbox, apiPort, revalidateRollback);
-        } else {
-          revalidateRollback?.(
-            `stop Hermes API forward for sandbox '${targetSandbox}' during rollback`,
+        if (!ensureForward.stop || !Number.isInteger(apiPort)) {
+          return failWithMessage(
+            `ForwardTcp rollback authority is unavailable for sandbox '${targetSandbox}'.`,
           );
-          runOpenshell(["forward", "stop", getApiForwardPort(), targetSandbox], {
-            ignoreError: true,
-          });
         }
+        ensureForward.stop(targetSandbox, apiPort, revalidateRollback);
         if (state.config) {
-          if (ensureForward.stop) {
-            ensureForward.stop(targetSandbox, state.config.port, revalidateRollback);
-          } else {
-            revalidateRollback?.(
-              `stop Hermes dashboard forward for sandbox '${targetSandbox}' during rollback`,
-            );
-            runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
-              ignoreError: true,
-            });
-          }
+          ensureForward.stop(targetSandbox, state.config.port, revalidateRollback);
         }
       },
       fail: failWithMessage,

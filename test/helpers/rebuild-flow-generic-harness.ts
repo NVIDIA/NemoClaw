@@ -16,6 +16,7 @@ import {
   gatewayDrift,
   gatewayState,
   gatewayTeardownAuthority,
+  forwardServiceMigration,
   hermesProviderAuth,
   installTerminalStepFailureMock,
   listHarnessRebuildBackups,
@@ -268,11 +269,26 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     dashboardPort: 18789,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    lifecycleGeneration: "rebuild-flow-generation",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
     ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };
   const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
   vi.spyOn(registry, "getSandbox").mockImplementation(readCurrentSandboxEntry);
+  vi.spyOn(forwardServiceMigration, "requireProductionForwardServiceAuthority").mockImplementation(
+    ((sandboxName: string) => ({
+      authority: {
+        gatewayName: String(currentSandboxEntry.gatewayName),
+        sandboxIdentityFingerprint: String(currentSandboxEntry.lifecycleLiveIdentityFingerprint),
+        sandboxName,
+      },
+      migrated: false,
+      assertCurrent: vi.fn(),
+      assertLiveCurrent: vi.fn(),
+    })) as never,
+  );
+  vi.spyOn(forwardServiceMigration, "retireProductionLegacySandboxForwards").mockReturnValue(0);
   const initialDefaultSandbox = overrides.defaultSandbox ?? null;
   const preDeleteDefaultSandbox =
     overrides.preDeleteDefaultSandbox !== undefined

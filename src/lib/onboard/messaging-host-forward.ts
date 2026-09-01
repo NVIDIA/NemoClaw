@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { createForwardServiceController } from "../adapters/openshell/forward-service-controller";
 import {
   getActiveMessagingHostForward,
   MessagingHostStateApplier,
@@ -13,11 +14,10 @@ import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
 import { withDashboardSandboxLifecycleLockSync } from "./dashboard-port";
-
-type RunOpenshell = (
-  args: string[],
-  options: { ignoreError: true },
-) => { readonly status?: number | null };
+import {
+  requireProductionForwardServiceAuthority,
+  retireProductionLegacySandboxForwards,
+} from "./forward-service-migration";
 
 type GatewayBinding =
   | {
@@ -47,15 +47,62 @@ export function productionForwardServiceRegistryContext() {
     stateDirectory: path.join(path.dirname(registry.REGISTRY_FILE), "state"),
     runExclusive: withDashboardSandboxLifecycleLockSync,
     resolveGatewayName: resolveProductionForwardServiceGatewayName,
+    migrateAuthority: requireProductionForwardServiceAuthority,
+    retireLegacy: retireProductionLegacySandboxForwards,
+  };
+}
+
+/** Stop every registered direct service, migrating any pre-cutover row first. */
+export function stopAllProductionForwardServices(deps: {
+  capture(gatewayName: string): {
+    error?: unknown;
+    output?: string | null;
+    signal?: NodeJS.Signals | null;
+    status?: number | null;
+  };
+  isReachable(port: number): boolean;
+  run(gatewayName: string, sandboxName: string, port: number): { status?: number | null };
+}): void {
+  const context = productionForwardServiceRegistryContext();
+  const controller = createForwardServiceController({
+    executable: () => {
+      throw new Error("ForwardTcp cleanup cannot start a process");
+    },
+    stateDirectory: context.stateDirectory,
+    runExclusive: context.runExclusive,
+  });
+  for (const sandbox of context.listSandboxes().sandboxes) {
+    const migration = context.migrateAuthority(sandbox.name);
+    context.retireLegacy(migration, deps);
+    controller.stopAll(migration.authority);
+  }
+}
+
+export function createProductionForwardServiceCleanupDeps(deps: {
+  isReachable(port: number): boolean;
+  runCaptureOpenshell(args: string[], options: { ignoreError: true }): string | null;
+  runOpenshell(args: string[], options: { ignoreError: true }): { status?: number | null };
+}) {
+  return {
+    capture: (gatewayName: string) => {
+      const output = deps.runCaptureOpenshell(["forward", "list", "--gateway", gatewayName], {
+        ignoreError: true,
+      });
+      return { status: output === null ? 1 : 0, output };
+    },
+    isReachable: deps.isReachable,
+    run: (gatewayName: string, sandboxName: string, port: number) =>
+      deps.runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
+        ignoreError: true,
+      }),
   };
 }
 
 export interface MessagingHostForwardRollbackOptions {
-  readonly runOpenshell: RunOpenshell;
+  readonly stopForward: (sandboxName: string, port: number) => boolean;
   readonly buildRollbackMessage: (sandboxName: string, err: unknown) => readonly string[];
   readonly cliName: () => string;
   readonly forwardPortsToStop?: readonly (number | string | null | undefined)[];
-  readonly beforeMutation?: (operation: string) => void;
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
 }
@@ -144,10 +191,9 @@ function abortMessagingHostForwardFailure({
   portsToStop.add(String(forward.port));
 
   for (const port of portsToStop) {
-    rollback.beforeMutation?.(
-      `stop messaging forward ${port} for sandbox '${sandboxName}' after dashboard failure`,
-    );
-    rollback.runOpenshell(["forward", "stop", port, sandboxName], { ignoreError: true });
+    if (!rollback.stopForward(sandboxName, Number(port))) {
+      throw new Error(`ForwardTcp rollback authority is unavailable for '${sandboxName}'`);
+    }
   }
   const error = new Error(
     `Failed to start ${forward.label} forward on port ${forward.port}. Free the port and ` +

@@ -61,7 +61,6 @@ const channelState: typeof import("./onboard/channel-state") = require("./onboar
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
-const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
@@ -462,7 +461,12 @@ const {
   skippedStepMessage,
 }: typeof import("./onboard/skipped-step-message") = require("./onboard/skipped-step-message");
 const {
+  createProductionForwardServiceCleanupDeps,
+  stopAllProductionForwardServices,
+}: typeof import("./onboard/messaging-host-forward") = require("./onboard/messaging-host-forward");
+const {
   findAvailableDashboardPort,
+  isPortBoundOnHost,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   withDashboardPortReservationScope: withSandboxPortReservationScope,
@@ -1104,6 +1108,15 @@ function logDockerDriverGatewayRestart(reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
 }
 
+const stopAllForwardServicesForGatewayCleanup = (): void =>
+  stopAllProductionForwardServices(
+    createProductionForwardServiceCleanupDeps({
+      isReachable: isPortBoundOnHost,
+      runCaptureOpenshell,
+      runOpenshell,
+    }),
+  );
+
 const {
   destroyGateway,
   removeDockerDriverGatewayRegistration,
@@ -1111,7 +1124,6 @@ const {
   runQuietOpenshell,
 } = createGatewayProcessLifecycle({
   gatewayName: () => GATEWAY_NAME,
-  dashboardPort: getOnboardDashboardPort,
   runOpenshell,
   runCaptureOpenshell,
   dockerInspect,
@@ -1223,21 +1235,16 @@ async function preflight(
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
     gatewayName: GATEWAY_NAME,
     cliDisplayName: cliDisplayName(),
-    dashboardPort: getOnboardDashboardPort(),
     verifyGatewayContainerRunning,
     recoverGatewayRuntime,
     waitForGatewayHttpReady,
     getGatewayLocalEndpoint,
-    stopDashboardForward: () =>
-      runOpenshell(["forward", "stop", String(getOnboardDashboardPort())], {
-        ignoreError: true,
-      }),
+    stopDashboardForward: stopAllDashboardForwards,
     stopAllDashboardForwards,
     getGatewayClusterImageDrift,
     exitProcess: (code) => process.exit(code),
     destroyGateway,
     destroyGatewayForReuse,
-    runOpenshell,
     dockerInspect,
     dockerStop,
     dockerRm,
@@ -1274,7 +1281,6 @@ async function preflight(
       const reuse = await applyHealthyPortReuse({
         kind,
         port,
-        dashboardPort: getOnboardDashboardPort(),
         label,
         runtimeDisplayName: cliDisplayName(),
         gatewayName: GATEWAY_NAME,
@@ -1283,7 +1289,7 @@ async function preflight(
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
-        runOpenshell,
+        stopDashboardForwards: stopAllForwardServicesForGatewayCleanup,
         checkPortAvailable,
         verifyGatewayContainerRunning,
       });
@@ -2997,8 +3003,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           waitForGatewayHttpReady,
           recoverGatewayRuntime,
           getGatewayLocalEndpoint,
-          stopDashboardForward: () =>
-            bestEffortForwardStop(runOpenshell, getOnboardDashboardPort()),
+          stopDashboardForward: stopAllDashboardForwards,
           destroyGateway,
           getGatewayClusterImageDrift,
           stopAllDashboardForwards,

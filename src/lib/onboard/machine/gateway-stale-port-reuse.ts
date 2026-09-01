@@ -43,7 +43,6 @@ export function classifyGatewayPortReuse(input: GatewayPortReuseInput): GatewayP
 export interface HealthyPortReuseInput {
   kind: PreflightPortKind;
   port: number;
-  dashboardPort: number;
   label: string;
   runtimeDisplayName: string;
   gatewayName: string;
@@ -52,7 +51,9 @@ export interface HealthyPortReuseInput {
   portCheckOptions: CheckPortOpts | undefined;
   supportsLifecycleCommands: boolean;
   destroyGateway: () => boolean;
-  runOpenshell: (args: string[], opts: { ignoreError: true }) => unknown;
+  dashboardPort?: number;
+  runOpenshell?: (args: string[], opts: { ignoreError: true }) => unknown;
+  stopDashboardForwards?: () => void;
   checkPortAvailable: (port?: number, opts?: CheckPortOpts) => Promise<PortProbeResult>;
   verifyGatewayContainerRunning: (gatewayName: string) => GatewayContainerState;
 }
@@ -71,7 +72,7 @@ export type HealthyPortReuseOutcome =
 export async function applyHealthyPortReuse(
   input: HealthyPortReuseInput,
 ): Promise<HealthyPortReuseOutcome | null> {
-  const { kind, port, dashboardPort, label, runtimeDisplayName, gatewayName } = input;
+  const { kind, port, label, runtimeDisplayName, gatewayName } = input;
   if (kind === "other") return null;
   // An occupied externally supervised gateway port is expected. Preserve it
   // unchanged so the FSM can perform the authoritative listener, supervisor,
@@ -94,7 +95,10 @@ export async function applyHealthyPortReuse(
     });
     if (decision === "stale") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-      input.runOpenshell(["forward", "stop", String(dashboardPort)], { ignoreError: true });
+      if (!input.stopDashboardForwards) {
+        throw new Error("ForwardTcp cleanup authority is unavailable");
+      }
+      input.stopDashboardForwards();
       const gatewayReuseState = destroyGatewayForReuse(
         input.destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",

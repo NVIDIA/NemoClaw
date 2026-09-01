@@ -4,7 +4,6 @@
 import {
   type HermesForwardWatcherHost,
   stopHermesForwardWatcherProcess,
-  stopHermesSandboxForward,
 } from "../../adapters/openshell/hermes-forward-watcher";
 import { readHermesForwardWatcherState } from "../../state/hermes-forward-watcher";
 
@@ -25,7 +24,6 @@ export function stopHermesForwardWatchers(
   let allStopped = true;
   for (const watcher of state.watchers) {
     if (!stopHermesForwardWatcherProcess(watcher, host)) allStopped = false;
-    if (!stopHermesSandboxForward(watcher, host)) allStopped = false;
   }
   return allStopped;
 }

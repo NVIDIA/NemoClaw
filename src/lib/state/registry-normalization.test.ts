@@ -233,6 +233,33 @@ describe("sandbox registry normalization", () => {
     expect(compareAndSetLegacySandboxLifecycleGeneration(stale, "c".repeat(64))).toBe(false);
   });
 
+  it("publishes complete ForwardTcp authority only for an unchanged legacy row", async () => {
+    const registry = await loadRegistryWith({});
+    const { compareAndSetLegacySandboxLifecycleAuthority } =
+      await import("./registry/lifecycle-generation");
+    registry.registerSandbox({ name: "legacy-forward" });
+    const expected = registry.getSandbox("legacy-forward")!;
+
+    expect(
+      compareAndSetLegacySandboxLifecycleAuthority(
+        expected,
+        "forward-generation",
+        "a".repeat(64),
+      ),
+    ).toBe(true);
+    expect(registry.getSandbox("legacy-forward")).toMatchObject({
+      lifecycleGeneration: "forward-generation",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    });
+    expect(
+      compareAndSetLegacySandboxLifecycleAuthority(
+        expected,
+        "replacement-generation",
+        "b".repeat(64),
+      ),
+    ).toBe(false);
+  });
+
   it("round-trips immutable serving profile provenance while preserving legacy rows (#8246)", async () => {
     const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
     expect(registry.getSandbox("legacy")?.servingProfileProvenance).toBeUndefined();

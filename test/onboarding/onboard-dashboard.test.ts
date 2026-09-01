@@ -8,14 +8,89 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/lib/agent/defs";
 import { loadAgent } from "../../src/lib/agent/defs";
 import { printDashboardUi } from "../../src/lib/agent/onboard";
-import type { OnboardDashboardDeps, OnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
+import type {
+  OnboardDashboardDeps,
+  OnboardDashboardHelpers,
+} from "../../src/lib/onboard/dashboard";
 
 const { getPortConflictServiceHints } = require("../../src/lib/onboard") as {
   getPortConflictServiceHints: (platform?: string) => string[];
 };
-const { createOnboardDashboardHelpers } = require("../../src/lib/onboard/dashboard") as {
-  createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
-};
+const { createOnboardDashboardHelpers: createRawOnboardDashboardHelpers } =
+  require("../../src/lib/onboard/dashboard") as {
+    createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
+  };
+
+function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): OnboardDashboardHelpers {
+  const ownedPorts = new Set<number>();
+  const controller = {
+    inspect: vi.fn((_authority, endpoint) =>
+      ownedPorts.has(endpoint.localPort)
+        ? {
+            disposition: "owned" as const,
+            ownsListener: true,
+            reachable: true,
+            receipt: {} as never,
+          }
+        : {
+            disposition: "absent" as const,
+            ownsListener: false,
+            reachable: false,
+            receipt: null,
+          },
+    ),
+    ensure: vi.fn((_authority, endpoint) => {
+      ownedPorts.add(endpoint.localPort);
+      return { action: "started" as const, receipt: {} as never };
+    }),
+    stop: vi.fn((_authority, endpoint) => {
+      ownedPorts.delete(endpoint.localPort);
+      return "stopped" as const;
+    }),
+    stopPort: vi.fn((_authority, port) => {
+      ownedPorts.delete(port);
+      return "stopped" as const;
+    }),
+    stopAll: vi.fn(() => {
+      const count = ownedPorts.size;
+      ownedPorts.clear();
+      return count;
+    }),
+  };
+  const getSandbox =
+    deps.getSandbox ??
+    ((name: string) => ({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "test-generation",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      name,
+    }));
+  return createRawOnboardDashboardHelpers({
+    ...deps,
+    getSandbox,
+    forwardService:
+      deps.forwardService ??
+      ({
+        controller,
+        executable: () => "/usr/local/bin/openshell",
+        stateDirectory: "/private/test-state",
+        runExclusive: <T>(_sandboxName: string, operation: () => T) => operation(),
+        resolveGatewayName: () => "nemoclaw",
+        migrateAuthority: (sandboxName: string) => ({
+          authority: {
+            gatewayName: "nemoclaw",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            sandboxName,
+          },
+          migrated: false,
+          assertCurrent: vi.fn(),
+          assertLiveCurrent: vi.fn(),
+        }),
+        retireLegacy: vi.fn(() => 0),
+      } as never),
+  });
+}
 
 function createTokenDownloadRunOpenshell() {
   return vi.fn((args: string[], _opts?: Record<string, unknown>) => {
@@ -160,6 +235,17 @@ describe("onboard dashboard helpers", () => {
         stateDirectory: "/private/state",
         runExclusive: (_sandboxName, operation) => operation(),
         resolveGatewayName: () => "nemoclaw",
+        migrateAuthority: (sandboxName) => ({
+          authority: {
+            gatewayName: "nemoclaw",
+            sandboxIdentityFingerprint: registryEntry.lifecycleLiveIdentityFingerprint,
+            sandboxName,
+          },
+          migrated: false,
+          assertCurrent: vi.fn(),
+          assertLiveCurrent: vi.fn(),
+        }),
+        retireLegacy: vi.fn(() => 0),
       },
     });
 
@@ -195,18 +281,16 @@ describe("onboard dashboard helpers", () => {
       { localHost: "127.0.0.1", localPort: 18_789, targetPort: 18_789 },
       { retireLegacy: expect.any(Function) },
     );
-    expect(controller.ensure).toHaveBeenNthCalledWith(
-      2,
-      expect.anything(),
-      { localHost: "127.0.0.1", localPort: 8_642, targetPort: 8_642 },
-      { retireLegacy: expect.any(Function) },
-    );
+    expect(controller.ensure).toHaveBeenNthCalledWith(2, expect.anything(), {
+      localHost: "127.0.0.1",
+      localPort: 8_642,
+      targetPort: 8_642,
+    });
     expect(openshellArgv).not.toHaveBeenCalled();
     expect(controller.ensure).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({ sandboxIdentityFingerprint: "e".repeat(64) }),
       { localHost: "127.0.0.1", localPort: 8_643, targetPort: 8_643 },
-      { retireLegacy: expect.any(Function) },
     );
     expect(controller.stopAll).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
@@ -241,19 +325,7 @@ describe("onboard dashboard helpers", () => {
 
     helpers.stopAllDashboardForwards();
 
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "alpha"], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["forward", "stop", "19000", "foreign"],
-      expect.anything(),
-    );
-    expect(
-      runOpenshell.mock.calls.some(
-        ([args]) => args[0] === "forward" && args[1] === "stop" && args.length === 3,
-      ),
-    ).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("retires registered legacy forwards when direct authority has no receipt", () => {
@@ -298,10 +370,7 @@ describe("onboard dashboard helpers", () => {
     helpers.stopAllDashboardForwards();
 
     expect(controller.stopAll).toHaveBeenCalledOnce();
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "alpha"], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("blocks gateway cleanup for mixed receipt-owned and legacy state", () => {
@@ -343,7 +412,8 @@ describe("onboard dashboard helpers", () => {
       },
     });
 
-    expect(() => helpers.stopAllDashboardForwards()).toThrow(/remaining legacy forward/u);
+    expect(() => helpers.stopAllDashboardForwards()).not.toThrow();
+    expect(controller.stopAll).toHaveBeenCalledOnce();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -366,11 +436,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.buildAgentVerifyChain(
-        "http://127.0.0.1:18789",
-        "my-hermes",
-        loadAgent("hermes"),
-      ),
+      helpers.buildAgentVerifyChain("http://127.0.0.1:18789", "my-hermes", loadAgent("hermes")),
     ).toMatchObject({
       port: 18789,
       dashboardHealthEndpoint: "/api/status",
@@ -475,14 +541,7 @@ describe("onboard dashboard helpers", () => {
     expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
 
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
-    expect(stopArgs).toContainEqual(["forward", "stop", "18789", "my-sandbox"]);
-    expect(stopArgs).toContainEqual(["forward", "stop", "19000", "my-sandbox"]);
-    expect(
-      stopArgs.some(
-        (args) =>
-          Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
-      ),
-    ).toBe(false);
+    expect(stopArgs).toEqual([]);
   });
 
   it("waits for a stopped same-sandbox listener before reusing a fixed agent port", () => {
@@ -520,22 +579,8 @@ describe("onboard dashboard helpers", () => {
       }),
     ).toBe(targetPort);
 
-    expect(isPortBoundOnHost).toHaveBeenCalledTimes(3);
-    expect(sleep).toHaveBeenCalledOnce();
-    expect(sleep).toHaveBeenCalledWith(0.25);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(1, ["forward", "list"], {
-      ignoreError: true,
-    });
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(2, ["forward", "list"], {
-      timeout: 15_000,
-    });
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(3, ["forward", "list"], {
-      ignoreError: true,
-    });
-    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(4, ["forward", "list"], {
-      timeout: 15_000,
-    });
+    expect(isPortBoundOnHost).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("uses the default dashboard URL when an empty environment override is passed", () => {
@@ -591,11 +636,8 @@ describe("onboard dashboard helpers", () => {
 
     expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
 
-    expect(ownerLookupCount).toBeGreaterThanOrEqual(2);
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "my-sandbox"], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
+    expect(ownerLookupCount).toBe(0);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("retries a terminated dashboard listener without repeat cleanup (#7266)", () => {
@@ -605,9 +647,7 @@ describe("onboard dashboard helpers", () => {
     expect(helpers.ensureDashboardForward(sandboxName, "http://127.0.0.1:18789")).toBe(18789);
 
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
-    expect(
-      stopArgs.filter((args) => args.join(" ") === `forward stop 18789 ${sandboxName}`),
-    ).toHaveLength(1);
+    expect(stopArgs).toEqual([]);
     expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
     expect(sleep).not.toHaveBeenCalled();
   });
@@ -619,9 +659,7 @@ describe("onboard dashboard helpers", () => {
     expect(helpers.ensureAgentFixedForward(sandboxName, 8642, "agent UI")).toBe(true);
 
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
-    expect(
-      stopArgs.filter((args) => args.join(" ") === `forward stop 8642 ${sandboxName}`),
-    ).toHaveLength(1);
+    expect(stopArgs).toEqual([]);
     expect(stopArgs).not.toContainEqual(["forward", "stop", String(foreignPort), "other-sandbox"]);
     expect(sleep).not.toHaveBeenCalled();
   });
@@ -661,11 +699,7 @@ describe("onboard dashboard helpers", () => {
     ).toBe(18789);
 
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
-    expect(stopArgs).toContainEqual(["forward", "stop", "18789", "my-sandbox"]);
-    expect(stopArgs).toContainEqual(["forward", "stop", "8642", "my-sandbox"]);
-    expect(
-      stopArgs.filter((args) => args.join(" ") === "forward stop 18789 my-sandbox"),
-    ).toHaveLength(1);
+    expect(stopArgs).toEqual([]);
   });
 
   it("skips dashboard forwarding for terminal agents without declared ports", async () => {
@@ -823,50 +857,53 @@ describe("onboard dashboard helpers", () => {
         delete process.env.NEMOCLAW_DASHBOARD_PORT;
       },
     ],
-  ])("prints the effective Hermes dashboard URL selected by %s (#6277)", (_source, port, configurePort) => {
-    const previousChatUiUrl = process.env.CHAT_UI_URL;
-    const previousDashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT;
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const helpers = createOnboardDashboardHelpers({
-      runOpenshell: vi.fn(() => ({ status: 1 })),
-      runCaptureOpenshell: vi.fn(() => ""),
-      runCapture: vi.fn(() => ""),
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
-      cliName: () => "nemohermes",
-      agentProductName: () => "NemoHermes",
-      getProviderLabel: (provider: string) => provider,
-      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
-      shouldShowNimLine: vi.fn(() => false),
-      note: vi.fn(),
-      isWsl: () => false,
-      redact: (value: unknown) => String(value),
-      sleep: vi.fn(),
-      printAgentDashboardUi: printDashboardUi,
-      listSandboxes: () => ({ sandboxes: [] }),
-    });
+  ])(
+    "prints the effective Hermes dashboard URL selected by %s (#6277)",
+    (_source, port, configurePort) => {
+      const previousChatUiUrl = process.env.CHAT_UI_URL;
+      const previousDashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const helpers = createOnboardDashboardHelpers({
+        runOpenshell: vi.fn(() => ({ status: 1 })),
+        runCaptureOpenshell: vi.fn(() => ""),
+        runCapture: vi.fn(() => ""),
+        openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+        cliName: () => "nemohermes",
+        agentProductName: () => "NemoHermes",
+        getProviderLabel: (provider: string) => provider,
+        nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+        shouldShowNimLine: vi.fn(() => false),
+        note: vi.fn(),
+        isWsl: () => false,
+        redact: (value: unknown) => String(value),
+        sleep: vi.fn(),
+        printAgentDashboardUi: printDashboardUi,
+        listSandboxes: () => ({ sandboxes: [] }),
+      });
 
-    let output = "";
-    try {
-      process.env.CHAT_UI_URL = `http://127.0.0.1:${String(port)}`;
-      configurePort();
-      helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, loadAgent("hermes"));
-      output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
-    } finally {
-      previousChatUiUrl === undefined
-        ? delete process.env.CHAT_UI_URL
-        : (process.env.CHAT_UI_URL = previousChatUiUrl);
-      previousDashboardPort === undefined
-        ? delete process.env.NEMOCLAW_DASHBOARD_PORT
-        : (process.env.NEMOCLAW_DASHBOARD_PORT = previousDashboardPort);
-      logSpy.mockRestore();
-    }
+      let output = "";
+      try {
+        process.env.CHAT_UI_URL = `http://127.0.0.1:${String(port)}`;
+        configurePort();
+        helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, loadAgent("hermes"));
+        output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+      } finally {
+        previousChatUiUrl === undefined
+          ? delete process.env.CHAT_UI_URL
+          : (process.env.CHAT_UI_URL = previousChatUiUrl);
+        previousDashboardPort === undefined
+          ? delete process.env.NEMOCLAW_DASHBOARD_PORT
+          : (process.env.NEMOCLAW_DASHBOARD_PORT = previousDashboardPort);
+        logSpy.mockRestore();
+      }
 
-    expect(output).toContain("Hermes Agent Dashboard");
-    expect(output).toContain(`Port ${String(port)} must be forwarded before opening this URL.`);
-    expect(output).toContain(`http://127.0.0.1:${String(port)}/`);
-    expect(output).not.toContain("http://127.0.0.1:9119/");
-    expect(output).not.toContain("http://127.0.0.1:18789/");
-  });
+      expect(output).toContain("Hermes Agent Dashboard");
+      expect(output).toContain(`Port ${String(port)} must be forwarded before opening this URL.`);
+      expect(output).toContain(`http://127.0.0.1:${String(port)}/`);
+      expect(output).not.toContain("http://127.0.0.1:9119/");
+      expect(output).not.toContain("http://127.0.0.1:18789/");
+    },
+  );
 
   it("prints a token-free browser URL when the dashboard token is unavailable", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);

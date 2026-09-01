@@ -11,6 +11,7 @@ import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   launchReadinessRegistryFixture,
 } from "../../helpers/launch-readiness-fixture";
+import { recoveringForwardServiceNodeOptions } from "../../helpers/forward-service-controller-preload";
 import { nonWslPlatformNodeOptions } from "../../helpers/platform-override-node-options";
 import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
@@ -96,6 +97,7 @@ interface Fixture {
   tmpDir: string;
   sandboxName: string;
   invocationLog: string;
+  nodeOptions: string;
   recoveryWaitMs: string;
 }
 
@@ -122,9 +124,6 @@ function setupFixture(opts: {
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
   fs.mkdirSync(registryDir, { recursive: true });
-  const legacyReadiness = launchReadinessRegistryFixture() as Record<string, unknown>;
-  delete legacyReadiness.lifecycleLiveIdentityFingerprint;
-
   fs.writeFileSync(
     path.join(registryDir, "sandboxes.json"),
     JSON.stringify({
@@ -132,7 +131,7 @@ function setupFixture(opts: {
       sandboxes: {
         [sandboxName]: {
           name: sandboxName,
-          ...legacyReadiness,
+          ...launchReadinessRegistryFixture(),
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
@@ -152,7 +151,7 @@ function setupFixture(opts: {
   const forwardPollCountFile = path.join(tmpDir, "forward-poll-count");
   const listenerPidFile = path.join(tmpDir, "forward-listener-pids");
   const listenerReadyFile = path.join(tmpDir, "forward-listener-ready");
-  fs.writeFileSync(forwardStateFile, "initial");
+  fs.writeFileSync(forwardStateFile, opts.forwardListStatus);
   fs.writeFileSync(forwardPollCountFile, "0");
   fs.writeFileSync(listenerPidFile, "");
 
@@ -299,6 +298,18 @@ process.exit(0);
     tmpDir,
     sandboxName,
     invocationLog,
+    nodeOptions: nonWslPlatformNodeOptions(
+      tmpDir,
+      recoveringForwardServiceNodeOptions(tmpDir, {
+        heal: opts.forwardStartHeals !== false,
+        invocationLog,
+        sandboxIdentityFingerprint:
+          launchReadinessRegistryFixture().lifecycleLiveIdentityFingerprint,
+        sandboxName,
+        settlePolls: opts.forwardStartDelayPolls ?? 0,
+        stateFile: forwardStateFile,
+      }),
+    ),
     recoveryWaitMs: opts.recoveryWaitMs ?? "2000",
   };
 }
@@ -314,7 +325,7 @@ function runRecover(fixture: Fixture) {
       env: {
         ...process.env,
         HOME: fixture.tmpDir,
-        NODE_OPTIONS: nonWslPlatformNodeOptions(fixture.tmpDir),
+        NODE_OPTIONS: fixture.nodeOptions,
         PATH: "/usr/bin:/bin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
@@ -335,7 +346,7 @@ describe("nemoclaw <name> recover", () => {
         forwardListStatus: "dead",
       });
       const result = runRecover(fixture);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout ?? ""}\n${result.stderr ?? ""}`).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain(
@@ -343,10 +354,9 @@ describe("nemoclaw <name> recover", () => {
       );
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      const stopIdx = calls.findIndex((l) => l.startsWith("forward stop "));
-      const startIdx = calls.findIndex((l) => l.startsWith("forward start "));
-      expect(stopIdx).toBeGreaterThanOrEqual(0);
-      expect(startIdx).toBeGreaterThan(stopIdx);
+      const startIdx = calls.findIndex((line) => line === "forward-service ensure");
+      expect(startIdx).toBeGreaterThanOrEqual(0);
+      expect(calls.some((line) => line.startsWith("forward start "))).toBe(false);
     },
   );
 
@@ -362,15 +372,15 @@ describe("nemoclaw <name> recover", () => {
         recoveryWaitMs: "2000",
       });
       const result = runRecover(fixture);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout ?? ""}\n${result.stderr ?? ""}`).toBe(0);
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      const startIdx = calls.findIndex((line) => line.startsWith("forward start "));
-      const postStartListCalls = calls
+      const startIdx = calls.findIndex((line) => line === "forward-service ensure");
+      const settlementChecks = calls
         .slice(startIdx + 1)
-        .filter((line) => line === "forward list");
+        .filter((line) => line === "forward-service settle");
       expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(postStartListCalls.length).toBeGreaterThanOrEqual(3);
+      expect(settlementChecks.length).toBeGreaterThanOrEqual(3);
     },
   );
 
@@ -410,7 +420,6 @@ describe("nemoclaw <name> recover", () => {
     expect(combined).not.toContain("restored dashboard port forward");
 
     const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-    expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
-    expect(calls.some((l) => l.startsWith("forward start "))).toBe(false);
+    expect(calls.some((line) => line.startsWith("forward-service "))).toBe(false);
   });
 });

@@ -178,12 +178,14 @@ describe("applyHealthyPortReuse", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const destroyGateway = vi.fn(() => true);
     const runOpenshell = vi.fn();
+    const stopDashboardForwards = vi.fn();
     const checkPortAvailable = vi.fn().mockResolvedValue({ ok: true });
 
     const result = await applyHealthyPortReuse({
       ...BASE_INPUT,
       destroyGateway,
       runOpenshell,
+      stopDashboardForwards,
       checkPortAvailable,
       verifyGatewayContainerRunning: () => "missing",
     });
@@ -197,7 +199,8 @@ describe("applyHealthyPortReuse", () => {
       expect(result.portCheck.ok).toBe(true);
     }
     expect(destroyGateway).toHaveBeenCalledTimes(1);
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789"], { ignoreError: true });
+    expect(stopDashboardForwards).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
     expect(checkPortAvailable).toHaveBeenCalledWith(8080, undefined);
     const messages = log.mock.calls.map((c) => c[0]);
     expect(messages).toContain(
@@ -214,6 +217,7 @@ describe("applyHealthyPortReuse", () => {
       ...BASE_INPUT,
       destroyGateway: () => true,
       runOpenshell: vi.fn(),
+      stopDashboardForwards: vi.fn(),
       checkPortAvailable,
       verifyGatewayContainerRunning: () => "missing",
     });

@@ -162,6 +162,10 @@ function throwSttyFailure(): never {
   throw new Error("stty failed");
 }
 
+function throwForwardAuthorityFixtureFailure(message: string): never {
+  throw new Error(message);
+}
+
 function spawnStatusFromOptions(options: ConnectHarnessOptions): number | null {
   return Object.hasOwn(options, "spawnStatus") ? (options.spawnStatus ?? null) : 0;
 }
@@ -184,6 +188,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         } as never)) as never);
 
   const runtime = requireDist("../../src/lib/adapters/openshell/runtime.js");
+  const forwardMigration = requireDist("../../src/lib/onboard/forward-service-migration.js");
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
@@ -481,10 +486,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       (rawInput: unknown) => {
         const input = rawInput as Parameters<PrepareHermesPortableLaunchForwards>[0];
         for (let index = 0; index < 5; index += 1) input.deps.assertCurrent();
-        input.deps.captureCurrentList(
-          ["forward", "list", "--gateway", input.gatewayName],
-          input.probeTimeoutMs,
-        );
         return {
           result: { kind: "verified", restoredPorts: [] },
           release: () => ({ kind: "verified", restoredPorts: [] }),
@@ -552,6 +553,30 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
             },
       )
     : [primaryRegistryEntry];
+  vi.spyOn(forwardMigration, "requireProductionForwardServiceAuthority").mockImplementation(((
+    sandboxName: string,
+  ) => {
+    const entry = registryEntries.find((candidate) => candidate.name === sandboxName);
+    const sandboxIdentityFingerprint =
+      entry?.lifecycleLiveIdentityFingerprint ??
+      throwForwardAuthorityFixtureFailure("fixture forwarding authority unavailable");
+    const assertCurrent = () => {
+      const current = registryEntries.find((candidate) => candidate.name === sandboxName);
+      current?.lifecycleLiveIdentityFingerprint === sandboxIdentityFingerprint ||
+        throwForwardAuthorityFixtureFailure("fixture forwarding authority changed");
+    };
+    return {
+      authority: {
+        gatewayName: String(entry?.gatewayName ?? "nemoclaw"),
+        sandboxIdentityFingerprint,
+        sandboxName,
+      },
+      migrated: false,
+      assertCurrent,
+      assertLiveCurrent: assertCurrent,
+    };
+  }) as never);
+  vi.spyOn(forwardMigration, "retireProductionLegacySandboxForwards").mockReturnValue(0);
   vi.spyOn(registry, "getSandbox").mockImplementation(
     (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
   );

@@ -13,11 +13,7 @@ import { decideOllamaModelOwnership } from "../../inference/ollama/model-ownersh
 import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
 import type { SandboxEntry } from "../../state/registry";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
-import {
-  discoverActiveOllamaSandboxNames,
-  type SandboxStopDeps,
-  stopSandbox,
-} from "./stop";
+import { discoverActiveOllamaSandboxNames, type SandboxStopDeps, stopSandbox } from "./stop";
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
@@ -155,7 +151,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
 }
 
 describe("teardownSandboxDashboardForward", () => {
-  it("stops only the selected sandbox's resolved dashboard forward on its gateway (#7227)", () => {
+  it("retires migrated ForwardTcp authority for only the selected sandbox", () => {
     const getSandbox = vi.fn(() =>
       sandbox({
         dashboardPort: 19443,
@@ -164,65 +160,50 @@ describe("teardownSandboxDashboardForward", () => {
       }),
     );
     const resolveSandboxDashboardPort = vi.fn(() => 19443);
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
-    const isLocalForwardReachable = vi
-      .fn<() => boolean>()
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    const isLocalForwardReachable = vi.fn(() => false);
+    const migration = {
+      authority: {
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        sandboxName: "selected-sandbox",
+      },
+      migrated: true,
+      assertCurrent: vi.fn(),
+      assertLiveCurrent: vi.fn(),
+    };
+    const controller = { stopAll: vi.fn(() => 1) };
+    const retireLegacy = vi.fn();
 
-    expect(() =>
+    expect(
       teardownSandboxDashboardForward("selected-sandbox", {
+        controller: controller as never,
         getSandbox,
         isLocalForwardReachable,
+        migrateAuthority: () => migration,
+        retireLegacy,
         resolveSandboxDashboardPort,
-        runOpenshell,
       }),
-    ).not.toThrow();
+    ).toBe(true);
 
     expect(resolveSandboxDashboardPort).toHaveBeenCalledWith(
       "selected-sandbox",
       expect.objectContaining({ getSandbox: expect.any(Function) }),
     );
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "19443", "selected-sandbox", "--gateway", "nemoclaw-18080"],
-      {
-        ignoreError: true,
-        stdio: "ignore",
-        timeout: 30_000,
-      },
-    );
-    expect(isLocalForwardReachable).toHaveBeenCalledTimes(2);
-    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(1, 19443);
-    expect(isLocalForwardReachable).toHaveBeenNthCalledWith(2, 19443);
+    expect(retireLegacy).toHaveBeenCalledWith(migration);
+    expect(controller.stopAll).toHaveBeenCalledWith(migration.authority);
+    expect(isLocalForwardReachable).toHaveBeenCalledWith(19443);
   });
 
-  it("does not throw when OpenShell cannot be launched (#7227)", () => {
-    const runOpenshell = vi.fn(() => {
-      throw new Error("spawn openshell ENOENT");
-    });
-
-    expect(() =>
+  it("reports incomplete cleanup when migration authority is unavailable", () => {
+    expect(
       teardownSandboxDashboardForward("selected-sandbox", {
         getSandbox: () => sandbox(),
+        migrateAuthority: () => {
+          throw new Error("live identity unavailable");
+        },
         resolveSandboxDashboardPort: () => 19443,
-        runOpenshell,
       }),
-    ).not.toThrow();
-  });
-
-  it("does not probe the port when OpenShell reports cleanup failure (#7227)", () => {
-    const isLocalForwardReachable = vi.fn(() => false);
-
-    expect(() =>
-      teardownSandboxDashboardForward("selected-sandbox", {
-        getSandbox: () => sandbox(),
-        isLocalForwardReachable,
-        resolveSandboxDashboardPort: () => 19443,
-        runOpenshell: () => ({ status: 1 }),
-      }),
-    ).not.toThrow();
-
-    expect(isLocalForwardReachable).not.toHaveBeenCalled();
+    ).toBe(false);
   });
 });
 
@@ -263,10 +244,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
         },
       ],
     });
-    expect(captureSandboxOwnershipPhases).toHaveBeenCalledExactlyOnceWith(
-      "nemoclaw",
-      environment,
-    );
+    expect(captureSandboxOwnershipPhases).toHaveBeenCalledExactlyOnceWith("nemoclaw", environment);
   });
 
   it("fails closed when a listed sibling has no usable phase (#10074)", () => {
@@ -292,8 +270,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
 
     expect(result).toEqual({
       ok: false,
-      message:
-        "OpenShell could not list sandbox phases on gateway 'nemoclaw': gateway unavailable",
+      message: "OpenShell could not list sandbox phases on gateway 'nemoclaw': gateway unavailable",
     });
   });
 });
@@ -475,7 +452,10 @@ describe("stopSandbox", () => {
       provider: "ollama/qwen3-vl:4b",
     });
     const peer = sandbox({ model: "qwen2.5:7b", name: "peer", provider: "ollama-local" });
-    const h = harness({ listSandboxes: () => ({ sandboxes: [hermesSandbox, peer], defaultSandbox: null }), unloadOllamaModels });
+    const h = harness({
+      listSandboxes: () => ({ sandboxes: [hermesSandbox, peer], defaultSandbox: null }),
+      unloadOllamaModels,
+    });
     h.getSandbox.mockReturnValue(hermesSandbox);
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
     h.stopPortableSandbox.mockReturnValue({ kind: "stopped", portableAgent: "hermes" });
@@ -611,23 +591,23 @@ describe("stopSandbox", () => {
     expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "unknown-runtime",
-    "mxc-not-installed",
-  ])("fails closed for unregistered provider %s without lifecycle side effects", (providerId) => {
-    const h = harness();
-    h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
+  it.each(["unknown-runtime", "mxc-not-installed"])(
+    "fails closed for unregistered provider %s without lifecycle side effects",
+    (providerId) => {
+      const h = harness();
+      h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
 
-    const result = stopSandbox("my-sandbox", h.deps);
+      const result = stopSandbox("my-sandbox", h.deps);
 
-    expect(result.exitCode).toBe(1);
-    expect(result.message).toContain(providerId);
-    expect(result.message).toContain("has no registered lifecycle provider");
-    expect(h.stopSandboxChannels).not.toHaveBeenCalled();
-    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
-    expect(h.dockerStop).not.toHaveBeenCalled();
-    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
-  });
+      expect(result.exitCode).toBe(1);
+      expect(result.message).toContain(providerId);
+      expect(result.message).toContain("has no registered lifecycle provider");
+      expect(h.stopSandboxChannels).not.toHaveBeenCalled();
+      expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+      expect(h.dockerStop).not.toHaveBeenCalled();
+      expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["null driver", sandbox({ openshellDriver: null })],
@@ -733,12 +713,7 @@ describe("stopSandbox Ollama GPU release", () => {
 
     stopSandbox("my-sandbox", h.deps);
 
-    expect(events).toEqual([
-      "ownership-lock-enter",
-      "peer-scan",
-      "unload",
-      "ownership-lock-exit",
-    ]);
+    expect(events).toEqual(["ownership-lock-enter", "peer-scan", "unload", "ownership-lock-exit"]);
   });
 
   it("releases GPU memory on an already-stopped sandbox too (#9110)", () => {

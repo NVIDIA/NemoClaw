@@ -260,10 +260,14 @@ describe("onboard Hermes dashboard helpers", () => {
       .mockImplementationOnce(() => {
         throw new Error("sandbox identity changed");
       });
+    const stop = vi.fn((_sandbox, _port, revalidate) => revalidate?.("stop"));
     const forwarding = createHermesDashboardOnboardForwarding({
       agentName: "hermes",
       env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
-      ensureForward: vi.fn(() => false),
+      ensureForward: Object.assign(
+        vi.fn(() => false),
+        { stop },
+      ),
       note: vi.fn(),
       runOpenshell,
       getApiForwardPort: () => "8642",
@@ -277,14 +281,10 @@ describe("onboard Hermes dashboard helpers", () => {
       forwarding.ensureForState(state, "my-hermes", true, revalidateSandboxIdentity),
     ).toThrow("sandbox identity changed");
 
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
-      ignoreError: true,
-    });
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "my-hermes"],
-      expect.anything(),
-    );
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(stop).toHaveBeenCalledWith("my-hermes", 8642, revalidateSandboxIdentity);
+    expect(stop).toHaveBeenCalledWith("my-hermes", 18789, revalidateSandboxIdentity);
+    expect(runOpenshell).not.toHaveBeenCalled();
     expect(runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "my-hermes"],
       expect.anything(),
@@ -293,10 +293,14 @@ describe("onboard Hermes dashboard helpers", () => {
 
   it("leaves the sandbox running after Hermes dashboard rollback (#9833)", () => {
     const runOpenshell = vi.fn();
+    const stop = vi.fn();
     const forwarding = createHermesDashboardOnboardForwarding({
       agentName: "hermes",
       env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
-      ensureForward: vi.fn(() => false),
+      ensureForward: Object.assign(
+        vi.fn(() => false),
+        { stop },
+      ),
       note: vi.fn(),
       runOpenshell,
       getApiForwardPort: () => "8642",
@@ -309,16 +313,9 @@ describe("onboard Hermes dashboard helpers", () => {
     expect(() => forwarding.ensureForState(state, "my-hermes", true)).toThrow(
       /left the sandbox running/u,
     );
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
-      ignoreError: true,
-    });
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "my-hermes"], {
-      ignoreError: true,
-    });
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "my-hermes"],
-      expect.anything(),
-    );
+    expect(stop).toHaveBeenCalledWith("my-hermes", 8642, undefined);
+    expect(stop).toHaveBeenCalledWith("my-hermes", 18789, undefined);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("uses the ForwardTcp lifecycle stop during dashboard rollback", () => {

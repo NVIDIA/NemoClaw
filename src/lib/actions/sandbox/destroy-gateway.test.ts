@@ -526,11 +526,9 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     [
       "gateway remove",
       (runOpenshell: ReturnType<typeof vi.fn>) =>
-        runOpenshell
-          .mockImplementationOnce(() => ({ status: 0, stdout: "", stderr: "" }))
-          .mockImplementationOnce(() => {
-            throw new Error("injected gateway remove failure");
-          }),
+        runOpenshell.mockImplementationOnce(() => {
+          throw new Error("injected gateway remove failure");
+        }),
     ],
     [
       "volume cleanup",

@@ -1007,6 +1007,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         (args) => args[0] !== "-p" && !(args[0] === "gateway" && args[1] === "list"),
       );
       expect(meaningful).toEqual([
+        ["forward", "list", "--gateway", `nemoclaw-${String(port)}`],
         ["sandbox", "delete", "-g", `nemoclaw-${String(port)}`, "port-box"],
       ]);
       expect(fs.existsSync(path.join(selected, "sandboxes.json"))).toBe(true);

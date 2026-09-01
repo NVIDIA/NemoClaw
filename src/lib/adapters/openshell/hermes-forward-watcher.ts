@@ -151,23 +151,3 @@ export function stopHermesForwardWatcherProcess(
   host.warn(`Failed to stop Hermes forward watcher ${pid}`);
   return false;
 }
-
-export function stopHermesSandboxForward(
-  watcher: HermesForwardWatcherState,
-  host: HermesForwardWatcherHost,
-): boolean {
-  if (!host.commandExists("openshell")) {
-    host.warn(
-      `Failed to stop Hermes forward for sandbox '${watcher.sandbox}' on port ${watcher.port}: openshell is unavailable.`,
-    );
-    return false;
-  }
-  const result = host.run("openshell", ["forward", "stop", watcher.port, watcher.sandbox], {
-    env: host.env,
-  });
-  if (result.status === 0) return true;
-  host.warn(
-    `Failed to stop Hermes forward for sandbox '${watcher.sandbox}' on port ${watcher.port} (exit ${String(result.status ?? "unknown")}).`,
-  );
-  return false;
-}

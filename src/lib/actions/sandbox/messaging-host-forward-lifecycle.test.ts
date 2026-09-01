@@ -14,12 +14,6 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   runOpenshell: vi.fn(() => ({ status: 0 })),
 }));
 
-vi.mock("../../onboard/forward-start", () => ({
-  buildDetachedForwardStartSpawn: vi.fn(() => vi.fn()),
-  buildForwardStartProgressLogger: vi.fn(() => vi.fn()),
-  runDetachedForwardStartWithRetries: vi.fn(() => ({ ok: true, diagnostic: "" })),
-}));
-
 function makePlan(): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
@@ -59,17 +53,13 @@ describe("ensureMessagingHostForwardAfterRebuild", () => {
     vi.clearAllMocks();
   });
 
-  it("preserves a failed list probe and skips forward cleanup (#8522)", () => {
+  it("fails closed without published ForwardTcp authority", () => {
     vi.mocked(captureOpenshell).mockReturnValue({ status: 1, output: "" });
 
     const ok = ensureMessagingHostForwardAfterRebuild("demo", makePlan());
 
     expect(ok).toBe(false);
-    expect(captureOpenshell).toHaveBeenCalledOnce();
-    expect(captureOpenshell).toHaveBeenCalledWith(
-      ["forward", "list"],
-      expect.objectContaining({ ignoreError: true, timeout: expect.any(Number) }),
-    );
+    expect(captureOpenshell).not.toHaveBeenCalled();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 });

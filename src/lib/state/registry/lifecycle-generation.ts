@@ -29,3 +29,39 @@ export function compareAndSetLegacySandboxLifecycleGeneration(
     return true;
   });
 }
+
+/** Publish complete live lifecycle authority for one unchanged pre-authority registry row. */
+export function compareAndSetLegacySandboxLifecycleAuthority(
+  expected: SandboxEntry,
+  lifecycleGeneration: string,
+  sandboxIdentityFingerprint: string,
+): boolean {
+  const expectedSnapshot = structuredClone(expected);
+  if (
+    expectedSnapshot.pendingRouteReservation === true ||
+    (expectedSnapshot.lifecycleGeneration !== undefined &&
+      expectedSnapshot.lifecycleLiveIdentityFingerprint !== undefined) ||
+    lifecycleGeneration.length === 0 ||
+    lifecycleGeneration.length > 256 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(lifecycleGeneration) ||
+    !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint) ||
+    (expectedSnapshot.lifecycleGeneration !== undefined &&
+      expectedSnapshot.lifecycleGeneration !== lifecycleGeneration) ||
+    (expectedSnapshot.lifecycleLiveIdentityFingerprint !== undefined &&
+      expectedSnapshot.lifecycleLiveIdentityFingerprint !== sandboxIdentityFingerprint)
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[expectedSnapshot.name];
+    if (!current || !isDeepStrictEqual(current, expectedSnapshot)) return false;
+    data.sandboxes[expectedSnapshot.name] = {
+      ...current,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
+    };
+    save(data);
+    return true;
+  });
+}

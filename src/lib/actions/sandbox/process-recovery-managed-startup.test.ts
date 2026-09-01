@@ -9,6 +9,39 @@ import * as registry from "../../state/registry";
 import * as forwardHealth from "./forward-health";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 
+const forwardMocks = vi.hoisted(() => ({
+  controller: {
+    ensure: vi.fn(() => ({ action: "started", receipt: {} })),
+    inspect: vi.fn(() => ({
+      disposition: "absent",
+      ownsListener: false,
+      reachable: false,
+      receipt: null,
+    })),
+    stop: vi.fn(() => "absent"),
+    stopAll: vi.fn(() => 0),
+    stopPort: vi.fn(() => "absent"),
+  },
+}));
+
+vi.mock("../../adapters/openshell/forward-service-controller", () => ({
+  createForwardServiceController: () => forwardMocks.controller,
+}));
+
+vi.mock("../../onboard/forward-service-migration", () => ({
+  requireProductionForwardServiceAuthority: (sandboxName: string) => ({
+    authority: {
+      gatewayName: "nemoclaw",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      sandboxName,
+    },
+    migrated: false,
+    assertCurrent: vi.fn(),
+    assertLiveCurrent: vi.fn(),
+  }),
+  retireProductionLegacySandboxForwards: vi.fn(() => 0),
+}));
+
 const ACCEPTED_MANAGED_RECOVERY = {
   status: 0,
   stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
@@ -30,6 +63,10 @@ function mockOpenClawSandbox(sandboxName: string): void {
     name: sandboxName,
     agent: "openclaw",
     dashboardPort: 18789,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "startup-generation",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
     openshellDriver: "docker",
   });
 }
@@ -53,38 +90,35 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     "SUPERVISOR_DISCOVERY_PENDING",
     "PRIVILEGED_CONTROL_UNAVAILABLE",
     "GATEWAY_HEALTH_TIMEOUT",
-  ])(
-    "waits through the exact %s startup transition (#9466)",
-    (startupMarker) => {
-      const sandboxName = "startup-box";
-      mockOpenClawSandbox(sandboxName);
-      mockRecoveredForward(sandboxName);
-      vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
-      vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
-      const requestGatewaySupervisorAction = vi
-        .fn()
-        .mockReturnValueOnce({ status: 1, stdout: "", stderr: startupMarker })
-        .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
-      const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+  ])("waits through the exact %s startup transition (#9466)", (startupMarker) => {
+    const sandboxName = "startup-box";
+    mockOpenClawSandbox(sandboxName);
+    mockRecoveredForward(sandboxName);
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
+    const requestGatewaySupervisorAction = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: startupMarker })
+      .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-      const result = checkAndRecoverSandboxProcesses(sandboxName, {
-        quiet: true,
-        isSandboxGatewayRunningImpl: () => false,
-        requestGatewaySupervisorAction,
-        relaunchManagedSupervisorSessionImpl,
-        waitForRecreatedSandboxOpenShellReadyImpl: () => true,
-      });
+    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl: () => true,
+    });
 
-      expect(result).toMatchObject({
-        checked: true,
-        wasRunning: false,
-        recovered: true,
-        forwardRecovered: true,
-      });
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(2);
-      expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
-    },
-  );
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    });
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(2);
+    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
+  });
 
   it("does not retry a diagnostic-bearing supervisor-discovery result", () => {
     const sandboxName = "diagnostic-start";
