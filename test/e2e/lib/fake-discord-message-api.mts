@@ -1,11 +1,9 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-"use strict";
-
-const fs = require("fs");
-const http = require("http");
+import fs from "node:fs";
+import http from "node:http";
 
 const host = process.env.FAKE_DISCORD_MESSAGE_API_HOST || "0.0.0.0";
 const rawPort = process.env.FAKE_DISCORD_MESSAGE_API_PORT || "0";
@@ -15,22 +13,23 @@ const captureFile = process.env.FAKE_DISCORD_MESSAGE_API_CAPTURE_FILE || "";
 const expectedToken = process.env.FAKE_DISCORD_MESSAGE_API_EXPECTED_TOKEN || "";
 const MAX_BODY_BYTES = 1024 * 1024;
 
-if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  console.error(`FAKE_DISCORD_MESSAGE_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`);
-  process.exit(2);
+if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+  throw new Error(
+    `FAKE_DISCORD_MESSAGE_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`,
+  );
 }
 
 if (!expectedToken) {
-  console.error("FAKE_DISCORD_MESSAGE_API_EXPECTED_TOKEN is required");
-  process.exit(2);
+  throw new Error("FAKE_DISCORD_MESSAGE_API_EXPECTED_TOKEN is required");
 }
 
-function record(event) {
-  if (!captureFile) return;
-  fs.appendFileSync(captureFile, `${JSON.stringify({ at: Date.now(), ...event })}\n`);
+function record(event: Record<string, unknown>): void {
+  if (captureFile) {
+    fs.appendFileSync(captureFile, `${JSON.stringify({ at: Date.now(), ...event })}\n`);
+  }
 }
 
-function tokenFromAuthorization(value) {
+function tokenFromAuthorization(value: string | undefined): string {
   const raw = String(value || "");
   if (raw.length < 4 || raw.slice(0, 3).toLowerCase() !== "bot") return raw;
   const next = raw.charCodeAt(3);
@@ -44,59 +43,64 @@ function tokenFromAuthorization(value) {
   return raw.slice(index);
 }
 
-function tokenLooksPlaceholder(value) {
-  return typeof value === "string" && value.includes("openshell:resolve:env:");
+function tokenLooksPlaceholder(value: string): boolean {
+  return value.includes("openshell:resolve:env:");
 }
 
-function writeJson(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(body));
+function writeJson(response: http.ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
 }
 
-function parseJson(body) {
+function parseJson(body: string): Record<string, unknown> {
   try {
-    return JSON.parse(body || "{}");
+    return JSON.parse(body || "{}") as Record<string, unknown>;
   } catch {
     return {};
   }
 }
 
-const server = http.createServer((req, res) => {
-  const chunks = [];
+const server = http.createServer((request, response) => {
+  const chunks: Buffer[] = [];
   let bodyBytes = 0;
   let bodyTooLarge = false;
-  req.on("data", (chunk) => {
+  request.on("data", (chunk: Buffer) => {
     if (bodyTooLarge) return;
     bodyBytes += chunk.length;
     if (bodyBytes > MAX_BODY_BYTES) {
       bodyTooLarge = true;
-      record({ event: "request-too-large", method: req.method, path: req.url || "/", bodyBytes });
-      writeJson(res, 413, { message: "payload too large", code: 413 });
-      req.destroy();
+      record({
+        event: "request-too-large",
+        method: request.method,
+        path: request.url || "/",
+        bodyBytes,
+      });
+      writeJson(response, 413, { message: "payload too large", code: 413 });
+      request.destroy();
       return;
     }
     chunks.push(chunk);
   });
 
-  req.on("end", () => {
+  request.on("end", () => {
     if (bodyTooLarge) return;
     const body = Buffer.concat(chunks).toString("utf8");
-    const url = new URL(req.url || "/", "http://fake-discord.local");
-    const token = tokenFromAuthorization(req.headers.authorization);
+    const url = new URL(request.url || "/", "http://fake-discord.local");
+    const token = tokenFromAuthorization(request.headers.authorization);
     const tokenMatchesExpected = token === expectedToken;
-    const messageMatch = /^\/api\/v10\/channels\/([^/]+)\/messages$/.exec(url.pathname);
-    const channelMatch = /^\/api\/v10\/channels\/([^/]+)$/.exec(url.pathname);
+    const messageMatch = /^\/api\/v10\/channels\/([^/]+)\/messages$/u.exec(url.pathname);
+    const channelMatch = /^\/api\/v10\/channels\/([^/]+)$/u.exec(url.pathname);
     const currentUserMatch = url.pathname === "/api/v10/users/@me";
     const parsed = parseJson(body);
     const content = typeof parsed.content === "string" ? parsed.content : "";
 
     record({
       event: "request",
-      method: req.method,
+      method: request.method,
       path: url.pathname,
       tokenMatchesExpected,
       tokenLooksPlaceholder: tokenLooksPlaceholder(token),
-      authorizationPresent: Boolean(req.headers.authorization),
+      authorizationPresent: Boolean(request.headers.authorization),
       authorizationRedacted: true,
       bodyRedacted: true,
       channelId: messageMatch?.[1] || channelMatch?.[1] || "",
@@ -105,17 +109,21 @@ const server = http.createServer((req, res) => {
     });
 
     if (!tokenMatchesExpected) {
-      writeJson(res, 401, { message: "401: Unauthorized", code: 0 });
+      writeJson(response, 401, { message: "401: Unauthorized", code: 0 });
       return;
     }
 
-    if (req.method === "GET" && currentUserMatch) {
-      writeJson(res, 200, { id: "420000000000000000", username: "NemoClaw E2E", bot: true });
+    if (request.method === "GET" && currentUserMatch) {
+      writeJson(response, 200, {
+        id: "420000000000000000",
+        username: "NemoClaw E2E",
+        bot: true,
+      });
       return;
     }
 
-    if (req.method === "GET" && channelMatch) {
-      writeJson(res, 200, {
+    if (request.method === "GET" && channelMatch) {
+      writeJson(response, 200, {
         id: channelMatch[1],
         type: 0,
         name: "nemoclaw-e2e",
@@ -123,8 +131,8 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (req.method === "POST" && messageMatch) {
-      writeJson(res, 200, {
+    if (request.method === "POST" && messageMatch) {
+      writeJson(response, 200, {
         id: "420000000000000001",
         channel_id: messageMatch[1],
         content,
@@ -138,7 +146,7 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    writeJson(res, 404, { message: "Unknown Endpoint", code: 10001 });
+    writeJson(response, 404, { message: "Unknown Endpoint", code: 10_001 });
   });
 });
 
@@ -149,13 +157,16 @@ server.on("error", (error) => {
 
 server.listen(port, host, () => {
   const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fake Discord message API did not bind a TCP port");
+  }
   if (portFile) {
     fs.writeFileSync(portFile, `${address.port}\n`, { mode: 0o600 });
   }
   record({ event: "listening", host, port: address.port });
 });
 
-for (const signal of ["SIGTERM", "SIGINT"]) {
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1000).unref();

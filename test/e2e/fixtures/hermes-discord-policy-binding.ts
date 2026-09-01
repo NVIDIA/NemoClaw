@@ -20,6 +20,33 @@ const policyBoundary = (
 ) as typeof policyBoundaryModule;
 const { parseOpenShellPolicy } = policyBoundary;
 
+function findHermesDiscordPolicyEndpoint(
+  policy: { network_policies?: Record<string, unknown> },
+  host: string,
+  port: number,
+  protocol: string,
+): { endpoint: Record<string, unknown>; policyEntry: Record<string, unknown> } {
+  for (const candidate of Object.values(policy.network_policies ?? {})) {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) continue;
+    const policyEntry = candidate as Record<string, unknown>;
+    if (!Array.isArray(policyEntry.endpoints)) continue;
+    const endpoint = policyEntry.endpoints.find((entry) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+      const value = entry as { host?: unknown; port?: unknown; protocol?: unknown };
+      return value.host === host && value.port === port && value.protocol === protocol;
+    });
+    if (typeof endpoint === "object" && endpoint !== null && !Array.isArray(endpoint)) {
+      return { endpoint: endpoint as Record<string, unknown>, policyEntry };
+    }
+  }
+  throw new Error("fake Discord endpoint is missing from the base policy");
+}
+
+function readPolicy(policyFile: string) {
+  const source = fs.readFileSync(policyFile, "utf8");
+  return parseOpenShellPolicy(source).policy;
+}
+
 export function bindHermesDiscordPolicyEndpoint(
   policyFile: string,
   providerName: string,
@@ -27,33 +54,66 @@ export function bindHermesDiscordPolicyEndpoint(
   port: number,
   protocol: string,
 ): void {
-  const source = fs.readFileSync(policyFile, "utf8");
-  const policy = parseOpenShellPolicy(source).policy;
-  const endpoints = Object.values(policy.network_policies ?? {}).flatMap((entry) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
-    const candidateEndpoints = (entry as { endpoints?: unknown }).endpoints;
-    return Array.isArray(candidateEndpoints) ? candidateEndpoints : [];
-  });
-  const endpoint = endpoints.find((candidate) => {
-    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-      return false;
-    }
-    const value = candidate as { host?: unknown; port?: unknown; protocol?: unknown };
-    return (
-      value.host === host &&
-      value.port === port &&
-      value.protocol === protocol
-    );
-  }) as Record<string, unknown> | undefined;
-  if (!endpoint) throw new Error("fake Discord endpoint is missing from the base policy");
-
+  const policy = readPolicy(policyFile);
+  const { endpoint } = findHermesDiscordPolicyEndpoint(policy, host, port, protocol);
   endpoint.credential_binding = { provider: providerName };
   fs.writeFileSync(policyFile, YAML.stringify(policy));
   fs.chmodSync(policyFile, 0o600);
 }
 
+export function assertHermesDiscordPolicyEndpointBinaries(
+  policyFile: string,
+  host: string,
+  port: number,
+  protocol: string,
+  expectedBinaries: string[],
+): void {
+  const { policyEntry } = findHermesDiscordPolicyEndpoint(
+    readPolicy(policyFile),
+    host,
+    port,
+    protocol,
+  );
+  if (!Array.isArray(policyEntry.binaries)) {
+    throw new Error("fake Discord endpoint policy has no binary restrictions");
+  }
+  const binaries = policyEntry.binaries.map((candidate) => {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      throw new Error("fake Discord endpoint policy has an invalid binary restriction");
+    }
+    const binaryPath = (candidate as { path?: unknown }).path;
+    if (typeof binaryPath !== "string") {
+      throw new Error("fake Discord endpoint policy has an invalid binary path");
+    }
+    return binaryPath;
+  });
+  if (JSON.stringify(binaries) !== JSON.stringify(expectedBinaries)) {
+    throw new Error(
+      `fake Discord endpoint policy binaries ${JSON.stringify(binaries)} did not match ${JSON.stringify(expectedBinaries)}`,
+    );
+  }
+}
+
 function main(): void {
-  const [policyFile, providerName, host, rawPort, protocol] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  if (args[0] === "--assert-binaries") {
+    const [, policyFile, host, rawPort, protocol, ...expectedBinaries] = args;
+    if (!policyFile || !host || !rawPort || !protocol || expectedBinaries.length === 0) {
+      throw new Error(
+        "usage: hermes-discord-policy-binding --assert-binaries <policy-file> <host> <port> <protocol> <binary>...",
+      );
+    }
+    assertHermesDiscordPolicyEndpointBinaries(
+      policyFile,
+      host,
+      Number(rawPort),
+      protocol,
+      expectedBinaries,
+    );
+    return;
+  }
+
+  const [policyFile, providerName, host, rawPort, protocol] = args;
   if (!policyFile || !providerName || !host || !rawPort || !protocol) {
     throw new Error(
       "usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port> <protocol>",
