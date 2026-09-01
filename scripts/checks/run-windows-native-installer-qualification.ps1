@@ -7,9 +7,11 @@
 
 .DESCRIPTION
     Verifies exact candidate and OpenShell source authority before executing the
-    candidate installer. The qualification installs, damages, repairs, and
-    uninstalls the candidate distribution, checks prohibited runtime processes
-    before and after execution, and atomically publishes bounded receipts.
+    candidate installer. The qualification executes the ARM64 binaries, then
+    installs, damages, repairs, recovers, and uninstalls the distribution. A
+    calibrated Windows process-start audit proves the file-only installer starts
+    no child process; prohibited runtime checks and bounded receipts preserve the
+    no-WSL evidence.
 #>
 
 [CmdletBinding()]
@@ -128,111 +130,6 @@ function Assert-CommittedFile {
     }
 }
 
-function Enter-RestrictedInstallerBoundary {
-    if (-not ('NemoClaw.WindowsQualification.JobBoundary' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-
-namespace NemoClaw.WindowsQualification
-{
-    [StructLayout(LayoutKind.Sequential)]
-    public struct IoCounters
-    {
-        public ulong ReadOperationCount;
-        public ulong WriteOperationCount;
-        public ulong OtherOperationCount;
-        public ulong ReadTransferCount;
-        public ulong WriteTransferCount;
-        public ulong OtherTransferCount;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct BasicLimitInformation
-    {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public UIntPtr MinimumWorkingSetSize;
-        public UIntPtr MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public UIntPtr Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct ExtendedLimitInformation
-    {
-        public BasicLimitInformation BasicLimitInformation;
-        public IoCounters IoInfo;
-        public UIntPtr ProcessMemoryLimit;
-        public UIntPtr JobMemoryLimit;
-        public UIntPtr PeakProcessMemoryUsed;
-        public UIntPtr PeakJobMemoryUsed;
-    }
-
-    public static class JobBoundary
-    {
-        public const uint ActiveProcessLimit = 0x00000008;
-        public const int ExtendedLimitInformationClass = 9;
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        public static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool SetInformationJobObject(
-            IntPtr job,
-            int informationClass,
-            ref ExtendedLimitInformation information,
-            uint informationLength);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool CloseHandle(IntPtr handle);
-    }
-}
-'@
-    }
-
-    $jobHandle = [NemoClaw.WindowsQualification.JobBoundary]::CreateJobObject(
-        [IntPtr]::Zero,
-        "NemoClawNativeQualification-$PID"
-    )
-    if ($jobHandle -eq [IntPtr]::Zero) {
-        Fail-Qualification 'Could not create the installer qualification Job Object.'
-    }
-    $limit = [NemoClaw.WindowsQualification.ExtendedLimitInformation]::new()
-    $limit.BasicLimitInformation.LimitFlags = [NemoClaw.WindowsQualification.JobBoundary]::ActiveProcessLimit
-    $limit.BasicLimitInformation.ActiveProcessLimit = 1
-    $limitLength = [Runtime.InteropServices.Marshal]::SizeOf($limit)
-    if (-not [NemoClaw.WindowsQualification.JobBoundary]::SetInformationJobObject(
-        $jobHandle,
-        [NemoClaw.WindowsQualification.JobBoundary]::ExtendedLimitInformationClass,
-        [ref]$limit,
-        $limitLength
-    )) {
-        [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($jobHandle) | Out-Null
-        Fail-Qualification 'Could not apply the one-process installer qualification limit.'
-    }
-    $currentProcess = [Diagnostics.Process]::GetCurrentProcess()
-    if (-not [NemoClaw.WindowsQualification.JobBoundary]::AssignProcessToJobObject(
-        $jobHandle,
-        $currentProcess.Handle
-    )) {
-        [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($jobHandle) | Out-Null
-        Fail-Qualification 'Could not enter the one-process installer qualification Job Object.'
-    }
-    return [pscustomobject]@{
-        JobHandle = $jobHandle
-    }
-}
-
 function Invoke-ChildSideEffectProbe {
     param([Parameter(Mandatory)][string]$SentinelPath)
 
@@ -242,6 +139,7 @@ function Invoke-ChildSideEffectProbe {
     $child = $null
     $startError = $null
     $exitCode = $null
+    $processId = $null
     try {
         $childParameters = @{
             FilePath = (Join-Path $PSHOME 'powershell.exe')
@@ -252,6 +150,7 @@ function Invoke-ChildSideEffectProbe {
         }
         $child = Start-Process @childParameters
         if ($null -ne $child) {
+            $processId = $child.Id
             $exitCode = $child.ExitCode
             $child.Dispose()
             $child = $null
@@ -266,37 +165,67 @@ function Invoke-ChildSideEffectProbe {
 
     return [pscustomobject]@{
         exitCode = $exitCode
+        processId = $processId
         sideEffectObserved = Test-Path -LiteralPath $SentinelPath -PathType Leaf
         startRejected = $null -ne $startError
     }
 }
 
-function Test-RestrictedInstallerBoundary {
-    param([Parameter(Mandatory)][string]$SentinelPath)
-
-    $probe = Invoke-ChildSideEffectProbe -SentinelPath $SentinelPath
-    if ($probe.sideEffectObserved) {
-        [IO.File]::Delete($SentinelPath)
-        Fail-Qualification 'The installer qualification Job Object allowed a child side effect.'
-    }
-    if (-not $probe.startRejected -and $probe.exitCode -eq 0) {
-        Fail-Qualification 'The installer qualification Job Object allowed a successful child process.'
-    }
-
+function Start-ProcessStartAudit {
+    $sourceIdentifier = 'NemoClawNativeInstaller-' + [guid]::NewGuid().ToString('N')
+    $subscription = Register-WmiEvent -Class Win32_ProcessStartTrace -SourceIdentifier $sourceIdentifier
     return [pscustomobject]@{
-        jobActiveProcessLimit = 1
-        childCreationRejected = $probe.startRejected
-        childExitCode = $probe.exitCode
-        childSideEffectAbsent = $true
+        sourceIdentifier = $sourceIdentifier
+        subscription = $subscription
     }
 }
 
-function Exit-RestrictedInstallerBoundary {
-    param([Parameter(Mandatory)]$Boundary)
+function Receive-ProcessStartAudit {
+    param(
+        [Parameter(Mandatory)]$Audit,
+        [Parameter(Mandatory)][int]$SettleMilliseconds
+    )
 
-    if ($Boundary.JobHandle -ne [IntPtr]::Zero) {
-        [NemoClaw.WindowsQualification.JobBoundary]::CloseHandle($Boundary.JobHandle) | Out-Null
+    Start-Sleep -Milliseconds $SettleMilliseconds
+    $records = @()
+    foreach ($event in @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)) {
+        $processEvent = $event.SourceEventArgs.NewEvent
+        $records += [pscustomobject]@{
+            processId = [int]$processEvent.ProcessID
+            parentProcessId = [int]$processEvent.ParentProcessID
+            processName = [string]$processEvent.ProcessName
+        }
+        Remove-Event -EventIdentifier $event.EventIdentifier
     }
+    return @($records)
+}
+
+function Get-AuditedDescendantStarts {
+    param(
+        [Parameter(Mandatory)][Array]$Records,
+        [Parameter(Mandatory)][int]$RootProcessId
+    )
+
+    $tracked = @{}
+    $tracked[[string]$RootProcessId] = $true
+    $descendants = @()
+    foreach ($record in $Records) {
+        if ($tracked.ContainsKey([string]$record.parentProcessId)) {
+            $descendants += $record
+            $tracked[[string]$record.processId] = $true
+        }
+    }
+    return @($descendants)
+}
+
+function Stop-ProcessStartAudit {
+    param([Parameter(Mandatory)]$Audit)
+
+    foreach ($event in @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)) {
+        Remove-Event -EventIdentifier $event.EventIdentifier
+    }
+    Unregister-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue
+    Remove-Job -Job $Audit.subscription -Force -ErrorAction SilentlyContinue
 }
 
 function Assert-ProhibitedProcessesAbsent {
@@ -476,9 +405,10 @@ $qualificationRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-windows-native-' + [g
 $payloadRoot = Join-Path $qualificationRoot 'payload'
 $installRoot = Join-Path $qualificationRoot 'install'
 $receiptStage = Join-Path $artifactParent ('.' + $artifactName + '.' + [guid]::NewGuid().ToString('N'))
-$restrictedBoundary = $null
-$restrictedBoundaryEvidence = $null
+$processAudit = $null
+$installerDescendantStarts = @()
 $childProbeControl = $null
+$controlDescendantStarts = @()
 $nativeBinaryEvidence = $null
 $hostPlatformEvidence = [pscustomobject]@{
     receiptVersion = 1
@@ -548,22 +478,28 @@ try {
         Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell.exe') -Label 'OpenShell CLI'
         Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell-gateway.exe') -Label 'OpenShell gateway'
     )
+    $processAudit = Start-ProcessStartAudit
     $controlSentinel = Join-Path $qualificationRoot 'child-control.txt'
     $childProbeControl = Invoke-ChildSideEffectProbe -SentinelPath $controlSentinel
     if ($childProbeControl.startRejected -or $childProbeControl.exitCode -ne 0 -or
         -not $childProbeControl.sideEffectObserved) {
-        Fail-Qualification 'The child side-effect control probe did not execute before restriction.'
+        Fail-Qualification 'The child side-effect control probe did not execute before installer qualification.'
+    }
+    $controlAuditRecords = @(Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds 3000)
+    $controlDescendantStarts = @(Get-AuditedDescendantStarts -Records $controlAuditRecords -RootProcessId $PID)
+    if (@($controlDescendantStarts | Where-Object {
+        $_.processId -eq $childProbeControl.processId
+    }).Count -ne 1) {
+        Fail-Qualification 'The calibrated Windows process-start audit did not observe its control child.'
     }
     [IO.File]::Delete($controlSentinel)
 
-    $restrictedBoundary = Enter-RestrictedInstallerBoundary
-    $restrictedBoundaryEvidence = Test-RestrictedInstallerBoundary -SentinelPath (Join-Path $qualificationRoot 'child-restricted.txt')
     $preExecution = Assert-ProhibitedProcessesAbsent -Phase 'pre-execution'
     $volumeRootRejected = $false
     try {
         & $installer -Action Uninstall -InstallRoot ([IO.Path]::GetPathRoot($installRoot)) | Out-Null
     } catch {
-        $volumeRootRejected = $true
+        $volumeRootRejected = $_.Exception.Message -like '*InstallRoot must not be a drive root.*'
     }
     if (-not $volumeRootRejected) {
         Fail-Qualification 'Installer accepted a drive root as InstallRoot.'
@@ -599,7 +535,7 @@ try {
     try {
         & $installer @installParameters | Out-Null
     } catch {
-        $untrackedInstallRejected = $true
+        $untrackedInstallRejected = $_.Exception.Message -like '*Existing candidate installation drifted; run Repair.*'
     }
     if (-not $untrackedInstallRejected) {
         Fail-Qualification 'Install accepted an untracked file inside the owned version root.'
@@ -625,7 +561,7 @@ try {
         try {
             & $installer @repairParameters | Out-Null
         } catch {
-            $overlappingRepairRejected = $true
+            $overlappingRepairRejected = $_.Exception.Message -like '*Another installer operation owns*'
         }
     } finally {
         $heldLock.Dispose()
@@ -722,6 +658,12 @@ try {
         finalAbsence = $true
     }
     $postExecution = Assert-ProhibitedProcessesAbsent -Phase 'post-execution'
+    $installerAuditRecords = @(Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds 1000)
+    $installerDescendantStarts = @(Get-AuditedDescendantStarts -Records $installerAuditRecords -RootProcessId $PID)
+    if ($installerDescendantStarts.Count -ne 0) {
+        $startedNames = @($installerDescendantStarts | ForEach-Object { $_.processName } | Sort-Object -Unique) -join ', '
+        Fail-Qualification "The file-only installer started a descendant process: $startedNames"
+    }
 
     [IO.File]::Copy($installer, (Join-Path $receiptStage 'install-windows-native.ps1'), $false)
     [IO.File]::Copy($manifestPath, (Join-Path $receiptStage 'distribution-manifest.json'), $false)
@@ -741,7 +683,8 @@ try {
     Write-JsonFile -Path (Join-Path $receiptStage 'process-absence.json') -Value ([pscustomobject]@{
         receiptVersion = 1
         calibratedChildProbe = $childProbeControl
-        restrictedExecution = $restrictedBoundaryEvidence
+        calibratedDescendantStarts = $controlDescendantStarts
+        installerDescendantStarts = $installerDescendantStarts
         preExecution = $preExecution
         postExecution = $postExecution
     })
@@ -760,8 +703,8 @@ try {
     $receiptStage = $null
     Write-Host "Windows native installer qualification receipts: $artifactPath"
 } finally {
-    if ($restrictedBoundary) {
-        Exit-RestrictedInstallerBoundary -Boundary $restrictedBoundary
+    if ($processAudit) {
+        Stop-ProcessStartAudit -Audit $processAudit
     }
     if ($receiptStage -and (Test-Path -LiteralPath $receiptStage -PathType Container)) {
         [IO.Directory]::Delete($receiptStage, $true)

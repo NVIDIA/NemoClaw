@@ -257,6 +257,8 @@ jobs:
           cache: true
           cache-bin: false
           cache-on-failure: true
+          cache-workspace-crates: true
+          cache-key: openshell-2721-bcd517bbe08c
           rust-src-dir: openshell
           rustflags: ""
 
@@ -269,7 +271,7 @@ jobs:
           & .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
           & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
 
-      - name: Qualify install, repair, and uninstall in an OS-restricted boundary
+      - name: Qualify native execution, install, repair, recovery, and uninstall
         shell: powershell
         run: |
           Set-StrictMode -Version Latest
