@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveManagedLlamaCppSelectionForGpu } from "../inference/llama-cpp/managed-selection";
 import { makeDeps } from "./__test-helpers__/setup-nim-flow";
 import { createSetupNim, type SetupNimFlowDeps, type SetupNimGpu } from "./setup-nim-flow";
 
@@ -18,11 +19,10 @@ function n1xProofHarness(proofPassed: boolean) {
       spec: { model: { servedName: "qwen3.6-35b-a3b" } },
     },
   } as never;
-  const resolveManagedLlamaCppSelection = vi.fn(
-    (_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
-      gpu?.wslDockerDesktopGpuProofPassed === true
-        ? { kind: "selected" as const, selection }
-        : { kind: "rejected" as const, reason: "WSL GPU proof is unavailable" },
+  const resolveManagedLlamaCppSelection = vi.fn((_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
+    gpu?.wslDockerDesktopGpuProofPassed === true
+      ? { kind: "selected" as const, selection }
+      : { kind: "rejected" as const, reason: "WSL GPU proof is unavailable" },
   );
   const installManagedLlamaCpp = vi.fn(async () => ({
     ok: true as const,
@@ -172,6 +172,25 @@ describe("managed llama.cpp profile onboarding", () => {
       undefined,
       expect.objectContaining({ wslDockerDesktopGpuProofPassed: false }),
     );
+  });
+
+  it("rejects a remote Docker context before managed N1x installation", async () => {
+    vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1");
+    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    const installManagedLlamaCpp = vi.fn();
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-llama-cpp",
+        resolveManagedLlamaCppSelection: resolveManagedLlamaCppSelectionForGpu,
+        installManagedLlamaCpp,
+      }),
+    );
+
+    await expect(
+      setupNim({ platform: "n1x", wslDockerDesktopGpuProofPassed: true } as never, "n1x-agent"),
+    ).rejects.toThrow("default Docker context");
+    expect(installManagedLlamaCpp).not.toHaveBeenCalled();
   });
 
   it("reports optional profile discovery failures while keeping other providers available", async () => {

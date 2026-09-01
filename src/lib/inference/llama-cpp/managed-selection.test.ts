@@ -263,6 +263,40 @@ describe("managed llama.cpp selection", () => {
     ).toMatchObject({ kind: "selected" });
   });
 
+  it("rejects an explicit remote Docker context for N1x WSL", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        {
+          [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID,
+          DOCKER_CONTEXT: "remote-builder",
+        },
+        catalog,
+        report,
+      ),
+    ).toMatchObject({
+      kind: "rejected",
+      reason: expect.stringContaining("default Docker context"),
+    });
+  });
+
+  it("rejects a persisted remote Docker context for N1x WSL", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID, HOME: "/home/test" },
+        catalog,
+        report,
+        { readDockerConfig: () => JSON.stringify({ currentContext: "remote-builder" }) },
+      ),
+    ).toMatchObject({
+      kind: "rejected",
+      reason: expect.stringContaining("persisted Docker context"),
+    });
+  });
+
   it("rejects N1x WSL when the real readiness wrapper receives failed GPU proof (#10102)", () => {
     const { catalog } = fixture(N1X_WSL_PRESET_ID);
     const gpu = {
