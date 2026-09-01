@@ -1168,6 +1168,9 @@ navigation:
               - page: "Extension Taxonomy and SDK Readiness"
                 path: _build/agent-variants/reference/extension-taxonomy-sdk-readiness.hermes.generated.mdx
                 slug: extension-taxonomy-sdk-readiness
+              - page: "Headless Lifecycle Package"
+                path: reference/headless-lifecycle-package.mdx
+                slug: headless-lifecycle-package
               - page: "CLI Commands Reference"
                 path: _build/agent-variants/reference/commands.hermes.generated.mdx
                 slug: commands

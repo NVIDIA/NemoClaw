@@ -834,7 +834,20 @@ When GPU passthrough is enabled and a gateway already exists without it, onboard
 
 ### `$$nemoclaw list`
 
-List all registered sandboxes with their model, provider, and policy presets. Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory. When the latest resumable onboarding session owns the matching inference-route reservation but has not created a sandbox, text output shows it under `Incomplete onboarding` with the recorded step and resume command. JSON output reports the same state in `incompleteOnboarding`; it remains separate from `sandboxes` and never affects the default sandbox. When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`. NemoClaw does not expose stale reservations that belong to another onboarding session. Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable. Each sandbox row reports `agent` as a string in both text and JSON output, never `null`. The row reports `openclaw` when the registry records no agent for the sandbox. The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway. The gateway sandbox list does not expose the agent. The row does not include the former derived `connected` boolean. Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
+List sandboxes in the registry for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and any sandbox entries recovered from that live gateway, with their model, provider, and policy presets.
+The command reads that port's registry and live gateway; it does not scan registries for other gateway ports.
+Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
+When the latest resumable onboarding session owns the matching inference-route reservation but has not created a sandbox, text output shows it under `Incomplete onboarding` with the recorded step and resume command.
+JSON output reports the same state in `incompleteOnboarding`; it remains separate from `sandboxes` and never affects the default sandbox.
+When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`.
+NemoClaw does not expose stale reservations that belong to another onboarding session.
+Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable.
+Each sandbox row reports `agent` as a string in both text and JSON output, never `null`.
+The row reports `openclaw` when the registry records no agent for the sandbox.
+The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway.
+The gateway sandbox list does not expose the agent.
+The row does not include the former derived `connected` boolean.
+Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 
 <AgentOnly variant="openclaw,hermes">
   When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
@@ -3018,7 +3031,8 @@ This command stops tunnel services and, for a manifest-resolved non-OpenClaw age
 
 ### `$$nemoclaw status`
 
-Show the global sandbox list and the status of host auxiliary services (for example cloudflared). This command is host-wide. It summarizes registered sandboxes, the default sandbox's live inference route, gateway health, and host services.
+Show the sandbox inventory for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and the host-scoped status of auxiliary services such as cloudflared.
+It reads the selected port's registry, live inference route, and gateway health; it does not scan registries for other gateway ports.
 
 <AgentOnly variant="openclaw,hermes">
 For gateway-based messaging agents, it also reports messaging overlap warnings within the selected OpenShell gateway's sandbox registry.
@@ -3043,14 +3057,21 @@ When at least one sandbox is registered and the named NemoClaw gateway is unreac
 
 ### `$$nemoclaw inference get`
 
-Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway. Use this command when you want the direct runtime route without the rest of the sandbox status output. It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
+Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+Use this command when you want the direct runtime route without the rest of the sandbox status output.
+It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
 ```bash
 $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-The sandbox-first grammar `$$nemoclaw <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `$$nemoclaw <name> inference set`.
+For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
+When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
+It does not search registries for other gateway ports.
+Lookup failures include timeouts, nonzero exits, no exit status, and output NemoClaw cannot interpret after a command exits successfully.
+The error names the gateway without rendering command output.
+It directs a direct lookup to `$$nemoclaw status` and a sandbox-first lookup to `$$nemoclaw <name> status`.
 
 ```bash
 $$nemoclaw my-assistant inference get
