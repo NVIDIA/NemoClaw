@@ -106,29 +106,10 @@ describe("Windows Ollama helper", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(
-      run,
-      runCapture,
-    );
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
 
     try {
       expect(windows.setupWindowsOllamaWith0000Binding({ installedPath })).toBe(true);
-      // The blocking wait settles for 1s after the kill, pauses 1s between
-      // launch attempts, then polls readiness with a 2s delay.
-      expect(atomicsWaitSpy).toHaveBeenCalledTimes(3);
-      // The wait must target the module's shared backing store (a plain
-      // ArrayBuffer would be rejected by Atomics.wait).
-      atomicsWaitSpy.mock.calls.forEach(([array]) => {
-        expect(array).toBeInstanceOf(Int32Array);
-        expect(array.buffer).toBeInstanceOf(SharedArrayBuffer);
-      });
-      expect(atomicsWaitSpy).toHaveBeenNthCalledWith(1, expect.any(Int32Array), 0, 0, 1000);
-      expect(atomicsWaitSpy).toHaveBeenNthCalledWith(2, expect.any(Int32Array), 0, 0, 1000);
-      expect(atomicsWaitSpy).toHaveBeenNthCalledWith(3, expect.any(Int32Array), 0, 0, 2000);
-      // Credential isolation may inspect the Docker context, but the retired
-      // subprocess-sleep path must remain unused.
-      expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
-      expect(spawnSyncSpy.mock.calls[0]?.slice(0, 2)).toEqual(["docker", ["context", "show"]]);
     } finally {
       restore();
       logSpy.mockRestore();

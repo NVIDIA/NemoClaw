@@ -1806,8 +1806,9 @@ export function getOllamaModelOptions(
   const modelDiscoveryRetryDelaysMs = [500, 1_000] as const;
   // Docker Desktop owns Windows-host reachability because host.docker.internal
   // may not resolve from WSL. Keep model discovery on the verified transport.
-  const tagsCommand = getOllamaApiCommand(
-    buildValidatedCurlCommandArgs([
+  const tagsCommand = [
+    "curl",
+    ...buildValidatedCurlCommandArgs([
       "-sf",
       "--connect-timeout",
       "3",
@@ -1815,8 +1816,7 @@ export function getOllamaModelOptions(
       "5",
       `http://${host}:${OLLAMA_PORT}/api/tags`,
     ]),
-    host,
-  );
+  ];
   const readTags = () => {
     const tagsOutput = capture(tagsCommand, { ignoreError: true });
     return parseOllamaModelInventory(String(tagsOutput || ""));
