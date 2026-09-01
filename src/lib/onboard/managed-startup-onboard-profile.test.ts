@@ -321,7 +321,7 @@ describe("buildManagedStartupOnboardProfile", () => {
     const plan = messagingPlan("hermes");
     const built = buildManagedStartupOnboardProfile(
       hermesInput({
-        chatUiUrl: "http://127.0.0.1:19189",
+        chatUiUrl: "https://hermes.example.test:19189",
         effectiveDashboardPort: 19_189,
         hermesDashboardState: {
           config: {
@@ -346,6 +346,7 @@ describe("buildManagedStartupOnboardProfile", () => {
       agent: "hermes",
       mode: "loopback-forwarded",
       url: "http://127.0.0.1:19189",
+      browserUrl: "https://hermes.example.test:19189",
       publicPort: 19_189,
       internalPort: 29_189,
       tuiEnabled: true,

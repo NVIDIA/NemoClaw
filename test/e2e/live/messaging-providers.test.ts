@@ -888,7 +888,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       imageScript: "fake-slack-api.cjs",
       containerPrefix: "nemoclaw-fake-slack",
       portEnv: "FAKE_SLACK_API_PORT",
-      portFileEnv: "FAKE_SLACK_API_PORT_FILE",
       captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
       credentialEnv: {
         FAKE_SLACK_API_EXPECTED_BOT_TOKEN: state.tokens.slackBot,
@@ -1062,7 +1061,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       imageScript: "fake-telegram-api.cjs",
       containerPrefix: "nemoclaw-fake-telegram",
       portEnv: "FAKE_TELEGRAM_API_PORT",
-      portFileEnv: "FAKE_TELEGRAM_API_PORT_FILE",
       captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
       credentialEnv: {
         FAKE_TELEGRAM_API_EXPECTED_TOKEN: state.tokens.telegram,
@@ -1126,7 +1124,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       nodeArgs: ["--experimental-strip-types"],
       containerPrefix: "nemoclaw-fake-wechat",
       portEnv: "FAKE_WECHAT_API_PORT",
-      portFileEnv: "FAKE_WECHAT_API_PORT_FILE",
       captureFileEnv: "FAKE_WECHAT_API_CAPTURE_FILE",
       credentialEnv: {
         FAKE_WECHAT_API_EXPECTED_TOKEN: state.tokens.wechat,

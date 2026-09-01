@@ -91,25 +91,30 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
-The `base-image-publication` job selects the nearest fully successful publication on the PR base
-first-parent history. It downloads the complete cohort contract and Deep Agents Code base contract
-by immutable artifact ID. It binds each artifact to the selected workflow run, attempt, revision,
-artifact ID, and artifact digest. The cohort validator requires OpenClaw, Hermes, and LangChain Deep
-Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_revision`.
-`generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed,
-incomplete, or mixed publication starts no onboarding consumer.
+The `base-image-publication` job selects managed-image authority before any stock-onboarding consumer starts.
 
-For a manual same-repository PR run, the trusted planner compares the immutable base and candidate
-commit trees with the reviewed base-image and managed-image input paths. When those inputs are
-unchanged, the run uses the applicable trusted managed-image publication from the PR base history.
-When any input changed, the run selects `local-dockerfile` and builds the candidate Dockerfiles
-locally instead of waiting for a candidate publication.
+For a manual same-repository PR run, the trusted planner compares immutable base and candidate commit trees against the reviewed image-input paths.
+When those paths are unchanged, the job selects the nearest fully successful cohort publication from the PR base's first-parent history.
+It downloads the complete cohort and Deep Agents Code base contracts by immutable artifact ID.
+It binds each artifact to the selected workflow run, attempt, revision, artifact ID, and digest.
+The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64`.
+Only then does it emit `managed_image_revision` and the complete cohort receipt.
 
-The selected source is passed to every stock-onboarding consumer. Managed-image runs receive the
-selected base revision and complete cohort receipt. Local-Dockerfile runs resolve the shipped agent
-Dockerfile at the final process boundary and require the resulting durable receipt to identify that
-source. The GitHub token remains available only to the trusted planner and is not included in the
-candidate CLI artifact.
+When a reviewed image input changed, the planner validates every returned managed-image PR workflow run for the candidate commit and selects the newest successful run by run ID.
+An earlier failed run does not block a later successful run.
+Every returned run must belong to the same open PR and an NVIDIA/NemoClaw source branch.
+The planner downloads one `managed-pr-contract-*` artifact for each shipped agent.
+It binds every artifact to the workflow run, attempt, candidate commit, artifact ID, and digest.
+It requires every shipped agent once, one candidate revision, one release, and one cohort before it assembles the candidate catalog.
+No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
+Manual PR E2E does not fall back to local Dockerfile builds.
+
+Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
+Changed-input runs pass the authenticated candidate catalog separately to those consumers.
+The candidate CLI artifact cannot contain the catalog.
+The GitHub token remains available only to the trusted planner and is not included in the candidate CLI artifact.
+The candidate catalog qualifies `linux/amd64` only, so a changed-input manual PR run does not dispatch the Jetson target.
+The trusted publication job reports this exclusion before the Jetson job is skipped.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
 OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
