@@ -31,10 +31,9 @@ import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
 } from "./hermes-dashboard-recovery";
-import {
-  HermesPortableForwardRecoveryError,
-  type HermesPortableForwardRecoveryInput,
-  type HermesPortableForwardRecoveryTimingEvidence,
+import type {
+  HermesPortableForwardRecoveryInput,
+  HermesPortableForwardRecoveryTimingEvidence,
 } from "./probe/hermes-portable-forward-recovery";
 export {
   HermesPortableForwardRecoveryError,

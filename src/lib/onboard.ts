@@ -461,10 +461,6 @@ const {
   skippedStepMessage,
 }: typeof import("./onboard/skipped-step-message") = require("./onboard/skipped-step-message");
 const {
-  createProductionForwardServiceCleanupDeps,
-  stopAllProductionForwardServices,
-}: typeof import("./onboard/messaging-host-forward") = require("./onboard/messaging-host-forward");
-const {
   findAvailableDashboardPort,
   isPortBoundOnHost,
   preflightDashboardPortRangeAvailability,
@@ -1105,15 +1101,6 @@ function getOpenShellInstallDeps(
 function logDockerDriverGatewayRestart(reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
 }
-
-const stopAllForwardServicesForGatewayCleanup = (): void =>
-  stopAllProductionForwardServices(
-    createProductionForwardServiceCleanupDeps({
-      isReachable: isPortBoundOnHost,
-      runCaptureOpenshell,
-      runOpenshell,
-    }),
-  );
 
 const {
   destroyGateway,

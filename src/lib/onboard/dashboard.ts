@@ -385,7 +385,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       normalizeDashboardForwardOptions(options);
     const { revalidateSandboxIdentity } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const preferredTarget = getDashboardForwardTarget(replaceUrlPort(chatUiUrl, preferredPort));
     const forwardGateway = resolveForwardServiceGateway(sandboxName, options);
     if (!forwardGateway) {
       throw new Error(`ForwardTcp authority is unavailable for '${sandboxName}'`);

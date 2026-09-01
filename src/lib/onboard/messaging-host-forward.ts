@@ -42,47 +42,6 @@ export function productionForwardServiceRegistryContext() {
   };
 }
 
-/** Stop every registered direct service, migrating any pre-cutover row first. */
-export function stopAllProductionForwardServices(deps: {
-  capture(gatewayName: string): {
-    error?: unknown;
-    output?: string | null;
-    signal?: NodeJS.Signals | null;
-    status?: number | null;
-  };
-  isReachable(port: number): boolean;
-  run(gatewayName: string, sandboxName: string, port: number): { status?: number | null };
-}): void {
-  const context = productionForwardServiceRegistryContext();
-  for (const sandbox of context.listSandboxes().sandboxes) {
-    const gatewayName = context.resolveGatewayName(sandbox);
-    const ports = [sandbox.dashboardPort, sandbox.hermesApiPort, sandbox.hermesDashboardPort].filter(
-      (port): port is number => Number.isInteger(port),
-    );
-    context.retireLegacy(sandbox.name, gatewayName, ports, deps);
-  }
-}
-
-export function createProductionForwardServiceCleanupDeps(deps: {
-  isReachable(port: number): boolean;
-  runCaptureOpenshell(args: string[], options: { ignoreError: true }): string | null;
-  runOpenshell(args: string[], options: { ignoreError: true }): { status?: number | null };
-}) {
-  return {
-    capture: (gatewayName: string) => {
-      const output = deps.runCaptureOpenshell(["forward", "list", "--gateway", gatewayName], {
-        ignoreError: true,
-      });
-      return { status: output === null ? 1 : 0, output };
-    },
-    isReachable: deps.isReachable,
-    run: (gatewayName: string, sandboxName: string, port: number) =>
-      deps.runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
-        ignoreError: true,
-      }),
-  };
-}
-
 export interface MessagingHostForwardRollbackOptions {
   readonly buildRollbackMessage: (sandboxName: string, err: unknown) => readonly string[];
   readonly cliName: () => string;
