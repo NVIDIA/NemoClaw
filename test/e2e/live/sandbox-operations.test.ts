@@ -723,7 +723,7 @@ test(
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {
-    timeout: 50 * 60_000,
+    timeout: 45 * 60_000,
     meta: {
       e2ePhases: [
         "confirm Docker and clear the sandbox operation fixtures",

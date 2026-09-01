@@ -9,8 +9,6 @@ export type OpenShellProviderCommandReason =
   | "failed"
   | "invalid_request"
   | "not_found"
-  | "profile_export_failed"
-  | "profile_import_failed"
   | "profile_incompatible";
 
 export type OpenShellProviderTransportReason =

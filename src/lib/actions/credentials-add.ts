@@ -79,8 +79,15 @@ function managedMcpCollisionFailure(
   return null;
 }
 
-function bundledProviderProfilePath(type: string): string {
-  return path.join(ROOT, "nemoclaw-blueprint", "provider-profiles", `${type.toLowerCase()}.yaml`);
+function bundledProviderProfile(type: string): { profileType: string; profilePath: string } | null {
+  const profileType = type.toLowerCase();
+  const profilePath = path.join(
+    ROOT,
+    "nemoclaw-blueprint",
+    "provider-profiles",
+    `${profileType}.yaml`,
+  );
+  return fs.existsSync(profilePath) ? { profileType, profilePath } : null;
 }
 
 function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): string[] {
@@ -110,31 +117,76 @@ function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): str
 }
 
 async function ensureBundledProviderProfile(
-  type: string,
+  profile: { profileType: string; profilePath: string } | null,
   target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
 ): Promise<CredentialsAddResult | null> {
-  const profilePath = bundledProviderProfilePath(type);
-  if (!fs.existsSync(profilePath)) return null;
+  if (!profile) return null;
 
   const result = await providerAdapter.importProviderProfile({
     target,
-    profilePath,
+    profilePath: profile.profilePath,
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   if (result.ok) return null;
   if (result.error.kind === "command" && result.error.reason === "profile_incompatible") {
     return fail([
-      `  OpenShell provider profile '${type}' does not match NemoClaw's checked-in credential boundary.`,
+      `  OpenShell provider profile '${profile.profileType}' does not match NemoClaw's checked-in credential boundary.`,
       "  Remove the conflicting provider profile, then retry this command.",
       `  ${result.error.message}`,
     ]);
   }
   return fail([
-    `  Could not import bundled provider profile '${type}'.`,
+    `  Could not import bundled provider profile '${profile.profileType}'.`,
     ...bundledProviderProfileRecoveryLines(result.error),
     `  ${result.error.message}`,
   ]);
+}
+
+function isUncertainProviderCreateError(error: OpenShellProviderError): boolean {
+  return (
+    error.kind === "timeout" ||
+    (error.kind === "transport" && error.reason === "unreachable")
+  );
+}
+
+async function reconcileUncertainProviderCreate(
+  provider: string,
+  target: OpenShellGatewayTarget,
+  providerAdapter: OpenShellProviderAdapter,
+): Promise<{ keepReservation: boolean; lines: string[] }> {
+  const inventory = await providerAdapter.listProviders({
+    target,
+    timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+  });
+  if (inventory.ok && inventory.value.names.includes(provider)) {
+    return {
+      keepReservation: true,
+      lines: [
+        `  OpenShell reports provider '${provider}' is registered; local provider ownership was preserved.`,
+        `  Verify with '${CLI_NAME} credentials list'.`,
+        `  Rebuild the target sandbox (\`${CLI_NAME} <sandbox> rebuild\`) to attach the provider.`,
+      ],
+    };
+  }
+  if (inventory.ok) {
+    return {
+      keepReservation: false,
+      lines: [
+        `  OpenShell confirms provider '${provider}' is absent.`,
+        "  It is safe to retry the credentials add command.",
+      ],
+    };
+  }
+  return {
+    keepReservation: true,
+    lines: [
+      `  Could not determine whether provider '${provider}' was registered; local provider ownership was preserved.`,
+      `  Run '${CLI_NAME} credentials list' to inspect the gateway before retrying.`,
+      `  If the provider exists, rebuild the target sandbox; otherwise run '${CLI_NAME} credentials reset ${provider} --yes' before retrying.`,
+      `  ${inventory.error.message}`,
+    ],
+  };
 }
 
 export async function runCredentialsAddAction(
@@ -248,14 +300,20 @@ export async function runCredentialsAddAction(
     return fail(recoveryFailureLines);
   }
 
-  const providerProfileFailure = await ensureBundledProviderProfile(type, target, providerAdapter);
+  const profile = bundledProviderProfile(type);
+  const providerType = profile?.profileType ?? type;
+  const providerProfileFailure = await ensureBundledProviderProfile(
+    profile,
+    target,
+    providerAdapter,
+  );
   if (providerProfileFailure) return providerProfileFailure;
 
   let importedCredentialKeys: string[] | null = null;
   if (fromExisting) {
     const inspection = await providerAdapter.inspectProviderProfile({
       target,
-      profileType: type,
+      profileType: providerType,
       timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     if (!inspection.ok) {
@@ -288,7 +346,7 @@ export async function runCredentialsAddAction(
       const result = await providerAdapter.createProvider({
         target,
         name: provider,
-        type,
+        type: providerType,
         credentials: credentials.map((credential) => ({
           name: credential,
           value: process.env[credential] ?? "",
@@ -308,6 +366,12 @@ export async function runCredentialsAddAction(
       }
 
       const lines = [`  Could not register provider '${provider}'.`];
+      if (isUncertainProviderCreateError(result.error)) {
+        const recovery = await reconcileUncertainProviderCreate(provider, target, providerAdapter);
+        keepReservation = recovery.keepReservation;
+        lines.push(`  ${result.error.message}`, ...recovery.lines);
+        return fail(lines);
+      }
       if (result.error.kind === "command" && result.error.reason === "already_exists") {
         lines.push(
           "",

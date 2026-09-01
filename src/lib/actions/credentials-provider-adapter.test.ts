@@ -127,6 +127,111 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
+  it("canonicalizes a mixed-case bundled profile through provider creation (#9806)", async () => {
+    const adapter = providerAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "openai-prod",
+        type: "OpenAI",
+        credentials: [],
+        configPairs: [],
+        fromExisting: true,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
+      timeoutMs: 30_000,
+    });
+    expect(adapter.inspectProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profileType: "openai",
+      timeoutMs: 30_000,
+    });
+    expect(adapter.createProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        type: "openai",
+      }),
+    );
+  });
+
+  it.each([
+    {
+      case: "confirmed present",
+      inventory: { ok: true, value: { names: ["custom-provider"] } } as const,
+      expectedLines: [
+        "  OpenShell reports provider 'custom-provider' is registered; local provider ownership was preserved.",
+        "  Rebuild the target sandbox (`nemoclaw <sandbox> rebuild`) to attach the provider.",
+      ],
+      forgetCalls: 0,
+    },
+    {
+      case: "confirmed absent",
+      inventory: { ok: true, value: { names: [] } } as const,
+      expectedLines: ["  OpenShell confirms provider 'custom-provider' is absent."],
+      forgetCalls: 1,
+    },
+    {
+      case: "still indeterminate",
+      inventory: {
+        ok: false,
+        error: { kind: "timeout", message: "The provider inventory query timed out." },
+      } as const,
+      expectedLines: [
+        "  Could not determine whether provider 'custom-provider' was registered; local provider ownership was preserved.",
+        "  Run 'nemoclaw credentials list' to inspect the gateway before retrying.",
+        "  If the provider exists, rebuild the target sandbox; otherwise run 'nemoclaw credentials reset custom-provider --yes' before retrying.",
+      ],
+      forgetCalls: 0,
+    },
+  ])(
+    "reconciles timed-out provider creation when the result is $case (#9806)",
+    async (testCase) => {
+      vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+      const forgetExtraProvider = vi.fn(() => true);
+      setGlobalCliActionRuntimeHooksForTest({
+        recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+        recordExtraProvider: () => true,
+        forgetExtraProvider,
+        listManagedMcpCredentialReservations: () => [],
+      });
+      const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
+        ok: false,
+        error: { kind: "timeout", message: "The OpenShell provider operation timed out." },
+      });
+      const listProviders: OpenShellProviderAdapter["listProviders"] = async () =>
+        testCase.inventory;
+      const adapter = providerAdapter({
+        createProvider: vi.fn(createProvider),
+        listProviders: vi.fn(listProviders),
+      });
+
+      const result = await runCredentialsAddAction(
+        {
+          provider: "custom-provider",
+          type: "generic",
+          credentials: ["CUSTOM_TOKEN"],
+          configPairs: [],
+          fromExisting: false,
+        },
+        { providerAdapter: adapter },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(adapter.listProviders).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        timeoutMs: 30_000,
+      });
+      expect(result.failureLines).toEqual(expect.arrayContaining(testCase.expectedLines));
+      expect(forgetExtraProvider).toHaveBeenCalledTimes(testCase.forgetCalls);
+    },
+  );
+
   it("does not create an OpenAI provider after profile import fails (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
     const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
