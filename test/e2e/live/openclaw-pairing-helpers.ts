@@ -12,7 +12,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   type FakeDockerApi,
-  precleanMessagingResources,
   runDiscordGatewayClient,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
@@ -69,22 +68,6 @@ export function pairingRedactions(options: {
   return [options.apiKey, options.slackBot, options.slackApp, options.discordToken].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-}
-
-export async function cleanupPairingSandbox(
-  host: HostCliClient,
-  sandbox: Pick<SandboxClient, "cleanupSandbox">,
-  sandboxName: string,
-  env: NodeJS.ProcessEnv,
-  redactions: string[],
-  prefix: string,
-): Promise<void> {
-  await precleanMessagingResources(host, sandbox, {
-    sandboxName,
-    artifactPrefix: prefix,
-    env,
-    redactionValues: redactions,
-  });
 }
 
 export async function startFakeDiscordGateway(
@@ -163,15 +146,8 @@ export async function assertOpenClawStateRoot(
   expect(resultText(list)).toMatch(new RegExp(`"channel"\\s*:\\s*"${channel}"`));
 }
 
-// Source-of-truth boundary: the live pairing probe imports the conversation
-// runtime from the active `openclaw` binary installed in the sandbox. Connect
-// shells may shadow that binary with a shell function, so the locator asks bash
-// for `type -P openclaw` and intentionally ignores functions/aliases. The invalid
-// state is an active OpenClaw package without `dist/plugin-sdk/conversation-runtime.js`;
-// this pairing migration fails closed for that installer/package drift instead of
-// searching secondary global installs. Support tests cover shell-function shadows
-// and the no-runtime path. Remove this locator once OpenClaw exposes a stable
-// CLI/import for issuing pairing challenges from E2E probes.
+// Import the runtime from the package resolved by `type -P openclaw`, ignoring
+// shell functions and aliases. Fail if that active package lacks the runtime.
 export const LOAD_CONVERSATION_RUNTIME_SOURCE = String.raw`
 import fs from "node:fs";
 import path from "node:path";
@@ -242,14 +218,8 @@ console.log("DISCORD_PAIRING_E2E_RESULT " + JSON.stringify({ code: result.code, 
 NODE
 `.replace("__LOAD_CONVERSATION_RUNTIME_SOURCE__", LOAD_CONVERSATION_RUNTIME_SOURCE);
 
-// Source-of-truth boundary: the Slack live probe validates its localized fake API
-// ports, proxy environment, and the revision-scoped credential references issued
-// to the sandbox before it opens direct Node socket/http clients. Invalid state
-// would otherwise hide the real pairing failure behind a low-level network error,
-// route the fake Slack websocket through an unexpected host, or send a credential
-// reference that OpenShell must reject for an endpoint-bound provider. Remove this
-// localized parser once the Slack probe delegates Socket Mode/REST traffic to a
-// shared fake-provider client instead of hand-rolled sockets.
+// Validate fake ports, proxy settings, and revision-scoped credential references
+// before the Slack probe opens a client connection.
 export const SLACK_PROBE_INPUT_VALIDATION_SOURCE = String.raw`
 function parseFakeSlackPort(envKey = "FAKE_SLACK_API_PORT") {
   const raw = process.env[envKey] || "";

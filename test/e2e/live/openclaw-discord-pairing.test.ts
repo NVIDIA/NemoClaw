@@ -5,11 +5,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   applyCredentialBoundFakePolicy,
   assertDiscordGatewayCapture,
+  precleanMessagingResources,
 } from "./messaging-providers-helpers.ts";
 import {
   approveAndAssertPairing,
   assertOpenClawStateRoot,
-  cleanupPairingSandbox,
   DISCORD_DM_CHANNEL,
   extractPairingResult,
   issuePairingRequest,
@@ -81,14 +81,12 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
     redactions,
     "cleanup-discord-pairing",
   );
-  await cleanupPairingSandbox(
-    host,
-    sandbox,
-    SANDBOX_NAME,
+  await precleanMessagingResources(host, sandbox, {
+    sandboxName: SANDBOX_NAME,
+    artifactPrefix: "preclean-discord-pairing",
     env,
-    redactions,
-    "preclean-discord-pairing",
-  );
+    redactionValues: redactions,
+  });
 
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);

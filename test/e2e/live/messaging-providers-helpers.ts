@@ -7,7 +7,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
+import * as policyOwner from "../../../src/lib/policy/index.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   assertExitZero as expectExitZero,
@@ -36,6 +38,7 @@ export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+const FAKE_API_ALLOWED_IPS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"] as const;
 
 // Leave ample headroom beneath OpenShell's strict per-argument ceiling.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
@@ -356,6 +359,49 @@ export async function precleanMessagingResources(
     env: options.env,
     redactionValues: options.redactionValues,
     timeoutMs: 120_000,
+  });
+}
+
+export async function registerRetainedSandboxPolicyRestore(
+  cleanup: Pick<CleanupRegistry, "add">,
+  sandbox: Pick<SandboxClient, "openshell">,
+  options: {
+    keepSandbox: boolean;
+    sandboxName: string;
+    env: NodeJS.ProcessEnv;
+    redactionValues: string[];
+  },
+): Promise<void> {
+  if (!options.keepSandbox) return;
+  const captured = await sandbox.openshell(["policy", "get", "--base", options.sandboxName], {
+    artifactName: `retain-${options.sandboxName}-policy-before-fake-endpoint`,
+    env: options.env,
+    redactionValues: options.redactionValues,
+    timeoutMs: 60_000,
+  });
+  expectExitZero(captured, `capture retained ${options.sandboxName} policy`);
+  const baseline = parseOpenShellPolicy(captured.stdout);
+
+  cleanup.add(`restore retained sandbox policy ${options.sandboxName}`, async () => {
+    if (
+      !policyOwner.setPolicyDocument(options.sandboxName, baseline.yamlBody, {
+        nonFatal: true,
+        operation: `restore the retained ${options.sandboxName} policy before fake API cleanup`,
+      })
+    ) {
+      throw new Error(`failed to restore the retained ${options.sandboxName} policy`);
+    }
+    const verified = await sandbox.openshell(
+      ["policy", "get", "--base", options.sandboxName],
+      {
+        artifactName: `retain-${options.sandboxName}-policy-restored`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(verified, `verify retained ${options.sandboxName} policy restoration`);
+    expect(parseOpenShellPolicy(verified.stdout).policy).toEqual(baseline.policy);
   });
 }
 
@@ -961,13 +1007,13 @@ export async function applyCredentialBoundFakePolicy(options: {
     "update",
     options.sandboxName,
     "--add-endpoint",
-    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},${FAKE_API_ALLOWED_IPS.map((address) => `allowed-ip=${address}`).join(",")}`,
   ];
   for (const method of methods) {
     args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
   }
-  const binaries = ["/usr/local/bin/node", "/usr/bin/node", ...(options.binaries ?? [])];
-  for (const binary of new Set(binaries)) args.push("--binary", binary);
+  const binaries = [...new Set(["/usr/local/bin/node", "/usr/bin/node", ...(options.binaries ?? [])])];
+  for (const binary of binaries) args.push("--binary", binary);
   args.push("--wait");
   const result = await runHost(options.host, options.host.openshellCommandPath, args, {
     artifactName: options.artifactName,
@@ -989,6 +1035,11 @@ export async function applyCredentialBoundFakePolicy(options: {
       policyHost,
       String(options.api.port),
       options.protocol,
+      "enforce",
+      options.rewrite,
+      methods.join(","),
+      FAKE_API_ALLOWED_IPS.join(","),
+      ...binaries,
     ],
     {
       artifactName: `${options.artifactName}-credential-binding`,

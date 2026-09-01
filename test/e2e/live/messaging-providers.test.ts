@@ -3,12 +3,11 @@
 
 /**
  *
- * Preserves the high-value provider/config/redaction contracts. Fake tokens are
- * used only when no channel token is set. Each _REAL token takes precedence over
- * its ordinary token, and either value can enable live sends. Provider placeholders
- * may appear in sandbox-visible surfaces, but raw credentials must remain absent.
- * Installed OpenClaw channel runtime exports drive the hermetic Slack and Telegram
- * send proofs.
+ * Preserves the high-value provider/config/redaction contracts. Telegram, Discord,
+ * and Slack use fake tokens when no channel token is set; WeChat always uses a
+ * synthetic token. Provider placeholders may appear in sandbox-visible surfaces,
+ * but raw credentials must remain absent. Installed OpenClaw channel runtime exports
+ * drive the hermetic Slack and Telegram send proofs.
  */
 
 import fs from "node:fs";

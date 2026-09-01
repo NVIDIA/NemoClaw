@@ -21,6 +21,7 @@ import {
   applyCredentialBoundFakePolicy,
   assertDiscordGatewayCapture,
   precleanMessagingResources,
+  registerRetainedSandboxPolicyRestore,
   type FakeDockerApi,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
@@ -524,6 +525,12 @@ PY`,
       DISCORD_TOKEN,
       redactionValues,
     );
+    await registerRetainedSandboxPolicyRestore(cleanup, sandbox, {
+      keepSandbox,
+      sandboxName: SANDBOX_NAME,
+      env,
+      redactionValues,
+    });
     await applyCredentialBoundFakePolicy({
       host,
       sandboxName: SANDBOX_NAME,

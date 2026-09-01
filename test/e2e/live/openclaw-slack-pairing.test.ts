@@ -4,11 +4,13 @@
 import fs from "node:fs";
 
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { applyCredentialBoundFakePolicy } from "./messaging-providers-helpers.ts";
+import {
+  applyCredentialBoundFakePolicy,
+  precleanMessagingResources,
+} from "./messaging-providers-helpers.ts";
 import {
   approveAndAssertPairing,
   assertOpenClawStateRoot,
-  cleanupPairingSandbox,
   extractPairingCode,
   issuePairingRequest,
   PAIRING_USER,
@@ -122,14 +124,12 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     redactions,
     "cleanup-slack-pairing",
   );
-  await cleanupPairingSandbox(
-    host,
-    sandbox,
-    SANDBOX_NAME,
+  await precleanMessagingResources(host, sandbox, {
+    sandboxName: SANDBOX_NAME,
+    artifactPrefix: "preclean-slack-pairing",
     env,
-    redactions,
-    "preclean-slack-pairing",
-  );
+    redactionValues: redactions,
+  });
 
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);

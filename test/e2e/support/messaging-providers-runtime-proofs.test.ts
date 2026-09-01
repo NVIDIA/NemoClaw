@@ -6,9 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import * as policyOwner from "../../../src/lib/policy/index.ts";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -24,6 +26,7 @@ import {
   parseRuntimeProofPort,
   precleanMessagingResources,
   REPO_ROOT,
+  registerRetainedSandboxPolicyRestore,
   slackCredentialBindingEvidence,
   startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
@@ -271,6 +274,66 @@ describe("messaging provider installed-runtime proofs", () => {
     },
   );
 
+  it("restores a retained sandbox policy before removing its fake API", async () => {
+    const sandboxName = "e2e-hermes-discord";
+    const baseline = YAML.stringify({
+      version: 1,
+      network_policies: {
+        discord: { endpoints: [{ host: "discord.com", port: 443, protocol: "rest" }] },
+      },
+    });
+    const events: string[] = [];
+    let policyReads = 0;
+    const sandbox = {
+      openshell: async () => {
+        policyReads += 1;
+        events.push(policyReads === 1 ? "capture-policy" : "verify-policy");
+        return successfulCommand(baseline);
+      },
+    } as unknown as Pick<SandboxClient, "openshell">;
+    const cleanup = new CleanupRegistry();
+    cleanup.add("remove fake API", async () => {
+      events.push("remove-fake-api");
+    });
+    const restore = vi.spyOn(policyOwner, "setPolicyDocument").mockImplementation(() => {
+      events.push("restore-policy");
+      return true;
+    });
+
+    try {
+      await registerRetainedSandboxPolicyRestore(cleanup, sandbox, {
+        keepSandbox: true,
+        sandboxName,
+        env: {},
+        redactionValues: [],
+      });
+      const result = await cleanup.runAll();
+
+      expect(result.failures).toEqual([]);
+      expect(result.passed).toEqual([
+        `restore retained sandbox policy ${sandboxName}`,
+        "remove fake API",
+      ]);
+      expect(events).toEqual([
+        "capture-policy",
+        "restore-policy",
+        "verify-policy",
+        "remove-fake-api",
+      ]);
+      expect(restore).toHaveBeenCalledWith(
+        sandboxName,
+        expect.any(String),
+        expect.objectContaining({
+          nonFatal: true,
+          operation: expect.stringContaining("before fake API cleanup"),
+        }),
+      );
+      expect(YAML.parse(restore.mock.calls[0]![1])).toEqual(YAML.parse(baseline));
+    } finally {
+      restore.mockRestore();
+    }
+  });
+
   it.each([
     {
       protocol: "rest" as const,
@@ -339,6 +402,15 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(binding.args).toContain("e2e-messaging-policy-bridge");
       expect(binding.args).toContain(expectedHost);
       expect(binding.args).toContain(protocol);
+      expect(binding.args).toEqual(
+        expect.arrayContaining([
+          "enforce",
+          rewrite,
+          protocol === "rest" ? "GET,POST" : "GET,WEBSOCKET_TEXT",
+          "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+          ...binaries,
+        ]),
+      );
       expect(binding.args).toContain(
         path.join(REPO_ROOT, "test/e2e/fixtures/credential-policy-transaction.ts"),
       );
