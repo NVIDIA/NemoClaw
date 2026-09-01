@@ -312,7 +312,9 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 For the managed one-host DGX Spark and N1x `nvidia/Qwen3.6-35B-A3B-NVFP4` profiles, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
-The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
+The DGX Spark profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, and an `8192`-token batch limit.
+The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `1` concurrent sequence, and a `4096`-token batch limit.
+Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
 
 NVIDIA Nemotron 3.5 Lightning is an additional explicit-only single-DGX Spark profile and does not change the Qwen default.
 Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
@@ -410,6 +412,8 @@ A full uninstall removes it only after managed-runtime cleanup succeeds and no s
 On an N1x host that matches the required identity, the Deferred Express preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 The installer uses the existing managed-vLLM image, download, container, receipt, recovery, and uninstall lifecycle.
 The installer applies the existing CUDA and Container Device Interface (CDI) readiness checks before it downloads the image or model.
+The N1x serving limits above have reached the ready vLLM endpoint on one physical host.
+That result covers managed-vLLM startup only; the full Express onboarding E2E remains pending.
 
 NemoClaw requires all of this N1x identity evidence:
 
@@ -608,8 +612,8 @@ Insufficient numeric free memory also stops onboarding.
 Follow the diagnostic to restore valid telemetry, correct the selected GPU, or free the required memory.
 Then run `$$nemoclaw onboard --resume`.
 
-To bound resource use while investigating long-context workflows on one DGX Spark or N1x host, select the Qwen profile.
-The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit.
+To bound resource use while investigating long-context workflows on one DGX Spark, select the Qwen profile.
+The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit to the current N1x defaults.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
@@ -619,7 +623,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 ```
 
 This override reduces request concurrency and context capacity, so it can reduce throughput.
-It does not guarantee protection against a DGX Spark or N1x host freeze.
+It does not guarantee protection against a DGX Spark host freeze.
 
 ## Related Topics
 
