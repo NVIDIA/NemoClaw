@@ -126,11 +126,16 @@ jobs:
           SANDBOX_NAME: docs-main-review
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
+      - name: Explain failed independent review
+        if: ${{ failure() && steps.review.outcome == 'failure' }}
+        run: |
+          echo "::warning title=Documentation candidate was not published::The independent documentation review failed, so no documentation patch was published. Inspect the failed review step and its rejection-report artifact, when available, before retrying."
+
       - name: Upload the independent review report
         if: ${{ failure() && steps.review.outcome == 'failure' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          if-no-files-found: ignore
+          if-no-files-found: warn
           name: post-merge-docs-review-rejection
           path: ${{ github.workspace }}/approved/review-report.txt
           retention-days: 3

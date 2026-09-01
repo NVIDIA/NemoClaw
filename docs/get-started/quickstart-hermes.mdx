@@ -172,7 +172,10 @@ Use these details when your first-run path needs more control.
     A sandbox receives those ports when no other sandbox or host listener already holds them.
     Otherwise, NemoClaw allocates the next free dashboard port from `18789` through `18799` and the next free API port from `8642` through `8652`.
     Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
-    For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
+    For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to an externally reachable HTTPS dashboard origin before onboarding.
+    The Hermes dashboard accepts that configured hostname, including WebSocket requests, while it remains loopback-bound.
+    The configured hostname does not authenticate proxy clients.
+    Protect dashboard ingress with your reverse proxy or other deployment controls.
 
     ```bash
     export NEMOCLAW_AGENT=hermes
