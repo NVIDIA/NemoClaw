@@ -9,10 +9,21 @@ import { bindOpenAiProviderProfile, createProviderReviewDeps } from "./setup-inf
 describe("bindOpenAiProviderProfile", () => {
   it("imports the profile immediately before an OpenAI provider upsert", () => {
     const events: string[] = [];
-    const profileEvents = ["profile-export", "profile-import"];
+    const profileEvents = ["profile-export", "profile-import", "profile-reexport"];
     const profileResults = [
       { status: 1, stdout: "", stderr: "provider profile not found" },
       { status: 0, stdout: "", stderr: "" },
+      {
+        status: 0,
+        stdout: JSON.stringify({
+          id: "openai",
+          credentials: [],
+          endpoints: [],
+          binaries: [],
+          inference_capable: true,
+        }),
+        stderr: "",
+      },
     ];
     let profileIndex = 0;
     const runOpenshell = vi.fn(() => {
@@ -42,7 +53,7 @@ describe("bindOpenAiProviderProfile", () => {
       ),
     ).toEqual({ ok: true });
 
-    expect(events).toEqual(["profile-export", "profile-import", "upsert"]);
+    expect(events).toEqual(["profile-export", "profile-import", "profile-reexport", "upsert"]);
     expect(runOpenshell).toHaveBeenNthCalledWith(
       1,
       ["provider", "profile", "export", "openai", "--output", "json"],
@@ -56,6 +67,16 @@ describe("bindOpenAiProviderProfile", () => {
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      3,
+      ["provider", "profile", "export", "openai", "--output", "json"],
       {
         ignoreError: true,
         suppressOutput: true,

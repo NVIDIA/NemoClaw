@@ -3,6 +3,7 @@
 
 import type { StdioOptions } from "node:child_process";
 
+import { PROVIDER_NAME_MAX_LENGTH, PROVIDER_NAME_VALID_PATTERN } from "../../name-validation";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import { OPENSHELL_OPERATION_TIMEOUT_MS, runOpenshell } from "./runtime";
 
@@ -12,6 +13,7 @@ export type ProviderCommandOptions = {
   env?: Record<string, string | undefined>;
   ignoreError?: boolean;
   stdio?: StdioOptions;
+  suppressOutput?: boolean;
   timeout?: number;
 };
 
@@ -23,6 +25,22 @@ let runtimeHooks: ProviderCommandRuntimeHooks = {};
 
 export function setProviderCommandRuntimeHooksForTest(hooks: ProviderCommandRuntimeHooks): void {
   runtimeHooks = hooks;
+}
+
+export function parseCliOpenShellProviderNames(output: unknown): string[] | null {
+  const text =
+    typeof output === "string" || Buffer.isBuffer(output)
+      ? output.toString()
+      : String(output ?? "");
+  const names = text
+    .split(/\r?\n/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  return names.every(
+    (name) => name.length <= PROVIDER_NAME_MAX_LENGTH && PROVIDER_NAME_VALID_PATTERN.test(name),
+  )
+    ? names
+    : null;
 }
 
 export function runOpenshellProviderCommand(args: string[], opts?: ProviderCommandOptions) {
