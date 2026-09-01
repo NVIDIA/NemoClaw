@@ -76,6 +76,12 @@ function contract(agent: ManagedImageAgent, index: number): ManagedImageContract
   return contractForCohort(agent, index, `ghrun-${RUN_ID}-1`);
 }
 
+function contractArchive(agent: ManagedImageAgent, index: number): Buffer {
+  return artifactZip([
+    { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
+  ]);
+}
+
 function treeEntry(entryPath: string, sha: string) {
   return { mode: "100644", path: entryPath, sha, type: "blob" };
 }
@@ -167,9 +173,7 @@ function candidateRequest(options: {
   }
   for (const [index, agent] of SHIPPED_MANAGED_IMAGE_AGENTS.entries()) {
     const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}`;
-    const archive = artifactZip([
-      { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
-    ]);
+    const archive = contractArchive(agent, index);
     const id = index + 100;
     responses.set(
       `/repos/${CANONICAL_REPOSITORY}/actions/runs/${artifactRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
@@ -230,6 +234,7 @@ function downloadContract(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -264,6 +269,38 @@ describe("exact PR managed-image publication", () => {
       ),
     );
     expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps artifact download evidence out of the machine-readable selection", async () => {
+    const standardOutput = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const standardError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: string | URL | Request) => {
+        const match = String(request).match(/\/artifacts\/([1-9][0-9]*)\/zip$/u);
+        expect(match, `unexpected artifact request ${String(request)}`).not.toBeNull();
+        const index = Number(match![1]) - 100;
+        const agent = SHIPPED_MANAGED_IMAGE_AGENTS[index];
+        expect(agent, `unexpected artifact index ${index}`).toBeDefined();
+        const archive = contractArchive(agent!, index);
+        return new Response(new Uint8Array(archive), {
+          status: 200,
+          headers: { "content-length": String(archive.length) },
+        });
+      }),
+    );
+
+    await expect(
+      resolvePrManagedImageCatalog(resolverInput(), candidateRequest({ imageChanged: true })),
+    ).resolves.toBe("candidate-catalog");
+    expect(standardOutput).not.toHaveBeenCalled();
+    expect(standardError).toHaveBeenCalledTimes(SHIPPED_MANAGED_IMAGE_AGENTS.length);
+    expect(standardError.mock.calls.flat()).toEqual(
+      Array.from(
+        { length: SHIPPED_MANAGED_IMAGE_AGENTS.length },
+        () => "artifact-content-read attempt=1 outcome=passed-first-attempt",
+      ),
+    );
   });
 
   it("selects a candidate catalog when only managed-image onboarding runtime changes", async () => {
