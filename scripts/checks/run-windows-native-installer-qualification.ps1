@@ -201,7 +201,7 @@ function Receive-ProcessStartAudit {
 
 function Get-AuditedDescendantStarts {
     param(
-        [Parameter(Mandatory)][Array]$Records,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Array]$Records,
         [Parameter(Mandatory)][int]$RootProcessId
     )
 
