@@ -10,24 +10,20 @@ import {
 import {
   buildGlobalPolicyGetFullJsonArgs,
   buildGlobalPolicyListArgs,
-  buildPolicyGetFullJsonArgs,
-  buildPolicyGetRevisionArgs,
 } from "../../policy/commands";
 import {
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
-  parseOpenShellPolicy,
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyInspection,
-  parseSandboxPolicyMetadata,
 } from "../../policy/merge";
 import * as openshellRuntime from "./runtime";
 import {
   createSyncCliOpenShellSandboxPolicyReader,
   type SyncCapturePolicyCommand,
 } from "./sandbox-policy-cli";
-import { namedOpenShellGateway } from "./sandbox-observer";
+import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 import { fingerprintOpenShellSandboxLiveIdentity } from "./sandbox-identity";
 const POLICY_STATE_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_STATE_CAPTURE_TIMEOUT_MS = 30_000;
@@ -158,6 +154,18 @@ function captureSandboxPolicyDocument(input: {
   return result.value.document;
 }
 
+function createBoundSandboxPolicyReader(gatewayName?: string) {
+  return createSyncCliOpenShellSandboxPolicyReader({
+    capture: (args, options) =>
+      captureBoundedOpenShell(args, "sandbox", { gatewayName }, options.timeout),
+    defaultTimeoutMs: POLICY_STATE_CAPTURE_TIMEOUT_MS,
+  });
+}
+
+function sandboxPolicyTarget(gatewayName?: string) {
+  return gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway();
+}
+
 function capturePolicyCommand(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
@@ -188,14 +196,6 @@ function capturePolicyCommand(
   return { output: result.output, stdout: result.stdout, stderr: result.stderr };
 }
 
-function capturePolicyRead(
-  args: string[],
-  subject: "sandbox" | "global",
-  runtimeSelection?: { readonly gatewayName?: string },
-): string {
-  return capturePolicyCommand(args, subject, runtimeSelection).stdout;
-}
-
 /** Inspect the effective policy source for one live sandbox. */
 export function inspectSandboxPolicy({
   sandboxName,
@@ -204,19 +204,12 @@ export function inspectSandboxPolicy({
   const validatedSandboxName = validatePolicyName(sandboxName, "sandbox name");
   const validatedGatewayName =
     gatewayName === undefined ? undefined : validatePolicyName(gatewayName, "gateway name");
-  const raw = capturePolicyRead(
-    buildPolicyGetFullJsonArgs(validatedSandboxName, validatedGatewayName),
-    "sandbox",
-    { gatewayName: validatedGatewayName },
-  );
-  try {
-    return parseSandboxPolicyMetadata(raw, validatedSandboxName);
-  } catch (error) {
-    failInspection(
-      "sandbox",
-      error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
-    );
-  }
+  const result = createBoundSandboxPolicyReader(validatedGatewayName).inspectSandboxPolicy({
+    target: sandboxPolicyTarget(validatedGatewayName),
+    sandboxName: validatedSandboxName,
+  });
+  if (!result.ok) failInspection("sandbox", result.error.message);
+  return result.value;
 }
 
 /** Inspect active global policy presence without assigning absent policy ownership. */
@@ -250,7 +243,12 @@ export function inspectActiveGlobalPolicy({
 
 /** Read one sandbox base policy through the same bounded OpenShell adapter. */
 export function captureSandboxBasePolicy(sandboxName: string, gatewayName: string): string {
-  return captureSandboxPolicyDocument({ sandboxName, gatewayName, scope: "base" });
+  return captureSandboxPolicyDocument({
+    sandboxName,
+    gatewayName,
+    scope: "base",
+    timeoutMs: POLICY_STATE_CAPTURE_TIMEOUT_MS,
+  });
 }
 
 /** Read one effective sandbox policy through the shared typed CLI boundary. */
@@ -263,7 +261,7 @@ export function captureSandboxEffectivePolicy(
     sandboxName,
     gatewayName,
     scope: "effective",
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    timeoutMs: timeoutMs ?? POLICY_STATE_CAPTURE_TIMEOUT_MS,
   });
 }
 
@@ -276,24 +274,15 @@ export function captureSandboxBasePolicyRevision(
   if (!Number.isSafeInteger(revision) || revision < 1) {
     failInspection("sandbox", "the requested policy revision is invalid");
   }
+  const validatedSandboxName = validatePolicyName(sandboxName, "sandbox name");
   const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
-  const raw = capturePolicyRead(
-    buildPolicyGetRevisionArgs(
-      validatePolicyName(sandboxName, "sandbox name"),
-      validatedGatewayName,
-      revision,
-    ),
-    "sandbox",
-    { gatewayName: validatedGatewayName },
-  );
-  try {
-    return parseOpenShellPolicy(raw).yamlBody;
-  } catch (error) {
-    failInspection(
-      "sandbox",
-      error instanceof Error ? error.message : "OpenShell returned invalid base policy output",
-    );
-  }
+  const result = createBoundSandboxPolicyReader(validatedGatewayName).readSandboxPolicyRevision({
+    target: namedOpenShellGateway(validatedGatewayName),
+    sandboxName: validatedSandboxName,
+    revision,
+  });
+  if (!result.ok) failInspection("sandbox", result.error.message);
+  return result.value.document;
 }
 
 /** Read and fingerprint one sandbox ID without exposing the ID in diagnostics. */

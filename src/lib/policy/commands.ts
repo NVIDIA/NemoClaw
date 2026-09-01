@@ -19,38 +19,8 @@ export function buildPolicySetCommand(
   ]);
 }
 
-/** Read one stored base-policy revision for concurrent-write reconciliation. */
-export function buildPolicyGetRevisionArgs(
-  sandboxName: string,
-  gatewayName: string,
-  revision: number,
-): string[] {
-  return [
-    "policy",
-    "get",
-    ...policyGatewayArgs(gatewayName),
-    "--rev",
-    String(revision),
-    "--base",
-    sandboxName,
-  ];
-}
-
 function policyGatewayArgs(gatewayName?: string): string[] {
   return gatewayName ? ["-g", gatewayName] : [];
-}
-
-/** Read effective sandbox policy and its authority metadata as JSON. */
-export function buildPolicyGetFullJsonArgs(sandboxName: string, gatewayName?: string): string[] {
-  return [
-    "policy",
-    "get",
-    ...policyGatewayArgs(gatewayName),
-    "--full",
-    "--output",
-    "json",
-    sandboxName,
-  ];
 }
 
 /** Read the active global policy and its authority metadata as JSON. */

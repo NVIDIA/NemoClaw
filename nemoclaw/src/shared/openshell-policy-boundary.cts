@@ -24,6 +24,39 @@ export function buildOpenShellSandboxPolicyReadArgs(input: {
   ];
 }
 
+/** Build one machine-readable effective-policy inspection. */
+export function buildOpenShellSandboxPolicyInspectionArgs(input: {
+  readonly sandboxName: string;
+  readonly gatewayName?: string;
+}): string[] {
+  return [
+    "policy",
+    "get",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    "--full",
+    "--output",
+    "json",
+    input.sandboxName,
+  ];
+}
+
+/** Build one immutable sandbox base-policy revision read. */
+export function buildOpenShellSandboxPolicyRevisionReadArgs(input: {
+  readonly sandboxName: string;
+  readonly gatewayName?: string;
+  readonly revision: number;
+}): string[] {
+  return [
+    "policy",
+    "get",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    "--rev",
+    String(input.revision),
+    "--base",
+    input.sandboxName,
+  ];
+}
+
 export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {
   readonly version?: number;
   readonly network_policies?: OpenShellPolicyMapping;

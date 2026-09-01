@@ -479,6 +479,8 @@ async function autoCreateSandboxFromSource(
   const commandArgs = [
     "sandbox",
     "create",
+    "-g",
+    sourceGatewayName,
     "--name",
     dstName,
     "--from",
@@ -1435,14 +1437,14 @@ async function runSnapshotRestoreUnlocked(
         if (clonePolicy.cleanup && !clonePolicy.cleanup()) {
           if (cloneCreatedAndRegistered) {
             throw new SnapshotCommandError([
-              `Temporary clone policy cleanup failed after '${targetSandbox}' was created.`,
+              `Temporary clone policy '${clonePolicy.policyPath}' could not be securely removed after '${targetSandbox}' was created.`,
               `Destination '${targetSandbox}' remains registered. Snapshot state was not restored.`,
               "Inspect and remove the task-owned temporary policy file before continuing.",
               `Then rerun the restore against the already-created destination '${targetSandbox}' so NemoClaw can reconcile it and continue, or explicitly destroy '${targetSandbox}' before starting a new restore.`,
             ]);
           }
           throw new SnapshotCommandError([
-            "Could not securely remove the temporary clone policy.",
+            `Could not securely remove temporary clone policy '${clonePolicy.policyPath}'.`,
             "Inspect the task-owned temporary directory before retrying the snapshot restore command.",
           ]);
         }

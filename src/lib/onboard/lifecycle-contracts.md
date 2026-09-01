@@ -66,7 +66,7 @@ The machine still cannot resume inside gateway startup, an individual credential
 
 ## Onboarding policy authority
 
-Onboarding may apply an initial policy as a convenience, but OpenShell owns and stores the sandbox policy. Policy-dependent operations read the current live policy through the sandbox's recorded gateway.
+Fresh onboarding materializes the operator-selected initial policy before it creates the sandbox. OpenShell owns and stores the resulting sandbox policy. For an existing sandbox, policy-dependent operations read the current live policy through the sandbox's recorded gateway.
 
 Completed onboarding stores no policy authority, receipt, copy, hash, version, preset list, or desired tier. Incomplete operations retain only the bounded transaction data required for recovery and cleanup.
 
@@ -256,7 +256,7 @@ The registry is separately owned by `src/lib/state/registry.ts`; backup and reco
 5. **Registry lifecycle:** create registers post-ready; same-name replacement preserves the source row until replacement registration commits; rebuild records removals and restores retry metadata through `rebuild-registry-rollback.ts`. Recommended owner: `sandbox-registration.ts` plus the existing durable pre-create identity.
 6. **Replacement validation:** legacy and custom-image rebuilds retain and fingerprint a prepared build context; managed-image rebuilds retain an immutable workload/profile handoff and revalidate provider-bound authority before deletion; normal live DCode rebuild adds route and managed-context proofs; re-onboard still stages legacy replacement work after delete. Health-before-delete and atomic swap remain unresolved. Closed issue #5801 records the original gap; #6835 fixed only the printed recovery path.
 
-OpenShell policy authority is not a duplicated decision point. Each active operation derives policy selection from the live OpenShell policy, and completed onboarding stores neither policy authority nor a policy copy.
+OpenShell policy authority is not a duplicated decision point. Each operation on an existing sandbox derives policy selection from the live OpenShell policy, and completed onboarding stores neither policy authority nor a policy copy.
 
 ## Bug-to-contract-gap map
 

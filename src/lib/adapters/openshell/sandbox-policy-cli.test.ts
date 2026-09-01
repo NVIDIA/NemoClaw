@@ -95,6 +95,96 @@ describe("CLI OpenShell sandbox policy reader", () => {
     );
   });
 
+  it("maps policy inspection to machine-readable full-policy arguments (#9805)", async () => {
+    const capture = vi.fn(() =>
+      result({
+        output: JSON.stringify({
+          scope: "sandbox",
+          sandbox: "alpha",
+          status: "effective",
+          policy_source: "sandbox",
+          hash: "sha256:policy",
+          active_version: 4,
+          policy: { version: 1, network_policies: {} },
+        }),
+      }),
+    );
+    const reader = createCliOpenShellSandboxPolicyReader({ capture });
+
+    await expect(
+      reader.inspectSandboxPolicy({
+        target: namedOpenShellGateway("nemoclaw-8091"),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        policySource: "sandbox",
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:policy", activeVersion: 4 },
+      },
+    });
+    expect(capture).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw-8091", "--full", "--output", "json", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("reads an immutable base-policy revision through the typed boundary (#9805)", async () => {
+    const capture = vi.fn(() =>
+      result({ output: "Version: 7\n---\nversion: 1\nnetwork_policies: {}" }),
+    );
+    const reader = createCliOpenShellSandboxPolicyReader({ capture });
+
+    await expect(
+      reader.readSandboxPolicyRevision({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "alpha",
+        revision: 7,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { document: POLICY, revision: 7 },
+    });
+    expect(capture).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw", "--rev", "7", "--base", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("fails closed on invalid inspection metadata and revision requests (#9805)", async () => {
+    const capture = vi.fn(() => result({ output: "not-json" }));
+    const reader = createCliOpenShellSandboxPolicyReader({ capture });
+
+    await expect(
+      reader.inspectSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "schema",
+        message: "OpenShell returned invalid sandbox policy metadata.",
+      },
+    });
+    await expect(
+      reader.readSandboxPolicyRevision({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        revision: 0,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "invalid_request",
+        message: "The requested OpenShell sandbox policy revision is invalid.",
+      },
+    });
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
   it("parses ANSI-formatted policy metadata and content (#9805)", async () => {
     const capture = vi.fn(() =>
       result({

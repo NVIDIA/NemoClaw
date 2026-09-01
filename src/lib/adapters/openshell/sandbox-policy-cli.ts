@@ -1,14 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildOpenShellSandboxPolicyReadArgs, parseOpenShellPolicy } from "../../policy/merge";
+import {
+  buildOpenShellSandboxPolicyInspectionArgs,
+  buildOpenShellSandboxPolicyReadArgs,
+  buildOpenShellSandboxPolicyRevisionReadArgs,
+  parseOpenShellPolicy,
+  parseSandboxPolicyMetadata,
+  type OpenShellPolicyInspection,
+} from "../../policy/merge";
 import { captureOpenshellCommand, stripAnsi } from "./client";
 import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
 import { type OpenShellSandboxError, type OpenShellSandboxResult } from "./sandbox-observer";
 import {
+  type InspectOpenShellSandboxPolicyRequest,
+  type OpenShellSandboxPolicyRevisionRead,
   type OpenShellSandboxPolicyRead,
   type OpenShellSandboxPolicyReader,
   type ReadOpenShellSandboxPolicyRequest,
+  type ReadOpenShellSandboxPolicyRevisionRequest,
   type SyncOpenShellSandboxPolicyReader,
 } from "./sandbox-policy";
 
@@ -23,24 +33,21 @@ export type CapturedPolicyCommandResult = Readonly<{
   error?: Error;
 }>;
 
+export type PolicyCaptureOptions = Readonly<{
+  ignoreError: true;
+  includeStderr: true;
+  includeStreams: true;
+  timeout: number;
+}>;
+
 export type CapturePolicyCommand = (
   args: string[],
-  options: {
-    ignoreError: true;
-    includeStderr: true;
-    includeStreams: true;
-    timeout: number;
-  },
+  options: PolicyCaptureOptions,
 ) => CapturedPolicyCommandResult | Promise<CapturedPolicyCommandResult>;
 
 export type SyncCapturePolicyCommand = (
   args: string[],
-  options: {
-    ignoreError: true;
-    includeStderr: true;
-    includeStreams: true;
-    timeout: number;
-  },
+  options: PolicyCaptureOptions,
 ) => CapturedPolicyCommandResult;
 
 export type CliOpenShellSandboxPolicyReaderDeps = Readonly<{
@@ -176,6 +183,49 @@ function parsePolicyRead(
   }
 }
 
+function parsePolicyInspection(
+  request: InspectOpenShellSandboxPolicyRequest,
+  displayOutput: string,
+): OpenShellSandboxResult<OpenShellPolicyInspection> {
+  try {
+    return {
+      ok: true,
+      value: parseSandboxPolicyMetadata(stripAnsi(displayOutput), request.sandboxName),
+    };
+  } catch {
+    return {
+      ok: false,
+      error: {
+        kind: "schema",
+        message: "OpenShell returned invalid sandbox policy metadata.",
+      },
+    };
+  }
+}
+
+function parsePolicyRevision(
+  request: ReadOpenShellSandboxPolicyRevisionRequest,
+  displayOutput: string,
+): OpenShellSandboxResult<OpenShellSandboxPolicyRevisionRead> {
+  try {
+    return {
+      ok: true,
+      value: {
+        document: parseOpenShellPolicy(stripAnsi(displayOutput)).yamlBody,
+        revision: request.revision,
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      error: {
+        kind: "schema",
+        message: "OpenShell returned an invalid sandbox policy revision document.",
+      },
+    };
+  }
+}
+
 function policyReadArgs(request: ReadOpenShellSandboxPolicyRequest): string[] {
   return buildOpenShellSandboxPolicyReadArgs({
     sandboxName: request.sandboxName,
@@ -184,11 +234,38 @@ function policyReadArgs(request: ReadOpenShellSandboxPolicyRequest): string[] {
   });
 }
 
+function policyInspectionArgs(request: InspectOpenShellSandboxPolicyRequest): string[] {
+  return buildOpenShellSandboxPolicyInspectionArgs({
+    sandboxName: request.sandboxName,
+    ...(request.target.kind === "named" ? { gatewayName: request.target.gatewayName } : {}),
+  });
+}
+
+function policyRevisionArgs(request: ReadOpenShellSandboxPolicyRevisionRequest): string[] {
+  return buildOpenShellSandboxPolicyRevisionReadArgs({
+    sandboxName: request.sandboxName,
+    ...(request.target.kind === "named" ? { gatewayName: request.target.gatewayName } : {}),
+    revision: request.revision,
+  });
+}
+
+function captureOptions(timeoutMs: number | undefined, defaultTimeoutMs: number | undefined) {
+  return {
+    ignoreError: true,
+    includeStderr: true,
+    includeStreams: true,
+    timeout: timeoutMs ?? defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
+  } as const;
+}
+
+function capturedOutput(captured: CapturedPolicyCommandResult): string {
+  return (captured.stdout ?? captured.output ?? "").trim();
+}
+
 function capturedPolicyRead(
-  request: ReadOpenShellSandboxPolicyRequest,
   captured: CapturedPolicyCommandResult,
 ): CliOpenShellSandboxPolicyReadResult {
-  const displayOutput = (captured.stdout ?? captured.output ?? "").trim();
+  const displayOutput = capturedOutput(captured);
   const commandFailure = classifyCommandFailure(captured);
   if (commandFailure) {
     return { result: { ok: false, error: commandFailure }, displayOutput: "" };
@@ -196,17 +273,45 @@ function capturedPolicyRead(
   return { result: parsePolicyRead(displayOutput), displayOutput };
 }
 
+function capturedPolicyInspection(
+  request: InspectOpenShellSandboxPolicyRequest,
+  captured: CapturedPolicyCommandResult,
+): OpenShellSandboxResult<OpenShellPolicyInspection> {
+  const commandFailure = classifyCommandFailure(captured);
+  return commandFailure
+    ? { ok: false, error: commandFailure }
+    : parsePolicyInspection(request, capturedOutput(captured));
+}
+
+function invalidRevision(): OpenShellSandboxResult<OpenShellSandboxPolicyRevisionRead> {
+  return {
+    ok: false,
+    error: {
+      kind: "command",
+      reason: "invalid_request",
+      message: "The requested OpenShell sandbox policy revision is invalid.",
+    },
+  };
+}
+
+function capturedPolicyRevision(
+  request: ReadOpenShellSandboxPolicyRevisionRequest,
+  captured: CapturedPolicyCommandResult,
+): OpenShellSandboxResult<OpenShellSandboxPolicyRevisionRead> {
+  const commandFailure = classifyCommandFailure(captured);
+  return commandFailure
+    ? { ok: false, error: commandFailure }
+    : parsePolicyRevision(request, capturedOutput(captured));
+}
+
 export function createCliOpenShellSandboxPolicyRead(
   deps: CliOpenShellSandboxPolicyReaderDeps,
 ): CliOpenShellSandboxPolicyRead {
   return async (request) => {
     const captured = await deps.capture(policyReadArgs(request), {
-      ignoreError: true,
-      includeStderr: true,
-      includeStreams: true,
-      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
+      ...captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
     });
-    return capturedPolicyRead(request, captured);
+    return capturedPolicyRead(captured);
   };
 }
 
@@ -216,6 +321,24 @@ export function createCliOpenShellSandboxPolicyReader(
   const read = createCliOpenShellSandboxPolicyRead(deps);
   return {
     readSandboxPolicy: async (request) => (await read(request)).result,
+    inspectSandboxPolicy: async (request) =>
+      capturedPolicyInspection(
+        request,
+        await deps.capture(
+          policyInspectionArgs(request),
+          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+        ),
+      ),
+    readSandboxPolicyRevision: async (request) =>
+      !Number.isSafeInteger(request.revision) || request.revision < 1
+        ? invalidRevision()
+        : capturedPolicyRevision(
+            request,
+            await deps.capture(
+              policyRevisionArgs(request),
+              captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+            ),
+          ),
   };
 }
 
@@ -226,14 +349,28 @@ export function createSyncCliOpenShellSandboxPolicyReader(
   return {
     readSandboxPolicy: (request) =>
       capturedPolicyRead(
-        request,
         deps.capture(policyReadArgs(request), {
-          ignoreError: true,
-          includeStderr: true,
-          includeStreams: true,
-          timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
+          ...captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
         }),
       ).result,
+    inspectSandboxPolicy: (request) =>
+      capturedPolicyInspection(
+        request,
+        deps.capture(
+          policyInspectionArgs(request),
+          captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+        ),
+      ),
+    readSandboxPolicyRevision: (request) =>
+      !Number.isSafeInteger(request.revision) || request.revision < 1
+        ? invalidRevision()
+        : capturedPolicyRevision(
+            request,
+            deps.capture(
+              policyRevisionArgs(request),
+              captureOptions(request.timeoutMs, deps.defaultTimeoutMs),
+            ),
+          ),
   };
 }
 

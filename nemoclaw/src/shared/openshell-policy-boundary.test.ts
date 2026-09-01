@@ -6,7 +6,9 @@ import YAML from "yaml";
 
 import {
   assertPolicyRequirementContainment,
+  buildOpenShellSandboxPolicyInspectionArgs,
   buildOpenShellSandboxPolicyReadArgs,
+  buildOpenShellSandboxPolicyRevisionReadArgs,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
@@ -29,6 +31,31 @@ describe("OpenShell policy boundary", () => {
     ],
   ])("builds %s policy read arguments", (_label, input, expected) => {
     expect(buildOpenShellSandboxPolicyReadArgs(input)).toEqual(expected);
+  });
+
+  it("builds inspection and immutable revision reads", () => {
+    expect(
+      buildOpenShellSandboxPolicyInspectionArgs({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+      }),
+    ).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--full",
+      "--output",
+      "json",
+      "alpha",
+    ]);
+    expect(
+      buildOpenShellSandboxPolicyRevisionReadArgs({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        revision: 7,
+      }),
+    ).toEqual(["policy", "get", "-g", "nemoclaw", "--rev", "7", "--base", "alpha"]);
   });
 
   it("parses sandbox policy metadata without assigning an owner", () => {

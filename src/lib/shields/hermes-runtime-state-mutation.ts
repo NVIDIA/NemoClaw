@@ -27,7 +27,7 @@ import { parseLiveSandboxEntries } from "../runtime-recovery";
 
 export const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
 
-/** Best-effort, fail-open OpenShell phase probe for a Hermes runtime transition. */
+/** Parse the Hermes sandbox phase from OpenShell sandbox-list output. */
 export function parseHermesRuntimeProviderSandboxPhase(
   sandboxName: string,
   output: string,

@@ -3,7 +3,9 @@
 
 import {
   assertPolicyRequirementContainment as assertCanonicalPolicyRequirementContainment,
+  buildOpenShellSandboxPolicyInspectionArgs as buildCanonicalOpenShellSandboxPolicyInspectionArgs,
   buildOpenShellSandboxPolicyReadArgs as buildCanonicalOpenShellSandboxPolicyReadArgs,
+  buildOpenShellSandboxPolicyRevisionReadArgs as buildCanonicalOpenShellSandboxPolicyRevisionReadArgs,
   classifyOpenShellGlobalPolicyHistory as classifyCanonicalOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata as parseCanonicalActiveGlobalPolicyMetadata,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
@@ -28,6 +30,10 @@ export const stripProviderComposedPolicies = stripCanonicalProviderComposedPolic
 export const parseSandboxPolicyMetadata = parseCanonicalSandboxPolicyMetadata;
 export const assertPolicyRequirementContainment = assertCanonicalPolicyRequirementContainment;
 export const buildOpenShellSandboxPolicyReadArgs = buildCanonicalOpenShellSandboxPolicyReadArgs;
+export const buildOpenShellSandboxPolicyInspectionArgs =
+  buildCanonicalOpenShellSandboxPolicyInspectionArgs;
+export const buildOpenShellSandboxPolicyRevisionReadArgs =
+  buildCanonicalOpenShellSandboxPolicyRevisionReadArgs;
 export type {
   ActiveGlobalPolicyInspection,
   OpenShellPolicyIdentity,

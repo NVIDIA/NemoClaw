@@ -6,8 +6,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildGlobalPolicyGetFullJsonArgs,
   buildGlobalPolicyListArgs,
-  buildPolicyGetFullJsonArgs,
-  buildPolicyGetRevisionArgs,
   buildPolicySetCommand,
 } from "./commands";
 
@@ -24,26 +22,6 @@ describe("OpenShell policy command builders", () => {
   });
 
   it("pins policy requirements reads to the selected gateway", () => {
-    expect(buildPolicyGetRevisionArgs("alpha", "nemoclaw", 7)).toEqual([
-      "policy",
-      "get",
-      "-g",
-      "nemoclaw",
-      "--rev",
-      "7",
-      "--base",
-      "alpha",
-    ]);
-    expect(buildPolicyGetFullJsonArgs("alpha", "nemoclaw")).toEqual([
-      "policy",
-      "get",
-      "-g",
-      "nemoclaw",
-      "--full",
-      "--output",
-      "json",
-      "alpha",
-    ]);
     expect(buildGlobalPolicyGetFullJsonArgs("nemoclaw")).toEqual([
       "policy",
       "get",

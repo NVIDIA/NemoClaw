@@ -43,6 +43,7 @@ beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: clone port identity", () => {
   it("allocates the auto-created clone its own dashboard port instead of inheriting the source's (#6746)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "selected-sibling");
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation(
       (entry) => (registeredClone = entry as f.SandboxRecord),
@@ -83,6 +84,18 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     );
     expect(dashboardPortMocks.withDashboardPortReservationLock).toHaveBeenCalledOnce();
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
+    expect(createArgs.slice(0, 6)).toEqual([
+      "sandbox",
+      "create",
+      "-g",
+      "nemoclaw-18080",
+      "--name",
+      "beta",
+    ]);
+    expect(f.captureOpenshellMock).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw-18080", "--base", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
     expect(createArgs.slice(createArgs.lastIndexOf("--") + 1)).toEqual([
       "env",
       "NEMOCLAW_OBSERVABILITY=0",
@@ -319,7 +332,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       expect(failure).toMatchObject({
         name: "SnapshotCommandError",
         lines: expect.arrayContaining([
-          "Temporary clone policy cleanup failed after 'beta' was created.",
+          expect.stringContaining(observedPolicyPath),
           "Destination 'beta' remains registered. Snapshot state was not restored.",
           expect.stringContaining("already-created destination 'beta'"),
           expect.stringContaining("explicitly destroy 'beta'"),
