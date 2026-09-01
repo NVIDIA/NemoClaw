@@ -463,7 +463,7 @@ describe("local PR review advisor", () => {
         calls.push("configure:" + env.PR_REVIEW_ADVISOR_INTEREST);
         expect(env.OPENSHELL_GATEWAY_ENDPOINT).toBe("http://127.0.0.1:8080");
         expect(env.PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
-        expect(env.SANDBOX_NAME).toMatch(/^pr-adv-[A-Za-z0-9_-]{12}$/u);
+        expect(env.SANDBOX_NAME).toMatch(/^pr-adv-[a-f0-9]{12}$/u);
         expect(env.SANDBOX_NAME).toHaveLength(19);
         return { configure: Promise.resolve(), stop: stopGateway };
       },
