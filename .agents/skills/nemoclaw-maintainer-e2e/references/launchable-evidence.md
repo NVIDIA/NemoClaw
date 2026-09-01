@@ -16,36 +16,35 @@ node --experimental-strip-types --no-warnings \
   --candidate <candidate-sha>
 ```
 
-Use `--repo OWNER/REPO` only when inspecting another repository. The script selects
-the newest eligible job, downloads the exact artifact, validates every binding and
-cleanup receipt, and emits the bounded versioned handoff JSON. A nonzero exit means
-the evidence is not acceptable. Do not reconstruct these checks manually.
+Use `--repo OWNER/REPO` only when you inspect another repository. Run the inspector
+once. It selects the newest eligible job, downloads its artifact, validates all
+bindings and cleanup evidence, and emits bounded handoff JSON.
+
+Accept the evidence only when the command exits zero. Use its JSON as the handoff.
+Do not reconstruct the checks manually.
+
+## What the Inspector Validates
 
 The inspector selects the newest successful `Staging Brev Launchable` job whose
-workflow run has all of these properties:
+workflow run meets these conditions:
 
 - `head_sha` equals the candidate SHA;
 - `path` is `.github/workflows/e2e.yaml`;
 - `head_branch` is `main`;
 - `event` is `workflow_dispatch`; and
-- the job is completed successfully.
+- the job completed successfully.
 
-Record the workflow run ID, attempt, URL, job ID, and job URL. Stop when the run,
-job, or candidate binding is missing or contradictory.
-
-## Validate the Private Artifact
-
-Download this exact artifact from the selected run and attempt:
+The artifact name binds the candidate, run, and attempt:
 
 ```text
 staging-brev-launchable-<candidate-sha>-<run-id>-<attempt>
 ```
 
-Require `launchable-e2e.json`, a nonempty `full-e2e.log`, and `cleanup.json`.
-Require `full-e2e.log` to contain the exact success sentinel
-`NEMOCLAW_FULL_E2E_PASSED`.
+The inspector requires `launchable-e2e.json`, a nonempty `full-e2e.log`, and
+`cleanup.json`. The log must contain the exact `NEMOCLAW_FULL_E2E_PASSED`
+sentinel.
 
-Require `launchable-e2e.json` to establish:
+The inspector verifies these values in `launchable-e2e.json`:
 
 - `candidateSha` equals the candidate SHA;
 - `producer.runId` is numeric and `producer.status` is `success`;
@@ -59,9 +58,9 @@ Require `launchable-e2e.json` to establish:
 - the workspace name and ID are nonempty; and
 - `fullE2e` is `passed`.
 
-Require `cleanup.json` to name the same workspace, report `ABSENT`, and contain
-an ISO 8601 UTC `verifiedAt` value. Stop when an artifact is absent, malformed,
-or bound to another candidate, run, attempt, or workspace.
+The inspector requires `cleanup.json` to name the same workspace, report
+`ABSENT`, and include a UTC `verifiedAt` value. It rejects missing or malformed
+artifacts and mismatched bindings.
 
 ## Handoff
 
