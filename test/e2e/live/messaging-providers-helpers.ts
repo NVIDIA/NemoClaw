@@ -717,6 +717,87 @@ if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
   return sandboxOutput(sandbox, probe, artifactName, redactionValues);
 }
 
+type DockerNetworkSettings = {
+  readonly Networks: Record<string, unknown>;
+  readonly Ports: Record<string, unknown>;
+};
+
+function parseDockerNetworkSettings(output: string, label: string): DockerNetworkSettings {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error(`${label} returned invalid Docker network settings`);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} returned invalid Docker network settings`);
+  }
+  const settings = parsed as Record<string, unknown>;
+  const networks = settings.Networks;
+  const ports = settings.Ports;
+  if (networks === null || typeof networks !== "object" || Array.isArray(networks)) {
+    throw new Error(`${label} did not report Docker networks`);
+  }
+  if (ports !== null && (typeof ports !== "object" || Array.isArray(ports))) {
+    throw new Error(`${label} returned invalid Docker port bindings`);
+  }
+  return {
+    Networks: networks as Record<string, unknown>,
+    Ports: (ports ?? {}) as Record<string, unknown>,
+  };
+}
+
+function requireExclusiveDockerNetwork(
+  settings: DockerNetworkSettings,
+  expectedNetwork: string,
+  label: string,
+): void {
+  const networks = Object.keys(settings.Networks);
+  if (networks.length !== 1 || networks[0] !== expectedNetwork) {
+    throw new Error(`${label} did not use only its internal Docker network`);
+  }
+}
+
+function requireNoPublishedDockerPorts(settings: DockerNetworkSettings, label: string): void {
+  if (Object.values(settings.Ports).some((bindings) => bindings !== null)) {
+    throw new Error(`${label} unexpectedly published a host port`);
+  }
+}
+
+function requireLoopbackDockerPorts(
+  settings: DockerNetworkSettings,
+  expectedContainerPorts: readonly number[],
+  label: string,
+): Map<number, string> {
+  const expectedKeys = expectedContainerPorts.map((port) => `${String(port)}/tcp`).sort();
+  const observedKeys = Object.keys(settings.Ports).sort();
+  if (
+    observedKeys.length !== expectedKeys.length ||
+    observedKeys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error(`${label} did not publish exactly its expected ports`);
+  }
+
+  const published = new Map<number, string>();
+  for (const containerPort of expectedContainerPorts) {
+    const bindings = settings.Ports[`${String(containerPort)}/tcp`];
+    if (!Array.isArray(bindings) || bindings.length !== 1) {
+      throw new Error(`${label} did not publish exactly one loopback binding per port`);
+    }
+    const binding = bindings[0];
+    if (binding === null || typeof binding !== "object" || Array.isArray(binding)) {
+      throw new Error(`${label} returned an invalid Docker port binding`);
+    }
+    const hostIp = (binding as Record<string, unknown>).HostIp;
+    const hostPort = (binding as Record<string, unknown>).HostPort;
+    if (hostIp !== "127.0.0.1" || typeof hostPort !== "string" || !/^\d+$/u.test(hostPort)) {
+      throw new Error(`${label} did not bind only to 127.0.0.1`);
+    }
+    published.set(containerPort, hostPort);
+  }
+  return published;
+}
+
 export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
@@ -771,6 +852,37 @@ export async function startFakeDockerApi(
       expectExitZero(remove, `remove fake ${options.kind} API network ${network}`);
     }
   });
+  cleanup(`remove ${container}`, async () => {
+    try {
+      const remove = await runHost(host, "docker", ["rm", "-f", container], {
+        artifactName: `cleanup-${container}`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 60_000,
+      });
+      if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
+        expectExitZero(remove, `remove fake ${options.kind} API container ${container}`);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  const networkInspection = await runHost(
+    host,
+    "docker",
+    ["network", "inspect", "--format", "{{json .Internal}}", network],
+    {
+      artifactName: `inspect-fake-${options.kind}-api-network`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(networkInspection, `inspect fake ${options.kind} API network`);
+  if (networkInspection.stdout.trim() !== "true") {
+    throw new Error(`fake ${options.kind} API network is not internal`);
+  }
 
   const dockerArgs = [
     "run",
@@ -802,22 +914,6 @@ export async function startFakeDockerApi(
     `/opt/nemoclaw-e2e/${options.imageScript}`,
   );
 
-  cleanup(`remove ${container}`, async () => {
-    try {
-      const remove = await runHost(host, "docker", ["rm", "-f", container], {
-        artifactName: `cleanup-${container}`,
-        env: options.env,
-        redactionValues: options.redactionValues,
-        timeoutMs: 60_000,
-      });
-      if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
-        expectExitZero(remove, `remove fake ${options.kind} API container ${container}`);
-      }
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   const start = await runHost(host, "docker", dockerArgs, {
     artifactName: `start-fake-${options.kind}-api`,
     env: options.env,
@@ -835,6 +931,34 @@ export async function startFakeDockerApi(
     await sleep(100);
   }
   if (!apiReady) throw new Error(`fake ${options.kind} API did not become ready`);
+
+  const inspectNetworkSettings = async (
+    containerName: string,
+    artifactName: string,
+    label: string,
+  ): Promise<DockerNetworkSettings> => {
+    const inspection = await runHost(
+      host,
+      "docker",
+      ["container", "inspect", "--format", "{{json .NetworkSettings}}", containerName],
+      {
+        artifactName,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
+    expectExitZero(inspection, label);
+    return parseDockerNetworkSettings(inspection.stdout, label);
+  };
+
+  const apiNetworkSettings = await inspectNetworkSettings(
+    container,
+    `inspect-fake-${options.kind}-api-container-network`,
+    `inspect fake ${options.kind} API container network`,
+  );
+  requireExclusiveDockerNetwork(apiNetworkSettings, network, `fake ${options.kind} API container`);
+  requireNoPublishedDockerPorts(apiNetworkSettings, `fake ${options.kind} API container`);
 
   cleanup(`remove ${proxyContainer}`, async () => {
     const remove = await runHost(host, "docker", ["rm", "-f", proxyContainer], {
@@ -885,29 +1009,19 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
-  const publishedPort = async (containerPort: number, artifactName: string): Promise<string> => {
-    const result = await runHost(
-      host,
-      "docker",
-      ["port", proxyContainer, `${String(containerPort)}/tcp`],
-      {
-        artifactName,
-        env: options.env,
-        redactionValues: options.redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(result, `read fake ${options.kind} API proxy port`);
-    const hostPort = result.stdout.trim().match(/^127\.0\.0\.1:(\d+)$/u)?.[1];
-    if (!hostPort) {
-      throw new Error(`fake ${options.kind} API proxy port did not bind only to 127.0.0.1`);
-    }
-    return hostPort;
-  };
-
-  const publishedRestPort = await publishedPort(8080, `port-fake-${options.kind}-api`);
-  const publishedWebsocketPort =
-    options.kind === "slack" ? await publishedPort(8081, "port-fake-slack-websocket-api") : "";
+  const proxyNetworkSettings = await inspectNetworkSettings(
+    proxyContainer,
+    `inspect-fake-${options.kind}-api-proxy-network`,
+    `inspect fake ${options.kind} API proxy network`,
+  );
+  requireExclusiveDockerNetwork(proxyNetworkSettings, network, `fake ${options.kind} API proxy`);
+  const publishedPorts = requireLoopbackDockerPorts(
+    proxyNetworkSettings,
+    containerPorts,
+    `fake ${options.kind} API proxy`,
+  );
+  const publishedRestPort = publishedPorts.get(8080)!;
+  const publishedWebsocketPort = options.kind === "slack" ? publishedPorts.get(8081)! : "";
 
   return {
     kind: options.kind,
