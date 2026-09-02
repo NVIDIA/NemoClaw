@@ -109,7 +109,7 @@ test(
     timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
-        "confirm Docker and skill tooling",
+        "confirm the selected runtime and skill tooling",
         "onboard the OpenClaw skill sandbox",
         "inject and confirm the skill fixture",
         "ask the agent to consume the skill",
@@ -117,7 +117,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -130,17 +130,10 @@ test(
       `missing skill verify helper: ${VERIFY_SKILL_SCRIPT}`,
     ).toBe(true);
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-skill-agent",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info-skill-agent",
+      scenarioLabel: "skill-agent",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for skill-agent E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for skill-agent E2E");
-    }
 
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
@@ -149,7 +142,7 @@ test(
       id: "skill-agent",
       boundary: "direct-cli-onboard-sandbox-skill-and-agent-turn",
       contract: [
-        "Docker is available before onboarding",
+        "the selected runtime is available before onboarding",
         "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
         "skill-smoke-fixture is injected into sandbox and home skill roots",
@@ -383,7 +376,7 @@ test(
       id: "skill-agent",
       status: "passed",
       assertions: {
-        dockerRunning: docker.exitCode === 0,
+        runtimeProviderAvailable: true,
         onboardCompleted: onboard.exitCode === 0,
         skillInjected: addSkill.exitCode === 0,
         agentReturnedVerificationToken: agentOk,

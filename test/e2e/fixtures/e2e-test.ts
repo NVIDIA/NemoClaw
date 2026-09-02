@@ -36,10 +36,11 @@ import {
   type TestProgress,
   type TestProgressOptions,
 } from "./progress.ts";
+import { RuntimeProviderPrerequisite } from "./runtime-provider.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
 
-declare module "@vitest/runner" {
+declare module "vitest" {
   interface TaskMeta {
     e2eArtifactRootId?: string;
     e2eCleanupTimeoutMs?: number;
@@ -52,6 +53,7 @@ export interface E2ETargetFixtures {
   cleanup: CleanupRegistry;
   secrets: SecretStore;
   docker: DockerPrerequisite;
+  runtimeProvider: RuntimeProviderPrerequisite;
   shellProbe: ShellProbe;
   host: HostCliClient;
   gateway: GatewayClient;
@@ -260,14 +262,17 @@ export const test = base.extend<E2ETargetFixtures>({
   host: async ({ shellProbe }, use) => {
     await use(new HostCliClient(shellProbe));
   },
+  runtimeProvider: async ({ host, skip }, use) => {
+    await use(new RuntimeProviderPrerequisite(host, skip));
+  },
   sandbox: async ({ shellProbe }, use) => {
     await use(new SandboxClient(shellProbe));
   },
-  gateway: async ({ host, sandbox }, use) => {
+  gateway: async ({ host, runtimeProvider, sandbox }, use) => {
     // GatewayClient depends on `sandbox` for in-sandbox probes
     // (guard-chain inspection, log tailing, gateway-PID polling).
     // The fixture chain is sandbox → gateway so the dependency stays acyclic.
-    await use(new GatewayClient(host, sandbox));
+    await use(new GatewayClient(host, sandbox, runtimeProvider));
   },
   provider: async ({ shellProbe }, use) => {
     await use(new ProviderClient(shellProbe));
@@ -283,14 +288,14 @@ export const test = base.extend<E2ETargetFixtures>({
   state: async ({}, use) => {
     await use(new StateClient());
   },
-  environment: async ({ artifacts, host }, use) => {
-    await use(new EnvironmentPhaseFixture(host, artifacts));
+  environment: async ({ artifacts, host, runtimeProvider }, use) => {
+    await use(new EnvironmentPhaseFixture(host, artifacts, runtimeProvider));
   },
   onboard: async ({ artifacts, cleanup, host, secrets }, use) => {
     await use(new OnboardingPhaseFixture(host, secrets, cleanup, artifacts));
   },
-  lifecycle: async ({ cleanup, gateway, host, sandbox }, use) => {
-    await use(new LifecyclePhaseFixture(host, sandbox, cleanup, gateway));
+  lifecycle: async ({ cleanup, gateway, host, runtimeProvider, sandbox }, use) => {
+    await use(new LifecyclePhaseFixture(host, sandbox, cleanup, gateway, runtimeProvider));
   },
   runtime: async ({ provider, sandbox }, use) => {
     await use(new RuntimePhaseFixture(sandbox, provider));

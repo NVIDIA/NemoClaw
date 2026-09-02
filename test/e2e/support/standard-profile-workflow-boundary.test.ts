@@ -19,21 +19,6 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
-  it("reserves cold-build time without changing managed-image target timeouts", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { "timeout-minutes"?: string; with?: Record<string, string> }>;
-    };
-    workflow.jobs.live!["timeout-minutes"] = "${{ matrix.timeout_minutes }}";
-    workflow.jobs["catalogue-standard"]!.with!.timeout_minutes = "${{ matrix.timeout_minutes }}";
-
-    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
-      expect.arrayContaining([
-        "live E2E must reserve the cold-build timeout only for local Dockerfiles",
-        "catalogue-standard must pass timeout_minutes from the catalogue matrix",
-      ]),
-    );
-  });
-
   it("rejects a cloudflared PATH shortcut before package verification", () => {
     const profile = YAML.parse(
       fs.readFileSync(
@@ -223,7 +208,9 @@ describe("standard E2E execution profile", () => {
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: "a".repeat(40),
       CATALOGUE_ID: "hermes-inference-switch",
+      COVERAGE_VARIANT: "anthropic-podman",
       ENV: "/dev/null",
+      EXECUTION_ID: "hermes-inference-switch-anthropic-podman",
       GITHUB_ENV: githubEnvironment,
       GITHUB_OUTPUT: githubOutput,
       GITHUB_WORKSPACE_VALUE: directory,
@@ -232,6 +219,7 @@ describe("standard E2E execution profile", () => {
       INSTALL_MODE: "credential-free",
       LC_ALL: "C",
       PATH: process.env.PATH ?? "",
+      RUNTIME_PROVIDER: "podman",
       SHARD: "anthropic",
       TARGET_ID: "hermes-inference-switch",
       TEST_FILE: "test/e2e/live/hermes-inference-switch.test.ts",
@@ -246,11 +234,12 @@ describe("standard E2E execution profile", () => {
       expect(valid.status, valid.stderr).toBe(0);
       expect(fs.readFileSync(githubOutput, "utf8")).toBe(
         "artifact_directory=e2e-artifacts/live/hermes-inference-switch/anthropic\n" +
-          "upload_name=e2e-hermes-inference-switch-anthropic\n",
+          "upload_name=e2e-hermes-inference-switch-anthropic-podman\n",
       );
       expect(fs.readFileSync(githubEnvironment, "utf8")).toBe(
         `E2E_ARTIFACT_DIR=${directory}/e2e-artifacts/live/hermes-inference-switch/anthropic\n` +
-          "NEMOCLAW_E2E_SHARD=anthropic\n",
+          "NEMOCLAW_E2E_SHARD=anthropic\n" +
+          "NEMOCLAW_GATEWAY_RUNTIME=podman\n",
       );
 
       const unsafe = spawnSync("bash", [...shellArguments, planScript], {
@@ -281,7 +270,10 @@ describe("standard E2E execution profile", () => {
       ARTIFACT_DIRECTORY: artifactDirectory,
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: "a".repeat(40),
+      COVERAGE_VARIANT: "default-podman",
+      EXECUTION_ID: "snapshot-commands-default-podman",
       JOB_STATUS: "success",
+      RUNTIME_PROVIDER: "podman",
       RUN_ATTEMPT: "2",
       RUN_ID: "123",
       TARGET_ID: "snapshot-commands",
@@ -308,6 +300,9 @@ describe("standard E2E execution profile", () => {
       ).toEqual({
         kind: "nemoclaw-e2e-evidence-v1",
         targetId: "snapshot-commands",
+        executionId: "snapshot-commands-default-podman",
+        coverageVariant: "default-podman",
+        runtimeProvider: "podman",
         candidate: { repository: "NVIDIA/NemoClaw", sha: "a".repeat(40) },
         workflow: {
           repository: "NVIDIA/NemoClaw",

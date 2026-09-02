@@ -10,12 +10,12 @@ import {
   runSecondaryCleanup as bestEffortDiagnostic,
   CLI,
   COMMAND_TIMEOUT_MS,
-  dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
   phase6Env,
   precleanSandbox,
+  requirePhase6RuntimeProvider,
   REPO_ROOT,
   redactionValues,
   resultText,
@@ -193,7 +193,9 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
   expect(result.stdout.trim(), resultText(result)).toBe("SECRET_ABSENT");
 }
 
-test("Telegram bridge-style message handling treats shell metacharacters as data", {
+test(
+  "Telegram bridge-style message handling treats shell metacharacters as data",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -204,7 +206,8 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
       "confirm benign message passthrough",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = phase6Env({
     sandboxName: SANDBOX_NAME,
@@ -238,8 +241,7 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
   );
   await precleanSandbox(host, SANDBOX_NAME, env, redactions, "preclean-telegram-injection");
 
-  const docker = await dockerInfo(host, env);
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+    await requirePhase6RuntimeProvider(runtimeProvider, "Telegram injection");
 
   const install = await installSandboxOrSkipOnRateLimit(
     host,
@@ -250,7 +252,13 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     "NVIDIA endpoint validation was rate-limited before Telegram injection assertions ran",
   );
   expectExitZero(install, "install.sh --non-interactive");
-  await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-telegram-injection");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "sandbox-list-telegram-injection",
+    );
 
   progress.phase("exercise command-substitution payloads");
   for (const [label, marker, payload] of [
@@ -383,4 +391,5 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
       timeoutMs: 60_000,
     }),
   );
-});
+  },
+);

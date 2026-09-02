@@ -14,26 +14,6 @@ export const ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS = 15 * MINUTE_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
-export const ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS = 100 * MINUTE_MS;
-export const ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS = 110 * MINUTE_MS;
-export const ONBOARD_LOCAL_DOCKERFILE_TARGET_TIMEOUT_MINUTES = 120;
-
-export type LocalDockerfileWorkflowTimeoutContract = Readonly<{
-  commandTimeoutEnvironment: string;
-  testTimeoutEnvironment: string;
-  targetTimeout: string;
-}>;
-
-export function localDockerfileWorkflowTimeoutContract(
-  managedTargetTimeoutMinutes: number,
-): LocalDockerfileWorkflowTimeoutContract {
-  const workloadSource = "needs.generate-matrix.outputs.workload_source";
-  return {
-    commandTimeoutEnvironment: `\${{ ${workloadSource} == 'local-dockerfile' && '${ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS}' || '' }}`,
-    testTimeoutEnvironment: `\${{ ${workloadSource} == 'local-dockerfile' && '${ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS}' || '' }}`,
-    targetTimeout: `\${{ ${workloadSource} == 'local-dockerfile' && ${ONBOARD_LOCAL_DOCKERFILE_TARGET_TIMEOUT_MINUTES} || ${managedTargetTimeoutMinutes} }}`,
-  };
-}
 
 // The registry post-reboot target also contains environment preparation,
 // gateway reconnection, sandbox readiness, and final state validation inside
@@ -68,35 +48,14 @@ export type LiveTargetTimeoutContract = Readonly<{
 
 export function liveTargetTimeoutContract(
   lifecycle: string | undefined,
-  workloadSource?: string,
 ): LiveTargetTimeoutContract {
-  if (lifecycle === "post-reboot-recovery") {
-    return {
-      commandTimeoutMs:
-        workloadSource === "local-dockerfile"
-          ? Math.max(
-              ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
-              ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS,
-            )
-          : ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
-      testTimeoutMs: Math.max(
-        ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS,
-        workloadSource === "local-dockerfile" ? ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS : 0,
-      ),
-      targetTimeoutMinutes: Math.max(
-        ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES,
-        workloadSource === "local-dockerfile" ? ONBOARD_LOCAL_DOCKERFILE_TARGET_TIMEOUT_MINUTES : 0,
-      ),
-    };
-  }
-  if (workloadSource === "local-dockerfile") {
-    return {
-      commandTimeoutMs: ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS,
-      testTimeoutMs: ONBOARD_LOCAL_DOCKERFILE_TEST_TIMEOUT_MS,
-      targetTimeoutMinutes: ONBOARD_LOCAL_DOCKERFILE_TARGET_TIMEOUT_MINUTES,
-    };
-  }
-  return { targetTimeoutMinutes: 45 };
+  return lifecycle === "post-reboot-recovery"
+    ? {
+        commandTimeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+        testTimeoutMs: ONBOARD_POST_REBOOT_TEST_TIMEOUT_MS,
+        targetTimeoutMinutes: ONBOARD_POST_REBOOT_TARGET_TIMEOUT_MINUTES,
+      }
+    : { targetTimeoutMinutes: 45 };
 }
 
 // The onboard-resume scenario gives two create/recreate commands the

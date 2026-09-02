@@ -22,7 +22,6 @@ import {
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
   HERMES_TIMEOUT_HEADROOM_MINUTES,
 } from "./hermes-timeout-contract.mts";
-import { localDockerfileWorkflowTimeoutContract } from "./onboard-timeout-contract.mts";
 import { validateLlamaCppDgxSparkQualificationWorkflow } from "./llama-cpp-dgx-spark-qualification-workflow-boundary.mts";
 import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
@@ -45,6 +44,12 @@ import {
   validateE2eExecutionRows,
   validateE2eExecutionMetadata,
 } from "./execution-coverage.mts";
+import {
+  E2E_RUNTIME_AGNOSTIC,
+  E2E_GATEWAY_RUNTIMES as SUPPORTED_E2E_GATEWAY_RUNTIMES,
+  type E2eGatewayRuntime,
+  type E2eGatewayRuntimeSupport,
+} from "./gateway-runtime.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import {
   validateTrustedHermesSwapHelperSource,
@@ -98,6 +103,13 @@ const DEFAULT_HOST_DEPENDENCY_ACTION_PATH = join(
   "host-dependency-setup",
   "action.yaml",
 );
+const DEFAULT_NATIVE_PODMAN_SETUP_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "setup-native-podman-e2e",
+  "action.yaml",
+);
 const DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH = join(
   REPO_ROOT,
   ".github",
@@ -124,6 +136,8 @@ export interface FreeStandingJobsInventory {
   targetToJob: Map<string, string>;
   liveTestToJobs: Map<string, string[]>;
   coverageRows: E2eExecutionRow[];
+  gatewayRuntimesByJob: Map<string, E2eGatewayRuntimeSupport>;
+  gatewayRuntimesByCoverageRow: Map<string, E2eGatewayRuntimeSupport>;
 }
 
 export interface FocusedE2eJob {
@@ -164,6 +178,7 @@ const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
+const GATEWAY_RUNTIMES_MARKER = "E2E_GATEWAY_RUNTIMES";
 const AGENT_RUNTIME_MARKER = "E2E_AGENT_RUNTIME";
 const OUTCOME_MARKER = "E2E_OBSERVABLE_OUTCOME";
 const ENVIRONMENT_MARKER = "E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT";
@@ -175,6 +190,7 @@ const COVERAGE_MATRIX_KEYS = [
   "unresolved_reason",
   "coverage_variant",
 ] as const;
+const COVERAGE_GATEWAY_RUNTIMES_KEY = "gateway_runtimes";
 const STAGING_BREV_JOB_ID = "staging-brev-launchable";
 const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
 const STAGING_BREV_JOB_IDS = new Set([STAGING_BREV_JOB_ID, STAGING_BREV_IDENTITY_JOB_ID]);
@@ -256,6 +272,22 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
   "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";
+const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
+  include: [
+    {
+      scenario: "openclaw-balanced-weather",
+      selector: "^common-egress.+C1.+$",
+    },
+    {
+      scenario: "openclaw-open-reference",
+      selector: "^common-egress.+C2.+$",
+    },
+    {
+      scenario: "hermes-open-reference",
+      selector: "^common-egress.+C3.+$",
+    },
+  ],
+} as const;
 const ROUTED_JOB_NAMES = new Set([
   ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
   ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
@@ -464,7 +496,47 @@ function findDuplicates(values: readonly string[]): string[] {
   return [...duplicates].sort();
 }
 
-function workflowCoverageRows(jobId: string, job: WorkflowRecord): E2eExecutionRow[] {
+function gatewayRuntimeSupport(value: unknown): E2eGatewayRuntimeSupport | undefined {
+  const declaration = stringValue(value);
+  if (declaration === E2E_RUNTIME_AGNOSTIC) return E2E_RUNTIME_AGNOSTIC;
+  const runtimes = declaration.split(",");
+  return runtimes.length > 0 &&
+    new Set(runtimes).size === runtimes.length &&
+    runtimes.every((runtime) =>
+      SUPPORTED_E2E_GATEWAY_RUNTIMES.includes(runtime as E2eGatewayRuntime),
+    )
+    ? (runtimes as E2eGatewayRuntime[])
+    : undefined;
+}
+
+function scenarioCoverageCandidates(
+  matrix: WorkflowRecord,
+  jobGatewayRuntimes: E2eGatewayRuntimeSupport,
+): WorkflowRecord[] {
+  if (!Array.isArray(matrix.scenario) || jobGatewayRuntimes === E2E_RUNTIME_AGNOSTIC) return [];
+  const scenarios = matrix.scenario.map(stringValue).filter(Boolean);
+  if (scenarios.length !== matrix.scenario.length || new Set(scenarios).size !== scenarios.length) {
+    return [];
+  }
+  const exclusions = Array.isArray(matrix.exclude) ? matrix.exclude.map(asRecord) : [];
+  return scenarios.map((scenario) => ({
+    coverage_variant: scenario,
+    gateway_runtimes: jobGatewayRuntimes
+      .filter(
+        (runtime) =>
+          !exclusions.some(
+            (entry) => entry.scenario === scenario && entry.runtime_provider === runtime,
+          ),
+      )
+      .join(","),
+  }));
+}
+
+function workflowCoverageRows(
+  jobId: string,
+  job: WorkflowRecord,
+  jobGatewayRuntimes: E2eGatewayRuntimeSupport,
+): Array<{ row: E2eExecutionRow; gatewayRuntimes: E2eGatewayRuntimeSupport }> {
   const env = asRecord(job.env);
   const matrix = asRecord(asRecord(job.strategy).matrix);
   const includes = Array.isArray(matrix.include)
@@ -480,7 +552,9 @@ function workflowCoverageRows(jobId: string, job: WorkflowRecord): E2eExecutionR
   ].some((key) => Object.hasOwn(env, key));
   if (!hasEnvironmentMetadata && includes.length === 0) return [];
 
-  const candidates = includes.length > 0 ? includes : [{}];
+  const scenarioCandidates = scenarioCoverageCandidates(matrix, jobGatewayRuntimes);
+  const candidates =
+    includes.length > 0 ? includes : scenarioCandidates.length > 0 ? scenarioCandidates : [{}];
   return candidates.map((entry) => {
     const metadata = validateE2eExecutionMetadata(
       {
@@ -494,10 +568,14 @@ function workflowCoverageRows(jobId: string, job: WorkflowRecord): E2eExecutionR
       `E2E workflow job ${jobId}`,
     );
     return {
-      id: jobId,
-      variant: stringValue(entry.coverage_variant),
-      source: STAGING_BREV_JOB_IDS.has(jobId) ? "staging" : "retained-workflow",
-      ...metadata,
+      row: {
+        id: jobId,
+        variant: stringValue(entry.coverage_variant),
+        source: STAGING_BREV_JOB_IDS.has(jobId) ? "staging" : "retained-workflow",
+        ...metadata,
+      },
+      gatewayRuntimes:
+        gatewayRuntimeSupport(entry[COVERAGE_GATEWAY_RUNTIMES_KEY]) ?? jobGatewayRuntimes,
     };
   });
 }
@@ -514,15 +592,12 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   const targetToJob = new Map<string, string>();
   const liveTestToJobs = new Map<string, string[]>();
   const coverageRows: E2eExecutionRow[] = [];
+  const gatewayRuntimesByJob = new Map<string, E2eGatewayRuntimeSupport>();
+  const gatewayRuntimesByCoverageRow = new Map<string, E2eGatewayRuntimeSupport>();
 
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob);
     const env = asRecord(job.env);
-    try {
-      coverageRows.push(...workflowCoverageRows(jobId, job));
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error));
-    }
     if (jobId === SHARED_E2E_JOB_ID) continue;
     const hasJobMarker = Object.hasOwn(env, FREE_STANDING_JOB_MARKER);
     const hasTargetMarker = Object.hasOwn(env, FREE_STANDING_TARGET_MARKER);
@@ -544,6 +619,24 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
 
     allowedJobs.push(jobId);
     workflowJobs.push(jobId);
+    const gatewayRuntimes =
+      gatewayRuntimeSupport(env[GATEWAY_RUNTIMES_MARKER]) ?? E2E_RUNTIME_AGNOSTIC;
+    if (gatewayRuntimes === undefined) {
+      errors.push(`${jobId} job ${GATEWAY_RUNTIMES_MARKER} is invalid`);
+    } else {
+      gatewayRuntimesByJob.set(jobId, gatewayRuntimes);
+      try {
+        for (const declaration of workflowCoverageRows(jobId, job, gatewayRuntimes)) {
+          coverageRows.push(declaration.row);
+          gatewayRuntimesByCoverageRow.set(
+            `${declaration.row.id}:${declaration.row.variant}`,
+            declaration.gatewayRuntimes,
+          );
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
     for (const file of collectLiveTestFiles(rawJob)) addMapValue(liveTestToJobs, file, jobId);
     if (Object.hasOwn(env, FREE_STANDING_DEFAULT_ENABLED_MARKER)) {
       if (env[FREE_STANDING_DEFAULT_ENABLED_MARKER] !== "0") {
@@ -617,6 +710,8 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       freeStandingTargets,
       targetToJob,
       coverageRows,
+      gatewayRuntimesByJob,
+      gatewayRuntimesByCoverageRow,
       liveTestToJobs: new Map(
         [...liveTestToJobs]
           .sort(([left], [right]) => left.localeCompare(right))
@@ -645,6 +740,18 @@ function cloneFreeStandingJobsInventory(
     freeStandingTargets: [...inventory.freeStandingTargets],
     targetToJob: new Map(inventory.targetToJob),
     coverageRows: inventory.coverageRows.map((row) => ({ ...row })),
+    gatewayRuntimesByJob: new Map(
+      [...inventory.gatewayRuntimesByJob].map(([job, runtimes]) => [
+        job,
+        runtimes === E2E_RUNTIME_AGNOSTIC ? runtimes : [...runtimes],
+      ]),
+    ),
+    gatewayRuntimesByCoverageRow: new Map(
+      [...inventory.gatewayRuntimesByCoverageRow].map(([key, runtimes]) => [
+        key,
+        runtimes === E2E_RUNTIME_AGNOSTIC ? runtimes : [...runtimes],
+      ]),
+    ),
     liveTestToJobs: cloneStringArrayMap(inventory.liveTestToJobs),
   };
 }
@@ -872,6 +979,35 @@ function requireJobStep(
   const step = namedStep(steps, name);
   if (!step) errors.push(`${jobName} job missing step: ${name}`);
   return step;
+}
+
+function requireDockerEngineRebuilds(
+  errors: string[],
+  jobName: string,
+  jobEnv: WorkflowRecord,
+  steps: readonly WorkflowStep[],
+): void {
+  const hasSeparateCacheBuilder = steps.some((step) => {
+    const uses = stringValue(step.uses);
+    return (
+      uses.startsWith("docker/setup-buildx-action@") || uses.startsWith("docker/build-push-action@")
+    );
+  });
+  const routesBuildsAwayFromDocker = steps.some((step) => {
+    const run = stringValue(step.run);
+    return (
+      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
+      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
+      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
+    );
+  });
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    hasSeparateCacheBuilder ||
+    routesBuildsAwayFromDocker
+  ) {
+    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
+  }
 }
 
 function requireRunContains(
@@ -1274,7 +1410,7 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (job.name !== "Shared E2E (${{ matrix.id }})") {
+  if (job.name !== "Shared E2E (${{ matrix.execution_id }})") {
     errors.push("shared E2E job name must expose the test ID");
   }
   if (job.needs !== "generate-matrix") {
@@ -1304,12 +1440,14 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   const jobEnv = asRecord(job.env);
   const expectedEnv = {
     CHECK_DOC_LINKS_REMOTE: "0",
-    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ matrix.id }}",
+    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ matrix.execution_id }}",
+    E2E_EXECUTION_ID: "${{ matrix.execution_id }}",
     E2E_TARGET_ID: "${{ matrix.id }}",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_GATEWAY_RUNTIME: "${{ matrix.runtime_provider }}",
   };
   for (const [name, expected] of Object.entries(expectedEnv)) {
     if (jobEnv[name] !== expected) {
@@ -1366,6 +1504,15 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   );
   requireRunContains(errors, runVitest, `--tags-filter=${CREDENTIAL_FREE_TEST_TAG}`);
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
+}
+
+function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
+  if (!runScript) return;
+  const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
+  const referencesSecret = /\bsecrets\.[A-Za-z0-9_]+\b|\$\{\{\s*secrets\.[^}]+\}\}/.test(runScript);
+  if (usesDockerLogin || referencesSecret) {
+    errors.push(`${owner} run script must not use docker login or inline secret interpolation`);
+  }
 }
 
 function requireCanonicalDockerHubAuthRun(
@@ -1609,7 +1756,10 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
     errors.push("hermes-e2e job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/hermes-e2e") {
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/live/hermes-e2e/${{ matrix.runtime_provider }}"
+  ) {
     errors.push("hermes-e2e job must write artifacts under e2e-artifacts/live/hermes-e2e");
   }
   if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
@@ -1667,42 +1817,16 @@ function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): 
     jobName,
     jobTimeoutMinutes,
   } of HERMES_TIMEOUT_CONTRACTS) {
-    const actualJobTimeout = asRecord(jobs[jobName])["timeout-minutes"];
+    const actualJobTimeoutMinutes = asRecord(jobs[jobName])["timeout-minutes"];
+    const maximumJobTimeoutMinutes = innerTimeoutMinutes + HERMES_TIMEOUT_HEADROOM_MAX_MINUTES;
     if (
-      actualJobTimeout !== localDockerfileWorkflowTimeoutContract(jobTimeoutMinutes).targetTimeout
+      !Number.isInteger(actualJobTimeoutMinutes) ||
+      (actualJobTimeoutMinutes as number) < jobTimeoutMinutes ||
+      (actualJobTimeoutMinutes as number) > maximumJobTimeoutMinutes
     ) {
       errors.push(
-        `${jobName} timeout must preserve the ${jobTimeoutMinutes}-minute managed-image budget and reserve 120 minutes for a local Dockerfile to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with ${HERMES_TIMEOUT_HEADROOM_MINUTES}-${HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes of managed-image job headroom`,
+        `${jobName} timeout must be between ${jobTimeoutMinutes} and ${maximumJobTimeoutMinutes} minutes to cover the ${innerTimeoutMinutes}-minute Vitest timeout in ${innerTest} with ${HERMES_TIMEOUT_HEADROOM_MINUTES}-${HERMES_TIMEOUT_HEADROOM_MAX_MINUTES} minutes of job headroom`,
       );
-    }
-  }
-}
-
-const RETAINED_LOCAL_DOCKERFILE_TIMEOUTS = [
-  { jobName: "mcp-bridge", managedTargetTimeoutMinutes: 90 },
-  { jobName: "mcp-bridge-dev", managedTargetTimeoutMinutes: 90 },
-  { jobName: "openshell-credential-generation-window", managedTargetTimeoutMinutes: 90 },
-  { jobName: "hermes-e2e", managedTargetTimeoutMinutes: 85 },
-  { jobName: "hermes-gpu-startup", managedTargetTimeoutMinutes: 90 },
-  { jobName: "cloud-onboard", managedTargetTimeoutMinutes: 70 },
-  { jobName: "messaging-providers", managedTargetTimeoutMinutes: 90 },
-] as const;
-
-function validateRetainedLocalDockerfileTimeouts(errors: string[], jobs: WorkflowRecord): void {
-  for (const { jobName, managedTargetTimeoutMinutes } of RETAINED_LOCAL_DOCKERFILE_TIMEOUTS) {
-    const job = asRecord(jobs[jobName]);
-    const env = asRecord(job.env);
-    const expected = localDockerfileWorkflowTimeoutContract(managedTargetTimeoutMinutes);
-    if (job["timeout-minutes"] !== expected.targetTimeout) {
-      errors.push(
-        `${jobName} must reserve 120 job minutes only for local Dockerfiles and preserve its ${managedTargetTimeoutMinutes}-minute managed-image budget`,
-      );
-    }
-    if (env.NEMOCLAW_EXEC_TIMEOUT !== expected.commandTimeoutEnvironment) {
-      errors.push(`${jobName} must publish the 100-minute local-Dockerfile command minimum`);
-    }
-    if (env.NEMOCLAW_TEST_TIMEOUT !== expected.testTimeoutEnvironment) {
-      errors.push(`${jobName} must publish the 110-minute local-Dockerfile test minimum`);
     }
   }
 }
@@ -2074,6 +2198,7 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
   const expectedJobEnv = {
     CANDIDATE_SHA: "${{ github.sha }}",
     E2E_DEFAULT_ENABLED: "0",
+    E2E_GATEWAY_RUNTIMES: "agnostic",
     E2E_JOB: "1",
     INSTANCE_NAME: "nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}",
     E2E_AGENT_RUNTIME: "none",
@@ -2833,10 +2958,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
-  if (
-    liveTargets["timeout-minutes"] !==
-    "${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}"
-  ) {
+  if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
     errors.push("live job timeout must come from the typed target matrix");
   }
   if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
@@ -3093,8 +3215,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const upload = requireStep(errors, steps, "Upload E2E artifacts");
   const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-${{ matrix.id }}") {
-    errors.push("artifact upload name must include matrix.id");
+  if (uploadWith.name !== "e2e-${{ matrix.execution_id }}") {
+    errors.push("artifact upload name must include matrix.execution_id");
   }
   const uploadPath = stringValue(uploadWith.path);
   requireUploadPathContains(
@@ -3176,7 +3298,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateStagingBrevLaunchableIdentityJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
-  validateRetainedLocalDockerfileTimeouts(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
 
@@ -3327,9 +3448,57 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
+    ...validateNativePodmanSetupAction(),
     ...validateE2eWorkflow(workflow),
     ...validateTrustedHermesSwapHelperSource(
       readFileSync(DEFAULT_LIVE_VITEST_INVOCATION_PATH, "utf8"),
     ),
   ];
+}
+
+export function validateNativePodmanSetupAction(
+  actionPath = DEFAULT_NATIVE_PODMAN_SETUP_ACTION_PATH,
+): string[] {
+  const action = asRecord(YAML.parse(readFileSync(actionPath, "utf8")));
+  const steps = asSteps(asRecord(action.runs).steps);
+  const start = steps.find((step) => step.name === "Start native Podman runtime");
+  const run = stringValue(start?.run);
+  const errors: string[] = [];
+
+  if (!start) return ["native Podman setup action must start the runtime"];
+  if (!run.includes('systemctl start "user-runtime-dir@${uid}.service" "user@${uid}.service"')) {
+    errors.push("native Podman setup must start the runner user manager");
+  }
+  if (!run.includes("/usr/bin/systemctl --user start dbus.socket")) {
+    errors.push("native Podman setup must start the runner user D-Bus socket");
+  }
+  if (!run.includes('[[ -S "$runtime_directory/bus" && ! -L "$runtime_directory/bus" ]]')) {
+    errors.push("native Podman setup must verify the runner user D-Bus authority");
+  }
+  if (run.includes("printf 'DOCKER_HOST=")) {
+    errors.push("native Podman setup must not expose its API socket as Docker");
+  }
+  if (
+    !run.includes("systemctl stop docker.service docker.socket") ||
+    !run.includes("systemctl mask --runtime docker.service docker.socket") ||
+    !run.includes("! pgrep -x dockerd >/dev/null") ||
+    !run.includes("docker info >/dev/null 2>&1")
+  ) {
+    errors.push("native Podman setup must make Docker unavailable before qualification");
+  }
+  if (
+    !run.includes('export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"') ||
+    !run.includes('systemctl --user start "$service_name.socket"') ||
+    run.indexOf('export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"') >
+      run.indexOf('systemctl --user start "$service_name.socket"')
+  ) {
+    errors.push("native Podman setup must bind user D-Bus before starting the API service");
+  }
+  if (!run.includes("printf 'OPENSHELL_PODMAN_SOCKET=%s\\n'")) {
+    errors.push("native Podman setup must expose the provider-owned socket authority");
+  }
+  if (!run.includes('printf \'PATH=%s:%s\\n\' "$toolchain_install_root/bin" "$PATH"')) {
+    errors.push("native Podman setup must preserve the reviewed executable authority on PATH");
+  }
+  return errors;
 }

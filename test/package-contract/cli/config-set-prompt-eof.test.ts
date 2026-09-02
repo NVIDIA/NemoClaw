@@ -75,8 +75,16 @@ function runConfigSetWithInput(input: string) {
     "  }),",
     "});",
     "install(" + PRIVILEGED_EXEC_PATH + ", {",
-    '  privilegedSandboxExecArgv: () => ["docker", "exec", "container-id"],',
+    "  capturePrivilegedSandboxCommand: () => Buffer.alloc(0),",
+    "  executePrivilegedSandboxCommand: () => ({",
+    "    status: 0,",
+    "    signal: null,",
+    "    stdout: Buffer.alloc(0),",
+    "    stderr: Buffer.alloc(0),",
+    "  }),",
     '  resolveDirectSandboxContainer: () => "container-id",',
+    '  resolvePrivilegedSandboxTarget: () => ({ resourceHandle: "container-id" }),',
+    "  withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),",
     "});",
     "",
     'Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });',
@@ -153,7 +161,10 @@ describe("config set new-key prompt", () => {
     expect(result.stderr).toContain("Write this new key? [y/N]");
     expect(result.stderr).not.toContain("Aborted.");
     expect(result.stderr).not.toContain("No input available on stdin");
-    expect(result.stdout).toContain("Writing config to sandbox");
+    expect(
+      result.stdout,
+      `status=${String(result.status)} stderr=${String(result.stderr)}`,
+    ).toContain("Writing config to sandbox");
     expect(result.stdout).toContain("config updated");
     expect(result.status).toBe(0);
   }, 45_000);

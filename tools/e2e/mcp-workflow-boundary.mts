@@ -4,7 +4,6 @@
 import fs from "node:fs";
 
 import YAML from "yaml";
-import { localDockerfileWorkflowTimeoutContract } from "./onboard-timeout-contract.mts";
 import {
   OPENSHELL_DEV_ARTIFACT_DIRECTORY,
   OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
@@ -12,7 +11,7 @@ import {
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
 import {
   contentSha256,
-  MCP_DEV_JOB_LOCAL_DOCKERFILE_EXECUTION_CONTEXT_SHA256,
+  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
   MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
   MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
@@ -25,6 +24,13 @@ const DEV_ARTIFACT_JOB = "openshell-dev-artifact";
 const CREDENTIAL_WINDOW_JOB = "openshell-credential-generation-window";
 const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
 const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
+const MATRIX_RUNTIME_PROVIDER_EXPRESSION = "${{ matrix.runtime_provider }}";
+const DOCKER_EXACT_MAIN_PROOF_EXPRESSION =
+  "${{ matrix.runtime_provider == 'docker' && '1' || '0' }}";
+const MANAGED_IMAGE_REVISION_EXPRESSION =
+  "${{ needs.base-image-publication.outputs.managed_image_revision }}";
+const MANAGED_IMAGE_RECEIPT_EXPRESSION =
+  "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
 const TERMINAL_JOBS = [
   "release-qualification",
   "relevant-e2e",
@@ -70,7 +76,7 @@ const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
 const CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
 const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
-const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-generation-window";
+const CREDENTIAL_WINDOW_ARTIFACT_DIR = `e2e-artifacts/live/openshell-credential-generation-window/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`;
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
@@ -163,7 +169,6 @@ function validateJobIdentity(
   const env = asRecord(job.env);
   const strategy = asRecord(job.strategy);
   const matrix = asRecord(strategy.matrix);
-  const timeoutContract = localDockerfileWorkflowTimeoutContract(90);
   requireEqual(errors, env.E2E_JOB, "1", `${jobName} must declare E2E_JOB=1`);
   requireEqual(
     errors,
@@ -174,32 +179,20 @@ function validateJobIdentity(
   requireEqual(
     errors,
     env.E2E_MANAGED_IMAGE_REVISION,
-    "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+    MANAGED_IMAGE_REVISION_EXPRESSION,
     `${jobName} must receive the selected managed-image cohort revision`,
   );
   requireEqual(
     errors,
     env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
-    "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+    MANAGED_IMAGE_RECEIPT_EXPRESSION,
     `${jobName} must receive the complete selected managed-image cohort receipt`,
   );
   requireEqual(
     errors,
     job["timeout-minutes"],
-    timeoutContract.targetTimeout,
-    `${jobName} must preserve 90 managed-image minutes and reserve 120 local-Dockerfile minutes`,
-  );
-  requireEqual(
-    errors,
-    env.NEMOCLAW_EXEC_TIMEOUT,
-    timeoutContract.commandTimeoutEnvironment,
-    `${jobName} must publish the 100-minute local-Dockerfile command minimum`,
-  );
-  requireEqual(
-    errors,
-    env.NEMOCLAW_TEST_TIMEOUT,
-    timeoutContract.testTimeoutEnvironment,
-    `${jobName} must publish the 110-minute local-Dockerfile test minimum`,
+    90,
+    `${jobName} must bound each shard to 90 minutes`,
   );
   requireEqual(errors, strategy["fail-fast"], false, `${jobName} shards must not fail fast`);
   requireEqual(
@@ -252,8 +245,8 @@ function validateJobIdentity(
     requireEqual(
       errors,
       env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF,
-      "1",
-      "mcp-bridge must enable the exact stable release proof",
+      DOCKER_EXACT_MAIN_PROOF_EXPRESSION,
+      "mcp-bridge must enable the exact stable release proof only for its Docker rows",
     );
     requireEqual(
       errors,
@@ -300,10 +293,7 @@ function validateJobSecurity(
 ): void {
   if (jobName === "mcp-bridge-dev") {
     const { steps: _jobSteps, ...jobExecutionContext } = job;
-    if (
-      contentSha256(jobExecutionContext) !==
-      MCP_DEV_JOB_LOCAL_DOCKERFILE_EXECUTION_CONTEXT_SHA256
-    ) {
+    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
       errors.push(
         "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
       );
@@ -698,7 +688,7 @@ function validateJobExecution(
   );
   for (const required of [
     "tools/e2e/assert-mcp-artifact-secrets-absent.mts",
-    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
   ]) {
     requireContains(errors, scan.run, required, `${jobName} artifact secret scan is incomplete`);
   }
@@ -718,13 +708,13 @@ function validateJobExecution(
   requireEqual(
     errors,
     uploadOptions.path,
-    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}/`,
     `${jobName} artifact upload must use exactly the scanned directory`,
   );
   requireEqual(
     errors,
     uploadOptions.name,
-    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}`,
+    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}-${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
     `${jobName} artifact upload must use its isolated artifact name`,
   );
   if (Object.keys(uploadOptions).sort().join(",") !== "name,path") {
@@ -880,12 +870,11 @@ function validateCredentialWindowJob(
     "ubuntu-latest",
     `${CREDENTIAL_WINDOW_JOB} must use its independent standard runner`,
   );
-  const timeoutContract = localDockerfileWorkflowTimeoutContract(90);
   requireEqual(
     errors,
     job["timeout-minutes"],
-    timeoutContract.targetTimeout,
-    `${CREDENTIAL_WINDOW_JOB} must preserve 90 managed-image minutes and reserve 120 local-Dockerfile minutes`,
+    90,
+    `${CREDENTIAL_WINDOW_JOB} must retain its bounded 90-minute budget`,
   );
   requireEqual(
     errors,
@@ -896,27 +885,25 @@ function validateCredentialWindowJob(
 
   const env = asRecord(job.env);
   const expectedEnv = {
-    E2E_MANAGED_IMAGE_REVISION:
-      "${{ needs.base-image-publication.outputs.managed_image_revision }}",
-    E2E_MANAGED_IMAGE_COHORT_RECEIPT:
-      "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+    E2E_MANAGED_IMAGE_REVISION: MANAGED_IMAGE_REVISION_EXPRESSION,
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: MANAGED_IMAGE_RECEIPT_EXPRESSION,
     E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
     NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON:
       "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
     E2E_JOB: "1",
+    E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
     E2E_OBSERVABLE_OUTCOME:
       "Credential expiry rotation detach and rebuild preserve the intended access window",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
-      "Ubuntu Docker host; local compatible inference and MCP endpoint",
+      "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
-    NEMOCLAW_EXEC_TIMEOUT: timeoutContract.commandTimeoutEnvironment,
-    NEMOCLAW_TEST_TIMEOUT: timeoutContract.testTimeoutEnvironment,
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_GATEWAY_RUNTIME: MATRIX_RUNTIME_PROVIDER_EXPRESSION,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
   };
   if (!hasExactEntries(env, expectedEnv)) {
@@ -1046,7 +1033,7 @@ function validateCredentialWindowJob(
   const uploadOptions = asRecord(upload.with);
   if (
     !hasExactEntries(uploadOptions, {
-      name: `e2e-${CREDENTIAL_WINDOW_JOB}`,
+      name: `e2e-${CREDENTIAL_WINDOW_JOB}-${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
       path: `${CREDENTIAL_WINDOW_ARTIFACT_DIR}/`,
     })
   ) {

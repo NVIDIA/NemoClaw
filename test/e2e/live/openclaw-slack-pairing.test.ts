@@ -20,10 +20,10 @@ import {
   writePairingArtifacts,
 } from "./openclaw-pairing-helpers.ts";
 import {
-  dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
+  requirePhase6RuntimeProvider,
   resultText,
   trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
@@ -86,7 +86,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
       "approve the Slack code through connect-shell",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = pairingEnv({
     sandboxName: SANDBOX_NAME,
@@ -126,8 +126,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   );
   await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
 
-  const docker = await dockerInfo(host, env);
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+  await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Slack pairing");
 
   progress.phase("install the Slack-enabled OpenClaw sandbox");
   const install = await installSandboxOrSkipOnRateLimit(
@@ -168,6 +167,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     SLACK_BOT_TOKEN,
     SLACK_APP_TOKEN,
     redactions,
+    "rest",
   );
   const fakeSlackWebSocket = await startFakeSlackApi(
     host,
@@ -176,6 +176,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     SLACK_BOT_TOKEN,
     SLACK_APP_TOKEN,
     redactions,
+    "websocket",
   );
   await applyFakePolicy({
     host,

@@ -204,7 +204,7 @@ The raw state layer still rejects a managed manifest unless both content authori
 Cross-provider clone and rebind, durable interrupted-restore recovery, and provider expansion remain separately reviewable units tracked by the [incremental runtime epic](https://github.com/NVIDIA/NemoClaw/issues/7744).
 If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the same selected snapshot after the runtime stabilizes.
 
-## Dormant Podman managed-bootstrap authority
+## Podman managed-bootstrap authority
 
 The Podman candidate owns a separate `managed-bootstrap` command scope bound
 to one rootless engine authority. Before a bootstrap mutation, it
@@ -224,10 +224,12 @@ The image transaction accepts only that prepared authority. It stages one
 protected root-apply request, starts the replacement, and authenticates
 the image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
 The watcher stays stopped and the journal remains authoritative throughout.
-These provider-owned modules remain disconnected from production runtime
-selection; persisted post-commit recovery, GPU and local inference, installer
-qualification, and supported activation remain later gates in
-[`#7744`](https://github.com/NVIDIA/NemoClaw/issues/7744).
+The registered native Podman provider consumes this authority when
+`NEMOCLAW_GATEWAY_RUNTIME=podman` selects it for standard managed-image
+onboarding. Persisted post-commit recovery, provider-owned cleanup, state-root
+preparation, and the supported E2E matrix fail closed on ambiguous or changed
+authority. The portable experimental profile remains an independent lifecycle
+and does not consume this selection.
 
 ## Agent-specific differences
 

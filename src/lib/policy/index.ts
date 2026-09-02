@@ -1839,9 +1839,8 @@ function removePreset(
         const exclusionError = openClawNpmExclusionStateError(sandboxName, currentPolicy);
         if (exclusionError) throw new Error(exclusionError);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to remove npm policy compatibility: ${redact(message)}`);
+    } catch {
+      console.error("  Refusing to remove npm policy compatibility: validation failed.");
       return false;
     }
   }
@@ -1865,18 +1864,16 @@ function removePreset(
               "teams",
             );
       updated = reconcileTeamsOutlookLoginCredentialBinding(updated, sandboxName, teamsActive);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to remove preset '${presetName}': ${message}`);
+    } catch {
+      console.error(`  Refusing to remove preset '${presetName}': validation failed.`);
       return false;
     }
   }
   if (openClawNpmBaseline) {
     try {
       updated = restoreOpenClawNpmCompatibility(currentPolicy, updated, openClawNpmBaseline);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to remove npm policy compatibility: ${message}`);
+    } catch {
+      console.error("  Refusing to remove npm policy compatibility: validation failed.");
       return false;
     }
   }
@@ -2358,9 +2355,8 @@ function applyPresetContent(
         merged = activation.policy;
         npmBaselineWidened = activation.widenedBaseline;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to apply npm policy compatibility: ${redact(message)}`);
+    } catch {
+      console.error("  Refusing to apply npm policy compatibility: validation failed.");
       return false;
     }
   }
@@ -2537,9 +2533,8 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
         merged = activation.policy;
         npmBaselineWidened = activation.widenedBaseline;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to apply npm policy compatibility: ${redact(message)}`);
+    } catch {
+      console.error("  Refusing to apply npm policy compatibility: validation failed.");
       return false;
     }
   }

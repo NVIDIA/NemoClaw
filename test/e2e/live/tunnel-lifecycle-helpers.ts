@@ -176,7 +176,7 @@ export const TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS = TEST_TIMEOUT_MS;
 
 type TunnelLifecycleFixtures = Pick<
   E2ETargetFixtures,
-  "artifacts" | "cleanup" | "host" | "progress" | "secrets"
+  "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "secrets"
 > & {
   skip: (note?: string) => never;
 };
@@ -224,6 +224,7 @@ export async function runTunnelLifecycleContract({
   cleanup,
   host,
   progress,
+  runtimeProvider,
   secrets,
   skip,
 }: TunnelLifecycleFixtures): Promise<void> {
@@ -247,17 +248,10 @@ export async function runTunnelLifecycleContract({
 
   registerTunnelLifecycleCleanup(cleanup, host);
 
-  const docker = await host.command("docker", ["info"], {
+  await runtimeProvider.requireAvailable({
     artifactName: "prereq-docker-info-tunnel-lifecycle",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    scenarioLabel: "tunnel lifecycle",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for tunnel lifecycle E2E: ${resultText(docker)}`);
-    }
-    skip("Docker is required for tunnel lifecycle E2E");
-  }
 
   const cloudflared = await host.command("cloudflared", ["--version"], {
     artifactName: "prereq-cloudflared-version",

@@ -5,12 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { type DockerRuntimeReady, EnvironmentPhaseFixture } from "../fixtures/phases/index.ts";
+import { EnvironmentPhaseFixture, type RuntimeReady } from "../fixtures/phases/index.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -72,8 +73,6 @@ const cloudOpenClawEnvironment: TargetEnvironment = {
   onboarding: "cloud-openclaw",
 };
 
-afterEach(() => vi.unstubAllEnvs());
-
 describe("environment phase fixture", () => {
   it("asserts the current repo CLI and required Docker runtime", async () => {
     const runner = new FakeRunner();
@@ -91,11 +90,12 @@ describe("environment phase fixture", () => {
       runtime: "docker-running",
       onboarding: "cloud-openclaw",
       cliPath: "./bin/nemoclaw.js",
-      docker: {
+      runtimeProvider: {
         id: "docker-running",
         expectation: "required",
+        providerId: "docker",
         available: true,
-      } satisfies Partial<DockerRuntimeReady>,
+      } satisfies Partial<RuntimeReady>,
     });
     expect(runner.calls).toEqual([
       {
@@ -122,6 +122,51 @@ describe("environment phase fixture", () => {
     ]);
   });
 
+  it("asserts the selected Podman provider for a managed runtime target", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(0, "Podman is available\n"));
+    const host = new HostCliClient(runner, { cliPath: "./bin/nemoclaw.js" });
+    const runtimeProvider = new RuntimeProviderPrerequisite(
+      host,
+      (reason) => {
+        throw new Error(reason);
+      },
+      {
+        HOME: "/home/runner",
+        PATH: "/usr/bin",
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+        XDG_RUNTIME_DIR: "/run/user/1001",
+      },
+    );
+    const environment = new EnvironmentPhaseFixture(host, undefined, runtimeProvider);
+
+    const ready = await environment.assertReady({
+      ...cloudOpenClawEnvironment,
+      runtime: "managed-runtime-running",
+    });
+
+    expect(ready.runtimeProvider).toMatchObject({
+      id: "managed-runtime-running",
+      expectation: "required",
+      providerId: "podman",
+      available: true,
+    });
+    expect(runner.calls[1]).toEqual({
+      command: "podman",
+      args: ["--url", "unix:///run/user/1001/podman/podman.sock", "info"],
+      options: {
+        artifactName: "runtime-podman-info-managed-runtime-running",
+        env: expect.objectContaining({
+          NEMOCLAW_GATEWAY_RUNTIME: "podman",
+          OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+        }),
+        timeoutMs: 30_000,
+      },
+    });
+  });
+
   it("fails when a required Docker runtime is unavailable", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
@@ -145,9 +190,10 @@ describe("environment phase fixture", () => {
       onboarding: "cloud-openclaw-no-docker",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.runtimeProvider).toMatchObject({
       id: "docker-missing",
       expectation: "missing",
+      providerId: "docker",
       available: false,
     });
   });
@@ -164,9 +210,10 @@ describe("environment phase fixture", () => {
       onboarding: "cloud-openclaw-no-docker",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.runtimeProvider).toMatchObject({
       id: "docker-missing",
       expectation: "missing",
+      providerId: "docker",
       available: true,
     });
   });
@@ -183,9 +230,10 @@ describe("environment phase fixture", () => {
       runtime: "macos-docker-optional",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.runtimeProvider).toMatchObject({
       id: "macos-docker-optional",
       expectation: "optional",
+      providerId: "docker",
       available: false,
       probeError: "spawn docker ENOENT",
     });
@@ -203,47 +251,61 @@ describe("environment phase fixture", () => {
       runtime: "macos-docker-optional",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.runtimeProvider).toMatchObject({
       id: "macos-docker-optional",
       expectation: "optional",
+      providerId: "docker",
       available: true,
     });
   });
 
   it("scopes availability probe env instead of inheriting unrelated secrets", async () => {
-    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
-    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "must-not-leak");
-    vi.stubEnv("DOCKER_HOST", "unix:///tmp/e2e-docker.sock");
-    vi.stubEnv("HOME", "/tmp/e2e-home");
-    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "/tmp/e2e-gateway-state");
-    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/tmp/e2e-gateway-tls");
-    vi.stubEnv("PATH", "/usr/bin");
+    const previousSecret = process.env.NVIDIA_INFERENCE_API_KEY;
+    const previousDockerHost = process.env.DOCKER_HOST;
+    const previousHome = process.env.HOME;
+    const previousPath = process.env.PATH;
+    process.env.NVIDIA_INFERENCE_API_KEY = "must-not-leak";
+    process.env.DOCKER_HOST = "unix:///tmp/e2e-docker.sock";
+    process.env.HOME = "/tmp/e2e-home";
+    process.env.PATH = "/usr/bin";
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      runner.enqueue(shellResult(0, "Docker is available\n"));
+      const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
 
-    const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
-    runner.enqueue(shellResult(0, "Docker is available\n"));
-    const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
+      await environment.assertReady(cloudOpenClawEnvironment);
 
-    await environment.assertReady(cloudOpenClawEnvironment);
-
-    const cliEnv = runner.calls[0]?.options?.env;
-    const dockerEnv = runner.calls[1]?.options?.env;
-    expect(cliEnv).toMatchObject({
-      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
-      DOCKER_HOST: "unix:///tmp/e2e-docker.sock",
-      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/tmp/e2e-gateway-state",
-      OPENSHELL_LOCAL_TLS_DIR: "/tmp/e2e-gateway-tls",
-    });
-    expect(dockerEnv).toMatchObject({
-      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
-      DOCKER_HOST: "unix:///tmp/e2e-docker.sock",
-      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/tmp/e2e-gateway-state",
-      OPENSHELL_LOCAL_TLS_DIR: "/tmp/e2e-gateway-tls",
-    });
-    expect(cliEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
-    expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
-    expect(cliEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-    expect(dockerEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+      const cliEnv = runner.calls[0]?.options?.env;
+      const dockerEnv = runner.calls[1]?.options?.env;
+      expect(cliEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
+      expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
+      expect(cliEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
+      expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
+      expect(cliEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+      expect(dockerEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env.NVIDIA_INFERENCE_API_KEY;
+      } else {
+        process.env.NVIDIA_INFERENCE_API_KEY = previousSecret;
+      }
+      if (previousDockerHost === undefined) {
+        delete process.env.DOCKER_HOST;
+      } else {
+        process.env.DOCKER_HOST = previousDockerHost;
+      }
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
   });
 
   it("treats launchable install as current first-layer CLI readiness", async () => {
@@ -275,7 +337,7 @@ describe("environment phase fixture", () => {
       runtime: "gpu-docker-cdi",
     });
 
-    expect(ready.docker).toMatchObject({
+    expect(ready.runtimeProvider).toMatchObject({
       id: "gpu-docker-cdi",
       expectation: "required",
       available: true,

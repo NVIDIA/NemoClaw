@@ -20,10 +20,10 @@ import {
   writePairingArtifacts,
 } from "./openclaw-pairing-helpers.ts";
 import {
-  dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
+  requirePhase6RuntimeProvider,
   resultText,
   sandboxSh,
   shellQuote,
@@ -46,7 +46,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
       "approve the Discord code through connect-shell",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = pairingEnv({
     sandboxName: SANDBOX_NAME,
@@ -82,8 +82,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   );
   await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-discord-pairing");
 
-  const docker = await dockerInfo(host, env);
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+  await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Discord pairing");
 
   progress.phase("install the Discord-enabled OpenClaw sandbox");
   const install = await installSandboxOrSkipOnRateLimit(

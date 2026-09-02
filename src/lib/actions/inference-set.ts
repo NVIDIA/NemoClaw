@@ -278,7 +278,15 @@ function defaultDeps(): InferenceSetDeps {
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: (credentialEnv) => process.env[credentialEnv] ?? "",
-    ensureHttpsPinRuntimeAdapter,
+    ensureHttpsPinRuntimeAdapter: (options) => {
+      if (!options.discoverAllowedSourceCidrs) {
+        throw new Error("HTTPS Pin Runtime adapter is missing runtime-provider network authority.");
+      }
+      return ensureHttpsPinRuntimeAdapter({
+        ...options,
+        discoverAllowedSourceCidrs: options.discoverAllowedSourceCidrs,
+      });
+    },
     revokeHttpsPinRuntimeAdapterRoute,
     probeSandboxRoute: probeInferenceSetSandboxRoute,
     sleep: sleepInferenceSetRouteConvergence,
@@ -305,9 +313,9 @@ function assertSupportedProvider(provider: string, model: string): void {
 function assertInferenceSetRuntimeAuthority(
   entry: SandboxEntry,
   providers: RuntimeProviderBundleRegistry | undefined,
-): void {
+): ReturnType<typeof requireInferenceSetRuntimeAuthority> {
   try {
-    requireInferenceSetRuntimeAuthority(entry, providers);
+    return requireInferenceSetRuntimeAuthority(entry, providers);
   } catch (error) {
     if (!(error instanceof RuntimeProviderSelectionError)) throw error;
     throw new InferenceSetError(error.message, 2);
@@ -790,6 +798,7 @@ async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
   expectedGatewayName: string,
+  runtimeProvider: ReturnType<typeof requireInferenceSetRuntimeAuthority>,
 ): Promise<InferenceMutation<InferenceSetMutationResult>> {
   // #6321: accept the installer-style provider name onboard uses (e.g.
   // `anthropicCompatible`) as well as the OpenShell provider name, by
@@ -936,7 +945,14 @@ async function runInferenceSetWithoutHostLock(
     getSandboxes: () => deps.listSandboxes().sandboxes,
     rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: deps.resolveCredentialValue,
-    ensureHttpsPinRuntimeAdapter: deps.ensureHttpsPinRuntimeAdapter,
+    ensureHttpsPinRuntimeAdapter: (adapterOptions) =>
+      deps.ensureHttpsPinRuntimeAdapter({
+        ...adapterOptions,
+        discoverAllowedSourceCidrs: () =>
+          runtimeProvider.gateway
+            .prepareHostRuntime({ environment: process.env, platform: process.platform })
+            .network.sandboxSourceCidrs(),
+      }),
     effectiveInferenceApi: preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
   });
 
@@ -1525,13 +1541,17 @@ export async function runInferenceSet(
     enforceRemovedImmutabilityMigrationBoundary(selected.sandboxName);
     assertInferenceSetCommandAvailable(selected.sandboxName);
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
-    assertInferenceSetRuntimeAuthority(lockedSelection.entry, deps.runtimeProviders);
+    const runtimeProvider = assertInferenceSetRuntimeAuthority(
+      lockedSelection.entry,
+      deps.runtimeProviders,
+    );
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
       runInferenceSetWithoutHostLock(
         { ...options, sandboxName: selected.sandboxName },
         deps,
         gatewayName,
+        runtimeProvider,
       ),
     );
     // Retain the outer sandbox lifecycle lock so another process cannot replace

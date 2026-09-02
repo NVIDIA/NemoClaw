@@ -631,7 +631,11 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
     return {"ok": True, "state": "matched"}
 
 
-def _mutate(data: object, action: str, payload: dict[str, object]) -> tuple[dict, bool]:
+def _mutate(
+    data: object,
+    action: str,
+    payload: dict[str, object],
+) -> tuple[dict, bool]:
     if not isinstance(data, dict):
         raise ValueError("Invalid Hermes config: expected a YAML object")
     server_name = payload.get("server")

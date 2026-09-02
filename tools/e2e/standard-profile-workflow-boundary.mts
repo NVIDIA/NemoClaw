@@ -28,8 +28,6 @@ const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
-const LOCAL_DOCKERFILE_TIMEOUT =
-  "${{ needs.generate-matrix.outputs.workload_source == 'local-dockerfile' && matrix.timeout_minutes < 120 && 120 || matrix.timeout_minutes }}";
 const guardedCallerSecret = (name: string): string =>
   `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
@@ -119,9 +117,6 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
 
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
-  if (record(jobs.live)["timeout-minutes"] !== LOCAL_DOCKERFILE_TIMEOUT) {
-    errors.push("live E2E must reserve the cold-build timeout only for local Dockerfiles");
-  }
   for (const profile of E2E_EXECUTION_PROFILES) {
     const contract = PROFILE_JOBS[profile];
     const job = record(jobs[contract.job]);
@@ -137,7 +132,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
         `${contract.job} must call the standard E2E profile after matrix generation and base-image publication`,
       );
     }
-    if (job.name !== "${{ matrix.display_name }}") {
+    if (job.name !== "${{ matrix.display_name }} (${{ matrix.runtime_provider }})") {
       errors.push(`${contract.job} must use the planned outcome-first display name`);
     }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
@@ -158,6 +153,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      runtime_provider: "${{ matrix.runtime_provider }}",
+      execution_id: "${{ matrix.execution_id }}",
+      coverage_variant: "${{ matrix.coverage_variant }}",
       risk_signal_expected_sha:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}",
       risk_signal_correlation_id:
@@ -175,7 +173,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       checkout_sha: "${{ inputs.checkout_sha }}",
       workflow_sha: "${{ inputs.workflow_sha }}",
       test_file: "${{ matrix.test_file }}",
-      timeout_minutes: LOCAL_DOCKERFILE_TIMEOUT,
+      timeout_minutes: "${{ matrix.timeout_minutes }}",
       install_mode: "${{ matrix.install_mode }}",
       install_non_interactive: "${{ matrix.install_non_interactive }}",
       restore_cli: "${{ matrix.restore_cli }}",
@@ -211,6 +209,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const requiredInputs = {
     candidate_repository: "string",
     candidate_sha: "string",
+    runtime_provider: "string",
+    execution_id: "string",
+    coverage_variant: "string",
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
@@ -285,6 +286,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const jobEnv = record(runJob.env);
   const expectedJobEnv = {
     E2E_JOB: "1",
+    E2E_EXECUTION_ID: "${{ inputs.execution_id }}",
     NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "${{ inputs.managed_image_catalog }}",
     E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
@@ -312,6 +314,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Install target host dependencies",
     "Prepare E2E workspace",
     "Restore exact-commit CLI artifact",
+    "Prepare native Podman E2E runtime",
+    "Stage immutable stopped-state cleanup helper",
     "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
@@ -334,6 +338,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const executionPlanRun = String(executionPlan?.run ?? "");
   const executionPlanFragments = [
     '[[ "$CATALOGUE_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$COVERAGE_VARIANT" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$EXECUTION_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
+    '[[ "$EXECUTION_ID" == "${CATALOGUE_ID}-${COVERAGE_VARIANT}" ]]',
     '[[ "$TARGET_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
     '[[ "$SHARD" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]',
     '[[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]',
@@ -347,6 +354,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     'printf \'upload_name=%s\\n\' "$upload_name" >>"$GITHUB_OUTPUT"',
     'printf \'E2E_ARTIFACT_DIR=%s/%s\\n\' "$GITHUB_WORKSPACE_VALUE" "$artifact_directory" >>"$GITHUB_ENV"',
     'printf \'NEMOCLAW_E2E_SHARD=%s\\n\' "$SHARD" >>"$GITHUB_ENV"',
+    'printf \'NEMOCLAW_GATEWAY_RUNTIME=%s\\n\' "$RUNTIME_PROVIDER" >>"$GITHUB_ENV"',
   ];
   if (
     executionPlan?.id !== "execution_plan" ||
@@ -358,12 +366,15 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       CANDIDATE_REPOSITORY: "${{ inputs.candidate_repository }}",
       CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
       CATALOGUE_ID: "${{ inputs.catalogue_id }}",
+      COVERAGE_VARIANT: "${{ inputs.coverage_variant }}",
       ENV: "/dev/null",
+      EXECUTION_ID: "${{ inputs.execution_id }}",
       GITHUB_WORKSPACE_VALUE: "${{ github.workspace }}",
       HOST_PACKAGES: "${{ inputs.host_packages }}",
       HOST_PREPARATION: "${{ inputs.host_preparation }}",
       INSTALL_MODE: "${{ inputs.install_mode }}",
       LC_ALL: "C",
+      RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
       SHARD: "${{ inputs.shard }}",
       TARGET_ID: "${{ inputs.target_id }}",
       TEST_FILE: "${{ inputs.test_file }}",
@@ -462,6 +473,43 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must restore the planned exact-commit CLI artifact");
   }
+  const nativePodmanRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Prepare native Podman E2E runtime",
+  );
+  if (
+    nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
+    record(nativePodmanRuntime?.with).enabled !==
+      "${{ inputs.runtime_provider == 'podman' && 'true' || 'false' }}" ||
+    !restore ||
+    workflowSteps.indexOf(nativePodmanRuntime ?? {}) !== workflowSteps.indexOf(restore) + 1
+  ) {
+    errors.push("standard E2E profile must prepare the selected native Podman runtime");
+  }
+  const stoppedStateHelper = requireStep(
+    errors,
+    workflowSteps,
+    "Stage immutable stopped-state cleanup helper",
+  );
+  const stoppedStateHelperRun = String(stoppedStateHelper?.run ?? "");
+  if (
+    stoppedStateHelper?.if !==
+      "${{ inputs.target_id == 'channels-stop-start' && (inputs.runtime_provider == 'docker' || inputs.runtime_provider == 'podman') }}" ||
+    stoppedStateHelper.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(stoppedStateHelper.env), {
+      CLEANUP_IMAGE:
+        "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+      RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
+    }) ||
+    !stoppedStateHelperRun.includes('docker pull "$CLEANUP_IMAGE"') ||
+    !stoppedStateHelperRun.includes('podman --url "unix://$OPENSHELL_PODMAN_SOCKET" pull') ||
+    !stoppedStateHelperRun.includes('--authfile "$DOCKER_CONFIG/config.json" "$CLEANUP_IMAGE"') ||
+    workflowSteps.indexOf(stoppedStateHelper ?? {}) !==
+      workflowSteps.indexOf(nativePodmanRuntime ?? {}) + 1
+  ) {
+    errors.push("standard E2E profile must stage the immutable stopped-state helper once");
+  }
   const cloudflared = requireStep(errors, workflowSteps, "Install reviewed cloudflared");
   const cloudflaredRun = String(cloudflared?.run ?? "");
   if (
@@ -478,7 +526,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
     !cloudflaredRun.includes('"${architecture}" != "amd64"') ||
     cloudflaredRun.includes("command -v cloudflared") ||
-    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
+    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
   ) {
     errors.push("standard E2E profile must install only the reviewed cloudflared package");
   }
@@ -633,9 +681,15 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     evidence?.if !== "${{ always() && steps.execution_plan.outcome == 'success' }}" ||
     evidenceEnv.ARTIFACT_DIRECTORY !== "${{ steps.execution_plan.outputs.artifact_directory }}" ||
     evidenceEnv.CANDIDATE_SHA !== "${{ inputs.candidate_sha }}" ||
+    evidenceEnv.COVERAGE_VARIANT !== "${{ inputs.coverage_variant }}" ||
+    evidenceEnv.EXECUTION_ID !== "${{ inputs.execution_id }}" ||
+    evidenceEnv.RUNTIME_PROVIDER !== "${{ inputs.runtime_provider }}" ||
     evidenceEnv.WORKFLOW_SHA !== "${{ github.workflow_sha }}" ||
     evidenceEnv.JOB_STATUS !== "${{ job.status }}" ||
     !evidenceRun.includes('kind: "nemoclaw-e2e-evidence-v1"') ||
+    !evidenceRun.includes("executionId: $executionId") ||
+    !evidenceRun.includes("coverageVariant: $coverageVariant") ||
+    !evidenceRun.includes("runtimeProvider: $runtimeProvider") ||
     !evidenceRun.includes("successful E2E target produced no product evidence") ||
     !evidenceRun.includes('>"$ARTIFACT_DIRECTORY/evidence-manifest.json"') ||
     workflowSteps.indexOf(evidence ?? {}) >= workflowSteps.indexOf(upload ?? {})

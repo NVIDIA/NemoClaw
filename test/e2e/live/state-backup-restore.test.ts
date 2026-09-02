@@ -128,11 +128,13 @@ async function destroySandboxUntilAbsent(
   );
 }
 
-test("state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)", {
+test(
+  "state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and the workspace backup script",
+      "confirm the selected runtime and the workspace backup script",
       "onboard the source sandbox",
       "write workspace and memory markers",
       "capture and inspect the host backup",
@@ -141,13 +143,15 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
       "validate restored workspace and memory",
     ],
   },
-}, async ({
+  },
+  async ({
   artifacts,
   cleanup,
   environment,
   host,
   onboard,
   progress,
+    runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -157,19 +161,10 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   secrets.required("NVIDIA_INFERENCE_API_KEY");
   expect(fs.existsSync(path.join(REPO_ROOT, "scripts", "backup-workspace.sh"))).toBe(true);
 
-  const dockerInfo = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info",
+      scenarioLabel: "state backup and restore",
   });
-  if (dockerInfo.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for state-backup-restore live coverage: ${resultText(dockerInfo)}`,
-      );
-    }
-    skip("Docker is required for state-backup-restore live coverage");
-  }
 
   await artifacts.writeJson("contract.json", {
     sandboxName: SANDBOX_NAME,
@@ -236,7 +231,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   const ready = await environment.assertReady({
     platform: "ubuntu-local",
     install: "repo-current",
-    runtime: "docker-running",
+      runtime: "managed-runtime-running",
     onboarding: "cloud-openclaw",
   });
 
@@ -448,4 +443,5 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   }
   expect(memoryText).toContain("STATE=EXISTS");
   expect(memoryText).toContain(`${markerContent}_daily`);
-});
+  },
+);

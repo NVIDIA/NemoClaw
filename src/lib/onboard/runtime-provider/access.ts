@@ -43,4 +43,5 @@ export {
   requireRuntimeProviderReadOnlyHostMounts,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
+  runtimeProviderSupportsContainerEngineOperation,
 } from "./registry";

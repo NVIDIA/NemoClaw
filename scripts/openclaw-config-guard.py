@@ -1536,6 +1536,14 @@ def _clear_secondary_journal(identity: Identity) -> None:
 
 
 def _open_config(config_path: str) -> OpenConfig:
+    """Pin the exact OpenClaw state root, including its managed-volume form.
+
+    SOURCE_OF_TRUTH_REVIEW
+    The host runtime validates and mounts the declared ``/sandbox/.openclaw``
+    state root.  A different device at that exact root is therefore expected;
+    descriptor-relative traversal below it remains bound to ``config_stat``
+    and continues to reject symlinks, races, hardlinks, and nested devices.
+    """
     normalized = posixpath.normpath(config_path)
     parent_path = posixpath.dirname(normalized)
     config_name = posixpath.basename(normalized)
@@ -1563,7 +1571,10 @@ def _open_config(config_path: str) -> OpenConfig:
             raise GuardError(
                 "entry-raced", normalized, "config directory changed while opening"
             )
-        if config_stat.st_dev != parent_stat.st_dev:
+        if (
+            config_stat.st_dev != parent_stat.st_dev
+            and normalized != PRODUCTION_CONFIG_DIR
+        ):
             os.close(config_fd)
             raise GuardError(
                 "cross-device-entry",
@@ -1583,6 +1594,121 @@ def _open_config(config_path: str) -> OpenConfig:
         os.close(parent_fd)
         raise
 
+
+def _open_config_for_lock(config_path: str, identity: Identity) -> OpenConfig:
+    """Pin /sandbox before resolving an attacker-controlled .openclaw name."""
+
+    normalized = posixpath.normpath(config_path)
+    parent_path = posixpath.dirname(normalized)
+    config_name = posixpath.basename(normalized)
+    if config_name != ".openclaw" or not parent_path:
+        raise GuardError(
+            "invalid-config-path",
+            config_path,
+            "config directory must be an absolute path ending in .openclaw",
+        )
+    parent_fd = _open_absolute_dir(parent_path)
+    created = False
+    try:
+        original_parent = os.fstat(parent_fd)
+        try:
+            before = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            before = None
+        already_protected = bool(
+            original_parent.st_uid == identity.root_uid
+            and original_parent.st_gid == identity.sandbox_gid
+            and stat.S_IMODE(original_parent.st_mode) == 0o1775
+            and before is not None
+            and stat.S_ISDIR(before.st_mode)
+            and before.st_uid == identity.root_uid
+            and before.st_gid == identity.root_gid
+            and stat.S_IMODE(before.st_mode) in {0o500, 0o755}
+        )
+        if (
+            before is not None
+            and stat.S_ISDIR(before.st_mode)
+            and before.st_dev != original_parent.st_dev
+            and normalized != PRODUCTION_CONFIG_DIR
+        ):
+            if not already_protected:
+                os.fchown(parent_fd, identity.root_uid, identity.sandbox_gid)
+                os.fchmod(parent_fd, 0o755)
+                os.fsync(parent_fd)
+            raise GuardError(
+                "cross-device-entry",
+                normalized,
+                "refusing to mutate a cross-device .openclaw mount",
+            )
+        # This root-ownership transition is the fail-closed outer namespace
+        # boundary. No later error returns /sandbox rename authority.
+        if not already_protected:
+            os.fchown(parent_fd, identity.root_uid, identity.sandbox_gid)
+            os.fchmod(parent_fd, 0o755)
+            os.fsync(parent_fd)
+        try:
+            before = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            before = None
+        if (
+            before is not None
+            and stat.S_ISDIR(before.st_mode)
+            and before.st_dev != original_parent.st_dev
+            and normalized != PRODUCTION_CONFIG_DIR
+        ):
+            raise GuardError(
+                "cross-device-entry",
+                normalized,
+                "refusing to mutate a cross-device .openclaw mount",
+            )
+        if before is not None and not stat.S_ISDIR(before.st_mode):
+            os.rename(
+                config_name,
+                f".nemoclaw-rejected-openclaw-{secrets.token_hex(16)}",
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+            os.fsync(parent_fd)
+            before = None
+        if before is None:
+            os.mkdir(config_name, 0o700, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+            before = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
+            created = True
+        config_fd = os.open(config_name, _directory_flags(), dir_fd=parent_fd)
+        config_stat = os.fstat(config_fd)
+        current = os.stat(config_name, dir_fd=parent_fd, follow_symlinks=False)
+        if not _same_inode(before, config_stat) or not _same_inode(
+            config_stat, current
+        ):
+            os.close(config_fd)
+            raise GuardError(
+                "entry-raced", normalized, "config directory changed while locking"
+            )
+        opened = OpenConfig(
+            config_path=normalized,
+            parent_path=parent_path,
+            config_name=config_name,
+            parent_fd=parent_fd,
+            config_fd=config_fd,
+            parent_stat=original_parent,
+            config_stat=config_stat,
+        )
+        if created:
+            placeholder = b"{}\n"
+            digest = hashlib.sha256(placeholder).hexdigest()
+            _force_replace_bytes(opened, "openclaw.json", placeholder, identity)
+            _force_replace_bytes(
+                opened,
+                ".config-hash",
+                f"{digest}  openclaw.json\n".encode("ascii"),
+                identity,
+            )
+            _commit_locked_dirs(opened, identity)
+        return opened
+    except Exception:
+        os.close(parent_fd)
+        raise
 
 
 def _journal_payload(record: dict[str, object]) -> bytes:

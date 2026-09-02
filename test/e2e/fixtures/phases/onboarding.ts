@@ -208,8 +208,8 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
-      throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
+    if (!environment.runtimeProvider.available) {
+      throw new Error("cloud-openclaw onboarding requires an available managed runtime provider.");
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
@@ -251,9 +251,9 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
+    if (!environment.runtimeProvider.available) {
       throw new Error(
-        "cloud-langchain-deepagents-code onboarding requires an available Docker runtime.",
+        "cloud-langchain-deepagents-code onboarding requires an available managed runtime provider.",
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
@@ -309,7 +309,7 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (environment.docker.expectation !== "missing") {
+    if (environment.runtimeProvider.expectation !== "missing") {
       throw new Error(
         "cloud-openclaw-no-docker onboarding requires the docker-missing runtime expectation.",
       );
@@ -361,9 +361,9 @@ export class OnboardingPhaseFixture {
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    if (!environment.docker.available) {
+    if (!environment.runtimeProvider.available) {
       throw new Error(
-        "cloud-openclaw-policy-custom-missing-presets onboarding requires an available Docker runtime.",
+        "cloud-openclaw-policy-custom-missing-presets onboarding requires an available managed runtime provider.",
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);

@@ -32,7 +32,6 @@ const { isIP } = require("node:net");
 const { isErrnoException }: typeof import("../core/errno") = require("../core/errno");
 const { validateName } = require("../runner");
 const { shellQuote } = require("../core/shell-quote");
-const { dockerExecFileSync, dockerSpawnSync } = require("../adapters/docker/exec");
 const credentialFilter: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("../state/audit/operational");
@@ -49,8 +48,10 @@ const {
   isPrivateIp,
 }: typeof import("../private-networks") = require("../private-networks");
 const {
-  privilegedSandboxExecArgv,
-  resolveDirectSandboxContainer,
+  capturePrivilegedSandboxCommand,
+  executePrivilegedSandboxCommand,
+  resolvePrivilegedSandboxTarget,
+  withPrivilegedSandboxExecutionLease,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
 const {
   buildHermesUpstreamHeader,
@@ -194,37 +195,40 @@ function privilegedSandboxExec(
   opts: { input?: string | Buffer; timeout?: number } = {},
 ): string {
   const hasInput = opts.input !== undefined;
-  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, hasInput, true), {
-    input: opts.input,
-    stdio: hasInput ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
-    timeout: opts.timeout ?? 30000,
-  });
+  return withPrivilegedSandboxExecutionLease(
+    sandboxName,
+    "sandbox config privileged execution",
+    () =>
+      capturePrivilegedSandboxCommand(sandboxName, cmd, {
+        ...(hasInput ? { input: opts.input } : {}),
+        sanitizeEnvironment: true,
+        timeout: opts.timeout ?? 30000,
+      }).toString("utf8"),
+  );
 }
 
 function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: string) {
   return {
     run: (cmd: string[], input?: string) => {
       try {
-        const argv = privilegedSandboxExecArgv(
-          sandboxName,
-          cmd,
-          input !== undefined,
-          true,
-          expectedContainerId,
-        );
-        const result = dockerSpawnSync(argv, {
-          encoding: "utf-8",
-          input,
-          timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
-          maxBuffer: 2 * 1024 * 1024,
+        return withPrivilegedSandboxExecutionLease(sandboxName, "OpenClaw config guard", () => {
+          const result = executePrivilegedSandboxCommand(sandboxName, cmd, {
+            ...(input === undefined ? {} : { input }),
+            sanitizeEnvironment: true,
+            ...(expectedContainerId === undefined
+              ? {}
+              : { expectedResourceHandle: expectedContainerId }),
+            timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
+            maxOutputBytes: 2 * 1024 * 1024,
+          });
+          return {
+            status: result.status,
+            signal: result.signal,
+            stdout: result.stdout.toString("utf8"),
+            stderr: result.stderr.toString("utf8"),
+            ...(result.error ? { error: result.error.message } : {}),
+          };
         });
-        return {
-          status: result.status,
-          signal: result.signal,
-          stdout: String(result.stdout ?? ""),
-          stderr: String(result.stderr ?? ""),
-          ...(result.error ? { error: result.error.message } : {}),
-        };
       } catch (error) {
         return {
           status: null,
@@ -1360,7 +1364,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     setDotpath(config, opts.key, safeValue);
     const content = composeSandboxConfigBody(config, target);
     try {
-      const containerId = resolveDirectSandboxContainer(sandboxName, null);
+      const containerId = resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
       const privileged = openClawConfigGuardExec(sandboxName, containerId);
       const issues = validateOpenClawConfigCandidate(privileged, content);
       if (issues.length > 0) configFail(issues.map((issue) => `  ${issue}`));
@@ -1476,7 +1480,6 @@ export {
   formatConfigValueForLogs,
   parseConfig,
   parseConfigGetArgs,
-  privilegedSandboxExecArgv,
   readSandboxConfig,
   readStdin,
   recomputeSandboxConfigHash,

@@ -13,8 +13,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -47,7 +45,7 @@ const OPENCLAW_WORKSPACE_PATH = "/sandbox/.openclaw/workspace";
 const MARKER_FILE = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker.txt`;
 const SNAPSHOT_NAME = "lifecycle";
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
-const LIVE_TIMEOUT_MS = testTimeout(36 * 60_000);
+const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
 const OPENCLAW_MAIN_SESSION_STORE = "/sandbox/.openclaw/agents/main/sessions/sessions.json";
@@ -202,7 +200,7 @@ test(
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm Docker and start hermetic inference",
+        "confirm the selected runtime and start hermetic inference",
         "onboard the snapshot sandbox",
         "create one snapshot",
         "destroy, freshly onboard, and restore workspace state",
@@ -213,7 +211,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "snapshot-commands",
       boundary: "install.sh + nemoclaw snapshot commands + openshell sandbox exec",
@@ -230,17 +228,10 @@ test(
       ],
     });
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-0-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-0-runtime-info",
+      scenarioLabel: "snapshot commands",
     });
-    if (dockerInfo.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`);
-      }
-      skip(`Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`);
-    }
 
     const inference = await startFakeOpenAiCompatibleServer({
       apiKey: INFERENCE_API_KEY,
@@ -308,7 +299,7 @@ test(
       cwd: REPO_ROOT,
       env: commandEnv(inferenceConfig),
       redactionValues: [INFERENCE_API_KEY],
-      timeoutMs: execTimeout(20 * 60_000),
+      timeoutMs: 20 * 60_000,
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 
@@ -386,7 +377,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
         artifactName: "phase-4-fresh-onboard-source",
         env: commandEnv(inferenceConfig),
         redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: execTimeout(20 * 60_000),
+        timeoutMs: 20 * 60_000,
       },
     );
     expect(freshOnboard.exitCode, resultText(freshOnboard)).toBe(0);

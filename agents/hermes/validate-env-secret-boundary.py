@@ -29,7 +29,9 @@ from contextlib import contextmanager
 from typing import Iterable, TextIO
 
 SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
-PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+PLACEHOLDER_RE = re.compile(
+    r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]{0,127}$"
+)
 KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 HERMES_API_PORT_RANGE_START = 8642

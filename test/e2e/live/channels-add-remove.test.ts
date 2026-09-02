@@ -409,7 +409,7 @@ test(
     await environment.assertReady({
       platform: "ubuntu-local",
       install: "repo-current",
-      runtime: "docker-running",
+      runtime: "managed-runtime-running",
       onboarding: "cloud-openclaw",
     });
 

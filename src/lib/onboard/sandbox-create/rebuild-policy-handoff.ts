@@ -6,7 +6,8 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
-import { parseOpenShellPolicy } from "../../policy/merge";
+import * as policies from "../../policy";
+import { parseOpenShellPolicy, stripProviderComposedPolicies } from "../../policy/merge";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
@@ -156,6 +157,7 @@ function mergeRequestedReplacementNetworkPolicies(
           policyMapping(replacement.network_policies, "replacement network_policies"),
         );
   if (required.size > 0) {
+    const requiredPolicies: PolicyMapping = {};
     for (const source of requiredPolicySources) {
       let parsed: unknown;
       try {
@@ -172,15 +174,16 @@ function mergeRequestedReplacementNetworkPolicies(
       );
       for (const [key, value] of Object.entries(policies)) {
         if (!required.has(key)) continue;
-        const existing = replacementPolicies[key];
+        const existing = requiredPolicies[key];
         if (existing !== undefined && !isDeepStrictEqual(existing, value)) {
           throw new Error(
             `Cannot prepare rebuild policy handoff: required network policy '${key}' has conflicting replacement sources.`,
           );
         }
-        replacementPolicies[key] = structuredClone(value);
+        requiredPolicies[key] = structuredClone(value);
       }
     }
+    Object.assign(replacementPolicies, requiredPolicies);
   }
   const livePolicies =
     live.network_policies === undefined
@@ -237,8 +240,25 @@ export function mergeReplacementPolicyAccess(
   requiredNetworkPolicyKeys: readonly string[] = [],
   removedNetworkPolicyKeys: readonly string[] = [],
   requiredNetworkPolicySources: readonly string[] = [],
+  sandboxName?: string,
 ): { readonly changed: boolean; readonly source: string } {
-  const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
+  const providerNormalizedLivePolicySource = stripProviderComposedPolicies(livePolicySource);
+  const teamsActive = requiredNetworkPolicyKeys.includes("teams")
+    ? true
+    : removedNetworkPolicyKeys.includes("teams")
+      ? false
+      : null;
+  const normalizedLivePolicySource =
+    teamsActive !== null
+      ? policies.reconcileTeamsOutlookLoginCredentialBinding(
+          providerNormalizedLivePolicySource,
+          sandboxName,
+          teamsActive,
+        )
+      : providerNormalizedLivePolicySource;
+  const live = structuredClone(
+    parseOpenShellPolicy(normalizedLivePolicySource).policy,
+  ) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
   const processChanged = mergeMissingReplacementProcessIdentity(live, replacement);
   const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
@@ -249,14 +269,19 @@ export function mergeReplacementPolicyAccess(
     removedNetworkPolicyKeys,
     requiredNetworkPolicySources,
   );
-  const changed = processChanged || filesystemChanged || networkChanged;
+  const changed =
+    normalizedLivePolicySource !== livePolicySource ||
+    processChanged ||
+    filesystemChanged ||
+    networkChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
-    : { changed: false, source: livePolicySource };
+    : { changed: false, source: normalizedLivePolicySource };
 }
 
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
+  readonly sandboxName?: string;
   readonly livePolicyPath: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
@@ -274,6 +299,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicyKeys,
     input.removedNetworkPolicyKeys,
     input.requiredNetworkPolicySources,
+    input.sandboxName,
   );
   if (!merged.changed) {
     return {

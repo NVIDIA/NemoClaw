@@ -23,15 +23,20 @@ export type CommandTransportDependencies = {
     sandboxName: string,
     options: { ignoreError: boolean; timeout: number },
   ) => { output: string; status: number | null };
-  dockerSpawnSync: (
-    args: readonly string[],
-    options: Parameters<typeof spawnSync>[2],
-  ) => ReturnType<typeof spawnSync>;
+  executePrivilegedSandboxCommand: (
+    sandboxName: string,
+    command: readonly string[],
+    options: { readonly sanitizeEnvironment: boolean; readonly timeout: number },
+  ) => {
+    readonly status: number | null;
+    readonly stdout: string | Buffer;
+    readonly stderr: string | Buffer;
+    readonly error?: unknown;
+  };
   extractSandboxExecCommandStdout: (output: string) => string | null;
   getOpenshellBinary: () => string;
   isDirectSandboxFallbackUnavailableError: (error: unknown) => boolean;
   openshellProbeTimeoutMs: number;
-  privilegedSandboxExecArgv: (sandboxName: string, command: string[]) => string[];
   root: string;
 };
 
@@ -96,7 +101,12 @@ export function executeSandboxCommandTransport(
 
 function parseSandboxCommandResult(
   deps: CommandTransportDependencies,
-  result: ReturnType<typeof spawnSync>,
+  result: {
+    readonly status: number | null;
+    readonly stdout: string | Buffer;
+    readonly stderr: string | Buffer;
+    readonly error?: unknown;
+  },
 ): SandboxCommandResult | null {
   if (result.error) return null;
   const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout || "");
@@ -110,35 +120,26 @@ function parseSandboxCommandResult(
   };
 }
 
-function executeLocalDockerSandboxCommand(
+function executeLocalSandboxCommand(
   deps: CommandTransportDependencies,
   sandboxName: string,
   markedCommand: string,
   timeout: number,
 ): SandboxCommandResult | null {
-  let argv: string[];
   try {
-    argv = deps.privilegedSandboxExecArgv(sandboxName, ["sh", "-c", markedCommand]);
+    const result = deps.executePrivilegedSandboxCommand(sandboxName, ["sh", "-c", markedCommand], {
+      sanitizeEnvironment: true,
+      timeout,
+    });
+    return parseSandboxCommandResult(deps, result);
   } catch (error) {
-    // Docker discovery failure or a stopped/nonexistent direct container means
+    // Provider discovery failure or a stopped/nonexistent runtime resource means
     // there is no local fallback. Identity refusals, unsupported drivers,
     // registry corruption, and ambiguous matches are security-boundary
     // diagnostics: let callers surface them instead of collapsing them into an
     // inconclusive OpenShell transport result.
     if (deps.isDirectSandboxFallbackUnavailableError(error)) return null;
     throw error;
-  }
-
-  try {
-    const result = deps.dockerSpawnSync(argv, {
-      encoding: "utf-8",
-      env: deps.buildSubprocessEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout,
-    });
-    return parseSandboxCommandResult(deps, result);
-  } catch {
-    return null;
   }
 }
 
@@ -155,7 +156,17 @@ export function executeSandboxExecCommandTransport(
     const gatewayArgs = options.gatewayName ? ["-g", options.gatewayName] : [];
     const result = spawnSync(
       deps.getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, ...gatewayArgs, "--", "sh", "-c", markedCommand],
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        ...gatewayArgs,
+        "--",
+        "sh",
+        "-c",
+        markedCommand,
+      ],
       {
         cwd: deps.root,
         encoding: "utf-8",
@@ -172,5 +183,5 @@ export function executeSandboxExecCommandTransport(
   if (options.allowLocalDockerFallback === false) return null;
   // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
   // refusal cannot be caught and retried against changing container state.
-  return executeLocalDockerSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
+  return executeLocalSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
 }

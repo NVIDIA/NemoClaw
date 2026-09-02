@@ -14,7 +14,6 @@ import os from "node:os";
 import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -332,7 +331,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
@@ -350,7 +349,7 @@ test(
       id: "cloud-inference",
       boundary: "install-sh-onboard-sandbox-inference-local-skill-filesystem",
       contracts: [
-        "Docker is running before install/onboard",
+        "the selected runtime is available before install/onboard",
         "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "install.sh --non-interactive creates or recreates the named OpenClaw sandbox",
         "nemoclaw and openshell are available on PATH after install",
@@ -368,17 +367,10 @@ test(
       },
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "phase-1-docker-info-cloud-inference",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-1-runtime-info-cloud-inference",
+      scenarioLabel: "cloud inference",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for cloud inference E2E: ${resultText(docker)}`);
-      }
-      return skip("Docker is required for cloud inference E2E");
-    }
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloud-inference-home-"));
     cleanup.trackDisposable(`remove cloud inference test home ${home}`, () =>
@@ -461,7 +453,7 @@ test(
       id: "cloud-inference",
       status: "passed",
       assertions: {
-        dockerRunning: docker.exitCode === 0,
+        runtimeProviderAvailable: true,
         installCompleted: install.exitCode === 0,
         chatReturnedPong: /pong/i.test(chat.content),
         sandboxCredentialBoundaryValidated: true,

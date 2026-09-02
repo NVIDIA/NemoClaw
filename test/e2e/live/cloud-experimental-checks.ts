@@ -4,7 +4,6 @@
 import path from "node:path";
 
 import { expect } from "vitest";
-import { ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import {
@@ -81,7 +80,6 @@ export function buildCloudExperimentalCommandEnv(
     CLOUD_EXPERIMENTAL_MODEL: base.NEMOCLAW_MODEL,
     COMPATIBLE_API_KEY: apiKey,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_AGENT: "langchain-deepagents-code",
     NEMOCLAW_E2E_CLOUD_API_KEY_ENV: "COMPATIBLE_API_KEY",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_SANDBOX_NAME: sandboxName,
@@ -103,15 +101,8 @@ export function assertRequiredCloudExperimentalResult(
   );
 }
 
-export function cloudExperimentalCheckTimeoutMs(
-  scriptPath: string,
-  workloadSource = process.env.E2E_WORKLOAD_SOURCE,
-): number {
-  if (scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK) {
-    return workloadSource === "local-dockerfile"
-      ? ONBOARD_LOCAL_DOCKERFILE_COMMAND_TIMEOUT_MS
-      : FRESH_REONBOARD_TIMEOUT_MS;
-  }
+export function cloudExperimentalCheckTimeoutMs(scriptPath: string): number {
+  if (scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK) return FRESH_REONBOARD_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_OBSERVABILITY_CHECK) return OBSERVABILITY_TIMEOUT_MS;
   if (scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK) {
     return THREAD_AUTO_APPROVAL_TIMEOUT_MS;
@@ -166,9 +157,7 @@ export async function runE2eCloudExperimentalChecks(
       cwd: REPO_ROOT,
       env: buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
         dcodeBaseImageReference: context.dcodeBaseImageReference,
-        forwardDcodeBaseImage:
-          scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK &&
-          context.dcodeBaseImageReference !== undefined,
+        forwardDcodeBaseImage: scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK,
       }),
       redactionValues: [apiKey],
       timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),

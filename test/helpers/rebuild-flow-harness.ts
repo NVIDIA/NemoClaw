@@ -26,6 +26,7 @@ delete require.cache[requireDist.resolve(rebuildModulePath)];
 export const agentDefs = requireDist("../../agent/defs.js");
 export const agentOnboard = requireDist("../../agent/onboard.js");
 export const agentRuntime = requireDist("../../agent/runtime.js");
+export const agentForwardStop = requireDist("../../tunnel/agent-forward-stop.js");
 export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );

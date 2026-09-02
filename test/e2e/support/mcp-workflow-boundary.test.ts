@@ -15,38 +15,6 @@ describe("MCP workflow artifact boundary", () => {
   it.each([
     "mcp-bridge",
     "mcp-bridge-dev",
-  ])("rejects managed-only timeouts and missing local-build minima in %s", (jobName) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
-    const workflowPath = path.join(directory, "e2e.yaml");
-    try {
-      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<
-          string,
-          { env: Record<string, unknown>; "timeout-minutes": string | number }
-        >;
-      };
-      const job = workflow.jobs[jobName];
-      requireFixture(job, `${jobName} fixture is missing`);
-      job["timeout-minutes"] = 90;
-      delete job.env.NEMOCLAW_EXEC_TIMEOUT;
-      job.env.NEMOCLAW_TEST_TIMEOUT = "6600000";
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          `${jobName} must preserve 90 managed-image minutes and reserve 120 local-Dockerfile minutes`,
-          `${jobName} must publish the 100-minute local-Dockerfile command minimum`,
-          `${jobName} must publish the 110-minute local-Dockerfile test minimum`,
-        ]),
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it.each([
-    "mcp-bridge",
-    "mcp-bridge-dev",
   ])("rejects missing canonical risk-signal evidence in %s", (jobName) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

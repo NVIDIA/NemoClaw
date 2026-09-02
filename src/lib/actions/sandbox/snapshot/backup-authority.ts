@@ -3,7 +3,6 @@
 
 import { isDeepStrictEqual } from "node:util";
 
-import { dockerSpawnSync } from "../../../adapters/docker/exec";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
@@ -13,7 +12,10 @@ import {
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
-import { privilegedSandboxExecArgv } from "../../../sandbox/privileged-exec";
+import {
+  executePrivilegedSandboxCommand,
+  withPrivilegedSandboxExecutionLease,
+} from "../../../sandbox/privileged-exec";
 import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
 import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
@@ -163,51 +165,54 @@ export function captureOpenClawStateFile(
     return null;
   }
   try {
-    const argv = privilegedSandboxExecArgv(
+    return withPrivilegedSandboxExecutionLease(
       sandboxName,
-      [
-        "/usr/bin/python3",
-        "-I",
-        "-S",
-        "-c",
-        OPENCLAW_CONFIG_CAPTURE_SCRIPT,
-        OPENCLAW_CONFIG_DIRECTORY,
-        OPENCLAW_CONFIG_NAME,
-      ],
-      false,
-      true,
+      "OpenClaw config snapshot capture",
+      () => {
+        const result = executePrivilegedSandboxCommand(
+          sandboxName,
+          [
+            "/usr/bin/python3",
+            "-I",
+            "-S",
+            "-c",
+            OPENCLAW_CONFIG_CAPTURE_SCRIPT,
+            OPENCLAW_CONFIG_DIRECTORY,
+            OPENCLAW_CONFIG_NAME,
+          ],
+          {
+            sanitizeEnvironment: true,
+            timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
+            maxOutputBytes: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
+          },
+        );
+        const protocolFailure = captureFailureProtocol(result.stderr);
+        if (
+          result.status === 2 &&
+          result.signal === null &&
+          !result.error &&
+          protocolFailure === "missing"
+        ) {
+          return { outcome: "missing" };
+        }
+        if (
+          result.status !== 0 ||
+          result.signal !== null ||
+          result.error ||
+          !Buffer.isBuffer(result.stdout)
+        ) {
+          const primaryDetail =
+            result.error?.message ??
+            (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+          const stderrDetail = protocolFailure
+            ? `reason ${protocolFailure}`
+            : captureFailureDiagnostic(result.stderr);
+          const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
+          return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
+        }
+        return { outcome: "backed_up", data: result.stdout };
+      },
     );
-    const result = dockerSpawnSync(argv, {
-      encoding: null,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
-      maxBuffer: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
-    });
-    const protocolFailure = captureFailureProtocol(result.stderr);
-    if (
-      result.status === 2 &&
-      result.signal === null &&
-      !result.error &&
-      protocolFailure === "missing"
-    ) {
-      return { outcome: "missing" };
-    }
-    if (
-      result.status !== 0 ||
-      result.signal !== null ||
-      result.error ||
-      !Buffer.isBuffer(result.stdout)
-    ) {
-      const primaryDetail =
-        result.error?.message ??
-        (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-      const stderrDetail = protocolFailure
-        ? `reason ${protocolFailure}`
-        : captureFailureDiagnostic(result.stderr);
-      const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
-      return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
-    }
-    return { outcome: "backed_up", data: result.stdout };
   } catch (error) {
     return {
       outcome: "failed",

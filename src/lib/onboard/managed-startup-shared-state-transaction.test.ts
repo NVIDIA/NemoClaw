@@ -325,16 +325,16 @@ describe("managed startup shared-state transaction", () => {
     );
   });
 
-  it("retains the no-mounted-state-root boundary for other agents", () => {
+  it("accepts the exact declared OpenClaw state root mount", () => {
     const root = agentRoot("openclaw");
     fs.mkdirSync(root);
     fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
     simulateMountedStateRoot(root);
 
-    expect(() =>
+    expect(
       beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options),
-    ).toThrow(/crosses a nested filesystem mount/u);
-    expect(fs.existsSync(transactionDirectory)).toBe(false);
+    ).toBe(true);
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
   });
 
   it("tracks only active post-install messaging outputs and leaves disabled targets alone", () => {

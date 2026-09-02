@@ -6,15 +6,15 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const privilegedCaptureMocks = vi.hoisted(() => ({
-  dockerSpawnSync: vi.fn(),
-  privilegedSandboxExecArgv: vi.fn(() => ["exec", "container", "python3"]),
+  executePrivilegedSandboxCommand: vi.fn(),
+  withPrivilegedSandboxExecutionLease: vi.fn(
+    (_sandboxName: string, _operation: string, run: () => unknown) => run(),
+  ),
 }));
 
-vi.mock("../../../adapters/docker/exec", () => ({
-  dockerSpawnSync: privilegedCaptureMocks.dockerSpawnSync,
-}));
 vi.mock("../../../sandbox/privileged-exec", () => ({
-  privilegedSandboxExecArgv: privilegedCaptureMocks.privilegedSandboxExecArgv,
+  executePrivilegedSandboxCommand: privilegedCaptureMocks.executePrivilegedSandboxCommand,
+  withPrivilegedSandboxExecutionLease: privilegedCaptureMocks.withPrivilegedSandboxExecutionLease,
 }));
 
 import { managedStartupE2eProfile } from "../../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
@@ -182,13 +182,13 @@ function explicitLlamaSandbox(agent: "openclaw" | "hermes" | "langchain-deepagen
 
 describe("managed snapshot backup authority", () => {
   beforeEach(() => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReset();
-    privilegedCaptureMocks.privilegedSandboxExecArgv.mockClear();
+    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReset();
+    privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
   });
 
   it("captures the exact OpenClaw configuration with bounded direct execution", () => {
     const data = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
-    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 0,
       signal: null,
       error: undefined,
@@ -203,24 +203,24 @@ describe("managed snapshot backup authority", () => {
     });
 
     expect(result).toEqual({ outcome: "backed_up", data });
-    expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
+    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).toHaveBeenCalledWith(
+      "alpha",
+      "OpenClaw config snapshot capture",
+      expect.any(Function),
+    );
+    expect(privilegedCaptureMocks.executePrivilegedSandboxCommand).toHaveBeenCalledWith(
       "alpha",
       expect.arrayContaining(["/usr/bin/python3", "-I", "-S", "-c"]),
-      false,
-      true,
-    );
-    expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenCalledWith(
-      ["exec", "container", "python3"],
       expect.objectContaining({
-        encoding: null,
+        sanitizeEnvironment: true,
         timeout: 30_000,
-        maxBuffer: 17 * 1024 * 1024,
+        maxOutputBytes: 17 * 1024 * 1024,
       }),
     );
   });
 
   it("recognizes only the fixed missing-file failure protocol", () => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 2,
       signal: null,
       error: undefined,
@@ -238,7 +238,7 @@ describe("managed snapshot backup authority", () => {
   });
 
   it("returns a fixed failure reason when privileged capture rejects unsafe file metadata", () => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 11,
       signal: null,
       error: undefined,
@@ -259,7 +259,7 @@ describe("managed snapshot backup authority", () => {
   });
 
   it("bounds and redacts untrusted privileged stderr", () => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 10,
       signal: null,
       error: undefined,
@@ -283,7 +283,7 @@ describe("managed snapshot backup authority", () => {
   });
 
   it("does not confuse an unrecognized exit 2 with a missing config", () => {
-    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+    privilegedCaptureMocks.executePrivilegedSandboxCommand.mockReturnValue({
       status: 2,
       signal: null,
       error: undefined,
@@ -330,7 +330,8 @@ describe("managed snapshot backup authority", () => {
     },
   ] as const)("rejects $input before privileged capture", ({ request }) => {
     expect(captureOpenClawStateFile("alpha", request)).toBeNull();
-    expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
+    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).not.toHaveBeenCalled();
+    expect(privilegedCaptureMocks.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(

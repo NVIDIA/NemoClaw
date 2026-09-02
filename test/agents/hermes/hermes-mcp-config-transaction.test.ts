@@ -22,8 +22,15 @@ const TRANSACTION = path.resolve(
 const GUARD = path.resolve(import.meta.dirname, "../../..", "agents/hermes/runtime-config-guard.py");
 
 function runPython(source: string, args: string[] = []) {
+  const canonicalEnvironment = Object.fromEntries(
+    [...source.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(([, name]) => [
+      name!,
+      `openshell:resolve:env:${name!}`,
+    ]),
+  );
   return spawnSync("python3", ["-c", source, TRANSACTION, GUARD, ...args], {
     encoding: "utf8",
+    env: { ...process.env, ...canonicalEnvironment },
   });
 }
 

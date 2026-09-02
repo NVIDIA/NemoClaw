@@ -19,18 +19,16 @@ function validWorkflow(): OpenClawPluginRuntimeExdevWorkflow {
       [JOB_NAME]: {
         needs: "generate-matrix",
         "runs-on": "ubuntu-latest",
-        "timeout-minutes": 120,
+        "timeout-minutes": 85,
         permissions: { contents: "read" },
         env: {
           E2E_ARTIFACT_DIR: expression("github.workspace") + "/e2e-artifacts/live/" + JOB_NAME,
           E2E_TARGET_ID: JOB_NAME,
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
           NEMOCLAW_CLI_BIN: expression("github.workspace") + "/bin/nemoclaw.js",
-          NEMOCLAW_EXEC_TIMEOUT: "6000000",
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev",
-          NEMOCLAW_TEST_TIMEOUT: "6600000",
           OPENSHELL_GATEWAY: "nemoclaw",
         },
         steps: [
@@ -147,7 +145,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "openclaw-plugin-runtime-exdev must run on ubuntu-latest",
-        "openclaw-plugin-runtime-exdev must retain its 120 minute runtime proof budget",
+        "openclaw-plugin-runtime-exdev must retain its 85 minute runtime proof budget",
         "openclaw-plugin-runtime-exdev must hold only contents: read",
         "openclaw-plugin-runtime-exdev must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev",
         "openclaw-plugin-runtime-exdev must remain enabled for scheduled and empty manual runs",

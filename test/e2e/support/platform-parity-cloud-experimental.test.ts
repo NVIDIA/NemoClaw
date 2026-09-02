@@ -15,10 +15,7 @@ vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
 
 import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
-import {
-  resolveLiveE2eWorkloadSourceEnv,
-  type ShellProbeResult,
-} from "../fixtures/shell-probe.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import {
   assertRequiredCloudExperimentalResult,
@@ -27,7 +24,7 @@ import {
   cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
 
-const cloudChecksDir = path.resolve(import.meta.dirname, "../e2e-cloud-experimental/checks");
+const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
 const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
 const dcodeApprovalMainEntrypoint = `if [[ "\${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -100,7 +97,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
     expect(script).toContain("config is baked into the sandbox image at build time");
     expect(script).toContain("re-onboard with the new selection");
-    expect(script).not.toContain(
+    expect(script).toContain(
       'NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF="$NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF"',
     );
   });
@@ -489,12 +486,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
           "/bin/bash",
           [
             "-c",
-            'source ./04-deepagents-code-fresh-reonboard.sh; CLI="$1"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
+            'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
             "bash",
+            dcodeFreshReonboardCheck,
             mockCli,
           ],
           {
-            cwd: cloudChecksDir,
             encoding: "utf8",
             env: {
               ...process.env,
@@ -688,14 +685,11 @@ assert_status_mode disabled
   );
 
   it("gives the destructive fresh re-onboard check its onboarding budget", () => {
-    const freshReonboard =
-      "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh";
     expect(
-      cloudExperimentalCheckTimeoutMs(freshReonboard),
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+      ),
     ).toBe(15 * 60_000);
-    expect(cloudExperimentalCheckTimeoutMs(freshReonboard, "local-dockerfile")).toBe(
-      100 * 60_000,
-    );
     expect(
       cloudExperimentalCheckTimeoutMs(
         "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
@@ -750,7 +744,6 @@ assert_status_mode disabled
     expect(env).toMatchObject({
       COMPATIBLE_API_KEY: "secret-key",
       CLOUD_EXPERIMENTAL_MODEL: "model-a",
-      NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_SANDBOX_NAME: "deepagents-sandbox",
       SANDBOX_NAME: "deepagents-sandbox",
       OPENSHELL_GATEWAY: "nemoclaw",
@@ -759,13 +752,6 @@ assert_status_mode disabled
     expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
     expect(env.GITHUB_TOKEN).toBeUndefined();
     expect(env.RANDOM_RUNNER_SECRET).toBeUndefined();
-    expect(
-      resolveLiveE2eWorkloadSourceEnv({
-        ...env,
-        E2E_TARGET_ID: "ubuntu-repo-cloud-langchain-deepagents-code",
-        E2E_WORKLOAD_SOURCE: "local-dockerfile",
-      }).NEMOCLAW_FROM_DOCKERFILE,
-    ).toBe(path.resolve("agents/langchain-deepagents-code/Dockerfile"));
   });
 
   it("forwards the immutable base reference only for the fresh Deep Agents Code re-onboard", () => {

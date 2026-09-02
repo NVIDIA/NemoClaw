@@ -26,6 +26,7 @@ import {
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   assessPersonalPublicFetchToolEvidence,
   classifyHermesAgentAssertion,
@@ -239,25 +240,18 @@ function cleanupAttempt(result: ShellProbeResult): CleanupAttempt {
 
 async function assertPrerequisites(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   secrets: SecretStore,
-  skip: SkipFn,
 ): Promise<HostedInferenceConfig> {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-common-egress",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+  await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-common-egress",
+    scenarioLabel: "common-egress agent",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for common-egress agent E2E: ${text(docker)}`);
-    }
-    skip("Docker is required for common-egress agent E2E");
-  }
 
   const openshell = await host.command("openshell", ["--version"], {
     artifactName: "prereq-openshell-version-common-egress",
@@ -614,8 +608,8 @@ describe.sequential("common-egress agent live targets", () => {
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       const braveApiKey = secrets.required("BRAVE_API_KEY");
       await artifacts.target.declare({
@@ -756,8 +750,8 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
@@ -815,8 +809,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       await artifacts.target.declare({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
@@ -879,8 +873,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",

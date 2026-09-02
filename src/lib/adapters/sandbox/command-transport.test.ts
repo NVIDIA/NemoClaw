@@ -55,12 +55,15 @@ function createDependencies(
       output: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
       status: 0,
     })),
-    dockerSpawnSync: vi.fn(() => spawnResult("fallback-output")),
+    executePrivilegedSandboxCommand: vi.fn(() => ({
+      status: 0,
+      stdout: "fallback-output",
+      stderr: "",
+    })),
     extractSandboxExecCommandStdout: vi.fn((output: string) => output),
     getOpenshellBinary: vi.fn(() => "/usr/bin/openshell"),
     isDirectSandboxFallbackUnavailableError: vi.fn(() => false),
     openshellProbeTimeoutMs: 5000,
-    privilegedSandboxExecArgv: vi.fn(() => ["exec", "container-id", "sh", "-c", "marked:id"]),
     root: "/repo",
     ...overrides,
   };
@@ -166,8 +169,7 @@ describe("sandbox command transport", () => {
         allowLocalDockerFallback: false,
       }),
     ).toBeNull();
-    expect(deps.privilegedSandboxExecArgv).not.toHaveBeenCalled();
-    expect(deps.dockerSpawnSync).not.toHaveBeenCalled();
+    expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
   it("uses the local fallback after an inconclusive OpenShell result", () => {
@@ -181,9 +183,9 @@ describe("sandbox command transport", () => {
         events.push("environment");
         return { PATH: "/usr/bin" };
       }),
-      dockerSpawnSync: vi.fn(() => {
-        events.push("fallback-spawn");
-        return spawnResult("fallback-output");
+      executePrivilegedSandboxCommand: vi.fn(() => {
+        events.push("fallback-execution");
+        return { status: 0, stdout: "fallback-output", stderr: "" };
       }),
       extractSandboxExecCommandStdout: vi.fn((output: string) => {
         events.push(`parse:${output}`);
@@ -192,10 +194,6 @@ describe("sandbox command transport", () => {
       getOpenshellBinary: vi.fn(() => {
         events.push("openshell-resolution");
         return "/usr/bin/openshell";
-      }),
-      privilegedSandboxExecArgv: vi.fn(() => {
-        events.push("fallback-resolution");
-        return ["exec", "container-id", "sh", "-c", "marked:id"];
       }),
     });
     mocks.spawnSync.mockImplementation(() => {
@@ -214,10 +212,9 @@ describe("sandbox command transport", () => {
       "environment",
       "openshell-spawn",
       "parse:unmarked-output",
-      "fallback-resolution",
-      "environment",
-      "fallback-spawn",
+      "fallback-execution",
       "parse:fallback-output",
     ]);
   });
+
 });
