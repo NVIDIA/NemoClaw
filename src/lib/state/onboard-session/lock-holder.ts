@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
-import { isErrnoException } from "../../core/errno";
+import {
+  hostProcessIdentityProbes,
+  type ProcessIdentityProbes,
+} from "../../adapters/process/identity";
 
 export interface OnboardLockHolderIdentity {
   readonly pid: number;
@@ -21,56 +22,22 @@ export type OnboardLockDisposition =
 
 export const ONBOARD_LOCK_SETTLING_MS = 30_000;
 
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
-
-function readProcProcessStartMs(pid: number): number | null {
-  try {
-    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const btimeLine = fs
-      .readFileSync("/proc/stat", "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("btime "));
-    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
-    const closeParen = statText.lastIndexOf(")");
-    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
-
-    const fieldsAfterComm = statText
-      .slice(closeParen + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = Number(fieldsAfterComm[19]);
-    if (!Number.isFinite(startTicks)) return null;
-
-    // Linux exposes /proc/<pid>/stat starttime in USER_HZ ticks. 100 is the
-    // stable value on supported NemoClaw Linux hosts.
-    const clockTicksPerSecond = 100;
-    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Confirm that a live PID still names the process that wrote an onboarding
  * lock. Linux process start metadata distinguishes a reused PID; platforms
  * without that metadata stay fail-closed and continue to treat it as held.
  */
-export function onboardLockHolderStillMatches(lock: OnboardLockHolderIdentity): boolean {
-  if (!isProcessAlive(lock.pid)) return false;
-  if (lock.pid === process.pid) return true;
+export function onboardLockHolderStillMatches(
+  lock: OnboardLockHolderIdentity,
+  probes: ProcessIdentityProbes = hostProcessIdentityProbes,
+): boolean {
+  if (!probes.isAlive(lock.pid)) return false;
+  if (lock.pid === probes.currentPid) return true;
 
   const lockStartedMs = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
   if (!Number.isFinite(lockStartedMs)) return true;
 
-  const processStartMs = readProcProcessStartMs(lock.pid);
+  const processStartMs = probes.readStartedAtMs(lock.pid);
   if (processStartMs === null) return true;
 
   // The original lock holder must have started before it wrote the lock. If
@@ -99,6 +66,7 @@ export function classifyOnboardLockContents(
   contents: string,
   modifiedAtMs: number,
   nowMs = Date.now(),
+  probes: ProcessIdentityProbes = hostProcessIdentityProbes,
 ): OnboardLockDisposition {
   let value: unknown;
   try {
@@ -113,5 +81,7 @@ export function classifyOnboardLockContents(
       ? { state: "stale" }
       : { state: "settling" };
   }
-  return onboardLockHolderStillMatches(record) ? { state: "held", record } : { state: "stale" };
+  return onboardLockHolderStillMatches(record, probes)
+    ? { state: "held", record }
+    : { state: "stale" };
 }
