@@ -345,7 +345,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(JSON.stringify(outcomes)).not.toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
   });
 
-  it("rejects unsafe managed Deep Agents projection entries before credential handling (#10754)", () => {
+  it("reports an unsafe Deep Agents projection when credential observation fails (#10754)", () => {
     const home = createTempHome("nemoclaw-mcp-unsafe-deepagents-projection-");
     const { stdout } = runHarness(
       home,
