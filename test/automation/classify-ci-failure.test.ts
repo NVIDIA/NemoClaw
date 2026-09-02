@@ -453,7 +453,7 @@ describe("CI failure classifier process", () => {
       /aws-credential|aws-signature|aws-session|google-credential|google-signature|azure-signature|oauth-token|common-token/,
     );
   });
-  test("redacts signed URL credentials in artifact errors and commands", () => {
+  test("redacts artifact errors and omits ignored command data", () => {
     const item = fixture("ordinary output", {
       exitCode: 1,
       error:
@@ -468,14 +468,9 @@ describe("CI failure classifier process", () => {
     expect(failure.error).toContain("< Set-Cookie: [REDACTED]");
     expect(failure.error).toContain("request: Set-Cookie: [REDACTED]");
     expect(failure.error).toContain("unrelated artifact error");
-    expect(failure.command).toContain("request: Api-Key: [REDACTED]");
-    expect(failure.command).toContain("> COOKIE: [REDACTED]");
-    expect(failure.command).toContain("unrelated artifact command");
+    expect(failure).not.toHaveProperty("command");
     expect(failure.error).toContain(
       "?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]&X-Amz-Security-Token=[REDACTED]&keep=error-visible",
-    );
-    expect(failure.command).toContain(
-      "?X-Goog-Credential=[REDACTED]&X-Goog-Signature=[REDACTED]&sig=[REDACTED]&access_token=[REDACTED]&token=[REDACTED]&keep=command-visible",
     );
     expect(result.stdout).not.toMatch(
       /artifact-error-key|artifact-response-cookie-secret|artifact-error-cookie|artifact-command-key|artifact-command-cookie|error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
@@ -775,7 +770,6 @@ describe("CI failure classifier process", () => {
     const item = fixture("SIGKILL", {
       exitCode: 137,
       signal: "SIGKILL",
-      command: "token=artifact-secret",
     });
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status, result.stderr).toBe(0);
@@ -848,7 +842,7 @@ describe("CI failure classifier process", () => {
       const secret = "winner-path-secret";
       const earlier = Array.from({ length: 20 }, (_, index) => ({
         name: `earlier-${index}.result.json`,
-        contents: JSON.stringify(index % 2 === 0 ? { exitCode: 23 } : { command: "npm test" }),
+        contents: JSON.stringify({ exitCode: 23 }),
       }));
       const winnerPath = `BUILD_TOKEN=${secret} ${"x".repeat(1100)}.result.json`;
       const archive = artifactZip([
@@ -922,11 +916,15 @@ describe("CI failure classifier process", () => {
     });
   });
 
-  test("ignores a string false timeout and retains a boolean true timeout", () => {
+  test("ignores non-failure and command-only records and retains a true timeout", () => {
     const archive = artifactZip([
       {
         name: "string-false.result.json",
         contents: JSON.stringify({ exitCode: 0, timedOut: "false" }),
+      },
+      {
+        name: "command-only.result.json",
+        contents: JSON.stringify({ command: "npm test" }),
       },
       {
         name: "boolean-true.result.json",

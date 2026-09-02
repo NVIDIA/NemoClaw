@@ -41,7 +41,6 @@ type ArtifactResult = {
   signal: string | null;
   timedOut: boolean;
   error: string | null;
-  command: string | null;
 };
 const artifactResultRank = (result: ArtifactResult): number => {
   if (result.signal) return 4;
@@ -989,19 +988,14 @@ async function classifyCiFailureWithRuntime(
           const error = result.error
             ? project(String(result.error), 1000, 1000).text || null
             : null;
-          const command =
-            result.command == null
-              ? null
-              : project(String(result.command), 2000, 1000).text || null;
           if (exitCode === 0 && !signal && !error && !timedOut) continue;
-          if (exitCode === null && !signal && !error && !timedOut && !result.command) continue;
+          if (exitCode === null && !signal && !error && !timedOut) continue;
           const projectedResult: ArtifactResult = {
             path: redact(relativePath).slice(0, 1000),
             exitCode,
             signal,
             timedOut,
             error,
-            command,
           };
           artifactWinner = selectArtifactWinner(artifactWinner, projectedResult);
           fileResultCount += 1;
