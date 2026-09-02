@@ -102,7 +102,6 @@ import * as dcodeResume from "./sandbox-dcode-resume";
 import {
   hasMessagingCredentialDrift,
   type RegistryMessagingAuthority,
-  reconcileReusedSandboxMessaging,
   reconcileSandboxMessaging,
   resolveMessagingPlanAuthority,
   sameRegistryMessagingAuthority,
@@ -1081,7 +1080,9 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private assertGatewayRouteCompatible(sandboxName: string | null): void {
+  private assertGatewayRouteCompatible(
+    sandboxName: string | null,
+  ): asserts sandboxName is string {
     const targetEntry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
     if (!sandboxName || !targetEntry) {
       this.failGatewayRouteCheck(
@@ -1192,13 +1193,22 @@ class SandboxStateFlow<
         state.sandboxName,
         state.session,
       );
-      const messaging = reconcileReusedSandboxMessaging(
-        messagingAuthority.plan,
-        this.options.agent,
-        this.deps,
-        state.session?.messagingPlan ?? null,
-      );
-      if (messaging.changed) {
+      const messaging = await reconcileSandboxMessaging({
+        resume: true,
+        session: state.session,
+        sandboxName: state.sandboxName,
+        agent: this.options.agent,
+        env: this.options.env,
+        registryAuthoritySnapshot:
+          messagingAuthority.source === "registry"
+            ? { authoritative: true, plan: messagingAuthority.plan }
+            : { authoritative: false, plan: null },
+        deps: this.deps,
+      });
+      const messagingChanged =
+        fingerprintSandboxRecreateValue(messaging.plan) !==
+        fingerprintSandboxRecreateValue(state.session?.messagingPlan ?? null);
+      if (messagingChanged) {
         this.deps.updateSession((current) => {
           current.messagingPlan = messaging.plan;
           recordCheckpointMessaging(current, messaging.plan);
