@@ -574,6 +574,26 @@ describe("exact PR managed-image publication", () => {
     ).toThrow("does not match the PR number");
   });
 
+  it("assembles every shipped agent contract for the exact candidate cohort", () => {
+    const assembled = assembleManagedImageCatalog(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map(contract),
+      CANDIDATE_SHA,
+      `ghrun-${RUN_ID}-1`,
+    );
+
+    expect(Object.keys(assembled)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
+  });
+
+  it("rejects an incomplete all-agent candidate contract set", () => {
+    expect(() =>
+      assembleManagedImageCatalog(
+        SHIPPED_MANAGED_IMAGE_AGENTS.slice(1).map(contract),
+        CANDIDATE_SHA,
+        `ghrun-${RUN_ID}-1`,
+      ),
+    ).toThrow(`requires ${SHIPPED_MANAGED_IMAGE_AGENTS.length} contracts`);
+  });
+
   it("rejects mixed candidate revisions in an all-agent catalog", () => {
     const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map(contract);
     const substituted = {

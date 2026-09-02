@@ -24,6 +24,7 @@ const IMAGE_REVISION = "c".repeat(40);
 const CANDIDATE_RUN_ID = 33_569_187_156;
 const BASE_RUN_ID = 33_600_000_001;
 const RUN_ATTEMPT = 1;
+const PR_NUMBER = 10_790;
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const REPOSITORIES = {
   openclaw: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
@@ -86,14 +87,15 @@ function receipt(
   role: "base" | "candidate",
   outcome: "failure" | "success" = "success",
   cleanupFailures = 0,
+  imageRevision = role === "candidate" ? CANDIDATE_SHA : BASE_SHA,
 ): ManagedRuntimeReceipt {
   const candidate = role === "candidate";
   return createManagedRuntimeReceipt({
     baseSha: BASE_SHA,
     candidateSha: CANDIDATE_SHA,
-    catalogPath: catalog(candidate ? CANDIDATE_SHA : IMAGE_REVISION),
+    catalogPath: catalog(imageRevision),
     evidenceDirectory: evidence(cleanupFailures),
-    imageRevision: candidate ? CANDIDATE_SHA : IMAGE_REVISION,
+    imageRevision,
     job: candidate
       ? "Trusted candidate all-agent managed runtime activation"
       : "Exact base all-agent managed runtime activation",
@@ -129,6 +131,72 @@ function artifactMetadata(name: string, id: number) {
       },
     ],
   };
+}
+
+function sourceFixture(
+  options: {
+    readonly pull?: Record<string, unknown>;
+    readonly run?: Record<string, unknown>;
+  } = {},
+) {
+  const requested: string[] = [];
+  const responses = new Map<string, unknown>([
+    [
+      `/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`,
+      {
+        state: "open",
+        head: { sha: CANDIDATE_SHA },
+        base: { sha: BASE_SHA },
+        ...options.pull,
+      },
+    ],
+    [
+      "/repos/NVIDIA/NemoClaw/actions/workflows/managed-images.yaml",
+      {
+        id: 123,
+        name: "Images / Build, Test, and Publish Managed Images",
+        path: ".github/workflows/managed-images.yaml",
+        state: "active",
+      },
+    ],
+    [
+      `/repos/NVIDIA/NemoClaw/actions/runs/${CANDIDATE_RUN_ID}`,
+      {
+        workflow_id: 123,
+        run_attempt: RUN_ATTEMPT,
+        path: ".github/workflows/managed-images.yaml",
+        event: "pull_request",
+        head_sha: CANDIDATE_SHA,
+        status: "completed",
+        repository: { full_name: "NVIDIA/NemoClaw" },
+        head_repository: { full_name: "NVIDIA/NemoClaw" },
+        pull_requests: [{ number: PR_NUMBER, head: { sha: CANDIDATE_SHA } }],
+        ...options.run,
+      },
+    ],
+  ]);
+  return {
+    requested,
+    request: async (apiPath: string): Promise<unknown> => {
+      requested.push(apiPath);
+      expect(responses.has(apiPath), `unexpected request ${apiPath}`).toBe(true);
+      return responses.get(apiPath);
+    },
+  };
+}
+
+function selectSource(request: (apiPath: string) => Promise<unknown>) {
+  return selectManagedRuntimeSource(
+    {
+      baseSha: BASE_SHA,
+      candidateSha: CANDIDATE_SHA,
+      pullRequest: PR_NUMBER,
+      runAttempt: RUN_ATTEMPT,
+      runId: CANDIDATE_RUN_ID,
+      token: "token",
+    },
+    { request },
+  );
 }
 
 function selection(
@@ -184,61 +252,55 @@ afterEach(() => {
 });
 
 describe("managed runtime comparison receipts", () => {
-  it("authenticates the automatic source attempt against the current same-repository PR", async () => {
-    const requested: string[] = [];
-    const run = {
-      workflow_id: 123,
-      run_attempt: RUN_ATTEMPT,
-      path: ".github/workflows/managed-images.yaml",
-      event: "pull_request",
-      head_sha: CANDIDATE_SHA,
-      status: "completed",
-      repository: { full_name: "NVIDIA/NemoClaw" },
-      head_repository: { full_name: "NVIDIA/NemoClaw" },
-      pull_requests: [{ number: 10_790, head: { sha: CANDIDATE_SHA } }],
-    };
-    const responses = new Map<string, unknown>([
-      [
-        "/repos/NVIDIA/NemoClaw/pulls/10790",
-        {
-          state: "open",
-          head: { sha: CANDIDATE_SHA },
-          base: { sha: BASE_SHA },
-        },
-      ],
-      [
-        "/repos/NVIDIA/NemoClaw/actions/workflows/managed-images.yaml",
-        {
-          id: 123,
-          name: "Images / Build, Test, and Publish Managed Images",
-          path: ".github/workflows/managed-images.yaml",
-          state: "active",
-        },
-      ],
-    ]);
-    const selected = await selectManagedRuntimeSource(
-      {
-        baseSha: BASE_SHA,
-        candidateSha: CANDIDATE_SHA,
-        pullRequest: 10_790,
-        runAttempt: RUN_ATTEMPT,
-        runId: CANDIDATE_RUN_ID,
-        token: "token",
-      },
-      {
-        request: async (apiPath) => {
-          requested.push(apiPath);
-          return responses.get(apiPath) ?? run;
-        },
-      },
-    );
+  it("selects a completed exact-candidate run for the current same-repository PR", async () => {
+    const fixture = sourceFixture();
+    const selected = await selectSource(fixture.request);
 
     expect(selected).toMatchObject({
       candidateSha: CANDIDATE_SHA,
       baseSha: BASE_SHA,
       run: { id: CANDIDATE_RUN_ID, attempt: RUN_ATTEMPT },
     });
-    expect(requested).toHaveLength(3);
+    expect(fixture.requested).toHaveLength(3);
+  });
+
+  it.each([
+    {
+      name: "a fork-owned source run",
+      run: { head_repository: { full_name: "external/NemoClaw" } },
+      message: "source workflow source repository",
+    },
+    {
+      name: "a non-PR event",
+      run: { event: "workflow_dispatch" },
+      message: "source workflow run event",
+    },
+    {
+      name: "another attached PR",
+      run: { pull_requests: [{ number: PR_NUMBER + 1, head: { sha: CANDIDATE_SHA } }] },
+      message: "source workflow run does not match the pull request",
+    },
+    {
+      name: "another attached PR head",
+      run: { pull_requests: [{ number: PR_NUMBER, head: { sha: IMAGE_REVISION } }] },
+      message: "source workflow pull request source SHA",
+    },
+    {
+      name: "a closed current PR",
+      pull: { state: "closed" },
+      message: "pull request state",
+    },
+  ] satisfies Array<{
+    name: string;
+    message: string;
+    pull?: Record<string, unknown>;
+    run?: Record<string, unknown>;
+  }>)("rejects $name", async ({ message, pull, run }) => {
+    const fixture = sourceFixture({
+      ...(pull === undefined ? {} : { pull }),
+      ...(run === undefined ? {} : { run }),
+    });
+    await expect(selectSource(fixture.request)).rejects.toThrow(message);
   });
 
   it("attributes a candidate failure only after the identical base scenario passes", () => {
@@ -274,6 +336,32 @@ describe("managed runtime comparison receipts", () => {
         workflowSha: BASE_SHA,
       }),
     ).toThrow("base SHA");
+  });
+
+  it("rejects exact-base image evidence published for another commit", () => {
+    expect(() => receipt("base", "success", 0, IMAGE_REVISION)).toThrow(
+      "exact-base managed image revision",
+    );
+
+    const value = structuredClone(receipt("base")) as unknown as {
+      runtime: { images: Array<{ sourceRevision: string }> };
+    };
+    value.runtime.images = value.runtime.images.map((image) => ({
+      ...image,
+      sourceRevision: IMAGE_REVISION,
+    }));
+    expect(() =>
+      parseManagedRuntimeReceipt(value, {
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        candidateSourceRunAttempt: RUN_ATTEMPT,
+        candidateSourceRunId: CANDIDATE_RUN_ID,
+        role: "base",
+        runAttempt: RUN_ATTEMPT,
+        runId: BASE_RUN_ID,
+        workflowSha: BASE_SHA,
+      }),
+    ).toThrow("base managed runtime image revision is stale");
   });
 
   it("rejects a receipt from the wrong run attempt", () => {

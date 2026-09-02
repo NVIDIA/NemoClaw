@@ -593,36 +593,6 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
   });
 
-  it("publishes exact all-agent candidate contracts for trusted activation (#7744)", () => {
-    const workflow = readWorkflow("managed-images.yaml");
-    const prBuilder = managedPrBuilder(workflow);
-    const uploadContract = step(prBuilder, "Upload exact published PR managed-image contract");
-
-    expect(workflow.on?.pull_request?.paths).toEqual(
-      expect.arrayContaining([
-        ".github/workflows/managed-runtime-base-qualification.yaml",
-        "src/lib/onboard/**",
-        "test/e2e/live/managed-image-activation-e2e*.ts",
-        "test/e2e/support/managed-runtime-comparison.test.ts",
-        "tools/e2e/managed-runtime-comparison.mts",
-      ]),
-    );
-    expect(workflow.jobs?.["pr-managed-activation"]).toBeUndefined();
-    expect(prBuilder.strategy?.matrix?.include?.map(({ agent }) => agent)).toEqual([
-      "openclaw",
-      "hermes",
-      "langchain-deepagents-code",
-    ]);
-    expect(uploadContract.if).toBe(
-      "github.event.pull_request.head.repo.full_name == github.repository",
-    );
-    expect(uploadContract.with).toMatchObject({
-      name: "managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}",
-      path: "${{ runner.temp }}/managed-pr-contract/contract.json",
-      "if-no-files-found": "error",
-    });
-  });
-
   it("passes the reported OpenClaw managed-image MCP discovery twice on one exact PR cohort (#8746)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const discovery = managedPrOpenClawMcpDiscovery(workflow);

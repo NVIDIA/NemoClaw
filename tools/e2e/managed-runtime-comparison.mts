@@ -368,6 +368,9 @@ export function createManagedRuntimeReceipt(input: {
     input.role === "candidate" ? candidateSha : baseSha,
     "managed runtime source SHA",
   );
+  if (input.role === "base") {
+    exactString(imageRevision, baseSha, "exact-base managed image revision");
+  }
   const expectedPath = BASE_WORKFLOW_PATH;
   const expectedJob = input.role === "candidate" ? CANDIDATE_JOB : BASE_JOB;
   exactString(input.workflowPath, expectedPath, "managed runtime workflow path");
@@ -531,8 +534,10 @@ export function parseManagedRuntimeReceipt(
       throw new Error("managed runtime image reference is mutable");
     }
     sha(image.sourceRevision, "managed runtime image source revision");
-    if (expected.role === "candidate" && image.sourceRevision !== expected.candidateSha) {
-      throw new Error("candidate managed runtime image revision is stale");
+    const expectedImageRevision =
+      expected.role === "candidate" ? expected.candidateSha : expected.baseSha;
+    if (image.sourceRevision !== expectedImageRevision) {
+      throw new Error(`${expected.role} managed runtime image revision is stale`);
     }
     if (
       typeof image.cohort !== "string" ||
