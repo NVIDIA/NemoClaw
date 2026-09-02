@@ -75,6 +75,7 @@ import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
 import {
   type ExternalPolicyPreset,
+  findUntrustedPrivatePolicyEndpointHost,
   isTrustedPrivatePolicyPinCapability,
   prepareTrustedPrivatePolicyPresets,
   type TrustedPrivatePolicyPinCapability,
@@ -382,6 +383,10 @@ function loadAgentPresetContent(
   }
 }
 
+/**
+ * Resolve a preset across messaging, central or agent, and live custom sources.
+ * Source misses stay silent so callers report only after the composite lookup fails.
+ */
 function loadPresetForSandbox(
   sandboxName: string,
   presetName: string,
@@ -413,7 +418,7 @@ function loadPresetForSandbox(
   }
   if (isMessagingChannelPolicyPreset(presetName)) return null;
 
-  const builtinPresetContent = loadCentralPreset(presetName);
+  const builtinPresetContent = loadCentralPreset(presetName, { reportMissing: false });
   if (!builtinPresetContent) return liveCustomPresetContent(sandboxName, presetName);
   const resolvedPresetContent =
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent;
@@ -2279,6 +2284,15 @@ function applyPresetContent(
     if (options.custom.trustedPrivatePinCapability && !trustedPrivateCapabilityValid) {
       console.error(
         `  Preset '${presetName}' has an invalid trusted-private pin capability for its content.`,
+      );
+      return false;
+    }
+    const untrustedPrivateHost = findUntrustedPrivatePolicyEndpointHost({
+      network_policies: np,
+    });
+    if (untrustedPrivateHost && !trustedPrivateCapabilityValid) {
+      console.error(
+        `  Preset '${presetName}' endpoint host '${untrustedPrivateHost}' is rejected. Add explicit trust only for RFC1918, CGNAT, or IPv6 unique local destinations.`,
       );
       return false;
     }

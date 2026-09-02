@@ -206,7 +206,6 @@ const {
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
-  getOllamaWarmupCommand,
   validateLocalProvider,
 } = localInference;
 const resolveNonInteractiveModel = localInference.resolveNonInteractiveOllamaModel;
@@ -2410,7 +2409,6 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     getLocalProviderBaseUrl,
     run,
     vllmLocalCredentialEnv: VLLM_LOCAL_CREDENTIAL_ENV,
-    getOllamaWarmupCommand,
     shouldFrontOllamaWithProxy,
     ensureOllamaAuthProxy,
     isProxyHealthy,

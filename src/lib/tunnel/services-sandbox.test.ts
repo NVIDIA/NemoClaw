@@ -20,6 +20,10 @@ function restoreSandboxEnv(saved: Record<(typeof SANDBOX_ENV_NAMES)[number], str
   }
 }
 
+function stopAllWithoutOllama(opts: Parameters<typeof stopAll>[0] = {}) {
+  return stopAll({ ...opts, cleanupOllamaModels: false });
+}
+
 describe("stopAll with sandbox channels", () => {
   let pidDir: string;
   let stopSandboxChannels: ReturnType<typeof vi.spyOn>;
@@ -45,7 +49,7 @@ describe("stopAll with sandbox channels", () => {
   it("stops in-sandbox channels when sandboxName is provided", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    stopAll({ pidDir, sandboxName: "test-sb" });
+    stopAllWithoutOllama({ pidDir, sandboxName: "test-sb" });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("test-sb", {
       info: expect.any(Function),
@@ -57,7 +61,7 @@ describe("stopAll with sandbox channels", () => {
   it("warns when no sandbox name is available", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    stopAll({ pidDir });
+    stopAllWithoutOllama({ pidDir });
 
     expect(stopSandboxChannels).not.toHaveBeenCalled();
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
@@ -68,7 +72,7 @@ describe("stopAll with sandbox channels", () => {
   it("still stops cloudflared when in-sandbox shutdown cannot stop a process", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
-    stopAll({ pidDir, sandboxName: "test-sb" });
+    stopAllWithoutOllama({ pidDir, sandboxName: "test-sb" });
 
     expect(stopSandboxChannels).toHaveBeenCalledTimes(1);
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
@@ -77,7 +81,7 @@ describe("stopAll with sandbox channels", () => {
   it("reads sandbox name from NEMOCLAW_SANDBOX env when not in opts", () => {
     process.env.NEMOCLAW_SANDBOX = "env-sandbox";
 
-    stopAll({ pidDir });
+    stopAllWithoutOllama({ pidDir });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("env-sandbox", expect.any(Object));
   });
@@ -85,7 +89,7 @@ describe("stopAll with sandbox channels", () => {
   it("reads sandbox name from NEMOCLAW_SANDBOX_NAME when NEMOCLAW_SANDBOX is unset", () => {
     process.env.NEMOCLAW_SANDBOX_NAME = "named-sandbox";
 
-    stopAll({ pidDir });
+    stopAllWithoutOllama({ pidDir });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("named-sandbox", expect.any(Object));
   });
@@ -94,7 +98,7 @@ describe("stopAll with sandbox channels", () => {
     process.env.NEMOCLAW_SANDBOX_NAME = "name-sandbox";
     process.env.NEMOCLAW_SANDBOX = "other-sandbox";
 
-    stopAll({ pidDir });
+    stopAllWithoutOllama({ pidDir });
 
     expect(stopSandboxChannels).toHaveBeenCalledWith("name-sandbox", expect.any(Object));
   });
@@ -111,7 +115,7 @@ describe("stopAll with sandbox channels", () => {
     process.env.NEMOCLAW_SANDBOX = "other-sandbox";
 
     try {
-      stopAll({ pidDir: effectivePidDir });
+      stopAllWithoutOllama({ pidDir: effectivePidDir });
 
       expect(stopSandboxChannels).toHaveBeenCalledWith("name-sandbox", expect.any(Object));
       expect(existsSync(join(effectivePidDir, "cloudflared.pid"))).toBe(false);
@@ -127,7 +131,7 @@ describe("stopAll with sandbox channels", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       process.env.NEMOCLAW_SANDBOX_NAME = invalidName;
 
-      stopAll({ pidDir });
+      stopAllWithoutOllama({ pidDir });
 
       expect(stopSandboxChannels).not.toHaveBeenCalled();
       expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("Invalid sandbox name");
@@ -142,7 +146,7 @@ describe("stopAll with sandbox channels", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     expect(() =>
-      stopAll({ pidDir, sandboxName: "bad name", releaseGatewayPort: true }),
+      stopAllWithoutOllama({ pidDir, sandboxName: "bad name", releaseGatewayPort: true }),
     ).not.toThrow();
 
     expect(stopSandboxChannels).not.toHaveBeenCalled();
@@ -156,7 +160,7 @@ describe("stopAll with sandbox channels", () => {
   it("does not stop default cloudflared for a malformed sandbox name without an explicit pidDir", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    expect(() => stopAll({ sandboxName: "bad name" })).not.toThrow();
+    expect(() => stopAllWithoutOllama({ sandboxName: "bad name" })).not.toThrow();
 
     expect(stopSandboxChannels).not.toHaveBeenCalled();
     const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
