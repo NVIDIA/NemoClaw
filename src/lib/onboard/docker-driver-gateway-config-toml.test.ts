@@ -182,7 +182,9 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
-  it("omits the false-by-default proxy setting for a proxy-free Podman gateway", () => {
+  // OpenShell 0.0.106 rejects an explicit false value when Podman has no
+  // HTTPS proxy. Omission is the compatible disabled runtime input.
+  it("omits the proxy setting required by proxy-free Podman startup", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-proxy-default-"));
     try {
       const { configPath } = writePreScopedGatewayConfig(stateDir, false, "podman");
@@ -195,7 +197,7 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
-  it("rewrites an explicit false proxy setting to the proxy-free Podman default", () => {
+  it("repairs an explicit false proxy setting for proxy-free Podman startup", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-proxy-repair-"));
     try {
       const { configPath, env } = writePreScopedGatewayConfig(stateDir, false, "podman");

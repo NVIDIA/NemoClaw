@@ -146,8 +146,13 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
     throw refusal("the gateway launch marker does not record a gateway config identity");
   }
 
-  if (marker.driver !== driver) {
-    throw refusal("the gateway launch marker driver does not match the selected config driver");
+  if (!marker.openShellDriver) {
+    throw refusal("the gateway launch marker does not record the selected OpenShell driver");
+  }
+  if (marker.openShellDriver !== driver) {
+    throw refusal(
+      "the gateway launch marker OpenShell driver does not match the selected config driver",
+    );
   }
 
   if (

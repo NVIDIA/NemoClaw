@@ -2333,7 +2333,9 @@ $$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe] [--too
 Refresh one MCP server registration, or every server on the sandbox when no server is supplied.
 Restart reapplies the generated policy, reattaches the OpenShell provider when needed, and refreshes the sandbox agent adapter registration.
 For a trusted-private entry, restart replays recorded address pins without resolving the endpoint again or widening the policy.
-For a public entry, restart resolves the hostname again and refreshes the policy with the current validated public addresses.
+For a public entry, restart activates a complete newly resolved public address set.
+If DNS returns one address already present in a recorded multi-address set, restart retains the complete recorded set.
+If a legacy registration has one recorded pin and DNS still returns only one address, restart stops before mutation; remove and add the server again after DNS returns a complete address set.
 If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
 Otherwise, restart reuses an existing provider only when its current metadata match the registry and the credential-resolution probe verifies the stored credential.
 Restart checks every selected server before it changes a policy, provider, or agent adapter.

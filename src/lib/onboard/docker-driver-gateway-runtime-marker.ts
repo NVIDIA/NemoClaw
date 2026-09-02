@@ -34,7 +34,10 @@ export function resolveDockerDriverGatewayPidFile(
 export type DockerDriverGatewayRuntimeMarker = {
   version: typeof DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION;
   pid: number;
+  /** Runtime-provider identity used to resolve lifecycle ownership. */
   driver: string;
+  /** OpenShell compute driver selected at launch; absent on legacy markers. */
+  openShellDriver?: string;
   platform: NodeJS.Platform;
   arch: NodeJS.Architecture;
   endpoint: string;
@@ -133,10 +136,15 @@ export function buildDockerDriverGatewayRuntimeMarker({
   if (!/^[a-z][a-z0-9-]{0,63}$/u.test(driver)) {
     throw new Error("Gateway runtime provider identity is invalid.");
   }
+  const openShellDriver = (desiredEnv.OPENSHELL_DRIVERS ?? driver).trim().toLowerCase();
+  if (!/^[a-z][a-z0-9-]{0,63}$/u.test(openShellDriver)) {
+    throw new Error("Gateway OpenShell compute driver identity is invalid.");
+  }
   return {
     version: DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION,
     pid,
     driver,
+    openShellDriver,
     platform,
     arch,
     endpoint,
@@ -156,6 +164,9 @@ function isRuntimeMarker(value: unknown): value is DockerDriverGatewayRuntimeMar
     marker.version === DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION &&
     typeof marker.driver === "string" &&
     /^[a-z][a-z0-9-]{0,63}$/u.test(marker.driver) &&
+    (marker.openShellDriver === undefined ||
+      (typeof marker.openShellDriver === "string" &&
+        /^[a-z][a-z0-9-]{0,63}$/u.test(marker.openShellDriver))) &&
     Number.isInteger(marker.pid) &&
     typeof marker.platform === "string" &&
     typeof marker.arch === "string" &&
@@ -249,6 +260,11 @@ export function getDockerDriverGatewayRuntimeMarkerDrift(
   if (marker.driver !== desired.driver) {
     return {
       reason: `runtime marker provider=${marker.driver} (expected ${desired.driver})`,
+    };
+  }
+  if (marker.openShellDriver !== desired.openShellDriver) {
+    return {
+      reason: `runtime marker OpenShell driver=${marker.openShellDriver || "<unset>"} (expected ${desired.openShellDriver})`,
     };
   }
   if (marker.platform !== desired.platform) {
