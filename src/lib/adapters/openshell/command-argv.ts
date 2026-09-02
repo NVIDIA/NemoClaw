@@ -45,8 +45,16 @@ export function buildOpenShellCommandEnv(
     : openshellResolveModule.buildOpenShellCommandBaseEnv(extra);
 }
 
+export function tryResolveOpenshellBinary(): string | null {
+  return openshellResolveModule.resolveOpenshell();
+}
+
+export function openshellNotFoundDiagnosticLines(): string[] {
+  return openshellResolveModule.openshellNotFoundDiagnosticLines();
+}
+
 export function resolveOpenshellBinary(): string {
-  return openshellResolveModule.resolveOpenshell() ?? "openshell";
+  return tryResolveOpenshellBinary() ?? "openshell";
 }
 
 export function buildOpenshellCommand(args: readonly string[]): string[] {

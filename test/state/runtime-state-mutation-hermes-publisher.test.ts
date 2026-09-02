@@ -317,6 +317,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
 publisher._verify_final_posture = real_verify_final_posture
 publisher._verify_top_posture = lambda posture: None
+publisher.pwd.getpwnam = lambda _name: type("User", (), {"pw_uid": os.getuid()})()
 
 class VerificationResult:
     ok = False
@@ -661,6 +662,7 @@ describe("Hermes runtime state mutation publisher", () => {
           expect.stringMatching(/\/sandbox\/\.hermes\/\.env$/),
           expect.stringMatching(/\/sandbox\/\.hermes\/config\.yaml$/),
         ],
+        mutable_service_uids: [expect.any(Number)],
       },
     };
     expect(failures).toMatchObject([

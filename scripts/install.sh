@@ -3789,11 +3789,13 @@ run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
   local portable_profile_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/experimental/portable-profile.js"
+  local runtime_provider_selection_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/runtime-provider/selection.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
     || [[ ! -f "$preflight_module" ]] \
     || [[ ! -f "$gateway_management_module" ]] \
+    || [[ ! -f "$runtime_provider_selection_module" ]] \
     || [[ ! -f "$host_readiness_module" ]] \
     || [[ ! -f "$onboard_admission_module" ]]; then
     return 0
@@ -3810,6 +3812,7 @@ run_installer_host_preflight() {
       const onboardAdmissionPath = process.argv[3];
       const gatewayManagementPath = process.argv[4];
       const portableProfilePath = process.argv[5];
+      const runtimeProviderSelectionPath = process.argv[6];
       let explicitlySelectedPortableProfile = false;
       try {
         const portableProfile = require(portableProfilePath);
@@ -3824,6 +3827,7 @@ run_installer_host_preflight() {
         const { createHostReadinessReport } = require(hostReadinessPath);
         const { evaluateOnboardReadinessAdmission } = require(onboardAdmissionPath);
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
+        const { resolveConfiguredRuntimeProvider } = require(runtimeProviderSelectionPath);
         const host = assessHost();
         const actions = planHostAdvisories(host);
         const gatewayManagement = loadGatewayManagementDeclaration();
@@ -3831,6 +3835,18 @@ run_installer_host_preflight() {
           gatewayManagement.ok &&
           (gatewayManagement.declaration === null ||
             gatewayManagement.declaration?.mode === "nemoclaw-managed");
+        const selectedRuntimeUsesProviderHostRoute =
+          !explicitlySelectedPortableProfile &&
+          (() => {
+            const provider = resolveConfiguredRuntimeProvider();
+            return (
+              provider.gateway.supported &&
+              provider.gateway.prepareHostRuntime({
+                environment: process.env,
+                platform: process.platform,
+              }).sandboxHostAddress !== null
+            );
+          })();
         const readiness = createHostReadinessReport(
           { nemoclawVersion: "installer", sourceRevision: "installer" },
           {
@@ -3843,7 +3859,8 @@ run_installer_host_preflight() {
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
-          allowUnsupportedRuntime: explicitlySelectedPortableProfile,
+          allowUnsupportedRuntime:
+            explicitlySelectedPortableProfile || selectedRuntimeUsesProviderHostRoute,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
@@ -3912,10 +3929,26 @@ run_installer_host_preflight() {
           process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
         process.exit(admission.admitted ? 0 : 10);
-      } catch {
-        process.exit(0);
+      } catch (error) {
+        const optionalModules = [
+          preflightPath,
+          hostReadinessPath,
+          onboardAdmissionPath,
+          gatewayManagementPath,
+          runtimeProviderSelectionPath,
+        ];
+        const missingOptionalModule =
+          error?.code === "MODULE_NOT_FOUND" &&
+          optionalModules.some((modulePath) =>
+            String(error?.message || "").includes(modulePath)
+          );
+        if (missingOptionalModule) process.exit(0);
+        process.stderr.write(
+          `NemoClaw installer host preflight failed: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+        process.exit(11);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module" "$runtime_provider_selection_module"
   )"; then
     status=0
   else
@@ -3947,7 +3980,7 @@ run_installer_host_preflight() {
     fi
   fi
 
-  [[ "$status" -ne 10 ]]
+  [[ "$status" -eq 0 ]]
 }
 
 recover_preexisting_sandboxes_before_onboard() {
@@ -4483,6 +4516,15 @@ prepare_portable_experimental_runtime_override() {
   _PORTABLE_INSTALLER_DOCKER_HOST="$DOCKER_HOST"
 
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
+}
+
+# Resolve the legacy Docker bootstrap requirement at the installer runtime
+# configuration boundary. Native managed Podman owns its host preparation via
+# the registered runtime provider; the portable experimental profile remains
+# on its existing Docker-CLI-over-Podman compatibility path.
+installer_requires_legacy_docker_bootstrap() {
+  [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] && return 0
+  [[ "${NEMOCLAW_GATEWAY_RUNTIME:-docker}" != "podman" ]]
 }
 
 is_wsl_host() {
@@ -5966,7 +6008,9 @@ prepare_installer_host() {
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
   prepare_portable_experimental_runtime_override
-  ensure_docker
+  if installer_requires_legacy_docker_bootstrap; then
+    ensure_docker
+  fi
   ensure_openshell_build_deps
 }
 

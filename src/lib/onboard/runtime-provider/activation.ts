@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-} from "../managed-image/contract";
-import {
   NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
   NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
   type NativeRuntimeQualificationAuthority,
   type NativeRuntimeQualificationExpectedSource,
 } from "./native-qualification-authority";
 import {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,

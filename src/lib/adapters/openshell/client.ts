@@ -19,6 +19,8 @@ export { classifyManagedGatewayEndpointBinding };
 export { buildSelectedOpenShellSubprocessEnv } from "./command-argv";
 export type { OpenShellRuntimeSelection } from "./runtime-selection";
 
+export { isOpenShellSandboxPolicyCredentialFree } from "./policy-boundary";
+
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 
 export type OpenshellSpawnSync = (

@@ -52,7 +52,7 @@ export type LaunchReadinessObservationStage =
 export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
-  capture?: (args: string[]) => LaunchReadinessCaptureResult;
+  capture?: LaunchReadinessBoundCapture;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
   forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
   smoke?: typeof runAgentSmokeCommands;
@@ -76,10 +76,11 @@ export function createBoundLaunchReadinessDeps(
   capture: LaunchReadinessBoundCapture,
 ): LaunchReadinessHealthDeps & { observeSandbox: SandboxRecreateObserver } {
   return {
-    capture: (args) =>
+    capture: (args, options) =>
       capture(args, {
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        ...options,
+        ignoreError: options?.ignoreError ?? true,
+        timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
@@ -144,7 +145,7 @@ export function recordLaunchReadinessObservationFailure(
 
 export function captureLaunchReadiness(
   args: string[],
-  options: { includeStreams?: boolean; maxBuffer?: number } = {},
+  options: NonNullable<Parameters<typeof captureOpenshell>[1]> = {},
 ): LaunchReadinessCaptureResult {
   return captureOpenshell(args, {
     ignoreError: true,
@@ -209,8 +210,9 @@ export async function requireLaunchSemanticHealth(
     const smoke = (deps.smoke ?? runAgentSmokeCommands)(
       sandboxName,
       agent,
-      (args, _options) =>
-        (deps.capture ?? ((captureArgs) => captureLaunchReadiness(captureArgs)))(args),
+      (args, options) =>
+        (deps.capture ?? ((captureArgs, captureOptions) =>
+          captureLaunchReadiness(captureArgs, captureOptions)))(args, options),
       gatewayName,
     );
     if (!smoke.ok) {

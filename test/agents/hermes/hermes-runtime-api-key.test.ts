@@ -865,7 +865,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.envFileContent).toContain(
-      "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n",
+      "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-v222_SLACK_BOT_TOKEN\n",
     );
     expect(run.envFileContent).toContain(
       "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n",
