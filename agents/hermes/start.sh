@@ -1285,11 +1285,15 @@ PYHISTORY
 }
 
 repair_hermes_startup_layout() {
-  # The cron execution and Discord recovery ledgers are created by gateway and
-  # backed up/restored by sandbox. Maintain their descriptor-verified,
-  # group-writable runtime and gateway parents even when the rest of the config
-  # root is locked while Shields up is active or was wiped. The cron directory
-  # contains cron job definitions and must remain sealed.
+  # Sessions plus the cron execution and Discord recovery ledgers are created
+  # by gateway and backed up/restored by sandbox. Maintain their
+  # descriptor-verified, group-writable parents even when the rest of the
+  # config root is locked while Shields up is active or was wiped. The cron
+  # directory contains cron job definitions and must remain sealed.
+  if ! ensure_hermes_cross_uid_state_dir sessions; then
+    echo "[gateway] Hermes pre-launch layout repair failed at sessions state directory" >&2
+    return 1
+  fi
   if ! ensure_hermes_cross_uid_state_dir gateway; then
     echo "[gateway] Hermes pre-launch layout repair failed at gateway state directory" >&2
     return 1

@@ -420,6 +420,7 @@ printf "legacy dashboard memory\n" >/sandbox/.hermes/dashboard-home/MEMORY.md
 chown sandbox:sandbox /sandbox/.hermes/dashboard-home/MEMORY.md
 chmod 600 /sandbox/.hermes/dashboard-home/MEMORY.md
 chmod 750 /sandbox/.hermes
+chmod 750 /sandbox/.hermes/sessions
 rm -rf /sandbox/.hermes/hooks /sandbox/.hermes/image_cache /sandbox/.hermes/audio_cache /sandbox/.hermes/logs/curator
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
@@ -430,6 +431,12 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   containers.push(container);
 
   await waitForHealth(probe, container);
+  await expectContainerSh(
+    probe,
+    container,
+    "restored sessions directory was not repaired for cross-UID writes",
+    `[ "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = "gateway:sandbox 2770" ] && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc ': > /sandbox/.hermes/sessions/.nemoclaw-write-test && rm -f /sandbox/.hermes/sessions/.nemoclaw-write-test'`,
+  );
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
@@ -481,6 +488,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
       "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
       "legacy gateway.pid symlink/state shape is repaired and booted",
+      "restored sessions state is repaired for separated gateway writes",
       "legacy dashboard profile state is moved into profiles/dashboard-home",
     ],
   });
@@ -524,6 +532,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       bearerAuthVerified: true,
       dashboardHomeVerified: true,
       legacyPidSymlinkMigrationVerified: true,
+      restoredSessionsPermissionsVerified: true,
       legacyDashboardProfileMigrationVerified: true,
     },
   });
