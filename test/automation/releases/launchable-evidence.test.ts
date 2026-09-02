@@ -310,11 +310,11 @@ describe("Launchable evidence inspection", () => {
     expect(() =>
       inspectLaunchableEvidence(
         { candidate: SHA },
-        reader(
-          [run(10, "2026-06-01T00:00:00Z"), run(11, "2026-07-01T00:00:00Z")],
-          { "10:2": [job()], "11:2": [job(21, { conclusion: "failure" })] },
-          artifact,
-        ),
+        {
+          listRuns: () => [run(10, "2026-06-01T00:00:00Z"), run(11, "2026-07-01T00:00:00Z")],
+          listJobs: (id) => (id === 10 ? [job()] : [job(21, { conclusion: "failure" })]),
+          readArtifact: (id) => (id === 10 ? files() : artifact),
+        },
       ),
     ).toThrow("run=11 attempt=2 job=21");
   });

@@ -1339,11 +1339,11 @@ The job reads these credentials from repository Actions secrets:
 
 `brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to
 `$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps
-and processes in the same job can read that file. An always-run workflow step
-removes the temporary credential home and verifies its absence after the scenario.
+and processes in the same job can read that file. The normal lane does not explicitly
+remove it; GitHub-hosted runner teardown discards the credential file after the job.
 These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, report the recorded workspace
-name and ID, do not run `brev delete`, and follow the
+name and ID, and follow the
 [ID-bound recovery procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/launchable-evidence.md#recover-incomplete-cleanup).
 Rotate or revoke each credential to remove later access.
 For an NVIDIA-owned PR revision, the job builds and runs the candidate commit with this same credential boundary.
