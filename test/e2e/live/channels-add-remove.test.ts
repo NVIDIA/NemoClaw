@@ -397,15 +397,15 @@ async function telegramEgressProbe(
   artifactName: string,
 ): Promise<{ result: ShellProbeResult; status: EgressProbeStatus }> {
   const source = [
-    `const url = ${JSON.stringify(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getMe`)};`,
+    'const url = "https://api.telegram.org/";',
     "fetch(url, { signal: AbortSignal.timeout(15000) })",
     "  .then((response) => console.log(`STATUS_${response.status}`))",
     "  .catch((error) => console.log(`ERROR_${error.cause?.code || error.code || error.message}`));",
   ].join(" ");
+  expect(source).not.toContain("/bot");
   const result = await sandbox.exec(SANDBOX_NAME, ["node", "-e", source], {
     artifactName,
     env: sandboxAccessEnv(),
-    redactionValues: [TELEGRAM_TOKEN],
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   assertExitZero(result, "telegram egress probe");

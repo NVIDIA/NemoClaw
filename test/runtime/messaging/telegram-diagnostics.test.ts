@@ -128,6 +128,7 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("identityless canonical placeholder");
+    expect(result.stderr).not.toContain("runtime credential is ready (revision-scoped)");
   });
 
   it("does NOT emit the startup-grace breadcrumb after the bridge logs 'starting provider'", () => {
