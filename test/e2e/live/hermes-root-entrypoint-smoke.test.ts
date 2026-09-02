@@ -218,6 +218,8 @@ async function assertImageCapabilitySurface(probe: DockerProbe, container: strin
     "Hermes image is missing an optional runtime capability or root sandbox-group membership",
     String.raw`set -eu
 id -Gn root | tr ' ' '\n' | grep -Fx sandbox
+test "$(command -v hermes)" = /usr/local/bin/hermes
+/usr/local/bin/hermes --version >/dev/null
 /opt/hermes/.venv/bin/python -I - <<'PY'
 import acp
 import anthropic
@@ -836,6 +838,7 @@ test(
           "gateway log has no PID race or config load failure",
           "Hermes v0.14 writable runtime directories are present",
           "selected Hermes optional capabilities import from the shipped image",
+          "the manifest-declared Hermes executable resolves and runs at its final-image path",
           "root retains sandbox supplementary-group membership in the shipped image",
           "build-only upstream tests and root caches are absent from the runtime image",
           "gateway.pid is stored as a regular file below the writable runtime directory",
