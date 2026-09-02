@@ -68,7 +68,7 @@ async function waitForPort(
     "bash",
     [
       "-lc",
-      String.raw`set -e
+      String.raw`set +e
 port="$1"
 expected="$2"
 for _ in $(seq 1 60); do
@@ -101,7 +101,7 @@ async function waitForSandboxReady(host: HostCliClient): Promise<void> {
     "bash",
     [
       "-lc",
-      String.raw`set -e
+      String.raw`set +e
 sandbox_name="$1"
 for _ in $(seq 1 60); do
   output="$(openshell sandbox get "$sandbox_name" --gateway nemoclaw 2>&1)" && status=0 || status=$?
