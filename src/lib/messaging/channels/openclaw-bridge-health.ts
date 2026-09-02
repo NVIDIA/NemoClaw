@@ -7,7 +7,7 @@ import type { MessagingHookHandler, MessagingHookRegistration } from "../hooks/t
 const OPENCLAW_CONFIG_FILE = "/sandbox/.openclaw/openclaw.json";
 const OPENCLAW_GATEWAY_LOG_FILE = "/tmp/gateway.log";
 const OPENCLAW_BRIDGE_WARNING_PATTERN =
-  /credential placeholder (?:configured but|could not|mismatch)|runtime .*placeholder (?:is malformed|is an identityless)|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired/i;
+  /credential placeholder (?:configured but|could not|mismatch)|runtime .*?(?:is an identityless canonical placeholder|placeholder is malformed)|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired/i;
 const OPENCLAW_BRIDGE_POSITIVE_STARTUP_PATTERN = /\bstarting provider\b|\bprovider ready\b/;
 
 export interface OpenClawBridgeHealthCommandResult {
