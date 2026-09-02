@@ -512,7 +512,7 @@ function runOllamaLocalCurlProbe(
   host: string,
   runCaptureExImpl: RunCaptureExFn = runCaptureEx,
 ): CurlProbeResult {
-  const command = getOllamaApiCommand(buildValidatedCurlCommandArgs(["-f", ...argv]), host);
+  const command = ["curl", ...buildValidatedCurlCommandArgs(["-f", ...argv])];
   const result = createOllamaApiCaptureEx(runCaptureExImpl, host)(command);
   const ok = result.exitCode === 0;
   const stderr = String(result.stderr ?? "");
