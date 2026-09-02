@@ -262,6 +262,14 @@ jobs:
           name: pr-review-advisor-context-${{ github.run_id }}
           path: ${{ runner.temp }}/shared-pr-review-advisor-context
 
+      # Preparation reads the checked-out PR only before the model credential enters the environment.
+      - name: Prepare advisor sandbox inputs
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: ${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
+
       # Shared lifecycle phases preserve the configure-only credential boundary.
       - name: Install OpenShell
         run: |
