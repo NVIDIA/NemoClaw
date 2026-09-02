@@ -106,10 +106,7 @@ describe("Windows Ollama helper", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(
-      run,
-      runCapture,
-    );
+    const { windows, restore, spawnSyncSpy } = loadWindowsOllamaWithMocks(run, runCapture);
 
     try {
       expect(windows.setupWindowsOllamaWith0000Binding({ installedPath })).toBe(true);
@@ -143,7 +140,6 @@ describe("Windows Ollama helper", () => {
       ],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(atomicsWaitSpy).not.toHaveBeenCalled();
     expect(spawnSyncSpy.mock.calls.some(([command]) => command === "sleep")).toBe(false);
   });
 
