@@ -541,7 +541,7 @@ describe("pull request and main workflow contracts", () => {
       "trusted_receipt_tool=.trusted-sdk-package-decision/tools/e2e/openshell-sdk-package-receipt.mts",
     );
     expect(locate.run).toContain('"$trusted_receipt_tool" resolve');
-    expect(locate.run).not.toContain("resolve-bootstrap");
+    expect(locate.run).toContain("openshell-sdk-package-receipt.mts resolve-bootstrap");
     expect(locate.run).toContain('"$RUNNER_TEMP/openshell-sdk-selection/selection.json"');
     expect(locate.run).not.toContain(".pull_requests[].base.sha");
     expect(locate.run).toContain("required=false");

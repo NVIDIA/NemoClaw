@@ -12,6 +12,7 @@ import { downloadBoundArtifact } from "../../../tools/e2e/exact-artifact-downloa
 import {
   createOpenShellSdkProducerReceipt,
   parseOpenShellSdkProducerReceipt,
+  resolveBootstrapOpenShellSdkPackage,
   resolveOpenShellSdkPackage,
   type OpenShellSdkProducerReceipt,
 } from "../../../tools/e2e/openshell-sdk-package-receipt.mts";
@@ -238,6 +239,81 @@ describe("OpenShell SDK producer receipts", () => {
         workflowSha: BASE_SHA,
       }),
     ).toThrow("regular non-symlink file");
+  });
+
+  it("bridges a base that predates producer receipts with a distinct authenticated selection", async () => {
+    const packageBytes = Buffer.from("reviewed SDK package");
+    const archive = artifactZip([
+      { name: "reviewed-sdk.tgz", contents: packageBytes.toString("utf8") },
+    ]);
+    const artifactName = `openshell-sdk-${CANDIDATE_SHA}`;
+    const artifactId = 9002;
+    const responses = new Map<string, unknown>([
+      [
+        `/repos/${REPOSITORY}/pulls/${PR_NUMBER}`,
+        {
+          number: PR_NUMBER,
+          state: "open",
+          head: { sha: CANDIDATE_SHA },
+          base: { sha: BASE_SHA },
+        },
+      ],
+      [
+        `/repos/${REPOSITORY}/actions/workflows/openshell-sdk-package-pr.yaml`,
+        {
+          id: WORKFLOW_ID,
+          name: "Security / Package OpenShell SDK for PR",
+          path: ".github/workflows/openshell-sdk-package-pr.yaml",
+          state: "active",
+        },
+      ],
+      [
+        `/repos/${REPOSITORY}/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&head_sha=${CANDIDATE_SHA}&per_page=100&page=1`,
+        { total_count: 1, workflow_runs: [workflowRun()] },
+      ],
+      [
+        `/repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=${encodeURIComponent(artifactName)}&per_page=100`,
+        {
+          total_count: 1,
+          artifacts: [
+            {
+              id: artifactId,
+              name: artifactName,
+              expired: false,
+              size_in_bytes: archive.length,
+              digest: `sha256:${createHash("sha256").update(archive).digest("hex")}`,
+              archive_download_url: `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`,
+              workflow_run: { id: RUN_ID, head_sha: CANDIDATE_SHA },
+            },
+          ],
+        },
+      ],
+    ]);
+    const outputDirectory = temporaryDirectory();
+    const selection = await resolveBootstrapOpenShellSdkPackage(
+      {
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        expectedPackageName: "reviewed-sdk.tgz",
+        outputDirectory,
+        pullRequest: PR_NUMBER,
+        selectionPath: path.join(temporaryDirectory(), "selection.json"),
+        token: "test-token",
+      },
+      {
+        request: async (requestPath) => {
+          expect(responses.has(requestPath), `unexpected request ${requestPath}`).toBe(true);
+          return responses.get(requestPath);
+        },
+        downloadArtifact: async () => archive,
+        waitMilliseconds: 0,
+      },
+    );
+
+    expect(selection.kind).toBe("nemoclaw-openshell-sdk-bootstrap-selection-v1");
+    expect(selection.base.sha).toBe(BASE_SHA);
+    expect(selection.run).toEqual({ id: RUN_ID, attempt: RUN_ATTEMPT });
+    expect(fs.readFileSync(path.join(outputDirectory, "reviewed-sdk.tgz"))).toEqual(packageBytes);
   });
 
   it("selects a receipt when GitHub retains stale PR base metadata", async () => {
