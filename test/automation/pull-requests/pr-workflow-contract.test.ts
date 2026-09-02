@@ -455,6 +455,9 @@ describe("pull request and main workflow contracts", () => {
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
   const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
+  const managedRuntimeWorkflow = readYaml<CiWorkflow>(
+    ".github/workflows/managed-runtime-base-qualification.yaml",
+  );
 
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
@@ -946,6 +949,65 @@ describe("pull request and main workflow contracts", () => {
       "if-no-files-found": "error",
       "retention-days": 1,
     });
+
+    const qualificationPackageJob = managedRuntimeWorkflow.jobs["package-openshell-sdk"];
+    const candidateActivation = managedRuntimeWorkflow.jobs["trusted-candidate-activation"];
+    const baseActivation = managedRuntimeWorkflow.jobs["exact-base-activation"];
+    expect(qualificationPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(candidateActivation.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(baseActivation.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(candidateActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
+    expect(baseActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
+
+    const qualificationCheckout = requiredWorkflowStep(
+      qualificationPackageJob,
+      "Check out exact base-controlled package verifier",
+    );
+    expect(qualificationCheckout.with).toMatchObject({
+      ref: "${{ needs.authenticate-source.outputs.base_sha }}",
+      "persist-credentials": false,
+      "sparse-checkout-cone-mode": false,
+    });
+    expect(JSON.stringify(qualificationPackageJob)).not.toContain(
+      "needs.authenticate-source.outputs.candidate_sha",
+    );
+
+    const qualificationUpload = requiredWorkflowStep(
+      qualificationPackageJob,
+      "Upload reviewed OpenShell SDK archive",
+    );
+    expect(qualificationUpload.with).toMatchObject({
+      name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ steps.package.outputs.artifact_path }}",
+      "if-no-files-found": "error",
+      "retention-days": 1,
+    });
+
+    const candidateDownload = requiredWorkflowStep(
+      candidateActivation,
+      "Download reviewed OpenShell SDK archive",
+    );
+    expect(candidateDownload.uses).toBe(
+      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    );
+    expect(candidateDownload.with).toEqual({
+      name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ runner.temp }}/openshell-sdk",
+    });
+    const baseDownload = requiredWorkflowStep(
+      baseActivation,
+      "Download reviewed OpenShell SDK archive",
+    );
+    expect(baseDownload).toEqual(candidateDownload);
+
+    const candidateInstall = requiredWorkflowStep(
+      candidateActivation,
+      "Install trusted controller and candidate dependencies without credentials",
+    );
+    expect(candidateInstall.env?.NODE_AUTH_TOKEN).toBeUndefined();
+    expect(candidateInstall.run).toContain("env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN");
+    expect(candidateInstall.run).toContain("ci-install-dependencies.sh");
+    expect(candidateInstall.run).not.toContain("github.token");
   });
 
   // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates
