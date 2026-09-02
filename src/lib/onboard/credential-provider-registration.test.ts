@@ -119,6 +119,81 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
   };
 }
 
+function bridgeRefreshCleanupScenario(deleteStatus: number, deleteError: string) {
+  const session = { stagedCredentialProviders: [] } as unknown as Session;
+  let providerExists = false;
+  const commandHandlers = new Map<string, () => ReturnType<typeof providerMetadata>>([
+    [
+      "get",
+      () =>
+        providerExists
+          ? providerMetadata(
+              "alpha-googlechat-bridge",
+              "google-chat-bridge",
+              "GOOGLE_CHAT_ACCESS_TOKEN",
+            )
+          : {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+            },
+    ],
+    [
+      "create",
+      () => {
+        providerExists = true;
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    ],
+    [
+      "delete",
+      () => {
+        providerExists = deleteStatus !== 0;
+        return { status: deleteStatus, stdout: "", stderr: deleteError };
+      },
+    ],
+  ]);
+  const runOpenshell = vi.fn(
+    (args: string[]) =>
+      commandHandlers.get(args[1] ?? "")?.() ?? { status: 0, stdout: "", stderr: "" },
+  );
+  const registration = createCredentialProviderRegistration(
+    registrationDeps(runOpenshell, session),
+  );
+  const tokenDef: MessagingTokenDef = {
+    name: "alpha-googlechat-bridge",
+    envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+    token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
+    providerType: "google-chat-bridge",
+  };
+  const ensureProfiles = vi
+    .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
+    .mockImplementation(() => undefined);
+  const configureRefreshes = vi
+    .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+    .mockReturnValue({ ok: false, reason: "token minting failed" });
+  const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+    throw new Error(`exit:${code ?? 0}`);
+  });
+  const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+  return {
+    errorLog,
+    providerExists: () => providerExists,
+    registration,
+    restore: () => {
+      errorLog.mockRestore();
+      exit.mockRestore();
+      configureRefreshes.mockRestore();
+      ensureProfiles.mockRestore();
+    },
+    runOpenshell,
+    session,
+    tokenDef,
+  };
+}
+
 describe("credential provider registration", () => {
   it.each([
     { condition: "matches", endpoints: [], expected: true },
@@ -946,106 +1021,57 @@ describe("credential provider registration", () => {
     expect(session.stagedCredentialProviders).toEqual([]);
   });
 
-  it.each([
-    { cleanup: "succeeds", deleteStatus: 0, deleteError: "", recovery: false },
-    { cleanup: "fails", deleteStatus: 1, deleteError: "gateway unavailable", recovery: true },
-  ])(
-    "cleans up a newly created bridge provider when refresh $cleanup",
-    async ({ deleteStatus, deleteError, recovery }) => {
-      const session = { stagedCredentialProviders: [] } as unknown as Session;
-      let providerExists = false;
-      const commandHandlers = new Map<string, () => ReturnType<typeof providerMetadata>>([
-        [
-          "get",
-          () =>
-            providerExists
-              ? providerMetadata(
-                  "alpha-googlechat-bridge",
-                  "google-chat-bridge",
-                  "GOOGLE_CHAT_ACCESS_TOKEN",
-                )
-              : {
-                  status: 1,
-                  stdout: "",
-                  stderr:
-                    'Error: code: \'Some requested entity was not found\', message: "provider not found"',
-                },
-        ],
-        [
-          "create",
-          () => {
-            providerExists = true;
-            return { status: 0, stdout: "", stderr: "" };
-          },
-        ],
-        [
-          "delete",
-          () => {
-            providerExists = deleteStatus !== 0;
-            return { status: deleteStatus, stdout: "", stderr: deleteError };
-          },
-        ],
-      ]);
-      const runOpenshell = vi.fn(
-        (args: string[]) =>
-          commandHandlers.get(args[1] ?? "")?.() ?? { status: 0, stdout: "", stderr: "" },
+  it("removes a newly created bridge provider when refresh configuration fails", async () => {
+    const scenario = bridgeRefreshCleanupScenario(0, "");
+    try {
+      await expect(
+        scenario.registration.stageSandboxCredentialProviders(
+          sandboxInput(requiredBindings([scenario.tokenDef])),
+          async () => ({ messagingTokenDefs: [scenario.tokenDef] }),
+        ),
+      ).rejects.toThrow("exit:1");
+
+      expect(scenario.runOpenshell).toHaveBeenCalledWith(
+        ["provider", "delete", "-g", "test-gateway", "alpha-googlechat-bridge"],
+        expect.objectContaining({ ignoreError: true }),
       );
-      const deps = registrationDeps(runOpenshell, session);
-      const registration = createCredentialProviderRegistration(deps);
-      const tokenDef: MessagingTokenDef = {
-        name: "alpha-googlechat-bridge",
-        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
-        providerType: "google-chat-bridge",
-      };
-      const ensureProfiles = vi
-        .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
-        .mockImplementation(() => undefined);
-      const configureRefreshes = vi
-        .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
-        .mockReturnValue({ ok: false, reason: "token minting failed" });
-      const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
-        throw new Error(`exit:${code ?? 0}`);
-      });
-      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(scenario.session.stagedCredentialProviders).toEqual([]);
+      expect(scenario.providerExists()).toBe(false);
+      expect(scenario.errorLog.mock.calls.flat().join("\n")).not.toContain(
+        "Automatic cleanup could not remove",
+      );
+    } finally {
+      scenario.restore();
+    }
+  });
 
-      try {
-        await expect(
-          registration.stageSandboxCredentialProviders(
-            sandboxInput(requiredBindings([tokenDef])),
-            async () => ({ messagingTokenDefs: [tokenDef] }),
-          ),
-        ).rejects.toThrow("exit:1");
+  it("reports a newly created bridge provider when refresh cleanup fails", async () => {
+    const scenario = bridgeRefreshCleanupScenario(1, "gateway unavailable");
+    try {
+      await expect(
+        scenario.registration.stageSandboxCredentialProviders(
+          sandboxInput(requiredBindings([scenario.tokenDef])),
+          async () => ({ messagingTokenDefs: [scenario.tokenDef] }),
+        ),
+      ).rejects.toThrow("exit:1");
 
-        expect(runOpenshell).toHaveBeenCalledWith(
-          [
-            "provider",
-            "delete",
-            "-g",
-            "test-gateway",
-            "alpha-googlechat-bridge",
-          ],
-          expect.objectContaining({ ignoreError: true }),
-        );
-        expect(session.stagedCredentialProviders).toEqual([]);
-        expect(providerExists).toBe(recovery);
-        const diagnostics = errorLog.mock.calls.flat().join("\n");
-        expect(diagnostics.includes("Automatic cleanup could not remove")).toBe(recovery);
-        expect(diagnostics.includes("alpha-googlechat-bridge")).toBe(recovery);
-        expect(diagnostics.includes("gateway unavailable")).toBe(recovery);
-        expect(
-          diagnostics.includes(
-            'openshell provider delete -g "test-gateway" "alpha-googlechat-bridge"',
-          ),
-        ).toBe(recovery);
-      } finally {
-        errorLog.mockRestore();
-        exit.mockRestore();
-        configureRefreshes.mockRestore();
-        ensureProfiles.mockRestore();
-      }
-    },
-  );
+      expect(scenario.runOpenshell).toHaveBeenCalledWith(
+        ["provider", "delete", "-g", "test-gateway", "alpha-googlechat-bridge"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(scenario.session.stagedCredentialProviders).toEqual([]);
+      expect(scenario.providerExists()).toBe(true);
+      const diagnostics = scenario.errorLog.mock.calls.flat().join("\n");
+      expect(diagnostics).toContain("Automatic cleanup could not remove");
+      expect(diagnostics).toContain("alpha-googlechat-bridge");
+      expect(diagnostics).toContain("gateway unavailable");
+      expect(diagnostics).toContain(
+        'openshell provider delete -g "test-gateway" "alpha-googlechat-bridge"',
+      );
+    } finally {
+      scenario.restore();
+    }
+  });
 
   it("rechecks before persisting migrated messaging credentials (#9833)", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;

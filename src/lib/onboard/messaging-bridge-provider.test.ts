@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import type { ChannelManifest } from "../messaging/manifest";
+import { redactFull } from "../security/redact";
 import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
@@ -22,7 +23,6 @@ const SA_JSON = JSON.stringify({
   private_key: "fake-test-private-key-material",
 });
 const normalizeCredentialValue = (v: unknown) => String(v ?? "").trim();
-const redact = (s: string) => s;
 const noLog = vi.fn();
 
 // `openshell provider refresh status` output as the CLI prints it, so the parser
@@ -219,7 +219,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -232,7 +232,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => null,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -245,7 +245,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => "not json",
       log: noLog,
       profiles: [GC_PROFILE],
@@ -258,7 +258,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => JSON.stringify({ client_email: "x@y" }),
       log: noLog,
       profiles: [GC_PROFILE],
@@ -271,7 +271,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => JSON.stringify({ client_email: " ", private_key: "\n" }),
       log: noLog,
       profiles: [GC_PROFILE],
@@ -289,7 +289,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -321,7 +321,7 @@ describe("configureMessagingBridgeRefreshes", () => {
 
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [{ ...GC_PROFILE, scopes: GC_PUBSUB_SCOPES }],
@@ -346,7 +346,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [misconfigured],
@@ -364,7 +364,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "gateway rejected the material" }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -373,11 +373,39 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(result.reason).toBeTruthy();
   });
 
+  it("fully redacts reflected source and generated material from refresh failures", () => {
+    const log = vi.fn();
+    const runOpenshell = vi.fn(() => ({
+      status: 1,
+      stderr: `source=${SA_JSON}`,
+      stdout:
+        "private_key=fake-test-private-key-material " +
+        "client_email=bot@p.iam.gserviceaccount.com " +
+        "scope=https://www.googleapis.com/auth/chat.bot",
+    }));
+
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redactFull,
+      getCredential: () => SA_JSON,
+      log,
+      profiles: [GC_PROFILE],
+    });
+
+    expect(result.ok).toBe(false);
+    const diagnostic = `${log.mock.calls.flat().join("\n")} ${result.reason ?? ""}`;
+    expect(diagnostic).not.toContain(SA_JSON);
+    expect(diagnostic).not.toContain("fake-test-private-key-material");
+    expect(diagnostic).not.toContain("bot@p.iam.gserviceaccount.com");
+    expect(diagnostic).not.toContain("https://www.googleapis.com/auth/chat.bot");
+    expect(diagnostic).not.toContain("fake");
+  });
+
   it("resolves the secret from the injected env too (parity)", () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: MINTED_STATUS_TABLE }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => null,
       env: { [GC_PROFILE.sourceSecretEnv]: SA_JSON },
       normalizeCredentialValue,
@@ -395,7 +423,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -418,7 +446,7 @@ describe("configureMessagingBridgeRefreshes", () => {
 
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -447,7 +475,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const sleep = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -468,7 +496,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -487,7 +515,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     });
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -507,7 +535,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     }));
     configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
@@ -524,7 +552,7 @@ describe("configureMessagingBridgeRefreshes", () => {
 
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
-      redact,
+      redactFull,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],

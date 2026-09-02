@@ -129,7 +129,7 @@ export interface MatchRegisteredMessagingBridgeProfileDeps {
 
 export interface ConfigureMessagingBridgeRefreshesDeps extends MessagingBridgeSecretResolveDeps {
   readonly runOpenshell: RunOpenshell;
-  readonly redact: (input: string) => string;
+  readonly redactFull: (input: string) => string;
   readonly log?: (message?: string) => void;
   readonly profiles?: readonly MessagingBridgeProfile[];
   /** Injected for tests; defaults to a synchronous wait. */
@@ -148,6 +148,22 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   if (value && typeof (value as Buffer).toString === "function")
     return (value as Buffer).toString();
   return "";
+}
+
+function redactRefreshDiagnostic(
+  input: string,
+  sourceSecret: string,
+  materialValues: readonly string[],
+  redactFull: (input: string) => string,
+): string {
+  let redacted = input;
+  const exactValues = Array.from(new Set([sourceSecret, ...materialValues])).sort(
+    (left, right) => right.length - left.length,
+  );
+  for (const value of exactValues) {
+    if (value) redacted = redacted.replaceAll(value, "<REDACTED>");
+  }
+  return redactFull(redacted);
 }
 
 function profileMatchesCheckedInBoundary(
@@ -685,9 +701,15 @@ export function configureMessagingBridgeRefreshes(
       return minted;
     }
 
-    // Redact before logging — never echo secret material.
+    // Redact exact source/generated material as well as known secret shapes
+    // before logging. The diagnostic is bounded only after redaction.
     const diagnostic = compactText(
-      deps.redact(`${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`),
+      redactRefreshDiagnostic(
+        `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`,
+        secret,
+        built.material.map(({ value }) => value),
+        deps.redactFull,
+      ),
     );
     warn(
       `\n  ✗ ${profile.channelId} bridge: failed to configure gateway token minting for '${bridge.name}'.`,
