@@ -43,7 +43,11 @@ const ONBOARD_ATTEMPTS = 3;
 
 type ChatCompletion = {
   choices?: Array<{
-    message?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown };
+    message?: {
+      content?: unknown;
+      reasoning_content?: unknown;
+      reasoning?: unknown;
+    };
   }>;
 };
 
@@ -170,7 +174,9 @@ async function expectPongFromSandboxInference(
   );
 }
 
-test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup", {
+test(
+  "bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -184,7 +190,8 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
       "destroy the bootstrap sandbox and clone",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   validateSandboxName(SANDBOX_NAME);
 
   await artifacts.target.declare({
@@ -215,12 +222,10 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   });
   if (sudo.exitCode !== 0) skip("passwordless sudo is required for bootstrap install smoke");
 
-  const dockerInfo = await host.command("docker", ["info"], {
+    await runtimeProvider.requireAvailable({
     artifactName: "prereq-docker-info",
-    env: runEnv(),
-    timeoutMs: 30_000,
+      scenarioLabel: "bootstrap install smoke",
   });
-  expectExitZero(dockerInfo, "Docker is running");
 
   const network = await host.command(
     "bash",
@@ -263,7 +268,9 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   expectExitZero(install, "Brev bootstrap script completed");
 
   progress.phase("inspect installed CLI and runtime artifacts");
-  const pathEnv = runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` });
+    const pathEnv = runEnv({
+      PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
+    });
 
   const nemoclawHelp = await runBash(host, "command -v nemoclaw && nemoclaw --help >/dev/null", {
     artifactName: "phase-3-nemoclaw-help",
@@ -294,19 +301,22 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
     { artifactName: "phase-3-node-version", env: pathEnv, timeoutMs: 30_000 },
   );
   expectExitZero(nodeVersion, "node version probe");
-  const node = JSON.parse(nodeVersion.stdout) as { version: string; major: number };
+    const node = JSON.parse(nodeVersion.stdout) as {
+      version: string;
+      major: number;
+    };
   await artifacts.writeJson("node-version.json", node);
   expect(
     node.major,
     `Node.js too old after bootstrap install: ${node.version}`,
   ).toBeGreaterThanOrEqual(20);
 
-  const dockerAfterInstall = await host.command("docker", ["info"], {
-    artifactName: "phase-3-docker-info-after-install",
+    const runtimeAfterInstall = await runtimeProvider.command(["info"], {
+      artifactName: "phase-3-runtime-info-after-install",
     env: pathEnv,
     timeoutMs: 30_000,
   });
-  expectExitZero(dockerAfterInstall, "Docker running after install");
+    expectExitZero(runtimeAfterInstall, `${runtimeProvider.displayName} running after install`);
   expect(fs.existsSync(BOOTSTRAP_SENTINEL), `${BOOTSTRAP_SENTINEL} missing`).toBe(true);
   expect(fs.existsSync(path.join(cloneDir, ".git")), `${cloneDir}/.git missing`).toBe(true);
   expect(fs.existsSync(path.join(cloneDir, "dist")), `${cloneDir}/dist missing`).toBe(true);
@@ -378,12 +388,19 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   expectExitZero(inferenceConfig, "openshell inference get");
   expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
 
-  const gatewayContainer = await runBash(
-    host,
-    "docker ps --format '{{.Names}}' | grep -E 'nemoclaw|openshell'",
-    { artifactName: "phase-5-gateway-container", env: pathEnv, timeoutMs: 30_000 },
+    const gatewayContainer = await runtimeProvider.command(
+      ["container", "ps", "--format", "{{.Names}}"],
+      {
+        artifactName: "phase-5-gateway-runtime-resource",
+        env: pathEnv,
+        timeoutMs: 30_000,
+      },
   );
-  const gatewayContainerNames = gatewayContainer.stdout.trim();
+    expectExitZero(gatewayContainer, "list gateway runtime resources");
+    const gatewayContainerNames = gatewayContainer.stdout
+      .split(/\r?\n/u)
+      .filter((name) => /nemoclaw|openshell/iu.test(name))
+      .join("\n");
   await artifacts.writeJson("gateway-container.json", {
     confirmed: gatewayContainerNames.length > 0,
     stdout: gatewayContainer.stdout,
@@ -472,4 +489,5 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   }
 
   await cleanupBootstrapState(host, cloneDir);
-});
+  },
+);

@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "../../cli/helpers";
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../../helpers/launch-readiness-fixture";
 
 function buildStubOpenshell(home: string, logFile: string): string {
   const localBin = path.join(home, "bin");
@@ -17,6 +18,7 @@ function buildStubOpenshell(home: string, logFile: string): string {
       "#!/usr/bin/env bash",
       `printf '%s\\n' "$*" >> ${JSON.stringify(logFile)}`,
       'case "$*" in',
+      `  "policy get"*) printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
       '  "sandbox list"*) printf "alpha Ready\\n"; exit 0 ;;',
       '  "sandbox get alpha"*) printf "Name: alpha\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw"*) printf "Gateway: nemoclaw\\n"; exit 0 ;;',

@@ -195,6 +195,18 @@ describe("Hermes runtime-provider state mutation consumer", () => {
     testTimeout(30_000),
   );
 
+  it("selects the registered native provider state-mutation surface without a provider-name branch", () => {
+    expect(
+      supportsHermesRuntimeProviderStateMutation(
+        { ...sandbox, openshellDriver: "podman" },
+        {
+          content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
+          metadata: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA,
+        },
+      ),
+    ).toBe(true);
+  });
+
   it("selects only an exact current managed Hermes Docker image capability", () => {
     const capability = {
       content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,

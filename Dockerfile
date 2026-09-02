@@ -1186,8 +1186,7 @@ RUN set -eu; \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for a normalized hostname. hostnameAllowlist only gates \
     # hostname pattern matching and does not bypass .internal/private blocking. \
-    # Executable fixture proof lives in test/security/fetch-guard-patch-regression.test.ts; \
-    # the live network-policy E2E exercises this path in the assembled image. \
+    # Executable fixture proof lives in test/security/fetch-guard-patch-regression.test.ts. \
     web_guard_files="$(grep -RIlE --include='*.js' 'function fetchWithWebToolsNetworkGuard\(params\)' "$OC_DIST" || true)"; \
     if [ -n "$web_guard_files" ]; then \
         patched_host_gateway=0; \

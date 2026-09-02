@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { credentialProviderRegistrationDependencies } from "../../../src/lib/onboard/credential-provider-registration.ts";
+import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
 import {
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
   GOOGLECHAT_E2E_ACCESS_TOKEN,
@@ -12,6 +12,7 @@ import {
 } from "../live/channels-stop-start-helpers.ts";
 
 type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
+type LegacyProvidersModule = typeof import("../../../src/lib/onboard/providers.ts");
 type FixtureProviderDependencies = {
   upsertMessagingProviders(
     tokenDefs: Parameters<
@@ -24,11 +25,22 @@ type FixtureProviderDependencies = {
     },
   ): string[];
 };
+type FixtureLegacyProviderDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[0],
+    run: FixtureRunner,
+    options?: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[2],
+  ): string[];
+};
 
 type FixtureChannelDependencies = Pick<
   (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"],
   "runGatewayOpenshell" | "upsertMessagingProviders"
 >;
+
+const legacyProviders = (
+  "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
+) as LegacyProvidersModule & FixtureProviderDependencies;
 
 describe("channels stop/start Google Chat live composition", () => {
   it("intercepts the live policy-channel boundary before gateway refresh minting", () => {
@@ -81,10 +93,10 @@ describe("channels stop/start Google Chat live composition", () => {
     expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
   });
 
-  it("routes rebuild registration through the process-global live fixture", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+  it("routes rebuild registration through the live fixture dependency and restores it", () => {
     const sandboxName = "e2e-oc-ch-cycle";
     const expectedName = `${sandboxName}-googlechat-bridge`;
+    const originalUpsert = legacyProviders.upsertMessagingProviders;
     const runMock = vi.fn((args: string[]) => ({
       status: args[1] === "get" ? 1 : 0,
       stdout: "",
@@ -98,7 +110,7 @@ describe("channels stop/start Google Chat live composition", () => {
     });
     try {
       expect(
-        credentialProviderRegistrationDependencies.upsertMessagingProviders(
+        legacyProviders.upsertMessagingProviders(
           [
             {
               name: expectedName,
@@ -115,8 +127,8 @@ describe("channels stop/start Google Chat live composition", () => {
       expect(runMock.mock.calls.some(([args]) => args.includes("refresh"))).toBe(false);
     } finally {
       restore();
-      vi.unstubAllEnvs();
     }
+    expect(legacyProviders.upsertMessagingProviders).toBe(originalUpsert);
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {
@@ -329,6 +341,12 @@ describe("channels stop/start Google Chat live composition", () => {
       }));
       const run = runMock as unknown as FixtureRunner;
       const revalidateSandboxIdentity = vi.fn();
+      const googlechatTokenDef = {
+        name: `${sandboxName}-googlechat-bridge`,
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: null,
+        providerType,
+      };
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
@@ -337,15 +355,7 @@ describe("channels stop/start Google Chat live composition", () => {
         run,
       });
       const providerNames = providerDependencies.upsertMessagingProviders(
-        [
-          delegatedTokenDef,
-          {
-            name: `${sandboxName}-googlechat-bridge`,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType,
-          },
-        ],
+        [delegatedTokenDef, googlechatTokenDef],
         run,
         { revalidateSandboxIdentity },
       );
@@ -487,7 +497,6 @@ describe("channels stop/start Google Chat live composition", () => {
         root: "/repo",
         run,
       });
-
       providerDependencies.upsertMessagingProviders(
         [
           {

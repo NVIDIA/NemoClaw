@@ -3,6 +3,7 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
+import type { SyncOpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
@@ -147,6 +148,15 @@ export const loadAgentMock = vi.fn((name: string) => ({
 export const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
 >((args) => defaultOpenshellResponses(args));
+export const readSandboxPolicyMock = vi.fn<SyncOpenShellSandboxPolicyReader["readSandboxPolicy"]>(
+  () => ({
+    ok: true,
+    value: {
+      document: "version: 1\nnetwork_policies: {}\n",
+      appliedRevision: null,
+    },
+  }),
+);
 export const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
 export const establishRestoredSandboxGatewayPairingMock = vi.fn();
 export const findBackupMock = vi.fn();
@@ -226,6 +236,15 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
+}));
+
+vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
+  syncCliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy: vi.fn(),
+    readSandboxPolicy: readSandboxPolicyMock,
+    readSandboxPolicyRevision: vi.fn(),
+  },
 }));
 
 vi.mock("../../credentials/store", () => ({
@@ -369,6 +388,13 @@ export function resetSnapshotRestoreMocks(): void {
   lifecycleMock.events.length = 0;
   lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
+  readSandboxPolicyMock.mockReturnValue({
+    ok: true,
+    value: {
+      document: "version: 1\nnetwork_policies: {}\n",
+      appliedRevision: null,
+    },
+  });
   dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
   establishRestoredSandboxGatewayPairingMock.mockReset();
   findBackupMock.mockReturnValue({ match: null });

@@ -509,9 +509,9 @@ const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const overlayfsAutoFix: typeof import("./onboard/overlayfs-auto-fix") = require("./onboard/overlayfs-auto-fix");
 const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo } = preflightUtils;
-const {
-  assertDockerBridgeAndContainerDnsHealthy,
-}: typeof import("./onboard/bridge-dns-preflight") = require("./onboard/bridge-dns-preflight");
+const runtimeEffectfulPreflight: typeof import("./onboard/machine/runtime-effectful-preflight") = require("./onboard/machine/runtime-effectful-preflight");
+const assertRuntimeProviderHealthy =
+  runtimeEffectfulPreflight.bindConfiguredRuntimeProviderHealth(isNonInteractive);
 const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
@@ -892,8 +892,7 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-const registeredCredentialProviders =
-  credentialProviderRegistration.createCredentialProviderRegistration({
+const registration = credentialProviderRegistration.createCredentialProviderRegistration({
     root: ROOT,
     runOpenshell,
     getGatewayName: () => GATEWAY_NAME,
@@ -902,9 +901,8 @@ const registeredCredentialProviders =
     stagedLegacyValues,
     migratedLegacyKeys,
     persistMigratedLegacyKeys,
-  });
-const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } =
-  registeredCredentialProviders;
+});
+const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } = registration;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
   onboardProviders.providerExistsInGateway(
     name,
@@ -1521,8 +1519,8 @@ const {
 
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
   sandboxRegistryMetadata.createSandboxRegistryMetadataHelpers({
-    getOpenShellComputeDriverName: () =>
-      dockerDriverPlatform.resolveCurrentOpenShellComputePlan().driverName,
+    getCurrentRuntimeProviderId: () =>
+      setupNimFlow.resolveCurrentRuntimeProviderBundle().identity.id,
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
@@ -2520,7 +2518,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
 const stageSandboxCredentialProviders = (
   input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>,
 ) =>
-  registeredCredentialProviders.stageSandboxCredentialProviders(
+  registration.stageSandboxCredentialProviders(
     input,
     sandboxCreateIntentResolver.prepareCredentialProviders,
   );
@@ -2976,7 +2974,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               ...options,
               allowStorageRemediation: !isGatewayExternallySupervised(),
             }),
-          assertDockerBridgeAndContainerDnsHealthy,
+          assertRuntimeProviderHealthy,
           resolveSandboxGpuConfig,
           validateSandboxGpuPreflight,
           skippedStepMessage,
@@ -3215,6 +3213,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             clearPlanEnv: messagingChannelSetup.clearPlanEnv,
             getRegistrySandboxMessagingAuthority:
               messagingChannelSetup.getRegistrySandboxMessagingAuthority,
+            inspectGatewayCredential: registration.inspectGatewayCredential,
             providerMatchesGatewayCredential,
             stageSandboxCredentialProviders,
             promptValidatedSandboxName,
@@ -3342,8 +3341,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ensureAgentDashboardForward: ensureFinalizationAgentDashboardForward,
           setDefaultSandbox: registry.setDefault,
           verifyWebSearchInsideSandbox,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates,
           removeLegacyCredentialsFile,
           cleanupStaleHostFiles,
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
@@ -3522,6 +3520,7 @@ module.exports = {
   startDockerDriverGateway,
   findAvailableDashboardPort,
   startGatewayForRecovery,
+  managedWorkloadOnboard,
   ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,

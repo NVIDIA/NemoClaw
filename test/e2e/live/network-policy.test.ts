@@ -15,11 +15,9 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  ensureDockerAvailable,
-  runRestrictedOnboardWithRetry,
-} from "./restricted-onboard-helpers.ts";
+import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
 const TEST_TIMEOUT_MS = 35 * 60_000;
@@ -159,7 +157,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm the CLI Docker OpenShell and credential",
+        "confirm built CLI selected runtime provider OpenShell and credential",
         "clear the sandbox and onboard restricted policy",
         "deny default egress and hot-reload one host-gateway port",
         "allow the approved host-gateway port and deny another port",
@@ -182,11 +180,11 @@ test(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    await ensureDockerAvailable({
+    await ensureConfiguredRuntimeProviderAvailable({
+      artifactName: "prereq-runtime-provider-info-network-policy",
       host,
-      artifactName: "prereq-docker-info-network-policy",
-      skip,
       scenarioLabel: "network-policy",
+      skip,
     });
 
     const openshellVersion = await host.command("openshell", ["--version"], {
