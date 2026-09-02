@@ -153,10 +153,12 @@ Use these details when your first-run path needs more control.
 
     Hermes receives revision-scoped `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
     OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
+    The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
     Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
     A copied revision can shadow the current provider value after rotation or rebuild.
 
     For a self-hosted Langfuse deployment, copy `nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml` to a new profile, change its `id` and exact `endpoints[0].host`, and import that reviewed profile before running `credentials add` with the new type.
+    When `HERMES_LANGFUSE_BASE_URL` uses a non-default HTTPS port, change `endpoints[0].port` to that exact port too.
     Keep the profile limited to the HTTPS ingestion origin and `/api/public/**` paths.
     Store only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
     Do not use the cloud profile for a self-hosted host because OpenShell will correctly refuse to resolve its credentials there.

@@ -4646,7 +4646,7 @@ Rebuild onto the current managed image before changing credentials.
 If Hermes accepts the placeholders but OpenShell reports `credential_unavailable` or an endpoint mismatch, inspect the provider type and endpoint profile.
 The provider must expose the exact `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` names and authorize the configured Langfuse host.
 
-For self-hosted Langfuse, import a separate reviewed profile with the exact HTTPS host before registering the provider.
+For self-hosted Langfuse, import a separate reviewed profile that matches the exact HTTPS origin, including its port, before registering the provider.
 Set only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
 Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved revision-scoped placeholder can shadow the current process-injected revision after rotation or rebuild.
 

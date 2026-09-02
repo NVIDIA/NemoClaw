@@ -106,9 +106,23 @@ describe("credential actions use typed OpenShell provider results", () => {
   it("registers both Langfuse keys through the checked-in endpoint profile (#10840)", async () => {
     vi.stubEnv("LANGFUSE_PUBLIC_KEY", "pk-lf-host-only");
     vi.stubEnv("LANGFUSE_SECRET_KEY", "sk-lf-host-only");
-    const adapter = providerAdapter();
+    let resolveImport: (() => void) | undefined;
+    const importGate = new Promise<void>((resolve) => {
+      resolveImport = resolve;
+    });
+    let importCompleted = false;
+    const importProviderProfile = vi.fn(async () => {
+      await importGate;
+      importCompleted = true;
+      return { ok: true as const };
+    });
+    const createProvider = vi.fn(async () => {
+      expect(importCompleted).toBe(true);
+      return { ok: true as const };
+    });
+    const adapter = providerAdapter({ importProviderProfile, createProvider });
 
-    const result = await runCredentialsAddAction(
+    const resultPromise = runCredentialsAddAction(
       {
         provider: "my-hermes-langfuse",
         type: "langfuse-hermes-v1",
@@ -118,6 +132,10 @@ describe("credential actions use typed OpenShell provider results", () => {
       },
       { providerAdapter: adapter },
     );
+    await vi.waitFor(() => expect(importProviderProfile).toHaveBeenCalledOnce());
+    expect(createProvider).not.toHaveBeenCalled();
+    resolveImport?.();
+    const result = await resultPromise;
 
     expect(result.exitCode).toBe(0);
     expect(adapter.importProviderProfile).toHaveBeenCalledWith({
@@ -137,9 +155,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       fromExisting: false,
       timeoutMs: 30_000,
     });
-    expect(vi.mocked(adapter.importProviderProfile).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(adapter.createProvider).mock.invocationCallOrder[0],
-    );
     expect(JSON.stringify(result)).not.toContain("pk-lf-host-only");
     expect(JSON.stringify(result)).not.toContain("sk-lf-host-only");
   });

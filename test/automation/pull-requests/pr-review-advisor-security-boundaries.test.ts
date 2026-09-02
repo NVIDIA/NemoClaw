@@ -40,6 +40,7 @@ describe("PR review advisor security boundaries", () => {
       });
       expect(result.fatalError).toBeUndefined();
       expect(result.turnErrors).toEqual([]);
+      expect(result.turnCallbackErrors).toEqual([]);
       expect(process.env[credentialEnv]).toBeUndefined();
     } finally {
       fs.rmSync(configDir, { recursive: true, force: true });
