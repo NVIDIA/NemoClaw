@@ -1285,21 +1285,18 @@ PYHISTORY
 }
 
 repair_hermes_startup_layout() {
+  local state_dir
+
   # The gateway writes state below sessions, gateway, and runtime. Sandbox
   # backup and restore also access these directories. Keep them group-writable
   # while Shields up seals cron job definitions.
-  if ! ensure_hermes_cross_uid_state_dir sessions; then
-    echo "[gateway] Hermes pre-launch layout repair failed at sessions state directory" >&2
-    return 1
-  fi
-  if ! ensure_hermes_cross_uid_state_dir gateway; then
-    echo "[gateway] Hermes pre-launch layout repair failed at gateway state directory" >&2
-    return 1
-  fi
-  if ! ensure_hermes_cross_uid_state_dir runtime; then
-    echo "[gateway] Hermes pre-launch layout repair failed at runtime state directory" >&2
-    return 1
-  fi
+  for state_dir in sessions gateway runtime; do
+    if ! ensure_hermes_cross_uid_state_dir "$state_dir"; then
+      echo "[gateway] Hermes pre-launch layout repair failed at ${state_dir} state directory" >&2
+      echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+      return 1
+    fi
+  done
 
   if hermes_config_root_is_locked; then
     # The locked-root posture seals config.yaml/.env, not the dir. The gateway

@@ -1486,6 +1486,14 @@ This refusal means a container recreation discarded the root-only restart metada
 
 This refusal means Hermes config files look shields-locked but `/sandbox` is not `root:sandbox 1775`, so the sandbox identity could rename the entire `.hermes` lock root. `shields up` cannot repair this after PID 1 has refused startup. Do not change the parent ownership manually or accept the current bytes as a new seal. Restore a trusted pre-incident snapshot into a new sandbox, or recreate the sandbox from host-side onboarding configuration.
 
+### Hermes startup refuses an unsafe state directory
+
+Hermes stops startup when `/sandbox/.hermes/sessions`, `/sandbox/.hermes/gateway`, or `/sandbox/.hermes/runtime` is a symbolic link, a file, or cannot be repaired safely.
+The gateway log names the directory and reports `Hermes pre-launch layout repair failed`.
+Do not run `chown`, `chmod`, or another in-place repair on the reported path.
+Follow [Hermes startup reports HERMES_CONFIG_MUTATION_ORPHANED](#hermes-startup-reports-hermes_config_mutation_orphaned) to restore a trusted host-side snapshot into a recreated sandbox.
+If no trusted snapshot exists, recreate the sandbox from host-side onboarding configuration only if you accept losing its inaccessible state.
+
 </AgentOnly>
 
 <AgentOnly variant="openclaw">

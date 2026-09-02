@@ -1153,6 +1153,7 @@ RUN set -eu; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -1189,6 +1190,7 @@ RUN set -eu; \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \

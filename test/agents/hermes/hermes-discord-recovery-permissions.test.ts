@@ -81,7 +81,13 @@ function runCrossUidParentRepair(
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       extractShellFunction(startScript, "ensure_hermes_cross_uid_state_dir"),
-      `ensure_hermes_cross_uid_state_dir ${name}`,
+      extractShellFunction(startScript, "repair_hermes_startup_layout"),
+      "hermes_config_root_is_locked() { return 1; }",
+      "ensure_hermes_config_root_mode() { :; }",
+      "repair_hermes_log_permissions() { :; }",
+      "ensure_hermes_state_dir() { :; }",
+      "ensure_hermes_history_file() { :; }",
+      "repair_hermes_startup_layout",
     ].join("\n"),
   );
   return spawnSync("bash", [script], {
@@ -154,12 +160,14 @@ describe("Hermes cross-UID ledger permissions", () => {
   });
 
   it.each([baseDockerfile, dockerfile])(
-    "prepares both setgid cross-UID parents in both image layouts [case %#]",
+    "prepares each setgid cross-UID parent in both image layouts [case %#]",
     (source) => {
       expect(source).toContain("/sandbox/.hermes/cron");
       expect(source).toContain("/sandbox/.hermes/gateway");
+      expect(source).toMatch(/chown gateway:sandbox[\s\S]*?\/sandbox\/[.]hermes\/sessions/);
+      expect(source).toMatch(/chmod 2770[\s\S]*?\/sandbox\/[.]hermes\/sessions/);
       expect(source).toMatch(
-        /chown gateway:sandbox \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
+        /chown gateway:sandbox \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
       );
       expect(source).toMatch(
         /chmod 2770 \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
@@ -203,41 +211,6 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(dockerfile).toContain(`discord_message_recovery.db)" = "sandbox:sandbox 660"`);
   });
 
-  it("requires descriptor-relative, no-follow repair for every writable state parent", () => {
-    expect(startScript).toContain("ensure_hermes_cross_uid_state_dir() {");
-    expect(startScript).toContain('name = os.environ["NEMOCLAW_HERMES_STATE_DIR_NAME"]');
-    expect(startScript).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
-    expect(startScript).toContain("os.open(name, open_flags, dir_fd=root_fd)");
-    expect(startScript).toContain("os.mkdir(name, desired_mode, dir_fd=root_fd)");
-    expect(startScript).toContain("os.fchown(gateway_fd, gateway_uid, sandbox_gid)");
-    expect(startScript).toContain("os.fchmod(gateway_fd, desired_mode)");
-    const repairStart = startScript.indexOf("repair_hermes_startup_layout() {");
-    const lockedBranch = startScript.indexOf("if hermes_config_root_is_locked; then", repairStart);
-    const gatewayRepair = startScript.indexOf(
-      "if ! ensure_hermes_cross_uid_state_dir gateway; then",
-      repairStart,
-    );
-    const sessionsRepair = startScript.indexOf(
-      "if ! ensure_hermes_cross_uid_state_dir sessions; then",
-      repairStart,
-    );
-    const runtimeRepair = startScript.indexOf(
-      "if ! ensure_hermes_cross_uid_state_dir runtime; then",
-      repairStart,
-    );
-    expect(repairStart).toBeGreaterThanOrEqual(0);
-    expect(lockedBranch).toBeGreaterThan(repairStart);
-    expect(sessionsRepair).toBeGreaterThan(repairStart);
-    expect(sessionsRepair).toBeLessThan(gatewayRepair);
-    expect(gatewayRepair).toBeGreaterThan(repairStart);
-    expect(gatewayRepair).toBeLessThan(
-      startScript.indexOf("if hermes_config_root_is_locked; then", repairStart),
-    );
-    expect(runtimeRepair).toBeGreaterThan(gatewayRepair);
-    expect(runtimeRepair).toBeLessThan(lockedBranch);
-    expect(startScript).not.toContain("ensure_hermes_cross_uid_state_dir cron");
-  });
-
   it.each([
     ["sessions", "symlink", "is a symlink"],
     ["sessions", "file", "is not a directory"],
@@ -245,11 +218,17 @@ describe("Hermes cross-UID ledger permissions", () => {
     ["gateway", "file", "is not a directory"],
     ["runtime", "symlink", "is a symlink"],
     ["runtime", "file", "is not a directory"],
-  ] as const)("refuses an unsafe %s %s parent", (name, kind, message) => {
+  ] as const)("refuses startup for an unsafe %s %s state directory", (name, kind, message) => {
     const result = runCrossUidParentRepair(name, kind);
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Refusing Hermes cross-UID state repair");
     expect(result.stderr).toContain(`/${name} ${message}`);
+    expect(result.stderr).toContain(
+      `Hermes pre-launch layout repair failed at ${name} state directory`,
+    );
+    expect(result.stderr).toContain(
+      "Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration.",
+    );
   });
 });

@@ -488,7 +488,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
       "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
       "legacy gateway.pid symlink/state shape is repaired and booted",
-      "restored sessions state is repaired for separated gateway writes",
+      "restored sessions directory permits gateway-user writes",
       "legacy dashboard profile state is moved into profiles/dashboard-home",
     ],
   });

@@ -342,6 +342,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/lazy-packages \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -375,6 +376,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
