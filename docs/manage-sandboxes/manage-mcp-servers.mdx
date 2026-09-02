@@ -39,12 +39,13 @@ For a trusted private server, status resolves the endpoint without changing mana
 
 <AgentOnly variant="deepagents">
 
-Before it reads `/sandbox/.deepagents/.nemoclaw-mcp.json`, Deep Agents Code `mcp status` checks the path type.
+Before it reads `/sandbox/.deepagents/.nemoclaw-mcp.json`, Deep Agents Code v2 `mcp status` checks the path type.
 It does not follow a final symbolic link or read from a FIFO.
 If the path is a symbolic link, FIFO, or another non-regular file, the command names the path type, writes no status output, and exits with status `2`.
 The diagnostics are `Unsafe managed Deep Agents MCP projection path: symbolic link`, `Unsafe managed Deep Agents MCP projection path: FIFO`, and `Unsafe managed Deep Agents MCP projection path: non-regular file`.
 This exit status applies only to the unsafe path-type diagnostic.
 Other adapter inspection failures retain their ordinary status behavior.
+Deep Agents Code v1 reads the legacy `.deepagents/.mcp.json` path and does not expose these type-specific diagnostics.
 
 </AgentOnly>
 

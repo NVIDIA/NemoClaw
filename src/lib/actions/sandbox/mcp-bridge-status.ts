@@ -97,12 +97,14 @@ function getAdapterRegistration(
 ): McpBridgeStatus["adapter"] {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
-  if (credentialObservationDetail) {
-    return {
-      registered: null,
-      detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
-    };
-  }
+  const credentialInspectionSkip: McpBridgeStatus["adapter"] | null =
+    credentialObservationDetail === undefined
+      ? null
+      : {
+          registered: null,
+          detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
+        };
+  if (credentialInspectionSkip && adapter !== "deepagents-config") return credentialInspectionSkip;
   if (adapter === "hermes-config" && hermesReconciliation) {
     return hermesReconciliation.ok
       ? { registered: true }
@@ -120,8 +122,10 @@ function getAdapterRegistration(
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
   const result = executeSandboxCommand(sandboxName, command);
-  if (!result) return { registered: null, detail: "sandbox unreachable" };
+  if (!result)
+    return credentialInspectionSkip ?? { registered: null, detail: "sandbox unreachable" };
   if (result.status === 0) {
+    if (credentialInspectionSkip) return credentialInspectionSkip;
     const output = result.stdout.trim();
     if (output === "registered") return { registered: true };
     return { registered: false, detail: output || "not found" };
@@ -139,6 +143,7 @@ function getAdapterRegistration(
   ) {
     throw new McpBridgeError(normalizedDetail, 2);
   }
+  if (credentialInspectionSkip) return credentialInspectionSkip;
   return {
     registered: false,
     detail,

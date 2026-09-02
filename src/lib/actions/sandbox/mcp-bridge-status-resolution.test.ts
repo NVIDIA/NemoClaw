@@ -97,11 +97,13 @@ let providerCredentialObservation = "v11";
 let credentialObservationCount = 0;
 processRecovery.executeSandboxExecCommand = () => {
   credentialObservationCount += 1;
-  return {
-    status: 0,
-    stdout: providerCredentialObservation,
-    stderr: "",
-  };
+  return providerCredentialObservation === null
+    ? undefined
+    : {
+        status: 0,
+        stdout: providerCredentialObservation,
+        stderr: "",
+      };
 };
 processRecovery.executeSandboxCommand = (sandboxName, command) => {
   executedSandboxCommands.push(command);
@@ -242,34 +244,40 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   });
   const outcomes = [];
   for (const detail of ${JSON.stringify(unsafeDetails)}) {
-    processRecovery.executeSandboxCommand = () => ({
-      status: 2,
-      stdout: "",
-      stderr: detail + "\n",
-    });
-    logLines.length = 0;
-    errorLines.length = 0;
-    await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
-    outcomes.push({
-      detail,
-      exitCode: process.exitCode ?? 0,
-      stdout: logLines.join("\n"),
-      stderr: errorLines.join("\n"),
-    });
-    process.exitCode = 0;
+    for (const observation of [null, "absent", "canonical"]) {
+      providerCredentialObservation = observation;
+      processRecovery.executeSandboxCommand = () => ({
+        status: 2,
+        stdout: "",
+        stderr: detail + "\n",
+      });
+      logLines.length = 0;
+      errorLines.length = 0;
+      await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
+      outcomes.push({
+        detail,
+        observation: observation ?? "unavailable",
+        exitCode: process.exitCode ?? 0,
+        stdout: logLines.join("\n"),
+        stderr: errorLines.join("\n"),
+      });
+      process.exitCode = 0;
+    }
   }
   process.stdout.write(JSON.stringify(outcomes));
 `,
       );
       const outcomes = JSON.parse(stdout) as Array<{
         detail: string;
+        observation: string;
         exitCode: number;
         stdout: string;
         stderr: string;
       }>;
 
-      expect(outcomes).toHaveLength(3);
+      expect(outcomes).toHaveLength(9);
       outcomes.forEach((outcome) => {
+        expect(["unavailable", "absent", "canonical"]).toContain(outcome.observation);
         expect(outcome.exitCode).toBe(2);
         expect(outcome.stdout).toBe("");
         expect(outcome.stderr).toContain(outcome.detail);
