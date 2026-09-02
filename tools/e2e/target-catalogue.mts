@@ -332,6 +332,7 @@ function gatewayUpgradeTarget(
     exposeCliBin: true,
     shard: options.shard,
     owningPaths: [
+      ".github/workflows/pr-self-hosted.yaml",
       "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
       "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
     ],

@@ -28,6 +28,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select-shields-retirement-upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      selected: ${{ steps.changed.outputs.selected }}
+    steps:
+      - id: changed
+        name: Select the released Shields retirement upgrade from PR files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^pull-request/([0-9]+)$ ]] || {
+            echo "::error::Copied branch name does not identify a PR" >&2
+            exit 1
+          }
+          pr_number="${BASH_REMATCH[1]}"
+          pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
+          head_sha="$(jq -er '.head.sha | select(test("^[a-f0-9]{40}$"))' <<<"$pr_json")"
+          [[ "$head_sha" == "$GITHUB_SHA" ]] || {
+            echo "::error::Copied PR branch SHA does not match the current PR head" >&2
+            exit 1
+          }
+          if gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
+            | jq -e '
+              flatten
+              | any(
+                  .filename == ".github/workflows/pr-self-hosted.yaml"
+                  or .filename == "install.sh"
+                  or .filename == "scripts/install.sh"
+                  or .filename == "src/lib/actions/sandbox/rebuild-flow-lifecycle.ts"
+                  or .filename == "src/lib/actions/sandbox/rebuild-pipeline.ts"
+                  or .filename == "src/lib/cli/nemoclaw-oclif-command.ts"
+                  or .filename == "src/lib/state/migrations/removed-immutability.ts"
+                  or .filename == "test/e2e/live/openshell-gateway-upgrade-helpers.ts"
+                  or .filename == "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
+                  or .filename == "test/e2e/live/shields-retirement-upgrade.test.ts"
+                  or .filename == "tools/e2e/target-catalogue.mts"
+                )
+            ' >/dev/null; then
+            selected=true
+          else
+            selected=false
+          fi
+          printf 'selected=%s\n' "$selected" >>"$GITHUB_OUTPUT"
+
   select-llama-cpp-generic-gpu:
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -182,6 +233,56 @@ jobs:
       - name: Upload llama.cpp generic NVIDIA GPU artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+  shields-retirement-upgrade:
+    name: Released Shields retirement upgrade
+    needs: select-shields-retirement-upgrade
+    if: ${{ needs.select-shields-retirement-upgrade.outputs.selected == 'true' }}
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 130
+    env:
+      E2E_AGENT_RUNTIME: openclaw
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/shields-retirement-upgrade
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: x86-64 Ubuntu; immutable v0.0.118 release artifacts; local compatible endpoint
+      E2E_JOB: "1"
+      E2E_OBSERVABLE_OUTCOME: Released Shields posture retires through a verified rebuild
+      E2E_TARGET_ID: shields-retirement-upgrade
+      E2E_WORKLOAD_SOURCE: local-dockerfile
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.sha }}
+      NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run the released Shields retirement upgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/target-catalogue.mts run \
+            shields-retirement-upgrade \
+            test/e2e/live/shields-retirement-upgrade.test.ts
+
+      - name: Upload released Shields retirement artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-shields-retirement-upgrade
+          path: e2e-artifacts/live/shields-retirement-upgrade/
 
   build-sandbox-images:
     runs-on: linux-amd64-cpu4

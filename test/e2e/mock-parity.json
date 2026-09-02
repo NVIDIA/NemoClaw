@@ -712,6 +712,7 @@
         "src/lib/state/migrations/removed-immutability.test.ts",
         "test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts",
         "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
+        "test/e2e/support/pr-self-hosted-shields-retirement.test.ts",
         "test/e2e/support/shields-retirement-workflow-plan.test.ts"
       ]
     },

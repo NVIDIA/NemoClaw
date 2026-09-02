@@ -87,6 +87,16 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/pr-self-hosted-shields-retirement.test.ts",
+      "test": "selects only owning changes from an exact copied PR head",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-shields-retirement.test.ts",
+      "test": "runs the exact catalogue target without repository secrets",
+      "category": "security"
+    },
+    {
       "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
       "test": "pins $source to its current bytes at $target",
       "category": "security"
