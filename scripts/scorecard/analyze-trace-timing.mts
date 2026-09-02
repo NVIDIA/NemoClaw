@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { readValidatedArtifactZipEntry } from "./read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "./read-artifact-zip.mts";
 
 type SemverTag = { name: string; major: number; minor: number; patch: number; sha?: string };
 type Threshold = { minDeltaMs: number; minPercent: number };
@@ -525,10 +525,11 @@ async function findLatestCompletedE2eRunForReleaseTag(
 // production-shape multi-entry regression test is the removal guard; retire
 // this parser if GitHub provides a verified single-file artifact API.
 function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
-  return readValidatedArtifactZipEntry(archive, TRACE_SUMMARY_FILE, {
-    maxBytes: MAX_TRACE_SUMMARY_BYTES,
+  const entries = readValidatedArtifactZipEntries(archive, {
     maxEntries: MAX_TRACE_ARCHIVE_ENTRIES,
+    maxTotalUncompressedBytes: MAX_TRACE_SUMMARY_BYTES,
   });
+  return entries?.find(({ name }) => name === TRACE_SUMMARY_FILE)?.bytes.toString("utf8") ?? null;
 }
 
 function readValidatedTraceSummaryZip(

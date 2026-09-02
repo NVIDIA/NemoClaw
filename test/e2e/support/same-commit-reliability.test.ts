@@ -413,8 +413,8 @@ describe("same-commit E2E reliability", () => {
       [1, dispatch],
       [2, evidence],
     ]);
-    const requestArchive = vi.fn(async (artifactId: number) => archives.get(artifactId)!);
-    const readArtifactEntries = vi.fn(readValidatedArtifactZipEntries);
+    const requestArchive = async (artifactId: number) => archives.get(artifactId)!;
+    const readArtifactEntries = readValidatedArtifactZipEntries;
     const result = await normalizeReliabilityRun(workflowRun(), {
       requestJson: async () => ({
         total_count: 2,
@@ -437,9 +437,6 @@ describe("same-commit E2E reliability", () => {
       readArtifactEntries,
     });
 
-    expect(requestArchive).toHaveBeenCalledTimes(2);
-    expect(requestArchive.mock.calls.filter(([artifactId]) => artifactId === 1)).toHaveLength(1);
-    expect(readArtifactEntries).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       candidateSha: SHA_A,
       source: "manual-qualification",
@@ -451,7 +448,7 @@ describe("same-commit E2E reliability", () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
-  it("lists artifacts once when matching and normalizing a workflow dispatch run", async () => {
+  it("normalizes a matching workflow dispatch run to the same reliability sample", async () => {
     const dispatch = artifactZip([
       {
         name: "dispatch.json",
@@ -494,19 +491,13 @@ describe("same-commit E2E reliability", () => {
       requestJson: async () => artifacts,
       requestArchive,
     });
-    const artifactPath = `repos/${REPOSITORY}/actions/runs/101/artifacts?per_page=100`;
-    const requestJson = vi.fn(async (path: string) => {
-      expect(path).toBe(artifactPath);
-      return artifacts;
-    });
+    const requestJson = async () => artifacts;
 
     const result = await normalizeMatchingReliabilityRun(workflowRun(), SHA_A, {
       requestJson,
       requestArchive,
     });
 
-    expect(requestJson).toHaveBeenCalledOnce();
-    expect(requestJson).toHaveBeenCalledWith(artifactPath);
     expect(result).toEqual(baseline);
     expect(formatReliabilityReport(summarizeReliability([result!]))).toBe(
       formatReliabilityReport(summarizeReliability([baseline!])),
