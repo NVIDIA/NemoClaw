@@ -23,6 +23,11 @@ import {
   sanitizeDiagnostic,
   type ValidationReceipt,
 } from "./contract.mts";
+import {
+  GENERATED_HEAD_VALIDATIONS,
+  generatedHeadRunTitle,
+  TRUSTED_GENERATED_HEAD_REF,
+} from "./generated-head-validation.mts";
 import { appendPublicationJobSummary } from "./summary.mts";
 
 const VERIFIED_RETRY_ATTEMPTS = 12;
@@ -464,20 +469,13 @@ export async function atomicUpdate(input: {
   }
 }
 
-const GENERATED_HEAD_WORKFLOWS = [
-  "pr.yaml",
-  "commit-lint.yaml",
-  "dco-check.yaml",
-  "installer-hash-check.yaml",
-  "code-scanning.yaml",
-] as const;
 const GENERATED_HEAD_DISPATCH_CLAIM = "Advisor repair validation dispatch";
 
 async function assertValidationWorkflowsActive(
   token: string,
   request: GitHubRequest,
 ): Promise<void> {
-  for (const workflow of [...GENERATED_HEAD_WORKFLOWS, "pr-review-advisor.yaml"]) {
+  for (const { workflow } of GENERATED_HEAD_VALIDATIONS) {
     const metadata = await request<{ state?: unknown; path?: unknown }>(
       `repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}`,
       token,
@@ -522,7 +520,7 @@ export async function ensureGeneratedHeadValidation(
   token: string,
   request: GitHubRequest = githubApi,
 ): Promise<string[]> {
-  const workflows = [...GENERATED_HEAD_WORKFLOWS, "pr-review-advisor.yaml"];
+  const workflows = GENERATED_HEAD_VALIDATIONS.map(({ workflow }) => workflow);
   const checks = await request<{ total_count?: unknown; check_runs?: unknown }>(
     `repos/${CANONICAL_REPOSITORY}/commits/${commitSha}/check-runs?per_page=100`,
     token,
@@ -627,8 +625,12 @@ async function matchingGeneratedHeadRuns(
   token: string,
   request: GitHubRequest,
 ): Promise<Array<Record<string, unknown>>> {
+  const validation = GENERATED_HEAD_VALIDATIONS.find((entry) => entry.workflow === workflow);
+  if (!validation) {
+    throw new RepairContractError(`unsupported generated-head workflow: ${workflow}`);
+  }
   const runs = await request<{ total_count?: unknown; workflow_runs?: unknown }>(
-    `repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=${encodeURIComponent(receipt.headRef)}&per_page=100`,
+    `repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=${TRUSTED_GENERATED_HEAD_REF}&per_page=100`,
     token,
   );
   if (!Array.isArray(runs.workflow_runs) || runs.total_count !== runs.workflow_runs.length) {
@@ -637,9 +639,11 @@ async function matchingGeneratedHeadRuns(
   return (runs.workflow_runs as Array<Record<string, unknown>>).filter(
     (run) =>
       run.event === "workflow_dispatch" &&
-      run.head_sha === commitSha &&
-      typeof run.display_title === "string" &&
-      run.display_title.includes(receipt.attemptKey),
+      run.head_branch === TRUSTED_GENERATED_HEAD_REF &&
+      run.head_sha === receipt.baseSha &&
+      run.path === `.github/workflows/${workflow}` &&
+      run.display_title ===
+        generatedHeadRunTitle(validation.titlePrefix, receipt.attemptKey, commitSha),
   );
 }
 
@@ -663,7 +667,7 @@ async function dispatchGeneratedHeadWorkflow(
       {
         method: "POST",
         body: {
-          ref: receipt.headRef,
+          ref: TRUSTED_GENERATED_HEAD_REF,
           inputs: {
             target_repo: CANONICAL_REPOSITORY,
             target_pr: String(receipt.prNumber),
@@ -679,7 +683,7 @@ async function dispatchGeneratedHeadWorkflow(
   }
   await request(`repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/dispatches`, token, {
     method: "POST",
-    body: { ref: receipt.headRef, inputs: common },
+    body: { ref: TRUSTED_GENERATED_HEAD_REF, inputs: common },
   });
 }
 

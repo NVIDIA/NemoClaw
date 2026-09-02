@@ -539,7 +539,7 @@ jobs:
     timeout-minutes: 95
     permissions:
       actions: read
-      checks: read
+      checks: write
       contents: read
     env:
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
@@ -569,7 +569,7 @@ jobs:
       - name: Wait for the exact required checks, CodeQL, and Advisor run
         env:
           ATTEMPT_KEY: ${{ needs.collect.outputs.attempt_key }}
+          BASE_SHA: ${{ needs.collect.outputs.base_sha }}
           COMMIT_SHA: ${{ needs.publish.outputs.commit_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          HEAD_REF: ${{ needs.publish.outputs.head_ref }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/verify-generated-head.mts"

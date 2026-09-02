@@ -80,7 +80,8 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
     ).toMatchObject({
       ADVISOR_REPAIR_PHASE1_ENABLED: "${{ vars.ADVISOR_REPAIR_PHASE1_ENABLED }}",
     });
-    expect(verify.permissions).toEqual({ actions: "read", checks: "read", contents: "read" });
+    expect(verify.permissions).toEqual({ actions: "read", checks: "write", contents: "read" });
+    expect(JSON.stringify(verify)).not.toContain("Checkout the exact original source head");
 
     const collectDownload = record(
       namedStep(collect, "Download the exact original validation artifact ID").with,

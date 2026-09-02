@@ -133,7 +133,8 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     expect(record(validate.outputs).validated).toBe("${{ steps.validate.outputs.validated }}");
     expect(String(publish.if)).toContain("needs.validate.outputs.validated == 'true'");
     expect(claim.permissions).toEqual({ actions: "read", checks: "write", contents: "read" });
-    expect(verify.permissions).toEqual({ actions: "read", checks: "read", contents: "read" });
+    expect(verify.permissions).toEqual({ actions: "read", checks: "write", contents: "read" });
+    expect(JSON.stringify(verify)).not.toContain("Checkout the exact selected PR head");
   });
 
   it("pins trusted code and binds every handoff to artifact IDs from the same run (#10791)", () => {
@@ -372,8 +373,77 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
       );
       expect(generatedHeadWorkflowSources[file]).toContain("REPAIR_ATTEMPT_KEY");
       expect(generatedHeadWorkflowSources[file]).toContain("SOURCE_HEAD_SHA");
+      expect(generatedHeadWorkflowSources[file]).toContain("GITHUB_WORKFLOW_SHA");
     },
   );
+
+  it("loads generated-head workflow code from trusted main and checks out the exact target only as data (#10791)", () => {
+    const prWorkflow = generatedHeadWorkflows["pr.yaml"];
+    expect(record(prWorkflow.env).CI_CHECKOUT_SHA).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.source_head_sha || github.sha }}",
+    );
+    const prJobs = record(prWorkflow.jobs);
+    expect(
+      record(
+        namedStep(record(prJobs["generated-head-context"]), "Checkout generated-head verifier")
+          .with,
+      ).ref,
+    ).toBe("${{ github.workflow_sha }}");
+    expect([
+      record(namedStep(record(prJobs.changes), "Checkout").with).ref,
+      record(namedStep(record(prJobs["docs-only-checks"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["static-checks"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["hugging-face-models"]), "Checkout").with).ref,
+      record(
+        namedStep(record(prJobs["openshell-sdk-package"]), "Checkout pull request lockfiles").with,
+      ).ref,
+      record(namedStep(record(prJobs["compile-artifacts"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["build-typecheck"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["installer-integration"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["wechat-runtime-audit"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["reviewed-npm-audit"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["cli-test-shards"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["cli-tests"]), "Checkout").with).ref,
+      record(namedStep(record(prJobs["plugin-tests"]), "Checkout").with).ref,
+    ]).toEqual([
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+      "${{ env.CI_CHECKOUT_SHA }}",
+    ]);
+
+    const codeScanningJobs = record(generatedHeadWorkflows["code-scanning.yaml"].jobs);
+    expect(
+      record(namedStep(record(codeScanningJobs["generated-head-context"]), "Checkout").with).ref,
+    ).toBe("${{ github.workflow_sha }}");
+    expect(record(namedStep(record(codeScanningJobs.codeql), "Checkout").with).ref).toContain(
+      "inputs.source_head_sha",
+    );
+    expect(record(namedStep(record(codeScanningJobs.shellcheck), "Checkout").with).ref).toContain(
+      "inputs.source_head_sha",
+    );
+
+    const installerJobs = record(generatedHeadWorkflows["installer-hash-check.yaml"].jobs);
+    const installer = record(installerJobs["check-hash"]);
+    expect(record(namedStep(installer, "Checkout trusted event").with).ref).toContain(
+      "github.workflow_sha",
+    );
+    expect(record(namedStep(installer, "Checkout the exact generated head").with).ref).toBe(
+      "${{ inputs.source_head_sha }}",
+    );
+    expect(
+      record(namedStep(installer, "Checkout base-trusted installer hash action").with).ref,
+    ).toContain("inputs.base_sha");
+  });
 
   it("dispatches Advisor through an exact generated-head context (#10791)", () => {
     const advisorInputs = record(

@@ -13,6 +13,7 @@ import {
   RepairContractError,
   sanitizeDiagnostic,
 } from "./contract.mts";
+import { TRUSTED_GENERATED_HEAD_REF } from "./generated-head-validation.mts";
 
 type GitHubRequest = <T>(apiPath: string, token: string) => Promise<T>;
 
@@ -91,12 +92,21 @@ export async function collectGeneratedHeadContext(
   const sourceHeadSha = fullSha(required(env, "SOURCE_HEAD_SHA"), "SOURCE_HEAD_SHA");
   const baseSha = fullSha(required(env, "BASE_SHA"), "BASE_SHA");
   const workflowHeadSha = fullSha(required(env, "GITHUB_SHA"), "GITHUB_SHA");
+  const workflowDefinitionSha = fullSha(
+    required(env, "GITHUB_WORKFLOW_SHA"),
+    "GITHUB_WORKFLOW_SHA",
+  );
   const repairAttemptKey = required(env, "REPAIR_ATTEMPT_KEY");
   if (!/^sha256:[0-9a-f]{64}$/u.test(repairAttemptKey)) {
     throw new RepairContractError("REPAIR_ATTEMPT_KEY is malformed");
   }
-  if (workflowHeadSha !== sourceHeadSha) {
-    throw new RepairContractError("workflow dispatch is not executing the requested exact head");
+  if (required(env, "GITHUB_REF") !== `refs/heads/${TRUSTED_GENERATED_HEAD_REF}`) {
+    throw new RepairContractError("generated-head workflow was not dispatched from trusted main");
+  }
+  if (workflowHeadSha !== workflowDefinitionSha || workflowDefinitionSha !== baseSha) {
+    throw new RepairContractError(
+      "generated-head workflow is not executing the exact trusted base revision",
+    );
   }
 
   const pull = await request<PullRequest>(

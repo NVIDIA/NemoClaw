@@ -92,6 +92,7 @@ jobs:
           GENERATED_HEAD_COMMAND: verify
           GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
           GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           PR_NUMBER: ${{ inputs.target_pr }}
           REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
           SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}

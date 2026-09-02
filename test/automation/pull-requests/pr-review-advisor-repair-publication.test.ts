@@ -24,6 +24,10 @@ import {
   collectGeneratedHeadContext,
 } from "../../../tools/pr-review-advisor-repair/generated-head-context.mts";
 import {
+  GENERATED_HEAD_VALIDATIONS,
+  generatedHeadRunTitle,
+} from "../../../tools/pr-review-advisor-repair/generated-head-validation.mts";
+import {
   assertPublicationPullRequest,
   atomicUpdate,
   ensureVerifiedRepairCommit,
@@ -116,6 +120,81 @@ function selection(overrides: Record<string, unknown> = {}): SelectionBundle {
         ...((overrides.optIn as Record<string, unknown> | undefined) ?? {}),
       },
     }),
+  );
+}
+
+function generatedHeadEvidenceRequest(
+  bundle: SelectionBundle,
+  commitSha: string,
+  options: { failedJob?: string; duplicateWorkflow?: string } = {},
+) {
+  const runIds = new Map(
+    GENERATED_HEAD_VALIDATIONS.map((validation, index) => [validation.workflow, 2000 + index]),
+  );
+  let checkId = 3000;
+  return vi.fn(
+    async (
+      apiPath: string,
+      _token: string,
+      requestOptions?: { method?: string; body?: Record<string, unknown> },
+    ): Promise<unknown> => {
+      const validation = GENERATED_HEAD_VALIDATIONS.find((candidate) =>
+        apiPath.includes(`/actions/workflows/${candidate.workflow}/runs?`),
+      );
+      const run = validation
+        ? {
+            id: runIds.get(validation.workflow),
+            run_attempt: 1,
+            event: "workflow_dispatch",
+            head_branch: "main",
+            head_sha: bundle.input.baseSha,
+            path: `.github/workflows/${validation.workflow}`,
+            status: "completed",
+            conclusion: "success",
+            display_title: generatedHeadRunTitle(
+              validation.titlePrefix,
+              bundle.attemptKey,
+              commitSha,
+            ),
+          }
+        : undefined;
+      const workflowRuns = run
+        ? options.duplicateWorkflow === validation?.workflow
+          ? [run, { ...run }]
+          : [run]
+        : undefined;
+      const jobValidation = GENERATED_HEAD_VALIDATIONS.find((candidate) => {
+        const runId = runIds.get(candidate.workflow);
+        return apiPath.includes(`/actions/runs/${runId}/attempts/1/jobs?`);
+      });
+      const jobs = jobValidation?.requiredChecks.map((requiredCheck, index) => {
+        const runId = runIds.get(jobValidation.workflow)!;
+        const jobId = runId * 10 + index;
+        return {
+          id: jobId,
+          name: requiredCheck.jobName,
+          status: "completed",
+          conclusion: options.failedJob === requiredCheck.name ? "failure" : "success",
+          html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${jobId}`,
+        };
+      });
+      const checkRuns = apiPath.includes(`/commits/${commitSha}/check-runs`)
+        ? { total_count: 0, check_runs: [] }
+        : undefined;
+      const createdCheck =
+        apiPath === "repos/NVIDIA/NemoClaw/check-runs" && requestOptions?.method === "POST"
+          ? { id: (checkId += 1) }
+          : undefined;
+      const response = workflowRuns
+        ? { total_count: workflowRuns.length, workflow_runs: workflowRuns }
+        : jobs
+          ? { total_count: jobs.length, jobs }
+          : (checkRuns ?? createdCheck);
+      return (
+        response ??
+        Promise.reject(new Error(`unexpected generated-head evidence request: ${apiPath}`))
+      );
+    },
   );
 }
 
@@ -449,9 +528,11 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     const context = await collectGeneratedHeadContext(
       {
         GITHUB_EVENT_NAME: "workflow_dispatch",
+        GITHUB_REF: "refs/heads/main",
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-        GITHUB_SHA: bundle.input.sourceHeadSha,
+        GITHUB_SHA: bundle.input.baseSha,
         GITHUB_TOKEN: "token",
+        GITHUB_WORKFLOW_SHA: bundle.input.baseSha,
         PR_NUMBER: String(bundle.input.prNumber),
         SOURCE_HEAD_SHA: bundle.input.sourceHeadSha,
         BASE_SHA: bundle.input.baseSha,
@@ -466,9 +547,11 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       collectGeneratedHeadContext(
         {
           GITHUB_EVENT_NAME: "workflow_dispatch",
+          GITHUB_REF: "refs/heads/main",
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           GITHUB_SHA: "f".repeat(40),
           GITHUB_TOKEN: "token",
+          GITHUB_WORKFLOW_SHA: bundle.input.baseSha,
           PR_NUMBER: String(bundle.input.prNumber),
           SOURCE_HEAD_SHA: bundle.input.sourceHeadSha,
           BASE_SHA: bundle.input.baseSha,
@@ -476,7 +559,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         },
         request,
       ),
-    ).rejects.toThrow("not executing the requested exact head");
+    ).rejects.toThrow("not executing the exact trusted base revision");
   });
 
   it("uses an atomic non-force update and exact generated-head dispatch payloads (#10791)", async () => {
@@ -514,8 +597,10 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     const commitSha = "d".repeat(40);
     const existingRun = {
       event: "workflow_dispatch",
-      head_sha: commitSha,
-      display_title: `Generated-head ${bundle.attemptKey}`,
+      head_branch: "main",
+      head_sha: bundle.input.baseSha,
+      path: ".github/workflows/pr.yaml",
+      display_title: generatedHeadRunTitle("Generated-head CI", bundle.attemptKey, commitSha),
     };
     let claimId = 1000;
     const request = vi.fn(
@@ -554,7 +639,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     );
     const expectedDispatch = expect.objectContaining({
       body: expect.objectContaining({
-        ref: receipt.headRef,
+        ref: "main",
         inputs: expect.objectContaining({
           source_head_sha: commitSha,
           base_sha: bundle.input.baseSha,
@@ -583,8 +668,10 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     const commitSha = "d".repeat(40);
     const existingRun = {
       event: "workflow_dispatch",
-      head_sha: commitSha,
-      display_title: `Generated-head ${bundle.attemptKey}`,
+      head_branch: "main",
+      head_sha: bundle.input.baseSha,
+      path: ".github/workflows/pr.yaml",
+      display_title: generatedHeadRunTitle("Generated-head CI", bundle.attemptKey, commitSha),
     };
     let claimId = 1000;
     const request = vi.fn(
@@ -898,7 +985,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
           workflowNames.map((_workflow, index) => ({ id: 1000 + index })),
         ],
         ...workflowNames.map((workflow): [string, unknown[]] => [
-          `GET repos/NVIDIA/NemoClaw/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=fix%2Fdemo&per_page=100`,
+          `GET repos/NVIDIA/NemoClaw/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=main&per_page=100`,
           [
             { total_count: 0, workflow_runs: [] },
             { total_count: 0, workflow_runs: [] },
@@ -1065,97 +1152,74 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     expect(wait).toHaveBeenCalledTimes(11);
   });
 
-  it("accepts generated-head gates only from the exact commit (#10791)", async () => {
+  it("attests required gates only from exact trusted-main workflow jobs (#10791)", async () => {
     const bundle = selection();
     const commitSha = "d".repeat(40);
-    const checks = ["changes", "checks", "commit-lint", "dco-check", "check-hash"].map((name) => ({
-      name,
-      head_sha: commitSha,
-      status: "completed",
-      conclusion: "success",
-      app: { slug: "github-actions" },
-    }));
-    const successfulWorkflow = {
-      event: "workflow_dispatch",
-      head_sha: commitSha,
-      status: "completed",
-      conclusion: "success",
-      display_title: `Generated-head ${bundle.attemptKey}`,
-    };
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce({ total_count: checks.length, check_runs: checks })
-      .mockResolvedValueOnce({ total_count: 1, workflow_runs: [successfulWorkflow] })
-      .mockResolvedValueOnce({ total_count: 1, workflow_runs: [successfulWorkflow] });
+    const request = generatedHeadEvidenceRequest(bundle, commitSha);
 
     await expect(
       verifyGeneratedHeadOnce({
         commitSha,
-        headRef: bundle.input.pullRequest.headRef,
+        baseSha: bundle.input.baseSha,
         attemptKey: bundle.attemptKey,
         token: "token",
-        request,
+        request: request as NonNullable<Parameters<typeof verifyGeneratedHeadOnce>[0]["request"]>,
       }),
     ).resolves.toBe("success");
+    const attestations = request.mock.calls.filter(
+      ([apiPath, , options]) =>
+        apiPath === "repos/NVIDIA/NemoClaw/check-runs" && options?.method === "POST",
+    );
+    expect(attestations).toHaveLength(5);
+    expect(attestations.map(([, , options]) => options?.body)).toEqual(
+      expect.arrayContaining(
+        ["changes", "checks", "commit-lint", "dco-check", "check-hash"].map((name) =>
+          expect.objectContaining({
+            name,
+            head_sha: commitSha,
+            status: "completed",
+            conclusion: "success",
+            external_id: `${bundle.attemptKey}:required:${name}`,
+            details_url: expect.stringMatching(
+              /^https:\/\/github[.]com\/NVIDIA\/NemoClaw\/actions\/runs\/\d+\/job\/\d+$/u,
+            ),
+          }),
+        ),
+      ),
+    );
   });
 
-  it("fails closed when an exact generated-head required check fails (#10791)", async () => {
+  it("fails closed when an exact trusted-main required job fails (#10791)", async () => {
     const bundle = selection();
     const commitSha = "d".repeat(40);
-    const checks = ["changes", "checks", "commit-lint", "dco-check", "check-hash"].map((name) => ({
-      name,
-      head_sha: commitSha,
-      status: "completed",
-      conclusion: name === "checks" ? "failure" : "success",
-      app: { slug: "github-actions" },
-    }));
-    const request = vi.fn().mockResolvedValueOnce({
-      total_count: checks.length,
-      check_runs: checks,
-    });
+    const request = generatedHeadEvidenceRequest(bundle, commitSha, { failedJob: "checks" });
 
     await expect(
       verifyGeneratedHeadOnce({
         commitSha,
-        headRef: bundle.input.pullRequest.headRef,
+        baseSha: bundle.input.baseSha,
         attemptKey: bundle.attemptKey,
         token: "token",
-        request,
+        request: request as NonNullable<Parameters<typeof verifyGeneratedHeadOnce>[0]["request"]>,
       }),
     ).rejects.toThrow("checks failed generated-head validation");
   });
 
-  it("fails closed on ambiguous duplicate generated-head evidence (#10791)", async () => {
+  it("fails closed on ambiguous duplicate trusted-main workflow evidence (#10791)", async () => {
     const bundle = selection();
     const commitSha = "d".repeat(40);
-    const successfulCheck = {
-      name: "checks",
-      head_sha: commitSha,
-      status: "completed",
-      conclusion: "success",
-      app: { slug: "github-actions" },
-    };
-    const checks = [
-      ...["changes", "commit-lint", "dco-check", "check-hash"].map((name) => ({
-        ...successfulCheck,
-        name,
-      })),
-      successfulCheck,
-      { ...successfulCheck },
-    ];
-    const request = vi.fn().mockResolvedValueOnce({
-      total_count: checks.length,
-      check_runs: checks,
+    const request = generatedHeadEvidenceRequest(bundle, commitSha, {
+      duplicateWorkflow: "pr.yaml",
     });
 
     await expect(
       verifyGeneratedHeadOnce({
         commitSha,
-        headRef: bundle.input.pullRequest.headRef,
+        baseSha: bundle.input.baseSha,
         attemptKey: bundle.attemptKey,
         token: "token",
-        request,
+        request: request as NonNullable<Parameters<typeof verifyGeneratedHeadOnce>[0]["request"]>,
       }),
-    ).rejects.toThrow("ambiguous generated-head validation results");
+    ).rejects.toThrow("pr.yaml has ambiguous generated-head validation results");
   });
 });

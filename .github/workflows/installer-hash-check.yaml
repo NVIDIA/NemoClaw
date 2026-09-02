@@ -75,6 +75,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' && github.workflow_sha || github.sha }}
           persist-credentials: false
 
       - name: Verify generated-head dispatch
@@ -84,16 +85,24 @@ jobs:
           GENERATED_HEAD_COMMAND: verify
           GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
           GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
           REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
           SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
         run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
 
-      - name: Checkout base-trusted installer hash action
-        if: github.event_name == 'pull_request'
+      - name: Checkout the exact generated head
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.source_head_sha }}
+          persist-credentials: false
+
+      - name: Checkout base-trusted installer hash action
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.base_sha }}
           path: .trusted-installer-hash
           persist-credentials: false
           sparse-checkout: |
@@ -103,13 +112,13 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Verify pull request installer hashes from base-trusted code
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')
         uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
         with:
           repo-root: ${{ github.workspace }}
 
       - name: Verify trusted event installer hashes
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')
         uses: ./.github/actions/ci-installer-hash-check
         with:
           repo-root: ${{ github.workspace }}

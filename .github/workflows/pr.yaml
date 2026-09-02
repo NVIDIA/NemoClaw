@@ -34,12 +34,13 @@ permissions:
 env:
   CI_BASE_REF: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.base_ref }}
   CI_BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+  CI_CHECKOUT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_head_sha || github.sha }}
   CI_HEAD_REPOSITORY: ${{ github.event_name == 'workflow_dispatch' && github.repository || github.event.pull_request.head.repo.full_name }}
   CI_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.source_head_sha || github.event.pull_request.head.sha }}
   CI_PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' || github.event.action != 'edited' || github.event.changes.base != null }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('repair-{0}-{1}', inputs.pr_number, inputs.repair_attempt_key) || github.ref }}-${{ github.event_name == 'workflow_dispatch' || github.event.action != 'edited' || github.event.changes.base != null }}
   cancel-in-progress: true
 
 jobs:
@@ -54,6 +55,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
       - name: Verify generated-head dispatch
@@ -63,6 +65,7 @@ jobs:
           GENERATED_HEAD_COMMAND: verify
           GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
           GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
           REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
           SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
@@ -83,6 +86,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Detect changed paths
@@ -111,6 +115,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -163,6 +168,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -208,6 +214,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -236,6 +243,7 @@ jobs:
       - name: Checkout pull request lockfiles
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
           sparse-checkout: |
             package-lock.json
@@ -418,6 +426,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
@@ -483,6 +492,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
@@ -541,6 +551,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
@@ -579,6 +590,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted WeChat runtime audit
@@ -616,6 +628,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted reviewed npm audit
@@ -658,6 +671,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -785,6 +799,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
@@ -835,6 +850,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.CI_CHECKOUT_SHA }}
           persist-credentials: false
 
       - name: Checkout trusted CI actions
