@@ -275,15 +275,18 @@ async function main() {
     "NemoClaw installation root",
   );
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
-  const node = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
+  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
   const gatewayExecutable = requiredFile(
     path.join(binRoot, "openshell-gateway.exe"),
     "OpenShell gateway",
   );
-  const openClawRoot = requiredDirectory(path.join(installRoot, "openclaw"), "OpenClaw runtime");
-  const openClawEntry = requiredFile(
-    path.join(openClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
+  const installedOpenClawRoot = requiredDirectory(
+    path.join(installRoot, "openclaw"),
+    "OpenClaw runtime",
+  );
+  requiredFile(
+    path.join(installedOpenClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
     "OpenClaw entrypoint",
   );
   const gatewayConfig = requiredFile(
@@ -297,9 +300,21 @@ async function main() {
   const runId = randomBytes(5).toString("hex");
   const runRoot = path.join(`${systemDrive}\\`, `NemoClawNativeTurn-${runId}`);
   const shareRoot = path.join(`${systemDrive}\\`, `NemoClawNativeShare-${runId}`);
-  if (fs.existsSync(runRoot) || fs.existsSync(shareRoot)) fail("qualification roots already exist");
+  const runtimeRoot = path.join(`${systemDrive}\\`, `NemoClawNativeArtifact-${runId}`);
+  if (fs.existsSync(runRoot) || fs.existsSync(shareRoot) || fs.existsSync(runtimeRoot))
+    fail("qualification roots already exist");
   fs.mkdirSync(runRoot);
   fs.mkdirSync(shareRoot);
+  fs.mkdirSync(runtimeRoot);
+  console.log("NEMOCLAW> Staging exact installed Node/OpenClaw bytes at the shallow MXC root");
+  const node = path.join(runtimeRoot, "node.exe");
+  const openClawRoot = path.join(runtimeRoot, "openclaw");
+  fs.copyFileSync(installedNode, node);
+  fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
+  const openClawEntry = requiredFile(
+    path.join(openClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
+    "Staged OpenClaw entrypoint",
+  );
   const artifactArgument = argumentValue("--artifact-directory");
   const artifactRoot = path.resolve(
     artifactArgument ??
@@ -429,7 +444,7 @@ async function main() {
     );
     fs.writeFileSync(
       receiptPath,
-      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, verdict: "pass" }, null, 2)}\n`,
+      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, verdict: "pass" }, null, 2)}\n`,
       "utf8",
     );
     console.log(`NEMOCLAW> PASS receipt=${receiptPath}`);
@@ -454,6 +469,9 @@ async function main() {
     } catch {}
     try {
       fs.rmSync(shareRoot, { recursive: true, force: true });
+    } catch {}
+    try {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
     } catch {}
   }
 }

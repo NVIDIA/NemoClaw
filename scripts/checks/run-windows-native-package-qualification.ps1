@@ -497,7 +497,8 @@ try {
     }
     $nativeTurnReceipt = Get-Content -LiteralPath $nativeTurnReceipts[0].FullName -Raw | ConvertFrom-Json
     if ($nativeTurnReceipt.verdict -cne 'pass' -or $nativeTurnReceipt.exactReply -cne 'CHAT_OK' -or
-        $nativeTurnReceipt.sandboxDeleted -ne $true) {
+        $nativeTurnReceipt.sandboxDeleted -ne $true -or
+        $nativeTurnReceipt.artifactStagedAtDriveRoot -ne $true) {
         Fail-PackageQualification 'Installed NemoClaw native turn receipt is incomplete.'
     }
     Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
