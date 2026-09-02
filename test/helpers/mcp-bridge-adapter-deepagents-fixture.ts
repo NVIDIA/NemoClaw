@@ -439,7 +439,6 @@ export function runDeepAgentsConfigCommand(
     const readRegularFile = (target: string): string | null => {
       let descriptor: number | null = null;
       try {
-        if (!fs.lstatSync(target).isFile()) return null;
         descriptor = fs.openSync(
           target,
           fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
@@ -451,8 +450,12 @@ export function runDeepAgentsConfigCommand(
         if (descriptor !== null) fs.closeSync(descriptor);
       }
     };
-    const managedSymlinkTargetText = readRegularFile(managedSymlinkTarget);
-    const managedParentTargetText = readRegularFile(managedParentTargetConfig);
+    const managedSymlinkTargetText =
+      managedTargetReadPath === managedSymlinkTarget ? null : readRegularFile(managedSymlinkTarget);
+    const managedParentTargetText =
+      managedTargetReadPath === managedParentTargetConfig
+        ? null
+        : readRegularFile(managedParentTargetConfig);
     const managedTargetReadAccessed =
       managedTargetReadPath !== null && waitForPath(managedTargetReadAccess, 200);
     const legacyConfigText = legacyConfigExists ? fs.readFileSync(legacyConfigPath, "utf-8") : null;
