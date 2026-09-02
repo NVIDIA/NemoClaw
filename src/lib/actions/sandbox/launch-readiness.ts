@@ -4,6 +4,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
+import {
+  createSyncCliOpenShellSandboxPolicyReader,
+  namedOpenShellGateway,
+  type OpenShellSandboxError,
+} from "../../adapters/openshell/sandbox-policy-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
 import {
@@ -157,6 +162,7 @@ export type LaunchReadinessPublicationResult =
       category: "identity" | "config" | "health" | "session";
       failedCheck?: LaunchReadinessFailedCheck;
     }
+  | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
   | { kind: "evidence-failed" };
 
 export type LaunchReadinessMutationGateResult<T> =
@@ -661,14 +667,32 @@ function validateLivePolicy(
   gatewayName: string,
   deps: LaunchReadinessDeps,
 ): void {
-  const result = (
-    deps.capture ?? ((args) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
-  )(["policy", "get", "-g", gatewayName, "--full", sandboxName]);
-  if (result.status !== 0 || !result.output?.trim()) throw new LaunchReadinessEvidenceError();
+  const capture = deps.capture ?? captureLaunchReadiness;
+  const result = createSyncCliOpenShellSandboxPolicyReader({
+    capture: (args, options) =>
+      capture(args, {
+        ...options,
+        maxBuffer: LIVE_POLICY_MAX_BYTES,
+      }),
+  }).readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
+    sandboxName,
+    scope: "effective",
+  });
+  if (!result.ok) throw new LaunchReadinessPolicyObservationError(result.error);
   try {
-    parseAndValidateSandboxPolicy(result.output);
+    parseAndValidateSandboxPolicy(result.value.document);
   } catch {
-    throw new LaunchReadinessEvidenceError();
+    throw new LaunchReadinessPolicyObservationError({
+      kind: "schema",
+      message: "OpenShell returned an invalid sandbox policy document.",
+    });
+  }
+}
+
+class LaunchReadinessPolicyObservationError extends Error {
+  constructor(readonly policyError: OpenShellSandboxError) {
+    super(policyError.message);
   }
 }
 
@@ -1199,9 +1223,7 @@ export async function settlePortableOpenClawPairing(
         );
         runProducer(sandboxName, target.gatewayName);
       }
-      revalidateSandboxIdentity?.(
-        `approve Portable OpenClaw pairing for sandbox '${sandboxName}'`,
-      );
+      revalidateSandboxIdentity?.(`approve Portable OpenClaw pairing for sandbox '${sandboxName}'`);
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
 
       const finalDeadline = Math.min(
@@ -1414,6 +1436,12 @@ export async function publishLaunchReadiness(
           }
           if (captureFailure !== undefined) throw captureFailure;
         } catch (error) {
+          if (error instanceof LaunchReadinessPolicyObservationError) {
+            return {
+              kind: "policy-observation-failed",
+              error: error.policyError,
+            } as const;
+          }
           const validation = publicationValidationCategory(error);
           return validation
             ? ({ kind: "validation-failed", ...validation } as const)
