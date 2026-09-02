@@ -1,10 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+
+import { artifactZip } from "../helpers/artifact-zip";
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
 );
@@ -58,16 +68,17 @@ const REDACTION_CASES = [
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-function fixture(log: string, result?: Record<string, unknown>) {
+function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer) {
   const root = mkdtempSync(join(tmpdir(), "classify-ci-test-"));
   roots.push(root);
   const bin = join(root, "bin");
   execFileSync("mkdir", ["-p", bin]);
-  const dir = join(root, "artifact");
-  execFileSync("mkdir", ["-p", dir]);
-  writeFileSync(join(dir, "sample.result.json"), JSON.stringify(result ?? {}));
   const zip = join(root, "artifact.zip");
-  execFileSync("zip", ["-q", zip, "sample.result.json"], { cwd: dir });
+  writeFileSync(
+    zip,
+    archive ??
+      artifactZip([{ name: "sample.result.json", contents: JSON.stringify(result ?? {}) }]),
+  );
   const gh = join(bin, "gh");
   const fake = [
     "#!/usr/bin/env node",
@@ -75,26 +86,42 @@ function fixture(log: string, result?: Record<string, unknown>) {
     "const a=process.argv.slice(2).join(' ');",
     "fs.appendFileSync(process.env.GH_CALLS,a+'\\n');",
     "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') console.log(JSON.stringify({id:123,run_id:456,name:'CLI tests',status:'completed',conclusion:'failure',html_url:'https://example.test/job'}));",
-    "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG);",
+    "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
     "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:1,artifacts:[{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]}));",
     "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') process.stdout.write(fs.readFileSync(process.env.ZIP_PATH));",
     "else { console.error('unexpected '+a); process.exit(9); }",
   ].join("\n");
   writeFileSync(gh, fake);
   chmodSync(gh, 0o755);
-  return {
-    root,
-    env: {
-      ...process.env,
-      PATH: bin + ":" + process.env.PATH,
-      TMPDIR: root,
-      GH_CALLS: join(root, "calls"),
-      TEST_LOG: log,
-      LOG_PREFIX_LINES: "0",
-      ZIP_PATH: zip,
-      ZIP_SIZE: String(execFileSync("stat", ["-c", "%s", zip], { encoding: "utf8" }).trim()),
-    },
+  const rm = join(bin, "rm");
+  writeFileSync(
+    rm,
+    [
+      "#!/usr/bin/env node",
+      "const fs=require('fs'); const path=require('path');",
+      "const target=process.argv.at(-1);",
+      "if(path.basename(target).startsWith('nemoclaw-ci-')) {",
+      " const observation={name:path.basename(target),mode:fs.statSync(target).mode&0o777};",
+      " const log=path.join(target,'job.log'); if(fs.existsSync(log)) observation.logBytes=fs.statSync(log).size;",
+      " fs.appendFileSync(process.env.CLEANUP_OBSERVATIONS,JSON.stringify(observation)+'\\n');",
+      " if(process.env.FAIL_CLEANUP===observation.name.split('.')[0]) { console.error('cleanup BUILD_TOKEN=cleanup-secret failed at '+target); process.exit(7); }",
+      "}",
+      "fs.rmSync(target,{recursive:true,force:true});",
+    ].join("\n"),
+  );
+  chmodSync(rm, 0o755);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: bin + ":" + process.env.PATH,
+    TMPDIR: root,
+    GH_CALLS: join(root, "calls"),
+    CLEANUP_OBSERVATIONS: join(root, "cleanup-observations.jsonl"),
+    TEST_LOG: log,
+    LOG_PREFIX_LINES: "0",
+    ZIP_PATH: zip,
+    ZIP_SIZE: String(statSync(zip).size),
   };
+  return { root, env };
 }
 function run(env: NodeJS.ProcessEnv, extra: string[] = []) {
   return spawnSync(
@@ -159,6 +186,16 @@ describe("CI failure classifier process", () => {
     expect(value.log.truncationReasons).toContain("source-log-bounded-before-filtering");
     expect(value.log.stdout).toContain("retained tail");
     expect(value.log.stdout.length).toBeLessThan(40000);
+    const observations = readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(observations).toContainEqual(
+      expect.objectContaining({ name: expect.stringMatching(/^nemoclaw-ci-log\./), mode: 0o700 }),
+    );
+    expect(
+      observations.find((entry) => entry.logBytes !== undefined)?.logBytes,
+    ).toBeLessThanOrEqual(4_000_000);
   });
   test.each([
     [["--unknown", "value"], "Unknown option --unknown"],
@@ -173,22 +210,114 @@ describe("CI failure classifier process", () => {
     expect(r.stderr).toContain(message);
     expect(readdirSync(item.root)).not.toContain("calls");
   });
-  test("fails with bounded redacted diagnostics when log cleanup fails", () => {
-    const exposed = REDACTION_CASES.map(([, input]) => input).join(" ");
-    const item = fixture(exposed);
-    const rm = join(item.root, "bin", "rm");
-    writeFileSync(
-      rm,
-      "#!/usr/bin/env node\nprocess.stderr.write('x'.repeat(3000) + ' ' + process.env.TEST_LOG); process.exit(7);\n",
+  test("preserves the primary log failure and an actionable redacted cleanup path", () => {
+    const item = fixture("AssertionError: retained tail");
+    const credential = "cleanup-path-secret";
+    const tempRoot = join(item.root, `BUILD_TOKEN=${credential}`);
+    execFileSync("mkdir", ["-p", tempRoot]);
+    item.env.TMPDIR = tempRoot;
+    item.env.FAIL_CLEANUP = "nemoclaw-ci-log";
+    item.env.FAIL_LOG = "primary log download failure";
+    const result = run(item.env);
+    const observation = JSON.parse(readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8").trim());
+    const safePath = join(item.root, "BUILD_TOKEN=[REDACTED]", observation.name);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("primary log download failure");
+    expect(result.stderr).toContain(`Cleanup failure for '${safePath}'`);
+    expect(result.stderr).toContain(`rm -rf -- '${safePath}'`);
+    expect(result.stderr).not.toContain(credential);
+    expect(result.stderr).not.toContain("cleanup-secret");
+    expect(result.stderr.length).toBeLessThanOrEqual(2100);
+  });
+  test.each([
+    ["malformed", Buffer.from("not a zip")],
+    [
+      "symlink",
+      (() => {
+        const archive = artifactZip([{ name: "sample.result.json", contents: "{}" }]);
+        archive.writeUInt32LE(0xa0000000, archive.readUInt32LE(archive.length - 6) + 38);
+        return archive;
+      })(),
+    ],
+    ["traversal", artifactZip([{ name: "../sample.result.json", contents: "{}" }])],
+    ["option-like", artifactZip([{ name: "-sample.result.json", contents: "{}" }])],
+    [
+      "duplicate",
+      artifactZip([
+        { name: "sample.result.json", contents: "{}" },
+        { name: "sample.result.json", contents: "{}" },
+      ]),
+    ],
+  ])("rejects a %s artifact ZIP", (_name, archive) => {
+    const item = fixture("SIGKILL", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
+  });
+  test("rejects artifact metadata that differs from downloaded bytes", () => {
+    const item = fixture("SIGKILL");
+    item.env.ZIP_SIZE = String(Number(item.env.ZIP_SIZE) + 1);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not download selected artifact");
+  });
+  test("rejects a corrupted unrelated entry beside a valid result", () => {
+    const archive = artifactZip(
+      [
+        { name: "sample.result.json", contents: JSON.stringify({ exitCode: 1 }) },
+        { name: "diagnostics/unrelated.txt", contents: "unrelated" },
+      ],
+      8,
     );
-    chmodSync(rm, 0o755);
-    const r = run(item.env);
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain("[REDACTED]");
-    expect(r.stderr).not.toMatch(
-      /xoxb-|xapp-|sk-|nvapi-|nvcf-|npm_|json-(?:secret|token|password|api-key|authorization)-value/,
+    const secondLocalOffset =
+      30 + Buffer.byteLength("sample.result.json") + archive.readUInt32LE(18);
+    const secondDataOffset =
+      secondLocalOffset +
+      30 +
+      archive.readUInt16LE(secondLocalOffset + 26) +
+      archive.readUInt16LE(secondLocalOffset + 28);
+    archive[secondDataOffset] ^= 0xff;
+    const item = fixture("SIGKILL", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
+  });
+
+  test("rejects an artifact whose declared expanded size exceeds the aggregate bound", () => {
+    const archive = artifactZip([{ name: "sample.result.json", contents: "{}" }]);
+    const centralOffset = archive.readUInt32LE(archive.length - 6);
+    archive.writeUInt32LE(100_000_001, centralOffset + 24);
+    const item = fixture("SIGKILL", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
+  });
+  test("rejects a result entry over the per-file expanded limit", () => {
+    const archive = artifactZip(
+      [{ name: "large.result.json", contents: "x".repeat(1_000_001) }],
+      8,
     );
-    expect(r.stderr.length).toBeLessThanOrEqual(2100);
+    const item = fixture("SIGKILL", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("exceeds the 1,000,000-byte limit");
+  });
+  test("preserves an artifact validation failure when cleanup also fails", () => {
+    const item = fixture("SIGKILL", undefined, Buffer.from("not a zip"));
+    item.env.FAIL_CLEANUP = "nemoclaw-ci-classify";
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
+    const observation = JSON.parse(
+      readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8")
+        .trim()
+        .split("\n")
+        .find((line) => JSON.parse(line).name.startsWith("nemoclaw-ci-classify"))!,
+    );
+    const cleanupPath = join(item.root, observation.name);
+    expect(result.stderr).toContain(`Cleanup failure for '${cleanupPath}'`);
+    expect(result.stderr).toContain(`rm -rf -- '${cleanupPath}'`);
+    expect(result.stderr).not.toContain("cleanup-secret");
   });
   test("reads a real ZIP artifact and removes private temporary directories", () => {
     const item = fixture("SIGKILL", {
@@ -196,12 +325,35 @@ describe("CI failure classifier process", () => {
       signal: "SIGKILL",
       command: "token=artifact-secret",
     });
-    const r = run(item.env, ["--artifact-name", "results"]);
-    expect(r.status, r.stderr).toBe(0);
-    const v = JSON.parse(r.stdout);
-    expect(v.artifact.filesRead).toBe(1);
-    expect(v.artifact.failures[0].signal).toBe("SIGKILL");
-    expect(r.stdout).not.toContain("artifact-secret");
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.artifact.filesRead).toBe(1);
+    expect(value.artifact.failures[0].signal).toBe("SIGKILL");
+    expect(result.stdout).not.toContain("artifact-secret");
+    const observations = readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(observations.map(({ name, mode }) => ({ name: name.split(".")[0], mode }))).toEqual([
+      { name: "nemoclaw-ci-log", mode: 0o700 },
+      { name: "nemoclaw-ci-classify", mode: 0o700 },
+    ]);
     expect(readdirSync(item.root).filter((name) => name.startsWith("nemoclaw-ci-"))).toEqual([]);
+  });
+  test("redacts credential assignments in returned artifact paths", () => {
+    const secret = "artifact-path-secret";
+    const archive = artifactZip([
+      {
+        name: `BUILD_TOKEN=${secret}.result.json`,
+        contents: JSON.stringify({ exitCode: 1 }),
+      },
+    ]);
+    const item = fixture("SIGKILL", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.artifact.failures[0].path).toContain("[REDACTED]");
+    expect(result.stdout).not.toContain(secret);
   });
 });

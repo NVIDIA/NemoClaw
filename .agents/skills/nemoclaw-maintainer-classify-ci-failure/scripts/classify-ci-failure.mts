@@ -6,6 +6,11 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import {
+  listValidatedArtifactZipEntries,
+  readValidatedArtifactZipEntryBytes,
+} from "../../../../scripts/scorecard/read-artifact-zip.mts";
+
 type ClipMode = "head" | "tail";
 type Input = {
   workdir: string;
@@ -22,7 +27,7 @@ type ProcessResult = {
   stderr: { text: string };
 };
 const SECRET_ASSIGNMENT =
-  /(\b(?:AWS_ACCESS_KEY_ID|[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY)[A-Za-z0-9_]*)\s*[=:]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/giu;
+  /(\b(?:AWS_ACCESS_KEY_ID|[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY)[A-Za-z0-9_]*)\s*[=:]\s*)(?!\[REDACTED\])(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/giu;
 const JSON_SECRET_FIELD =
   /("[^"\r\n]*(?:secret|token|password|api[_-]?key|authorization)[^"\r\n]*"\s*:\s*)"(?:\\.|[^"\\\r\n])*"/giu;
 const STANDALONE_SECRET =
@@ -189,6 +194,28 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     }
     return result;
   };
+  const redactPath = (value: string): string => value.split("/").map(redact).join("/");
+  const cleanupTemporaryDirectory = async (dir: string, kind: string): Promise<string> => {
+    const safeDir = redactPath(dir);
+    const remediation = `Remove it directly with: rm -rf -- ${q(safeDir)}`;
+    try {
+      const cleanup = await run(`rm -rf -- ${q(dir)}`, `Remove temporary ${kind} directory`);
+      if (cleanup.exitCode === 0) return "";
+      const detail = redact(
+        cleanup.stderr.text ||
+          cleanup.stdout.text ||
+          `Could not remove temporary ${kind} directory`,
+      ).slice(-1000);
+      return `Cleanup failure for ${q(safeDir)}: ${detail}. ${remediation}`;
+    } catch (error) {
+      const detail = redact(error instanceof Error ? error.message : String(error)).slice(-1000);
+      return `Cleanup failure for ${q(safeDir)}: ${detail}. ${remediation}`;
+    }
+  };
+  const appendCleanupFailure = (error: unknown, cleanupFailure: string): Error => {
+    const primary = error instanceof Error ? error.message : String(error);
+    return new Error(cleanupFailure ? `${primary}\n${cleanupFailure}` : primary);
+  };
   const jobResult = await github(["api", `repos/${repo}/actions/jobs/${jobId}`]);
   const rawJob = JSON.parse(jobResult.stdout);
   const job = {
@@ -210,6 +237,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
   let logStderr = "";
   let sourceTruncated = false;
   let logLines: string[] = [];
+  let logFailure: unknown;
   try {
     const rawPath = logDir + "/job.log";
     const boundedPath = logDir + "/job.tail.log";
@@ -245,12 +273,15 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       logLines = content.lines.map((line) => line.text);
       sourceTruncated ||= content.totalLines > content.lines.length;
     }
-  } finally {
-    const cleanup = await run(`rm -rf -- ${q(logDir)}`, "Remove temporary CI log directory");
-    if (cleanup.exitCode !== 0)
-      throw await diagnosticError(
-        cleanup.stderr.text || cleanup.stdout.text || "Could not remove temporary CI log directory",
-      );
+  } catch (error) {
+    logFailure = error;
+  }
+  const logCleanupFailure = await cleanupTemporaryDirectory(logDir, "CI log");
+  if (logFailure !== undefined) throw appendCleanupFailure(logFailure, logCleanupFailure);
+  if (logCleanupFailure) {
+    const primary =
+      logCode === 0 ? undefined : logStderr || `GitHub Actions log read failed (exit ${logCode})`;
+    throw appendCleanupFailure(primary ?? logCleanupFailure, primary ? logCleanupFailure : "");
   }
   const logPattern =
     /FAIL|Failed Tests|AssertionError|Test timed out|Process completed|SIGKILL|timed out|Source-shape|Source architecture|grew by|adds JavaScript|NEMOCLAW_|npm audit report|docs-review|Documentation writer|Fern validation|check-docs|hadolint|shellcheck|Nemotron/i;
@@ -372,6 +403,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       if (temp.exitCode !== 0) throw new Error("Could not create temporary artifact directory");
       const dir = temp.stdout.text.trim();
       if (!dir) throw new Error("Could not create temporary artifact directory");
+      let artifactFailure: unknown;
       try {
         const artifactId = found.id;
         if (typeof artifactId !== "number" || !Number.isSafeInteger(artifactId) || artifactId <= 0)
@@ -396,94 +428,38 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
           downloadBytes !== sizeBytes
         )
           throw new Error("Could not download selected artifact");
-        const checked = await run(
-          `archive=${q(archive)}; expected=${q(sizeBytes)}; measured=$(stat -c %s -- "$archive") || { printf 'malformed\n'; exit 0; }; if [ "$measured" -gt 25000000 ] || [ "$measured" -ne "$expected" ]; then printf 'compressed-size\n'; exit 0; fi; summary=$(LC_ALL=C zipinfo -t "$archive" 2>/dev/null) || { printf 'malformed\n'; exit 0; }; if [[ "$summary" == *$'\n'* ]] || [[ ! "$summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]]; then printf 'malformed\n'; exit 0; fi; entries=\${BASH_REMATCH[1]}; expanded=\${BASH_REMATCH[2]}; if [ "$entries" -gt 100 ]; then printf 'entries\n'; exit 0; fi; if [ "$expanded" -gt 100000000 ]; then printf 'expanded\n'; exit 0; fi; listing=$(umask 077; mktemp "${dir}/zip-listing.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; names=$(umask 077; mktemp "${dir}/zip-names.XXXXXXXXXX") || { rm -f -- "$listing"; printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names"' EXIT; LC_ALL=C zipinfo -l "$archive" > "$listing" 2>/dev/null || { printf 'malformed\n'; exit 0; }; LC_ALL=C zipinfo -1 "$archive" > "$names" 2>/dev/null || { printf 'malformed\n'; exit 0; }; listing_bytes=$(wc -c < "$listing") || { printf 'malformed\n'; exit 0; }; if [ "$listing_bytes" -gt 7000000 ]; then printf 'listing\n'; exit 0; fi; state=$(awk -v expected="$entries" 'NR==FNR { exact[FNR]=$0; next } BEGIN { count=0; state="ok" } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=9;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=exact[count]; if (line != name || name ~ /^[[:space:]]/ || name ~ /[[:space:]]$/) state="path"; if (mode != "-" && mode != "d") state="type"; if (size !~ /^[0-9]+$/) state="parser"; if (name == "" || name ~ /^[-\/]/ || index(name, "\\\\") || name ~ /[[:cntrl:]]/ || index(name, "*") || index(name, "?") || index(name, "[")) state="path"; parts=split(name, component, "/"); last=parts; if (mode == "d" && component[parts] == "") last--; else if (component[parts] == "") state="path"; for (i=1;i<=last;i++) if (component[i] == "" || component[i] == "." || component[i] == "..") state="path"; output=name; if (substr(output, length(output), 1) == "/") output=substr(output, 1, length(output)-1); if (output == "" || seen[output]++) state="duplicate"; next } /^[0-9]+ files?, [0-9]+ bytes uncompressed, / { summaries++; next } { state="parser" } END { if (count != expected || summaries != 1) state="parser"; print state }' "$names" "$listing"); if [ "$state" != ok ]; then printf '%s\n' "$state"; exit 0; fi; unzip -tqq "$archive" >/dev/null 2>&1 || { printf 'malformed\n'; exit 0; }; selected=$(umask 077; mktemp "${dir}/selected.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; unsorted=$(umask 077; mktemp "${dir}/unsorted.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names" "$selected" "$unsorted"' EXIT; count=$(awk -v selected="$unsorted" 'NR==FNR { exact[FNR]=$0; next } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { entry++; name=exact[entry]; if (substr($0, 1, 1) == "-" && name ~ /[.]result[.]json$/) { printf "%s\t%s%c", name, $4, 0 > selected; count++ } } END { print count+0 }' "$names" "$listing") || { printf 'parser\n'; exit 0; }; LC_ALL=C sort -z "$unsorted" > "$selected" || { printf 'parser\n'; exit 0; }; encoded=$(base64 -w0 < "$selected") || { printf 'parser\n'; exit 0; }; printf 'ok %s %s\n' "$count" "$encoded"`,
-          "Inspect selected artifact ZIP",
-        );
-        const parts = checked.stdout.text.trim().split(/\s+/, 3);
-        const archiveState = parts[0];
-        if (checked.exitCode !== 0 || archiveState !== "ok") {
-          const details: Record<string, string> = {
-            "compressed-size": "Artifact compressed size is invalid or differs from its metadata",
-            entries: "Artifact contains more than 100 entries",
-            expanded: "Artifact declares more than 100,000,000 expanded bytes",
-            type: "Artifact contains a symlink or another unsupported entry type",
-            path: "Artifact contains an unsafe, ambiguous, or option-like path",
-            duplicate: "Artifact contains duplicate output paths",
-            listing: "Artifact entry listing exceeds the inspection limit",
-            parser: "Artifact entry listing is ambiguous",
-            malformed: "Artifact ZIP is malformed",
-          };
-          throw new Error(
-            details[archiveState] ??
-              `Could not inspect artifact ZIP (state ${archiveState || "empty"}, exit ${checked.exitCode}): ${redact(checked.stderr.text).slice(-1000)}`,
-          );
-        }
-        const selectedCount = Number(parts[1]);
-        const resultEntries = Buffer.from(parts[2] ?? "", "base64")
-          .toString("utf8")
-          .split("\0")
-          .filter(Boolean);
-        if (
-          !Number.isSafeInteger(selectedCount) ||
-          selectedCount < 0 ||
-          selectedCount > 100 ||
-          resultEntries.length !== selectedCount
-        )
-          throw new Error("Artifact result entry listing is ambiguous");
+        const archiveBytes = readFileSync(archive);
+        if (archiveBytes.length !== sizeBytes)
+          throw new Error("Artifact compressed size differs from its metadata");
+        const entries = listValidatedArtifactZipEntries(archiveBytes, {
+          maxEntries: 100,
+          maxTotalUncompressedBytes: 100_000_000,
+          validateAllEntries: true,
+        });
+        if (entries === null) throw new Error("Artifact ZIP is malformed or unsafe");
+        const resultEntries = entries.filter((entry) => entry.endsWith(".result.json"));
         const fileResults = [];
         let filesRead = 0;
         let measuredOutput = 0;
-        let cumulativeLimitExceeded = false;
-        for (let index = 0; index < resultEntries.length; index += 1) {
-          const separator = resultEntries[index].lastIndexOf("\t");
-          const relativePath = resultEntries[index].slice(0, separator);
-          const declaredBytes = Number(resultEntries[index].slice(separator + 1));
-          if (separator < 1 || !Number.isSafeInteger(declaredBytes) || declaredBytes < 0)
-            throw new Error("Artifact result entry listing is ambiguous");
-          if (declaredBytes > 1000000)
+        for (const relativePath of resultEntries) {
+          const contents = readValidatedArtifactZipEntryBytes(archiveBytes, relativePath, {
+            maxBytes: 1_000_000,
+            maxEntries: 100,
+          });
+          if (contents === null)
             throw new Error(
-              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
+              `Artifact result entry ${redact(relativePath).slice(0, 1000)} is invalid or exceeds the 1,000,000-byte limit`,
             );
-          const resultPath = dir + "/result-" + index;
-          const streamed = await run(
-            `archive=${q(archive)}; entry=${q(relativePath)}; output=${q(resultPath)}; metadata=${q(resultPath + ".stream")}; umask 077; set +e; set -o pipefail; unzip -p "$archive" "$entry" | { : > "$output" || exit 1; dd bs=65536 count=15 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=16960 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
-            "Stream bounded test result artifact",
-          );
-          const [unzipStatus, readerStatus, streamState, byteText] = streamed.stdout.text
-            .trim()
-            .split(/\s+/, 4);
-          if (streamState === "limit")
+          measuredOutput += contents.length;
+          if (measuredOutput > 100_000_000)
+            throw new Error("Artifact result output exceeds the 100,000,000-byte limit");
+          const text = contents.toString("utf8");
+          const lineCount = text === "" ? 0 : text.split(/\r?\n/u).length;
+          if (lineCount > 2_000)
             throw new Error(
-              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
+              `Artifact result entry ${redact(relativePath).slice(0, 1000)} exceeds the 2,000-line read limit`,
             );
-          const resultBytes = Number(byteText);
-          if (
-            streamed.exitCode !== 0 ||
-            readerStatus !== "0" ||
-            unzipStatus !== "0" ||
-            streamState !== "ok" ||
-            !Number.isSafeInteger(resultBytes) ||
-            resultBytes < 0
-          )
-            throw new Error(`Could not stream artifact result entry ${relativePath}`);
-          if (resultBytes > 1000000)
-            throw new Error(
-              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
-            );
-          if (resultBytes !== declaredBytes)
-            throw new Error(`Artifact result entry ${relativePath} differs from its declared size`);
-          measuredOutput += resultBytes;
-          if (measuredOutput > 100000000) {
-            cumulativeLimitExceeded = true;
-            break;
-          }
-          const file = await runtime.read({ file_path: resultPath, limit: 2000 });
-          if (file.totalLines > 2000)
-            throw new Error(
-              `Artifact result entry ${relativePath} exceeds the 2,000-line read limit`,
-            );
-          const value = JSON.parse(file.lines.map((line) => line.text).join("\n"));
+          const value = JSON.parse(text);
           filesRead += 1;
           if (!value || typeof value !== "object" || Array.isArray(value)) continue;
           const exitCode = Number.isInteger(value.exitCode) ? value.exitCode : null;
@@ -499,7 +475,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
           if (exitCode === 0 && !signal && !error && !timedOut) continue;
           if (exitCode === null && !signal && !error && !timedOut && !value.command) continue;
           fileResults.push({
-            path: relativePath.slice(0, 1000),
+            path: redact(relativePath).slice(0, 1000),
             exitCode,
             signal,
             timedOut,
@@ -507,8 +483,6 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
             command,
           });
         }
-        if (cumulativeLimitExceeded)
-          throw new Error("Artifact streamed output exceeds the 100,000,000-byte limit");
         const failures = fileResults;
         artifact = {
           name: artifactName,
@@ -519,15 +493,13 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
           failures: failures.slice(0, 20),
           failuresTruncated: failures.length > 20,
         };
-      } finally {
-        const cleanup = await run(`rm -rf -- ${q(dir)}`, "Remove temporary artifact directory");
-        if (cleanup.exitCode !== 0)
-          throw await diagnosticError(
-            cleanup.stderr.text ||
-              cleanup.stdout.text ||
-              "Could not remove temporary artifact directory",
-          );
+      } catch (error) {
+        artifactFailure = error;
       }
+      const artifactCleanupFailure = await cleanupTemporaryDirectory(dir, "artifact");
+      if (artifactFailure !== undefined)
+        throw appendCleanupFailure(artifactFailure, artifactCleanupFailure);
+      if (artifactCleanupFailure) throw new Error(artifactCleanupFailure);
     } catch (error) {
       throw await diagnosticError(error instanceof Error ? error.message : String(error));
     }

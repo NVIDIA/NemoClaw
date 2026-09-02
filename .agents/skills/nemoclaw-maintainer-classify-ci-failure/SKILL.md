@@ -21,6 +21,6 @@ The default repository is `NVIDIA/NemoClaw`. Optional flags are `--repo`, `--art
 
 The script uses authenticated `gh` reads. It performs no GitHub writes. It bounds and redacts log output. When an artifact is selected, it bounds pagination, compressed and expanded sizes, entries, paths, file reads, and reported failures. It rejects malformed ZIPs, links, special files, duplicate or unsafe paths, ambiguous listings, and size mismatches. Temporary files use private directories and are removed after success or failure.
 
-The artifact path requires Bash, GNU `dd` and `find`, Info-ZIP `zipinfo` and `unzip`, `awk`, `base64`, `mktemp`, `stat`, and `wc` on Linux.
+The artifact path requires Node.js, Bash, GNU `dd`, `base64`, `mktemp`, `stat`, and `wc` on Linux.
 
 Stop on GitHub authentication or authorization failure. Follow the repository GitHub access hard stop. Treat `unclassified` as bounded evidence, not proof that no known cause exists.
