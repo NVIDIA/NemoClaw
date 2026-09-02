@@ -254,6 +254,7 @@ Use the recovery guidance that matches the reported check:
 - Verify the sandbox name when its registry entry is missing.
 - Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
 - Restore access to the current OpenShell policy when rebuild reports that the live policy cannot be read, then rerun `rebuild`. NemoClaw does not reconstruct policy from registry state.
+- Replace literal policy credentials with supported OpenShell credential bindings or resolver placeholders when rebuild refuses the policy handoff. NemoClaw stops before it creates the handoff or changes sandbox resources.
 - Resolve an incomplete MCP destroy transaction before retrying.
 - Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
 - Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
@@ -315,6 +316,28 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 - It continues deletion when the live sandbox still has the journaled source identity.
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
 - It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
+
+<Warning title="Recover an Unsafe Retained Policy Handoff">
+Do not retry rebuild when a retained policy handoff contains a literal credential. Recover any required data from the backup before deletion, and keep the backup and handoff until that recovery is complete. Restore or select the recorded gateway and confirm `openshell status` is healthy. Only then use the ordinary fail-closed destroy flow and confirm OpenShell reports the sandbox deleted:
+
+```bash
+openshell gateway select <recorded-gateway>
+openshell status
+$$nemoclaw <sandbox-name> destroy --yes
+```
+
+Do not use `--force` for this recovery. If deletion is unconfirmed, preserve the local recovery state and restore gateway access. After confirmed deletion, run `$$nemoclaw onboard --name <new-sandbox-name>` and recover any required data from the retained backup. Use a new sandbox name: recovery retirement refuses while the failed sandbox name is still present on its recorded gateway.
+
+Only after the old sandbox is confirmed absent and required data recovery is complete, retire the exact failed transaction printed by rebuild:
+
+```bash
+$$nemoclaw <failed-sandbox-name> rebuild --retire-recovery <transaction-id> --yes
+```
+
+`--yes` confirms that required data recovery is complete. The command rechecks the old sandbox on the transaction's recorded gateway, binds cleanup to the exact sandbox and transaction, and removes that transaction's retained policy handoff and recovery marker. It cannot retire another sandbox or transaction. On failure, it prints the exact backup path that remains retained; preserve that path and retry only after correcting the reported condition. Keep the remaining backup until it is no longer needed.
+
+If retirement reports that the recovery marker is invalid or unreadable, preserve the printed backup path, marker, and policy handoff. Do not edit the marker JSON or delete either recovery file. If only the marker's mode or ownership changed, restore mode `0600` and ownership by the current NemoClaw user. Otherwise, restore the exact marker from a trusted backup of the same backup directory. Then rerun the same retirement command; it rechecks deletion on the recorded gateway before removing the handoff. If no trusted marker is available, preserve the backup and ask a NemoClaw maintainer to inspect it.
+</Warning>
 
 A mount-free journal written before NemoClaw bound host-mount identity remains resumable. An older journal for a rebuild with one or more host mounts stops as incompatible, even when the visible mount settings are unchanged, because it cannot prove the original host source identity. Preserve the live sandbox, onboarding session, printed backup, exact error, and the sandbox name, gateway, and journal phase from the `Journaled replacement` diagnostic. Do not change the target settings, edit the session, or delete the same-name sandbox. Ask a NemoClaw maintainer to review that retained recovery state before taking another recovery action.
 

@@ -11,7 +11,6 @@ import {
   createHarnessTempDir,
   installRebuildFlowTestHooks,
   originalSandboxName,
-  policyGet,
   portableAgentLifecycle,
   snapshotEnv,
   tempFiles,
@@ -126,8 +125,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
         recreatedPolicy = fs.readFileSync(rebuildPolicySourcePath, "utf8");
       },
     });
-    vi.mocked(policyGet.getSandboxPolicy).mockReset().mockReturnValue({ yaml: completePolicy });
-
     await expect(
       harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
     ).resolves.toBeUndefined();
@@ -155,7 +152,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       }),
     );
     expect(innerBackupMarker).toBe("1");
-    expect(policyGet.getSandboxPolicy).toHaveBeenCalledOnce();
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
     expect(recreatedPolicy).toContain("durable_user_policy");
     expect(recreatedPolicy).toContain("mcp_bridge_github");
     expect(recreatedPolicy).toContain("nemoclaw-mcp-alpha-github");
@@ -210,6 +210,26 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
   });
 
+  it("publishes the delete-edge policy recapture without a transient source file", async () => {
+    let recreatedPolicy = "";
+    const secureTempFile = vi.spyOn(tempFiles, "secureTempFile");
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {},
+      onboard: (_session, options) => {
+        recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(recreatedPolicy).toContain("host_preserved");
+    expect(
+      secureTempFile.mock.calls.filter(([prefix]) => prefix === "nemoclaw-rebuild-policy"),
+    ).toEqual([]);
+  });
+
   it("does not report rebuild success when inner onboarding returns a failure code (#10394)", async ({
     onTestFinished,
   }) => {
@@ -251,20 +271,32 @@ describe("rebuildSandbox flow: lifecycle", () => {
         detachedProviderEntries: [mcpEntry],
       },
     });
-    vi.mocked(policyGet.getSandboxPolicy)
-      .mockReset()
-      .mockReturnValueOnce({ yaml: "version: 1\nnetwork_policies: {}\n" })
-      .mockReturnValue({ yaml: "" });
+    const captureLivePolicy = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+    let policyReadCount = 0;
+    harness.captureResolvedOpenshellSpy.mockImplementation((args: unknown, options?: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      const failRead = argv[0] === "policy" && (policyReadCount += 1) > 2;
+      return failRead
+        ? {
+            status: 1,
+            output: "",
+            stdout: "",
+            stderr: "connection refused",
+          }
+        : captureLivePolicy(args, options);
+    });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("OpenShell policy became unavailable before sandbox deletion");
+    ).rejects.toThrow(
+      /Cannot read the current OpenShell policy.*Verify the gateway with `openshell status`/u,
+    );
 
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(fs.existsSync(policyDirectory)).toBe(false);
+    expect(fs.readdirSync(policyDirectory)).toEqual([]);
   });
 
   it("keeps the original sandbox when the shared route drifts at the delete edge (#7798)", async () => {
