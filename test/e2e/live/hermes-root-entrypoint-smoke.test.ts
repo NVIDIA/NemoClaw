@@ -597,6 +597,73 @@ cat /tmp/nemoclaw-hardlink-start.log`;
   expect(wait.stdout.trim(), resultText(wait)).toBe("0");
 }
 
+async function runMutableLayoutSwapRefusalVariant(
+  probe: DockerProbe,
+  image: string,
+  runId: string,
+  containers: string[],
+): Promise<void> {
+  const container = `nemoclaw-hermes-root-layout-swap-${runId}`;
+  const bootstrap = String.raw`set -euo pipefail
+real_python="$(command -v python3)"
+install -d -m 755 /tmp/nemoclaw-layout-swap-bin /tmp/nemoclaw-layout-external
+printf 'outside sentinel\n' >/tmp/nemoclaw-layout-external/sentinel.txt
+chmod 640 /tmp/nemoclaw-layout-external/sentinel.txt
+cat >/tmp/nemoclaw-layout-swap-bin/python3 <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(printenv NEMOCLAW_HERMES_LAYOUT_DIR_NAME || true)" != "." ]; then
+  exec "$NEMOCLAW_TEST_REAL_PYTHON" "$@"
+fi
+tee /tmp/nemoclaw-layout-repair.py >/dev/null
+exec "$NEMOCLAW_TEST_REAL_PYTHON" -I -c '
+import os
+
+real_fchown = os.fchown
+
+
+def swap_then_fchown(fd, uid, gid):
+    os.rename("/sandbox/.hermes", "/tmp/nemoclaw-original-hermes-root")
+    os.symlink("/tmp/nemoclaw-layout-external", "/sandbox/.hermes")
+    return real_fchown(fd, uid, gid)
+
+
+os.fchown = swap_then_fchown
+script = "/tmp/nemoclaw-layout-repair.py"
+with open(script, encoding="utf-8") as stream:
+    exec(compile(stream.read(), script, "exec"))
+'
+WRAPPER
+chmod 755 /tmp/nemoclaw-layout-swap-bin/python3
+export NEMOCLAW_TEST_REAL_PYTHON="$real_python"
+stat -c '%U:%G %a %s' /tmp/nemoclaw-layout-external /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.stat
+sha256sum /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.sha256
+set +e
+PATH="/tmp/nemoclaw-layout-swap-bin:$PATH" /usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-layout-swap-start.log 2>&1
+startup_status=$?
+set -e
+test "$startup_status" -ne 0
+test "$startup_status" -ne 124
+test -L /sandbox/.hermes
+test "$(readlink /sandbox/.hermes)" = "/tmp/nemoclaw-layout-external"
+test "$(stat -c '%U:%G %a %s' /tmp/nemoclaw-layout-external /tmp/nemoclaw-layout-external/sentinel.txt)" = "$(cat /tmp/nemoclaw-layout-external.stat)"
+sha256sum -c /tmp/nemoclaw-layout-external.sha256
+grep -F '/sandbox/.hermes changed during repair' /tmp/nemoclaw-layout-swap-start.log
+cat /tmp/nemoclaw-layout-swap-start.log`;
+
+  await probe.expect(
+    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+    { artifactName: "start-root-layout-swap-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
+  );
+  containers.push(container);
+  const wait = await probe.run(["wait", container], {
+    artifactName: "wait-root-layout-swap-refusal-container",
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
+  expect(wait.exitCode, resultText(wait)).toBe(0);
+  expect(wait.stdout.trim(), resultText(wait)).toBe("0");
+}
+
 async function runNonRootHistoryOwnershipRefusalVariant(
   probe: DockerProbe,
   image: string,
@@ -644,6 +711,7 @@ test(
         "validate locked-root history recovery",
         "validate root history hard-link refusal",
         "validate root log hard-link refusal",
+        "validate root mutable-layout swap refusal",
         "validate non-root history ownership refusal",
       ],
     },
@@ -683,6 +751,7 @@ test(
         "locked-root startup recreates protected group-writable Hermes history without changing sealed config",
         "gateway process preserves the caller dispatcher value while unlocked and forces it off while locked",
         "root startup rejects history and log hard links without changing the protected inode",
+        "root startup rejects a config-root swap after descriptor validation without changing the external target",
         "non-root startup rejects a mode-correct history file with an unusable group",
       ],
     });
@@ -713,6 +782,8 @@ test(
       await runHardLinkRefusalVariant(probe, image, runId, containers, "history");
       progress.phase("validate root log hard-link refusal");
       await runHardLinkRefusalVariant(probe, image, runId, containers, "logs");
+      progress.phase("validate root mutable-layout swap refusal");
+      await runMutableLayoutSwapRefusalVariant(probe, image, runId, containers);
       progress.phase("validate non-root history ownership refusal");
       await runNonRootHistoryOwnershipRefusalVariant(probe, image, runId, containers);
     } catch (error) {
@@ -740,6 +811,7 @@ test(
         legacyDashboardProfileMigrationVerified: true,
         lockedRootHistoryRecoveryVerified: true,
         rootHardLinkRefusalVerified: true,
+        rootMutableLayoutSwapRefusalVerified: true,
         nonRootHistoryOwnershipRefusalVerified: true,
       },
     });

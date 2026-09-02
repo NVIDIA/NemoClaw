@@ -890,42 +890,152 @@ apply_shields_up_runtime_env() {
   fi
 }
 
-ensure_hermes_config_root_mode() {
-  if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
-    return 1
-  fi
+ensure_hermes_mutable_layout_dir() {
+  local dir_name="${1:?Hermes layout directory name required}"
+  local desired_mode="${2:?Hermes layout directory mode required}"
+  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
+    NEMOCLAW_HERMES_LAYOUT_DIR_NAME="$dir_name" \
+    NEMOCLAW_HERMES_LAYOUT_DIR_MODE="$desired_mode" \
+    python3 -I - <<'PYMUTABLELAYOUT'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
 
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$HERMES_DIR" || return 1
-  fi
-  chmod 3770 "$HERMES_DIR"
+root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
+name = os.environ["NEMOCLAW_HERMES_LAYOUT_DIR_NAME"]
+
+
+def fail(message: str) -> None:
+    print(
+        f"[SECURITY] Refusing Hermes layout repair because {message}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+try:
+    desired_mode = int(os.environ["NEMOCLAW_HERMES_LAYOUT_DIR_MODE"], 8)
+except ValueError:
+    fail(f"{name} has an invalid requested mode")
+if name != "." and (not name or name in {".."} or "/" in name):
+    fail(f"{name} is not a direct Hermes layout directory")
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    fail("descriptor-safe directory flags are unavailable")
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+open_flags |= getattr(os, "O_CLOEXEC", 0)
+root_fd = -1
+target_fd = -1
+display = root if name == "." else f"{root}/{name}"
+try:
+    try:
+        root_fd = os.open(root, open_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (
+        root_before.st_dev,
+        root_before.st_ino,
+    ):
+        fail(f"{root} changed while it was opened")
+
+    if name == ".":
+        target_fd = os.dup(root_fd)
+    else:
+        try:
+            target_fd = os.open(name, open_flags, dir_fd=root_fd)
+        except FileNotFoundError:
+            try:
+                os.mkdir(name, desired_mode, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                fail(f"{display} could not be created: {exc.strerror}")
+            try:
+                target_fd = os.open(name, open_flags, dir_fd=root_fd)
+            except OSError as exc:
+                fail(f"{display} could not be opened after creation: {exc.strerror}")
+        except OSError as exc:
+            try:
+                unsafe = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            except OSError:
+                unsafe = None
+            if unsafe is not None and stat.S_ISLNK(unsafe.st_mode):
+                fail(f"{display} is a symlink")
+            if unsafe is not None and not stat.S_ISDIR(unsafe.st_mode):
+                fail(f"{display} is not a directory")
+            detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+            fail(f"{display} could not be opened safely: {detail}")
+
+    if os.geteuid() == 0:
+        try:
+            sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+            sandbox_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            fail(f"sandbox account lookup failed: {exc}")
+        try:
+            os.fchown(target_fd, sandbox_uid, sandbox_gid)
+        except OSError as exc:
+            fail(f"{display} ownership could not be repaired: {exc.strerror}")
+    try:
+        os.fchmod(target_fd, desired_mode)
+    except OSError as exc:
+        fail(f"{display} mode could not be repaired: {exc.strerror}")
+
+    current = os.fstat(target_fd)
+    if not stat.S_ISDIR(current.st_mode):
+        fail(f"{display} is not a directory")
+    if stat.S_IMODE(current.st_mode) != desired_mode:
+        fail(
+            f"{display} mode is {stat.S_IMODE(current.st_mode):04o}, "
+            f"expected {desired_mode:04o}"
+        )
+    if os.geteuid() == 0 and (
+        current.st_uid != sandbox_uid or current.st_gid != sandbox_gid
+    ):
+        fail(f"{display} ownership did not match sandbox:sandbox after repair")
+
+    if name != ".":
+        try:
+            named = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except OSError as exc:
+            fail(f"{display} no longer names the opened directory: {exc.strerror}")
+        if (named.st_dev, named.st_ino) != (current.st_dev, current.st_ino):
+            fail(f"{display} changed during repair")
+
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        fail(f"{root} disappeared during repair: {exc.strerror}")
+    if (root_after.st_dev, root_after.st_ino) != (
+        root_open.st_dev,
+        root_open.st_ino,
+    ):
+        fail(f"{root} changed during repair")
+finally:
+    if target_fd >= 0:
+        os.close(target_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
+PYMUTABLELAYOUT
+}
+
+ensure_hermes_config_root_mode() {
+  ensure_hermes_mutable_layout_dir . 3770
 }
 
 ensure_hermes_state_dir() {
-  local dir="$1"
-  local mode="$2"
-
-  if [ -L "$dir" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${dir} is a symlink" >&2
-    return 1
-  fi
-  if [ -e "$dir" ] && [ ! -d "$dir" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${dir} is not a directory" >&2
-    return 1
-  fi
-
-  mkdir -p "$dir" || return 1
-
-  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${dir} did not resolve to a safe directory" >&2
-    return 1
-  fi
-
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$dir" || return 1
-  fi
-  chmod "$mode" "$dir"
+  ensure_hermes_mutable_layout_dir "$1" "$2"
 }
 
 ensure_hermes_cross_uid_state_dir() {
@@ -1540,9 +1650,9 @@ repair_hermes_startup_layout() {
     echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
     return 1
   fi
-  ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770 || return 1
-  ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770 || return 1
-  ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770 || return 1
+  ensure_hermes_state_dir hooks 770 || return 1
+  ensure_hermes_state_dir image_cache 770 || return 1
+  ensure_hermes_state_dir audio_cache 770 || return 1
   if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
     echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
     echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2

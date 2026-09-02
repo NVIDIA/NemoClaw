@@ -80,12 +80,12 @@ function createHermesUnsafeLogFixture(
   return { before: fingerprint(), fingerprint };
 }
 
-function createHermesHistoryRootSwapFixture(tmpDir: string, hermesHome: string) {
-  const externalRoot = path.join(tmpDir, "unsafe-history-root");
+function createLayoutSwapFixture(tmpDir: string, hermesHome: string, target: "." | "hooks") {
+  const externalRoot = path.join(tmpDir, "unsafe-layout-target");
   const sentinel = path.join(externalRoot, "sentinel.txt");
-  const originalRoot = path.join(tmpDir, "original-hermes-root");
-  const marker = path.join(tmpDir, "history-root-swapped");
-  const fakeBin = path.join(tmpDir, "history-swap-bin");
+  const originalEntry = path.join(tmpDir, `original-${target === "." ? "hermes-root" : target}`);
+  const injectedScript = path.join(tmpDir, "layout-repair.py");
+  const fakeBin = path.join(tmpDir, "layout-swap-bin");
   fs.mkdirSync(externalRoot);
   fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
   fs.mkdirSync(fakeBin);
@@ -94,13 +94,31 @@ function createHermesHistoryRootSwapFixture(tmpDir: string, hermesHome: string) 
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `if [ -n "\${NEMOCLAW_HERMES_HISTORY_FILE:-}" ] && [ ! -e ${shellQuote(marker)} ]; then`,
-      `  mv ${shellQuote(hermesHome)} ${shellQuote(originalRoot)}`,
-      `  ln -s ${shellQuote(externalRoot)} ${shellQuote(hermesHome)}`,
-      `  : > ${shellQuote(marker)}`,
+      `if [ "\${NEMOCLAW_HERMES_LAYOUT_DIR_NAME:-}" != ${shellQuote(target)} ]; then`,
+      `  export PATH=${shellQuote(process.env.PATH ?? "")}`,
+      '  exec python3 "$@"',
       "fi",
+      `tee ${shellQuote(injectedScript)} >/dev/null`,
+      `export NEMOCLAW_TEST_LAYOUT_ROOT=${shellQuote(hermesHome)}`,
+      `export NEMOCLAW_TEST_LAYOUT_TARGET=${shellQuote(target)}`,
+      `export NEMOCLAW_TEST_LAYOUT_EXTERNAL=${shellQuote(externalRoot)}`,
+      `export NEMOCLAW_TEST_LAYOUT_ORIGINAL=${shellQuote(originalEntry)}`,
+      `export NEMOCLAW_TEST_LAYOUT_SCRIPT=${shellQuote(injectedScript)}`,
       `export PATH=${shellQuote(process.env.PATH ?? "")}`,
-      'exec python3 "$@"',
+      "exec python3 -I -c '",
+      "import os",
+      "real_fchmod = os.fchmod",
+      "def swap_then_fchmod(fd, mode):",
+      '    root = os.environ["NEMOCLAW_TEST_LAYOUT_ROOT"]',
+      '    target = os.environ["NEMOCLAW_TEST_LAYOUT_TARGET"]',
+      '    source = root if target == "." else os.path.join(root, target)',
+      '    os.rename(source, os.environ["NEMOCLAW_TEST_LAYOUT_ORIGINAL"])',
+      '    os.symlink(os.environ["NEMOCLAW_TEST_LAYOUT_EXTERNAL"], source)',
+      "    return real_fchmod(fd, mode)",
+      "os.fchmod = swap_then_fchmod",
+      'script = os.environ["NEMOCLAW_TEST_LAYOUT_SCRIPT"]',
+      'exec(compile(open(script, encoding="utf-8").read(), script, "exec"))',
+      "'",
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -397,7 +415,6 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
 function runHermesRootStartupMutableRootPreflight() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-root-preflight-"));
   const hermesHome = path.join(tmpDir, ".hermes");
-  const chmodLog = path.join(tmpDir, "chmod.log");
   const scriptPath = path.join(tmpDir, "run.sh");
 
   fs.mkdirSync(hermesHome, { recursive: true });
@@ -411,12 +428,10 @@ function runHermesRootStartupMutableRootPreflight() {
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "hermes_config_path_is_locked"),
       extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
+      extractShellFunctionFromSource(src, "ensure_hermes_mutable_layout_dir"),
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
-      `CHMOD_LOG=${shellQuote(chmodLog)}`,
-      "HERMES_DIR_MODE=750",
-      'chmod() { if [ "${1:-}" = "3770" ] && [ "${2:-}" = "$HERMES_DIR" ]; then printf "%s\\n" "$1" > "$CHMOD_LOG"; HERMES_DIR_MODE=770; command chmod 770 "$2"; return 0; fi; command chmod "$@"; }',
-      'dir_mode() { printf "%s\\n" "$HERMES_DIR_MODE"; }',
+      'dir_mode() { stat -c "%a" "$HERMES_DIR" 2>/dev/null || stat -f "%Lp" "$HERMES_DIR"; }',
       'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
       'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
@@ -447,9 +462,7 @@ function runHermesRootStartupMutableRootPreflight() {
     });
     return {
       result,
-      hermesDirMode: fs.existsSync(chmodLog)
-        ? fs.readFileSync(chmodLog, "utf-8").trim()
-        : (fs.statSync(hermesHome).mode & 0o7777).toString(8),
+      hermesDirMode: (fs.statSync(hermesHome).mode & 0o7777).toString(8),
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -504,7 +517,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   lockedConfigRoot?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   unsafeLog?: "root-symlink" | "nested-symlink" | "fifo";
-  swapHistoryRoot?: boolean;
+  swapLayoutDir?: "." | "hooks";
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
   unsafeState?: readonly [name: HermesStateDir, kind: "symlink" | "file"];
 }) {
@@ -550,8 +563,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
   const unsafeLogFixture = opts.unsafeLog
     ? createHermesUnsafeLogFixture(tmpDir, hermesHome, opts.unsafeLog)
     : undefined;
-  const historyRootSwapFixture = opts.swapHistoryRoot
-    ? createHermesHistoryRootSwapFixture(tmpDir, hermesHome)
+  const layoutSwapFixture = opts.swapLayoutDir
+    ? createLayoutSwapFixture(tmpDir, hermesHome, opts.swapLayoutDir)
     : undefined;
   if (opts.lockedConfigRoot) {
     fs.chmodSync(hermesHome, 0o755);
@@ -640,6 +653,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       extractShellFunctionFromSource(src, "remove_stale_gateway_file"),
       extractShellFunctionFromSource(src, "hermes_config_path_is_locked"),
       extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
+      extractShellFunctionFromSource(src, "ensure_hermes_mutable_layout_dir"),
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       extractShellFunctionFromSource(src, "ensure_hermes_state_dir"),
       extractShellFunctionFromSource(src, "ensure_hermes_cross_uid_state_dir"),
@@ -666,8 +680,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
     const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 15_000,
-      env: historyRootSwapFixture
-        ? { ...process.env, PATH: `${historyRootSwapFixture.fakeBin}:${process.env.PATH ?? ""}` }
+      env: layoutSwapFixture
+        ? { ...process.env, PATH: `${layoutSwapFixture.fakeBin}:${process.env.PATH ?? ""}` }
         : process.env,
     });
     const legacyPidStat = fs.lstatSync(legacyPid, { throwIfNoEntry: false });
@@ -734,8 +748,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
       pythonImportSentinelExists: fs.existsSync(pythonImportSentinel),
       unsafeLogBefore: unsafeLogFixture?.before,
       unsafeLogAfter: unsafeLogFixture?.fingerprint(),
-      historyRootSwapBefore: historyRootSwapFixture?.before,
-      historyRootSwapAfter: historyRootSwapFixture?.fingerprint(),
+      layoutSwapBefore: layoutSwapFixture?.before,
+      layoutSwapAfter: layoutSwapFixture?.fingerprint(),
       symlinkTargetContent,
       unsafeStateBefore,
       unsafeStateAfter:
@@ -1346,14 +1360,15 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     );
   });
 
-  it("rejects a swapped mutable config root without mutating its external history target", () => {
-    const run = runHermesGatewayRuntimeCleanup({ swapHistoryRoot: true });
-    expect(run.result.status).not.toBe(0);
-    expect(run.historyRootSwapAfter).toEqual(run.historyRootSwapBefore);
-    expect(run.result.stderr).toContain(".hermes is not a safe directory");
-    expect(run.result.stderr).toContain("Hermes pre-launch layout repair failed at history file");
-    expect(run.result.stderr).toContain("Restore a trusted snapshot into a recreated sandbox");
-  });
+  it.each([".", "hooks"] as const)(
+    "rejects a swapped mutable layout directory %s after validation without mutating its external target",
+    (swapLayoutDir) => {
+      const run = runHermesGatewayRuntimeCleanup({ swapLayoutDir });
+      expect(run.result.status).not.toBe(0);
+      expect(run.layoutSwapAfter).toEqual(run.layoutSwapBefore);
+      expect(run.result.stderr).toContain("changed during repair");
+    },
+  );
 
   it("fails Hermes startup when the locked-root history path hard-links a sealed config file", () => {
     const run = runHermesGatewayRuntimeCleanup({
