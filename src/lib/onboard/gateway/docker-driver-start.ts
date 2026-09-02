@@ -226,6 +226,11 @@ export function createDockerDriverGatewayStart(
       const log = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
       console.log("  Starting OpenShell Docker-driver gateway...");
       console.log(`  Gateway log: ${logPath}`);
+      // Capture the exact config bytes before launch. The runtime marker must
+      // identify what the child was asked to load, not a file that may have
+      // changed between spawn and marker publication.
+      const gatewayConfigIdentity =
+        dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayConfigIdentity(driftGatewayEnv);
       dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(gatewayLaunch);
       const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(gatewayLaunch, log.fd);
       const childExit = trackChildExit(child);
@@ -237,6 +242,7 @@ export function createDockerDriverGatewayStart(
         pid: childPid,
         desiredEnv: driftGatewayEnv,
         endpoint: deps.getDockerDriverGatewayEndpoint(),
+        ...gatewayConfigIdentity,
         gatewayBin: driftGatewayBin,
         openshellVersion: deps.getInstalledOpenshellVersion(openshellVersionOutput),
         dockerHost: process.env.DOCKER_HOST || null,

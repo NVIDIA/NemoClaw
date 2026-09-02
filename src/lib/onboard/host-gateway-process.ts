@@ -252,6 +252,39 @@ function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
   }
 }
 
+/** Read the environment of an owned gateway process without invoking a shell. */
+export function readHostGatewayProcessEnvironment(
+  pid: number,
+  depsOverrides: Partial<HostGatewayProcessDeps> = {},
+): Record<string, string> | null {
+  const deps = defaultDeps(depsOverrides);
+  const injected = deps.readProcessEnvironment?.(pid);
+  if (injected) return injected;
+  try {
+    return Object.fromEntries(
+      fs
+        .readFileSync(`/proc/${String(pid)}/environ`, "utf-8")
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => [entry.slice(0, entry.indexOf("=")), entry.slice(entry.indexOf("=") + 1)]),
+    );
+  } catch {
+    const command = deps.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
+      env: deps.env,
+    });
+    if (command.status !== 0) return null;
+    const environment: Record<string, string> = {};
+    for (const token of command.stdout.split(/\s+/)) {
+      const separator = token.indexOf("=");
+      if (separator < 1) continue;
+      const key = token.slice(0, separator);
+      if (!/^[A-Z][A-Z0-9_]*$/u.test(key)) continue;
+      environment[key] = token.slice(separator + 1);
+    }
+    return Object.keys(environment).length > 0 ? environment : null;
+  }
+}
+
 export function processUsesStateScopedSandboxNamespace(
   pid: number,
   stateDir: string,
@@ -260,30 +293,7 @@ export function processUsesStateScopedSandboxNamespace(
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
   const owner = deps.run("ps", ["-p", String(pid), "-o", "uid="], { env: deps.env });
   if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
-  let environment = deps.readProcessEnvironment?.(pid) ?? null;
-  if (!environment) {
-    try {
-      environment = Object.fromEntries(
-        fs
-          .readFileSync(`/proc/${String(pid)}/environ`, "utf-8")
-          .split("\0")
-          .filter(Boolean)
-          .map((entry) => [
-            entry.slice(0, entry.indexOf("=")),
-            entry.slice(entry.indexOf("=") + 1),
-          ]),
-      );
-    } catch {
-      const command = deps.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
-        env: deps.env,
-      });
-      const prefix = `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=`;
-      const value = command.stdout.split(/\s+/).find((token) => token.startsWith(prefix));
-      environment = value
-        ? { [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: value.slice(prefix.length) }
-        : null;
-    }
-  }
+  const environment = readHostGatewayProcessEnvironment(pid, deps);
   return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
 }
 

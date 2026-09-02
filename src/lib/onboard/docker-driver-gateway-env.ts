@@ -21,6 +21,10 @@ import {
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
+  getDockerDriverGatewayConfigIdentity,
+  NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV,
+} from "./docker-driver-gateway-runtime-marker";
+import {
   getOpenShellGatewayManagedServiceLogCommand,
   getOpenShellUserConfigHome,
   hasOpenShellGatewayUserService,
@@ -62,6 +66,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_GATEWAY_CONFIG",
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
+  NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV,
   "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS",
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   "NETAVARK_FW",
@@ -288,6 +293,11 @@ export function buildDockerDriverGatewayEnv({
     allowOpenShell0044PreAuthDatabase:
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
   });
+  const configIdentity = getDockerDriverGatewayConfigIdentity(env);
+  if (!configIdentity.gatewayConfigSha256) {
+    throw new Error("OpenShell gateway config could not be bound to its launch environment");
+  }
+  env[NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV] = configIdentity.gatewayConfigSha256;
   return env;
 }
 

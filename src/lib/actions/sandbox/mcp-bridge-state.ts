@@ -5,7 +5,8 @@ import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../age
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import { getSandboxTargetGatewayName, getSandboxTargetGatewayPort } from "./gateway-target";
+import { assertMcpGatewayProxyDnsDisabled } from "./mcp-bridge/gateway-security";
 import {
   isAgentMcpAdapter,
   MCP_BRIDGE_POLICY_SOURCE,
@@ -234,7 +235,10 @@ export function removeBridgeEntry(sandboxName: string, server: string): void {
   setBridgeState(sandboxName, bridges);
 }
 
-export async function ensureSandboxGatewaySelected(sandboxName: string): Promise<void> {
+export async function ensureSandboxGatewaySelected(
+  sandboxName: string,
+  options: { requireMcpProxyDnsDisabled?: boolean } = {},
+): Promise<void> {
   const gatewayName = getSandboxTargetGatewayName(sandboxName);
   const recovery = await recoverNamedGatewayRuntime({
     gatewayName,
@@ -249,4 +253,7 @@ export async function ensureSandboxGatewaySelected(sandboxName: string): Promise
   // shared metadata and another NemoClaw process may select a sibling between
   // this health check and the provider/policy mutation.
   process.env.OPENSHELL_GATEWAY = gatewayName;
+  if (options.requireMcpProxyDnsDisabled) {
+    assertMcpGatewayProxyDnsDisabled(gatewayName, getSandboxTargetGatewayPort(sandboxName));
+  }
 }

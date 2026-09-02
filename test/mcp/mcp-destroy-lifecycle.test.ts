@@ -8,6 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as adapterRegistration from "../../src/lib/actions/sandbox/mcp-bridge-adapters";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
+import { restoreEnv } from "../helpers/env-test-helpers";
 import * as mcpPolicyPins from "../helpers/mcp-policy-pins";
 import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
 import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
@@ -73,6 +74,9 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
 
 vi.mock("../../src/lib/gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
+}));
+vi.mock("../../src/lib/actions/sandbox/mcp-bridge/gateway-security", () => ({
+  assertMcpGatewayProxyDnsDisabled: vi.fn(),
 }));
 
 vi.mock("../../src/lib/policy", async (importOriginal) => ({
@@ -160,15 +164,6 @@ const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
     addedAt: "2026-06-27T00:00:00.000Z",
   },
 };
-function restoreEnv(name: string, value: string | undefined): void {
-  switch (value) {
-    case undefined:
-      delete process.env[name];
-      break;
-    default:
-      process.env[name] = value;
-  }
-}
 async function captureMessage(action: () => Promise<unknown>): Promise<string> {
   try {
     await action();
@@ -1254,7 +1249,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       url: "https://mcp.example.com/github",
     };
     testState.resolveHostAddresses.mockResolvedValue([
-      { address: "1.1.1.1" }, { address: "8.8.4.4" },
+      { address: "1.1.1.1" },
+      { address: "8.8.4.4" },
     ]);
     const registration = vi
       .spyOn(adapterRegistration, "registerAgentAdapterAtCurrentCredentialRevision")

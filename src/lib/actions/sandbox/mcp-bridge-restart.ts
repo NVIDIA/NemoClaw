@@ -100,7 +100,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, targetEntries);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
-  await ensureSandboxGatewaySelected(sandboxName);
+  await ensureSandboxGatewaySelected(sandboxName, { requireMcpProxyDnsDisabled: true });
   // Validate every generated policy name before inspecting or updating any provider.
   for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const providerInspectionByServer = new Map<string, McpProviderInspection>();
@@ -209,7 +209,7 @@ export async function restoreExistingMcpBridgeRuntime(
   if (options.lifecyclePhase !== "teardown-rollback") {
     assertMcpCredentialBoundaryRuntimeVersion();
   }
-  await ensureSandboxGatewaySelected(sandboxName);
+  await ensureSandboxGatewaySelected(sandboxName, { requireMcpProxyDnsDisabled: true });
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(sandbox);
   if (options.lifecyclePhase === "teardown-rollback") {

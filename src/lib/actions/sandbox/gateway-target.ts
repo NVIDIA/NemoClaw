@@ -4,6 +4,7 @@
 import { GATEWAY_PORT } from "../../core/ports";
 import {
   resolveGatewayName,
+  resolveGatewayPortFromName,
   resolveSandboxGatewayName,
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
@@ -24,6 +25,13 @@ export function getSelectedGatewayName(): string {
 
 export function getSandboxTargetGatewayName(sandboxName = ""): string {
   return getKnownSandboxTargetGatewayName(sandboxName) ?? getSelectedGatewayName();
+}
+
+export function getSandboxTargetGatewayPort(sandboxName = ""): number {
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
+  const gatewayPort = resolveGatewayPortFromName(gatewayName);
+  if (gatewayPort === null) throw new Error(`Invalid resolved gateway name: ${gatewayName}`);
+  return gatewayPort;
 }
 
 /** Resolve a gateway directly from the already-authoritative persisted row. */

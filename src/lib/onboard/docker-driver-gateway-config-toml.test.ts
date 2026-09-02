@@ -114,6 +114,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(toml).toContain('compute_drivers = ["docker"]');
+      expect(toml).toContain("proxy_connect_by_hostname = false");
       expect(toml).toContain('grpc_endpoint = "https://127.0.0.1:8080"');
       expect(toml).toContain(`guest_tls_ca = "${path.join(stateDir, "tls", "ca.crt")}"`);
       expect(toml).toContain(
@@ -143,6 +144,43 @@ describe("docker-driver-gateway config TOML", () => {
         gatewayIdForStateDir(stateDir),
       );
       expect(readRegularFileUtf8(signingKeyPath)).toBe(signingKeyBeforeRestart);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rewrites the exact prior false-by-default proxy setting to explicit false", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-proxy-upgrade-"));
+    try {
+      const env = writeGatewayConfig(stateDir);
+      const configPath = path.join(stateDir, "openshell-gateway.toml");
+      const priorToml = fs
+        .readFileSync(configPath, "utf-8")
+        .replace("proxy_connect_by_hostname = false\n", "");
+      fs.writeFileSync(configPath, priorToml, { mode: 0o600 });
+
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+
+      expect(fs.readFileSync(configPath, "utf-8")).toContain("proxy_connect_by_hostname = false");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an operator-enabled proxy hostname setting without rewriting it", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-proxy-unsafe-"));
+    try {
+      const env = writeGatewayConfig(stateDir);
+      const configPath = path.join(stateDir, "openshell-gateway.toml");
+      const unsafeToml = fs
+        .readFileSync(configPath, "utf-8")
+        .replace("proxy_connect_by_hostname = false", "proxy_connect_by_hostname = true");
+      fs.writeFileSync(configPath, unsafeToml, { mode: 0o600 });
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(/does not match NemoClaw's generated form/);
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(unsafeToml);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

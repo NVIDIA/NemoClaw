@@ -15,6 +15,7 @@ import {
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
+import { NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV } from "./docker-driver-gateway-runtime-marker";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
@@ -74,6 +75,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       OPENSHELL_GATEWAY_CONFIG: "/tmp/nemoclaw-gateway/openshell-gateway.toml",
     });
     expect(env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+    expect(env[NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV]).toMatch(/^[0-9a-f]{64}$/u);
   });
 
   it("uses the Docker driver on macOS without VM helper state", () => {

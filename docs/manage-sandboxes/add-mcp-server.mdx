@@ -178,7 +178,7 @@ OpenShell re-resolves the hostname for each new connection, requires every curre
 
 A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
 
-Any later DNS answer outside the addresses returned during public preflight remains unpinned and fails closed.
+Until a successful `mcp restart` refreshes the public pins, any later DNS answer outside the addresses returned during public preflight remains unpinned and fails closed.
 Cloudflare Quick Tunnels and other endpoints that return only one rotating address or later change beyond that set are not durable managed MCP deployments.
 A named tunnel can stabilize the hostname without stabilizing its address set.
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.

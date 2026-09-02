@@ -583,7 +583,11 @@ function existingGatewayIdentityFromConfig(
       typeof namespace === "string" ? namespace : null,
       canonicalGatewayJwtTtl,
     );
-    if (originalToml !== canonicalToml) {
+    // OpenShell defaults this option to false. Accept the exact prior
+    // NemoClaw form once so an existing managed gateway can be rewritten with
+    // the now-explicit invariant; any explicit true value remains ambiguous.
+    const legacyCanonicalToml = canonicalToml.replace("proxy_connect_by_hostname = false\n", "");
+    if (originalToml !== canonicalToml && originalToml !== legacyCanonicalToml) {
       throw ambiguousGatewayConfig(
         configPath,
         "the config does not match NemoClaw's generated form",
@@ -671,6 +675,9 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
   const dockerEntries: [string, string | boolean | undefined][] = [
     ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
+    // MCP public-address pins are socket-address constraints. Resolving the
+    // hostname again at an HTTPS proxy would bypass that authoritative list.
+    ["proxy_connect_by_hostname", false],
     ["sandbox_namespace", driver === "docker" ? (sandboxNamespace ?? undefined) : undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],

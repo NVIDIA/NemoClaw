@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION = 1;
+export const NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV =
+  "NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256";
 
 export type DockerDriverGatewayRuntimeMarker = {
   version: typeof DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION;
@@ -15,6 +17,10 @@ export type DockerDriverGatewayRuntimeMarker = {
   arch: NodeJS.Architecture;
   endpoint: string;
   desiredEnvHash: string;
+  /** Exact config file used by the launched gateway; absent on legacy markers. */
+  gatewayConfigPath?: string | null;
+  /** Digest of the config bytes present when the gateway was launched. */
+  gatewayConfigSha256?: string | null;
   gatewayBin: string | null;
   openshellVersion: string | null;
   dockerHost: string | null;
@@ -25,6 +31,8 @@ export type DockerDriverGatewayRuntimeMarkerInput = {
   pid: number;
   desiredEnv: Record<string, string>;
   endpoint: string;
+  gatewayConfigPath?: string | null;
+  gatewayConfigSha256?: string | null;
   gatewayBin?: string | null;
   openshellVersion?: string | null;
   dockerHost?: string | null;
@@ -40,6 +48,26 @@ export function hashDockerDriverGatewayEnv(env: Record<string, string>): string 
     .sort()
     .map((key) => [key, env[key]] as const);
   return crypto.createHash("sha256").update(JSON.stringify(stablePairs)).digest("hex");
+}
+
+export function getDockerDriverGatewayConfigIdentity(desiredEnv: Record<string, string>): {
+  gatewayConfigPath: string | null;
+  gatewayConfigSha256: string | null;
+} {
+  const configuredPath = normalizeOptionalString(desiredEnv.OPENSHELL_GATEWAY_CONFIG);
+  if (!configuredPath) return { gatewayConfigPath: null, gatewayConfigSha256: null };
+  const gatewayConfigPath = path.resolve(configuredPath);
+  try {
+    return {
+      gatewayConfigPath,
+      gatewayConfigSha256: crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(gatewayConfigPath))
+        .digest("hex"),
+    };
+  } catch {
+    return { gatewayConfigPath, gatewayConfigSha256: null };
+  }
 }
 
 function normalizeOptionalString(value: string | null | undefined): string | null {
@@ -61,6 +89,8 @@ export function buildDockerDriverGatewayRuntimeMarker({
   pid,
   desiredEnv,
   endpoint,
+  gatewayConfigPath,
+  gatewayConfigSha256,
   gatewayBin = null,
   openshellVersion = null,
   dockerHost = null,
@@ -68,6 +98,13 @@ export function buildDockerDriverGatewayRuntimeMarker({
   arch = process.arch,
   createdAt = new Date().toISOString(),
 }: DockerDriverGatewayRuntimeMarkerInput): DockerDriverGatewayRuntimeMarker {
+  const configIdentity =
+    gatewayConfigPath === undefined && gatewayConfigSha256 === undefined
+      ? getDockerDriverGatewayConfigIdentity(desiredEnv)
+      : {
+          gatewayConfigPath: normalizeOptionalString(gatewayConfigPath),
+          gatewayConfigSha256: normalizeOptionalString(gatewayConfigSha256),
+        };
   return {
     version: DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION,
     pid,
@@ -76,6 +113,7 @@ export function buildDockerDriverGatewayRuntimeMarker({
     arch,
     endpoint,
     desiredEnvHash: hashDockerDriverGatewayEnv(desiredEnv),
+    ...configIdentity,
     gatewayBin: normalizeGatewayBin(gatewayBin),
     openshellVersion: normalizeOptionalString(openshellVersion),
     dockerHost: normalizeOptionalString(dockerHost),
@@ -94,6 +132,12 @@ function isRuntimeMarker(value: unknown): value is DockerDriverGatewayRuntimeMar
     typeof marker.arch === "string" &&
     typeof marker.endpoint === "string" &&
     typeof marker.desiredEnvHash === "string" &&
+    (marker.gatewayConfigPath === undefined ||
+      typeof marker.gatewayConfigPath === "string" ||
+      marker.gatewayConfigPath === null) &&
+    (marker.gatewayConfigSha256 === undefined ||
+      typeof marker.gatewayConfigSha256 === "string" ||
+      marker.gatewayConfigSha256 === null) &&
     (typeof marker.gatewayBin === "string" || marker.gatewayBin === null) &&
     (typeof marker.openshellVersion === "string" || marker.openshellVersion === null) &&
     (typeof marker.dockerHost === "string" || marker.dockerHost === null) &&
@@ -185,6 +229,18 @@ export function getDockerDriverGatewayRuntimeMarkerDrift(
   }
   if (marker.desiredEnvHash !== desired.desiredEnvHash) {
     return { reason: "runtime marker env hash does not match desired Docker-driver env" };
+  }
+  if (
+    marker.gatewayConfigPath !== undefined &&
+    marker.gatewayConfigPath !== desired.gatewayConfigPath
+  ) {
+    return { reason: "runtime marker gateway config path does not match desired config" };
+  }
+  if (
+    marker.gatewayConfigSha256 !== undefined &&
+    marker.gatewayConfigSha256 !== desired.gatewayConfigSha256
+  ) {
+    return { reason: "runtime marker gateway config digest does not match desired config" };
   }
   if (marker.gatewayBin !== desired.gatewayBin) {
     return {

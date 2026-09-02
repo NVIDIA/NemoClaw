@@ -3,10 +3,9 @@
 
 import { isDeepStrictEqual } from "node:util";
 
-import YAML from "yaml";
-
 import type { McpBridgeEntry } from "../../state/registry";
 import * as policies from "../../policy";
+import { parseOpenShellPolicy } from "../../policy/merge";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
@@ -59,9 +58,9 @@ export interface McpRebuildPreparation {
   assertDeleteEdgeUnchanged?: () => void;
 }
 
-function policyDocumentsMatch(left: string, right: string): boolean {
+export function mcpTeardownPoliciesMatch(left: string, right: string): boolean {
   try {
-    return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
+    return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
   } catch {
     return false;
   }
@@ -85,7 +84,7 @@ function assertMcpTeardownPolicyUnchanged(
   const currentPolicy = getSandboxPolicy(sandboxName, {
     recordedGatewayOperation: "verify the live policy before MCP teardown",
   }).yaml;
-  if (!currentPolicy || !policyDocumentsMatch(currentPolicy, expectedTeardownPolicy)) {
+  if (!currentPolicy || !mcpTeardownPoliciesMatch(currentPolicy, expectedTeardownPolicy)) {
     throw new McpBridgeError(
       `OpenShell policy changed while preparing MCP teardown for sandbox '${sandboxName}'. Refusing sandbox deletion.`,
     );

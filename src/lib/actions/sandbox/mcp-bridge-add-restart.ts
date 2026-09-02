@@ -305,7 +305,7 @@ async function addMcpBridgeUnlocked(
   // Bind the static credential-name deny-list to the OpenShell binary before
   // persisting ownership or mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
-  await ensureSandboxGatewaySelected(sandboxName);
+  await ensureSandboxGatewaySelected(sandboxName, { requireMcpProxyDnsDisabled: true });
   if (!existingEntry) {
     await withMcpCredentialOwnershipLock(() => {
       // Publish the durable MCP reservation under the same cross-command lock

@@ -1,0 +1,194 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+
+const processProofs = vi.hoisted(() => ({
+  externalOwnershipFailure: vi.fn<() => string | null>(() => null),
+  processEnvironment: vi.fn<() => Record<string, string> | null>(() => null),
+  serviceIdentity: vi.fn<() => { pid: number; executablePath: string | null } | null>(() => null),
+  standaloneOwnershipFailure: vi.fn<() => string | null>(() => null),
+}));
+
+vi.mock("../../onboard/host-gateway-process", () => ({
+  externallySupervisedHostGatewayProcessOwnershipFailure: processProofs.externalOwnershipFailure,
+  readHostGatewayProcessEnvironment: processProofs.processEnvironment,
+  scopedHostGatewayProcessOwnershipFailure: processProofs.standaloneOwnershipFailure,
+}));
+vi.mock("../../onboard/docker-driver-gateway-service", () => ({
+  getTrustedActiveOpenShellGatewayUserServiceIdentity: processProofs.serviceIdentity,
+}));
+
+import {
+  buildDockerDriverGatewayRuntimeMarker,
+  getDockerDriverGatewayConfigIdentity,
+  NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV,
+  writeDockerDriverGatewayRuntimeMarker,
+} from "../../onboard/docker-driver-gateway-runtime-marker";
+import { assertMcpGatewayProxyDnsDisabled } from "./mcp-bridge/gateway-security";
+
+const originalStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+
+function gatewayConfig(proxyMode?: boolean): string {
+  return [
+    "[openshell]",
+    "version = 1",
+    "",
+    "[openshell.gateway]",
+    'compute_drivers = ["docker"]',
+    "",
+    "[openshell.drivers.docker]",
+    ...(proxyMode === undefined ? [] : [`proxy_connect_by_hostname = ${String(proxyMode)}`]),
+    "",
+  ].join("\n");
+}
+
+function writeRuntimeIdentity(
+  stateDir: string,
+  config: string,
+  mutateMarker: (marker: ReturnType<typeof buildDockerDriverGatewayRuntimeMarker>) => void = () =>
+    undefined,
+): string {
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(stateDir, 0o700);
+  const configPath = path.join(stateDir, "openshell-gateway.toml");
+  fs.writeFileSync(configPath, config, { mode: 0o600 });
+  const marker = buildDockerDriverGatewayRuntimeMarker({
+    pid: process.pid,
+    desiredEnv: { OPENSHELL_GATEWAY_CONFIG: configPath },
+    endpoint: "https://127.0.0.1:8080",
+  });
+  mutateMarker(marker);
+  writeDockerDriverGatewayRuntimeMarker(path.join(stateDir, "runtime.json"), marker);
+  process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+  return configPath;
+}
+
+afterEach(() => {
+  restoreEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", originalStateDir);
+  processProofs.externalOwnershipFailure.mockReset().mockReturnValue(null);
+  processProofs.processEnvironment.mockReset().mockReturnValue(null);
+  processProofs.serviceIdentity.mockReset().mockReturnValue(null);
+  processProofs.standaloneOwnershipFailure.mockReset().mockReturnValue(null);
+});
+
+describe("managed MCP gateway proxy DNS boundary", () => {
+  it("accepts an explicit false setting bound to the launch marker", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      writeRuntimeIdentity(stateDir, gatewayConfig(false));
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts the false-by-default setting and its canonical rewrite for a legacy marker", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      const makeLegacy = (marker: ReturnType<typeof buildDockerDriverGatewayRuntimeMarker>) => {
+        delete marker.gatewayConfigPath;
+        delete marker.gatewayConfigSha256;
+      };
+      writeRuntimeIdentity(stateDir, gatewayConfig(), makeLegacy);
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+
+      writeRuntimeIdentity(stateDir, gatewayConfig(false), makeLegacy);
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects proxy hostname resolution before MCP mutation", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      writeRuntimeIdentity(stateDir, gatewayConfig(true));
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /enables proxy hostname resolution/,
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects config bytes that changed after gateway launch", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      const configPath = writeRuntimeIdentity(stateDir, gatewayConfig(false));
+      fs.appendFileSync(configPath, "# post-launch change\n");
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /does not match the config recorded at gateway launch/,
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unproven selected process even when the file says false", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      writeRuntimeIdentity(stateDir, gatewayConfig(false));
+      processProofs.standaloneOwnershipFailure.mockReturnValue("process identity does not match");
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /process identity does not match/,
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a trusted package-managed process bound to the current config", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      const configPath = writeRuntimeIdentity(stateDir, gatewayConfig(false));
+      const configSha256 = getDockerDriverGatewayConfigIdentity({
+        OPENSHELL_GATEWAY_CONFIG: configPath,
+      }).gatewayConfigSha256;
+      processProofs.standaloneOwnershipFailure.mockReturnValue("standalone PID file is absent");
+      processProofs.serviceIdentity.mockReturnValue({
+        pid: process.pid,
+        executablePath: "/usr/bin/openshell-gateway",
+      });
+      processProofs.processEnvironment.mockReturnValue({
+        OPENSHELL_GATEWAY_CONFIG: configPath,
+        [NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV]: configSha256 ?? "",
+      });
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a package-managed process whose launch digest differs", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      const configPath = writeRuntimeIdentity(stateDir, gatewayConfig(false));
+      processProofs.standaloneOwnershipFailure.mockReturnValue("standalone PID file is absent");
+      processProofs.serviceIdentity.mockReturnValue({
+        pid: process.pid,
+        executablePath: "/usr/bin/openshell-gateway",
+      });
+      processProofs.processEnvironment.mockReturnValue({
+        OPENSHELL_GATEWAY_CONFIG: configPath,
+        [NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV]: "0".repeat(64),
+      });
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /managed service config differs from its launch environment/,
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+});
