@@ -89,14 +89,19 @@ describe("gateway route mutation lock", () => {
   it("makes sync and async operations contend in the same explicit nondefault state directory", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-gateway-cross-mode-"));
     const outsideLockContext = new AsyncResource("gateway-route-cross-mode-test");
-    const options = { stateDir, pollIntervalMs: 1, timeoutMs: 25 };
+    const options = { stateDir, pollIntervalMs: 1, timeoutMs: 5_000 };
+    const contentionOptions = { ...options, timeoutMs: 25 };
     try {
       await withGatewayRouteMutationLock(
         "nemoclaw-18080",
         () => {
           expect(() =>
             outsideLockContext.runInAsyncScope(() =>
-              withGatewayRouteMutationLockSync("nemoclaw-18080", () => "must-not-enter", options),
+              withGatewayRouteMutationLockSync(
+                "nemoclaw-18080",
+                () => "must-not-enter",
+                contentionOptions,
+              ),
             ),
           ).toThrow();
         },
