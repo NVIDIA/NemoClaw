@@ -66,11 +66,10 @@ describe("staging Launchable maintainer guidance", () => {
   });
 
   it("binds image and environment identity before manual validation (#8924)", () => {
-    expect(launchable).toContain(
-      "`producer.runId` equal to the producer run ID selected by the automated job",
-    );
-    expect(launchable).toContain("`fullE2e` equal to `passed`");
-    expect(launchable).toContain("`boot.bootImage` from `launchable-e2e.json`");
+    expect(launchable).toContain("references/launchable-evidence.md");
+    expect(launchable).toContain("Stop unless the");
+    expect(launchable).toContain("inspection succeeds");
+    expect(launchable).toContain("returned boot image and producer");
     expect(launchable).toContain("Use the supplied environment ID as the authoritative identity");
     expect(launchable).toContain(
       "Use an instance-name lookup only when no environment ID is available",

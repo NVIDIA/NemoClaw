@@ -364,7 +364,7 @@ export function workflowRunsApiArgs(candidate: string): string[] {
     "github.com",
     "--paginate",
     "--slurp",
-    `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${candidate}`,
+    `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100`,
   ];
 }
 

@@ -284,7 +284,7 @@ describe("Launchable evidence inspection", () => {
       inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, files(change))),
     ).toThrow(),
   );
-  it("bounds paginated workflow runs to the candidate (#10798)", () => {
+  it("reads paginated trusted runs without workflow-SHA candidate filtering (#10798)", () => {
     const runs = workflowRunsFromPages([
       { workflow_runs: [run(10, "2026-06-01T00:00:00Z")] },
       { workflow_runs: [run(11, "2026-07-01T00:00:00Z")] },
@@ -299,7 +299,7 @@ describe("Launchable evidence inspection", () => {
       new Set([
         "--paginate",
         "--slurp",
-        `repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${SHA}`,
+        "repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100",
       ]),
     );
     expect(

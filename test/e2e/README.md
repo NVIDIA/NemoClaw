@@ -1346,7 +1346,8 @@ These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, report the recorded workspace
 name and ID, and follow the
 [ID-bound recovery procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/launchable-evidence.md#recover-incomplete-cleanup).
-Rotate or revoke each credential to remove later access.
+Rotate or revoke `NVIDIA_INFERENCE_API_KEY`. Rotate or revoke `BREV_API_KEY` and
+`NEMOCLAW_IMAGE_DISPATCH_TOKEN` only if the trusted host boundary was compromised.
 For an NVIDIA-owned PR revision, the job builds and runs the candidate commit with this same credential boundary.
 The PR branch must be in `NVIDIA/NemoClaw` because the image producer does not accept a sibling-repository candidate.
 

@@ -28,13 +28,13 @@ Do not reconstruct the checks manually.
 The inspector selects the newest completed `Exact staging Brev Launchable` job whose
 workflow run meets these conditions. It accepts evidence only when that job succeeded:
 
-- `head_sha` equals the candidate SHA;
 - `path` is `.github/workflows/e2e.yaml`;
 - `head_branch` is `main`;
 - `event` is `workflow_dispatch`; and
 - the job is completed.
 
-The artifact name binds the candidate, run, and attempt:
+A historical candidate may be tested by a later trusted `main` dispatch, so the workflow run SHA need
+not equal the candidate. The artifact name and its contents bind the candidate, run, and attempt:
 
 ```text
 staging-brev-launchable-<candidate-sha>-<run-id>-<attempt>
