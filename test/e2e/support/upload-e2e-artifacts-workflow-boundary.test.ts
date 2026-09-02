@@ -230,16 +230,13 @@ describe("E2E artifact uploads", () => {
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "messaging-providers upload-e2e-artifacts invocation must not override its contract",
-        "messaging-providers upload-e2e-artifacts must use the action defaults",
-        "messaging-providers default upload caller must declare a valid E2E_TARGET_ID",
+        "messaging-providers upload-e2e-artifacts must preserve its explicit name/path contract",
         "hermes-gpu-startup upload-e2e-artifacts must preserve its explicit name/path contract",
         "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "openshell-gateway-auth-contract upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
         "shared-e2e must not declare E2E_JOB",
         "shared-e2e upload-e2e-artifacts invocation must not override its contract",
-        "shared-e2e default upload caller E2E_TARGET_ID must be '${{ matrix.id }}'",
         "messaging-providers upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
       ]),
     );

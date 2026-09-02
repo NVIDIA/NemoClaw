@@ -525,11 +525,13 @@ async function assertOpenClawAgentTurn(
   expect(leaked, `Proxy hop headers leaked to upstream: ${leaked.join(",")}`).toEqual([]);
 }
 
-test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local", {
+test(
+  "messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and register messaging cleanup",
+      "confirm the selected runtime and register messaging cleanup",
       "clear prior messaging state and start the compatible endpoint",
       "confirm host reachability to the compatible endpoint",
       "onboard Telegram-enabled OpenClaw",
@@ -538,20 +540,12 @@ test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inf
       "record authenticated traffic and proxy-header results",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-messaging-compatible-endpoint",
-    env: commandEnv(),
-    timeoutMs: 30_000,
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-messaging-compatible-endpoint",
+      scenarioLabel: "messaging compatible endpoint",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for messaging compatible endpoint E2E: ${resultText(docker)}`,
-      );
-    }
-    skip("Docker is required for messaging compatible endpoint E2E");
-  }
 
   await artifacts.target.declare({
     id: "messaging-compatible-endpoint",
@@ -670,7 +664,7 @@ test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inf
     runner,
     endpointUrl,
     assertions: {
-      dockerRunning: docker.exitCode === 0,
+        runtimeProviderAvailable: true,
       mockReachable: hostReachability.exitCode === 0,
       onboardCompleted: onboard.exitCode === 0,
       providerRegistered: provider.exitCode === 0,
@@ -682,4 +676,5 @@ test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inf
       ),
     },
   });
-});
+  },
+);

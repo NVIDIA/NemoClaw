@@ -4,7 +4,11 @@
 import os from "node:os";
 import path from "node:path";
 
-import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import {
+  type McpLifecycleLockOptions,
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../state/mcp-lifecycle-lock";
 import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
 
 const GATEWAY_ROUTE_LOCK_PREFIX = "gateway-route:";
@@ -27,6 +31,20 @@ export function withGatewayRouteMutationLock<T>(
   const normalizedGatewayName = gatewayName.trim();
   if (!normalizedGatewayName) throw new Error("OpenShell gateway name is required.");
   return withMcpLifecycleLock(
+    `${GATEWAY_ROUTE_LOCK_PREFIX}${normalizedGatewayName}`,
+    operation,
+    options,
+  );
+}
+
+export function withGatewayRouteMutationLockSync<T>(
+  gatewayName: string,
+  operation: () => T,
+  options: McpLifecycleLockOptions = {},
+): T {
+  const normalizedGatewayName = gatewayName.trim();
+  if (!normalizedGatewayName) throw new Error("OpenShell gateway name is required.");
+  return withMcpLifecycleLockSync(
     `${GATEWAY_ROUTE_LOCK_PREFIX}${normalizedGatewayName}`,
     operation,
     options,

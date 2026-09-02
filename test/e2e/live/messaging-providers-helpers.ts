@@ -21,8 +21,10 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 export { CLI_ENTRYPOINT, expectExitZero, REPO_ROOT };
@@ -235,7 +237,16 @@ export function assertDiscordGatewayCapture(captureFile: string, expectedToken: 
   expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
 }
 
-export type FakeDockerApiKind = "slack" | "telegram" | "wechat" | "discord-gateway";
+export type FakeDockerApiKind =
+  | "slack"
+  | "slack-app"
+  | "slack-bot"
+  | "slack-rest"
+  | "slack-websocket"
+  | "telegram"
+  | "wechat"
+  | "discord-gateway"
+  | "discord-message";
 
 export type FakeDockerApi = {
   kind: FakeDockerApiKind;
@@ -447,7 +458,14 @@ export function messagingEnv(): MessagingEnv {
     env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   }
 
-  return { env, tokens, telegramIds, telegramAllowlistKey, slackIds, wechatAccount };
+  return {
+    env,
+    tokens,
+    telegramIds,
+    telegramAllowlistKey,
+    slackIds,
+    wechatAccount,
+  };
 }
 
 export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<void> {
@@ -653,7 +671,10 @@ export async function readOpenClawConfig(
 import json
 print(json.dumps(json.load(open('/sandbox/.openclaw/openclaw.json'))))
 PY`,
-    { artifactName: "read-openclaw-config-messaging-providers", redactionValues },
+    {
+      artifactName: "read-openclaw-config-messaging-providers",
+      redactionValues,
+    },
   );
   expectExitZero(result, "read openclaw.json");
   return JSON.parse(result.stdout.trim()) as OpenClawConfig;
@@ -694,7 +715,10 @@ export async function sandboxOutput(
   artifactName: string,
   redactionValues: string[],
 ): Promise<string> {
-  const result = await runSandboxShell(sandbox, script, { artifactName, redactionValues });
+  const result = await runSandboxShell(sandbox, script, {
+    artifactName,
+    redactionValues,
+  });
   expectExitZero(result, artifactName);
   return result.stdout.trim();
 }
@@ -720,7 +744,7 @@ if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
 }
 
 async function captureFakeApiContainerDiagnostics(
-  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   kind: FakeDockerApiKind,
   component: "api" | "api-proxy",
   container: string,
@@ -728,7 +752,7 @@ async function captureFakeApiContainerDiagnostics(
   redactionValues: string[],
 ): Promise<void> {
   await runSecondaryCleanup(async () => {
-    await runHost(host, "docker", ["inspect", "--format", "{{json .State}}", container], {
+    await runtimeProvider.command(["inspect", "--format", "{{json .State}}", container], {
       artifactName: `diagnose-fake-${kind}-${component}-state`,
       env,
       redactionValues,
@@ -736,7 +760,7 @@ async function captureFakeApiContainerDiagnostics(
     });
   });
   await runSecondaryCleanup(async () => {
-    await runHost(host, "docker", ["logs", "--tail", "100", container], {
+    await runtimeProvider.command(["logs", "--tail", "100", container], {
       artifactName: `diagnose-fake-${kind}-${component}-logs`,
       env,
       redactionValues,
@@ -747,19 +771,18 @@ async function captureFakeApiContainerDiagnostics(
 
 async function requireFakeApiProxyReady(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   options: {
     kind: FakeDockerApiKind;
     proxyContainer: string;
-    bridgeAddress: string;
+    probeAddress: string;
     readinessPort: string;
     captureDiagnostics: () => Promise<void>;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
   },
 ): Promise<void> {
-  const running = await runHost(
-    host,
-    "docker",
+  const running = await runtimeProvider.command(
     ["inspect", "--format", "{{.State.Running}}", options.proxyContainer],
     {
       artifactName: `inspect-fake-${options.kind}-api-proxy-readiness`,
@@ -773,7 +796,7 @@ async function requireFakeApiProxyReady(
       ? await runHost(
           host,
           "node",
-          ["-e", FAKE_API_PROXY_READINESS_SOURCE, options.bridgeAddress, options.readinessPort],
+          ["-e", FAKE_API_PROXY_READINESS_SOURCE, options.probeAddress, options.readinessPort],
           {
             artifactName: `probe-fake-${options.kind}-api-proxy-readiness`,
             env: options.env,
@@ -791,9 +814,11 @@ async function requireFakeApiProxyReady(
 }
 
 type DockerContainerInspect = {
+  BoundingCaps?: unknown;
   Config?: {
     Env?: unknown;
   };
+  EffectiveCaps?: unknown;
   Name?: unknown;
   HostConfig?: {
     CapDrop?: unknown;
@@ -806,6 +831,10 @@ type DockerContainerInspect = {
     Ports?: unknown;
   };
 };
+
+function containerName(record: DockerContainerInspect): string | undefined {
+  return typeof record.Name === "string" ? record.Name.replace(/^\/+/u, "") : undefined;
+}
 
 function containerNetworks(record: DockerContainerInspect): string[] {
   const networks = record.NetworkSettings?.Networks;
@@ -860,22 +889,20 @@ function environmentContainsCredential(entries: string[], redactionValues: strin
   );
 }
 
-async function requireFakeApiDockerTopology(
-  host: HostCliClient,
+async function requireFakeApiRuntimeTopology(
+  runtimeProvider: RuntimeProviderPrerequisite,
   options: {
     kind: FakeDockerApiKind;
     apiContainer: string;
     proxyContainer: string;
     network: string;
-    openshellBridgeAddress: string;
+    proxyPublishAddress: string;
     proxyPorts: readonly number[];
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
   },
 ): Promise<void> {
-  const containerInspect = await runHost(
-    host,
-    "docker",
+  const containerInspect = await runtimeProvider.command(
     ["inspect", options.apiContainer, options.proxyContainer],
     {
       artifactName: `inspect-fake-${options.kind}-api-topology`,
@@ -885,7 +912,7 @@ async function requireFakeApiDockerTopology(
     },
   );
   expectExitZero(containerInspect, `inspect fake ${options.kind} API topology`);
-  const networkInspect = await runHost(host, "docker", ["network", "inspect", options.network], {
+  const networkInspect = await runtimeProvider.command(["network", "inspect", options.network], {
     artifactName: `inspect-fake-${options.kind}-api-network`,
     env: options.env,
     redactionValues: options.redactionValues,
@@ -899,11 +926,13 @@ async function requireFakeApiDockerTopology(
     containers = JSON.parse(containerInspect.stdout);
     networks = JSON.parse(networkInspect.stdout);
   } catch {
-    throw new Error(`fake ${options.kind} API Docker topology inspection returned invalid JSON`);
+    throw new Error(
+      `fake ${options.kind} API ${runtimeProvider.displayName} topology inspection returned invalid JSON`,
+    );
   }
   const records = Array.isArray(containers) ? (containers as DockerContainerInspect[]) : [];
-  const api = records.find((record) => record.Name === `/${options.apiContainer}`);
-  const proxy = records.find((record) => record.Name === `/${options.proxyContainer}`);
+  const api = records.find((record) => containerName(record) === options.apiContainer);
+  const proxy = records.find((record) => containerName(record) === options.proxyContainer);
   const networkRecord = Array.isArray(networks) && networks.length === 1 ? networks[0] : undefined;
   const apiNetworks = api === undefined ? [] : containerNetworks(api);
   const proxyNetworks = proxy === undefined ? [] : containerNetworks(proxy);
@@ -916,37 +945,51 @@ async function requireFakeApiDockerTopology(
   const inspectedProxyEnvironment = proxy?.Config?.Env;
   const proxyEnvironmentValid = isStringArray(inspectedProxyEnvironment);
   const proxyEnvironment = proxyEnvironmentValid ? inspectedProxyEnvironment : [];
-  const networkDriver =
-    networkRecord !== null &&
-    typeof networkRecord === "object" &&
-    typeof (networkRecord as { Driver?: unknown }).Driver === "string"
-      ? (networkRecord as { Driver: string }).Driver
+  const networkFields =
+    networkRecord !== null && typeof networkRecord === "object"
+      ? (networkRecord as {
+          Driver?: unknown;
+          Internal?: unknown;
+          driver?: unknown;
+          internal?: unknown;
+        })
       : undefined;
+  const networkDriver =
+    runtimeProvider.id === "podman" ? networkFields?.driver : networkFields?.Driver;
   const networkInternal =
-    networkRecord !== null &&
-    typeof networkRecord === "object" &&
-    (networkRecord as { Internal?: unknown }).Internal === true;
+    runtimeProvider.id === "podman"
+      ? networkFields?.internal === true
+      : networkFields?.Internal === true;
+  const proxyCapabilitiesDropped =
+    runtimeProvider.id === "podman"
+      ? proxyCapabilityDrops.length > 0 &&
+        proxy?.EffectiveCaps === null &&
+        proxy?.BoundingCaps === null
+      : proxyCapabilityDrops.includes("ALL");
+  const defaultNetwork = runtimeProvider.id === "podman" ? "podman" : "bridge";
   if (
     api === undefined ||
     proxy === undefined ||
     networkDriver !== "bridge" ||
     !networkInternal ||
     JSON.stringify(apiNetworks) !== JSON.stringify([options.network]) ||
-    JSON.stringify(proxyNetworks) !== JSON.stringify(["bridge", options.network].sort()) ||
+    JSON.stringify(proxyNetworks) !== JSON.stringify([defaultNetwork, options.network].sort()) ||
     apiBindings.length !== 0 ||
     JSON.stringify(observedContainerPorts) !== JSON.stringify(expectedContainerPorts) ||
     proxyBindings.some(
       ({ hostAddress, hostPort }) =>
-        hostAddress !== options.openshellBridgeAddress || !/^\d+$/u.test(hostPort),
+        hostAddress !== options.proxyPublishAddress || !/^\d+$/u.test(hostPort),
     ) ||
     proxy?.HostConfig?.ReadonlyRootfs !== true ||
-    !proxyCapabilityDrops.includes("ALL") ||
+    !proxyCapabilitiesDropped ||
     !proxySecurityOptions.includes("no-new-privileges") ||
     !proxyEnvironmentValid ||
     environmentContainsCredential(proxyEnvironment, options.redactionValues) ||
     proxy?.HostConfig?.PidsLimit !== 32
   ) {
-    throw new Error(`fake ${options.kind} API Docker topology did not preserve isolation`);
+    throw new Error(
+      `fake ${options.kind} API ${runtimeProvider.displayName} topology did not preserve isolation`,
+    );
   }
 }
 
@@ -959,12 +1002,20 @@ export async function startFakeDockerApi(
     nodeArgs?: readonly string[];
     containerPrefix: string;
     portEnv: string;
+    portFileEnv?: string;
     captureFileEnv: string;
     expectedEnv: Record<string, string>;
     redactionValues: string[];
     env: NodeJS.ProcessEnv;
   },
 ): Promise<FakeDockerApi> {
+  const runtimeProvider = new RuntimeProviderPrerequisite(
+    host,
+    (reason) => {
+      throw new Error(reason);
+    },
+    options.env,
+  );
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
   const captureFile = path.join(dir, "capture.jsonl");
@@ -978,52 +1029,54 @@ export async function startFakeDockerApi(
     await fs.promises.rm(dir, { recursive: true, force: true });
   });
 
-  const openshellNetwork =
-    options.env.OPENSHELL_DOCKER_NETWORK_NAME ??
-    process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
-    DEFAULT_OPENSHELL_DOCKER_NETWORK;
-  const openshellNetworkInspect = await runHost(
-    host,
-    "docker",
-    ["network", "inspect", openshellNetwork],
-    {
-      artifactName: `inspect-fake-${options.kind}-openshell-network`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  expectExitZero(openshellNetworkInspect, "inspect OpenShell Docker network");
-  let openshellNetworkRecords: unknown;
-  try {
-    openshellNetworkRecords = JSON.parse(openshellNetworkInspect.stdout);
-  } catch {
-    throw new Error("OpenShell Docker network inspection returned invalid JSON");
-  }
-  const openshellBridgeAddresses =
-    Array.isArray(openshellNetworkRecords) && openshellNetworkRecords.length === 1
-      ? ((
-          openshellNetworkRecords[0] as {
-            Driver?: unknown;
-            IPAM?: { Config?: Array<{ Gateway?: unknown }> };
-          }
-        ).IPAM?.Config?.flatMap((entry) =>
-          typeof entry.Gateway === "string" && isIPv4(entry.Gateway) ? [entry.Gateway] : [],
-        ) ?? [])
-      : [];
-  const openshellBridgeAddress =
-    openshellBridgeAddresses.length === 1 ? openshellBridgeAddresses[0] : undefined;
-  if (
-    (openshellNetworkRecords as Array<{ Driver?: unknown }> | undefined)?.[0]?.Driver !==
-      "bridge" ||
-    typeof openshellBridgeAddress !== "string"
-  ) {
-    throw new Error("OpenShell Docker network must expose exactly one IPv4 bridge gateway");
+  let proxyPublishAddress = "0.0.0.0";
+  let proxyProbeAddress = "127.0.0.1";
+  if (runtimeProvider.id === "docker") {
+    const openshellNetwork =
+      options.env.OPENSHELL_DOCKER_NETWORK_NAME ??
+      process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
+      DEFAULT_OPENSHELL_DOCKER_NETWORK;
+    const openshellNetworkInspect = await runtimeProvider.command(
+      ["network", "inspect", openshellNetwork],
+      {
+        artifactName: `inspect-fake-${options.kind}-openshell-network`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
+    expectExitZero(openshellNetworkInspect, "inspect OpenShell Docker network");
+    let openshellNetworkRecords: unknown;
+    try {
+      openshellNetworkRecords = JSON.parse(openshellNetworkInspect.stdout);
+    } catch {
+      throw new Error("OpenShell Docker network inspection returned invalid JSON");
+    }
+    const openshellBridgeAddresses =
+      Array.isArray(openshellNetworkRecords) && openshellNetworkRecords.length === 1
+        ? ((
+            openshellNetworkRecords[0] as {
+              Driver?: unknown;
+              IPAM?: { Config?: Array<{ Gateway?: unknown }> };
+            }
+          ).IPAM?.Config?.flatMap((entry) =>
+            typeof entry.Gateway === "string" && isIPv4(entry.Gateway) ? [entry.Gateway] : [],
+          ) ?? [])
+        : [];
+    const openshellBridgeAddress =
+      openshellBridgeAddresses.length === 1 ? openshellBridgeAddresses[0] : undefined;
+    if (
+      (openshellNetworkRecords as Array<{ Driver?: unknown }> | undefined)?.[0]?.Driver !==
+        "bridge" ||
+      typeof openshellBridgeAddress !== "string"
+    ) {
+      throw new Error("OpenShell Docker network must expose exactly one IPv4 bridge gateway");
+    }
+    proxyPublishAddress = openshellBridgeAddress;
+    proxyProbeAddress = openshellBridgeAddress;
   }
 
-  const networkCreate = await runHost(
-    host,
-    "docker",
+  const networkCreate = await runtimeProvider.command(
     ["network", "create", "--internal", network],
     {
       artifactName: `create-fake-${options.kind}-api-network`,
@@ -1034,7 +1087,7 @@ export async function startFakeDockerApi(
   );
   expectExitZero(networkCreate, `create fake ${options.kind} API network`);
   cleanup(`remove ${network}`, async () => {
-    const remove = await runHost(host, "docker", ["network", "rm", network], {
+    const remove = await runtimeProvider.command(["network", "rm", network], {
       artifactName: `cleanup-${network}`,
       env: options.env,
       redactionValues: options.redactionValues,
@@ -1045,7 +1098,7 @@ export async function startFakeDockerApi(
     }
   });
 
-  const dockerArgs = [
+  const runtimeArgs = [
     "run",
     "-d",
     "--name",
@@ -1054,14 +1107,17 @@ export async function startFakeDockerApi(
     network,
     "-e",
     `${options.portEnv}=8080`,
+    ...(options.portFileEnv ? ["-e", `${options.portFileEnv}=/tmp/fake/port`] : []),
     "-e",
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
-  if (options.kind === "slack") dockerArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
-  for (const [key, value] of Object.entries(options.expectedEnv)) {
-    dockerArgs.push("-e", `${key}=${value}`);
+  if (options.kind === "slack") {
+    runtimeArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
   }
-  dockerArgs.push(
+  for (const [key, value] of Object.entries(options.expectedEnv)) {
+    runtimeArgs.push("-e", `${key}=${value}`);
+  }
+  runtimeArgs.push(
     "-v",
     `${dir}:/tmp/fake`,
     "-v",
@@ -1077,7 +1133,7 @@ export async function startFakeDockerApi(
     if (apiDiagnosticsCaptured) return;
     apiDiagnosticsCaptured = true;
     await captureFakeApiContainerDiagnostics(
-      host,
+      runtimeProvider,
       options.kind,
       "api",
       container,
@@ -1086,19 +1142,23 @@ export async function startFakeDockerApi(
     );
   };
   cleanup(`remove ${container}`, async () => {
-    await captureApiDiagnostics();
-    const remove = await runHost(host, "docker", ["rm", "-f", container], {
-      artifactName: `cleanup-${container}`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 60_000,
-    });
-    if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
-      expectExitZero(remove, `remove fake ${options.kind} API container ${container}`);
+    try {
+      await captureApiDiagnostics();
+      const remove = await runtimeProvider.command(["rm", "--force", container], {
+        artifactName: `cleanup-${container}`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 60_000,
+      });
+      if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
+        expectExitZero(remove, `remove fake ${options.kind} API container ${container}`);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  const start = await runHost(host, "docker", dockerArgs, {
+  const start = await runtimeProvider.command(runtimeArgs, {
     artifactName: `start-fake-${options.kind}-api`,
     env: options.env,
     redactionValues: options.redactionValues,
@@ -1111,7 +1171,7 @@ export async function startFakeDockerApi(
     if (proxyDiagnosticsCaptured) return;
     proxyDiagnosticsCaptured = true;
     await captureFakeApiContainerDiagnostics(
-      host,
+      runtimeProvider,
       options.kind,
       "api-proxy",
       proxyContainer,
@@ -1121,7 +1181,7 @@ export async function startFakeDockerApi(
   };
   cleanup(`remove ${proxyContainer}`, async () => {
     await captureProxyDiagnostics();
-    const remove = await runHost(host, "docker", ["rm", "-f", proxyContainer], {
+    const remove = await runtimeProvider.command(["rm", "--force", proxyContainer], {
       artifactName: `cleanup-${proxyContainer}`,
       env: options.env,
       redactionValues: options.redactionValues,
@@ -1132,9 +1192,7 @@ export async function startFakeDockerApi(
     }
   });
 
-  const proxyStart = await runHost(
-    host,
-    "docker",
+  const proxyStart = await runtimeProvider.command(
     [
       "run",
       "-d",
@@ -1142,7 +1200,7 @@ export async function startFakeDockerApi(
       proxyContainer,
       "--network",
       "bridge",
-      ...proxyPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
+      ...proxyPorts.flatMap((port) => ["-p", `${proxyPublishAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -1170,9 +1228,7 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
-  const proxyConnect = await runHost(
-    host,
-    "docker",
+  const proxyConnect = await runtimeProvider.command(
     ["network", "connect", network, proxyContainer],
     {
       artifactName: `connect-fake-${options.kind}-api-proxy`,
@@ -1183,21 +1239,19 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy`);
 
-  await requireFakeApiDockerTopology(host, {
+  await requireFakeApiRuntimeTopology(runtimeProvider, {
     kind: options.kind,
     apiContainer: container,
     proxyContainer,
     network,
-    openshellBridgeAddress,
+    proxyPublishAddress,
     proxyPorts,
     env: options.env,
     redactionValues: options.redactionValues,
   });
 
   const publishedPort = async (containerPort: number, artifactName: string): Promise<string> => {
-    const result = await runHost(
-      host,
-      "docker",
+    const result = await runtimeProvider.command(
       ["port", proxyContainer, `${String(containerPort)}/tcp`],
       {
         artifactName,
@@ -1208,9 +1262,9 @@ export async function startFakeDockerApi(
     );
     expectExitZero(result, `read fake ${options.kind} API proxy port`);
     const published = result.stdout.trim().match(/^(\d+\.\d+\.\d+\.\d+):(\d+)$/u);
-    if (published?.[1] !== openshellBridgeAddress || !published[2]) {
+    if (published?.[1] !== proxyPublishAddress || !published[2]) {
       throw new Error(
-        `fake ${options.kind} API proxy port did not bind only to the OpenShell bridge`,
+        `fake ${options.kind} API proxy port did not bind to the reviewed ${runtimeProvider.displayName} address`,
       );
     }
     return published[2];
@@ -1223,10 +1277,10 @@ export async function startFakeDockerApi(
     FAKE_API_PROXY_READINESS_PORT,
     `port-fake-${options.kind}-api-proxy-readiness`,
   );
-  await requireFakeApiProxyReady(host, {
+  await requireFakeApiProxyReady(host, runtimeProvider, {
     kind: options.kind,
     proxyContainer,
-    bridgeAddress: openshellBridgeAddress,
+    probeAddress: proxyProbeAddress,
     readinessPort: publishedReadinessPort,
     captureDiagnostics: async () => {
       await captureProxyDiagnostics();
@@ -1247,9 +1301,10 @@ export async function startFakeDockerApi(
 export async function applyRestRewritePolicy(
   host: HostCliClient,
   api: FakeDockerApi,
+  providerName: string,
+  credentialKey: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
-  providerName?: string,
 ): Promise<void> {
   const result = await runHost(
     host,
@@ -1278,35 +1333,84 @@ export async function applyRestRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
-  if (!providerName) return;
-
-  const binding = await runHost(
+  await bindFixturePolicyEndpoint(
     host,
-    "bash",
+    api,
+    providerName,
+    credentialKey,
+    "rest",
+    env,
+    redactionValues,
+  );
+}
+
+export async function applyWebSocketRewritePolicy(
+  host: HostCliClient,
+  api: FakeDockerApi,
+  providerName: string,
+  credentialKey: string,
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<void> {
+  const result = await runHost(
+    host,
+    "openshell",
     [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${api.kind}-rest-policy`,
-      host.openshellCommandPath,
+      "policy",
+      "update",
       SANDBOX_NAME,
-      providerName,
-      api.port,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      "--add-endpoint",
+      `host.openshell.internal:${api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+      "--add-allow",
+      `host.openshell.internal:${api.port}:GET:/**`,
+      "--add-allow",
+      `host.openshell.internal:${api.port}:WEBSOCKET_TEXT:/**`,
+      "--binary",
+      "/usr/local/bin/node",
+      "--binary",
+      "/usr/bin/node",
+      "--wait",
     ],
     {
-      artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
-      cwd: REPO_ROOT,
+      artifactName: `apply-${api.kind}-websocket-policy`,
       env,
       redactionValues,
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
+  expectExitZero(result, `apply ${api.kind} fake WebSocket policy`);
+  await bindFixturePolicyEndpoint(
+    host,
+    api,
+    providerName,
+    credentialKey,
+    "websocket",
+    env,
+    redactionValues,
+  );
+}
+
+async function bindFixturePolicyEndpoint(
+  host: HostCliClient,
+  api: FakeDockerApi,
+  providerName: string,
+  credentialKey: string,
+  protocol: "rest" | "websocket",
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<void> {
+  await rebindFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+    artifactName: `bind-${api.kind}-${protocol}-credential`,
+    credentialEnv: credentialKey,
+    endpoint: {
+      host: "host.openshell.internal",
+      port: api.port,
+      protocol,
+    },
+    env,
+    providerName,
+    redactionValues,
+  });
 }
 
 export function lastJsonLine(
@@ -1328,7 +1432,7 @@ export async function runSlackApiRequest(
   sandbox: SandboxClient,
   port: string,
   apiPath: string,
-  authorization: string,
+  authorization: string | { envKey: string; aliasPrefix?: string },
   redactionValues: string[],
 ): Promise<string> {
   const result = await runSandboxNode(
@@ -1336,7 +1440,19 @@ export async function runSlackApiRequest(
     `
 import http from "node:http";
 
-const authorization = process.env.FAKE_SLACK_AUTH ?? "";
+let authorization = process.env.FAKE_SLACK_AUTH ?? "";
+const providerEnvKey = process.env.FAKE_SLACK_PROVIDER_ENV_KEY ?? "";
+if (providerEnvKey) {
+  const scoped = process.env[providerEnvKey] ?? "";
+  const expected = new RegExp("^openshell:resolve:env:(v[0-9]{1,20}_" + providerEnvKey + ")$");
+  const match = scoped.match(expected);
+  if (!match) throw new Error("missing current revision-scoped Slack provider placeholder");
+  const aliasPrefix = process.env.FAKE_SLACK_ALIAS_PREFIX ?? "";
+  const placeholder = aliasPrefix
+    ? aliasPrefix + "-OPENSHELL-RESOLVE-ENV-" + match[1]
+    : scoped;
+  authorization = "Bearer " + placeholder;
+}
 const token = authorization.replace(/^Bearer\\s+/, "");
 const data = new URLSearchParams({ token }).toString();
 const req = http.request({
@@ -1369,7 +1485,14 @@ req.end();
       env: {
         FAKE_SLACK_PORT: port,
         FAKE_SLACK_PATH: apiPath,
-        FAKE_SLACK_AUTH: authorization,
+        ...(typeof authorization === "string"
+          ? { FAKE_SLACK_AUTH: authorization }
+          : {
+              FAKE_SLACK_PROVIDER_ENV_KEY: authorization.envKey,
+              ...(authorization.aliasPrefix
+                ? { FAKE_SLACK_ALIAS_PREFIX: authorization.aliasPrefix }
+                : {}),
+            }),
       },
       redactionValues,
       timeoutMs: 60_000,
