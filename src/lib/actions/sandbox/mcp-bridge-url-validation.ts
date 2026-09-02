@@ -321,7 +321,7 @@ export async function preflightMcpServerUrlResolvedTarget(
   }
   if (isIP(parsed.hostname) === 0 && addresses.length === 1) {
     throw new McpBridgeError(
-      `MCP server URL host '${parsed.hostname}' returned only one public address. NemoClaw cannot prove whether that address is a stable singleton or one member of a rotating answer set, so it refuses to register incomplete allowed_ips. Use an endpoint whose DNS lookup returns its complete public address set in one response.`,
+      `MCP server URL host '${parsed.hostname}' returned only one public address. NemoClaw cannot prove whether that address is a stable singleton or one member of a rotating answer set, so it refuses to register incomplete allowed_ips. Use an endpoint whose DNS lookup returns at least two public addresses in one response. For an existing managed server, record its URL and credential-variable name, remove the server, and add it again after the endpoint meets that requirement. Sandbox destroy remains available if you need to retire the sandbox instead.`,
       2,
       "rejected",
     );

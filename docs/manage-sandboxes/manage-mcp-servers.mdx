@@ -118,6 +118,23 @@ When the host variable is unset, restart reuses an existing provider whose curre
 
 Running restart without a server name refreshes every managed server. Export only the variables whose credentials you intend to replace.
 
+### Recover a Legacy Public Single-Pin Registration
+
+After upgrading, restart or rebuild restoration rejects an existing public MCP server when its current DNS response contains only one public address. The command stops before policy, provider, or adapter mutation because it cannot distinguish a stable singleton from one member of a rotating answer set.
+
+Record the server URL and credential-variable name. Remove the affected server, then add it again after the endpoint returns at least two public addresses in one DNS response:
+
+```bash
+export MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw <sandbox> mcp remove <server>
+$$nemoclaw <sandbox> mcp add <server> \
+  --url https://mcp.example.com/mcp \
+  --env MCP_TOKEN
+unset MCP_TOKEN
+```
+
+NemoClaw pins only the addresses from that response. Any later DNS answer outside those pins fails closed. If you are retiring the sandbox instead of recovering the server, `$$nemoclaw <sandbox> destroy` remains available.
+
 ## Change Endpoint Pins
 
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.

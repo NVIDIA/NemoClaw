@@ -13,6 +13,108 @@ import { mcpPolicyAllowedIps } from "../helpers/mcp-policy-pins";
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
 describe("MCP restart policy ordering", () => {
+  it.each(["restart", "rebuild restoration"] as const)(
+    "rejects a legacy public single-pin registration before %s mutates runtime state (#10755)",
+    (operation) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-single-pin-"));
+      const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const dns = require("./src/lib/adapters/dns/resolve.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const policies = require("./src/lib/policy/index.js");
+const adapterRegistration = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+
+const replace = (target, key, value) =>
+  Object.defineProperty(target, key, { configurable: true, value });
+let dnsCalls = 0;
+let policyCalls = 0;
+let providerCalls = 0;
+let adapterCalls = 0;
+replace(dns, "resolveHostAddresses", async () => {
+  dnsCalls += 1;
+  return [{ address: "8.8.8.8" }];
+});
+replace(policies, "applyPresetContent", () => {
+  policyCalls += 1;
+  return true;
+});
+replace(providerCommands, "runOpenshellProviderCommand", () => {
+  providerCalls += 1;
+  return { status: 0, stdout: "", stderr: "" };
+});
+replace(adapterRegistration, "registerAgentAdapterAtCurrentCredentialRevision", () => {
+  adapterCalls += 1;
+  return "v1";
+});
+
+const entry = {
+  server: "example",
+  agent: "openclaw",
+  adapter: "mcporter",
+  url: "https://mcp.example.com/mcp",
+  env: ["MCP_TOKEN"],
+  allowedIps: ["8.8.8.8"],
+  providerName: "alpha-mcp-example",
+  providerId: "11111111-2222-4333-8444-555555555555",
+  policyName: "mcp-bridge-example",
+  addedAt: "2026-06-01T00:00:00.000Z",
+};
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { example: entry } },
+});
+
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+const action =
+  ${JSON.stringify(operation)} === "restart"
+    ? bridge.restartMcpBridge("alpha", "example")
+    : bridge.restoreMcpBridgesAfterRebuild("alpha", [entry]);
+action.then(
+  () => process.exit(9),
+  (error) => {
+    process.stdout.write(JSON.stringify({
+      message: error instanceof Error ? error.message : String(error),
+      dnsCalls,
+      policyCalls,
+      providerCalls,
+      adapterCalls,
+      allowedIps: registry.getSandbox("alpha").mcp.bridges.example.allowedIps,
+    }));
+  },
+);
+`;
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
+        timeout: 30_000,
+      });
+      fs.rmSync(home, { recursive: true, force: true });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        message: string;
+        dnsCalls: number;
+        policyCalls: number;
+        providerCalls: number;
+        adapterCalls: number;
+        allowedIps: string[];
+      };
+      expect(payload.message).toContain("returned only one public address");
+      expect(payload.message).toContain("record its URL and credential-variable name");
+      expect(payload.message).toContain("remove the server, and add it again");
+      expect(payload.message).toContain("Sandbox destroy remains available");
+      expect(payload.dnsCalls).toBe(1);
+      expect(payload.policyCalls).toBe(0);
+      expect(payload.providerCalls).toBe(0);
+      expect(payload.adapterCalls).toBe(0);
+      expect(payload.allowedIps).toEqual(["8.8.8.8"]);
+    },
+  );
+
   it.each(["restart", "restore"] as const)(
     "rejects a later foreign attached credential key before any policy or provider mutation during %s (#9388)",
     (operation) => {

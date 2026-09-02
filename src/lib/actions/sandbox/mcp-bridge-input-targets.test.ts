@@ -33,17 +33,15 @@ describe("MCP URL target validation", () => {
     }
   });
 
-  it("fails closed when a later public address can appear beyond preflight (#10755)", async () => {
+  it("rejects a public hostname that resolves to one address (#10755)", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never);
+      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
     try {
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
       ).rejects.toThrow(/cannot prove whether that address is a stable singleton/);
+      expect(lookup).toHaveBeenCalledOnce();
     } finally {
       lookup.mockRestore();
     }

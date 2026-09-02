@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
-import { expect, vi } from "vitest";
+import { expect } from "vitest";
 
-import type { AgentMcpAdapter } from "../../src/lib/agent/defs";
-import * as adapterRegistration from "../../src/lib/actions/sandbox/mcp-bridge-adapters";
 import { getRegisteredGeneratedPolicy } from "../../src/lib/actions/sandbox/mcp-bridge-policy";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
 import * as registry from "../../src/lib/state/registry";
@@ -40,22 +38,4 @@ export function expectMcpPolicyAndRegistryPins(
   expect(mcpPolicyAllowedIps(activePolicyContent, entry.server)).toEqual(expectedPins);
   expect(activePolicyContent).toContain(expectedBinary);
   expect(registeredPolicy?.content).toBe(activePolicyContent);
-}
-
-export function stubMcpAdapterRegistration() {
-  return vi
-    .spyOn(adapterRegistration, "registerAgentAdapterAtCurrentCredentialRevision")
-    .mockImplementation((_sandbox, _adapter, _entry, _env, revision) => revision);
-}
-
-export function expectMcpAdapterRegistration(
-  registration: ReturnType<typeof stubMcpAdapterRegistration>,
-  expectedAdapter: AgentMcpAdapter,
-): void {
-  expect(
-    registration.mock.calls.some(
-      ([, adapter, entry]) => adapter === expectedAdapter && entry.adapter === adapter,
-    ),
-  ).toBe(true);
-  registration.mockRestore();
 }

@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as adapterRegistration from "../../src/lib/actions/sandbox/mcp-bridge-adapters";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
 import * as mcpPolicyPins from "../helpers/mcp-policy-pins";
 import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
@@ -1244,7 +1245,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       testState.adapterCalls.some((call) => call.includes("config") && call.includes("remove")),
     ).toBe(true);
   });
-
   it("restores a rebuilt sandbox with refreshed public pins without rotating its credential (#10755)", async () => {
     process.env.GITHUB_TOKEN = "ambient-value-that-must-not-rotate";
     const dnsEntry = {
@@ -1254,19 +1254,21 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       url: "https://mcp.example.com/github",
     };
     testState.resolveHostAddresses.mockResolvedValue([
-      { address: "1.1.1.1" },
-      { address: "8.8.4.4" },
+      { address: "1.1.1.1" }, { address: "8.8.4.4" },
     ]);
-    const registration = mcpPolicyPins.stubMcpAdapterRegistration();
+    const registration = vi
+      .spyOn(adapterRegistration, "registerAgentAdapterAtCurrentCredentialRevision")
+      .mockImplementation((_sandbox, _adapter, _entry, _env, revision) => revision);
     testState.attachedProviders.delete("alpha-mcp-github");
-    testState.adapterRegistered = false;
     registry.registerSandbox({
       name: "alpha",
       agent: "langchain-deepagents-code",
       mcp: { bridges: { github: dnsEntry } },
     });
     await bridge.restoreMcpBridgesAfterRebuild("alpha", [dnsEntry]);
-    mcpPolicyPins.expectMcpAdapterRegistration(registration, "deepagents-config");
+    expect(registration.mock.calls[0]?.[1]).toBe("deepagents-config");
+    expect(registration.mock.calls[0]?.[2].adapter).toBe("deepagents-config");
+    registration.mockRestore();
     expect(process.env.GITHUB_TOKEN).toBe("ambient-value-that-must-not-rotate");
     expect(testState.providers.get("alpha-mcp-github")?.resourceVersion).toBe(2);
     expect(
@@ -1281,7 +1283,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       "/usr/local/bin/dcode",
     );
   });
-
   it("reattaches after a rebuild abort with refreshed public policy and registry pins (#10755)", async () => {
     const dnsEntry = {
       ...bridgeEntries.github,
