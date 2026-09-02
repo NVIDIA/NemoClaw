@@ -12,7 +12,7 @@ cp -- "$out/stage/bin/fdfind" "$out/stage/bin/fd"
 printf '%s\n' "$GITHUB_WORKFLOW_SHA" > "$out/stage/workflow-sha"
 printf '%s\n' "$GITHUB_RUN_ID" > "$out/stage/run-id"
 printf '%s\n' "$GITHUB_RUN_ATTEMPT" > "$out/stage/run-attempt"
-(cd "$out/stage" && tar --dereference --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf ../runtime.tar .)
+(cd "$out/stage" && tar --dereference --hard-dereference --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf ../runtime.tar .)
 sha256sum "$out/runtime.tar" | awk '{print $1}' > "$out/runtime.sha256"
 chmod 0600 "$out/runtime.tar" "$out/runtime.sha256"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then printf 'payload-sha=%s\n' "$(<"$out/runtime.sha256")" >> "$GITHUB_OUTPUT"; fi
