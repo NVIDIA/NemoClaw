@@ -498,6 +498,8 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toContain("gateway-token --quiet");
     expect(output).not.toContain("append  #token=<token>");
     expect(output).not.toMatch(/secret[-_]?token/);
+    expect(output).toContain("nemoclaw credentials reset <PROVIDER> && nemoclaw onboard");
+    expect(output).not.toContain("credentials reset <KEY>");
     expect(nimStatus).toHaveBeenCalledWith("my-gpt-claw");
   });
 
