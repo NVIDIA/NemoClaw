@@ -421,7 +421,9 @@ async function removeMcpBridgeUnlocked(
     }
   }
   if (failures.length > 0) {
-    console.warn(`  MCP force cleanup warnings:\n${failures.join("\n")}`);
+    console.warn(
+      `  MCP force cleanup reported ${failures.length} warning(s); inspect redacted diagnostics.`,
+    );
     if (!options.allowResidual) {
       throw new McpBridgeError(
         `MCP force cleanup left residual resources for '${server}'. The registry entry was preserved so cleanup can be retried.`,

@@ -375,6 +375,7 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
 function validatePreflightDoctorSurface(surface: Record<string, unknown>): void {
   requireSupported("preflightDoctor", surface);
   requireFunction(surface, "inspectHost", "preflightDoctor");
+  requireFunction(surface, "validateSandboxGpu", "preflightDoctor");
   requireFunction(surface, "preflightLifecycle", "preflightDoctor");
 }
 
@@ -423,6 +424,22 @@ function validateLifecycleSurface(providerId: string, surface: Record<string, un
     requireFunction(surface, "start", "lifecycle");
     requireFunction(surface, "verifyStarted", "lifecycle");
     requireFunction(surface, "stop", "lifecycle");
+    if (
+      surface.containerMutationTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(surface.containerMutationTimeoutMs) ||
+        (surface.containerMutationTimeoutMs as number) < 1_000 ||
+        (surface.containerMutationTimeoutMs as number) > 5 * 60_000)
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `lifecycle for '${providerId}' has an invalid container mutation timeout`,
+      );
+    }
+    const control = requireOwnRecord(surface, "privilegedSandboxControl");
+    requireFunction(control, "resolveTarget", "lifecycle.privilegedSandboxControl");
+    requireFunction(control, "execute", "lifecycle.privilegedSandboxControl");
+    if (control.buildLegacyDockerArgv !== undefined) {
+      requireFunction(control, "buildLegacyDockerArgv", "lifecycle.privilegedSandboxControl");
+    }
   }
 }
 
@@ -517,6 +534,12 @@ function validateRecoverySurface(surface: Record<string, unknown>): void {
 
 function validateCleanupSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
+    if (surface.captureDestroyIdentity !== undefined) {
+      requireFunction(surface, "captureDestroyIdentity", "cleanup");
+    }
+    if (surface.captureDestroyIdentityByName !== undefined) {
+      requireFunction(surface, "captureDestroyIdentityByName", "cleanup");
+    }
     requireFunction(surface, "prepareDestroy", "cleanup");
     requireFunction(surface, "planOwnedWorkloadCleanup", "cleanup");
     requireFunction(surface, "removeOwnedWorkload", "cleanup");
@@ -528,6 +551,7 @@ function validateContainerEngineSurface(
   surface: Record<string, unknown>,
 ): void {
   if (surface.supported === true) {
+    requireFunction(surface, "capture", "containerEngine");
     const identities = surface.identities;
     if (!Array.isArray(identities)) {
       throw new RuntimeProviderRegistrationError(
@@ -793,6 +817,20 @@ export function runtimeProviderContainerEngineIdentity(
     (candidate) => candidate.operation === operation,
   );
   return identity ? { engineId: identity.engineId, displayName: identity.displayName } : null;
+}
+
+/**
+ * Report whether the selected provider registered the operation-scoped engine
+ * authority required by generic orchestration. Provider identities stay
+ * opaque: adding a provider changes registration, not the caller's branches.
+ */
+export function runtimeProviderSupportsContainerEngineOperation(
+  driverName: string | null | undefined,
+  providers: RuntimeProviderBundleRegistry,
+  operation: RuntimeProviderContainerEngineOperation,
+): boolean {
+  const bundle = resolveRuntimeProviderBundle(driverName, providers);
+  return bundle !== null && runtimeProviderContainerEngineIdentity(bundle, operation) !== null;
 }
 
 export function requireRuntimeProviderHostLocalInferenceOperation(

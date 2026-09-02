@@ -5,8 +5,12 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import {
+  parseOpenShellPolicy,
+  stripProviderComposedPolicies,
+} from "../../adapters/openshell/policy-boundary";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
-import { parseOpenShellPolicy } from "../../policy/merge";
+import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
@@ -216,6 +220,7 @@ function mergeRequestedReplacementNetworkPolicies(
           policyMapping(replacement.network_policies, "replacement network_policies"),
         );
   if (required.size > 0) {
+    const requiredPolicies: PolicyMapping = {};
     for (const source of requiredPolicySources) {
       let parsed: unknown;
       try {
@@ -232,15 +237,16 @@ function mergeRequestedReplacementNetworkPolicies(
       );
       for (const [key, value] of Object.entries(policies)) {
         if (!required.has(key)) continue;
-        const existing = replacementPolicies[key];
+        const existing = requiredPolicies[key];
         if (existing !== undefined && !isDeepStrictEqual(existing, value)) {
           throw new Error(
             `Cannot prepare rebuild policy handoff: required network policy '${key}' has conflicting replacement sources.`,
           );
         }
-        replacementPolicies[key] = structuredClone(value);
+        requiredPolicies[key] = structuredClone(value);
       }
     }
+    Object.assign(replacementPolicies, requiredPolicies);
   }
   const livePolicies =
     live.network_policies === undefined
@@ -323,8 +329,25 @@ export function mergeReplacementPolicyAccess(
   removedNetworkPolicyKeys: readonly string[] = [],
   requiredNetworkPolicySources: readonly string[] = [],
   removedCredentialBindingProviders: readonly string[] = [],
+  sandboxName?: string,
 ): { readonly changed: boolean; readonly source: string } {
-  const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
+  const providerNormalizedLivePolicySource = stripProviderComposedPolicies(livePolicySource);
+  const teamsActive = requiredNetworkPolicyKeys.includes("teams")
+    ? true
+    : removedNetworkPolicyKeys.includes("teams")
+      ? false
+      : null;
+  const normalizedLivePolicySource =
+    teamsActive !== null
+      ? reconcileTeamsOutlookLoginCredentialBinding(
+          providerNormalizedLivePolicySource,
+          sandboxName,
+          teamsActive,
+        )
+      : providerNormalizedLivePolicySource;
+  const live = structuredClone(
+    parseOpenShellPolicy(normalizedLivePolicySource).policy,
+  ) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
   const processChanged = mergeMissingReplacementProcessIdentity(live, replacement);
   const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
@@ -339,14 +362,20 @@ export function mergeReplacementPolicyAccess(
     removedNetworkPolicyKeys,
     requiredNetworkPolicySources,
   );
-  const changed = processChanged || filesystemChanged || providerNetworkChanged || networkChanged;
+  const changed =
+    normalizedLivePolicySource !== livePolicySource ||
+    processChanged ||
+    filesystemChanged ||
+    providerNetworkChanged ||
+    networkChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
-    : { changed: false, source: livePolicySource };
+    : { changed: false, source: normalizedLivePolicySource };
 }
 
 /** Select the live policy or materialize a temporary handoff policy for an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
+  readonly sandboxName?: string;
   readonly livePolicyPath: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
@@ -366,6 +395,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.removedNetworkPolicyKeys,
     input.requiredNetworkPolicySources,
     input.removedCredentialBindingProviders,
+    input.sandboxName,
   );
   if (!merged.changed) {
     const replacementCleanupRequired = Boolean(

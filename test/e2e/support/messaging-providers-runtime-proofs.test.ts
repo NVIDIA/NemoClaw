@@ -130,6 +130,7 @@ function fakeDockerInspect(
     missingProxyControl?: MissingProxyControl;
     proxyEnvironment: readonly string[];
     publishedAddress?: string;
+    runtimeProviderId: "docker" | "podman";
   },
 ): string {
   const [apiRun, proxyRun] = calls.filter((call) => call[0] === "run") as [string[], string[]];
@@ -139,12 +140,19 @@ function fakeDockerInspect(
   const connectedProxyNetworks = calls
     .filter((call) => call[0] === "network" && call[1] === "connect" && call[3] === proxyContainer)
     .map((call) => call[2]!);
-  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks].filter(
-    (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
-  );
+  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks]
+    .filter(
+      (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
+    )
+    .map((network) =>
+      options.runtimeProviderId === "podman" && network === "bridge" ? "podman" : network,
+    );
+  const proxyDropsAllCapabilities = options.missingProxyControl !== "--cap-drop";
+  const inspectName = (name: string): string =>
+    options.runtimeProviderId === "podman" ? name : `/${name}`;
   return JSON.stringify([
     {
-      Name: "/" + apiContainer,
+      Name: inspectName(apiContainer),
       HostConfig: {},
       NetworkSettings: {
         Networks: { [apiNetwork]: {} },
@@ -155,13 +163,31 @@ function fakeDockerInspect(
       },
     },
     {
+      BoundingCaps:
+        options.runtimeProviderId === "podman"
+          ? proxyDropsAllCapabilities
+            ? null
+            : ["CAP_CHOWN"]
+          : undefined,
       Config: {
         Env: [...optionValues(proxyRun, "-e"), ...options.proxyEnvironment],
       },
-      Name: "/" + proxyContainer,
+      EffectiveCaps:
+        options.runtimeProviderId === "podman"
+          ? proxyDropsAllCapabilities
+            ? null
+            : ["CAP_CHOWN"]
+          : undefined,
+      Name: inspectName(proxyContainer),
       HostConfig: {
         CapDrop:
-          options.missingProxyControl === "--cap-drop" ? [] : optionValues(proxyRun, "--cap-drop"),
+          options.runtimeProviderId === "podman"
+            ? proxyDropsAllCapabilities
+              ? ["CAP_CHOWN"]
+              : []
+            : proxyDropsAllCapabilities
+              ? optionValues(proxyRun, "--cap-drop")
+              : [],
         PidsLimit:
           options.missingProxyControl === "--pids-limit"
             ? undefined
@@ -205,6 +231,7 @@ function fakeDockerHost(
   const containers = new Set<string>();
   const networks = new Set<string>();
   const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
+  let runtimeProviderId: "docker" | "podman" = "docker";
   let proxyRunning = options.proxyRunning !== false;
   const dockerCommand = (args: string[]) => {
     const executedArgs = [...args];
@@ -221,7 +248,15 @@ function fakeDockerHost(
               executedArgs[2] === "openshell-docker"
                 ? networkInspect
                 : JSON.stringify([
-                    { Driver: "bridge", Internal: createdNetwork?.includes("--internal") === true },
+                    runtimeProviderId === "podman"
+                      ? {
+                          driver: "bridge",
+                          internal: createdNetwork?.includes("--internal") === true,
+                        }
+                      : {
+                          Driver: "bridge",
+                          Internal: createdNetwork?.includes("--internal") === true,
+                        },
                   ]),
             );
           }
@@ -252,6 +287,7 @@ function fakeDockerHost(
                   missingProxyControl: options.missingProxyControl,
                   proxyEnvironment: options.proxyEnvironment ?? [],
                   publishedAddress: options.publishedAddress,
+                  runtimeProviderId,
                 }),
               )
             : executedArgs[2] === "{{json .State}}"
@@ -292,13 +328,17 @@ function fakeDockerHost(
       commandOptions?: { artifactName?: string },
     ) => {
       commands.push({ command, args: [...args] });
-      expect(["docker", "node"]).toContain(command);
+      expect(["docker", "node", "podman"]).toContain(command);
+      runtimeProviderId =
+        command === "podman" ? "podman" : command === "docker" ? "docker" : runtimeProviderId;
+      const runtimeArgs =
+        command === "podman" && args[0] === "--url" ? args.slice(2) : args;
       const result =
         command === "node"
           ? options.proxyReady === false
             ? failedCommand("proxy could not reach the upstream API")
             : successfulCommand()
-          : dockerCommand(args);
+          : dockerCommand(runtimeArgs);
       const artifactNames =
         commandOptions?.artifactName === undefined ? [] : [commandOptions.artifactName];
       for (const artifactName of artifactNames) {
@@ -343,7 +383,11 @@ function expectFakeDiscordDiagnosticArtifacts(artifacts: Map<string, string>): v
   expect(artifacts.get("diagnose-fake-discord-gateway-api-logs")).toContain("api diagnostic logs");
 }
 
-function startFakeDiscordApi(host: HostCliClient, cleanup: CleanupAction[]) {
+function startFakeDiscordApi(
+  host: HostCliClient,
+  cleanup: CleanupAction[],
+  env: NodeJS.ProcessEnv = {},
+) {
   return startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
     kind: "discord-gateway",
     imageScript: "fake-discord-gateway.cjs",
@@ -352,7 +396,7 @@ function startFakeDiscordApi(host: HostCliClient, cleanup: CleanupAction[]) {
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
     expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: "fixture-discord-token" },
     redactionValues: ["fixture-discord-token"],
-    env: {},
+    env,
   });
 }
 
@@ -544,6 +588,49 @@ describe("messaging provider installed-runtime proofs", () => {
       await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
         /Docker topology did not preserve isolation/u,
       );
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("publishes the isolated proxy through rootless Podman without binding its bridge gateway", async () => {
+    const { calls, host } = fakeDockerHost({ networkInspect: "[]" });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      const api = await startFakeDiscordApi(host, cleanup, {
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      });
+      const proxyRun = calls.filter((args) => args[0] === "run").at(-1)!;
+      const publications = optionValues(proxyRun, "-p");
+
+      expect(publications).toContain("0.0.0.0::8080");
+      expect(publications).toContain(`0.0.0.0::${String(FAKE_API_PROXY_READINESS_PORT)}`);
+      expect(publications.some((entry) => entry.startsWith(`${OPENSHELL_BRIDGE_ADDRESS}::`))).toBe(
+        false,
+      );
+      expect(calls).not.toContainEqual(["network", "inspect", "openshell-docker"]);
+      expect(api.port).toBe("32100");
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("rejects effective proxy capabilities reported by rootless Podman", async () => {
+    const { host } = fakeDockerHost({
+      missingProxyControl: "--cap-drop",
+      networkInspect: "[]",
+    });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await expect(
+        startFakeDiscordApi(host, cleanup, {
+          NEMOCLAW_GATEWAY_RUNTIME: "podman",
+          OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+        }),
+      ).rejects.toThrow(/Podman topology did not preserve isolation/u);
     } finally {
       await runCleanup(cleanup);
     }

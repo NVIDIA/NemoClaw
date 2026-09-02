@@ -74,13 +74,15 @@ export const credentialProviderRegistrationDependencies = {
   ): string[] {
     const override = liveE2eCredentialProviderOverride();
     if (override) {
-      const expected = tokenDefs.filter(
-        ({ envKey, name, providerType }) =>
-          envKey === "GOOGLE_CHAT_ACCESS_TOKEN" &&
-          name === override.expectedName &&
-          providerType === override.expectedType,
-      );
-      if (expected.length !== 1) {
+      const selected = tokenDefs.filter(({ name }) => name === override.expectedName);
+      if (selected.length === 0) {
+        return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
+      }
+      if (
+        selected.length !== 1 ||
+        selected[0]?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
+        selected[0]?.providerType !== override.expectedType
+      ) {
         throw new Error("Google Chat live E2E provider override received an unexpected plan.");
       }
       return override.upsert(tokenDefs, runOpenshell, options);

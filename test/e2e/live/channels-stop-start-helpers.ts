@@ -12,6 +12,7 @@ import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/run
 import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
+import { clearStoppedSandboxStateRoots } from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -38,7 +39,7 @@ import {
   type AgentKind,
   runSecondaryCleanup as bestEffortPreclean,
   CLI,
-  dockerInfo,
+  requirePhase6RuntimeProvider,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
@@ -246,6 +247,9 @@ export function installGooglechatCredentialFixture(
   const run = dependencies.run ?? runOpenshell;
   const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;
   const originalLegacyUpsert = effectiveLegacyProviderDependencies.upsertMessagingProviders;
+  const delegatedUpsert = dependencies.legacyProviderDependencies
+    ? originalLegacyUpsert
+    : originalRegistrationUpsert;
 
   const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
     tokenDefs,
@@ -266,7 +270,7 @@ export function installGooglechatCredentialFixture(
     const delegatedProviderNames =
       delegatedTokenDefs.length === 0
         ? []
-        : originalLegacyUpsert(delegatedTokenDefs, providerRun, options);
+        : delegatedUpsert(delegatedTokenDefs, providerRun, options);
     const baseRun = providerRun ?? run;
     const revalidate = () =>
       options.revalidateSandboxIdentity?.(
@@ -1056,7 +1060,52 @@ async function removeChannelsAndRebuild(
         redactionValues: redactions,
       },
     );
-    expectExitZero(setup, "prepare running OpenClaw WeChat cleanup proof");
+    expectExitZero(setup, "prepare stopped OpenClaw WeChat cleanup proof");
+
+    const stop = await host.command("node", [CLI, SANDBOX_NAME, "stop"], {
+      artifactName: "stop-before-wechat-cleanup-openclaw",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 120_000,
+    });
+    expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
+
+    const cleanupResult = await withLiveE2eEnvironment(env, async () =>
+      clearStoppedSandboxStateRoots(SANDBOX_NAME, [
+        "/sandbox/.openclaw/wechat",
+        "/sandbox/.openclaw/openclaw-weixin",
+      ]),
+    );
+    expect(cleanupResult).toEqual({ cleared: true });
+
+    const start = await host.command("node", [CLI, SANDBOX_NAME, "start"], {
+      artifactName: "start-after-wechat-cleanup-openclaw",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 120_000,
+    });
+    expectExitZero(start, "start OpenClaw after stopped WeChat cleanup");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "sandbox-list-after-stopped-wechat-cleanup-openclaw",
+    );
+    const proof = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "test ! -e /sandbox/.openclaw/wechat",
+        "test ! -e /sandbox/.openclaw/openclaw-weixin",
+        'test "$(cat /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel)" = preserve',
+      ].join("\n"),
+      {
+        artifactName: "verify-stopped-wechat-cleanup-openclaw",
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(proof, "stopped cleanup removed only OpenClaw WeChat state");
   }
 
   for (const channel of REMOVAL_CHANNELS) {
@@ -1174,6 +1223,7 @@ export async function runChannelsStopStartTarget({
   cleanup,
   host,
   progress,
+  runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -1223,8 +1273,7 @@ export async function runChannelsStopStartTarget({
   );
   await precleanProviders(host, env, redactions, `preclean-channels-stop-start-${AGENT}`);
 
-  const docker = await dockerInfo(host, env);
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+  await requirePhase6RuntimeProvider(runtimeProvider, `${AGENT} channels stop/start`);
   progress.phase("onboard sandbox with all messaging channels");
   const onboardingEnv = withoutGooglechatOnboardInputs(env);
   const install = await installSandboxOrSkipOnRateLimit(
