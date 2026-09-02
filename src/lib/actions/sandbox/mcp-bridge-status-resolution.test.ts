@@ -216,48 +216,35 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     {
       caseName: "a symlink appearing after a missing-path open",
       credentialObservation: null,
-      expectedConfigExists: true,
+      diagnostic: "symbolic link",
       expectedConfigIsFifo: false,
       expectedConfigIsSymlink: true,
-      expectedDiagnostic: "Unsafe managed Deep Agents MCP projection path: symbolic link",
       managedOptions: { swapAfterMissingManagedOpen: "symlink", timeoutMs: 30_000 },
     },
     {
       caseName: "a FIFO appearing after a missing-path open",
       credentialObservation: "absent",
-      expectedConfigExists: true,
+      diagnostic: "FIFO",
       expectedConfigIsFifo: true,
       expectedConfigIsSymlink: false,
-      expectedDiagnostic: "Unsafe managed Deep Agents MCP projection path: FIFO",
       managedOptions: { swapAfterMissingManagedOpen: "fifo", timeoutMs: 30_000 },
     },
     {
       caseName: "a symlink restored after ELOOP",
       credentialObservation: "canonical",
-      expectedConfigExists: true,
+      diagnostic: "symbolic link",
       expectedConfigIsFifo: false,
       expectedConfigIsSymlink: true,
-      expectedDiagnostic: "Unsafe managed Deep Agents MCP projection path: symbolic link",
       managedOptions: { swapAfterManagedEloop: true, symlink: true, timeoutMs: 30_000 },
-    },
-    {
-      caseName: "a projection removed after it is opened",
-      credentialObservation: "canonical",
-      expectedConfigExists: false,
-      expectedConfigIsFifo: false,
-      expectedConfigIsSymlink: false,
-      expectedDiagnostic: "managed MCP projection changed while reading",
-      managedOptions: { removeAfterManagedOpen: true, timeoutMs: 30_000 },
     },
   ])(
     "propagates $caseName through status with credential observation $credentialObservation (#10754)",
     { timeout: 120_000 },
     ({
       credentialObservation,
-      expectedConfigExists,
+      diagnostic,
       expectedConfigIsFifo,
       expectedConfigIsSymlink,
-      expectedDiagnostic,
       managedOptions,
     }) => {
       const home = createTempHome("nemoclaw-mcp-status-projection-");
@@ -288,7 +275,6 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     stdout: logLines.join("\n"),
     stderr: errorLines.join("\n"),
     fixtureStatus: lastDeepAgentsFixtureResult?.status ?? null,
-    configExists: lastDeepAgentsFixtureResult?.configExists ?? false,
     configIsFifo: lastDeepAgentsFixtureResult?.configIsFifo ?? false,
     configIsSymlink: lastDeepAgentsFixtureResult?.configIsSymlink ?? false,
   }));
@@ -299,7 +285,6 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
         stdout: string;
         stderr: string;
         fixtureStatus: number | null;
-        configExists: boolean;
         configIsFifo: boolean;
         configIsSymlink: boolean;
       };
@@ -307,8 +292,9 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       expect(outcome.fixtureStatus).toBe(2);
       expect(outcome.exitCode).toBe(2);
       expect(outcome.stdout).toBe("");
-      expect(outcome.stderr).toContain(expectedDiagnostic);
-      expect(outcome.configExists).toBe(expectedConfigExists);
+      expect(outcome.stderr).toContain(
+        `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
+      );
       expect(outcome.configIsFifo).toBe(expectedConfigIsFifo);
       expect(outcome.configIsSymlink).toBe(expectedConfigIsSymlink);
     },

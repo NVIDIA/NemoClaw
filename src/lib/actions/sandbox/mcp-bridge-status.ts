@@ -8,7 +8,6 @@ import {
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
   DEFAULT_OPENCLAW_CONFIG_DIR,
-  DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL,
   DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX,
   openClawMcporterRoot,
 } from "./mcp-bridge-adapters";
@@ -140,8 +139,7 @@ function getAdapterRegistration(
   const normalizedDetail = detail.trim();
   if (
     adapter === "deepagents-config" &&
-    (normalizedDetail.startsWith(DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX) ||
-      normalizedDetail.endsWith(`: ${DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL}`))
+    normalizedDetail.startsWith(DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX)
   ) {
     throw new McpBridgeError(normalizedDetail, 2);
   }

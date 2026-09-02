@@ -61,7 +61,6 @@ export {
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
   DEFAULT_OPENCLAW_CONFIG_DIR,
-  DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL,
   DEEPAGENTS_MCP_CONFIG_PATH,
   DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX,
   mcporterHeadersMatchExpected,
