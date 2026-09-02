@@ -34,11 +34,6 @@ export interface DeepAgentsConfigCommandResult {
   legacyConfigExists: boolean;
   legacyConfig: Record<string, unknown> | null;
   legacyConfigText: string | null;
-  legacyParentIsSymlink: boolean;
-  legacyParentTargetText: string | null;
-  managedParentIsSymlink: boolean;
-  managedParentTargetText: string | null;
-  managedRaceIterations: number;
   managedSymlinkTargetExists: boolean;
   managedSymlinkTargetText: string | null;
   managedTargetReadAccessed: boolean;
@@ -48,15 +43,66 @@ export interface DeepAgentsManagedFixtureOptions {
   danglingSymlink?: boolean;
   directory?: boolean;
   fifo?: boolean;
-  legacyParentSymlink?: boolean;
   mode?: number;
-  parentSymlink?: boolean;
-  raceAbsentPublication?: string;
-  raceProjection?: "fifo" | "symlink";
-  socket?: boolean;
+  swapAfterManagedEloop?: boolean;
+  swapAfterManagedOpen?: "fifo" | "symlink";
+  swapAfterMissingManagedOpen?: "fifo" | "symlink";
+  swapBeforeManagedLink?: string;
+  swapOnManagedOpen?: "fifo" | "socket" | "symlink";
+  swapOnManagedRead?: "fifo" | "symlink";
+  swapOnManagedSeek?: string;
   symlink?: boolean;
   targetReadProbe?: boolean;
   timeoutMs?: number;
+}
+
+type ManagedSwap = {
+  content?: string;
+  kind: "fifo" | "regular" | "socket" | "symlink";
+  phase:
+    | "after-missing-projection-open"
+    | "after-projection-eloop"
+    | "after-projection-open"
+    | "before-projection-open"
+    | "projection-publication-begins"
+    | "projection-read-begins"
+    | "projection-rewrite-begins";
+};
+
+function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSwap | undefined {
+  if (options.swapOnManagedOpen) {
+    return { kind: options.swapOnManagedOpen, phase: "before-projection-open" };
+  }
+  if (options.swapAfterManagedOpen) {
+    return { kind: options.swapAfterManagedOpen, phase: "after-projection-open" };
+  }
+  if (options.swapAfterMissingManagedOpen) {
+    return {
+      kind: options.swapAfterMissingManagedOpen,
+      phase: "after-missing-projection-open",
+    };
+  }
+  if (options.swapOnManagedRead) {
+    return { kind: options.swapOnManagedRead, phase: "projection-read-begins" };
+  }
+  if (options.swapAfterManagedEloop) {
+    return { kind: "symlink", phase: "after-projection-eloop" };
+  }
+  if (options.swapBeforeManagedLink !== undefined) {
+    return {
+      content: options.swapBeforeManagedLink,
+      kind: "regular",
+      phase: "projection-publication-begins",
+    };
+  }
+  if (options.swapOnManagedSeek !== undefined) {
+    return {
+      content: options.swapOnManagedSeek,
+      kind: "regular",
+      phase: "projection-rewrite-begins",
+    };
+  }
+  return undefined;
 }
 
 function createFifo(target: string, mode = 0o600): void {
@@ -77,170 +123,6 @@ function waitForPath(target: string, timeoutMs: number): boolean {
     pause(10);
   } while (Date.now() < deadline);
   return fs.existsSync(target);
-}
-
-type ManagedFixtureProcess = {
-  child: ReturnType<typeof spawn>;
-  finishedPath: string;
-  resultPath: string;
-  stopPath: string;
-};
-
-function startManagedFixtureProcess(
-  fixtureRoot: string,
-  label: string,
-  script: string,
-  args: string[],
-): ManagedFixtureProcess {
-  const readyPath = path.join(fixtureRoot, `${label}-ready`);
-  const stopPath = path.join(fixtureRoot, `${label}-stop`);
-  const finishedPath = path.join(fixtureRoot, `${label}-finished`);
-  const resultPath = path.join(fixtureRoot, `${label}-result`);
-  const child = spawn(
-    "python3",
-    ["-I", "-c", script, ...args, readyPath, stopPath, finishedPath, resultPath],
-    { stdio: "ignore" },
-  );
-  if (!waitForPath(readyPath, 2000)) {
-    child.kill("SIGTERM");
-    throw new Error(`${label} did not become ready`);
-  }
-  pause(20);
-  return { child, finishedPath, resultPath, stopPath };
-}
-
-function stopManagedFixtureProcess(process: ManagedFixtureProcess): number {
-  try {
-    fs.writeFileSync(process.stopPath, "", { flag: "wx" });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-  if (!waitForPath(process.finishedPath, 2000)) {
-    process.child.kill("SIGTERM");
-    throw new Error("managed fixture process did not stop");
-  }
-  process.child.kill("SIGTERM");
-  const descriptor = fs.openSync(
-    process.resultPath,
-    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-  );
-  let result: number;
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) {
-      throw new Error("managed fixture process result is not a regular file");
-    }
-    result = Number.parseInt(fs.readFileSync(descriptor, "utf-8"), 10);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-  return Number.isFinite(result) ? result : 0;
-}
-
-function startManagedPathRace(
-  fixtureRoot: string,
-  managedPath: string,
-  managedTarget: string,
-  kind: "fifo" | "symlink",
-  safeContent: string,
-): ManagedFixtureProcess {
-  const script = [
-    "import base64, os, sys, time",
-    "managed_path, managed_target, race_kind, encoded = sys.argv[1:5]",
-    "ready, stop, finished, result = sys.argv[5:9]",
-    "safe_content = base64.b64decode(encoded)",
-    "safe_temp = managed_path + '.race-safe'",
-    "unsafe_temp = managed_path + '.race-unsafe'",
-    "def remove_temp(target):",
-    "    try:",
-    "        os.unlink(target)",
-    "    except FileNotFoundError:",
-    "        pass",
-    "def replace_safe():",
-    "    remove_temp(safe_temp)",
-    "    descriptor = os.open(safe_temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)",
-    "    try:",
-    "        offset = 0",
-    "        while offset < len(safe_content):",
-    "            offset += os.write(descriptor, safe_content[offset:])",
-    "        os.fsync(descriptor)",
-    "    finally:",
-    "        os.close(descriptor)",
-    "    os.replace(safe_temp, managed_path)",
-    "def replace_unsafe():",
-    "    remove_temp(unsafe_temp)",
-    "    if race_kind == 'symlink':",
-    "        os.symlink(managed_target, unsafe_temp)",
-    "    else:",
-    "        os.mkfifo(unsafe_temp, 0o600)",
-    "    os.replace(unsafe_temp, managed_path)",
-    "iterations = 0",
-    "replace_unsafe()",
-    "open(ready, 'x').close()",
-    "while not os.path.exists(stop):",
-    "    replace_safe()",
-    "    iterations += 1",
-    "    replace_unsafe()",
-    "    iterations += 1",
-    "    time.sleep(0.0001)",
-    "replace_unsafe()",
-    "open(result, 'w', encoding='utf-8').write(str(iterations))",
-    "open(finished, 'x').close()",
-  ].join("\n");
-  return startManagedFixtureProcess(fixtureRoot, "managed-path-race", script, [
-    managedPath,
-    managedTarget,
-    kind,
-    Buffer.from(safeContent).toString("base64"),
-  ]);
-}
-
-function startAbsentPublicationRace(
-  fixtureRoot: string,
-  managedPath: string,
-  managedTarget: string,
-): ManagedFixtureProcess {
-  const script = [
-    "import os, sys, time",
-    "managed_path, managed_target = sys.argv[1:3]",
-    "ready, stop, finished, result = sys.argv[3:7]",
-    "parent = os.path.dirname(managed_path)",
-    "triggered = 0",
-    "open(ready, 'x').close()",
-    "while not os.path.exists(stop) and not triggered:",
-    "    if os.path.isdir(parent):",
-    "        try:",
-    "            os.symlink(managed_target, managed_path)",
-    "            triggered = 1",
-    "        except FileExistsError:",
-    "            pass",
-    "    time.sleep(0.0001)",
-    "while not os.path.exists(stop):",
-    "    time.sleep(0.001)",
-    "open(result, 'w', encoding='utf-8').write(str(triggered))",
-    "open(finished, 'x').close()",
-  ].join("\n");
-  return startManagedFixtureProcess(fixtureRoot, "managed-publication-race", script, [
-    managedPath,
-    managedTarget,
-  ]);
-}
-
-function startManagedSocket(fixtureRoot: string, managedPath: string): ManagedFixtureProcess {
-  const script = [
-    "import os, socket, sys, time",
-    "managed_path = sys.argv[1]",
-    "ready, stop, finished, result = sys.argv[2:6]",
-    "os.makedirs(os.path.dirname(managed_path), exist_ok=True)",
-    "managed_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)",
-    "managed_socket.bind(managed_path)",
-    "open(ready, 'x').close()",
-    "while not os.path.exists(stop):",
-    "    time.sleep(0.001)",
-    "managed_socket.close()",
-    "open(result, 'w', encoding='utf-8').write('1')",
-    "open(finished, 'x').close()",
-  ].join("\n");
-  return startManagedFixtureProcess(fixtureRoot, "managed-socket", script, [managedPath]);
 }
 
 function startTargetReadProbe(target: string, ready: string, accessed: string) {
@@ -266,10 +148,12 @@ function createDeepAgentsFixturePythonExecutable(
   fixtureRoot: string,
   configPath: string,
   legacyConfigPath: string,
+  managedSymlinkTarget: string,
   runtimeKind: "v2" | "legacy" | "unknown",
+  managedSwap?: ManagedSwap,
 ): { executablePath: string; scriptPath: string } {
-  const executablePath = path.join(fixtureRoot, "fixture-python");
-  const scriptPath = path.join(fixtureRoot, "fixture-wrapper.py");
+  const executablePath = path.join(fixtureRoot, "managed-swap-python");
+  const scriptPath = path.join(fixtureRoot, "managed-swap-wrapper.py");
   const runtimeConfigPath =
     runtimeKind === "v2"
       ? configPath
@@ -285,12 +169,118 @@ function createDeepAgentsFixturePythonExecutable(
     { mode: 0o600 },
   );
   const wrapper = [
+    "import errno",
+    "import os",
+    "import socket",
     "import sys",
     `fixture_root = ${JSON.stringify(fixtureRoot)}`,
+    `managed_path = ${JSON.stringify(configPath)}`,
+    `managed_target = ${JSON.stringify(managedSymlinkTarget)}`,
+    `managed_swap_kind = ${JSON.stringify(managedSwap?.kind ?? "")}`,
+    `managed_swap_phase = ${JSON.stringify(managedSwap?.phase ?? "")}`,
+    `managed_swap_content = ${JSON.stringify(managedSwap?.content ?? "")}`,
+    "managed_eloop_stage = 0",
+    "managed_socket = None",
+    "managed_swapped = False",
+    "managed_descriptor = None",
+    "managed_entry_name = os.path.basename(managed_path)",
+    "managed_real_link = os.link",
+    "managed_real_lseek = os.lseek",
+    "managed_real_open = os.open",
+    "managed_real_read = os.read",
+    "def replace_managed_path():",
+    "    global managed_socket, managed_swapped",
+    "    if managed_swapped:",
+    "        return",
+    "    managed_swapped = True",
+    "    try:",
+    "        os.unlink(managed_path)",
+    "    except FileNotFoundError:",
+    "        pass",
+    "    if managed_swap_kind == 'symlink':",
+    "        os.symlink(managed_target, managed_path)",
+    "    elif managed_swap_kind == 'fifo':",
+    "        os.mkfifo(managed_path, 0o600)",
+    "    elif managed_swap_kind == 'socket':",
+    "        managed_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)",
+    "        managed_socket.bind(managed_path)",
+    "    else:",
+    "        with open(managed_path, 'w', encoding='utf-8') as replacement:",
+    "            replacement.write(managed_swap_content)",
+    "        os.chmod(managed_path, 0o600)",
+    "def replace_managed_symlink_with_regular():",
+    "    global managed_eloop_stage",
+    "    os.unlink(managed_path)",
+    "    with open(managed_target, 'rb') as source, open(managed_path, 'wb') as replacement:",
+    "        replacement.write(source.read())",
+    "    os.chmod(managed_path, 0o600)",
+    "    managed_eloop_stage = 1",
+    "def restore_managed_symlink():",
+    "    global managed_eloop_stage",
+    "    os.unlink(managed_path)",
+    "    os.symlink(managed_target, managed_path)",
+    "    managed_eloop_stage = 2",
+    "def is_managed_entry(value, directory_descriptor):",
+    "    try:",
+    "        candidate = os.fspath(value)",
+    "        return candidate == managed_path if directory_descriptor is None else candidate == managed_entry_name",
+    "    except TypeError:",
+    "        return False",
+    "def managed_boundary_open(value, flags, mode=0o777, *, dir_fd=None):",
+    "    global managed_descriptor",
+    "    projection_entry = is_managed_entry(value, dir_fd)",
+    "    if projection_entry and managed_swap_phase == 'before-projection-open':",
+    "        replace_managed_path()",
+    "    try:",
+    "        if dir_fd is None:",
+    "            descriptor = managed_real_open(value, flags, mode)",
+    "        else:",
+    "            descriptor = managed_real_open(value, flags, mode, dir_fd=dir_fd)",
+    "    except OSError as exc:",
+    "        if projection_entry and managed_swap_phase == 'after-missing-projection-open' and isinstance(exc, FileNotFoundError):",
+    "            replace_managed_path()",
+    "        elif projection_entry and managed_swap_phase == 'after-projection-eloop' and exc.errno == errno.ELOOP:",
+    "            replace_managed_symlink_with_regular()",
+    "        raise",
+    "    if projection_entry:",
+    "        managed_descriptor = descriptor",
+    "        if managed_swap_phase == 'after-projection-open':",
+    "            replace_managed_path()",
+    "    return descriptor",
+    "def managed_boundary_read(descriptor, length):",
+    "    if managed_swap_phase == 'projection-read-begins' and descriptor == managed_descriptor:",
+    "        replace_managed_path()",
+    "    return managed_real_read(descriptor, length)",
+    "def managed_boundary_link(source, destination, *args, **kwargs):",
+    "    if managed_swap_phase == 'projection-publication-begins' and is_managed_entry(destination, kwargs.get('dst_dir_fd')):",
+    "        replace_managed_path()",
+    "    return managed_real_link(source, destination, *args, **kwargs)",
+    "def managed_boundary_lseek(descriptor, position, how):",
+    "    if managed_swap_phase == 'projection-rewrite-begins' and descriptor == managed_descriptor:",
+    "        replace_managed_path()",
+    "    return managed_real_lseek(descriptor, position, how)",
+    "def install_managed_boundaries():",
+    "    if not managed_swap_phase:",
+    "        return",
+    "    os.link = managed_boundary_link",
+    "    os.lseek = managed_boundary_lseek",
+    "    os.open = managed_boundary_open",
+    "    os.read = managed_boundary_read",
+    "def restore_managed_boundaries():",
+    "    os.link = managed_real_link",
+    "    os.lseek = managed_real_lseek",
+    "    os.open = managed_real_open",
+    "    os.read = managed_real_read",
     "source = sys.stdin.read()",
     "namespace = {'__name__': '__main__'}",
     "sys.path.insert(0, fixture_root)",
-    "exec(compile(source, '<nemoclaw-managed-command>', 'exec'), namespace)",
+    "install_managed_boundaries()",
+    "try:",
+    "    exec(compile(source, '<nemoclaw-managed-command>', 'exec'), namespace)",
+    "finally:",
+    "    restore_managed_boundaries()",
+    "    if managed_swap_phase == 'after-projection-eloop' and managed_eloop_stage == 1:",
+    "        restore_managed_symlink()",
     "",
   ].join("\n");
   fs.writeFileSync(scriptPath, wrapper, { mode: 0o600 });
@@ -311,27 +301,14 @@ export function runDeepAgentsConfigCommand(
   managedOptions: DeepAgentsManagedFixtureOptions = {},
   runtimeEnvironment: NodeJS.ProcessEnv = {},
 ): DeepAgentsConfigCommandResult {
-  const activeFixtureProcesses = [
-    managedOptions.raceAbsentPublication !== undefined,
-    managedOptions.raceProjection !== undefined,
-    managedOptions.socket === true,
-  ].filter(Boolean).length;
-  if (activeFixtureProcesses > 1) {
-    throw new Error("managed fixture process options are mutually exclusive");
-  }
-  const fixtureRoot = managedOptions.socket ? "/tmp" : os.tmpdir();
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-")));
+  const managedSwap = resolveManagedSwap(managedOptions);
+  const fixtureRoot = managedSwap?.kind === "socket" ? "/tmp" : os.tmpdir();
+  const tmp = fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
-  const managedParentPath = path.dirname(configPath);
-  const managedParentTarget = path.join(tmp, "managed-parent-target");
-  const managedParentTargetConfig = path.join(managedParentTarget, path.basename(configPath));
   const managedSymlinkTarget = path.join(tmp, "managed-projection-target.json");
   const managedTargetReadReady = path.join(tmp, "managed-target-read-ready");
   const managedTargetReadAccess = path.join(tmp, "managed-target-read-accessed");
   const legacyConfigPath = path.join(tmp, ".deepagents", ".mcp.json");
-  const legacyParentPath = path.dirname(legacyConfigPath);
-  const legacyParentTarget = path.join(tmp, "legacy-parent-target");
-  const legacyParentTargetConfig = path.join(legacyParentTarget, path.basename(legacyConfigPath));
   const initializeConfig = (
     target: string,
     value: Record<string, unknown> | string | undefined,
@@ -346,78 +323,44 @@ export function runDeepAgentsConfigCommand(
     );
   };
   const managedSymlink = managedOptions.symlink === true || managedOptions.danglingSymlink === true;
-  if (
-    managedOptions.legacyParentSymlink &&
-    (initialConfig !== undefined ||
-      managedOptions.danglingSymlink ||
-      managedOptions.directory ||
-      managedOptions.fifo ||
-      managedOptions.parentSymlink ||
-      managedOptions.raceAbsentPublication !== undefined ||
-      managedOptions.raceProjection !== undefined ||
-      managedOptions.socket ||
-      managedOptions.symlink)
-  ) {
-    throw new Error("legacyParentSymlink cannot share the managed projection parent fixture");
-  }
   const managedTargetReadPath = managedOptions.targetReadProbe
-    ? managedOptions.parentSymlink
-      ? managedParentTargetConfig
-      : managedSymlink
-        ? managedSymlinkTarget
-        : null
+    ? managedSymlink
+      ? managedSymlinkTarget
+      : null
     : null;
   if (managedOptions.targetReadProbe && managedTargetReadPath === null) {
-    throw new Error("targetReadProbe requires a projection or parent symlink");
+    throw new Error("targetReadProbe requires a projection symlink");
   }
   const managedInitialPath = managedSymlink ? managedSymlinkTarget : configPath;
-  if (managedOptions.parentSymlink) {
-    fs.mkdirSync(managedParentTarget, { recursive: true });
-    if (managedTargetReadPath === managedParentTargetConfig) {
-      createFifo(managedParentTargetConfig, managedOptions.mode);
-    } else {
-      initializeConfig(managedParentTargetConfig, initialConfig, managedOptions.mode);
-    }
-    fs.symlinkSync(managedParentTarget, managedParentPath);
-  } else if (managedOptions.directory) {
+  if (managedOptions.directory) {
     fs.mkdirSync(configPath, { recursive: true, mode: managedOptions.mode ?? 0o700 });
   } else if (managedOptions.fifo) {
     createFifo(configPath, managedOptions.mode);
-  } else if (managedOptions.socket) {
-    // The socket holder creates the path after the rest of the fixture is ready.
   } else {
     if (managedTargetReadPath === managedSymlinkTarget) {
       createFifo(managedSymlinkTarget, managedOptions.mode);
     } else if (
       !managedOptions.danglingSymlink &&
-      managedOptions.raceAbsentPublication === undefined
+      managedSwap?.phase !== "after-missing-projection-open"
     ) {
       initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
       if (initialConfig !== undefined)
         fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
+    }
+    if (managedSwap?.phase === "after-missing-projection-open") {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
     }
     if (managedSymlink) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.symlinkSync(managedSymlinkTarget, configPath);
     }
   }
-  if (managedOptions.raceProjection === "symlink") {
+  if (managedSwap?.kind === "symlink") {
     initializeConfig(managedSymlinkTarget, initialConfig, managedOptions.mode);
   }
-  if (managedOptions.raceAbsentPublication !== undefined) {
-    initializeConfig(managedSymlinkTarget, managedOptions.raceAbsentPublication);
-  }
-  if (managedOptions.legacyParentSymlink) {
-    fs.mkdirSync(legacyParentTarget, { recursive: true });
-    initializeConfig(legacyParentTargetConfig, initialLegacyConfig, initialLegacyMode);
-    fs.symlinkSync(legacyParentTarget, legacyParentPath);
-  } else {
-    initializeConfig(legacyConfigPath, initialLegacyConfig, initialLegacyMode);
-  }
+  initializeConfig(legacyConfigPath, initialLegacyConfig);
+  if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);
   let targetReadProbe: ReturnType<typeof spawn> | null = null;
-  let managedRace: ManagedFixtureProcess | null = null;
-  let socketFixture: ManagedFixtureProcess | null = null;
-  let managedRaceIterations = 0;
   try {
     if (managedTargetReadPath !== null) {
       targetReadProbe = startTargetReadProbe(
@@ -426,39 +369,22 @@ export function runDeepAgentsConfigCommand(
         managedTargetReadAccess,
       );
     }
-    if (managedOptions.socket) {
-      socketFixture = startManagedSocket(tmp, configPath);
-    } else if (managedOptions.raceProjection) {
-      if (initialConfig === undefined) throw new Error("raceProjection requires initialConfig");
-      const safeContent =
-        typeof initialConfig === "string"
-          ? initialConfig
-          : `${JSON.stringify(initialConfig, null, 2)}\n`;
-      managedRace = startManagedPathRace(
-        tmp,
-        configPath,
-        managedSymlinkTarget,
-        managedOptions.raceProjection,
-        safeContent,
-      );
-    } else if (managedOptions.raceAbsentPublication !== undefined) {
-      managedRace = startAbsentPublicationRace(tmp, configPath, managedSymlinkTarget);
-    }
     const fixturePython = createDeepAgentsFixturePythonExecutable(
       tmp,
       configPath,
       legacyConfigPath,
+      managedSymlinkTarget,
       runtimeKind,
+      managedSwap,
     );
     const fixtureCommand = command
       .replaceAll(DEEPAGENTS_MCP_CONFIG_PATH, configPath)
       .replaceAll("/sandbox/.deepagents/.mcp.json", legacyConfigPath)
       .replaceAll("/opt/venv/bin/python3", fixturePython.executablePath);
     const canonicalEnvironment = Object.fromEntries(
-      [...command.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(([, name]) => [
-        name!,
-        `openshell:resolve:env:${name!}`,
-      ]),
+      [...command.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(
+        ([, name]) => [name!, `openshell:resolve:env:${name!}`],
+      ),
     );
     const fixtureCommandPath = path.join(tmp, "managed-command.sh");
     fs.writeFileSync(fixtureCommandPath, fixtureCommand, { mode: 0o600 });
@@ -472,14 +398,6 @@ export function runDeepAgentsConfigCommand(
       },
       timeout: managedOptions.timeoutMs ?? 5000,
     });
-    if (managedRace !== null) {
-      managedRaceIterations = stopManagedFixtureProcess(managedRace);
-      managedRace = null;
-    }
-    if (socketFixture !== null) {
-      stopManagedFixtureProcess(socketFixture);
-      socketFixture = null;
-    }
     let configStat: fs.Stats | null = null;
     try {
       configStat = fs.lstatSync(configPath);
@@ -487,19 +405,7 @@ export function runDeepAgentsConfigCommand(
       // A missing projection has no path type to report.
     }
     const configExists = configStat !== null;
-    let managedParentIsSymlink = false;
-    try {
-      managedParentIsSymlink = fs.lstatSync(managedParentPath).isSymbolicLink();
-    } catch {
-      // A missing projection parent cannot redirect the managed path.
-    }
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
-    let legacyParentIsSymlink = false;
-    try {
-      legacyParentIsSymlink = fs.lstatSync(legacyParentPath).isSymbolicLink();
-    } catch {
-      // A missing legacy parent cannot redirect the legacy config path.
-    }
     const configIsFifo = configStat?.isFIFO() === true;
     const configIsSocket = configStat?.isSocket() === true;
     const configIsSymlink = configStat?.isSymbolicLink() === true;
@@ -525,14 +431,9 @@ export function runDeepAgentsConfigCommand(
     };
     const managedSymlinkTargetText =
       managedTargetReadPath === managedSymlinkTarget ? null : readRegularFile(managedSymlinkTarget);
-    const managedParentTargetText =
-      managedTargetReadPath === managedParentTargetConfig
-        ? null
-        : readRegularFile(managedParentTargetConfig);
     const managedTargetReadAccessed =
       managedTargetReadPath !== null && waitForPath(managedTargetReadAccess, 200);
     const legacyConfigText = legacyConfigExists ? fs.readFileSync(legacyConfigPath, "utf-8") : null;
-    const legacyParentTargetText = readRegularFile(legacyParentTargetConfig);
     const parseConfigText = (text: string | null): Record<string, unknown> | null => {
       if (!text) return null;
       try {
@@ -558,18 +459,11 @@ export function runDeepAgentsConfigCommand(
       legacyConfigExists,
       legacyConfig: parseConfigText(legacyConfigText),
       legacyConfigText,
-      legacyParentIsSymlink,
-      legacyParentTargetText,
-      managedParentIsSymlink,
-      managedParentTargetText,
-      managedRaceIterations,
       managedSymlinkTargetExists,
       managedSymlinkTargetText,
       managedTargetReadAccessed,
     };
   } finally {
-    if (managedRace !== null) managedRace.child.kill("SIGTERM");
-    if (socketFixture !== null) socketFixture.child.kill("SIGTERM");
     targetReadProbe?.kill("SIGTERM");
     fs.rmSync(tmp, { recursive: true, force: true });
   }

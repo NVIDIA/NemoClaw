@@ -616,16 +616,10 @@ exit 1
     it("applyPreset does not create temp dirs when bounded policy observation loses OpenShell", () => {
       const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
-      const policyReadSpy = vi
-        .spyOn(policyReaderModule.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy")
-        .mockReturnValue({
-          ok: false,
-          error: {
-            kind: "command",
-            reason: "failed",
-            message: "OpenShell became unavailable during the bounded policy read.",
-          },
-        });
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValueOnce(fakeOpenshell)
+        .mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -645,7 +639,7 @@ exit 1
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
       } finally {
-        policyReadSpy.mockRestore();
+        resolveSpy.mockRestore();
         mkdtempSpy.mockRestore();
         errSpy.mockRestore();
         logSpy.mockRestore();

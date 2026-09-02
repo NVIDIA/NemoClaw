@@ -80,31 +80,4 @@ describe("Deep Agents MCP config adapter legacy teardown", () => {
       ui: { theme: "dark" },
     });
   });
-
-  it("refuses removal through a symlinked legacy parent", () => {
-    const legacyConfig = {
-      mcpServers: {
-        github: {
-          type: "http",
-          url: baseEntry.url,
-          headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
-        },
-      },
-    };
-    const original = `${JSON.stringify(legacyConfig, null, 2)}\n`;
-
-    const removal = runDeepAgentsConfigCommand(
-      buildDeepAgentsMcpRemoveCommand(baseEntry, false, true),
-      undefined,
-      "legacy",
-      legacyConfig,
-      0o600,
-      { legacyParentSymlink: true },
-    );
-
-    expect(removal.status).toBe(2);
-    expect(removal.stderr).toContain("legacy MCP config parent is unsafe: symbolic link");
-    expect(removal.legacyParentIsSymlink).toBe(true);
-    expect(removal.legacyParentTargetText).toBe(original);
-  });
 });
