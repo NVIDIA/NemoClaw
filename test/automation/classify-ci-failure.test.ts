@@ -3,6 +3,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -14,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { artifactZip } from "../helpers/artifact-zip";
+import { artifactZip, artifactZipEntryDataOffset } from "../helpers/artifact-zip";
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
 );
@@ -72,7 +73,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
   const root = mkdtempSync(join(tmpdir(), "classify-ci-test-"));
   roots.push(root);
   const bin = join(root, "bin");
-  execFileSync("mkdir", ["-p", bin]);
+  mkdirSync(bin, { recursive: true });
   const zip = join(root, "artifact.zip");
   writeFileSync(
     zip,
@@ -87,7 +88,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
     "fs.appendFileSync(process.env.GH_CALLS,a+'\\n');",
     "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') console.log(JSON.stringify({id:123,run_id:456,name:'CLI tests',status:'completed',conclusion:'failure',html_url:'https://example.test/job'}));",
     "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
-    "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:1,artifacts:[{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]}));",
+    "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') { const artifacts=process.env.DUPLICATE_ARTIFACTS ? [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)},{id:790,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}] : [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]; process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:artifacts.length,artifacts})); }",
     "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') process.stdout.write(fs.readFileSync(process.env.ZIP_PATH));",
     "else { console.error('unexpected '+a); process.exit(9); }",
   ].join("\n");
@@ -214,7 +215,7 @@ describe("CI failure classifier process", () => {
     const item = fixture("AssertionError: retained tail");
     const credential = "cleanup-path-secret";
     const tempRoot = join(item.root, `BUILD_TOKEN=${credential}`);
-    execFileSync("mkdir", ["-p", tempRoot]);
+    mkdirSync(tempRoot, { recursive: true });
     item.env.TMPDIR = tempRoot;
     item.env.FAIL_CLEANUP = "nemoclaw-ci-log";
     item.env.FAIL_LOG = "primary log download failure";
@@ -269,14 +270,7 @@ describe("CI failure classifier process", () => {
       ],
       8,
     );
-    const secondLocalOffset =
-      30 + Buffer.byteLength("sample.result.json") + archive.readUInt32LE(18);
-    const secondDataOffset =
-      secondLocalOffset +
-      30 +
-      archive.readUInt16LE(secondLocalOffset + 26) +
-      archive.readUInt16LE(secondLocalOffset + 28);
-    archive[secondDataOffset] ^= 0xff;
+    archive[artifactZipEntryDataOffset(archive, 1)] ^= 0xff;
     const item = fixture("SIGKILL", undefined, archive);
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status).toBe(1);
@@ -328,6 +322,7 @@ describe("CI failure classifier process", () => {
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status, result.stderr).toBe(0);
     const value = JSON.parse(result.stdout);
+    expect(value.artifact.artifactId).toBe(789);
     expect(value.artifact.filesRead).toBe(1);
     expect(value.artifact.failures[0].signal).toBe("SIGKILL");
     expect(result.stdout).not.toContain("artifact-secret");
@@ -341,6 +336,47 @@ describe("CI failure classifier process", () => {
     ]);
     expect(readdirSync(item.root).filter((name) => name.startsWith("nemoclaw-ci-"))).toEqual([]);
   });
+  test("skips malformed result JSON while retaining valid artifact failures", () => {
+    const archive = artifactZip([
+      { name: "truncated.result.json", contents: '{"exitCode":' },
+      { name: "valid.result.json", contents: JSON.stringify({ exitCode: 1 }) },
+    ]);
+    const item = fixture("ordinary output", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.artifact.filesRead).toBe(2);
+    expect(value.artifact.filesTruncated).toBe(false);
+    expect(value.artifact.failures).toHaveLength(1);
+    expect(value.artifact.failures[0].exitCode).toBe(1);
+  });
+
+  test("rejects ambiguous same-name artifacts before downloading a ZIP", () => {
+    const item = fixture("SIGKILL");
+    item.env.DUPLICATE_ARTIFACTS = "1";
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Artifact results is ambiguous for run 456");
+    expect(result.stderr).toContain("789, 790");
+    const calls = readFileSync(item.env.GH_CALLS!, "utf8");
+    expect(calls).not.toContain("actions/artifacts/789/zip");
+    expect(calls).not.toContain("actions/artifacts/790/zip");
+  });
+
+  test("does not return or use a credential-shaped artifact signal", () => {
+    const secret = "artifact-signal-secret";
+    const item = fixture("ordinary output", {
+      exitCode: 1,
+      signal: `BUILD_TOKEN=${secret}`,
+    });
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.artifact.failures[0].signal).toBeNull();
+    expect(value.findings).not.toContainEqual(expect.objectContaining({ type: "process-signal" }));
+    expect(result.stdout).not.toContain(secret);
+  });
+
   test("redacts credential assignments in returned artifact paths", () => {
     const secret = "artifact-path-secret";
     const archive = artifactZip([

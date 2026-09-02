@@ -5,10 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   listValidatedArtifactZipEntries,
+  readValidatedArtifactZipEntries,
   readValidatedArtifactZipEntry,
   readValidatedArtifactZipEntryBytes,
 } from "../../../scripts/scorecard/read-artifact-zip.mts";
-import { artifactZip } from "../../helpers/artifact-zip";
+import { artifactZip, artifactZipEntryDataOffset } from "../../helpers/artifact-zip";
 
 const structuralMutations: Array<[string, (archive: Buffer, centralOffset: number) => void]> = [
   ["link", (archive, centralOffset) => archive.writeUInt32LE(0xa0000000, centralOffset + 38)],
@@ -133,14 +134,7 @@ describe("validated GitHub artifact ZIP reader", () => {
       8,
     );
     const corruptArchive = Buffer.from(archive);
-    const secondLocalOffset =
-      30 + Buffer.byteLength("summary.json") + corruptArchive.readUInt32LE(18);
-    const secondDataOffset =
-      secondLocalOffset +
-      30 +
-      corruptArchive.readUInt16LE(secondLocalOffset + 26) +
-      corruptArchive.readUInt16LE(secondLocalOffset + 28);
-    corruptArchive[secondDataOffset] ^= 0xff;
+    corruptArchive[artifactZipEntryDataOffset(corruptArchive, 1)] ^= 0xff;
 
     expect(
       listValidatedArtifactZipEntries(corruptArchive, {
@@ -153,6 +147,78 @@ describe("validated GitHub artifact ZIP reader", () => {
         maxEntries: 10,
         maxTotalUncompressedBytes: 1_024,
         validateAllEntries: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns reusable validated bytes for every entry", () => {
+    const archive = artifactZip(
+      [
+        { name: "summary.json", contents: '{"safe":true}' },
+        { name: "diagnostics/log.txt", contents: "log" },
+      ],
+      8,
+    );
+
+    expect(
+      readValidatedArtifactZipEntries(archive, {
+        maxEntries: 2,
+        maxTotalUncompressedBytes: 1_024,
+      }),
+    ).toEqual([
+      { name: "summary.json", bytes: Buffer.from('{"safe":true}') },
+      { name: "diagnostics/log.txt", bytes: Buffer.from("log") },
+    ]);
+  });
+
+  it.each([
+    ["zero max entries", { maxEntries: 0 }],
+    ["fractional max entries", { maxEntries: 1.5 }],
+    ["NaN max entries", { maxEntries: Number.NaN }],
+    ["infinite max entries", { maxEntries: Number.POSITIVE_INFINITY }],
+    ["unsafe max entries", { maxEntries: Number.MAX_SAFE_INTEGER + 1 }],
+    ["negative total bytes", { maxTotalUncompressedBytes: -1 }],
+    ["fractional total bytes", { maxTotalUncompressedBytes: 1.5 }],
+    ["NaN total bytes", { maxTotalUncompressedBytes: Number.NaN }],
+    ["infinite total bytes", { maxTotalUncompressedBytes: Number.POSITIVE_INFINITY }],
+    ["unsafe total bytes", { maxTotalUncompressedBytes: Number.MAX_SAFE_INTEGER + 1 }],
+  ])("rejects invalid list limit: %s", (_name, options) => {
+    const archive = artifactZip([{ name: "summary.json", contents: "{}" }]);
+    expect(listValidatedArtifactZipEntries(archive, options)).toBeNull();
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid exact-entry byte limit: %s",
+    (maxBytes) => {
+      const archive = artifactZip([{ name: "summary.json", contents: "{}" }]);
+      expect(readValidatedArtifactZipEntryBytes(archive, "summary.json", { maxBytes })).toBeNull();
+    },
+  );
+
+  it.each([0, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid exact-entry count limit: %s",
+    (maxEntries) => {
+      const archive = artifactZip([{ name: "summary.json", contents: "{}" }]);
+      expect(
+        readValidatedArtifactZipEntryBytes(archive, "summary.json", {
+          maxBytes: 1_024,
+          maxEntries,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("rejects invalid reusable-view limits", () => {
+    const archive = artifactZip([{ name: "summary.json", contents: "{}" }]);
+    expect(
+      readValidatedArtifactZipEntries(archive, {
+        maxEntries: Number.NaN,
+        maxTotalUncompressedBytes: 1_024,
+      }),
+    ).toBeNull();
+    expect(
+      readValidatedArtifactZipEntries(archive, {
+        maxTotalUncompressedBytes: Number.POSITIVE_INFINITY,
       }),
     ).toBeNull();
   });

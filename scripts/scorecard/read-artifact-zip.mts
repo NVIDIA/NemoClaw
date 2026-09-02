@@ -3,21 +3,26 @@
 
 import zlib from "node:zlib";
 
-type ZipEntry = {
-  creatorSystem: number;
-  flags: number;
-  compressionMethod: number;
-  expectedCrc: number;
-  compressedSize: number;
-  uncompressedSize: number;
-  diskStart: number;
-  externalAttributes: number;
-  localHeaderOffset: number;
-};
-
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
+
+type ParseOptions = {
+  maxEntries: number;
+  maxTotalUncompressedBytes: number;
+  inflate: "all" | string | null;
+  maxInflatedEntryBytes?: number;
+};
+
+type ParsedZipEntry = {
+  name: string;
+  contents: Buffer | null;
+};
+
+export type ValidatedArtifactZipEntry = {
+  name: string;
+  bytes: Buffer;
+};
 
 function findZipEndOfCentralDirectory(archive: Buffer): number {
   const minimumOffset = Math.max(0, archive.length - 22 - 0xffff);
@@ -56,27 +61,24 @@ function isSafeExpectedFile(expectedFile: string): boolean {
   );
 }
 
-/**
- * Lists structurally validated regular-file entries from a GitHub artifact
- * ZIP without extracting paths to disk. When validateAllEntries is enabled,
- * every regular entry is bounded by the aggregate declared-size limit,
- * inflated, and CRC-checked. Relative names must not contain empty, dot,
- * parent, backslash, NUL, absolute, or trailing-slash segments. Links,
- * encryption, split archives, ZIP64, duplicate names, unsupported
- * compression, inconsistent headers, and excess entries are rejected before
- * callers select an allowlisted evidence file.
- */
-export function listValidatedArtifactZipEntries(
+function isSafeIntegerAtLeast(value: number, minimum: number): boolean {
+  return Number.isSafeInteger(value) && value >= minimum;
+}
+
+/** Owns all ZIP parsing, structural validation, optional inflation, and CRC checks. */
+function parseValidatedArtifactZip(
   archive: Buffer,
-  options: {
-    maxEntries?: number;
-    maxTotalUncompressedBytes?: number;
-    validateAllEntries?: boolean;
-  },
-): string[] | null {
-  const maxEntries = options.maxEntries ?? 1000;
-  const maxTotalUncompressedBytes = options.maxTotalUncompressedBytes ?? Number.MAX_SAFE_INTEGER;
-  if (maxEntries < 1 || maxTotalUncompressedBytes < 0) return null;
+  options: ParseOptions,
+): ParsedZipEntry[] | null {
+  if (
+    !isSafeIntegerAtLeast(options.maxEntries, 1) ||
+    !isSafeIntegerAtLeast(options.maxTotalUncompressedBytes, 0) ||
+    (options.maxInflatedEntryBytes !== undefined &&
+      !isSafeIntegerAtLeast(options.maxInflatedEntryBytes, 1))
+  ) {
+    return null;
+  }
+
   const endOffset = findZipEndOfCentralDirectory(archive);
   if (endOffset < 0) return null;
   const entriesOnDisk = archive.readUInt16LE(endOffset + 8);
@@ -88,13 +90,13 @@ export function listValidatedArtifactZipEntries(
     archive.readUInt16LE(endOffset + 6) !== 0 ||
     entriesOnDisk !== totalEntries ||
     totalEntries < 1 ||
-    totalEntries > maxEntries ||
+    totalEntries > options.maxEntries ||
     centralDirectoryOffset + centralDirectorySize !== endOffset
   ) {
     return null;
   }
 
-  const names: string[] = [];
+  const entries: ParsedZipEntry[] = [];
   const seen = new Set<string>();
   let totalUncompressedBytes = 0;
   let offset = centralDirectoryOffset;
@@ -111,7 +113,6 @@ export function listValidatedArtifactZipEntries(
     const expectedCrc = archive.readUInt32LE(offset + 16);
     const compressedSize = archive.readUInt32LE(offset + 20);
     const uncompressedSize = archive.readUInt32LE(offset + 24);
-    totalUncompressedBytes += uncompressedSize;
     const fileNameLength = archive.readUInt16LE(offset + 28);
     const extraLength = archive.readUInt16LE(offset + 30);
     const commentLength = archive.readUInt16LE(offset + 32);
@@ -120,6 +121,7 @@ export function listValidatedArtifactZipEntries(
     const localHeaderOffset = archive.readUInt32LE(offset + 42);
     const entryEnd = offset + 46 + fileNameLength + extraLength + commentLength;
     if (entryEnd > endOffset) return null;
+
     const nameBytes = archive.subarray(offset + 46, offset + 46 + fileNameLength);
     let name: string;
     try {
@@ -127,10 +129,11 @@ export function listValidatedArtifactZipEntries(
     } catch {
       return null;
     }
+    totalUncompressedBytes += uncompressedSize;
     const unixFileType = (externalAttributes >>> 16) & 0xf000;
     if (
       !isSafeExpectedFile(name) ||
-      totalUncompressedBytes > maxTotalUncompressedBytes ||
+      totalUncompressedBytes > options.maxTotalUncompressedBytes ||
       seen.has(name) ||
       diskStart !== 0 ||
       (flags & 0x1) !== 0 ||
@@ -142,12 +145,14 @@ export function listValidatedArtifactZipEntries(
     ) {
       return null;
     }
+
     const localFlags = archive.readUInt16LE(localHeaderOffset + 6);
     const localCompressionMethod = archive.readUInt16LE(localHeaderOffset + 8);
     const localNameLength = archive.readUInt16LE(localHeaderOffset + 26);
     const localExtraLength = archive.readUInt16LE(localHeaderOffset + 28);
     const localNameEnd = localHeaderOffset + 30 + localNameLength;
-    const dataEnd = localNameEnd + localExtraLength + compressedSize;
+    const compressedDataOffset = localNameEnd + localExtraLength;
+    const dataEnd = compressedDataOffset + compressedSize;
     if (
       localNameEnd > centralDirectoryOffset ||
       dataEnd > centralDirectoryOffset ||
@@ -157,14 +162,22 @@ export function listValidatedArtifactZipEntries(
     ) {
       return null;
     }
-    if (options.validateAllEntries) {
-      const compressedDataOffset = localNameEnd + localExtraLength;
+
+    const shouldInflate = options.inflate === "all" || options.inflate === name;
+    let contents: Buffer | null = null;
+    if (shouldInflate) {
+      if (
+        options.maxInflatedEntryBytes !== undefined &&
+        (compressedSize > options.maxInflatedEntryBytes ||
+          uncompressedSize > options.maxInflatedEntryBytes)
+      ) {
+        return null;
+      }
       const compressedData = archive.subarray(compressedDataOffset, dataEnd);
-      let contents: Buffer;
       try {
         contents =
           compressionMethod === 0
-            ? compressedData
+            ? Buffer.from(compressedData)
             : zlib.inflateRawSync(compressedData, {
                 maxOutputLength: Math.max(1, uncompressedSize),
               });
@@ -173,144 +186,62 @@ export function listValidatedArtifactZipEntries(
       }
       if (contents.length !== uncompressedSize || crc32(contents) !== expectedCrc) return null;
     }
+
     seen.add(name);
-    names.push(name);
+    entries.push({ name, contents });
     offset = entryEnd;
   }
-  return offset === endOffset ? names.sort() : null;
+  return offset === endOffset ? entries : null;
 }
 
 /**
- * Reads the exact bytes of one structurally validated relative regular-file
- * entry from a GitHub artifact ZIP without extracting paths to disk. The same
- * name, archive-layout, file-type, encryption, split/ZIP64, compression,
- * header-consistency, entry-count, compressed-size, inflated-size, and CRC
- * constraints used by the entry validator are enforced before bytes return.
+ * Returns every safe regular-file entry and its validated bytes. The whole
+ * archive is structurally validated before any entry is returned, and every
+ * entry is inflated and CRC-checked within the caller's aggregate bound.
  */
+export function readValidatedArtifactZipEntries(
+  archive: Buffer,
+  options: { maxEntries?: number; maxTotalUncompressedBytes: number },
+): ValidatedArtifactZipEntry[] | null {
+  const entries = parseValidatedArtifactZip(archive, {
+    maxEntries: options.maxEntries ?? 1000,
+    maxTotalUncompressedBytes: options.maxTotalUncompressedBytes,
+    inflate: "all",
+  });
+  return entries?.map(({ name, contents }) => ({ name, bytes: contents! })) ?? null;
+}
+
+/** Lists structurally validated regular-file entries from an artifact ZIP. */
+export function listValidatedArtifactZipEntries(
+  archive: Buffer,
+  options: {
+    maxEntries?: number;
+    maxTotalUncompressedBytes?: number;
+    validateAllEntries?: boolean;
+  },
+): string[] | null {
+  const entries = parseValidatedArtifactZip(archive, {
+    maxEntries: options.maxEntries ?? 1000,
+    maxTotalUncompressedBytes: options.maxTotalUncompressedBytes ?? Number.MAX_SAFE_INTEGER,
+    inflate: options.validateAllEntries ? "all" : null,
+  });
+  return entries?.map(({ name }) => name).sort() ?? null;
+}
+
+/** Reads the exact validated bytes of one safe relative regular-file entry. */
 export function readValidatedArtifactZipEntryBytes(
   archive: Buffer,
   expectedFile: string,
   options: { maxBytes: number; maxEntries?: number },
 ): Buffer | null {
-  const maxEntries = options.maxEntries ?? 1000;
-  const expectedFileName = Buffer.from(expectedFile, "utf8");
-  if (!isSafeExpectedFile(expectedFile) || options.maxBytes < 1 || maxEntries < 1) {
-    return null;
-  }
-
-  const endOffset = findZipEndOfCentralDirectory(archive);
-  if (endOffset < 0) return null;
-
-  const diskNumber = archive.readUInt16LE(endOffset + 4);
-  const centralDirectoryDisk = archive.readUInt16LE(endOffset + 6);
-  const entriesOnDisk = archive.readUInt16LE(endOffset + 8);
-  const totalEntries = archive.readUInt16LE(endOffset + 10);
-  const centralDirectorySize = archive.readUInt32LE(endOffset + 12);
-  const centralDirectoryOffset = archive.readUInt32LE(endOffset + 16);
-  if (
-    diskNumber !== 0 ||
-    centralDirectoryDisk !== 0 ||
-    entriesOnDisk !== totalEntries ||
-    totalEntries < 1 ||
-    totalEntries > maxEntries ||
-    centralDirectoryOffset + centralDirectorySize !== endOffset
-  ) {
-    return null;
-  }
-
-  let centralEntryOffset = centralDirectoryOffset;
-  let target: ZipEntry | null = null;
-  for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
-    if (
-      centralEntryOffset + 46 > endOffset ||
-      archive.readUInt32LE(centralEntryOffset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE
-    ) {
-      return null;
-    }
-    const fileNameLength = archive.readUInt16LE(centralEntryOffset + 28);
-    const extraLength = archive.readUInt16LE(centralEntryOffset + 30);
-    const commentLength = archive.readUInt16LE(centralEntryOffset + 32);
-    const centralEntryEnd = centralEntryOffset + 46 + fileNameLength + extraLength + commentLength;
-    if (centralEntryEnd > endOffset) return null;
-    const fileName = archive.subarray(
-      centralEntryOffset + 46,
-      centralEntryOffset + 46 + fileNameLength,
-    );
-    if (fileName.equals(expectedFileName)) {
-      if (target !== null) return null;
-      target = {
-        creatorSystem: archive.readUInt8(centralEntryOffset + 5),
-        flags: archive.readUInt16LE(centralEntryOffset + 8),
-        compressionMethod: archive.readUInt16LE(centralEntryOffset + 10),
-        expectedCrc: archive.readUInt32LE(centralEntryOffset + 16),
-        compressedSize: archive.readUInt32LE(centralEntryOffset + 20),
-        uncompressedSize: archive.readUInt32LE(centralEntryOffset + 24),
-        diskStart: archive.readUInt16LE(centralEntryOffset + 34),
-        externalAttributes: archive.readUInt32LE(centralEntryOffset + 38),
-        localHeaderOffset: archive.readUInt32LE(centralEntryOffset + 42),
-      };
-    }
-    centralEntryOffset = centralEntryEnd;
-  }
-  if (centralEntryOffset !== endOffset || target === null) return null;
-
-  const {
-    creatorSystem,
-    flags,
-    compressionMethod,
-    expectedCrc,
-    compressedSize,
-    uncompressedSize,
-    diskStart,
-    externalAttributes,
-    localHeaderOffset,
-  } = target;
-  const unixFileType = (externalAttributes >>> 16) & 0xf000;
-  if (
-    diskStart !== 0 ||
-    (flags & 0x1) !== 0 ||
-    (compressionMethod !== 0 && compressionMethod !== 8) ||
-    compressedSize > options.maxBytes ||
-    uncompressedSize > options.maxBytes ||
-    (creatorSystem !== 0 && creatorSystem !== 3) ||
-    (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
-    localHeaderOffset + 30 > centralDirectoryOffset ||
-    archive.readUInt32LE(localHeaderOffset) !== ZIP_LOCAL_FILE_SIGNATURE
-  ) {
-    return null;
-  }
-
-  const localFlags = archive.readUInt16LE(localHeaderOffset + 6);
-  const localCompressionMethod = archive.readUInt16LE(localHeaderOffset + 8);
-  const localFileNameLength = archive.readUInt16LE(localHeaderOffset + 26);
-  const localExtraLength = archive.readUInt16LE(localHeaderOffset + 28);
-  const localFileNameEnd = localHeaderOffset + 30 + localFileNameLength;
-  const compressedDataOffset = localFileNameEnd + localExtraLength;
-  const compressedDataEnd = compressedDataOffset + compressedSize;
-  if (
-    localFileNameEnd > centralDirectoryOffset ||
-    localFlags !== flags ||
-    localCompressionMethod !== compressionMethod ||
-    !archive.subarray(localHeaderOffset + 30, localFileNameEnd).equals(expectedFileName) ||
-    compressedDataEnd > centralDirectoryOffset
-  ) {
-    return null;
-  }
-
-  const compressedData = archive.subarray(compressedDataOffset, compressedDataEnd);
-  let contents: Buffer;
-  try {
-    contents =
-      compressionMethod === 0
-        ? Buffer.from(compressedData)
-        : zlib.inflateRawSync(compressedData, {
-            maxOutputLength: options.maxBytes,
-          });
-  } catch {
-    return null;
-  }
-  if (contents.length !== uncompressedSize || crc32(contents) !== expectedCrc) return null;
-  return contents;
+  if (!isSafeExpectedFile(expectedFile)) return null;
+  const entries = parseValidatedArtifactZip(archive, {
+    maxEntries: options.maxEntries ?? 1000,
+    maxTotalUncompressedBytes: Number.MAX_SAFE_INTEGER,
+    inflate: expectedFile,
+    maxInflatedEntryBytes: options.maxBytes,
+  });
+  return entries?.find(({ name }) => name === expectedFile)?.contents ?? null;
 }
 
 /** Read one validated artifact entry as UTF-8 text. */

@@ -3,13 +3,11 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import {
-  listValidatedArtifactZipEntries,
-  readValidatedArtifactZipEntryBytes,
-} from "../../../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../../../scripts/scorecard/read-artifact-zip.mts";
 
 type ClipMode = "head" | "tail";
 type Input = {
@@ -131,6 +129,28 @@ const runtime = {
     };
   },
 };
+
+function selectUniqueArtifact(
+  artifacts: Record<string, unknown>[],
+  artifactName: string,
+  runId: number,
+): Record<string, unknown> {
+  const matches = artifacts.filter((entry) => entry.name === artifactName);
+  if (matches.length === 0)
+    throw new Error(`Artifact ${artifactName} was not found for run ${runId}`);
+  if (matches.length === 1) return matches[0];
+  const identifiers = matches
+    .slice(0, 20)
+    .map((entry) =>
+      typeof entry.id === "number" && Number.isSafeInteger(entry.id) && entry.id > 0
+        ? String(entry.id)
+        : "invalid",
+    );
+  const suffix = matches.length > identifiers.length ? ", ..." : "";
+  throw new Error(
+    `Artifact ${artifactName} is ambiguous for run ${runId}; matching artifact IDs: ${identifiers.join(", ")}${suffix}`,
+  );
+}
 
 export async function classifyCiFailure(input: Input): Promise<Record<string, unknown>> {
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -384,8 +404,10 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       }
       if (artifactTotal === null || artifacts.length !== artifactTotal)
         throw new Error("Artifact inventory pagination was incomplete");
-      const found = artifacts.find((entry) => entry.name === artifactName);
-      if (!found) throw new Error(`Artifact ${artifactName} was not found for run ${job.runId}`);
+      const found = selectUniqueArtifact(artifacts, artifactName, job.runId);
+      const artifactId = found.id;
+      if (typeof artifactId !== "number" || !Number.isSafeInteger(artifactId) || artifactId <= 0)
+        throw new Error(`Artifact ${artifactName} has an invalid artifact ID`);
       const sizeBytes = found.size_in_bytes;
       if (
         typeof sizeBytes !== "number" ||
@@ -405,9 +427,6 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       if (!dir) throw new Error("Could not create temporary artifact directory");
       let artifactFailure: unknown;
       try {
-        const artifactId = found.id;
-        if (typeof artifactId !== "number" || !Number.isSafeInteger(artifactId) || artifactId <= 0)
-          throw new Error(`Artifact ${artifactName} has an invalid artifact ID`);
         const archive = dir + "/artifact.zip";
         const download = await run(
           `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; dd bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
@@ -431,22 +450,17 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
         const archiveBytes = readFileSync(archive);
         if (archiveBytes.length !== sizeBytes)
           throw new Error("Artifact compressed size differs from its metadata");
-        const entries = listValidatedArtifactZipEntries(archiveBytes, {
+        const entries = readValidatedArtifactZipEntries(archiveBytes, {
           maxEntries: 100,
           maxTotalUncompressedBytes: 100_000_000,
-          validateAllEntries: true,
         });
         if (entries === null) throw new Error("Artifact ZIP is malformed or unsafe");
-        const resultEntries = entries.filter((entry) => entry.endsWith(".result.json"));
+        const resultEntries = entries.filter(({ name }) => name.endsWith(".result.json"));
         const fileResults = [];
         let filesRead = 0;
         let measuredOutput = 0;
-        for (const relativePath of resultEntries) {
-          const contents = readValidatedArtifactZipEntryBytes(archiveBytes, relativePath, {
-            maxBytes: 1_000_000,
-            maxEntries: 100,
-          });
-          if (contents === null)
+        for (const { name: relativePath, bytes: contents } of resultEntries) {
+          if (contents.length > 1_000_000)
             throw new Error(
               `Artifact result entry ${redact(relativePath).slice(0, 1000)} is invalid or exceeds the 1,000,000-byte limit`,
             );
@@ -459,21 +473,30 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
             throw new Error(
               `Artifact result entry ${redact(relativePath).slice(0, 1000)} exceeds the 2,000-line read limit`,
             );
-          const value = JSON.parse(text);
           filesRead += 1;
+          let value: unknown;
+          try {
+            value = JSON.parse(text);
+          } catch {
+            continue;
+          }
           if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-          const exitCode = Number.isInteger(value.exitCode) ? value.exitCode : null;
-          const signal = value.signal ? String(value.signal).slice(0, 100) : null;
-          const timedOut = Boolean(value.timedOut);
-          const error = value.error
-            ? (await project(String(value.error), 1000, 1000)).text || null
+          const result = value as Record<string, unknown>;
+          const exitCode = Number.isInteger(result.exitCode) ? result.exitCode : null;
+          const signal =
+            typeof result.signal === "string" && Object.hasOwn(osConstants.signals, result.signal)
+              ? result.signal
+              : null;
+          const timedOut = Boolean(result.timedOut);
+          const error = result.error
+            ? (await project(String(result.error), 1000, 1000)).text || null
             : null;
           const command =
-            value.command == null
+            result.command == null
               ? null
-              : (await project(String(value.command), 2000, 1000)).text || null;
+              : (await project(String(result.command), 2000, 1000)).text || null;
           if (exitCode === 0 && !signal && !error && !timedOut) continue;
-          if (exitCode === null && !signal && !error && !timedOut && !value.command) continue;
+          if (exitCode === null && !signal && !error && !timedOut && !result.command) continue;
           fileResults.push({
             path: redact(relativePath).slice(0, 1000),
             exitCode,
@@ -486,6 +509,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
         const failures = fileResults;
         artifact = {
           name: artifactName,
+          artifactId,
           sizeBytes,
           inventoryTruncated: false,
           filesRead,
