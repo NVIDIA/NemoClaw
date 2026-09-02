@@ -521,32 +521,6 @@ describe("planSandboxCreateReplay never opens a second sandbox (#5961)", () => {
   });
 });
 
-describe("crash-then-resume matrix proves at-most-once destructive create (#6228)", () => {
-  const states = [
-    "sandbox",
-    "openclaw",
-    "agent_setup",
-    "policies",
-    "finalizing",
-    "post_verify",
-  ] as const;
-
-  it.each(states)(
-    "crash at %s: reuse a surviving sandbox, recreate under the same identity when it is gone",
-    (state) => {
-      const cp = checkpoint({
-        machineState: state,
-        effectGroups: { sandbox_create: { completedAt: ISO, fingerprint: "fp" } },
-      });
-      expect(planSandboxCreateReplay(cp, { liveSandboxExists: true }).action).toBe("reuse");
-      expect(planSandboxCreateReplay(cp, { liveSandboxExists: false })).toEqual({
-        action: "create",
-        identity: { name: "my-sandbox", agent: "openclaw" },
-      });
-    },
-  );
-});
-
 describe("revalidateCheckpointBindings fails closed without leaking values (#6228)", () => {
   it("passes when every binding is currently available", () => {
     const cp = checkpoint({

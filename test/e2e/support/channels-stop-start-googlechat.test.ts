@@ -81,8 +81,7 @@ describe("channels stop/start Google Chat live composition", () => {
     expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
   });
 
-  it("routes rebuild registration through the process-global live fixture", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+  it("temporarily routes rebuild registration through the live fixture", () => {
     const sandboxName = "e2e-oc-ch-cycle";
     const expectedName = `${sandboxName}-googlechat-bridge`;
     const runMock = vi.fn((args: string[]) => ({
@@ -91,12 +90,16 @@ describe("channels stop/start Google Chat live composition", () => {
       stderr: "",
     }));
     const run = runMock as unknown as FixtureRunner;
+    const originalUpsert = credentialProviderRegistrationDependencies.upsertMessagingProviders;
     const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
       ensureProfiles: vi.fn(),
       root: "/repo",
       run,
     });
     try {
+      expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).not.toBe(
+        originalUpsert,
+      );
       expect(
         credentialProviderRegistrationDependencies.upsertMessagingProviders(
           [
@@ -115,8 +118,10 @@ describe("channels stop/start Google Chat live composition", () => {
       expect(runMock.mock.calls.some(([args]) => args.includes("refresh"))).toBe(false);
     } finally {
       restore();
-      vi.unstubAllEnvs();
     }
+    expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).toBe(
+      originalUpsert,
+    );
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {

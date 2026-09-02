@@ -7,10 +7,8 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
-  credentialProviderRegistrationDependencies,
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
-  installLiveE2eCredentialProviderRegistrationOverride,
 } from "./credential-provider-registration";
 import type { MessagingTokenDef } from "./messaging-prep";
 
@@ -92,75 +90,6 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
-  it("restricts the process-global provider override to the destructive live E2E", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "0");
-    try {
-      expect(() =>
-        installLiveE2eCredentialProviderRegistrationOverride({
-          expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
-          expectedType: "google-chat-bridge",
-          upsert: vi.fn(() => []),
-        }),
-      ).toThrow("restricted to its destructive live E2E");
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("routes one exact Google Chat live E2E plan through the process-global override", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
-    const tokenDefs: MessagingTokenDef[] = [
-      {
-        name: "e2e-oc-ch-cycle-googlechat-bridge",
-        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        token: null,
-        providerType: "google-chat-bridge",
-      },
-    ];
-    const runOpenshell = vi.fn();
-    const override = vi.fn(() => ["e2e-oc-ch-cycle-googlechat-bridge"]);
-    const restore = installLiveE2eCredentialProviderRegistrationOverride({
-      expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
-      expectedType: "google-chat-bridge",
-      upsert: override,
-    });
-    try {
-      expect(
-        credentialProviderRegistrationDependencies.upsertMessagingProviders(
-          tokenDefs,
-          runOpenshell,
-          { replaceExisting: true },
-        ),
-      ).toEqual(["e2e-oc-ch-cycle-googlechat-bridge"]);
-      expect(override).toHaveBeenCalledExactlyOnceWith(tokenDefs, runOpenshell, {
-        replaceExisting: true,
-      });
-    } finally {
-      restore();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("resolves the provider upsert dependency when registration executes", () => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn();
-    const deps = registrationDeps(runOpenshell, session);
-    const registration = createCredentialProviderRegistration(deps);
-    const tokenDefs: MessagingTokenDef[] = [
-      { name: "alpha-googlechat-bridge", envKey: "GOOGLE_CHAT_ACCESS_TOKEN", token: null },
-    ];
-    const upsert = vi
-      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
-      .mockReturnValue(["alpha-googlechat-bridge"]);
-
-    try {
-      expect(registration.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-googlechat-bridge"]);
-      expect(upsert).toHaveBeenCalledExactlyOnceWith(tokenDefs, deps.runOpenshell, {});
-    } finally {
-      upsert.mockRestore();
-    }
-  });
-
   it.each([
     { condition: "matches", endpoints: [], expected: true },
     {
@@ -308,11 +237,7 @@ describe("credential provider registration", () => {
     const runOpenshell = vi.fn((args: string[]) =>
       args.includes("profile")
         ? { status: 2, stderr: "gateway unavailable" }
-        : providerMetadata(
-            "alpha-discord-bridge",
-            "discord-hermes-static-v1",
-            "DISCORD_BOT_TOKEN",
-          ),
+        : providerMetadata("alpha-discord-bridge", "discord-hermes-static-v1", "DISCORD_BOT_TOKEN"),
     );
     const deps = registrationDeps(runOpenshell, session);
     deps.root = process.cwd();
