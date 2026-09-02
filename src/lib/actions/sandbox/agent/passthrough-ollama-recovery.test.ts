@@ -128,7 +128,7 @@ describe("runOllamaRestartRecovery", () => {
 
     const stderr = writes.join("");
     expect(stderr).toContain(
-      "Ollama at http://host.docker.internal:11434/ reports 'gemma4:26b' as unavailable",
+      "Ollama at http://host.docker.internal:11434 reports 'gemma4:26b' as unavailable",
     );
     expect(stderr).toContain("reported models: llama3.2:1b");
     expect(stderr).toContain("continuing to OpenClaw dispatch");

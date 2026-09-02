@@ -20,8 +20,14 @@ export interface OllamaRestartRecoveryProcess {
   stderr: { write(s: string): unknown };
 }
 
+function boundedRecoveryEndpoint(value: unknown, fallback: string): string {
+  const original = String(value ?? "").trim();
+  const endpoint = boundedOllamaRestartRecoveryDetail(value, fallback);
+  return endpoint.endsWith("/") && !original.endsWith("/") ? endpoint.slice(0, -1) : endpoint;
+}
+
 function recordedEndpointLabel(route: OllamaRestartRecoveryRoute): string {
-  const endpoint = boundedOllamaRestartRecoveryDetail(route.endpointUrl, "");
+  const endpoint = boundedRecoveryEndpoint(route.endpointUrl, "");
   return endpoint ? `at the recorded endpoint ${endpoint}` : "at the saved local Ollama endpoint";
 }
 
@@ -51,10 +57,7 @@ function reportRecovery(
       proc.stderr.write(`  Ollama model '${model}' is loaded and ready.\n`);
       return;
     }
-    const endpoint = boundedOllamaRestartRecoveryDetail(
-      result.endpoint,
-      "the saved local Ollama endpoint",
-    );
+    const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
     const detail = boundedOllamaRestartRecoveryDetail(result.detail, "unknown warm-up error");
     proc.stderr.write(
       `  Ollama warm-up for '${model}' at ${endpoint} ${describeWarmFailure(result.reason)} ` +
@@ -66,10 +69,7 @@ function reportRecovery(
   }
 
   if (result.reason === "model-absent") {
-    const endpoint = boundedOllamaRestartRecoveryDetail(
-      result.endpoint,
-      "the saved local Ollama endpoint",
-    );
+    const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
     const inventoryLabel = boundedOllamaRestartRecoveryDetail(result.inventoryLabel, "none");
     proc.stderr.write(
       `  Ollama at ${endpoint} reports '${model}' as unavailable ` +
