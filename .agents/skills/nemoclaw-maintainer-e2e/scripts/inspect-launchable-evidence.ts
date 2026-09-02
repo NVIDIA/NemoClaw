@@ -87,9 +87,10 @@ function text(value: unknown, label: string): string {
   return value;
 }
 function integer(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) <= 0)
+  const parsed = typeof value === "string" && /^[1-9]\d*$/u.test(value) ? Number(value) : value;
+  if (!Number.isSafeInteger(parsed) || (parsed as number) <= 0)
     fail(`${label} must be a positive integer`);
-  return value as number;
+  return parsed as number;
 }
 
 export function parseOptions(args: string[]): Options {
@@ -105,30 +106,42 @@ export function parseOptions(args: string[]): Options {
   if (!SHA.test(candidate)) fail("--candidate must be a lowercase 40-character SHA");
   return { candidate };
 }
-export function selectNewestSuccessfulJob(
-  candidate: string,
-  runs: WorkflowRun[],
-  jobs: (run: WorkflowRun) => WorkflowJob[],
-): Selection {
-  const eligible = runs
+function candidateRuns(candidate: string, runs: WorkflowRun[]): WorkflowRun[] {
+  return runs
     .filter(
       (run) =>
         run.head_sha === candidate &&
         run.path === WORKFLOW &&
         run.head_branch === "main" &&
         run.event === "workflow_dispatch" &&
-        run.status === "completed" &&
-        run.conclusion === "success",
+        run.status === "completed",
     )
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
-  for (const run of eligible) {
+}
+function selectJob(
+  candidate: string,
+  runs: WorkflowRun[],
+  jobs: (run: WorkflowRun) => WorkflowJob[],
+  conclusion: "success" | "failure",
+): Selection | undefined {
+  for (const run of candidateRuns(candidate, runs)) {
     const job = jobs(run).find(
       (value) =>
-        value.name === JOB && value.status === "completed" && value.conclusion === "success",
+        value.name === JOB && value.status === "completed" && value.conclusion === conclusion,
     );
     if (job) return { run, job };
   }
-  return fail("no successful staging Brev Launchable job is bound to the candidate");
+  return undefined;
+}
+export function selectNewestSuccessfulJob(
+  candidate: string,
+  runs: WorkflowRun[],
+  jobs: (run: WorkflowRun) => WorkflowJob[],
+): Selection {
+  return (
+    selectJob(candidate, runs, jobs, "success") ??
+    fail("no successful staging Brev Launchable job is bound to the candidate")
+  );
 }
 function json(value: string | undefined, name: string): JsonRecord {
   if (value === undefined) fail(`artifact is missing ${name}`);
@@ -230,18 +243,20 @@ export function validateLaunchableEvidence(
   };
 }
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
-  const selection = selectNewestSuccessfulJob(
-    options.candidate,
-    reader.listRuns(options.candidate),
-    (run) => reader.listJobs(run.id, run.run_attempt),
-  );
-  const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`;
-  return validateLaunchableEvidence(
-    options.candidate,
-    selection,
-    artifactName,
-    reader.readArtifact(selection.run.id, artifactName),
-  );
+  const runs = reader.listRuns(options.candidate),
+    jobs = (run: WorkflowRun): WorkflowJob[] => reader.listJobs(run.id, run.run_attempt),
+    successful = selectJob(options.candidate, runs, jobs, "success"),
+    selection = successful ?? selectJob(options.candidate, runs, jobs, "failure");
+  if (!selection) fail("no successful staging Brev Launchable job is bound to the candidate");
+  const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
+    receipt = validateLaunchableEvidence(
+      options.candidate,
+      selection,
+      artifactName,
+      reader.readArtifact(selection.run.id, artifactName),
+    );
+  if (!successful) fail("failed staging Brev Launchable job cannot provide release evidence");
+  return receipt;
 }
 function gh(args: string[]): unknown {
   return JSON.parse(

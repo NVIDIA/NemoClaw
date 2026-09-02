@@ -44,7 +44,7 @@ const job = (id = 20, overrides: Partial<WorkflowJob> = {}): WorkflowJob => ({
 const files = (overrides: Partial<ArtifactFiles> = {}): ArtifactFiles => ({
   "launchable-e2e.json": JSON.stringify({
     candidateSha: SHA,
-    producer: { runId: 30, status: "success" },
+    producer: { runId: "30", status: "success" },
     boot: {
       bootImage: "registry.test/image@sha256:123",
       schemaVersion: 1,
@@ -89,14 +89,6 @@ describe("Launchable evidence inspection", () => {
       fullE2e: { status: "passed" },
       cleanup: { status: "ABSENT" },
     }));
-  it("rejects invalid options before reading GitHub (#10798)", () => {
-    expect(() => parseOptions(["--candidate", "A".repeat(40)])).toThrow(
-      "lowercase 40-character SHA",
-    );
-    expect(() => parseOptions(["--candidate", SHA, "--repo", "attacker/repo"])).toThrow(
-      "unknown option: --repo",
-    );
-  });
   it.each([
     ["wrong candidate", run(10, "2026-06-01T00:00:00Z", { head_sha: IMAGE_SHA })],
     ["wrong run", run(10, "2026-06-01T00:00:00Z", { path: ".github/workflows/ci.yaml" })],
@@ -105,13 +97,28 @@ describe("Launchable evidence inspection", () => {
       "no successful",
     ),
   );
-  it("rejects non-success jobs (#10798)", () =>
+  it("returns recovery identity from a failed cleanup job (#10798)", () => {
+    const artifact = files({
+      "cleanup.json": JSON.stringify({
+        workspaceName: "workspace",
+        workspaceId: "ws-1",
+        status: "PRESENT",
+        checkedAt: "2026-06-01T01:00:00Z",
+      }),
+    });
     expect(() =>
       inspectLaunchableEvidence(
         { candidate: SHA },
-        reader([run()], { "10:2": [job(20, { conclusion: "failure" })] }),
+        reader(
+          [run(10, "2026-06-01T00:00:00Z", { conclusion: "failure" })],
+          { "10:2": [job(20, { conclusion: "failure" })] },
+          artifact,
+        ),
       ),
-    ).toThrow("no successful"));
+    ).toThrow(
+      `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=PRESENT checkedAt=2026-06-01T01:00:00Z`,
+    );
+  });
   it("rejects a mismatched workspace (#10798)", () =>
     expect(() =>
       inspectLaunchableEvidence(
@@ -204,15 +211,18 @@ describe("Launchable evidence inspection", () => {
     );
   });
 
-  it("rejects invalid CLI input before reading GitHub (#10798)", () => {
+  it.each([
+    [["--candidate", "bad"], "lowercase 40-character SHA"],
+    [["--candidate", SHA, "--repo", "attacker/repo"], "unknown option: --repo"],
+  ])("rejects invalid CLI input before reading GitHub (#10798)", (args, error) => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const boundary: EvidenceReader = {
       listRuns: vi.fn(() => []),
       listJobs: vi.fn(() => []),
       readArtifact: vi.fn(() => ({})),
     };
-    expect(runCli(["--candidate", "bad"], boundary)).toBe(1);
-    expect(String(stderr.mock.calls[0]?.[0])).toContain("lowercase 40-character SHA");
+    expect(runCli(args, boundary)).toBe(1);
+    expect(String(stderr.mock.calls[0]?.[0])).toContain(error);
     expect(String(stderr.mock.calls[0]?.[0]).length).toBeLessThan(600);
     expect(boundary.listRuns).not.toHaveBeenCalled();
     expect(boundary.listJobs).not.toHaveBeenCalled();

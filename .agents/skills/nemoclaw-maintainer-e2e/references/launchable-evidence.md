@@ -47,7 +47,7 @@ sentinel.
 The inspector verifies these values in `launchable-e2e.json`:
 
 - `candidateSha` equals the candidate SHA;
-- `producer.runId` is numeric and `producer.status` is `success`;
+- `producer.runId` is a positive decimal string and `producer.status` is `success`;
 - `boot.bootImage` is a nonempty concrete image URI;
 - `boot.schemaVersion` is `1`;
 - `boot.sourceRepository` is `NVIDIA/NemoClaw` and `boot.sourcePath` is
@@ -84,7 +84,8 @@ evidence until absence is confirmed.
 
 Only a maintainer with access to the repository's Brev organization may perform this procedure.
 
-1. Open the reported run in `NVIDIA/NemoClaw`. Confirm that its workflow is `E2E`, its event is
+1. Open the reported run in `NVIDIA/NemoClaw`. Confirm that its workflow is
+   `E2E / Main and Manual Suite` (`.github/workflows/e2e.yaml`), its event is
    `workflow_dispatch`, its branch is `main`, and the reported attempt contains job
    `Exact staging Brev Launchable`.
 2. Download the reported artifact from that run attempt. Its name must be
