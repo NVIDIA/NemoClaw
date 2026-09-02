@@ -62,7 +62,7 @@ jobs:
           path: trusted
           persist-credentials: false
           sparse-checkout: |
-            scripts/scorecard/read-artifact-zip.mts
+            scripts/lib/read-artifact-zip.mts
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-collector.mts
