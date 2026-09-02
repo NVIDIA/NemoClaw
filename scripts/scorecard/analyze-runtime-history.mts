@@ -20,7 +20,7 @@ import {
   normalizeSandboxPhaseTailSample,
   type SandboxPhaseTailSample,
 } from "./analyze-sandbox-phase-tail.mts";
-import { readValidatedArtifactZipEntries } from "./read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../lib/read-artifact-zip.mts";
 
 export const RUNTIME_SUMMARY_ARTIFACT = "e2e-runtime-summary";
 export const RUNTIME_SUMMARY_FILE = "e2e-runtime-summary.json";

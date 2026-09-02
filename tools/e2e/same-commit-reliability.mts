@@ -5,7 +5,7 @@
 
 import { pathToFileURL } from "node:url";
 
-import { readValidatedArtifactZipEntries } from "../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 import {
   RETRY_FAILURE_CLASSES,
   validateRetryEvidence,
@@ -23,6 +23,7 @@ const CONTROLLER_WORKFLOW_PATH = ".github/workflows/e2e-main-retry.yaml";
 const DISPLAY_TITLE_PREFIX = "E2E ";
 const SHA = /^[a-f0-9]{40}$/u;
 const MAX_RUNS = 50;
+export const MAX_RUN_REFERENCES_PER_OUTCOME = 10;
 const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024;
 const MAX_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024;
 
@@ -55,6 +56,22 @@ export interface ReliabilitySample {
   url: string;
 }
 
+export interface ReliabilityRunReference {
+  runId: number;
+  attempt: number;
+  outcome: ReliabilityOutcome;
+  evidence: EvidenceState;
+  failureClassEvidence: EvidenceState;
+  url: string;
+}
+
+export interface ReliabilityRunReferenceGroup {
+  total: number;
+  retained: number;
+  truncated: boolean;
+  references: ReliabilityRunReference[];
+}
+
 export interface ReliabilityGroup {
   candidateSha: string | null;
   source: ReliabilitySource;
@@ -71,6 +88,7 @@ export interface ReliabilityGroup {
   failureClasses: Record<string, number>;
   evidence: Record<EvidenceState, number>;
   failureClassEvidence: Record<EvidenceState, number>;
+  runReferences: Record<ReliabilityOutcome, ReliabilityRunReferenceGroup>;
 }
 
 type WorkflowRun = {
@@ -666,6 +684,35 @@ export function summarizeReliability(samples: readonly ReliabilitySample[]): Rel
           classes[failureClass] = (classes[failureClass] ?? 0) + 1;
         }
       }
+      const runReferences = Object.fromEntries(
+        [
+          "exhausted",
+          "failed-first-attempt",
+          "passed-after-retry",
+          "passed-first-attempt",
+          "superseded",
+          "unclassified",
+        ].map((outcome) => {
+          const matching = ordered.filter((sample) => sample.outcome === outcome);
+          const references = matching.slice(0, MAX_RUN_REFERENCES_PER_OUTCOME).map((sample) => ({
+            runId: sample.runId,
+            attempt: sample.runAttempt,
+            outcome: sample.outcome,
+            evidence: sample.evidence,
+            failureClassEvidence: sample.failureClassEvidence,
+            url: sample.url,
+          }));
+          return [
+            outcome,
+            {
+              total: matching.length,
+              retained: references.length,
+              truncated: matching.length > references.length,
+              references,
+            },
+          ];
+        }),
+      ) as Record<ReliabilityOutcome, ReliabilityRunReferenceGroup>;
       const evidence = { complete: 0, malformed: 0, missing: 0 };
       const failureClassEvidence = { complete: 0, malformed: 0, missing: 0 };
       for (const sample of ordered) {
@@ -689,6 +736,7 @@ export function summarizeReliability(samples: readonly ReliabilitySample[]): Rel
         failureClasses: classes,
         evidence,
         failureClassEvidence,
+        runReferences,
       };
     })
     .sort((a, b) => {
@@ -719,6 +767,22 @@ export function formatReliabilityReport(groups: readonly ReliabilityGroup[]): st
     lines.push(
       `| ${group.source} | ${group.candidateSha ? `\`${group.candidateSha.slice(0, 12)}\`` : "unclassified"} | ${group.runs} | ${group.passedFirstAttempt} | ${group.passedAfterRetry} | ${group.exhausted} | ${group.failedFirstAttempt} | ${group.superseded} | ${group.unclassified} | ${group.passFailFlips} | ${(group.firstPassRate * 100).toFixed(1)}% | ${group.recoveryRate === null ? "n/a" : `${(group.recoveryRate * 100).toFixed(1)}%`} | ${classes || "none"} | ${formatEvidenceCounts(group.evidence)} | ${formatEvidenceCounts(group.failureClassEvidence)} |`,
     );
+  }
+  lines.push("", `### Non-passing run links (maximum ${MAX_RUN_REFERENCES_PER_OUTCOME} per outcome)`);
+  for (const group of groups) {
+    for (const outcome of ["failed-first-attempt", "exhausted", "unclassified"] as const) {
+      const referenceGroup = group.runReferences[outcome];
+      for (const reference of referenceGroup.references) {
+        lines.push(
+          `- [Run ${reference.runId} attempt ${reference.attempt}](${reference.url}) — ${reference.outcome}; outcome evidence: ${reference.evidence}; failure-class evidence: ${reference.failureClassEvidence}`,
+        );
+      }
+      if (referenceGroup.truncated) {
+        lines.push(
+          `- ${outcome}: ${referenceGroup.total - referenceGroup.retained} additional run reference(s) truncated`,
+        );
+      }
+    }
   }
   return lines.join("\n");
 }

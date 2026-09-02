@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { readValidatedArtifactZipEntries } from "../../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../../scripts/lib/read-artifact-zip.mts";
 import { artifactZip, artifactZipEntryDataOffset } from "../../helpers/artifact-zip";
 
 const LIMITS = { maxEntries: 10, maxTotalUncompressedBytes: 1_024 };

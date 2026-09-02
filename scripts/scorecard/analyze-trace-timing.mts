@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { readValidatedArtifactZipEntries } from "./read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../lib/read-artifact-zip.mts";
 
 type SemverTag = { name: string; major: number; minor: number; patch: number; sha?: string };
 type Threshold = { minDeltaMs: number; minPercent: number };

@@ -17,7 +17,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { readValidatedArtifactZipEntries } from "../../../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../../../scripts/lib/read-artifact-zip.mts";
 
 type ClipMode = "head" | "tail";
 type Input = {

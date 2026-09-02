@@ -7,12 +7,13 @@ import {
   formatReliabilityReport,
   githubArchive,
   githubJson,
+  MAX_RUN_REFERENCES_PER_OUTCOME,
   normalizeMatchingReliabilityRun,
   normalizeReliabilityRun,
   type ReliabilitySample,
   summarizeReliability,
 } from "../../../tools/e2e/same-commit-reliability.mts";
-import { readValidatedArtifactZipEntries } from "../../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../../scripts/lib/read-artifact-zip.mts";
 import {
   RETRY_FAILURE_CLASSES,
   type RetryFailureClass,
@@ -341,6 +342,54 @@ describe("same-commit E2E reliability", () => {
       recoveryRate: 0.5,
       failureClasses: { assertion: 1, "transient-external": 1, timeout: 1 },
     });
+  });
+
+  it("retains bounded failed, exhausted, malformed, and unclassified run identities", () => {
+    const failed = Array.from({ length: MAX_RUN_REFERENCES_PER_OUTCOME + 2 }, (_, index) =>
+      sample(100 + index, SHA_A, "trusted-main", "failed-first-attempt", ["assertion"]),
+    );
+    const exhausted = sample(200, SHA_A, "trusted-main", "exhausted", ["timeout"]);
+    const malformed = {
+      ...sample(201, SHA_A, "trusted-main", "unclassified", ["unclassified"]),
+      evidence: "malformed" as const,
+      failureClassEvidence: "malformed" as const,
+    };
+    const unclassified = sample(202, SHA_A, "trusted-main", "unclassified", ["unclassified"]);
+
+    const group = summarizeReliability([...failed, exhausted, malformed, unclassified])[0]!;
+    expect(group.runReferences["failed-first-attempt"]).toMatchObject({
+      total: MAX_RUN_REFERENCES_PER_OUTCOME + 2,
+      retained: MAX_RUN_REFERENCES_PER_OUTCOME,
+      truncated: true,
+    });
+    expect(group.runReferences["failed-first-attempt"].references[0]).toEqual({
+      runId: 100,
+      attempt: 1,
+      outcome: "failed-first-attempt",
+      evidence: "complete",
+      failureClassEvidence: "complete",
+      url: `https://github.com/${REPOSITORY}/actions/runs/100`,
+    });
+    expect(group.runReferences.exhausted.references).toEqual([
+      expect.objectContaining({ runId: 200, attempt: 2, outcome: "exhausted" }),
+    ]);
+    expect(group.runReferences.unclassified.references).toEqual([
+      expect.objectContaining({ runId: 201, outcome: "unclassified", evidence: "malformed" }),
+      expect.objectContaining({ runId: 202, outcome: "unclassified", evidence: "complete" }),
+    ]);
+
+    const json = JSON.stringify(group);
+    const markdown = formatReliabilityReport([group]);
+    expect(json).toContain("actions/runs/100");
+    expect(json).toContain("actions/runs/200");
+    expect(json).toContain("actions/runs/201");
+    expect(json).toContain("actions/runs/202");
+    expect(markdown).toContain("[Run 100 attempt ");
+    expect(markdown).toContain("[Run 200 attempt ");
+    expect(markdown).toContain("[Run 201 attempt ");
+    expect(markdown).toContain("[Run 202 attempt ");
+    expect(markdown).toContain("failed-first-attempt: 2 additional run reference(s) truncated");
+    expect(markdown).toContain("outcome evidence: malformed");
   });
 
   it("renders only normalized identities and fixed classes, never input credentials", () => {

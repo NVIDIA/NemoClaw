@@ -6,7 +6,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readValidatedArtifactZipEntries } from "../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 import { githubRequest } from "./base-image-publication.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";

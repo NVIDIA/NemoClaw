@@ -6,7 +6,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { readValidatedArtifactZipEntries } from "../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 import {
   compileNativeRuntimeQualification,
   consumeNativeRuntimeQualificationEvidence,
