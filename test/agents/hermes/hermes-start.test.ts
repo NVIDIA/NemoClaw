@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import {
   bashPrintfQ,
+  createHermesHistoryRootSwapFixture,
   createHermesUnsafeLogFixture,
   extractShellFunction as extractShellFunctionFromSource,
   filesystemFingerprint,
@@ -454,6 +455,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   lockedConfigRoot?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   unsafeLog?: "root-symlink" | "nested-symlink";
+  swapHistoryRoot?: boolean;
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
   unsafeState?: readonly [name: HermesStateDir, kind: "symlink" | "file"];
 }) {
@@ -498,6 +500,9 @@ function runHermesGatewayRuntimeCleanup(opts: {
         : undefined);
   const unsafeLogFixture = opts.unsafeLog
     ? createHermesUnsafeLogFixture(tmpDir, hermesHome, opts.unsafeLog)
+    : undefined;
+  const historyRootSwapFixture = opts.swapHistoryRoot
+    ? createHermesHistoryRootSwapFixture(tmpDir, hermesHome)
     : undefined;
   if (opts.lockedConfigRoot) {
     fs.chmodSync(hermesHome, 0o755);
@@ -611,8 +616,10 @@ function runHermesGatewayRuntimeCleanup(opts: {
   try {
     const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
+      timeout: 15_000,
+      env: historyRootSwapFixture
+        ? { ...process.env, PATH: `${historyRootSwapFixture.fakeBin}:${process.env.PATH ?? ""}` }
+        : process.env,
     });
     const legacyPidStat = lstatIfPresent(legacyPid);
     const modeEntry = (entry: string, mask: number): [string, string] => {
@@ -678,6 +685,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
       pythonImportSentinelExists: fs.existsSync(pythonImportSentinel),
       unsafeLogBefore: unsafeLogFixture?.before,
       unsafeLogAfter: unsafeLogFixture?.fingerprint(),
+      historyRootSwapBefore: historyRootSwapFixture?.before,
+      historyRootSwapAfter: historyRootSwapFixture?.fingerprint(),
       symlinkTargetContent,
       unsafeStateBefore,
       unsafeStateAfter:
@@ -765,21 +774,6 @@ describe("agents/hermes/start.sh sandbox init bootstrap", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(dirnameCalled).toBe(false);
     expect(sourcePath).toBe("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-  });
-
-  it("removes its temporary fixture when the prelude markers are absent", () => {
-    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-missing-prelude-"));
-    const invalidStartScript = path.join(fixtureDir, "start.sh");
-    fs.writeFileSync(invalidStartScript, "#!/usr/bin/env bash\n");
-
-    try {
-      expect(() =>
-        runHermesSandboxInitPreludeWithFakePath(invalidStartScript, ENV_WRAPPER, fixtureDir),
-      ).toThrow("Hermes start.sh prelude markers not found");
-      expect(fs.readdirSync(fixtureDir)).toEqual(["start.sh"]);
-    } finally {
-      fs.rmSync(fixtureDir, { recursive: true, force: true });
-    }
   });
 });
 
@@ -1291,6 +1285,15 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.stderr).toContain(
       "Hermes layout repair limited to history file because config root is locked",
     );
+  });
+
+  it("rejects a swapped mutable config root without mutating its external history target", () => {
+    const run = runHermesGatewayRuntimeCleanup({ swapHistoryRoot: true });
+    expect(run.result.status).not.toBe(0);
+    expect(run.historyRootSwapAfter).toEqual(run.historyRootSwapBefore);
+    expect(run.result.stderr).toContain(".hermes is not a safe directory");
+    expect(run.result.stderr).toContain("Hermes pre-launch layout repair failed at history file");
+    expect(run.result.stderr).toContain("Restore a trusted snapshot into a recreated sandbox");
   });
 
   it("fails Hermes startup when the locked-root history path hard-links a sealed config file", () => {

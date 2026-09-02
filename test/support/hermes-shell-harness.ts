@@ -68,6 +68,34 @@ export function createHermesUnsafeLogFixture(
   return { before: fingerprint(), fingerprint };
 }
 
+export function createHermesHistoryRootSwapFixture(tmpDir: string, hermesHome: string) {
+  const externalRoot = path.join(tmpDir, "unsafe-history-root");
+  const sentinel = path.join(externalRoot, "sentinel.txt");
+  const originalRoot = path.join(tmpDir, "original-hermes-root");
+  const marker = path.join(tmpDir, "history-root-swapped");
+  const fakeBin = path.join(tmpDir, "history-swap-bin");
+  fs.mkdirSync(externalRoot);
+  fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(
+    path.join(fakeBin, "python3"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `if [ -n "\${NEMOCLAW_HERMES_HISTORY_FILE:-}" ] && [ ! -e ${shellQuote(marker)} ]; then`,
+      `  mv ${shellQuote(hermesHome)} ${shellQuote(originalRoot)}`,
+      `  ln -s ${shellQuote(externalRoot)} ${shellQuote(hermesHome)}`,
+      `  : > ${shellQuote(marker)}`,
+      "fi",
+      `export PATH=${shellQuote(process.env.PATH ?? "")}`,
+      'exec python3 "$@"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  const fingerprint = () => [filesystemFingerprint(externalRoot), filesystemFingerprint(sentinel)];
+  return { fakeBin, before: fingerprint(), fingerprint };
+}
+
 export function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
   const pidDir = path.join(procRoot, String(pid));
   fs.mkdirSync(pidDir, { recursive: true });

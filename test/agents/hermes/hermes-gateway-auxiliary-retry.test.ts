@@ -8,15 +8,10 @@ import { describe, expect, it } from "vitest";
 import {
   extractShellFunction,
   runHermesBashHarness as runBashHarness,
+  writeFakeProcCmdline,
 } from "../../support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
-
-function writeFakeProcCmdline(procRoot: string, pid: number, args: string[]): void {
-  const processDir = path.join(procRoot, String(pid));
-  fs.mkdirSync(processDir, { recursive: true });
-  fs.writeFileSync(path.join(processDir, "cmdline"), Buffer.from(`${args.join("\0")}\0`));
-}
 
 describe("Hermes gateway auxiliary retry", () => {
   it("holds the exact failed supervisor for an authenticated state-mutation retry", () => {

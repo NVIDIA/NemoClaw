@@ -516,6 +516,62 @@ sha256sum -c /tmp/nemoclaw-locked-config.sha256`,
   await assertRuntimeLayout(probe, container);
 }
 
+async function runHardLinkRefusalVariant(
+  probe: DockerProbe,
+  image: string,
+  runId: string,
+  containers: string[],
+  kind: "history" | "logs",
+): Promise<void> {
+  const container = `nemoclaw-hermes-root-${kind}-hardlink-${runId}`;
+  const target = "/sandbox/.hermes/config.yaml";
+  const setup =
+    kind === "history"
+      ? String.raw`
+rm -f /sandbox/.hermes/.hermes_history
+chown root:sandbox /sandbox /sandbox/.hermes
+chmod 1775 /sandbox
+chmod 3770 /sandbox/.hermes
+chown root:root /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
+chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
+ln /sandbox/.hermes/config.yaml /sandbox/.hermes/.hermes_history`
+      : String.raw`
+install -d -m 2770 -o sandbox -g sandbox /sandbox/.hermes/logs/curator
+rm -f /sandbox/.hermes/logs/curator/hardlink.log
+ln /sandbox/.hermes/config.yaml /sandbox/.hermes/logs/curator/hardlink.log`;
+  const expectedEvent =
+    kind === "history"
+      ? "Hermes pre-launch layout repair failed at history file"
+      : "Hermes pre-launch layout repair failed at logs directory";
+  const bootstrap = `set -euo pipefail
+${setup}
+stat -c '%U:%G %a' ${target} >/tmp/nemoclaw-protected-file.stat
+sha256sum ${target} >/tmp/nemoclaw-protected-file.sha256
+set +e
+/usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-hardlink-start.log 2>&1
+startup_status=$?
+set -e
+test "$startup_status" -ne 0
+test "$startup_status" -ne 124
+test "$(stat -c '%U:%G %a' ${target})" = "$(cat /tmp/nemoclaw-protected-file.stat)"
+sha256sum -c /tmp/nemoclaw-protected-file.sha256
+grep -F 'has hard-link count' /tmp/nemoclaw-hardlink-start.log
+grep -F ${JSON.stringify(expectedEvent)} /tmp/nemoclaw-hardlink-start.log
+cat /tmp/nemoclaw-hardlink-start.log`;
+
+  await probe.expect(
+    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+    { artifactName: `start-${kind}-hardlink-refusal-container`, timeoutMs: RUN_TIMEOUT_MS },
+  );
+  containers.push(container);
+  const wait = await probe.run(["wait", container], {
+    artifactName: `wait-${kind}-hardlink-refusal-container`,
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
+  expect(wait.exitCode, resultText(wait)).toBe(0);
+  expect(wait.stdout.trim(), resultText(wait)).toBe("0");
+}
+
 test(
   "hermes root-entrypoint smoke preserves runtime layout and restored state migration",
   {
@@ -526,6 +582,8 @@ test(
         "validate clean root-entrypoint startup",
         "validate legacy state migration",
         "validate locked-root history recovery",
+        "validate root history hard-link refusal",
+        "validate root log hard-link refusal",
       ],
     },
   },
@@ -562,6 +620,7 @@ test(
         "restored state directories permit gateway-user and sandbox-user writes",
         "legacy dashboard profile state is moved into profiles/dashboard-home",
         "locked-root startup recreates protected group-writable Hermes history without changing sealed config",
+        "root startup rejects history and log hard links without changing the protected inode",
       ],
     });
 
@@ -587,6 +646,10 @@ test(
       await runLegacyVariant(probe, image, runId, containers);
       progress.phase("validate locked-root history recovery");
       await runLockedRootVariant(probe, image, runId, containers);
+      progress.phase("validate root history hard-link refusal");
+      await runHardLinkRefusalVariant(probe, image, runId, containers, "history");
+      progress.phase("validate root log hard-link refusal");
+      await runHardLinkRefusalVariant(probe, image, runId, containers, "logs");
     } catch (error) {
       for (const container of containers) {
         await dumpContainerDiagnostics(probe, container);
@@ -610,6 +673,7 @@ test(
         restoredStatePermissionsVerified: true,
         legacyDashboardProfileMigrationVerified: true,
         lockedRootHistoryRecoveryVerified: true,
+        rootHardLinkRefusalVerified: true,
       },
     });
   },

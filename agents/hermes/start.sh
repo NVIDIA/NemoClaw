@@ -1371,18 +1371,34 @@ except ValueError:
     print(f"[SECURITY] Refusing Hermes layout repair because requested mode {mode_text!r} is invalid", file=sys.stderr)
     sys.exit(1)
 
-if not hasattr(os, "O_NOFOLLOW"):
-    print("[SECURITY] Refusing Hermes layout repair because O_NOFOLLOW is unavailable", file=sys.stderr)
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    print("[SECURITY] Refusing Hermes layout repair because descriptor-safe directory flags are unavailable", file=sys.stderr)
     sys.exit(1)
 
-flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+root, name = os.path.split(path)
+if not root or not name:
+    print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a valid history path", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    print(f"[SECURITY] Refusing Hermes layout repair because {root} could not be inspected: {exc.strerror}", file=sys.stderr)
+    sys.exit(1)
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    print(f"[SECURITY] Refusing Hermes layout repair because {root} is not a safe directory", file=sys.stderr)
+    sys.exit(1)
+
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+directory_flags |= getattr(os, "O_CLOEXEC", 0)
+file_flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
 for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
-    flags |= getattr(os, optional_flag, 0)
+    file_flags |= getattr(os, optional_flag, 0)
 
 
-def describe_unsafe_existing_path() -> str:
+def describe_unsafe_existing_path(root_fd: int) -> str:
     try:
-        st = os.lstat(path)
+        st = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
     except OSError:
         return "could not be opened safely"
     if stat.S_ISLNK(st.st_mode):
@@ -1391,15 +1407,27 @@ def describe_unsafe_existing_path() -> str:
         return "is not a regular file"
     return "could not be opened safely"
 
+root_fd = -1
+fd = -1
 try:
-    fd = os.open(path, flags, mode)
-except OSError as exc:
-    reason = describe_unsafe_existing_path()
-    detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
-    print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
-    sys.exit(1)
+    try:
+        root_fd = os.open(root, directory_flags)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} could not be opened safely: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} changed while it was opened", file=sys.stderr)
+        sys.exit(1)
 
-try:
+    try:
+        fd = os.open(name, file_flags, mode, dir_fd=root_fd)
+    except OSError as exc:
+        reason = describe_unsafe_existing_path(root_fd)
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
+        sys.exit(1)
+
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode):
         print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a regular file", file=sys.stderr)
@@ -1437,15 +1465,26 @@ try:
         print(f"[SECURITY] Refusing Hermes layout repair because {path} has mode {stat.S_IMODE(st.st_mode):04o}, not {mode:04o}, after repair", file=sys.stderr)
         sys.exit(1)
     try:
-        current = os.stat(path, follow_symlinks=False)
+        current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
     except OSError as exc:
         print(f"[SECURITY] Refusing Hermes layout repair because {path} no longer names the opened history file: {exc.strerror}", file=sys.stderr)
         sys.exit(1)
     if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
         print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during repair", file=sys.stderr)
         sys.exit(1)
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} disappeared during repair: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {root} changed during repair", file=sys.stderr)
+        sys.exit(1)
 finally:
-    os.close(fd)
+    if fd >= 0:
+        os.close(fd)
+    if root_fd >= 0:
+        os.close(root_fd)
 PYHISTORY
 }
 
