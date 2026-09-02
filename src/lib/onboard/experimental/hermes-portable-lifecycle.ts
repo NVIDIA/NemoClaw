@@ -733,23 +733,31 @@ function openshellExecArgs(receipt: HermesPortableConfiguredReceipt, command: re
   ];
 }
 
-function waitFor(
-  timeoutMs: number,
+function waitUntil(
+  deadline: number,
   deps: HermesPortableLifecycleDeps,
   probe: (remainingMs: number) => boolean,
   measureSleep?: (operation: () => void) => void,
 ): boolean {
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? defaultSleep;
-  const deadline = now() + timeoutMs;
-  do {
-    const remaining = Math.max(1, deadline - now());
+  while (now() < deadline) {
+    const remaining = deadline - now();
     if (probe(remaining)) return true;
     const operation = () => sleep(Math.min(POLL_INTERVAL_MS, remaining));
     if (measureSleep) measureSleep(operation);
     else operation();
-  } while (now() < deadline);
+  }
   return false;
+}
+
+function waitFor(
+  timeoutMs: number,
+  deps: HermesPortableLifecycleDeps,
+  probe: (remainingMs: number) => boolean,
+  measureSleep?: (operation: () => void) => void,
+): boolean {
+  return waitUntil((deps.now ?? Date.now)() + timeoutMs, deps, probe, measureSleep);
 }
 
 function rollbackStartedHermesPortableRecovery(
@@ -1063,9 +1071,10 @@ export function recoverHermesPortableSandboxLifecycle(
     }
     let observerSupported = startedByRecovery;
     let observerRecognized = false;
+    const startupDeadline = (deps.now ?? Date.now)() + STARTUP_TIMEOUT_MS;
     if (startedByRecovery) {
-      const observerReady = waitFor(
-        STARTUP_TIMEOUT_MS,
+      const observerReady = waitUntil(
+        startupDeadline,
         deps,
         (remainingMs) => {
           qualified = timing.measure("startupReadyObserverCurrentness", () =>
@@ -1143,7 +1152,7 @@ export function recoverHermesPortableSandboxLifecycle(
           }
           return health === "ready";
         })()
-      : waitFor(STARTUP_TIMEOUT_MS, deps, () => {
+      : waitUntil(startupDeadline, deps, () => {
           qualified = timing.measure("healthPollCurrentness", () =>
             refreshLifecycleCurrentness(sandboxName, context, deps, qualified, timing, true),
           );
