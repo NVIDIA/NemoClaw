@@ -113,7 +113,8 @@ info "4. Verify blueprint runner plan command"
 # -------------------------------------------------------
 cd /opt/nemoclaw-blueprint
 # Runner will fail at openshell prereq check (expected in test container).
-# Use 'ncp' profile (empty endpoint skips SSRF DNS lookup in sandbox).
+# Use the credential-free 'ncp' profile; the shared blueprint intentionally has
+# no private scoped-policy additions for this generic sandbox smoke test.
 # Catch only the expected error — anything else propagates as a real failure.
 NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');

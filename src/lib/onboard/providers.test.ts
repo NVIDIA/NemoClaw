@@ -1120,7 +1120,11 @@ describe("onboard provider helpers", () => {
     }
   });
 
-  it("reports providers changed before bridge refresh throws (#9833)", () => {
+  it("reports a valid unscoped recovery command when bridge refresh throws (#9833)", () => {
+    const runResults = new Map<string, RunResult>([
+      ["get", { status: 1, stdout: "", stderr: "not found" }],
+      ["delete", { status: 1, stdout: "", stderr: "gateway unavailable" }],
+    ]);
     const configureRefreshes = vi
       .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
       .mockImplementation(() => {
@@ -1130,12 +1134,14 @@ describe("onboard provider helpers", () => {
       expect(() =>
         upsertMessagingProviders(
           [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
-          () => ({ status: 0, stdout: "", stderr: "" }),
+          (command) => runResults.get(command[1] ?? "") ?? { status: 0, stdout: "", stderr: "" },
           { bestEffort: true },
         ),
       ).toThrow(
         expect.objectContaining({
-          message: expect.stringMatching(/sandbox identity changed.*alpha-bridge/isu),
+          message: expect.stringMatching(
+            /sandbox identity changed.*alpha-bridge.*openshell provider delete "alpha-bridge"/isu,
+          ),
           mutatedProviderNames: ["alpha-bridge"],
         }),
       );

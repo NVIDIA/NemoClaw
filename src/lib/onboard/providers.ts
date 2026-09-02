@@ -133,10 +133,11 @@ function cleanupCreatedMessagingProvidersAfterRefreshFailure(
     cleanupFailureNames,
   );
   if (cleanupFailures.length > 0) {
+    const gatewayArg = gatewayName ? ` -g ${JSON.stringify(gatewayName)}` : "";
     const recovery = cleanupFailures
       .map(
         ({ providerName, diagnostic }) =>
-          `Automatic cleanup could not remove ${JSON.stringify(providerName)}: ${diagnostic || "provider delete failed"}. Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry onboarding.`,
+          `Automatic cleanup could not remove ${JSON.stringify(providerName)}: ${diagnostic || "provider delete failed"}. Run \`openshell provider delete${gatewayArg} ${JSON.stringify(providerName)}\`, then retry onboarding.`,
       )
       .join(" ");
     failure.message = `${failure.message} ${recovery}`;
@@ -837,8 +838,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     });
     const requiresRefreshingBridgeBinding =
       token === messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE;
-    const requiresExactCredentialBinding =
-      requiresFamilyBinding || requiresRefreshingBridgeBinding;
+    const requiresExactCredentialBinding = requiresFamilyBinding || requiresRefreshingBridgeBinding;
     let knownExists;
     let result;
     if (requiresExactCredentialBinding) {
