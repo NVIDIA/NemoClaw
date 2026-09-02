@@ -122,7 +122,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(toml).toContain('compute_drivers = ["docker"]');
-      expect(toml).toContain("proxy_connect_by_hostname = false");
+      expect(parseGatewayProxyConnectByHostname(toml)).toBe(false);
       expect(toml).toContain('grpc_endpoint = "https://127.0.0.1:8080"');
       expect(toml).toContain(`guest_tls_ca = "${path.join(stateDir, "tls", "ca.crt")}"`);
       expect(toml).toContain(
