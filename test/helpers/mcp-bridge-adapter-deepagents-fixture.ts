@@ -43,7 +43,9 @@ export interface DeepAgentsManagedFixtureOptions {
   fifo?: boolean;
   mode?: number;
   swapAfterManagedOpen?: "fifo" | "symlink";
+  swapAfterManagedOpenError?: "fifo" | "symlink";
   swapBeforeManagedLink?: string;
+  swapRejectedManagedSymlinkToRegular?: string;
   swapOnManagedOpen?: "fifo" | "socket" | "symlink";
   swapOnManagedRead?: "fifo" | "symlink";
   swapOnManagedSeek?: string;
@@ -54,8 +56,39 @@ export interface DeepAgentsManagedFixtureOptions {
 type ManagedSwap = {
   content?: string;
   kind: "fifo" | "regular" | "socket" | "symlink";
-  phase: "after-open" | "before-link" | "before-open" | "read" | "seek";
+  phase: "after-open" | "before-link" | "before-open" | "open-error" | "read" | "seek";
+  restoreSymlink?: boolean;
 };
+
+function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSwap | undefined {
+  if (options.swapOnManagedOpen) {
+    return { kind: options.swapOnManagedOpen, phase: "before-open" };
+  }
+  if (options.swapAfterManagedOpen) {
+    return { kind: options.swapAfterManagedOpen, phase: "after-open" };
+  }
+  if (options.swapAfterManagedOpenError) {
+    return { kind: options.swapAfterManagedOpenError, phase: "open-error" };
+  }
+  if (options.swapRejectedManagedSymlinkToRegular !== undefined) {
+    return {
+      content: options.swapRejectedManagedSymlinkToRegular,
+      kind: "regular",
+      phase: "open-error",
+      restoreSymlink: true,
+    };
+  }
+  if (options.swapOnManagedRead) {
+    return { kind: options.swapOnManagedRead, phase: "read" };
+  }
+  if (options.swapBeforeManagedLink !== undefined) {
+    return { content: options.swapBeforeManagedLink, kind: "regular", phase: "before-link" };
+  }
+  if (options.swapOnManagedSeek !== undefined) {
+    return { content: options.swapOnManagedSeek, kind: "regular", phase: "seek" };
+  }
+  return undefined;
+}
 
 function createManagedSwapPythonExecutable(
   fixtureRoot: string,
@@ -74,6 +107,7 @@ function createManagedSwapPythonExecutable(
     `managed_swap_kind = ${JSON.stringify(managedSwap.kind)}`,
     `managed_swap_phase = ${JSON.stringify(managedSwap.phase)}`,
     `managed_swap_content = ${JSON.stringify(managedSwap.content ?? "")}`,
+    `managed_restore_symlink = ${managedSwap.restoreSymlink === true ? "True" : "False"}`,
     "managed_socket = None",
     "managed_swapped = False",
     "def replace_managed_path():",
@@ -96,12 +130,22 @@ function createManagedSwapPythonExecutable(
     "        with open(managed_path, 'w', encoding='utf-8') as replacement:",
     "            replacement.write(managed_swap_content)",
     "        os.chmod(managed_path, 0o600)",
+    "def restore_managed_symlink():",
+    "    if not managed_restore_symlink or not managed_swapped:",
+    "        return",
+    "    try:",
+    "        os.unlink(managed_path)",
+    "    except FileNotFoundError:",
+    "        pass",
+    "    os.symlink(managed_target, managed_path)",
     "def managed_profile(_frame, event, target):",
     "    if managed_swapped:",
     "        return",
     "    if managed_swap_phase == 'before-open' and event == 'c_call' and target is os.open:",
     "        replace_managed_path()",
     "    elif managed_swap_phase == 'after-open' and event == 'c_return' and target is os.open:",
+    "        replace_managed_path()",
+    "    elif managed_swap_phase == 'open-error' and event == 'c_exception' and target is os.open:",
     "        replace_managed_path()",
     "    elif managed_swap_phase == 'read' and event == 'c_call' and target is os.read:",
     "        replace_managed_path()",
@@ -116,6 +160,7 @@ function createManagedSwapPythonExecutable(
     "    exec(compile(source, '<nemoclaw-managed-command>', 'exec'), namespace)",
     "finally:",
     "    sys.setprofile(None)",
+    "    restore_managed_symlink()",
     "",
   ].join("\n");
   fs.writeFileSync(scriptPath, wrapper, { mode: 0o600 });
@@ -135,25 +180,7 @@ export function runDeepAgentsConfigCommand(
   initialLegacyMode = 0o600,
   managedOptions: DeepAgentsManagedFixtureOptions = {},
 ): DeepAgentsConfigCommandResult {
-  const managedSwap: ManagedSwap | undefined = managedOptions.swapOnManagedOpen
-    ? { kind: managedOptions.swapOnManagedOpen, phase: "before-open" }
-    : managedOptions.swapAfterManagedOpen
-      ? { kind: managedOptions.swapAfterManagedOpen, phase: "after-open" }
-      : managedOptions.swapOnManagedRead
-        ? { kind: managedOptions.swapOnManagedRead, phase: "read" }
-        : managedOptions.swapBeforeManagedLink !== undefined
-          ? {
-              content: managedOptions.swapBeforeManagedLink,
-              kind: "regular" as const,
-              phase: "before-link" as const,
-            }
-          : managedOptions.swapOnManagedSeek !== undefined
-            ? {
-                content: managedOptions.swapOnManagedSeek,
-                kind: "regular" as const,
-                phase: "seek" as const,
-              }
-            : undefined;
+  const managedSwap = resolveManagedSwap(managedOptions);
   const fixtureRoot = managedSwap?.kind === "socket" ? "/tmp" : os.tmpdir();
   const tmp = fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
@@ -172,7 +199,10 @@ export function runDeepAgentsConfigCommand(
       { mode },
     );
   };
-  const managedSymlink = managedOptions.symlink === true || managedOptions.danglingSymlink === true;
+  const managedSymlink =
+    managedOptions.symlink === true ||
+    managedOptions.danglingSymlink === true ||
+    managedOptions.swapRejectedManagedSymlinkToRegular !== undefined;
   const managedInitialPath = managedSymlink ? managedSymlinkTarget : configPath;
   if (managedOptions.directory) {
     fs.mkdirSync(configPath, { recursive: true, mode: managedOptions.mode ?? 0o700 });
@@ -194,6 +224,9 @@ export function runDeepAgentsConfigCommand(
   }
   if (managedSwap?.kind === "symlink") {
     initializeConfig(managedSymlinkTarget, initialConfig, managedOptions.mode);
+  }
+  if (managedSwap?.phase === "open-error") {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
   }
   initializeConfig(legacyConfigPath, initialLegacyConfig);
   if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);

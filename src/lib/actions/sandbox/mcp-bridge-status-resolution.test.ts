@@ -210,9 +210,11 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     },
   });
   const outcomes = [];
-  for (const detail of [
-    "Unsafe managed Deep Agents MCP projection path: symbolic link",
-    "Unsafe managed Deep Agents MCP projection path: FIFO",
+  for (const [scenario, detail] of [
+    ["static symlink", "Unsafe managed Deep Agents MCP projection path: symbolic link"],
+    ["static FIFO", "Unsafe managed Deep Agents MCP projection path: FIFO"],
+    ["symlink after absent open", "Unsafe managed Deep Agents MCP projection path: symbolic link"],
+    ["masked ELOOP symlink", "Unsafe managed Deep Agents MCP projection path: symbolic link"],
   ]) {
     processRecovery.executeSandboxCommand = () => ({
       status: 2,
@@ -223,6 +225,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     errorLines.length = 0;
     await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
     outcomes.push({
+      scenario,
       detail,
       exitCode: process.exitCode ?? 0,
       stdout: logLines.join("\n"),
@@ -234,14 +237,16 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
 `,
     );
     const outcomes = JSON.parse(stdout) as Array<{
+      scenario: string;
       detail: string;
       exitCode: number;
       stdout: string;
       stderr: string;
     }>;
 
-    expect(outcomes).toHaveLength(2);
+    expect(outcomes).toHaveLength(4);
     outcomes.forEach((outcome) => {
+      expect(outcome.scenario).toBeTruthy();
       expect(outcome.exitCode).toBe(2);
       expect(outcome.stdout).toBe("");
       expect(outcome.stderr).toContain(outcome.detail);

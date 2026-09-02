@@ -193,6 +193,54 @@ describe("Deep Agents managed MCP projection safety", () => {
     );
   });
 
+  it("preserves unsafe classification when a hostile path appears after an absent open (#10754)", () => {
+    const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
+    const racedSymlink = runDeepAgentsConfigCommand(
+      statusCommand,
+      undefined,
+      "v2",
+      undefined,
+      0o600,
+      { swapAfterManagedOpenError: "symlink", timeoutMs: managedCommandTimeoutMs },
+    );
+    expect(racedSymlink.status).toBe(2);
+    expect(racedSymlink.stdout.trim()).toBe("");
+    expect(racedSymlink.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    );
+    expect(racedSymlink.configIsSymlink).toBe(true);
+    expect(racedSymlink.managedSymlinkTargetExists).toBe(false);
+
+    const racedFifo = runDeepAgentsConfigCommand(statusCommand, undefined, "v2", undefined, 0o600, {
+      swapAfterManagedOpenError: "fifo",
+      timeoutMs: managedCommandTimeoutMs,
+    });
+    expect(racedFifo.status).toBe(2);
+    expect(racedFifo.stdout.trim()).toBe("");
+    expect(racedFifo.stderr).toContain("Unsafe managed Deep Agents MCP projection path: FIFO");
+    expect(racedFifo.configIsFifo).toBe(true);
+  });
+
+  it("preserves ELOOP classification when a rejected symlink is briefly masked (#10754)", () => {
+    const raced = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      {
+        swapRejectedManagedSymlinkToRegular: attackerProjection,
+        timeoutMs: managedCommandTimeoutMs,
+      },
+    );
+
+    expect(raced.status).toBe(2);
+    expect(raced.stdout.trim()).toBe("");
+    expect(raced.stderr).toContain("Unsafe managed Deep Agents MCP projection path: symbolic link");
+    expect(raced.configIsSymlink).toBe(true);
+    expect(raced.managedSymlinkTargetText).toBe(`${JSON.stringify(emptyProjection, null, 2)}\n`);
+  });
+
   it("keeps the generic diagnostic for ordinary projection inspection failures (#10754)", () => {
     const result = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpStatusCommand(baseEntry),
