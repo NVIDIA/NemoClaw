@@ -681,8 +681,10 @@ export function createShieldsFlowHarness(
   if (options.timerAuthorityRevokedSequence) {
     const timerAuthorityRevocations = [...options.timerAuthorityRevokedSequence];
     const finalTimerAuthorityRevocation = timerAuthorityRevocations.at(-1) ?? true;
+    const nextTimerAuthorityRevocation = () =>
+      timerAuthorityRevocations.shift() ?? finalTimerAuthorityRevocation;
     vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
-      const authorityRevoked = timerAuthorityRevocations.shift() ?? finalTimerAuthorityRevocation;
+      const authorityRevoked = nextTimerAuthorityRevocation();
       return {
         authorityRevoked,
         markerFound: true,
@@ -694,6 +696,14 @@ export function createShieldsFlowHarness(
           : ["Failed to remove shields timer marker: permission denied"],
       };
     });
+    vi.spyOn(timerControl, "clearTimerMarkerGeneration").mockImplementation(() =>
+      nextTimerAuthorityRevocation()
+        ? { status: "removed" }
+        : {
+            status: "failed",
+            warning: "Failed to remove shields timer marker: permission denied",
+          },
+    );
   }
   const cleanupTempDirSpy = vi.spyOn(tempFiles, "cleanupTempDir");
   vi.spyOn(stateDirLock, "stateLockPlanCompatibilityIssues").mockReturnValue([]);
