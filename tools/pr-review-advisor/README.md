@@ -25,7 +25,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 5. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown and native session trace as one artifact.
 6. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
-`investigate-turn.mts` owns the specialist turn contract, including its prompt and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
+`investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
 
 `tools/pr-review-advisor/specialist-lifecycle.mts` owns the advisor-specific prepare, configure,
 complete, and cleanup sequence. `tools/pr-review-advisor/openshell.mts` exports its OpenShell

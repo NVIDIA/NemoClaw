@@ -18,14 +18,13 @@ import {
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   ADVISOR_SPECIALISTS,
   buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
   type AdvisorInterest,
 } from "./specialists.mts";
-import { createTerminologyToolController } from "./terminology.mts";
+import { specialistCustomTools } from "./specialist-tools.mts";
 import { SPECIALIST_DIFF_FILE_NAME } from "./specialist-context.mts";
 import { buildSystemPrompt, readTrustedControlledWords } from "./trusted-guidance.mts";
 import {
@@ -38,15 +37,6 @@ import {
 } from "./turn-context.mts";
 
 const CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
-
-export function documentationSpecialistTools(
-  interest: AdvisorInterest,
-  { baseRef, headRef, cwd = process.cwd() }: { baseRef: string; headRef: string; cwd?: string },
-): ToolDefinition[] {
-  return interest === "documentation-standard-work"
-    ? createTerminologyToolController({ baseRef, headRef, cwd }).tools
-    : [];
-}
 
 export function renderSpecialistSummary(interest: AdvisorInterest, text: string): string {
   const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);
@@ -72,7 +62,7 @@ export function runSpecialistAdvisor(
 ): Promise<RunAdvisorResult> {
   return run({
     ...options,
-    customTools: documentationSpecialistTools(interest, { ...refs, cwd: options.cwd }),
+    customTools: specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
   });
 }
 

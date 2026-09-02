@@ -11,7 +11,7 @@ import {
   type AdvisorInterest,
   type AdvisorSpecialist,
 } from "./specialist-catalog.mts";
-import { TERMINOLOGY_TRACE_TOOL } from "./terminology.mts";
+import { specialistToolNames } from "./specialist-tools.mts";
 
 export {
   ADVISOR_INTERESTS,
@@ -97,13 +97,10 @@ export function buildSpecialistInvestigateTurn(
 ): AdvisorPromptTurn {
   const specialist = advisorSpecialist(interest);
   const fullTurn = chunkSpecialistContext(buildInvestigateTurn(context));
-  const activeToolNames = ["read", "grep", "find", "ls"];
-  if (interest === "documentation-standard-work") activeToolNames.push(TERMINOLOGY_TRACE_TOOL);
-
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
-    activeToolNames,
+    activeToolNames: specialistToolNames(interest),
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}
