@@ -34,8 +34,6 @@ export interface DeepAgentsConfigCommandResult {
   legacyConfigExists: boolean;
   legacyConfig: Record<string, unknown> | null;
   legacyConfigText: string | null;
-  managedParentIsSymlink: boolean;
-  managedParentTargetText: string | null;
   managedSymlinkTargetExists: boolean;
   managedSymlinkTargetText: string | null;
   managedTargetReadAccessed: boolean;
@@ -46,7 +44,6 @@ export interface DeepAgentsManagedFixtureOptions {
   directory?: boolean;
   fifo?: boolean;
   mode?: number;
-  parentSymlink?: boolean;
   swapAfterManagedEloop?: boolean;
   swapAfterManagedOpen?: "fifo" | "symlink";
   swapAfterMissingManagedOpen?: "fifo" | "symlink";
@@ -225,7 +222,8 @@ function createDeepAgentsFixturePythonExecutable(
     "    managed_eloop_stage = 2",
     "def is_managed_entry(value, directory_descriptor):",
     "    try:",
-    "        return directory_descriptor is not None and os.fspath(value) == managed_entry_name",
+    "        candidate = os.fspath(value)",
+    "        return candidate == managed_path if directory_descriptor is None else candidate == managed_entry_name",
     "    except TypeError:",
     "        return False",
     "def managed_boundary_open(value, flags, mode=0o777, *, dir_fd=None):",
@@ -305,11 +303,8 @@ export function runDeepAgentsConfigCommand(
 ): DeepAgentsConfigCommandResult {
   const managedSwap = resolveManagedSwap(managedOptions);
   const fixtureRoot = managedSwap?.kind === "socket" ? "/tmp" : os.tmpdir();
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-")));
+  const tmp = fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
-  const managedParentPath = path.dirname(configPath);
-  const managedParentTarget = path.join(tmp, "managed-parent-target");
-  const managedParentTargetConfig = path.join(managedParentTarget, path.basename(configPath));
   const managedSymlinkTarget = path.join(tmp, "managed-projection-target.json");
   const managedTargetReadReady = path.join(tmp, "managed-target-read-ready");
   const managedTargetReadAccess = path.join(tmp, "managed-target-read-accessed");
@@ -329,25 +324,15 @@ export function runDeepAgentsConfigCommand(
   };
   const managedSymlink = managedOptions.symlink === true || managedOptions.danglingSymlink === true;
   const managedTargetReadPath = managedOptions.targetReadProbe
-    ? managedOptions.parentSymlink
-      ? managedParentTargetConfig
-      : managedSymlink
-        ? managedSymlinkTarget
-        : null
+    ? managedSymlink
+      ? managedSymlinkTarget
+      : null
     : null;
   if (managedOptions.targetReadProbe && managedTargetReadPath === null) {
-    throw new Error("targetReadProbe requires a projection or parent symlink");
+    throw new Error("targetReadProbe requires a projection symlink");
   }
   const managedInitialPath = managedSymlink ? managedSymlinkTarget : configPath;
-  if (managedOptions.parentSymlink) {
-    fs.mkdirSync(managedParentTarget, { recursive: true });
-    if (managedTargetReadPath === managedParentTargetConfig) {
-      createFifo(managedParentTargetConfig, managedOptions.mode);
-    } else {
-      initializeConfig(managedParentTargetConfig, initialConfig, managedOptions.mode);
-    }
-    fs.symlinkSync(managedParentTarget, managedParentPath);
-  } else if (managedOptions.directory) {
+  if (managedOptions.directory) {
     fs.mkdirSync(configPath, { recursive: true, mode: managedOptions.mode ?? 0o700 });
   } else if (managedOptions.fifo) {
     createFifo(configPath, managedOptions.mode);
@@ -420,12 +405,6 @@ export function runDeepAgentsConfigCommand(
       // A missing projection has no path type to report.
     }
     const configExists = configStat !== null;
-    let managedParentIsSymlink = false;
-    try {
-      managedParentIsSymlink = fs.lstatSync(managedParentPath).isSymbolicLink();
-    } catch {
-      // A missing projection parent cannot redirect the managed path.
-    }
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
     const configIsFifo = configStat?.isFIFO() === true;
     const configIsSocket = configStat?.isSocket() === true;
@@ -452,7 +431,6 @@ export function runDeepAgentsConfigCommand(
       }
     };
     const managedSymlinkTargetText = readRegularFile(managedSymlinkTarget);
-    const managedParentTargetText = readRegularFile(managedParentTargetConfig);
     const managedTargetReadAccessed =
       managedTargetReadPath !== null && waitForPath(managedTargetReadAccess, 200);
     const legacyConfigText = legacyConfigExists ? fs.readFileSync(legacyConfigPath, "utf-8") : null;
@@ -481,8 +459,6 @@ export function runDeepAgentsConfigCommand(
       legacyConfigExists,
       legacyConfig: parseConfigText(legacyConfigText),
       legacyConfigText,
-      managedParentIsSymlink,
-      managedParentTargetText,
       managedSymlinkTargetExists,
       managedSymlinkTargetText,
       managedTargetReadAccessed,
