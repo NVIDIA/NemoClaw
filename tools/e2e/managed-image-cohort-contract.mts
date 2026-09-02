@@ -6,14 +6,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
+  MANAGED_IMAGE_SOURCE_REPOSITORY,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 
-const REPOSITORY = "NVIDIA/NemoClaw";
-const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -109,7 +109,7 @@ function validatePlatformEvidence(
   expected: {
     readonly agent: string;
     readonly cohort: string;
-    readonly platform: (typeof PLATFORMS)[number];
+    readonly platform: ManagedImagePlatform;
     readonly revision: string;
     readonly runAttempt: number;
     readonly runId: number;
@@ -208,7 +208,7 @@ function validatePlatformEvidence(
   );
   exactString(
     statement.builderId,
-    `https://github.com/${REPOSITORY}/actions/runs/${expected.runId}/attempts/${producerAttempt}`,
+    `https://github.com/${MANAGED_IMAGE_SOURCE_REPOSITORY}/actions/runs/${expected.runId}/attempts/${producerAttempt}`,
     `${expected.agent} ${expected.platform} builder`,
   );
   const bindings = record(
@@ -227,7 +227,11 @@ function validatePlatformEvidence(
     expected.revision,
     `${expected.agent} ${expected.platform} revision`,
   );
-  exactString(bindings.source, `https://github.com/${REPOSITORY}`, `${expected.agent} source`);
+  exactString(
+    bindings.source,
+    `https://github.com/${MANAGED_IMAGE_SOURCE_REPOSITORY}`,
+    `${expected.agent} source`,
+  );
   exactString(
     bindings.baseReference,
     baseReference,
@@ -264,13 +268,17 @@ export function validateManagedImageCohort(
   const boundedCohort = boundedCohortIdentity(cohort.cohort, expected);
   const cohortIdentity = boundedCohort.identity;
   const source = record(cohort.source, "managed-image cohort source");
-  exactString(source.repository, REPOSITORY, "managed-image cohort source repository");
+  exactString(
+    source.repository,
+    MANAGED_IMAGE_SOURCE_REPOSITORY,
+    "managed-image cohort source repository",
+  );
   exactString(source.revision, expected.revision, "managed-image cohort source revision");
   const run = record(cohort.run, "managed-image cohort run");
   if (run.id !== expected.runId || run.attempt !== expected.runAttempt) {
     throw new Error("managed-image cohort run does not match the selected publication");
   }
-  if (JSON.stringify(cohort.platforms) !== JSON.stringify(PLATFORMS)) {
+  if (JSON.stringify(cohort.platforms) !== JSON.stringify(MANAGED_IMAGE_PLATFORMS)) {
     throw new Error("managed-image cohort must contain linux/amd64 and linux/arm64");
   }
 
@@ -289,8 +297,8 @@ export function validateManagedImageCohort(
       `${agent} cohort descriptor digest`,
     );
     const platforms = record(contract.platforms, `${agent} cohort platforms`);
-    exactKeys(platforms, PLATFORMS, `${agent} cohort platforms`);
-    for (const platform of PLATFORMS) {
+    exactKeys(platforms, MANAGED_IMAGE_PLATFORMS, `${agent} cohort platforms`);
+    for (const platform of MANAGED_IMAGE_PLATFORMS) {
       validatePlatformEvidence(platforms[platform], {
         agent,
         cohort: cohortIdentity,
@@ -311,7 +319,7 @@ export function validateManagedImageCohort(
       return [
         agent,
         Object.fromEntries(
-          PLATFORMS.map((platform) => {
+          MANAGED_IMAGE_PLATFORMS.map((platform) => {
             const publication = record(platforms[platform], `${agent} ${platform} publication`);
             const workloadDescriptor = record(
               record(publication.publicationEvidence, `${agent} ${platform} publication evidence`)

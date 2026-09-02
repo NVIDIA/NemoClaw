@@ -1509,7 +1509,9 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]]
-          printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          # Failed-job reruns retain successful candidate artifacts from prior
+          # attempts, so every attempt of this logical run shares one cohort.
+          printf 'cohort=ghrun-%s-1\n' "$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
 
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
