@@ -289,6 +289,8 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
 describe("OpenClaw plugin recreation pairing resume", () => {
   it("resumes recreation once after canonical pairing appears late (#9844)", async () => {
     const sandboxName = "fixture-sandbox";
+    const cliEntrypoint = "/repo/bin/nemoclaw.js";
+    const fromDockerfile = "/tmp/fixture/Dockerfile";
     const attempts = [
       onboardResult(
         1,
@@ -296,17 +298,53 @@ describe("OpenClaw plugin recreation pairing resume", () => {
       ),
       onboardResult(0),
     ];
-    const onEvidence = vi.fn();
+    const runCommand = vi
+      .fn()
+      .mockResolvedValueOnce(attempts[0])
+      .mockResolvedValueOnce(attempts[1]);
+    const reconcile = vi.fn(async () => true);
+    const writeEvidence = vi.fn();
 
     const result = await runOpenClawPluginRecreateWithPairingResume({
+      cliEntrypoint,
+      fromDockerfile,
+      reconcile,
+      runCommand,
       sandboxName,
-      run: vi.fn(async (attempt) => attempts[attempt - 1]),
-      reconcile: vi.fn(async () => true),
-      onEvidence,
+      writeEvidence,
     });
 
     expect(result.outcome).toBe("passed");
-    expect(onEvidence).toHaveBeenCalledWith(
+    expect(runCommand).toHaveBeenNthCalledWith(
+      1,
+      [
+        cliEntrypoint,
+        "onboard",
+        "--fresh",
+        "--recreate-sandbox",
+        "--non-interactive",
+        "--yes",
+        "--yes-i-accept-third-party-software",
+        "--name",
+        sandboxName,
+        "--agent",
+        "openclaw",
+        "--from",
+        fromDockerfile,
+      ],
+      "openclaw-weather-plugin-recreate",
+    );
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledWith(
+      "openclaw-weather-plugin-recreate-pairing-reconcile",
+    );
+    expect(runCommand).toHaveBeenNthCalledWith(
+      2,
+      [cliEntrypoint, "onboard", "--resume", "--non-interactive"],
+      "openclaw-weather-plugin-recreate-pairing-resume",
+    );
+    expect(writeEvidence).toHaveBeenCalledWith(
+      "openclaw-weather-plugin-recreate-retry.json",
       expect.objectContaining({
         operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
         outcome: "passed-after-retry",
@@ -316,24 +354,30 @@ describe("OpenClaw plugin recreation pairing resume", () => {
 
   it("does not resume recreation when reconciliation fails (#9844)", async () => {
     const sandboxName = "fixture-sandbox";
-    const run = vi.fn(async () =>
-      onboardResult(
-        1,
-        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
-      ),
+    const failed = onboardResult(
+      1,
+      `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
     );
-    const onEvidence = vi.fn();
+    const runCommand = vi.fn(async () => failed);
+    const reconcile = vi.fn(async () => false);
+    const writeEvidence = vi.fn();
 
     const result = await runOpenClawPluginRecreateWithPairingResume({
+      cliEntrypoint: "/repo/bin/nemoclaw.js",
+      fromDockerfile: "/tmp/fixture/Dockerfile",
+      reconcile,
+      runCommand,
       sandboxName,
-      run,
-      reconcile: vi.fn(async () => false),
-      onEvidence,
+      writeEvidence,
     });
 
     expect(result.outcome).toBe("failed");
-    expect(run).toHaveBeenCalledOnce();
-    expect(onEvidence).toHaveBeenCalledWith(
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledWith(
+      "openclaw-weather-plugin-recreate-pairing-reconcile",
+    );
+    expect(writeEvidence).toHaveBeenCalledWith(
+      "openclaw-weather-plugin-recreate-retry.json",
       expect.objectContaining({
         operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
         outcome: "failed-no-retry",

@@ -586,39 +586,18 @@ test(
     });
     openshellWrapper.selectImage(pluginImageV2);
     const recreate = await runOpenClawPluginRecreateWithPairingResume({
+      cliEntrypoint: CLI_ENTRYPOINT,
+      fromDockerfile: customPluginContext.dockerfilePath,
+      reconcile: reconcilePairing,
+      runCommand: (args, artifactName) =>
+        host.command("node", args, {
+          artifactName,
+          env: sandboxEnv,
+          timeoutMs: ONBOARD_TIMEOUT_MS,
+        }),
       sandboxName: SANDBOX_NAME,
-      run: (attempt) =>
-        host.command(
-          "node",
-          attempt === 1
-            ? [
-                CLI_ENTRYPOINT,
-                "onboard",
-                "--fresh",
-                "--recreate-sandbox",
-                "--non-interactive",
-                "--yes",
-                "--yes-i-accept-third-party-software",
-                "--name",
-                SANDBOX_NAME,
-                "--agent",
-                "openclaw",
-                "--from",
-                customPluginContext.dockerfilePath,
-              ]
-            : [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
-          {
-            artifactName:
-              attempt === 1
-                ? "openclaw-weather-plugin-recreate"
-                : "openclaw-weather-plugin-recreate-pairing-resume",
-            env: sandboxEnv,
-            timeoutMs: ONBOARD_TIMEOUT_MS,
-          },
-        ),
-      reconcile: () => reconcilePairing("openclaw-weather-plugin-recreate-pairing-reconcile"),
-      onEvidence: async (evidence) => {
-        await artifacts.writeJson("openclaw-weather-plugin-recreate-retry.json", evidence);
+      writeEvidence: async (artifactName, evidence) => {
+        await artifacts.writeJson(artifactName, evidence);
       },
     });
     const recreateText = recreate.value ? resultText(recreate.value) : "recreate returned no result";

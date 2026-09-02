@@ -11,12 +11,25 @@ import {
 const ONBOARD_OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
 const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
 const OWNER = "openclaw-plugin-runtime-exdev";
+const RECREATE_ARTIFACT = "openclaw-weather-plugin-recreate";
+const RECREATE_RESUME_ARTIFACT = "openclaw-weather-plugin-recreate-pairing-resume";
+const RECREATE_RECONCILE_ARTIFACT = "openclaw-weather-plugin-recreate-pairing-reconcile";
+const RECREATE_RETRY_EVIDENCE_ARTIFACT = "openclaw-weather-plugin-recreate-retry.json";
 
 type OnboardPairingRetryOptions<T extends CommandExitResult> = {
   sandboxName: string;
   run(attempt: number): Promise<T>;
   reconcile(value: T | undefined, error: unknown, attempt: number): Promise<boolean>;
   onEvidence(evidence: RetryEvidence): Promise<void> | void;
+};
+
+type RecreatePairingRetryOptions<T extends CommandExitResult> = {
+  cliEntrypoint: string;
+  fromDockerfile: string;
+  reconcile(artifactName: string): Promise<boolean>;
+  runCommand(args: string[], artifactName: string): Promise<T>;
+  sandboxName: string;
+  writeEvidence(artifactName: string, evidence: RetryEvidence): Promise<void> | void;
 };
 
 type PairingTarget = {
@@ -84,9 +97,37 @@ export function runOpenClawPluginOnboardWithPairingResume<T extends CommandExitR
 
 /** Resume sandbox recreation once when the startup watcher has not published canonical pairing. */
 export function runOpenClawPluginRecreateWithPairingResume<T extends CommandExitResult>(
-  options: OnboardPairingRetryOptions<T>,
+  options: RecreatePairingRetryOptions<T>,
 ): Promise<BoundedRetryResult<T>> {
-  return runOpenClawPluginWithPairingResume(options, RECREATE_OPERATION);
+  return runOpenClawPluginWithPairingResume(
+    {
+      sandboxName: options.sandboxName,
+      run: (attempt) =>
+        options.runCommand(
+          attempt === 1
+            ? [
+                options.cliEntrypoint,
+                "onboard",
+                "--fresh",
+                "--recreate-sandbox",
+                "--non-interactive",
+                "--yes",
+                "--yes-i-accept-third-party-software",
+                "--name",
+                options.sandboxName,
+                "--agent",
+                "openclaw",
+                "--from",
+                options.fromDockerfile,
+              ]
+            : [options.cliEntrypoint, "onboard", "--resume", "--non-interactive"],
+          attempt === 1 ? RECREATE_ARTIFACT : RECREATE_RESUME_ARTIFACT,
+        ),
+      reconcile: () => options.reconcile(RECREATE_RECONCILE_ARTIFACT),
+      onEvidence: (evidence) => options.writeEvidence(RECREATE_RETRY_EVIDENCE_ARTIFACT, evidence),
+    },
+    RECREATE_OPERATION,
+  );
 }
 
 /** Require the paused finalization session and its live runtime before resume can continue. */
