@@ -100,8 +100,14 @@ async function runConfigSetWithPrompt(prompt: () => Promise<string>) {
       validateOpenClawConfigCandidate: () => [],
     });
     installMock(privilegedExecPath, {
-      privilegedSandboxExecArgv: () => ["docker", "exec", "container-id"],
-      resolveDirectSandboxContainer: () => "container-id",
+      capturePrivilegedSandboxCommand: () => Buffer.alloc(0),
+      executePrivilegedSandboxCommand: () => ({
+        status: 0,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      }),
+      resolvePrivilegedSandboxTarget: () => ({ resourceHandle: "container-id" }),
       withPrivilegedSandboxExecutionLease: <T>(
         _sandboxName: string,
         _operation: string,

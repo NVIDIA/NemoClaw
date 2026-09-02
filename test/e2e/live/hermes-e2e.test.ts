@@ -210,7 +210,7 @@ test(
     timeout: HERMES_E2E_TEST_TIMEOUT_MS,
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
-  async ({ artifacts, cleanup, host, inference, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "hermes-e2e",
       boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
@@ -295,12 +295,11 @@ test(
     progress.phase("prepare clean Hermes runner");
     await cleanupHermes("pre-cleanup");
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-1-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    // Phase 1: prerequisites.
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-1-runtime-info",
+      scenarioLabel: "Hermes",
     });
-    expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
 
     await expect(inference.probeModels("phase-1-inference-models")).resolves.toMatchObject({
       data: expect.arrayContaining([expect.objectContaining({ id: inference.model })]),
@@ -414,7 +413,7 @@ test(
     await expectPackageDatabaseReadOnly({
       artifactPrefix: "phase-3",
       env: commandEnv(),
-      host,
+      runtimeProvider,
       sandbox,
       sandboxName: SANDBOX_NAME,
       timeoutMs: 30_000,

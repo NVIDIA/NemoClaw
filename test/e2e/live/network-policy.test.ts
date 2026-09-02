@@ -25,6 +25,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
@@ -32,10 +33,7 @@ import { runInteractivePolicyAdd } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
-import {
-  ensureDockerAvailable,
-  runRestrictedOnboardWithRetry,
-} from "./restricted-onboard-helpers.ts";
+import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
 const PERMISSIVE_POLICY = path.join(
   REPO_ROOT,
@@ -498,7 +496,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm built CLI Docker OpenShell and credential",
+        "confirm built CLI selected runtime provider OpenShell and credential",
         "clear the sandbox and onboard restricted policy",
         "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
         "exercise package and SaaS policy presets",
@@ -510,7 +508,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     await artifacts.target.declare({
       id: "network-policy",
       boundary: "live-sandbox-network-policy",
@@ -537,17 +535,12 @@ test(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-network-policy",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await ensureConfiguredRuntimeProviderAvailable({
+      artifactName: "prereq-runtime-provider-info-network-policy",
+      host,
+      scenarioLabel: "network-policy",
+      skip,
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for network-policy live E2E: ${text(docker)}`);
-      }
-      skip("Docker is required for network-policy live E2E");
-    }
 
     const openshellVersion = await host.command("openshell", ["--version"], {
       artifactName: "prereq-openshell-version-network-policy",
@@ -663,7 +656,7 @@ test(
     await expectPackageDatabaseReadOnly({
       artifactPrefix: "tc-net",
       env: baseEnv(),
-      host,
+      runtimeProvider,
       sandbox,
       sandboxName: SANDBOX_NAME,
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -1128,7 +1121,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm built CLI Docker OpenShell and credential",
+        "confirm built CLI selected runtime provider OpenShell and credential",
         "clear the restricted-policy sandbox",
         "onboard default restricted OpenClaw",
         "confirm the restricted tier has zero active presets",
@@ -1148,9 +1141,9 @@ test(
       "run `npm run build:cli` before live repo CLI scenarios",
     ).toBe(true);
 
-    await ensureDockerAvailable({
+    await ensureConfiguredRuntimeProviderAvailable({
+      artifactName: "prereq-runtime-provider-info-restricted-zero-presets",
       host,
-      artifactName: "prereq-docker-info-restricted-zero-presets",
       skip,
       scenarioLabel: "restricted-zero-presets",
     });

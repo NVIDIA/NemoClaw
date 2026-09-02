@@ -59,6 +59,7 @@ type RestoreFixtureOptions = {
     | "missing-shared"
     | "non-dist"
     | "link"
+    | "managed-catalog"
     | "shared-module-directory"
     | "traversal";
   buildIdentitySha?: string;
@@ -140,6 +141,20 @@ function writeLinkArchive(context: ArchiveFixtureContext): void {
   });
 }
 
+const MANAGED_IMAGE_REVISION = "e".repeat(40);
+
+function writeManagedCatalogArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(context, (dist) => {
+    fs.writeFileSync(
+      path.join(dist, "e2e-managed-image-catalog.json"),
+      `${JSON.stringify({
+        openclaw: { source: { revision: MANAGED_IMAGE_REVISION } },
+        hermes: { source: { revision: MANAGED_IMAGE_REVISION } },
+      })}\n`,
+    );
+  });
+}
+
 function writeCliDirectoryArchive(context: ArchiveFixtureContext): void {
   writeCliArchive(context, (dist) => {
     const entrypoint = path.join(dist, "nemoclaw.js");
@@ -194,6 +209,7 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
 const ARCHIVE_FIXTURE_WRITERS = {
   "cli-directory": writeCliDirectoryArchive,
   link: writeLinkArchive,
+  "managed-catalog": writeManagedCatalogArchive,
   "missing-shared": writeMissingSharedArchive,
 
   "non-dist": writeNonDistArchive,
@@ -352,6 +368,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
   const githubOutput = path.join(root, "github-output");
+  const githubEnv = path.join(root, "github-env");
   const identityResult = spawnSync(IDENTITY_SCRIPT, [], {
     cwd: workspace,
     encoding: "utf8",
@@ -394,6 +411,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
         ARTIFACT_NAME: identityOutputs.artifact_name,
         CANDIDATE_REPOSITORY: identityOutputs.candidate_repository,
         CANDIDATE_SHA: identityOutputs.candidate_sha,
+        GITHUB_ENV: githubEnv,
         GITHUB_WORKSPACE: workspace,
         PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
         PAYLOAD_SHA256: identityOutputs.payload_sha256,
@@ -409,6 +427,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   return {
     candidateSha,
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
+    githubEnv: fs.existsSync(githubEnv) ? fs.readFileSync(githubEnv, "utf8") : "",
     output: `${identityResult.stdout}${identityResult.stderr}${
       identitySucceeded ? `${restoreResult.stdout}${restoreResult.stderr}` : ""
     }`,
@@ -569,6 +588,19 @@ describe("exact-commit CLI artifact restore", () => {
           .readdirSync(fixture.runnerTemp)
           .filter((entry) => entry.startsWith("nemoclaw-cli-restore.")),
       ).toEqual([]);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("exports restored managed-image catalog publication authority", () => {
+    const fixture = runRestoreValidation({ archive: "managed-catalog" });
+    try {
+      expect(fixture.result.status, fixture.output).toBe(0);
+      expect(fixture.githubEnv).toBe(
+        `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=${fixture.workspace}/dist/e2e-managed-image-catalog.json\n` +
+          `NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=${MANAGED_IMAGE_REVISION}\n`,
+      );
     } finally {
       fixture.cleanup();
     }

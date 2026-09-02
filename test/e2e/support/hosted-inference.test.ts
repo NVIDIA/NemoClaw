@@ -415,6 +415,8 @@ printf '{"data":[]}'
       HOME: "/tmp/home",
       PATH: "/usr/bin",
       BUILDX_BUILDER: "external-builder",
+      CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
+      CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
@@ -423,6 +425,8 @@ printf '{"data":[]}'
 
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
     expect(env.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
+    expect(env.CONTAINERS_CONF).toBe("/tmp/native-podman-containers.conf");
+    expect(env.CONTAINERS_STORAGE_CONF).toBe("/tmp/native-podman-storage.conf");
     expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
     expect(env).not.toHaveProperty("BUILDX_BUILDER");
