@@ -249,25 +249,49 @@ function Start-ProhibitedProcessAudit {
 }
 
 function Stop-ProhibitedProcessAudit {
-    param([Parameter(Mandatory)][string]$SourceIdentifier)
+    param(
+        [Parameter(Mandatory)][string]$SourceIdentifier,
+        [Parameter(Mandatory)][int]$RootProcessId
+    )
 
     Start-Sleep -Milliseconds $script:ProcessAuditSettleMilliseconds
-    $prohibitedStarts = @()
+    $records = @()
     foreach ($auditEvent in @(Get-Event -SourceIdentifier $SourceIdentifier -ErrorAction SilentlyContinue)) {
         $processEvent = $auditEvent.SourceEventArgs.NewEvent
-        $name = ([string]$processEvent.ProcessName).ToLowerInvariant()
-        if ($name -in @('bash.exe', 'docker.exe', 'dockerd.exe', 'wsl.exe') -or
-            $name.StartsWith('com.docker') -or $name.StartsWith('ubuntu')) {
-            $prohibitedStarts += [pscustomobject]@{
-                processId = [int]$processEvent.ProcessID
-                parentProcessId = [int]$processEvent.ParentProcessID
-                processName = [string]$processEvent.ProcessName
-            }
+        $records += [pscustomobject]@{
+            processId = [int]$processEvent.ProcessID
+            parentProcessId = [int]$processEvent.ParentProcessID
+            processName = [string]$processEvent.ProcessName
         }
         Remove-Event -EventIdentifier $auditEvent.EventIdentifier
     }
     Unregister-Event -SourceIdentifier $SourceIdentifier -ErrorAction SilentlyContinue
-    return @($prohibitedStarts)
+
+    $tracked = @{}
+    $tracked[[string]$RootProcessId] = $true
+    $descendantStarts = @()
+    foreach ($record in $records) {
+        if ($tracked.ContainsKey([string]$record.parentProcessId)) {
+            $descendantStarts += $record
+            $tracked[[string]$record.processId] = $true
+        }
+    }
+    $prohibitedStarts = @($records | Where-Object {
+        $name = $_.processName.ToLowerInvariant()
+        $name -in @('bash.exe', 'docker.exe', 'dockerd.exe', 'wsl.exe') -or
+        $name.StartsWith('com.docker') -or $name.StartsWith('ubuntu')
+    })
+    $packageDescendantProhibitedStarts = @($descendantStarts | Where-Object {
+        $name = $_.processName.ToLowerInvariant()
+        $name -in @('bash.exe', 'docker.exe', 'dockerd.exe', 'wsl.exe') -or
+        $name.StartsWith('com.docker') -or $name.StartsWith('ubuntu')
+    })
+    return [pscustomobject]@{
+        allStarts = $records
+        descendantStarts = $descendantStarts
+        prohibitedStarts = $prohibitedStarts
+        packageDescendantProhibitedStarts = $packageDescendantProhibitedStarts
+    }
 }
 
 if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
@@ -406,11 +430,21 @@ try {
         Fail-PackageQualification 'Machine PATH still contains the removed bin directory.'
     }
 
-    $prohibitedStarts = @(Stop-ProhibitedProcessAudit -SourceIdentifier $processAudit)
+    $auditResult = Stop-ProhibitedProcessAudit -SourceIdentifier $processAudit -RootProcessId $PID
     $processAuditStopped = $true
-    if ($prohibitedStarts.Count -ne 0) {
-        $names = @($prohibitedStarts | ForEach-Object { $_.processName } | Sort-Object -Unique) -join ', '
-        Fail-PackageQualification "Package operations started a prohibited process: $names"
+    $setupProcessName = (Split-Path -Leaf $setup).ToLowerInvariant()
+    if (@($auditResult.descendantStarts | Where-Object {
+        $_.processName.ToLowerInvariant() -ceq $setupProcessName
+    }).Count -lt 1) {
+        Fail-PackageQualification 'The process audit did not observe the setup executable as a package descendant.'
+    }
+    $prohibitedStarts = @($auditResult.prohibitedStarts)
+    $packageDescendantProhibitedStarts = @($auditResult.packageDescendantProhibitedStarts)
+    if ($packageDescendantProhibitedStarts.Count -ne 0) {
+        $names = @($packageDescendantProhibitedStarts | ForEach-Object {
+            $_.processName
+        } | Sort-Object -Unique) -join ', '
+        Fail-PackageQualification "Package operations started a prohibited descendant process: $names"
     }
     $postExecution = Get-ProhibitedProcessSnapshot -Phase 'post-execution'
     $baselineIds = @($preExecution.processes | ForEach-Object { $_.processId })
@@ -451,6 +485,8 @@ try {
         finalAbsence = $true
         machinePathRemoved = $true
         prohibitedProcessStarts = $prohibitedStarts
+        packageDescendantStarts = $auditResult.descendantStarts
+        packageDescendantProhibitedStarts = $packageDescendantProhibitedStarts
         newProhibitedProcesses = $newProhibitedProcesses
         preExecution = $preExecution
         postExecution = $postExecution
@@ -464,7 +500,7 @@ try {
 } finally {
     if (-not $processAuditStopped) {
         try {
-            Stop-ProhibitedProcessAudit -SourceIdentifier $processAudit | Out-Null
+            Stop-ProhibitedProcessAudit -SourceIdentifier $processAudit -RootProcessId $PID | Out-Null
         } catch {
             Write-Warning "Could not stop prohibited-process audit during cleanup: $($_.Exception.Message)"
         }
