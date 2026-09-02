@@ -194,7 +194,7 @@ describe("Hermes accepted replacement recovery", () => {
     vi.restoreAllMocks();
   });
 
-  it("recovers a stranded cron gate without a current gate plan before accepting the replacement (#7806)", async () => {
+  it("restores accepted replacement state before reopening cron dispatch (#7806)", async () => {
     const events: string[] = [];
     phaseMocks.recoverCronRestore.mockImplementation(() => {
       events.push("recover");
@@ -214,7 +214,7 @@ describe("Hermes accepted replacement recovery", () => {
       rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(events).toEqual(["recover", "restore", "post-restore", "clear-recovery", "complete"]);
+    expect(events).toEqual(["restore", "post-restore", "recover", "clear-recovery", "complete"]);
     expect(log).toHaveBeenCalledWith(
       "Hermes cron restore recovery for accepted replacement: dispatch-reactivated",
     );
@@ -231,6 +231,21 @@ describe("Hermes accepted replacement recovery", () => {
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
     expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
+  });
+
+  it("keeps cron dispatch gated when accepted replacement restoration fails (#7806)", async () => {
+    phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: false });
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.runPostRestore).toHaveBeenCalledWith(
+      expect.objectContaining({ restoreSucceeded: false }),
+    );
+    expect(phaseMocks.recoverCronRestore).not.toHaveBeenCalled();
+    expect(phaseMocks.clearRecoveryBackup).not.toHaveBeenCalled();
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
   });
 
   it("retires both the unused current policy handoff and the recovered transaction handoff", async () => {

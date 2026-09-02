@@ -129,14 +129,15 @@ NEW_ENTER_BLOCK = '''        if self._external_drain_active:
 
 JOBS_ANCHOR = '''def get_due_jobs() -> List[Dict[str, Any]]:
 '''
-JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetime) -> int:
+JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetime, profile_homes) -> int:
     """Re-arm one-shots held overdue by NemoClaw's restore drain.
 
     The root-owned controller calls this helper while the external drain still
     blocks dispatch and passes the authenticated marker creation time. It
     changes only enabled scheduled one-shots that have never run, carry no
     dispatch or fire claim, and became due at or after that marker was acquired.
-    The jobs lock and normal save path preserve profile isolation and ownership.
+    Each validated profile uses its own cron-store context, jobs lock, and
+    normal save path so profile isolation and ownership remain intact.
     """
     now = _hermes_now()
     not_before = _ensure_aware(not_before)
@@ -149,41 +150,45 @@ JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetim
         raise RuntimeError("NemoClaw cron restore could not schedule delayed one-shots")
 
     changed = 0
-    with _jobs_lock():
-        jobs = load_jobs()
-        for job in jobs:
-            schedule = job.get("schedule")
-            repeat = job.get("repeat")
-            if (
-                not isinstance(schedule, dict)
-                or schedule.get("kind") != "once"
-                or job.get("enabled", True) is not True
-                or job.get("state") not in {None, "scheduled"}
-                or job.get("last_run_at") is not None
-                or job.get("run_claim") is not None
-                or job.get("fire_claim") is not None
-                or (isinstance(repeat, dict) and repeat.get("completed", 0) != 0)
-            ):
-                continue
-            run_at = schedule.get("run_at")
-            next_run_at = job.get("next_run_at")
-            if not isinstance(run_at, str) or not isinstance(next_run_at, str):
-                continue
-            try:
-                scheduled = _ensure_aware(datetime.fromisoformat(run_at))
-                next_run = _ensure_aware(datetime.fromisoformat(next_run_at))
-            except (TypeError, ValueError):
-                continue
-            if scheduled < not_before or next_run < not_before:
-                continue
-            if scheduled > now or next_run > now:
-                continue
-            job["schedule"] = dict(replacement_schedule)
-            job["schedule_display"] = replacement_schedule.get("display")
-            job["next_run_at"] = replacement_next
-            changed += 1
-        if changed:
-            save_jobs(jobs)
+    for profile_home in profile_homes:
+        profile_changed = 0
+        with use_cron_store(profile_home):
+            with _jobs_lock():
+                jobs = load_jobs()
+                for job in jobs:
+                    schedule = job.get("schedule")
+                    repeat = job.get("repeat")
+                    if (
+                        not isinstance(schedule, dict)
+                        or schedule.get("kind") != "once"
+                        or job.get("enabled", True) is not True
+                        or job.get("state") not in {None, "scheduled"}
+                        or job.get("last_run_at") is not None
+                        or job.get("run_claim") is not None
+                        or job.get("fire_claim") is not None
+                        or (isinstance(repeat, dict) and repeat.get("completed", 0) != 0)
+                    ):
+                        continue
+                    run_at = schedule.get("run_at")
+                    next_run_at = job.get("next_run_at")
+                    if not isinstance(run_at, str) or not isinstance(next_run_at, str):
+                        continue
+                    try:
+                        scheduled = _ensure_aware(datetime.fromisoformat(run_at))
+                        next_run = _ensure_aware(datetime.fromisoformat(next_run_at))
+                    except (TypeError, ValueError):
+                        continue
+                    if scheduled < not_before or next_run < not_before:
+                        continue
+                    if scheduled > now or next_run > now:
+                        continue
+                    job["schedule"] = dict(replacement_schedule)
+                    job["schedule_display"] = replacement_schedule.get("display")
+                    job["next_run_at"] = replacement_next
+                    profile_changed += 1
+                if profile_changed:
+                    save_jobs(jobs)
+        changed += profile_changed
     return changed
 
 

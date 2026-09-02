@@ -334,13 +334,6 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
-# Managed MCP and ACP require their packaged Hermes client surfaces. A
-# published base can carry the expected Hermes version while omitting either
-# optional dependency group. This is a build-time package/import guard; live
-# protocol behavior remains a separate E2E concern.
-RUN /opt/hermes/.venv/bin/python -I -c \
-    'import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit("Hermes ACP SDK version is unavailable"); mcp_tool._ensure_mcp_sdk() or sys.exit("Hermes MCP client runtime is unavailable"); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit("Hermes MCP client runtime is unavailable"); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit("Hermes MCP Streamable HTTP runtime is unavailable")'
-
 RUN chmod -R a+rX /opt/hermes/.venv \
     && test -r /opt/hermes/.venv/pyvenv.cfg \
     && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
@@ -419,7 +412,16 @@ ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
 COPY --from=hermes-agent-payload / /
 
+# Managed MCP and ACP require their packaged Hermes client surfaces. A
+# published base can carry the expected Hermes version while omitting either
+# optional dependency group. This is a build-time package/import guard; live
+# protocol behavior remains a separate E2E concern.
+# hadolint ignore=DL3059
+RUN /opt/hermes/.venv/bin/python -I \
+    /opt/nemoclaw-hermes-config/image-build-probes.py managed-runtime-capability
+
 # Ensure the NemoClaw plugin for Hermes is readable.
+# hadolint ignore=DL3059
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
 # Keep the config generator and its source dependencies root-owned and
@@ -437,7 +439,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=9d617ac7cd4e977cfb91ce5dcf0a82c7f6a3c1078a86bcea41cf20329613cf93
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=1fc80ba3b8b1f66e92fb242e48258131a5d4e0faa6d235b0f75d4cc49992b772
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -574,13 +576,13 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # predicate to compose an independent root-owned marker, hydrate that predicate
 # during GatewayRunner construction, and re-arm only unclaimed one-shots held
 # overdue when the authenticated release record opens the gate.
-ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=aeb2a7777d1d6ac9e4013671407dc47762ec6981f3627196bcdeaad0221f437c
+ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=c959cf1caaeb1cf6933842c0382779feb63685870e836b58f79328cf6dc6b1a8
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256=4195245d27b7b067b416b69f4728fcfcdd97c912bdb0954f14402b35601f76cc
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256=8b8def1d9cb8088d4de7dd3d920d31fb0d959f4d6ffffadf6dd8f8320da5e00b
 ARG NEMOCLAW_HERMES_CRON_JOBS_SOURCE_SHA256=dd5c7c601e23e5058e93d824b17ff426ed2cc5113c20d431ea4937274be59923
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256=6d1c20afd6d0030a4d7c0fcc5a82dea1a9d9b912886aff1343597cfe74be1c8a
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256=30a36097a525449bc9d3b721ba3c3047b1c4f2d8a19da8027bb280867c2d6823
-ARG NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256=e19c2563581433447871a4f5107b0c7ccb52631384b58336b2b893d13ab3769e
+ARG NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256=fcdb54593fa9e484e16c9f14b8d543aff42da0819327ee7db838e10c568409e7
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
@@ -755,7 +757,7 @@ ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=3c769f05292b840424a8feec9a9eb441e393a48bf
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=57282ff0b70b857010f49207c31fa7415356a877e0937173cc2aa733bffadd3b
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
-ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=290fcf9faa720d93c0b3a97b70470406a3464ae9f8864b7ab079fb57eb6e955b
+ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=dbd32832383f174878c08529947f5d81911152e1516b6f960824db3c7f7ac1e9
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \

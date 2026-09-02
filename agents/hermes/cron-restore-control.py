@@ -339,7 +339,8 @@ def _rearm_drained_oneshots(drain_token: str) -> int:
     except Exception as error:
         raise ControlError("Hermes cron restore re-arm helper is unavailable") from error
     try:
-        changed = rearm_nemoclaw_drained_oneshots(started_at)
+        profile_homes = [profile_home for _label, profile_home in _profile_homes(HERMES_HOME)]
+        changed = rearm_nemoclaw_drained_oneshots(started_at, profile_homes)
     except Exception as error:
         raise ControlError("Hermes cron restore could not re-arm delayed one-shots") from error
     if isinstance(changed, bool) or not isinstance(changed, int) or changed < 0:

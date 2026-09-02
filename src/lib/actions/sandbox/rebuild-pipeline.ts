@@ -534,9 +534,35 @@ async function rebuildSandboxUnlocked(
         }
         rebuildPolicyHandoffManifest = recoveryBackup;
         retainPolicyHandoffForRecovery = true;
-        // The accepted replacement belongs to an earlier run. Its persisted
-        // gate is independent of the current backup's cron plan, so probe every
-        // Hermes target before retiring the replacement journal.
+        const restored = runRebuildRestorePhase({
+          sandboxName,
+          targetAgentType: rebuildAgent || "openclaw",
+          targetImageIsCustom: Boolean(fromDockerfile),
+          backupManifest: recoveryBackup,
+          log,
+        });
+        await runRebuildPostRestorePhase({
+          sandboxName,
+          sandboxEntry,
+          targetAgentName: rebuildAgent || "openclaw",
+          messagingPlan,
+          backupManifest: recoveryBackup,
+          mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
+          restoreSucceeded: restored.restoreSucceeded,
+          staleRecovery: false,
+          recoveryRecreate: true,
+          preparedBackupRecovery: true,
+          staleSandboxWasLocked,
+          versionCheck,
+          relockShieldsIfNeeded,
+          log,
+          bail,
+        });
+        if (!restored.restoreSucceeded) return;
+        // The accepted replacement belongs to an earlier run. Keep its
+        // persisted gate active until the backup and all post-restore state
+        // have been applied and verified, then validate the restored cron tree
+        // before reopening dispatch or retiring recovery records.
         if (rebuildAgent === "hermes") {
           try {
             const outcome = recoverHermesCronRestore(sandboxName);
@@ -568,30 +594,6 @@ async function rebuildSandboxUnlocked(
             );
           }
         }
-        const restored = runRebuildRestorePhase({
-          sandboxName,
-          targetAgentType: rebuildAgent || "openclaw",
-          targetImageIsCustom: Boolean(fromDockerfile),
-          backupManifest: recoveryBackup,
-          log,
-        });
-        await runRebuildPostRestorePhase({
-          sandboxName,
-          sandboxEntry,
-          targetAgentName: rebuildAgent || "openclaw",
-          messagingPlan,
-          backupManifest: recoveryBackup,
-          mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
-          restoreSucceeded: restored.restoreSucceeded,
-          staleRecovery: false,
-          recoveryRecreate: true,
-          preparedBackupRecovery: true,
-          staleSandboxWasLocked,
-          versionCheck,
-          relockShieldsIfNeeded,
-          log,
-          bail,
-        });
         if (!completePolicyHandoffCleanup(recreateJournal.id, recoveryBackup)) return;
         if (!clearRecoveryMarker(recreateJournal.id, recoveryBackup)) return;
         recreateJournal.completeAcceptedTarget();

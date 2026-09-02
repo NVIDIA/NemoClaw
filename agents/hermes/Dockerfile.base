@@ -79,8 +79,6 @@ ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
 ARG NODE_VERSION=24.18.1
 ARG UV_VERSION=0.11.33
 
-COPY --chmod=0555 agents/hermes/check-uv-version.py /usr/local/libexec/nemoclaw-check-uv-version.py
-
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
 # tools again after install.
@@ -441,7 +439,13 @@ RUN printf '%s\n' \
 # skip rather than doing a nondeterministic dependency resolve during image
 # build.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
-    && /usr/local/libexec/nemoclaw-check-uv-version.py "$(uv --version)" "${UV_VERSION}"
+    && uv_version_output="$(uv --version)" \
+    && uv_command="${uv_version_output%% *}" \
+    && uv_version_tail="${uv_version_output#* }" \
+    && uv_version="${uv_version_tail%% *}" \
+    && [ "$uv_version_tail" != "$uv_version_output" ] \
+    && [ "$uv_command" = "uv" ] \
+    && [ "$uv_version" = "$UV_VERSION" ]
 # Upstream tests are not part of the production runtime and can contain
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.

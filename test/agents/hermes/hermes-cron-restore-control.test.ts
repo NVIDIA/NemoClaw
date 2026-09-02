@@ -139,9 +139,11 @@ rearm_calls = []
 delayed_one_shot_due_at = None
 cron_package = types.ModuleType("cron")
 cron_jobs = types.ModuleType("cron.jobs")
-def rearm_nemoclaw_drained_oneshots(not_before):
+def rearm_nemoclaw_drained_oneshots(not_before, profile_homes):
     if not module._marker_path().exists():
         raise AssertionError("one-shot re-arm ran without the NemoClaw drain")
+    if not profile_homes or profile_homes[0] != module.HERMES_HOME:
+        raise AssertionError("one-shot re-arm did not include the default Hermes profile")
     rearm_calls.append(not_before.isoformat())
     if delayed_one_shot_due_at is not None and not_before > delayed_one_shot_due_at:
         return 0
@@ -330,7 +332,7 @@ try:
     elif scenario == "rearm-failure":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
-        def fail_rearm(_not_before):
+        def fail_rearm(_not_before, _profile_homes):
             raise RuntimeError("simulated re-arm failure")
         cron_jobs.rearm_nemoclaw_drained_oneshots = fail_rearm
         module.recover_drain()
@@ -1156,9 +1158,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stderr).toContain(
       "Hermes cron restore drain release failed and its marker could not be restored",
     );
-    const rearmCalls = result.stdout
-      .match(/^REARM_CALLS:(.+)$/mu)?.[1]
-      .split(",");
+    const rearmCalls = result.stdout.match(/^REARM_CALLS:(.+)$/mu)?.[1].split(",");
     expect(rearmCalls).toHaveLength(2);
     expect(rearmCalls?.[1]).toBe(rearmCalls?.[0]);
     const receipts = result.stdout

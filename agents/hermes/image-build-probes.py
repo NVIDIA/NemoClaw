@@ -463,6 +463,24 @@ def verify_googlechat_override_seams() -> None:
         )
 
 
+def verify_managed_runtime_capability() -> None:
+    """Require the packaged ACP adapter and lazy MCP HTTP client surfaces."""
+    import importlib.metadata as metadata
+
+    import acp
+    import mcp
+    from acp_adapter.server import HermesACPAgent
+    from tools import mcp_tool
+
+    _ = (acp, mcp, HermesACPAgent)
+    if metadata.version("agent-client-protocol") != "0.9.0":
+        raise RuntimeError("Hermes ACP SDK version is unavailable")
+    if not mcp_tool._ensure_mcp_sdk() or not getattr(mcp_tool, "_MCP_AVAILABLE", False):
+        raise RuntimeError("Hermes MCP client runtime is unavailable")
+    if not getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False):
+        raise RuntimeError("Hermes MCP Streamable HTTP runtime is unavailable")
+
+
 COMMANDS: dict[str, Callable[[], None]] = {
     "cron-backup": verify_cron_backup,
     "cron-create": verify_cron_create,
@@ -476,6 +494,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "googlechat-override-seams": verify_googlechat_override_seams,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
+    "managed-runtime-capability": verify_managed_runtime_capability,
     "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
     "session-delete": verify_session_delete,

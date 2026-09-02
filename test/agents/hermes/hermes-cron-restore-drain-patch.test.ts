@@ -180,7 +180,7 @@ print(json.dumps({
     }
   });
 
-  it("re-arms only an overdue unclaimed one-shot before the restore gate opens", () => {
+  it("re-arms eligible one-shots in every profile before the restore gate opens", () => {
     const fixture = createFixture();
     try {
       expect(runPatcher(fixture).status).toBe(0);
@@ -195,7 +195,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 now = datetime(2026, 8, 30, 12, 0, 0, tzinfo=timezone.utc)
 not_before = datetime(2026, 8, 30, 11, 50, 0, tzinfo=timezone.utc)
-jobs = [
+default_jobs = [
     {"id": "held", "enabled": True, "state": "scheduled", "last_run_at": None,
      "run_claim": None, "fire_claim": None, "repeat": {"completed": 0},
      "schedule": {"kind": "once", "run_at": "2026-08-30T11:55:00+00:00"},
@@ -213,41 +213,71 @@ jobs = [
      "schedule": {"kind": "once", "run_at": "2026-08-30T11:55:00+00:00"},
      "next_run_at": "2026-08-30T11:55:00+00:00"},
 ]
+named_jobs = [
+    {"id": "named-held", "enabled": True, "state": "scheduled", "last_run_at": None,
+     "run_claim": None, "fire_claim": None, "repeat": {"completed": 0},
+     "schedule": {"kind": "once", "run_at": "2026-08-30T11:58:00+00:00"},
+     "next_run_at": "2026-08-30T11:58:00+00:00"},
+    {"id": "named-disabled", "enabled": False, "state": "scheduled", "last_run_at": None,
+     "run_claim": None, "fire_claim": None,
+     "schedule": {"kind": "once", "run_at": "2026-08-30T11:58:00+00:00"},
+     "next_run_at": "2026-08-30T11:58:00+00:00"},
+]
+stores = {"default": default_jobs, "named": named_jobs}
 saved = []
+active_home = None
+
+@contextlib.contextmanager
+def use_cron_store(home):
+    global active_home
+    previous = active_home
+    active_home = home
+    try:
+        yield
+    finally:
+        active_home = previous
+
 module._hermes_now = lambda: now
 module._ensure_aware = lambda value: value
 module.parse_schedule = lambda value: {"kind": "once", "run_at": value, "display": value}
 module.compute_next_run = lambda schedule: schedule["run_at"]
-module.load_jobs = lambda: jobs
-module.save_jobs = lambda value: saved.append(json.loads(json.dumps(value)))
+module.use_cron_store = use_cron_store
+module.load_jobs = lambda: stores[active_home]
+module.save_jobs = lambda value: saved.append({"home": active_home, "jobs": json.loads(json.dumps(value))})
 module._jobs_lock = contextlib.nullcontext
-changed = module.rearm_nemoclaw_drained_oneshots(not_before)
-print(json.dumps({"changed": changed, "jobs": jobs, "saved": saved}))
+changed = module.rearm_nemoclaw_drained_oneshots(not_before, ["default", "named"])
+print(json.dumps({"changed": changed, "stores": stores, "saved": saved}))
 `;
       const result = spawnSync(process.env.PYTHON || "python3", ["-I", "-c", probe], {
         encoding: "utf8",
       });
       const observed = JSON.parse(result.stdout) as {
         changed: number;
-        jobs: Array<{ id: string; next_run_at: string }>;
-        saved: unknown[];
+        stores: Record<string, Array<{ id: string; next_run_at: string }>>;
+        saved: Array<{ home: string }>;
       };
 
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
-      expect(observed.changed).toBe(1);
-      expect(observed.saved).toHaveLength(1);
-      expect(observed.jobs.find((job) => job.id === "held")?.next_run_at).toBe(
+      expect(observed.changed).toBe(2);
+      expect(observed.saved.map(({ home }) => home)).toEqual(["default", "named"]);
+      expect(observed.stores.default.find((job) => job.id === "held")?.next_run_at).toBe(
         "2026-08-30T12:00:02+00:00",
       );
-      expect(observed.jobs.find((job) => job.id === "future")?.next_run_at).toBe(
+      expect(observed.stores.default.find((job) => job.id === "future")?.next_run_at).toBe(
         "2026-08-30T12:05:00+00:00",
       );
-      expect(observed.jobs.find((job) => job.id === "old")?.next_run_at).toBe(
+      expect(observed.stores.default.find((job) => job.id === "old")?.next_run_at).toBe(
         "2026-08-30T11:40:00+00:00",
       );
-      expect(observed.jobs.find((job) => job.id === "claimed")?.next_run_at).toBe(
+      expect(observed.stores.default.find((job) => job.id === "claimed")?.next_run_at).toBe(
         "2026-08-30T11:55:00+00:00",
+      );
+      expect(observed.stores.named.find((job) => job.id === "named-held")?.next_run_at).toBe(
+        "2026-08-30T12:00:02+00:00",
+      );
+      expect(observed.stores.named.find((job) => job.id === "named-disabled")?.next_run_at).toBe(
+        "2026-08-30T11:58:00+00:00",
       );
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
