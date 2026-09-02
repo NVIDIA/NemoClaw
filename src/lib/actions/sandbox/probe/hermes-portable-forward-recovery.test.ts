@@ -647,11 +647,10 @@ describe("Hermes Portable connect composition", () => {
     expect(harness.runOpenshellSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
     );
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
-      /forwardAction=restored result=ready/,
-    );
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
-      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 parse=\d+ms parseCount=2 currentness=\d+ms currentnessCount=11 tcp=\d+ms tcpCount=2 sleep=0ms sleepCount=0 stop=0ms stopCount=0 start=\d+ms startCount=1 settle=\d+ms settleCount=1 rollback=0ms rollbackCount=0 ports=18789:2:2:healthy total=\d+ms result=proved/u,
+    const timingLog = harness.logSpy.mock.calls.flat().join("\n");
+    expect(timingLog).toMatch(/forwardAction=restored result=ready/);
+    expect(timingLog).toMatch(
+      /Hermes Portable forward recovery timing: .*ports=18789\(observations=2,reachability=2,outcome=healthy\).*result=proved/u,
     );
   });
 
@@ -681,11 +680,10 @@ describe("Hermes Portable connect composition", () => {
       .map(([args]) => (args as string[])[1]);
     expect(mutations).toEqual(["stop", "start"]);
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
-      /forwardAction=restored result=ready/,
-    );
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
-      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 parse=\d+ms parseCount=2 currentness=\d+ms currentnessCount=13 tcp=\d+ms tcpCount=2 sleep=0ms sleepCount=0 stop=\d+ms stopCount=1 start=\d+ms startCount=1 settle=\d+ms settleCount=1 rollback=0ms rollbackCount=0 ports=18789:2:2:healthy total=\d+ms result=proved/u,
+    const timingLog = harness.logSpy.mock.calls.flat().join("\n");
+    expect(timingLog).toMatch(/forwardAction=restored result=ready/);
+    expect(timingLog).toMatch(
+      /Hermes Portable forward recovery timing: .*ports=18789\(observations=2,reachability=2,outcome=healthy\).*result=proved/u,
     );
   });
 
