@@ -645,9 +645,12 @@ describe("sandbox recreate journal", () => {
       () => ({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
       () => undefined,
       () => SOURCE_ENTRY,
-      () => {
-        if (!authorityMatches) throw new Error("gateway lifecycle authority changed");
-      },
+      () =>
+        authorityMatches
+          ? undefined
+          : (() => {
+              throw new Error("gateway lifecycle authority changed");
+            })(),
     );
     authorityMatches = false;
 

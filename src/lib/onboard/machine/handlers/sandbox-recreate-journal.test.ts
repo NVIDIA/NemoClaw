@@ -150,13 +150,7 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
   );
   expect(calls.note).toHaveBeenCalledWith(expect.stringContaining("run 'nemohermes gc'"));
   const orderedPhases = phases.filter((phase, index) => index === 0 || phase !== phases[index - 1]);
-  expect(orderedPhases).toEqual([
-    null,
-    "created",
-    "registry_committing",
-    "completed",
-    null,
-  ]);
+  expect(orderedPhases).toEqual([null, "created", "registry_committing", "completed", null]);
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
@@ -721,9 +715,12 @@ it("keeps durable state and emits no success when FSM CAS save throws (#10491)",
       }),
       compareAndSwapSession: vi.fn((matches, mutator) => {
         const transient = structuredClone(session);
-        if (!matches(transient)) return "mismatch" as const;
-        mutator(transient);
-        throw new Error("durable CAS save failed");
+        return matches(transient)
+          ? (mutator(transient),
+            (() => {
+              throw new Error("durable CAS save failed");
+            })())
+          : ("mismatch" as const);
       }),
     },
     session,
