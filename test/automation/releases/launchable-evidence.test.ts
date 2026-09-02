@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   artifactDownloadArgs,
   inspectLaunchableEvidence,
-  parseOptions,
   runCli,
   workflowJobsFromPages,
   workflowRunsApiArgs,
