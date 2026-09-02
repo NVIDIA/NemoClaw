@@ -11,10 +11,8 @@ import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
-import {
-  loadMessagingChannelPolicyPreset,
-  resolveMessagingPolicyRequirementsFromConfig,
-} from "../../messaging/channels/policy";
+import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
+import { normalizeWechatIlinkBaseUrl } from "../../messaging/channels/wechat/ilink-base-url";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { MessagingChannelConfig } from "../../messaging-channel-config";
 import {
@@ -145,9 +143,10 @@ export function resolveRebuildMessagingPolicyDeltas(
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
-    const requirements = resolveMessagingPolicyRequirementsFromConfig(fallbackMessagingConfig);
+    const wechatIlinkOrigin = normalizeWechatIlinkBaseUrl(fallbackMessagingConfig?.WECHAT_BASE_URL);
     return {
-      ...requirements,
+      requiredNetworkPolicyKeys: wechatIlinkOrigin ? ["wechat_bridge"] : [],
+      requiredNetworkPolicyPresetNames: wechatIlinkOrigin ? ["wechat"] : [],
       removedNetworkPolicyKeys: [],
     };
   }

@@ -13,7 +13,6 @@ import {
   listMessagingChannelPolicyPresets,
   loadMessagingChannelPolicyPreset,
   materializeMessagingPolicySandboxName,
-  resolveMessagingPolicyRequirementsFromConfig,
   resolveMessagingChannelPolicyPresetPath,
 } from "./policy";
 
@@ -250,25 +249,5 @@ describe("messaging channel policy presets", () => {
         },
       ),
     ).toBe(false);
-  });
-
-  it("derives the legacy WeChat rebuild requirement from a reviewed saved origin (#10606)", () => {
-    expect(
-      resolveMessagingPolicyRequirementsFromConfig({
-        WECHAT_BASE_URL: "https://idc-37.weixin.qq.com",
-      }),
-    ).toEqual({
-      requiredNetworkPolicyKeys: ["wechat_bridge"],
-      requiredNetworkPolicyPresetNames: ["wechat"],
-    });
-    expect(resolveMessagingPolicyRequirementsFromConfig(null)).toEqual({
-      requiredNetworkPolicyKeys: [],
-      requiredNetworkPolicyPresetNames: [],
-    });
-    expect(() =>
-      resolveMessagingPolicyRequirementsFromConfig({
-        WECHAT_BASE_URL: "https://idc-3.weixin.qq.com.evil.example",
-      }),
-    ).toThrow("WeChat baseUrl must use an expected iLink host");
   });
 });

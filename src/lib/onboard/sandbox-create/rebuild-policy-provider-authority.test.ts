@@ -249,6 +249,11 @@ describe("rebuild policy provider handoff", () => {
         },
       );
       expect(legacyMessagingConfig?.WECHAT_BASE_URL).toBe("https://idc-3.weixin.qq.com");
+      expect(() =>
+        resolveRebuildMessagingPolicyDeltas(null, {
+          WECHAT_BASE_URL: "https://idc-3.weixin.qq.com.evil.example",
+        }),
+      ).toThrow("WeChat baseUrl must use an expected iLink host");
       const replacementWechatPolicy = loadMessagingChannelPolicyPreset("wechat", {
         agent,
         sandboxName,

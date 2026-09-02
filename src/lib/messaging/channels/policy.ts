@@ -112,21 +112,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function resolveMessagingPolicyRequirementsFromConfig(
-  messagingConfig: Readonly<Record<string, string | undefined>> | null | undefined,
-): {
-  readonly requiredNetworkPolicyKeys: readonly string[];
-  readonly requiredNetworkPolicyPresetNames: readonly string[];
-} {
-  const baseUrl = normalizeWechatIlinkBaseUrl(messagingConfig?.[WECHAT_BASE_URL_ENV_KEY]);
-  return baseUrl
-    ? {
-        requiredNetworkPolicyKeys: [WECHAT_POLICY_KEY],
-        requiredNetworkPolicyPresetNames: ["wechat"],
-      }
-    : { requiredNetworkPolicyKeys: [], requiredNetworkPolicyPresetNames: [] };
-}
-
 /** Approve only channel-owned, structurally identical policy endpoint migrations. */
 export function isReviewedMessagingChannelPolicyUpgrade(
   key: string,
