@@ -13,7 +13,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { openRegularFileNoFollow } from "../../../src/lib/adapters/fs/regular-file";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -300,16 +299,22 @@ function expectCandidateManagedSandbox(): void {
 }
 
 function expectLegacyStateRecord(): void {
-  const record = openRegularFileNoFollow(LEGACY_STATE_RECORD);
+  const noFollow = fs.constants.O_NOFOLLOW as number;
+  expect(Number.isInteger(noFollow)).toBe(true);
+  const descriptor = fs.openSync(LEGACY_STATE_RECORD, fs.constants.O_RDONLY | noFollow);
   try {
-    const state = JSON.parse(record.readBytes(1024 * 1024).toString("utf8")) as {
+    const metadata = fs.fstatSync(descriptor);
+    expect(metadata.isFile()).toBe(true);
+    expect(metadata.nlink).toBe(1);
+    expect(metadata.size).toBeLessThanOrEqual(1024 * 1024);
+    const state = JSON.parse(fs.readFileSync(descriptor, "utf8")) as {
       fileHashes?: unknown;
       shieldsDown?: unknown;
     };
     expect(state.shieldsDown).toBe(false);
     expect(state.fileHashes).toEqual(expect.any(Object));
   } finally {
-    record.close();
+    fs.closeSync(descriptor);
   }
 }
 
