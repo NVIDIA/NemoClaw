@@ -45,25 +45,35 @@ function reportRecovery(
   result: OllamaRestartRecoveryResult,
   proc: OllamaRestartRecoveryProcess,
 ): void {
-  const model = String(route.model ?? "").trim() || "the registered model";
+  const model = boundedOllamaRestartRecoveryDetail(route.model, "the registered model");
   if (result.kind === "warmed") {
     if (result.ok) {
       proc.stderr.write(`  Ollama model '${model}' is loaded and ready.\n`);
       return;
     }
+    const endpoint = boundedOllamaRestartRecoveryDetail(
+      result.endpoint,
+      "the saved local Ollama endpoint",
+    );
+    const detail = boundedOllamaRestartRecoveryDetail(result.detail, "unknown warm-up error");
     proc.stderr.write(
-      `  Ollama warm-up for '${model}' at ${result.endpoint} ${describeWarmFailure(result.reason)} ` +
-        `(${result.detail}). OpenClaw dispatch will continue. To retry the warm-up, restore ` +
-        `Ollama access to ${result.endpoint} and confirm that it serves '${model}', then rerun ` +
+      `  Ollama warm-up for '${model}' at ${endpoint} ${describeWarmFailure(result.reason)} ` +
+        `(${detail}). OpenClaw dispatch will continue. To retry the warm-up, restore ` +
+        `Ollama access to ${endpoint} and confirm that it serves '${model}', then rerun ` +
         `this command.\n`,
     );
     return;
   }
 
   if (result.reason === "model-absent") {
+    const endpoint = boundedOllamaRestartRecoveryDetail(
+      result.endpoint,
+      "the saved local Ollama endpoint",
+    );
+    const inventoryLabel = boundedOllamaRestartRecoveryDetail(result.inventoryLabel, "none");
     proc.stderr.write(
-      `  Ollama at ${result.endpoint} reports '${model}' as unavailable ` +
-        `(reported models: ${result.inventoryLabel}); continuing to OpenClaw dispatch.\n`,
+      `  Ollama at ${endpoint} reports '${model}' as unavailable ` +
+        `(reported models: ${inventoryLabel}); continuing to OpenClaw dispatch.\n`,
     );
     proc.stderr.write(
       `  Either the daemon answering that endpoint changed, or the model was removed from ` +
@@ -107,7 +117,7 @@ export function runOllamaRestartRecovery(
   try {
     reportRecovery(route, recoverOllama(route), proc);
   } catch (error) {
-    const model = String(route.model ?? "").trim() || "the registered model";
+    const model = boundedOllamaRestartRecoveryDetail(route.model, "the registered model");
     const endpoint = recordedEndpointLabel(route);
     const detail = boundedOllamaRestartRecoveryDetail(error, "unknown recovery error");
     proc.stderr.write(

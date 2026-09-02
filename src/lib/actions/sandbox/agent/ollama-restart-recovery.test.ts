@@ -3,7 +3,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
-import { prepareOllamaApiExecution } from "../../../inference/local";
 import {
   maybeWarmOllamaAfterDaemonRestart,
   type OllamaRestartRecoveryDeps,
@@ -76,11 +75,6 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           runCaptureImpl,
           runCaptureExImpl,
           prepareDockerEnvironment,
-          prepareOllamaApiExecution: (command, host, options) =>
-            prepareOllamaApiExecution(command, host, {
-              ...options,
-              prepareDockerEnvironment,
-            }),
         },
       ),
     ).toEqual({ kind: "warmed", ok: true, timedOut: false });

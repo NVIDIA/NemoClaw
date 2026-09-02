@@ -128,7 +128,7 @@ describe("runOllamaRestartRecovery", () => {
 
     const stderr = writes.join("");
     expect(stderr).toContain(
-      "Ollama at http://host.docker.internal:11434 reports 'gemma4:26b' as unavailable",
+      "Ollama at http://host.docker.internal:11434/ reports 'gemma4:26b' as unavailable",
     );
     expect(stderr).toContain("reported models: llama3.2:1b");
     expect(stderr).toContain("continuing to OpenClaw dispatch");
@@ -136,7 +136,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).not.toContain("Ollama was unreachable during the restart check");
   });
 
-  it("reports bounded recovery detail and guidance while dispatch continues", () => {
+  it("continues dispatch with redacted, bounded detail when recovery throws", () => {
     const { writes, proc } = makeProcMock();
     const exposedToken = "sk-proj-NOT-A-REAL-SECRET-1234567890";
 
@@ -144,27 +144,31 @@ describe("runOllamaRestartRecovery", () => {
       runOllamaRestartRecovery(
         {
           provider: "ollama-local",
-          model: "qwen3.6:35b",
-          endpointUrl: "http://host.openshell.internal:11434/v1",
+          model: "qwen3.6:35b\u001b[2J\u0007",
+          endpointUrl: "http://host.openshell.internal:11434/v1\u001b]52;c;clipboard\u0007",
         },
         proc,
         () => {
           throw new Error(
-            `synthetic Docker transport failure OPENAI_API_KEY=${exposedToken} ${"x".repeat(400)} END-OF-DETAIL`,
+            `synthetic\u001b[2J Docker transport failure\u0007 OPENAI_API_KEY=${exposedToken} ${"x".repeat(400)} END-OF-DETAIL`,
           );
         },
       ),
     ).not.toThrow();
     const stderr = writes.join("");
-    expect(stderr).toContain("Ollama restart recovery for 'qwen3.6:35b'");
+    expect(stderr).toContain("Ollama restart recovery for 'qwen3.6:35b");
     expect(stderr).toContain("at the recorded endpoint http://host.openshell.internal:11434/v1");
-    expect(stderr).toContain("synthetic Docker transport failure");
+    expect(stderr).toContain("synthetic");
+    expect(stderr).toContain("Docker transport failure");
     expect(stderr).toContain("OPENAI_API_KEY=<REDACTED>");
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("Restore Ollama access to that endpoint");
     expect(stderr).toContain("then rerun this command");
     expect(stderr).not.toContain(exposedToken);
     expect(stderr).not.toContain("END-OF-DETAIL");
+    expect(stderr).not.toContain("\u001b");
+    expect(stderr).not.toContain("\u0007");
+    expect(stderr.replace(/\n/gu, "")).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
   });
 });
 
