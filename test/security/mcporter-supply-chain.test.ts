@@ -33,6 +33,7 @@ const reviewedAuditConfig = JSON.parse(
     id: string;
     integrity: string;
     lockSha256: string;
+    replacementLockSha256?: string;
     packageSpec: string;
     tarballUrl: string;
   }>;
@@ -107,6 +108,8 @@ describe("mcporter image supply-chain controls", () => {
     });
 
     const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
-    expect(createHash("sha256").update(lockfile).digest("hex")).toBe(graph?.lockSha256);
+    expect(createHash("sha256").update(lockfile).digest("hex")).toBe(
+      graph?.replacementLockSha256,
+    );
   });
 });
