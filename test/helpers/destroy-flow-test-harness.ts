@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { expect, type MockInstance, vi } from "vitest";
 import type { SandboxDestroyExecutionResult } from "../../src/lib/actions/sandbox/destroy-execution";
 import type { PreparedManagedLlamaCppRuntimeCleanup } from "../../src/lib/inference/local-model-profile/cleanup";
-import type { ManagedHermesStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
+import type { ManagedAgentStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
 import type { Session } from "../../src/lib/state/onboard-session";
 import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-session/retained-sandbox-recovery";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
@@ -43,8 +43,7 @@ export type DestroyHarness = {
   cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
   preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
-  removeManagedHermesStateVolumeSpy: MockInstance;
-  removeRetainedManagedHermesStateVolumeSpy: MockInstance;
+  removeManagedAgentStateVolumesSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   resolveRetainedSandboxRecoverySpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
@@ -102,8 +101,7 @@ type DestroyHarnessOptions = {
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   liveListOutput?: string;
-  managedHermesStateVolumeCleanupResult?: ManagedHermesStateVolumeCleanupResult;
-  retainedManagedHermesStateVolumeCleanupResult?: ManagedHermesStateVolumeCleanupResult;
+  managedAgentStateVolumeCleanupResults?: readonly ManagedAgentStateVolumeCleanupResult[];
   onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
   preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
   mcpAddState?: "prepared";
@@ -143,7 +141,6 @@ const sandboxEntry = {
   nimContainer: "alpha-nim",
   gatewayName: "nemoclaw-19080",
   gatewayPort: 19080,
-  createAttemptNonce: "a".repeat(62),
 };
 
 export function sandboxListJson(names: string[]): string {
@@ -212,9 +209,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const runtime = requireSource("../../adapters/openshell/runtime.js");
   const destroyGateway = requireSource("./destroy-gateway.js");
   const credentialStore = requireSource("../../credentials/store.js");
-  const hermesStateVolume = requireSource(
-    "../../onboard/managed-workload/hermes-state-volume.js",
-  );
   const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireSource("../../inference/nim.js");
   const ollamaProxy = requireSource("../../inference/ollama/proxy.js");
@@ -572,14 +566,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
-  const removeManagedHermesStateVolumeSpy = vi
-    .spyOn(hermesStateVolume, "removeManagedHermesStateVolume")
-    .mockReturnValue(options.managedHermesStateVolumeCleanupResult ?? { status: "not-applicable" });
-  const removeRetainedManagedHermesStateVolumeSpy = vi
-    .spyOn(hermesStateVolume, "removeRetainedManagedHermesStateVolume")
-    .mockReturnValue(
-      options.retainedManagedHermesStateVolumeCleanupResult ?? { status: "absent" },
-    );
+  const removeManagedAgentStateVolumesSpy = vi
+    .spyOn(sandboxProviderCleanup, "removeManagedAgentStateVolumes")
+    .mockReturnValue(options.managedAgentStateVolumeCleanupResults ?? []);
   const stopNimByNameSpy = vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => {
     if (options.stopInferenceError !== undefined) {
       throw new Error(options.stopInferenceError);
@@ -696,8 +685,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     portableDestroyRevalidateSpy,
     portableDestroyVerifyAbsentSpy,
     promptSpy,
-    removeManagedHermesStateVolumeSpy,
-    removeRetainedManagedHermesStateVolumeSpy,
+    removeManagedAgentStateVolumesSpy,
     removeSandboxSpy,
     resolveRetainedSandboxRecoverySpy,
     retirePortableLifecycleReceiptSpy,

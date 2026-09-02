@@ -89,8 +89,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostMounts?: SandboxHostMount[];
   openshellDriver?: string | null;
   openshellVersion?: string | null;
-  /** Immutable create-attempt identity for resources owned by this successful sandbox. */
-  createAttemptNonce?: string;
   /** Verified create boundary retained until final registration publishes atomically. */
   pendingCreateIdentity?: PendingSandboxCreateIdentity;
   webSearchEnabled?: boolean;

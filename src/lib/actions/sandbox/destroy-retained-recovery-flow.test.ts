@@ -213,37 +213,6 @@ describe("destroySandbox retained recovery flow", () => {
     },
   );
 
-  it("removes retained managed Docker volume before retiring recovery without a registry row", async () => {
-    const retainedVolume = {
-      name: "nemoclaw-hermes-state-v1-alpha",
-      createAttemptNonce: "c".repeat(62),
-    };
-    const recovery = {
-      ...retainedRecoveryRecord(),
-      resources: {
-        ...retainedRecoveryRecord().resources,
-        managedDockerVolumes: [retainedVolume],
-      },
-    };
-    const harness = createDestroyHarness({
-      registryEntryPresent: false,
-      sandboxPresent: false,
-      retainedRecoveryRecords: [recovery],
-      retainedManagedHermesStateVolumeCleanupResult: { status: "removed" },
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-    expect(harness.removeRetainedManagedHermesStateVolumeSpy).toHaveBeenCalledExactlyOnceWith(
-      "alpha",
-      retainedVolume,
-    );
-    expect(harness.removeRetainedManagedHermesStateVolumeSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.resolveRetainedSandboxRecoverySpy.mock.invocationCallOrder[0]!,
-    );
-    expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
-  });
-
   it(
     "finishes retained cleanup after OpenShell already removed the sandbox (#10547)",
     { timeout: 30_000 },

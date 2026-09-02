@@ -75,6 +75,7 @@ import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
+export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -134,10 +135,6 @@ export interface SessionCancellationRecovery {
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
   readonly createAttemptNonce: string;
-  readonly managedDockerVolumes?: readonly {
-    readonly name: string;
-    readonly createAttemptNonce: string;
-  }[];
   readonly recordedAt: string;
 }
 
@@ -154,8 +151,6 @@ function sameCancellationRecovery(
     left.gatewayPort === right.gatewayPort &&
     left.lifecycleGeneration === right.lifecycleGeneration &&
     left.createAttemptNonce === right.createAttemptNonce &&
-    JSON.stringify(left.managedDockerVolumes ?? []) ===
-      JSON.stringify(right.managedDockerVolumes ?? []) &&
     left.recordedAt === right.recordedAt
   );
 }
@@ -819,25 +814,6 @@ function parseSessionCancellationRecovery(
   const gatewayPort = value.gatewayPort;
   const lifecycleGeneration = readString(value.lifecycleGeneration);
   const createAttemptNonce = readString(value.createAttemptNonce);
-  const managedDockerVolumesValue = value.managedDockerVolumes;
-  const managedDockerVolumes =
-    managedDockerVolumesValue === undefined
-      ? []
-      : Array.isArray(managedDockerVolumesValue) &&
-          managedDockerVolumesValue.every(
-            (candidate) =>
-              isObject(candidate) &&
-              typeof candidate.name === "string" &&
-              candidate.name.length <= NAME_MAX_LENGTH &&
-              NAME_VALID_PATTERN.test(candidate.name) &&
-              typeof candidate.createAttemptNonce === "string" &&
-              /^[0-9a-f]{62}$/u.test(candidate.createAttemptNonce),
-          )
-        ? managedDockerVolumesValue.map((candidate) => ({
-            name: String((candidate as Record<string, unknown>).name),
-            createAttemptNonce: String((candidate as Record<string, unknown>).createAttemptNonce),
-          }))
-        : null;
   if (
     !sandboxName ||
     sandboxName.length > NAME_MAX_LENGTH ||
@@ -850,8 +826,7 @@ function parseSessionCancellationRecovery(
     Number(gatewayPort) > 65_535 ||
     !lifecycleGeneration ||
     !createAttemptNonce ||
-    !/^[0-9a-f]{62}$/u.test(createAttemptNonce) ||
-    managedDockerVolumes === null
+    !/^[0-9a-f]{62}$/u.test(createAttemptNonce)
   ) {
     return null;
   }
@@ -863,7 +838,6 @@ function parseSessionCancellationRecovery(
     gatewayPort: Number(gatewayPort),
     lifecycleGeneration,
     createAttemptNonce,
-    ...(managedDockerVolumes.length > 0 ? { managedDockerVolumes } : {}),
     recordedAt,
   };
 }
@@ -1945,17 +1919,12 @@ export interface RetainedSandboxRecoveryContext {
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
   readonly createAttemptNonce: string;
-  readonly managedDockerVolumes?: readonly {
-    readonly name: string;
-    readonly createAttemptNonce: string;
-  }[];
 }
 
 function retainedSandboxResourceEvidence(session: Session) {
   const messagingCredentialEnvironmentVariables =
     session.messagingPlan?.credentialBindings.map((binding) => binding.providerEnvKey) ?? [];
   return {
-    managedDockerVolumes: [],
     sharedInferenceProviders: session.provider ? [session.provider] : [],
     sandboxScopedProviders: session.stagedCredentialProviders,
     credentialEnvironmentVariables: [
@@ -1981,10 +1950,7 @@ function persistIndependentRetainedSandboxRecovery(
     gatewayPort: context.gatewayPort,
     lifecycleGeneration: context.lifecycleGeneration,
     createAttemptNonce: context.createAttemptNonce,
-    resources: {
-      ...retainedSandboxResourceEvidence(session),
-      managedDockerVolumes: context.managedDockerVolumes ?? [],
-    },
+    resources: retainedSandboxResourceEvidence(session),
     reason,
   });
 }
@@ -2012,10 +1978,7 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
           gatewayPort: recovery.gatewayPort,
           lifecycleGeneration: recovery.lifecycleGeneration,
           createAttemptNonce: recovery.createAttemptNonce,
-          resources: {
-            ...retainedSandboxResourceEvidence(current),
-            managedDockerVolumes: recovery.managedDockerVolumes ?? [],
-          },
+          resources: retainedSandboxResourceEvidence(current),
           reason: recovery.reason,
           recordedAt: recovery.recordedAt,
         });

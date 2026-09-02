@@ -21,9 +21,6 @@ afterEach(() => {
 });
 
 const evidence = {
-  managedDockerVolumes: [
-    { name: "nemoclaw-hermes-state-v1-retained-sb", createAttemptNonce: "c".repeat(62) },
-  ],
   sharedInferenceProviders: ["nvidia"],
   sandboxScopedProviders: ["sandbox-telegram"],
   credentialEnvironmentVariables: ["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"],
@@ -262,10 +259,10 @@ describe("retained sandbox recovery state", () => {
     const recorded = recovery.recordRetainedSandboxRecovery({
       sandboxName: "retained-sb",
       sandboxIdentityFingerprint: fingerprint,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      lifecycleGeneration: "generation-1",
-      ...recoveryAuthority,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });

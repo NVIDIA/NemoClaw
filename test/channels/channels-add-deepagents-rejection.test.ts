@@ -178,20 +178,12 @@ const ctx = module.exports;
     );
     assert.equal(payload.exitCode, 1, "expected addSandboxChannel to exit with code 1");
     assert.ok(
-      payload.errors.some((msg) =>
-        /Channel 'discord' does not support agent 'langchain-deepagents-code'/.test(msg),
-      ),
-      `missing unsupported channel-agent error in stderr: ${JSON.stringify(payload.errors)}`,
+      payload.errors.includes("  This channel does not support the configured agent."),
+      `missing redacted unsupported channel-agent error in stderr: ${JSON.stringify(payload.errors)}`,
     );
     assert.ok(
-      payload.errors.some((msg) => /Channel-supported agents: openclaw, hermes/.test(msg)),
-      `missing channel-supported agents hint in stderr: ${JSON.stringify(payload.errors)}`,
-    );
-    assert.ok(
-      payload.errors.some((msg) =>
-        /Channels supported by agent 'langchain-deepagents-code': \(none\)/.test(msg),
-      ),
-      `missing agent-supported channels hint in stderr: ${JSON.stringify(payload.errors)}`,
+      payload.errors.every((msg) => !msg.includes("langchain-deepagents-code")),
+      `agent identity leaked in stderr: ${JSON.stringify(payload.errors)}`,
     );
 
     assert.deepEqual(payload.policyCalls.loadPreset, [], "loadPreset must not run before the gate");

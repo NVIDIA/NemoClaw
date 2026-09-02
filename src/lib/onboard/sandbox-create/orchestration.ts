@@ -1,22 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../adapters/openshell/sandbox-observer-cli";
-import {
-  NEMOCLAW_CREATE_ATTEMPT_LABEL,
-  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
-} from "../../adapters/openshell/sandbox-identity";
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
-import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
+import {
+  getMessagingPolicyKeysByChannel,
+  listMessagingPolicyPresetMetadata,
+} from "../../messaging/channels/metadata";
 import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
+import { normalizeWechatIlinkBaseUrl } from "../../messaging/channels/wechat/ilink-base-url";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import type { MessagingChannelConfig } from "../../messaging-channel-config";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -30,6 +31,10 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
+import {
+  getMessagingChannelConfigFromPlan,
+  getStoredMessagingChannelConfig,
+} from "../messaging-config";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -37,7 +42,13 @@ import type {
   ManagedHermesStateVolumeCleanupResult,
   ManagedHermesStateVolumeContext,
 } from "../managed-workload/hermes-state-volume";
+import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
+import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import {
+  managedStartupStateRoots,
+  MANAGED_HERMES_STATE_ROOT,
+} from "../managed-startup/state-roots";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
 import type {
@@ -62,42 +73,6 @@ import {
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
 import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
-function managedHermesPriorCreateAttemptNonce(
-  entry: SandboxEntry | null,
-  normalizeRuntimeProviderIdentity: (driverName: string | null | undefined) => string,
-): string | undefined {
-  if (
-    entry?.agent !== "hermes" ||
-    normalizeRuntimeProviderIdentity(entry.openshellDriver) !== "docker" ||
-    entry.workload?.kind !== "managed-image"
-  ) {
-    return undefined;
-  }
-  return entry.createAttemptNonce;
-}
-
-function resolveManagedHermesCreateAttemptNonce(accepted: PendingSandboxCreateIdentity | null) {
-  return (
-    accepted?.createAttemptNonce ??
-    randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
-  );
-}
-
-function retainedManagedHermesVolumeRecoveryMessage(
-  message: string,
-  descriptor: { readonly name: string; readonly createAttemptNonce: string } | null | undefined,
-): string {
-  if (!descriptor) return message;
-  return (
-    message +
-    " Managed Hermes volume '" +
-    descriptor.name +
-    "' is retained with create-attempt nonce " +
-    descriptor.createAttemptNonce +
-    ". Preserve both exact values for recovery."
-  );
-}
-
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -165,20 +140,52 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   return [...providers];
 }
 
+function asMessagingAgentId(
+  agent: string | null | undefined,
+): SandboxMessagingPlan["agent"] | null {
+  return agent === "openclaw" || agent === "hermes" ? agent : null;
+}
+
 export function resolveRebuildMessagingPolicyDeltas(
   plan:
     | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
     | null
     | undefined,
+  fallback?: {
+    readonly agent?: SandboxMessagingPlan["agent"] | null;
+    readonly messagingConfig?: MessagingChannelConfig | null;
+  },
 ): {
   readonly requiredNetworkPolicyKeys: readonly string[];
   readonly requiredNetworkPolicyPresetNames: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
+    const wechatIlinkOrigin = normalizeWechatIlinkBaseUrl(
+      fallback?.messagingConfig?.WECHAT_BASE_URL,
+    );
+    if (!wechatIlinkOrigin) {
+      return {
+        requiredNetworkPolicyKeys: [],
+        requiredNetworkPolicyPresetNames: [],
+        removedNetworkPolicyKeys: [],
+      };
+    }
+    const fallbackAgent = fallback?.agent;
+    const wechatPolicy = fallbackAgent
+      ? listMessagingPolicyPresetMetadata({ agent: fallbackAgent }).find(
+          ({ channelId }) => channelId === "wechat",
+        )
+      : undefined;
+    if (!fallbackAgent || !wechatPolicy) {
+      throw new Error(
+        "Cannot prepare a legacy WeChat rebuild policy without manifest metadata for the effective agent.",
+      );
+    }
     return {
-      requiredNetworkPolicyKeys: [],
-      requiredNetworkPolicyPresetNames: [],
+      requiredNetworkPolicyKeys:
+        wechatPolicy.agentPolicyKeys[fallbackAgent] ?? wechatPolicy.policyKeys,
+      requiredNetworkPolicyPresetNames: [wechatPolicy.presetName],
       removedNetworkPolicyKeys: [],
     };
   }
@@ -232,20 +239,22 @@ export function resolveRebuildObservabilityPolicyDelta(input: {
 }
 
 /** Preserve OpenShell's live policy plus bounded requirements for this explicit create. */
-function selectRebuildCreatePolicy(
+export function selectRebuildCreatePolicy(
   policySourcePath: string,
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
-  messagingPlan: SandboxMessagingPlan | null | undefined,
+  messagingAgent: string | null | undefined,
+  messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingPlan?.agent,
+      agent: messagingAgent,
       sandboxName,
+      messagingConfig,
     });
     if (!source) {
       throw new Error(
@@ -255,6 +264,7 @@ function selectRebuildCreatePolicy(
     return source;
   });
   return materializeRebuildPolicyHandoff({
+    sandboxName,
     livePolicyPath: policySourcePath,
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
@@ -543,14 +553,13 @@ type SandboxRecreateReasonInput = {
   existingSandboxState: string;
 };
 
-type RecreatedSourceHermesStateVolumeFinalizationInput = {
+type RecreatedSourceHermesStateVolumeCleanupInput = {
   readonly sandboxName: string;
-  readonly sourceConfirmedAbsent: boolean;
   readonly sourceEntry: SandboxEntry | null;
   readonly targetKeepsManagedHermesStateVolume: boolean;
 };
 
-type RecreatedSourceHermesStateVolumeFinalizationDeps = {
+type RecreatedSourceHermesStateVolumeCleanupDeps = {
   readonly normalizeRuntimeProviderIdentity: (driverName: string | null | undefined) => string;
   readonly removeManagedHermesStateVolume: (
     context: ManagedHermesStateVolumeContext,
@@ -558,8 +567,41 @@ type RecreatedSourceHermesStateVolumeFinalizationDeps = {
   readonly note: (message: string) => void;
   readonly warn: (message: string) => void;
   readonly redact: (message: string) => string;
-  readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
 };
+
+type RecreatedSourceHermesStateVolumeFinalizationInput =
+  RecreatedSourceHermesStateVolumeCleanupInput & {
+    readonly sourceConfirmedAbsent: boolean;
+  };
+
+type RecreatedSourceHermesStateVolumeFinalizationDeps =
+  RecreatedSourceHermesStateVolumeCleanupDeps & {
+    readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
+  };
+
+export function cleanupRecreatedSourceHermesStateVolume(
+  input: RecreatedSourceHermesStateVolumeCleanupInput,
+  deps: RecreatedSourceHermesStateVolumeCleanupDeps,
+): void {
+  if (!input.sourceEntry || input.targetKeepsManagedHermesStateVolume) return;
+
+  const cleanup = deps.removeManagedHermesStateVolume({
+    agentName: input.sourceEntry.agent,
+    runtimeProviderId: deps.normalizeRuntimeProviderIdentity(input.sourceEntry.openshellDriver),
+    sandboxName: input.sandboxName,
+    workloadKind: input.sourceEntry.workload?.kind ?? "",
+  });
+  if (cleanup.status === "failed") {
+    throw new Error(
+      `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but Docker could not remove its managed Hermes state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
+    );
+  }
+  if (cleanup.status === "not-owned") {
+    deps.warn(`  Left Docker volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`);
+  } else if (cleanup.status === "removed") {
+    deps.note(`  Removed managed Hermes state volume for '${input.sandboxName}'.`);
+  }
+}
 
 export function finalizeRecreatedSourceHermesStateVolume(
   input: RecreatedSourceHermesStateVolumeFinalizationInput,
@@ -567,27 +609,7 @@ export function finalizeRecreatedSourceHermesStateVolume(
 ): void {
   if (!input.sourceConfirmedAbsent || !input.sourceEntry) return;
 
-  if (!input.targetKeepsManagedHermesStateVolume) {
-    const cleanup = deps.removeManagedHermesStateVolume({
-      agentName: input.sourceEntry.agent,
-      runtimeProviderId: deps.normalizeRuntimeProviderIdentity(input.sourceEntry.openshellDriver),
-      sandboxName: input.sandboxName,
-      workloadKind: input.sourceEntry.workload?.kind ?? "",
-      createAttemptNonce: input.sourceEntry.createAttemptNonce,
-    });
-    if (cleanup.status === "failed") {
-      throw new Error(
-        `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but Docker could not remove its managed Hermes state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
-      );
-    }
-    if (cleanup.status === "not-owned") {
-      deps.warn(
-        `  Left Docker volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`,
-      );
-    } else if (cleanup.status === "removed") {
-      deps.note(`  Removed managed Hermes state volume for '${input.sandboxName}'.`);
-    }
-  }
+  cleanupRecreatedSourceHermesStateVolume(input, deps);
   deps.removeSourceRegistryEntry(input.sourceEntry, input.sandboxName);
 }
 
@@ -791,9 +813,8 @@ export async function runSandboxCreateWithIdentityVerification<
   ) => boolean;
   readonly retainedSandboxRecoveryRetryOwner?: PostCreateRecoveryRetryOwner;
   readonly cleanupTemporarySources: () => void;
-  readonly cleanupIncompleteCreate?: () => void;
-  readonly preserveIncompleteCreate?: () => void;
 }): Promise<Result> {
+  input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   let exactIdentity: string | null = null;
   let createAttemptNonce: string | null = null;
   let verifiedCreateEvidence: Evidence | null = null;
@@ -810,33 +831,8 @@ export async function runSandboxCreateWithIdentityVerification<
       return [error];
     }
   };
-  let incompleteCreateCleanupAttempted = false;
-  const cleanupIncompleteCreate = (): unknown[] => {
-    if (incompleteCreateCleanupAttempted) return [];
-    incompleteCreateCleanupAttempted = true;
-    try {
-      input.cleanupIncompleteCreate?.();
-      return [];
-    } catch (error) {
-      return [error];
-    }
-  };
-  let incompleteCreatePreservationAttempted = false;
-  const preserveIncompleteCreate = (): unknown[] => {
-    if (incompleteCreatePreservationAttempted) return [];
-    incompleteCreatePreservationAttempted = true;
-    try {
-      input.preserveIncompleteCreate?.();
-      return [];
-    } catch (error) {
-      return [error];
-    }
-  };
   const refuseAfterCreate = (validationError: unknown): never => {
     recoveryAttempted = true;
-    const compensationErrors = [
-      ...(exactIdentity === null ? cleanupIncompleteCreate() : preserveIncompleteCreate()),
-    ];
     const identityGuidance = exactIdentity
       ? `Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create.`
       : "OpenShell did not return a durable sandbox identity fingerprint for comparison.";
@@ -849,6 +845,7 @@ export async function runSandboxCreateWithIdentityVerification<
       `${identityGuidance} NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox. ` +
       `Do not delete the sandbox by mutable sandbox name. Run '${cliName()} ${input.sandboxName} destroy' to use the retained identity. ` +
       "If destroy cannot prove that identity, stop. Ask the OpenShell administrator to inspect the surviving sandbox and use an identity-bound recovery or removal procedure.";
+    const compensationErrors: unknown[] = [];
     if (input.persistRetainedSandboxRecovery) {
       try {
         persistRetainedSandboxRecoveryWithRetry(input.retainedSandboxRecoveryRetryOwner, () =>
@@ -920,22 +917,14 @@ export async function runSandboxCreateWithIdentityVerification<
   };
   let result: Result;
   try {
-    input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
     result = await input.create(verifyCreatedSandbox);
   } catch (error) {
     if (exactIdentity !== null && !recoveryAttempted) return refuseAfterCreate(error);
-    const cleanupErrors = [
-      ...(recoveryAttempted
-        ? []
-        : exactIdentity === null
-          ? cleanupIncompleteCreate()
-          : preserveIncompleteCreate()),
-      ...cleanupTemporarySources(),
-    ];
+    const cleanupErrors = cleanupTemporarySources();
     if (cleanupErrors.length > 0) {
       throw new AggregateError(
         [error, ...cleanupErrors],
-        "Sandbox creation failed, and compensation did not complete.",
+        "Sandbox creation failed, and temporary source cleanup did not complete.",
       );
     }
     throw error;
@@ -1548,21 +1537,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             managedWorkloadRuntime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
           );
-    const priorManagedHermesVolumeNonce = managedHermesPriorCreateAttemptNonce(
-      existingEntry,
-      managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
-    );
-    const prepareHermesStateVolumeLifecycle = (
+    const prepareManagedStateVolumeLifecycle = (
       workload: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-    ) =>
-      managedWorkloadOnboard.createManagedHermesStateVolumeOnboardLifecycle({
-        agentName: requestedAgentName,
+    ) => {
+      const managedStateRoots =
+        workload.source.kind === "managed-image"
+          ? managedStartupStateRoots({
+              agent: workload.source.contract.agent,
+              sandboxName,
+              agentIdentity: managedImageRuntimeIdentity(workload.source.contract.agent),
+            })
+          : [];
+      return managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle({
+        roots: managedStateRoots,
         runtimeProvider: managedWorkloadRuntime.runtimeProvider,
-        sandboxName,
-        workloadKind: workload.source.kind,
-        createAttemptNonce,
-        authorizedPriorCreateAttemptNonce: priorManagedHermesVolumeNonce,
       });
+    };
     const finalizeRecreatedSourceHermesVolume = (
       sourceConfirmedAbsent: boolean,
       sourceEntry: SandboxEntry | null,
@@ -1577,7 +1567,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         {
           normalizeRuntimeProviderIdentity: managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
-          removeManagedHermesStateVolume: managedWorkloadOnboard.removeManagedHermesStateVolume,
+          removeManagedHermesStateVolume: (context) =>
+            removeManagedHermesStateVolume(context, {
+              runtimeProvider: managedWorkloadRuntime.runtimeProvider ?? undefined,
+            }),
           removeSourceRegistryEntry: sandboxLifecycle.removeSandboxUnlessSessionReservation,
           note,
           warn: (message) => console.warn(message),
@@ -1595,6 +1588,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
     let createEffectsFinalized = false;
     const createCheckpointSession = onboardSession.loadSession();
+    const effectiveMessagingConfig =
+      getMessagingChannelConfigFromPlan(plannedMessagingState?.plan) ??
+      getStoredMessagingChannelConfig(sandboxName, createCheckpointSession);
+    const effectiveMessagingAgent = plannedMessagingState?.plan?.agent ?? effectiveAgent.name;
     const openingPendingCreateIdentity = pendingVerifiedCreateCheckpointForSession({
       sandboxName,
       gatewayName: GATEWAY_NAME,
@@ -1632,9 +1629,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       readEntry: () => registry.getSandbox(sandboxName),
     });
     const resumingVerifiedCreate = acceptedTargetPendingIdentity !== null;
-    const createAttemptNonce = resolveManagedHermesCreateAttemptNonce(
-      acceptedTargetPendingIdentity,
-    );
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
         sandboxName,
@@ -1696,7 +1690,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     let pendingStateRestoreBackupPath: string | null = null,
       preparedSandboxWorkload!: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-      hermesStateVolumeLifecycle!: ReturnType<typeof prepareHermesStateVolumeLifecycle>;
+      managedStateVolumeLifecycle!: ReturnType<typeof prepareManagedStateVolumeLifecycle>;
     if (!liveExists && existingEntry)
       ({ runtime: recreateRuntime, backupPath: pendingStateRestoreBackupPath } =
         recreateProtection.selectJournalBoundPreUpgradeBackup({
@@ -1986,7 +1980,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
       revalidateSandboxIdentity(true, `recreating sandbox '${sandboxName}'`);
@@ -2021,7 +2015,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
-      finalizeRecreatedSourceHermesVolume(true, previousEntry, hermesStateVolumeLifecycle !== null);
+      finalizeRecreatedSourceHermesVolume(
+        true,
+        previousEntry,
+        managedStateVolumeLifecycle.roots.some(
+          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
+        ),
+      );
       await hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(
         hermesApiPortReservationInput,
       );
@@ -2029,17 +2029,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     if (resumingVerifiedCreate) {
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
     } else if (!liveExists || agentCreateInput.hermesPortableLifecycle) {
       if (!agentCreateInput.hermesPortableLifecycle) {
         await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       }
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       finalizeRecreatedSourceHermesVolume(
         !liveExists,
         existingEntry,
-        hermesStateVolumeLifecycle !== null,
+        managedStateVolumeLifecycle.roots.some(
+          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
+        ),
       );
     }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
@@ -2191,6 +2193,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               openshellArgv,
             },
             plannedMessagingPlan: plannedMessagingState?.plan ?? null,
+            messagingConfig: effectiveMessagingConfig,
             gpu: {
               provider,
               config: effectiveSandboxGpuConfig,
@@ -2199,12 +2202,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             dependencies: {
               materializeSandboxCreatePlan: (input) =>
-                hermesStateVolumeLifecycle
-                  ? hermesStateVolumeLifecycle.materializeSandboxCreatePlan(
-                      input,
-                      sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
-                    )
-                  : sandboxCreatePlanMaterialization.materializeSandboxCreatePlan(input),
+                managedStateVolumeLifecycle.materializeSandboxCreatePlan(
+                  input,
+                  sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
+                ),
               prepareSandboxBuildPatchConfig:
                 sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig,
             },
@@ -2233,6 +2234,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     } = preparedOnboardLaunch;
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
+      {
+        agent: asMessagingAgentId(effectiveMessagingAgent),
+        messagingConfig: effectiveMessagingConfig,
+      },
     );
     const rebuildObservabilityPolicyDelta = resolveRebuildObservabilityPolicyDelta({
       agent: agent?.name,
@@ -2259,7 +2264,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             ...rebuildObservabilityPolicyDelta.removedNetworkPolicyKeys,
           ],
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
-          plannedMessagingState?.plan,
+          effectiveMessagingAgent,
+          effectiveMessagingConfig,
           sandboxName,
           rebuildPolicyProviderAuthority,
         )
@@ -2281,6 +2287,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
       runtime: managedWorkloadRuntime,
       workload: preparedSandboxWorkload,
+      sandboxName,
       stateRoot: getDockerDriverGatewayStateDir(),
       bootstrapIdentity: managedBootstrapIdentity,
       request: managedStartupRootApplyRequest,
@@ -2460,9 +2467,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayPort: GATEWAY_PORT,
         lifecycleGeneration: createdSandboxLifecycle.generation,
         createAttemptNonce,
-        ...(hermesStateVolumeLifecycle?.recoveryDescriptor
-          ? { managedDockerVolumes: [hermesStateVolumeLifecycle.recoveryDescriptor] }
-          : {}),
       };
     };
     const recordPostCreateRecovery = (
@@ -2567,10 +2571,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           persistRetainedSandboxRecoveryMessage(
             {
               sandboxName,
-              message: retainedManagedHermesVolumeRecoveryMessage(
-                message,
-                hermesStateVolumeLifecycle?.recoveryDescriptor,
-              ),
+              message,
               ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
               recoveryContext: retainedSandboxRecoveryContext(
                 boundary,
@@ -2581,8 +2582,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           ),
         retainedSandboxRecoveryRetryOwner: postCreateRecoveryRetryOwner,
         cleanupTemporarySources: cleanupSandboxCreateSources,
-        cleanupIncompleteCreate: () => hermesStateVolumeLifecycle?.cleanupIncompleteCreate(),
-        preserveIncompleteCreate: () => hermesStateVolumeLifecycle?.commit(),
         runVerifiedCreateEffects: runDeferredProviderEffects
           ? async (_identity, _exactIdentity, boundary) => {
               const context: VerifiedSandboxCreateEffectsContext = {
@@ -2597,7 +2596,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
               sandboxName,
-              createAttemptNonce,
               ...(resumeVerifiedCreateInput
                 ? { resumeVerifiedCreate: resumeVerifiedCreateInput }
                 : {}),
@@ -2925,7 +2923,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     }
     return runWithPostCreateRecovery(
       () => {
-        hermesStateVolumeLifecycle?.commit();
+        managedStateVolumeLifecycle.commit();
         if ("complete" in recreateRuntime) recreateRuntime.complete();
         if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
         return completeOrdinaryOnboardSandboxCreation(

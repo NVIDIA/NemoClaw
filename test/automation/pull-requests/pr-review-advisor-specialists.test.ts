@@ -139,9 +139,14 @@ describe("PR review advisor specialist prompts", () => {
       ["--experimental-strip-types", "render-specialist-matrix.mts"],
       { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
     );
-    const matrix = JSON.parse(output) as Array<{ interest: string }>;
+    const matrix = JSON.parse(output) as Array<{ interest: string; model: string }>;
 
     expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
+    expect(matrix.map(({ model }) => model)).toEqual(
+      ADVISOR_INTERESTS.map((_, index) =>
+        index % 2 === 0 ? "openai/openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
+      ),
+    );
     expect(matrix.every((entry) => !("sandbox_name" in entry))).toBe(true);
   });
 

@@ -145,7 +145,6 @@ const catalogTemplate = ${JSON.stringify(catalog)};
 const catalogRelease = ${JSON.stringify(CATALOG_RELEASE)};
 const model = ${JSON.stringify(MODEL)};
 const provider = ${JSON.stringify(PROVIDER)};
-const sourceCreateAttemptNonce = "a".repeat(62);
 const catalogCalls = [];
 const forbiddenCalls = [];
 const managedBootstrapCalls = [];
@@ -161,7 +160,6 @@ let managedHermesVolume = recreate ? {
     "io.nvidia.nemoclaw.hermes-state.schema": "1",
     "io.nvidia.nemoclaw.hermes-state.sandbox": sandboxName,
     "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
-    "io.nvidia.nemoclaw.hermes-state.create-attempt": sourceCreateAttemptNonce,
   },
 } : null;
 
@@ -460,6 +458,10 @@ runner.run = (command, options = {}) => {
   }
   return createdSandbox.run(command) ?? { status: 0, stdout: "", stderr: "" };
 };
+const doctorHostCommand = require(${source("src/lib/actions/sandbox/doctor-host-command.ts")});
+replace(doctorHostCommand, "captureHostCommand", (command, args) =>
+  runner.run([command, ...args]),
+);
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
@@ -528,7 +530,6 @@ const sourceEntry = recreate ? fixtureMocks.sandboxLifecycleFixture({
   model,
   provider,
   toolDisclosure: "progressive",
-  createAttemptNonce: sourceCreateAttemptNonce,
   workload: {
     schemaVersion: 1,
     kind: "managed-image",

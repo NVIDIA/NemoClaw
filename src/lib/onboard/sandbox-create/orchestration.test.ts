@@ -1326,7 +1326,6 @@ describe("sandbox create identity checks", () => {
 
   it("fails closed when a create implementation skips the post-create gate (#9833)", async () => {
     const cleanupTemporarySources = vi.fn();
-    const cleanupIncompleteCreate = vi.fn();
 
     const error = await runSandboxCreateWithIdentityVerification({
       sandboxName: "alpha",
@@ -1334,7 +1333,6 @@ describe("sandbox create identity checks", () => {
       create: async () => "created",
       ...exactIdentityBoundary(),
       cleanupTemporarySources,
-      cleanupIncompleteCreate,
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -1347,6 +1345,5 @@ describe("sandbox create identity checks", () => {
       ]),
     );
     expect(cleanupTemporarySources).toHaveBeenCalledOnce();
-    expect(cleanupIncompleteCreate).toHaveBeenCalledOnce();
   });
 });

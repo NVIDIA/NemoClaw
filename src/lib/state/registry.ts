@@ -105,10 +105,12 @@ export type {
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
+export { normalizeSandboxMcpState };
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
   getHydratedMessagingPlanFromEntry,
+  getMessagingChannelConfigFromEntry,
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
@@ -144,7 +146,6 @@ function pendingVerifiedCreateEntry(
     gatewayPort: checkpoint.gatewayPort,
     lifecycleGeneration: checkpoint.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-    createAttemptNonce: checkpoint.createAttemptNonce,
     pendingCreateIdentity: checkpoint,
   });
 }
@@ -515,7 +516,6 @@ export function registerSandbox(
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
-      createAttemptNonce: entry.createAttemptNonce,
       messaging: cloneSandboxMessagingState(entry.messaging),
       mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:

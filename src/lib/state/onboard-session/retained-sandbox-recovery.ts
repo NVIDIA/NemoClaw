@@ -23,10 +23,6 @@ export type RetainedSandboxRecoveryReason =
   | "retained_after_sandbox_creation_failure";
 
 export interface RetainedSandboxResourceEvidence {
-  readonly managedDockerVolumes?: readonly {
-    readonly name: string;
-    readonly createAttemptNonce: string;
-  }[];
   readonly sharedInferenceProviders: readonly string[];
   readonly sandboxScopedProviders: readonly string[];
   readonly credentialEnvironmentVariables: readonly string[];
@@ -334,33 +330,8 @@ function parseEvidence(value: unknown): RetainedSandboxResourceEvidence | null {
   const sharedInferenceProviders = parse(value.sharedInferenceProviders);
   const sandboxScopedProviders = parse(value.sandboxScopedProviders);
   const credentialEnvironmentVariables = parse(value.credentialEnvironmentVariables);
-  const managedDockerVolumesValue = value.managedDockerVolumes;
-  const managedDockerVolumes =
-    managedDockerVolumesValue === undefined
-      ? []
-      : Array.isArray(managedDockerVolumesValue) &&
-          managedDockerVolumesValue.every(
-            (candidate) =>
-              isObjectRecord(candidate) &&
-              validSafeEvidence(candidate.name) &&
-              typeof candidate.createAttemptNonce === "string" &&
-              CREATE_ATTEMPT_NONCE_PATTERN.test(candidate.createAttemptNonce),
-          )
-        ? managedDockerVolumesValue.map((candidate) => ({
-            name: String((candidate as Record<string, unknown>).name),
-            createAttemptNonce: String((candidate as Record<string, unknown>).createAttemptNonce),
-          }))
-        : null;
-  return sharedInferenceProviders &&
-    sandboxScopedProviders &&
-    credentialEnvironmentVariables &&
-    managedDockerVolumes
-    ? {
-        managedDockerVolumes,
-        sharedInferenceProviders,
-        sandboxScopedProviders,
-        credentialEnvironmentVariables,
-      }
+  return sharedInferenceProviders && sandboxScopedProviders && credentialEnvironmentVariables
+    ? { sharedInferenceProviders, sandboxScopedProviders, credentialEnvironmentVariables }
     : null;
 }
 
@@ -431,7 +402,6 @@ function recoveryRecordId(input: RecordRetainedSandboxRecoveryInput): string {
         input.sandboxIdentityFingerprint,
         input.lifecycleGeneration,
         input.createAttemptNonce,
-        input.resources.managedDockerVolumes ?? [],
       ]),
     )
     .digest("hex");
@@ -502,7 +472,9 @@ function retainedSandboxRecoveryAuthorityMatchesState(
   state: RetainedSandboxRecoveryState,
   expected: RetainedSandboxRecoveryRecord,
 ): boolean {
-  const recorded = state.unresolved.find((candidate) => candidate.recordId === expected.recordId);
+  const recorded = state.unresolved.find(
+    (candidate) => candidate.recordId === expected.recordId,
+  );
   if (!recorded) return false;
   if (!isDeepStrictEqual(recorded, expected)) {
     throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
@@ -529,9 +501,7 @@ export function resolveRetainedSandboxRecovery(
     ...current,
     unresolved: current.unresolved.filter((candidate) => candidate.recordId !== expected.recordId),
   });
-  if (
-    loadState(filePath).unresolved.some((candidate) => candidate.recordId === expected.recordId)
-  ) {
+  if (loadState(filePath).unresolved.some((candidate) => candidate.recordId === expected.recordId)) {
     throw new Error("Retained sandbox recovery record remained after verified cleanup.");
   }
   return true;

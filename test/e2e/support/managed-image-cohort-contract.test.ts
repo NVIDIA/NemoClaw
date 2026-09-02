@@ -3,10 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  MANAGED_IMAGE_REPOSITORIES,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
-} from "../../../src/lib/onboard/managed-image/contract";
 import { validateManagedImageCohort } from "../../../tools/e2e/managed-image-cohort-contract.mts";
 
 const REVISION = "a".repeat(40);
@@ -14,6 +10,14 @@ const RUN_ID = 32707920950;
 const RUN_ATTEMPT = 2;
 const COHORT = `ghrun-${RUN_ID}-${RUN_ATTEMPT}`;
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
+const EXPECTED_AGENT_IMAGES = [
+  { agent: "openclaw", image: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox" },
+  { agent: "hermes", image: "ghcr.io/nvidia/nemoclaw/hermes-sandbox" },
+  {
+    agent: "langchain-deepagents-code",
+    image: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
+  },
+] as const;
 type JsonObject = Record<string, unknown>;
 type PlatformPublication = {
   run: { attempt: number; id: number };
@@ -47,8 +51,7 @@ function cohortContract(
     run: { id: RUN_ID, attempt: runAttempt },
     platforms: PLATFORMS,
     agents: Object.fromEntries(
-      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, agentIndex) => {
-        const image = MANAGED_IMAGE_REPOSITORIES[agent];
+      EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => {
         const manifestDigest = digest(agentIndex + 1);
         return [
           agent,
@@ -154,7 +157,7 @@ function platformPublication(value: Record<string, unknown>): PlatformPublicatio
 }
 
 describe("managed-image cohort publication contract", () => {
-  it("binds all shipped agents and architectures to the selected publication", () => {
+  it("binds the literal shipped agents and architectures to the selected publication", () => {
     expect(
       validateManagedImageCohort(cohortContract(), {
         revision: REVISION,
@@ -170,12 +173,12 @@ describe("managed-image cohort publication contract", () => {
         runAttempt: RUN_ATTEMPT,
         runId: RUN_ID,
         images: Object.fromEntries(
-          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, agentIndex) => [
+          EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => [
             agent,
             Object.fromEntries(
               PLATFORMS.map((platform, platformIndex) => [
                 platform,
-                `${MANAGED_IMAGE_REPOSITORIES[agent]}@${digest(agentIndex + platformIndex + 10)}`,
+                `${image}@${digest(agentIndex + platformIndex + 10)}`,
               ]),
             ),
           ]),
@@ -274,6 +277,20 @@ describe("managed-image cohort publication contract", () => {
     const value = cohortContract();
     const agents = value.agents as Record<string, { platforms: Record<string, unknown> }>;
     delete agents.hermes.platforms["linux/arm64"];
+
+    expect(() =>
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+      }),
+    ).toThrow("complete expected set");
+  });
+
+  it("rejects a cohort that omits one literal required agent", () => {
+    const value = cohortContract();
+    const agents = value.agents as Record<string, unknown>;
+    delete agents.hermes;
 
     expect(() =>
       validateManagedImageCohort(value, {

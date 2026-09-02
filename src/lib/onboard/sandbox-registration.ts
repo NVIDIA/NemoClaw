@@ -91,7 +91,6 @@ export interface CreatedSandboxRegistryEntryInput {
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
-  createAttemptNonce?: string;
   gatewayName: string;
   gatewayPort: number;
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
@@ -279,7 +278,6 @@ export function buildCreatedSandboxRegistryEntry(
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-    ...(input.createAttemptNonce ? { createAttemptNonce: input.createAttemptNonce } : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
     ...(input.hostMounts && input.hostMounts.length > 0

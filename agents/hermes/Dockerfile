@@ -77,6 +77,7 @@ COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-br
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch
+COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -251,9 +252,9 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
 
-# A published base can lag the source patch in Dockerfile.base. Apply only the
-# two Hindsight compatibility hunks when needed, then verify the final source
-# contract. This remains idempotent once the published base contains them.
+# A published base can lag the source patches in Dockerfile.base. Apply only
+# the required final-image hunks, then verify the source contracts in one layer
+# so the already-deep Hermes image remains importable by Docker.
 RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_cli/memory_setup.py \
@@ -272,7 +273,18 @@ RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_
     fi \
     && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
-    && rm /scripts/hermes-security-dependencies.patch
+    && rm /scripts/hermes-security-dependencies.patch \
+    && if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+    fi \
+    && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"' /opt/hermes/hermes_cli/web_server.py \
+    && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \
+    && rm /scripts/hermes-dashboard-external-host.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
@@ -413,7 +425,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=521756ea979d58df44d52b7fc1c2f062a11db397835b925f15bc0265e33e48ea
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=c6609394bd9c4657fcbcbd9104a5e5c9a332e9a90712b597e3e9a6253e5be487
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -679,9 +691,10 @@ RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
 # Hermes v0.19.0's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
 # the OpenShell public and secret placeholders when each placeholder is bound
-# to its matching standard Langfuse key. raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
-# fails closed when the pinned upstream source shape changes.
-ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=c6aad6a7cb56083a3fbb54617ada3edae4bbae1348ba45565944144b07fc283b
+# to its matching standard Langfuse key. Raw keys keep Hermes' upstream
+# pk-lf-/sk-lf- validation, and every authenticated client requires an absolute
+# HTTPS base URL. The patcher fails closed when the pinned source shape changes.
+ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=a505357f9991d85e42d6cb2fcd320fb6f3a989f090a7969c0460265254e7d9c6
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
@@ -705,7 +718,7 @@ RUN node --experimental-strip-types \
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=4db45043f45d8296dd39228315b721ee19b0a4e0591579ec0ceeec2777bbb40d
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=b355d1365fb1d15475e327f312ceb854ae96f9ebed28cf96bc8817f550df2688
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=57282ff0b70b857010f49207c31fa7415356a877e0937173cc2aa733bffadd3b
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
 # hadolint ignore=DL4006

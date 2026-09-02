@@ -23,6 +23,44 @@ type ImportRef = {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SRC_ROOT = path.join(REPO_ROOT, "src");
 const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
+const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
+  "src/lib/actions/sandbox/connect.ts",
+  "src/lib/actions/sandbox/destroy-presence.ts",
+  "src/lib/actions/sandbox/launch-readiness.ts",
+  "src/lib/actions/sandbox/process-recovery.ts",
+  "src/lib/actions/sandbox/snapshot/backup-authority.ts",
+  "src/lib/actions/sandbox/rebuild-flow-helpers.ts",
+  "src/lib/actions/sandbox/sandbox-gateway-routing.ts",
+  "src/lib/actions/sandbox/status-preflight.ts",
+  "src/lib/actions/sandbox/status-snapshot.ts",
+  "src/lib/actions/sandbox/stopped-sandbox-backup.ts",
+  "src/lib/actions/sandbox/supervisor-relaunch.ts",
+  "src/lib/actions/sandbox/terminal-runtime-health.ts",
+  "src/lib/onboard/compute/plan.ts",
+  "src/lib/onboard/docker-driver-gateway-env.ts",
+  "src/lib/onboard/docker-driver-gateway-config.ts",
+  "src/lib/onboard/docker-driver-gateway-local-tls.ts",
+  "src/lib/onboard/docker-driver-gateway-process-identity.ts",
+  "src/lib/onboard/docker-driver-gateway-runtime.ts",
+  "src/lib/onboard/fatal-runtime-preflight.ts",
+  "src/lib/onboard/gateway-sandbox-reachability.ts",
+  "src/lib/onboard/host-gateway-process.ts",
+  "src/lib/onboard/host-service-reachability.ts",
+  "src/lib/onboard/managed-workload/hermes-state-volume.ts",
+  "src/lib/onboard/sandbox-create/orchestration.ts",
+  "src/lib/adapters/sandbox/command-transport.ts",
+  "src/lib/sandbox/config.ts",
+  "src/lib/sandbox/privileged-exec.ts",
+  "src/lib/shields/hermes-runtime-state-mutation.ts",
+  "src/lib/shields/index.ts",
+  "src/lib/shields/mutable-config-repair.ts",
+  "src/lib/state/registry/lifecycle-generation.ts",
+] as const;
+const MANAGED_STATE_ROOT_PROVIDER_MODULES = [
+  "src/lib/onboard/managed-bootstrap/docker.ts",
+  "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
+] as const;
+const MANAGED_AGENT_IDS = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi"]);
 
 function toRepoPath(absPath: string): string {
   return path.relative(REPO_ROOT, absPath).split(path.sep).join("/");
@@ -472,12 +510,7 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
     const commandFile = isCommandFile(repoPath);
     const source = readFileSync(absPath, "utf8");
     if (!domainFile && !actionFile && !adapterFile && !messagingManifestFile && !commandFile) {
-      checkNoBinLibShimImport(
-        absPath,
-        repoPath,
-        collectPreprocessedImportRefs(source),
-        violations,
-      );
+      checkNoBinLibShimImport(absPath, repoPath, collectPreprocessedImportRefs(source), violations);
       continue;
     }
     const sourceFile = sourceFileFor(absPath, source);
@@ -496,8 +529,159 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
   return violations;
 }
 
+export function findManagedRuntimeBoundaryViolations(): Violation[] {
+  const violations: Violation[] = [];
+  const isProviderImplementationImport = (specifier: string): boolean =>
+    /(?:^|\/)runtime-provider\/(?:docker|podman)(?:[-/.]|$)/.test(specifier);
+  const isProviderName = (node: ts.Node): boolean =>
+    ts.isStringLiteralLike(node) && (node.text === "docker" || node.text === "podman");
+  const isEqualityOperator = (kind: ts.SyntaxKind): boolean =>
+    kind === ts.SyntaxKind.EqualsEqualsToken ||
+    kind === ts.SyntaxKind.ExclamationEqualsToken ||
+    kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+
+  for (const repoPath of PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES) {
+    const absPath = path.join(REPO_ROOT, repoPath);
+    const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
+    const isProviderIdentity = (node: ts.Node): boolean => {
+      const expression = node.getText(sourceFile);
+      // OPENSHELL_DRIVERS is the upstream gateway driver's configuration,
+      // not NemoClaw's opaque runtime-provider identity.
+      return (
+        !/OPENSHELL_DRIVERS/.test(expression) &&
+        /(?:provider|engine|openshellDriver|sandboxDriver|driver)/i.test(expression)
+      );
+    };
+    const report = (node: ts.Node, detail: string): void => {
+      const pos = position(sourceFile, node);
+      addViolation(
+        violations,
+        repoPath,
+        pos.line,
+        pos.column,
+        "managed-runtime-neutrality",
+        detail,
+      );
+    };
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteralLike(node.moduleSpecifier) &&
+        isProviderImplementationImport(node.moduleSpecifier.text)
+      ) {
+        report(
+          node.moduleSpecifier,
+          "generic managed runtime code must not import a provider implementation",
+        );
+      }
+      if (
+        ts.isCallExpression(node) &&
+        ((ts.isIdentifier(node.expression) &&
+          node.expression.text === "isPodmanGatewayRuntimeEnabled") ||
+          (ts.isPropertyAccessExpression(node.expression) &&
+            node.expression.name.text === "isPodmanGatewayRuntimeEnabled"))
+      ) {
+        report(node.expression, "generic managed runtime code must not branch on native Podman");
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        isEqualityOperator(node.operatorToken.kind) &&
+        ((isProviderName(node.left) && isProviderIdentity(node.right)) ||
+          (isProviderName(node.right) && isProviderIdentity(node.left)))
+      ) {
+        report(node, "generic managed runtime code must not compare an opaque provider identity");
+      }
+      if (
+        ts.isCaseClause(node) &&
+        isProviderName(node.expression) &&
+        ts.isSwitchStatement(node.parent.parent) &&
+        isProviderIdentity(node.parent.parent.expression)
+      ) {
+        report(
+          node.expression,
+          "generic managed runtime code must not switch on an opaque provider identity",
+        );
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+
+  const managedBootstrapFiles = [
+    ...walk(path.join(SRC_ROOT, "lib/onboard/managed-bootstrap")),
+  ].filter((absPath) => !path.basename(absPath).includes("test-fixture"));
+  const podmanProviderFiles = [...walk(path.join(SRC_ROOT, "lib/onboard/runtime-provider"))].filter(
+    (absPath) => path.basename(absPath).startsWith("podman"),
+  );
+  for (const absPath of [...managedBootstrapFiles, ...podmanProviderFiles]) {
+    const repoPath = toRepoPath(absPath);
+    const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
+    const report = (node: ts.Node, detail: string): void => {
+      const pos = position(sourceFile, node);
+      addViolation(
+        violations,
+        repoPath,
+        pos.line,
+        pos.column,
+        "managed-state-root-neutrality",
+        detail,
+      );
+    };
+    for (const ref of collectImportRefs(sourceFile)) {
+      const target = resolveInternalImport(absPath, ref.specifier);
+      if (
+        podmanProviderFiles.includes(absPath) &&
+        target &&
+        /(?:^|\/)(?:hermes|openclaw)(?:[-/.]|$)/u.test(target)
+      ) {
+        addViolation(
+          violations,
+          repoPath,
+          ref.line,
+          ref.column,
+          "managed-state-root-neutrality",
+          `Podman provider code must not import agent implementation ${target}`,
+        );
+      }
+    }
+    const visit = (node: ts.Node): void => {
+      if (ts.isStringLiteralLike(node) && MANAGED_AGENT_IDS.has(node.text)) {
+        report(node, "managed bootstrap and Podman provider code must not encode agent IDs");
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+
+  for (const repoPath of MANAGED_STATE_ROOT_PROVIDER_MODULES) {
+    const absPath = path.join(REPO_ROOT, repoPath);
+    const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
+    const ownsGenericStateRootPreparation = collectImportRefs(sourceFile).some(
+      (ref) =>
+        resolveInternalImport(absPath, ref.specifier) ===
+        "src/lib/onboard/managed-bootstrap/state-root-authority.ts",
+    );
+    if (!ownsGenericStateRootPreparation) {
+      addViolation(
+        violations,
+        repoPath,
+        1,
+        1,
+        "managed-state-root-neutrality",
+        "managed provider bootstrap must consume the generic state-root authority operation",
+      );
+    }
+  }
+  return violations;
+}
+
 function main(): void {
-  const violations = findLayerImportBoundaryViolations();
+  const violations = [
+    ...findLayerImportBoundaryViolations(),
+    ...findManagedRuntimeBoundaryViolations(),
+  ];
   if (violations.length > 0) {
     const formatted = violations
       .map(

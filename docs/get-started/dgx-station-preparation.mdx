@@ -57,7 +57,10 @@ Without an interactive terminal or a choice, the installer safely selects the fi
 Use `--force-station-install` only when automatic Station detection rejects release metadata on a DGX Station with recognized GB300 hardware.
 The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
 The flag bypasses only the `/etc/dgx-release` allowlist.
-It still requires ARM64 Ubuntu 24.04, recognized GB300 hardware, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent or unrelated Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+It still requires ARM64 Ubuntu 24.04, recognized GB300 hardware, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+Preparation requires no active agent owned by the invoking user.
+A direct root invocation checks agents across the host.
+Preparation also requires no inference workload or unrelated Docker workload.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
 This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the automatic allowlist.
@@ -102,7 +105,10 @@ If the `docker --gpus all` acceptance probe fails, preparation registers the NVI
 If registration or a post-change acceptance probe fails, preparation restores the prior Docker daemon configuration; if restoration fails, it reports the backup path and stops.
 After successful registration, the runtime remains configured until the same acceptance probe succeeds through a replacement Docker and NVIDIA runtime integration.
 
-Preparation requires Secure Boot to be disabled, matching headers for the running kernel, at least 20 GiB free on the root filesystem, and no active agent, inference, or Docker workloads.
+Preparation requires Secure Boot to be disabled, matching headers for the running kernel, and at least 20 GiB free on the root filesystem.
+It also requires no active agent owned by the invoking user.
+A direct root invocation checks agents across the host.
+Preparation requires no inference workload or Docker workload.
 It also stops when systemd reports a failed unit unless the unit matches a condition-qualified state reviewed for the active Station profile.
 The generic Ubuntu profile permits the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
 Stock DGX OS and Colossus BaseOS require reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints for `cloud-init`, Fluent Bit, `fwupd`, and SSSD.
