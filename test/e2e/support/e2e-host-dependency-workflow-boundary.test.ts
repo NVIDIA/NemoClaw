@@ -30,8 +30,6 @@ const ACTION_USES =
 
 interface WorkflowStep {
   name?: string;
-  if?: string;
-  run?: string;
   uses?: string;
   with?: Record<string, unknown>;
   "continue-on-error"?: boolean;
@@ -210,25 +208,5 @@ exit 64
     expect(validateE2eWorkflow(workflow)).toContain(
       "cloud-onboard DCode TUI host dependencies must precede workspace prep",
     );
-  });
-
-  it("runs native Podman public install without a Docker CLI and restores it (#10891)", () => {
-    const steps = readWorkflow().jobs["cloud-onboard"].steps;
-    const hideIndex = requireStepIndex(steps, "Hide Docker CLI from native Podman public install");
-    const runIndex = requireStepIndex(steps, "Run cloud-onboard live Vitest test");
-    const restoreIndex = requireStepIndex(
-      steps,
-      "Restore Docker CLI after native Podman public install",
-    );
-    const hide = steps[hideIndex]!;
-    const restore = steps[restoreIndex]!;
-
-    expect(hideIndex).toBeLessThan(runIndex);
-    expect(restoreIndex).toBeGreaterThan(runIndex);
-    expect(hide.if).toBe("${{ matrix.runtime_provider == 'podman' }}");
-    expect(hide.run).toContain("command -v docker");
-    expect(hide.run).toContain("dockerClientAvailable: false");
-    expect(restore.if).toBe("${{ always() && matrix.runtime_provider == 'podman' }}");
-    expect(restore.run).toContain('sudo mv -- "${disabled_path}" "${restore_path}"');
   });
 });

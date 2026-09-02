@@ -5690,6 +5690,7 @@ jobs:
       - name: Run cloud-onboard live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NEMOCLAW_E2E_REQUIRE_DOCKER_CLIENT_ABSENT: ${{ matrix.runtime_provider == 'podman' && '1' || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -5736,6 +5737,7 @@ jobs:
           fi
           sudo mv -- "${disabled_path}" "${restore_path}"
           test -x "${restore_path}"
+          test "$(command -v docker)" = "${restore_path}"
 
       - name: Build trusted cloud-onboard timing summary
         if: always()
