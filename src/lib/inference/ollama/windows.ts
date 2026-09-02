@@ -64,30 +64,108 @@ async function installOllamaOnWindowsHost(): Promise<{ ok: boolean; path: string
   return { ok: true, path: installedPath };
 }
 
-// Capture the watcher path so we can relaunch from the same exe after kill,
-// preserving the tray icon and the watcher's auto-restart behavior.
-function captureWindowsOllamaWatcherPath(): string {
-  return runCapture(
+type WindowsOllamaHostSnapshot = {
+  userHost: string | null;
+  watcherPath: string | null;
+  daemonPath: string | null;
+};
+
+function optionalSnapshotPath(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  return value.trim() || null;
+}
+
+// Capture every state item that setup mutates before changing the User-scope
+// binding or stopping processes. A failed snapshot leaves the host untouched.
+function captureWindowsOllamaHostSnapshot(): WindowsOllamaHostSnapshot | null {
+  const result = run(
     [
       "powershell.exe",
       "-Command",
-      "Get-Process 'ollama app' -EA SilentlyContinue | Select-Object -First 1 -ExpandProperty Path",
+      "$userHost = [Environment]::GetEnvironmentVariable('OLLAMA_HOST','User'); " +
+        "$watcherPath = Get-Process 'ollama app' -EA SilentlyContinue | Select-Object -First 1 -ExpandProperty Path; " +
+        "$daemonPath = Get-Process ollama -EA SilentlyContinue | Select-Object -First 1 -ExpandProperty Path; " +
+        "[PSCustomObject]@{userHost=$userHost;watcherPath=$watcherPath;daemonPath=$daemonPath} | ConvertTo-Json -Compress",
     ],
-    { ignoreError: true },
-  ).trim();
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (result.error || result.status !== 0) return null;
+  try {
+    const parsed = JSON.parse(String(result.stdout || "")) as Record<string, unknown> | null;
+    if (!parsed || (parsed.userHost !== null && typeof parsed.userHost !== "string")) return null;
+    const watcherPath = optionalSnapshotPath(parsed.watcherPath);
+    const daemonPath = optionalSnapshotPath(parsed.daemonPath);
+    if (watcherPath === undefined || daemonPath === undefined) return null;
+    return { userHost: parsed.userHost, watcherPath, daemonPath };
+  } catch {
+    return null;
+  }
+}
+
+function psUtf8Expression(value: string): string {
+  const encoded = Buffer.from(value, "utf8").toString("base64");
+  return `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`;
+}
+
+function psNullableUtf8Expression(value: string | null): string {
+  return value === null ? "$null" : psUtf8Expression(value);
+}
+
+function runWindowsOllamaStateScript(script: string): boolean {
+  const result = run(["powershell.exe", "-Command", `$ErrorActionPreference='Stop'; ${script}`], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  return !result.error && result.status === 0;
 }
 
 // User-scope so the next login-time tray launch keeps the 0.0.0.0 binding
 // without NemoClaw being involved.
-function persistOllamaHostEnvVar(): void {
-  runCapture(
-    [
-      "powershell.exe",
-      "-Command",
-      "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User')",
-    ],
-    { ignoreError: true },
+function persistOllamaHostEnvVar(): boolean {
+  return runWindowsOllamaStateScript(
+    "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User')",
   );
+}
+
+function buildWindowsOllamaRestoreScript(snapshot: WindowsOllamaHostSnapshot): string {
+  const script = [
+    `$previousHost = ${psNullableUtf8Expression(snapshot.userHost)}`,
+    "[Environment]::SetEnvironmentVariable('OLLAMA_HOST',$previousHost,'User')",
+    "$env:OLLAMA_HOST = $previousHost",
+  ];
+  if (snapshot.watcherPath) {
+    script.push(
+      `$previousWatcher = ${psUtf8Expression(snapshot.watcherPath)}`,
+      "Start-Process -FilePath $previousWatcher -WindowStyle Hidden -ErrorAction Stop",
+    );
+  } else if (snapshot.daemonPath) {
+    script.push(
+      `$previousDaemon = ${psUtf8Expression(snapshot.daemonPath)}`,
+      "Start-Process -FilePath $previousDaemon -ArgumentList 'serve' -WindowStyle Hidden -ErrorAction Stop",
+    );
+  }
+  return script.join("; ");
+}
+
+function previousOllamaHostLabel(value: string | null): string {
+  if (value === null) return "unset";
+  const terminalSafe = value.replace(/[\u202A-\u202E\u2066-\u2069]/gu, "").slice(0, 200);
+  return JSON.stringify(terminalSafe);
+}
+
+function restoreWindowsOllamaHostSnapshot(snapshot: WindowsOllamaHostSnapshot): boolean {
+  const script = buildWindowsOllamaRestoreScript(snapshot);
+  if (runWindowsOllamaStateScript(script)) return true;
+  const encodedCommand = Buffer.from(
+    `$ErrorActionPreference='Stop'; ${script}`,
+    "utf16le",
+  ).toString("base64");
+  console.error("  Failed to restore the previous Windows Ollama state.");
+  console.error(`  Previous User-scope OLLAMA_HOST: ${previousOllamaHostLabel(snapshot.userHost)}`);
+  console.error("  Restore it and relaunch the previous Ollama process with:");
+  console.error(`    powershell.exe -NoProfile -EncodedCommand ${encodedCommand}`);
+  return false;
 }
 
 // Order matters: kill 'ollama app' (the tray watcher) before 'ollama'
@@ -203,17 +281,29 @@ function launchAndAwaitWindowsOllama(
 function setupWindowsOllamaWith0000Binding(
   opts: { announceStop?: boolean; installedPath?: string } = {},
 ): boolean {
-  const watcherPath = captureWindowsOllamaWatcherPath();
-  persistOllamaHostEnvVar();
+  const snapshot = captureWindowsOllamaHostSnapshot();
+  if (!snapshot) {
+    console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
+    return false;
+  }
+  if (!persistOllamaHostEnvVar()) {
+    console.error(
+      "  Could not persist the Windows Ollama host binding; leaving processes running.",
+    );
+    return false;
+  }
   if (opts.announceStop) {
     console.log("  Stopping existing Ollama on Windows host...");
   }
   killWindowsOllamaProcesses();
   sleepSeconds(1);
-  return launchAndAwaitWindowsOllama({
-    watcherPath: watcherPath || undefined,
+  const launched = launchAndAwaitWindowsOllama({
+    watcherPath: snapshot.watcherPath || undefined,
     installedPath: opts.installedPath,
   });
+  if (launched) return true;
+  restoreWindowsOllamaHostSnapshot(snapshot);
+  return false;
 }
 
 function switchToWindowsOllamaHost(): void {

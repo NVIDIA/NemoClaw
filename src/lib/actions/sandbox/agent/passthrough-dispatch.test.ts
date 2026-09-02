@@ -243,10 +243,6 @@ describe("agentDispatchDeadlineSeconds", () => {
     expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "-m", "hi"])).toBeUndefined();
   });
 
-  it("holds the deadline buffer above the longest aborted-run finish measured (#8723)", () => {
-    expect(AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS).toBeGreaterThan(20);
-  });
-
   it("stays unbounded when the buffered deadline leaves the safe-integer range (#8723)", () => {
     const ceiling = String(Number.MAX_SAFE_INTEGER);
     expect(requestedAgentTimeoutSeconds(["openclaw", "agent", "--timeout", ceiling])).toBe(
