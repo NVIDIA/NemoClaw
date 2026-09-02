@@ -1265,6 +1265,25 @@ describe("focused staging Brev Launchable lane", () => {
     ).toMatchObject({ workspaceId: "foreign-2", status: "NOT_OWNED" });
   });
 
+  it("retains a pending recovery receipt when create cannot be reconciled (#9925)", () => {
+    const { env, workDir } = fixture({ createAppearsAfterRefresh: 99, createStatus: 17 });
+    const result = run({
+      ...identitySmokeEnv(env),
+      BREV_CREATE_RECONCILE_SECONDS: "1",
+      POLL_SECONDS: "1",
+    });
+    expect(result.status).toBe(17);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "workspace-recovery.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      candidateSha,
+      runId: "789",
+      runAttempt: "1",
+      workspace: { name: "nclaw-e2e-test-1", id: "" },
+    });
+  });
+
   it("reconciles and deletes an identity workspace after an ambiguous create failure (#9925)", () => {
     const { calls, env, state, workDir } = fixture({
       createAppearsAfterRefresh: 3,

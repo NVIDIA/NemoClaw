@@ -31,8 +31,6 @@ require() {
 
 write_workspace_recovery() {
   local workspace_id="$1" receipt="$WORK_DIR/workspace-recovery.json" temporary
-  [ -n "$workspace_id" ] || return 0
-  [ ! -e "$receipt" ] || return 0
   temporary="${receipt}.tmp"
   jq -n --arg candidateSha "$CANDIDATE_SHA" --arg runId "${GITHUB_RUN_ID:-}" \
     --arg runAttempt "${GITHUB_RUN_ATTEMPT:-}" --arg workspaceName "$INSTANCE_NAME" \
@@ -817,6 +815,7 @@ existing="$(workspace)" || die "Brev workspace inventory failed"
 }
 cleanup_required=1
 write_workspace_ownership pending
+write_workspace_recovery ""
 timeout 900s brev create "$INSTANCE_NAME" --launchable "$BREV_LAUNCHABLE_ID" --detached --timeout 900
 write_workspace_ownership accepted
 deadline=$((SECONDS + ${BREV_READY_TIMEOUT_SECONDS:-1200}))

@@ -285,10 +285,12 @@ describe("Launchable evidence inspection", () => {
     ]);
     const args = workflowRunsApiArgs(SHA);
     expect(args[0]).toBe("api");
-    expect(new Set(args.slice(1))).toEqual(
+    expect(args.filter((arg) => arg === "--hostname")).toHaveLength(1);
+    expect(args[args.indexOf("--hostname") + 1]).toBe("github.com");
+    expect(
+      new Set(args.filter((arg) => arg !== "--hostname" && arg !== "github.com").slice(1)),
+    ).toEqual(
       new Set([
-        "--hostname",
-        "github.com",
         "--paginate",
         "--slurp",
         `repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${SHA}`,
@@ -354,10 +356,12 @@ describe("Launchable evidence inspection", () => {
   it("pins workflow-job inventory to github.com (#10798)", () => {
     const args = workflowJobsApiArgs(10, 2);
     expect(args[0]).toBe("api");
-    expect(new Set(args.slice(1))).toEqual(
+    expect(args.filter((arg) => arg === "--hostname")).toHaveLength(1);
+    expect(args[args.indexOf("--hostname") + 1]).toBe("github.com");
+    expect(
+      new Set(args.filter((arg) => arg !== "--hostname" && arg !== "github.com").slice(1)),
+    ).toEqual(
       new Set([
-        "--hostname",
-        "github.com",
         "--paginate",
         "--slurp",
         "repos/NVIDIA/NemoClaw/actions/runs/10/attempts/2/jobs?per_page=100",
@@ -421,6 +425,23 @@ describe("Launchable evidence inspection", () => {
     expect(boundary.listRuns).not.toHaveBeenCalled();
     expect(boundary.listJobs).not.toHaveBeenCalled();
     expect(boundary.readArtifact).not.toHaveBeenCalled();
+  });
+  it("reports a candidate-bound pending-create recovery name (#10798)", () => {
+    const artifact = files({
+      "workspace-recovery.json": JSON.stringify({
+        schemaVersion: 1,
+        candidateSha: SHA,
+        runId: "10",
+        runAttempt: "2",
+        workspace: { name: "nclaw-e2e-10-2", id: "" },
+      }),
+      "launchable-e2e.json": undefined,
+      "full-e2e.log": undefined,
+      "cleanup.json": undefined,
+    });
+    expect(() =>
+      inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact)),
+    ).toThrow("workspace=nclaw-e2e-10-2 id=<pending>");
   });
   it.each([
     ["PRESENT", "2026-06-01T01:00:00Z", "2026-06-01T02:00:00Z", "2026-06-01T01:00:00Z"],

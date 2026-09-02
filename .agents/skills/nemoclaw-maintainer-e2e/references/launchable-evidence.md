@@ -41,9 +41,10 @@ staging-brev-launchable-<candidate-sha>-<run-id>-<attempt>
 ```
 
 The inspector requires `launchable-e2e.json`, a nonempty `full-e2e.log`, and
-`cleanup.json` for successful evidence. The lane writes `workspace-recovery.json` immediately
-after it obtains the workspace ID. When full evidence is absent, the inspector uses that
-candidate-, run-, attempt-, name-, and ID-bound receipt only to report recovery identity;
+`cleanup.json` for successful evidence. Before workspace creation, the lane writes
+`workspace-recovery.json` with the candidate, run, attempt, deterministic name, and an empty ID; it
+updates the receipt after inventory returns the workspace ID. When full evidence is absent, the
+inspector uses that recovery receipt only to report recovery identity;
 it never accepts it as release evidence. The log must contain the exact `NEMOCLAW_FULL_E2E_PASSED`
 sentinel.
 
@@ -95,10 +96,13 @@ Only a maintainer with access to the repository's Brev organization may perform 
    `staging-brev-launchable-<candidate>-<run-id>-<attempt>`. In `launchable-e2e.json`, require
    `candidateSha` to equal the candidate and require `workspace.name` and `workspace.id` to equal
    the reported values. If full evidence is absent, require `workspace-recovery.json` instead; its
-   candidate, run, attempt, workspace name, and workspace ID must equal the reported values. The workspace name must also equal `nclaw-e2e-<run-id>-<attempt>`.
+   candidate, run, attempt, and workspace name must equal the reported values. The workspace name
+   must also equal `nclaw-e2e-<run-id>-<attempt>`. When the receipt contains an ID, require it to equal
+   the reported ID. A pending-create receipt may have an empty ID.
 3. Authenticate the Brev CLI to the repository's Brev organization through the maintainer-approved
-   credential path. Run `brev ls --json`. Permit deletion only when exactly one row has both the
-   reported name and ID. If the row is absent, skip deletion. If the inventory is unavailable,
+   credential path. Run `brev ls --json`. For a pending-create receipt, obtain the ID only when exactly
+   one row has the deterministic reported name. Otherwise, permit deletion only when exactly one row
+   has both the reported name and ID. If the row is absent, skip deletion. If the inventory is unavailable,
    ambiguous, or differs by name or ID, prohibit deletion and escalate the handoff to the Brev
    organization owner.
 4. Run `brev delete <workspace-id>` once, using the validated ID rather than the workspace name.

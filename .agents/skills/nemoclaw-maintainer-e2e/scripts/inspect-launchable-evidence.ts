@@ -253,7 +253,7 @@ function earlyRecovery(
   const recovery = json(files["workspace-recovery.json"], "workspace-recovery.json"),
     workspace = record(recovery.workspace, "workspace-recovery.workspace"),
     name = text(workspace.name, "workspace-recovery.workspace.name"),
-    id = text(workspace.id, "workspace-recovery.workspace.id");
+    id = typeof workspace.id === "string" ? workspace.id : "";
   if (
     recovery.schemaVersion !== 1 ||
     recovery.candidateSha !== candidate ||
@@ -262,6 +262,10 @@ function earlyRecovery(
     name !== `nclaw-e2e-${selection.run.id}-${selection.run.run_attempt}`
   )
     fail("workspace recovery receipt does not match the selected candidate run attempt");
+  if (id === "")
+    fail(
+      `workspace creation pending before full evidence: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName} workspace=${name} id=<pending>; resolve exactly one matching inventory row before deletion`,
+    );
   let cleanup: JsonRecord;
   try {
     cleanup = json(files["cleanup.json"], "cleanup.json");

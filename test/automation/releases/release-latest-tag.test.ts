@@ -566,7 +566,7 @@ describe("release-latest-tag.sh", () => {
     const releaseCommit = commit(fixture, "planned release commit"),
       planPath = path.join(fixture.root, "release", "plan.json"),
       { plan } = createPlan(fixture, planPath, releaseCommit);
-    fs.writeFileSync(fixture.launchableInspector, 'console.log("{}")');
+    fs.writeFileSync(fixture.launchableInspector, fs.readFileSync(fixture.launchableInspector, "utf8").replace("run: { id: 10", "run: { id: 11"));
     const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
     expect([result.status, result.stderr, localTagObject(fixture, "v0.0.2")]).toEqual(
       [1, expect.stringContaining("does not match current inspected evidence"), ""]);
