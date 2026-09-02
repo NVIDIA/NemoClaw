@@ -9,6 +9,7 @@ import { isErrnoException } from "../../core/errno";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
 const PROCESS_IDENTITY_CACHE_MS = 1_000;
+const HOST_IDENTITY_CACHE_KEY = Symbol.for("NVIDIA.NemoClaw.hostIdentity");
 
 export interface ProcessIdentityProbes {
   readonly currentPid: number;
@@ -23,6 +24,30 @@ interface LinuxProcessStat {
 }
 
 const processIdentityCache = new Map<string, { checkedAt: number; identity: string | null }>();
+
+function readDarwinHostIdentity(): string | null {
+  const globalCache = globalThis as typeof globalThis & Record<symbol, unknown>;
+  if (HOST_IDENTITY_CACHE_KEY in globalCache) {
+    return globalCache[HOST_IDENTITY_CACHE_KEY] as string | null;
+  }
+  let identity: string | null = null;
+  try {
+    const platform = execFileSync("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1_000,
+      maxBuffer: 64 * 1024,
+    }).toString();
+    const platformUuid =
+      /"IOPlatformUUID"\s*=\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/iu.exec(
+        platform,
+      )?.[1];
+    identity = platformUuid ? `darwin:${platformUuid.toLowerCase()}` : null;
+  } catch {
+    identity = null;
+  }
+  globalCache[HOST_IDENTITY_CACHE_KEY] = identity;
+  return identity;
+}
 
 function readLinuxProcessStat(pid: number): LinuxProcessStat | null {
   if (process.platform !== "linux") return null;
@@ -87,22 +112,7 @@ export function readHostIdentity(): string | null {
       }
     }
   }
-  if (process.platform === "darwin") {
-    try {
-      const platform = execFileSync("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], {
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 1_000,
-        maxBuffer: 64 * 1024,
-      }).toString();
-      const platformUuid =
-        /"IOPlatformUUID"\s*=\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/iu.exec(
-          platform,
-        )?.[1];
-      return platformUuid ? `darwin:${platformUuid.toLowerCase()}` : null;
-    } catch {
-      return null;
-    }
-  }
+  if (process.platform === "darwin") return readDarwinHostIdentity();
   return null;
 }
 

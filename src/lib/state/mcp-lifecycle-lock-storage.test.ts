@@ -182,4 +182,50 @@ describe("MCP lifecycle lock storage", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("reports an oversized async candidate without failing completed reclamation", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    const owner = createMcpLifecycleLockOwner("alpha", "async-reclaim-owner");
+    const candidatePath = `${lockPath}.candidate-${String(process.pid)}-${owner.token}`;
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    try {
+      fs.writeFileSync(lockPath, `${JSON.stringify(owner)}\n`);
+      fs.writeFileSync(candidatePath, Buffer.alloc(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1, "x"));
+      const expected = await readMcpLifecycleLockObservation(lockPath);
+
+      await expect(reclaimStaleMcpLifecycleLockGeneration(lockPath, expected!)).resolves.toBe(true);
+
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(candidatePath)).toBe(true);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(candidatePath), {
+        code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED",
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an oversized sync candidate without failing completed reclamation", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    const owner = createMcpLifecycleLockOwner("alpha", "sync-reclaim-owner");
+    const candidatePath = `${lockPath}.candidate-${String(process.pid)}-${owner.token}`;
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    try {
+      fs.writeFileSync(lockPath, `${JSON.stringify(owner)}\n`);
+      fs.writeFileSync(candidatePath, Buffer.alloc(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1, "x"));
+      const expected = readMcpLifecycleLockObservationSync(lockPath);
+
+      expect(reclaimStaleMcpLifecycleLockGenerationSync(lockPath, expected!)).toBe(true);
+
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(candidatePath)).toBe(true);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(candidatePath), {
+        code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED",
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });

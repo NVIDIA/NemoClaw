@@ -343,15 +343,23 @@ async function reclaimStaleMcpLifecycleLockGenerationInternal(
     }
     await fs.promises.rm(quarantinePath, { force: true, recursive: true });
     if (recoverCandidate && claimed?.owner) {
-      const recovered = await recoverOrphanedMcpLifecycleLockCandidate(
-        targetPath,
-        claimed.owner.pid,
-        claimed.owner.token,
+      let recoveryError: unknown = new Error(
+        "the candidate is still linked to a canonical or changed generation",
       );
+      let recovered = false;
+      try {
+        recovered = await recoverOrphanedMcpLifecycleLockCandidate(
+          targetPath,
+          claimed.owner.pid,
+          claimed.owner.token,
+        );
+      } catch (error) {
+        recoveryError = error;
+      }
       if (!recovered) {
         reportRetainedLifecycleLockCandidate(
           lifecycleLockCandidatePath(targetPath, claimed.owner.pid, claimed.owner.token),
-          new Error("the candidate is still linked to a canonical or changed generation"),
+          recoveryError,
         );
       }
     }
@@ -423,15 +431,23 @@ function reclaimStaleMcpLifecycleLockGenerationSyncInternal(
     }
     fs.rmSync(quarantinePath, { force: true, recursive: true });
     if (recoverCandidate && claimed?.owner) {
-      const recovered = recoverOrphanedMcpLifecycleLockCandidateSync(
-        targetPath,
-        claimed.owner.pid,
-        claimed.owner.token,
+      let recoveryError: unknown = new Error(
+        "the candidate is still linked to a canonical or changed generation",
       );
+      let recovered = false;
+      try {
+        recovered = recoverOrphanedMcpLifecycleLockCandidateSync(
+          targetPath,
+          claimed.owner.pid,
+          claimed.owner.token,
+        );
+      } catch (error) {
+        recoveryError = error;
+      }
       if (!recovered) {
         reportRetainedLifecycleLockCandidate(
           lifecycleLockCandidatePath(targetPath, claimed.owner.pid, claimed.owner.token),
-          new Error("the candidate is still linked to a canonical or changed generation"),
+          recoveryError,
         );
       }
     }

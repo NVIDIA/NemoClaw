@@ -273,22 +273,25 @@ describe("onboard lock ownership", () => {
       originalRenameSync(from, to);
     }) as typeof fs.renameSync);
 
-    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+    try {
+      const result = session.acquireOnboardLock("nemoclaw onboard --resume");
 
-    expect(result).toMatchObject({
-      acquired: false,
-      holderPid: process.pid,
-      holderProvenance: provenance,
-    });
-    expect(renameSpy).toHaveBeenCalledOnce();
-    expect(fs.statSync(session.LOCK_FILE).ino).toBe(replacementInode);
-    expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(replacementContents);
-    expect(
-      fs
-        .readdirSync(path.dirname(session.LOCK_FILE))
-        .filter((name) => name.startsWith(`${path.basename(session.LOCK_FILE)}.reclaim-`)),
-    ).toEqual([]);
-    renameSpy.mockRestore();
+      expect(result).toMatchObject({
+        acquired: false,
+        holderPid: process.pid,
+        holderProvenance: provenance,
+      });
+      expect(renameSpy).toHaveBeenCalledOnce();
+      expect(fs.statSync(session.LOCK_FILE).ino).toBe(replacementInode);
+      expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(replacementContents);
+      expect(
+        fs
+          .readdirSync(path.dirname(session.LOCK_FILE))
+          .filter((name) => name.startsWith(`${path.basename(session.LOCK_FILE)}.reclaim-`)),
+      ).toEqual([]);
+    } finally {
+      renameSpy.mockRestore();
+    }
   });
 
   it("restores an oversized replacement without reading it during atomic stale reclamation", () => {
