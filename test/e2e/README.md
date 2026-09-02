@@ -156,8 +156,9 @@ classification and produces no product verdict. An `infrastructure-failure` outc
 produce a product verdict. This workflow covers the managed runtime activation scenario only; it
 does not qualify the Hermes dependency lane.
 
-The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
-local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
+The `Images / Build, Test, and Publish Managed Images` pull-request workflow publishes each Pi
+candidate by immutable digest. Its `pi-candidate` job validates the local image, removes registry
+credentials, validates the anonymously pullable digest, and uploads a
 `managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
 `managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
 qualification receipts may consume these candidate contracts only when the recorded image-source

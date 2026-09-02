@@ -537,8 +537,10 @@ describe("pull request and main workflow contracts", () => {
     expect(locate.run).toContain(
       "trusted_receipt_tool=.trusted-sdk-package-decision/tools/e2e/openshell-sdk-package-receipt.mts",
     );
+    expect(locate.run).toContain('if [ ! -f "$trusted_receipt_tool" ]');
+    expect(locate.run).toContain("The pull request base cannot authenticate");
     expect(locate.run).toContain('"$trusted_receipt_tool" resolve');
-    expect(locate.run).toContain("openshell-sdk-package-receipt.mts resolve-bootstrap");
+    expect(locate.run).not.toContain("tools/e2e/openshell-sdk-package-receipt.mts resolve");
     expect(locate.run).toContain('"$RUNNER_TEMP/openshell-sdk-selection/selection.json"');
     expect(locate.run).not.toContain(".pull_requests[].base.sha");
     expect(locate.run).toContain("required=false");
@@ -673,6 +675,19 @@ describe("pull request and main workflow contracts", () => {
 
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(githubOutput).toBe("required=false\n");
+  });
+
+  it("fails closed when the pull request base lacks the trusted SDK receipt resolver", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("The pull request base cannot authenticate");
+    expect(githubOutput).toBe("");
   });
 
   it("rejects a non-boolean package requirement from the trusted inspector", () => {

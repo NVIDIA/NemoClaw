@@ -187,7 +187,6 @@ jobs:
             scripts/scorecard/read-artifact-zip.mts
             tools/e2e/base-image-publication.mts
             tools/e2e/exact-artifact-download.mts
-            tools/e2e/openshell-sdk-package-receipt.mts
           sparse-checkout-cone-mode: false
 
       - name: Checkout base package decision
@@ -272,31 +271,22 @@ jobs:
           fi
 
           artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
-          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           trusted_receipt_tool=.trusted-sdk-package-decision/tools/e2e/openshell-sdk-package-receipt.mts
-          if [ -f "$trusted_receipt_tool" ]; then
-            resolved_artifact_name="$(
-              node --experimental-strip-types --no-warnings \
-                "$trusted_receipt_tool" resolve \
-                "$RUNNER_TEMP/openshell-sdk" \
-                "$RUNNER_TEMP/openshell-sdk-selection/selection.json"
-            )"
-          else
-            # The bootstrap path exists only so this change can pass against a base that predates
-            # producer receipts. It authenticates the current PR and old artifact metadata but
-            # records a distinct receipt kind because the old producer has no inner receipt.
-            resolved_artifact_name="$(
-              EXPECTED_PACKAGE_NAME="$artifact_name" \
-                node --experimental-strip-types --no-warnings \
-                tools/e2e/openshell-sdk-package-receipt.mts resolve-bootstrap \
-                "$RUNNER_TEMP/openshell-sdk" \
-                "$RUNNER_TEMP/openshell-sdk-selection/selection.json"
-            )"
+          if [ ! -f "$trusted_receipt_tool" ]; then
+            echo "::error title=Missing trusted SDK package resolver::The pull request base cannot authenticate the packaged OpenShell SDK receipt."
+            exit 1
           fi
+          resolved_artifact_name="$(
+            node --experimental-strip-types --no-warnings \
+              "$trusted_receipt_tool" resolve \
+              "$RUNNER_TEMP/openshell-sdk" \
+              "$RUNNER_TEMP/openshell-sdk-selection/selection.json"
+          )"
           if [ "$resolved_artifact_name" != "$artifact_name" ]; then
             echo "::error title=SDK package identity mismatch::The authenticated producer selected a different SDK archive."
             exit 1
           fi
+          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           echo "required=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish SDK archive inside this CI run

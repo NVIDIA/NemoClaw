@@ -339,7 +339,7 @@ describe("complete managed-image publication workflow", () => {
       ]),
     );
     expect(reviewedAudit).toMatchObject({
-      if: "github.event_name == 'pull_request'",
+      if: "github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null)",
       permissions: { contents: "read" },
       "runs-on": "ubuntu-latest",
       "timeout-minutes": 15,
@@ -384,7 +384,9 @@ describe("complete managed-image publication workflow", () => {
     }
 
     expect(prBuilder.needs).toBe("pr-reviewed-npm-audit");
-    expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
+    expect(prBuilder.if).toBe(
+      "github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null)",
+    );
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });

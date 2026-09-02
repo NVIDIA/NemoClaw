@@ -66,10 +66,6 @@ export type Workflow = {
       branches?: string[];
       paths?: string[];
     };
-    pull_request_target?: {
-      paths?: string[];
-      types?: string[];
-    };
     push?: {
       paths?: string[];
     };
@@ -85,16 +81,6 @@ export type Workflow = {
       >;
       outputs?: Record<string, { description?: string; value?: string }>;
       secrets?: Record<string, { description?: string; required?: boolean }>;
-    };
-    workflow_dispatch?: {
-      inputs?: Record<
-        string,
-        {
-          description?: string;
-          required?: boolean;
-          type?: string;
-        }
-      >;
     };
   };
   permissions?: Record<string, string>;

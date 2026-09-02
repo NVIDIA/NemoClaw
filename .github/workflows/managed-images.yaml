@@ -30,6 +30,7 @@ on:
         required: true
         type: string
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/actions/publish-managed-image-digest/**"
@@ -77,7 +78,9 @@ env:
 jobs:
   pr-reviewed-npm-audit:
     name: PR reviewed npm audit
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'edited' || github.event.changes.base != null)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -126,7 +129,9 @@ jobs:
 
   pr-staging-qa-deep-code:
     name: Staging QA base permission regression (Deep Agents Code)
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'edited' || github.event.changes.base != null)
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     permissions:
@@ -385,7 +390,9 @@ jobs:
     # GitHub's maintainer workflow approval. Exact digest publication is limited
     # to branches in NVIDIA/NemoClaw; fork jobs never log in or push.
     needs: pr-reviewed-npm-audit
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'edited' || github.event.changes.base != null)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -865,7 +872,10 @@ jobs:
     # E2E / Exact Base Managed Runtime workflow owns the product verdict.
     continue-on-error: true
     needs: pr-build-and-entrypoint
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'edited' || github.event.changes.base != null) &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -960,7 +970,10 @@ jobs:
   pr-openclaw-mcp-discovery:
     name: PR exact OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
     needs: pr-build-and-entrypoint
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'edited' || github.event.changes.base != null) &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1089,7 +1102,11 @@ jobs:
 
   pi-candidate:
     name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
-    if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'edited' || github.event.changes.base != null) &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:

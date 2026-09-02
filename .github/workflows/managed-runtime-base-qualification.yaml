@@ -9,7 +9,7 @@ run-name: >-
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/actions/publish-managed-image-digest/**"
@@ -82,7 +82,9 @@ jobs:
     name: Authenticate candidate image catalog
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_target' &&
+      (github.event.action != 'edited' || github.event.changes.base != null)))
     runs-on: ubuntu-24.04
     timeout-minutes: 95
     outputs:
