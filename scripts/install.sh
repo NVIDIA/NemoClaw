@@ -3835,7 +3835,7 @@ run_installer_host_preflight() {
           gatewayManagement.ok &&
           (gatewayManagement.declaration === null ||
             gatewayManagement.declaration?.mode === "nemoclaw-managed");
-        const selectedRuntimeUsesProviderHostRoute =
+        const selectedRuntimeOwnsHostReadiness =
           !explicitlySelectedPortableProfile &&
           (() => {
             const provider = resolveConfiguredRuntimeProvider();
@@ -3859,8 +3859,8 @@ run_installer_host_preflight() {
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
-          allowUnsupportedRuntime:
-            explicitlySelectedPortableProfile || selectedRuntimeUsesProviderHostRoute,
+          allowUnsupportedRuntime: explicitlySelectedPortableProfile,
+          providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.

@@ -166,7 +166,7 @@ export function assertOnboardSystemReadiness(
   const portable = isPortableExperimentalProfile();
   const managedLocalGatewayEnabled =
     host.platform === "linux" && isLinuxDockerDriverGatewayEnabled("linux");
-  const selectedRuntimeUsesProviderHostRoute =
+  const selectedRuntimeOwnsHostReadiness =
     !portable && managedLocalGatewayEnabled
       ? (() => {
           const provider = resolveConfiguredRuntimeProvider("linux");
@@ -181,10 +181,8 @@ export function assertOnboardSystemReadiness(
       : false;
   const admission = evaluateOnboardReadinessAdmission(readinessReport, {
     explicitlyOptedOutGpuPassthrough: options.explicitlyOptedOutGpuPassthrough,
-    allowUnsupportedRuntime:
-      portable ||
-      selectedRuntimeUsesProviderHostRoute ||
-      !managedLocalGatewayEnabled,
+    allowUnsupportedRuntime: portable || !managedLocalGatewayEnabled,
+    providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:

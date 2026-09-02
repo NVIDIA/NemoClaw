@@ -3,10 +3,25 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ preparePortableExperimentalHost: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  preparePortableExperimentalHost: vi.fn(),
+  prepareRuntimeHost: vi.fn(({ environment }: { environment: NodeJS.ProcessEnv }) => ({
+    sandboxHostAddress:
+      environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
+  })),
+}));
 
 vi.mock("./experimental/portable-host-preparation", () => ({
   preparePortableExperimentalHost: mocks.preparePortableExperimentalHost,
+}));
+
+vi.mock("./runtime-provider/selection", () => ({
+  resolveConfiguredRuntimeProvider: () => ({
+    gateway: {
+      supported: true,
+      prepareHostRuntime: mocks.prepareRuntimeHost,
+    },
+  }),
 }));
 
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
@@ -45,6 +60,15 @@ function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
     cdiNvidiaGpuSpecMissing: false,
     nvidiaContainerToolkitInstalled: false,
     notes: [],
+  };
+}
+
+function hostWithoutDocker(): HostAssessment {
+  return {
+    ...hostWithRuntime("unknown"),
+    dockerInstalled: false,
+    dockerRunning: false,
+    dockerReachable: false,
   };
 }
 
@@ -425,11 +449,11 @@ describe("report-backed runtime readiness (#7411)", () => {
   );
 
   it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
-    "allows Podman when the native gateway runtime is explicit",
+    "allows Docker-less onboarding when the native Podman gateway runtime is explicit",
     () => {
       vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
       const exit = vi.fn();
-      assertOnboardHostReadiness(hostWithRuntime("podman"), null, {
+      assertOnboardHostReadiness(hostWithoutDocker(), null, {
         explicitlyOptedOutGpuPassthrough: false,
         exitProcess: exit as never,
       });

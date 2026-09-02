@@ -140,8 +140,26 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
   if (forcedRejection) {
     return { admitted: false, reasonIds: [], ...forcedRejection, waivedFindingIds: [] };
   }
+  const providerOwnedDockerFindings = new Set([
+    "host.docker.unavailable",
+    "host.docker.host_invalid",
+    "host.docker.daemon_unreachable",
+    "host.docker.runtime_unsupported",
+    "host.docker.storage_incompatible",
+  ]);
+  const providerOwnedDockerCapabilities = new Set([
+    "host.docker.available",
+    "host.docker.daemon_reachable",
+    "host.docker.runtime_supported",
+    "host.docker.storage_compatible",
+    "host.docker.storage_remediation_available",
+  ]);
   const findingIds = report.findings
     .filter((finding) => {
+      if (
+        options.providerOwnsHostReadiness &&
+        providerOwnedDockerFindings.has(finding.id)
+      ) return false;
       if (
         finding.id === "host.docker.runtime_unsupported" &&
         options.allowUnsupportedRuntime
@@ -160,10 +178,11 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     .map((finding) => finding.id);
   const capabilityIds = report.capabilityIds.filter(
     (id) =>
-      !options.allowPortableHostPreparation ||
-      (id !== "host.docker.daemon_reachable" &&
-        id !== "host.docker.runtime_supported" &&
-        id !== "host.docker.storage_compatible")
+      !(options.providerOwnsHostReadiness && providerOwnedDockerCapabilities.has(id)) &&
+      (!options.allowPortableHostPreparation ||
+        (id !== "host.docker.daemon_reachable" &&
+          id !== "host.docker.runtime_supported" &&
+          id !== "host.docker.storage_compatible"))
   );
   return findingIds.length === 0 && capabilityIds.length === 0
     ? { admitted: true, waivedFindingIds: [] }
@@ -260,6 +279,31 @@ describe("installer host preflight package contract", () => {
 
     expect(result.status, output).toBe(0);
     expect(output).not.toMatch(/Host preflight found issues/);
+  });
+
+  it("admits a Docker-less host through the selected managed runtime provider (#10891)", () => {
+    const dockerCapabilityIds = [
+      "host.docker.available",
+      "host.docker.daemon_reachable",
+      "host.docker.runtime_supported",
+      "host.docker.storage_compatible",
+      "host.docker.storage_remediation_available",
+    ];
+    const host = {
+      runtime: "unknown",
+      additionalFindingIds: ["host.docker.unavailable"],
+      unknownCapabilityIds: dockerCapabilityIds,
+    };
+
+    const admitted = runInstallerHostAdmissionTest(host, undefined, {
+      gatewayRuntime: "podman",
+    });
+    expect(admitted.result.status, admitted.output).toBe(0);
+    expect(admitted.output).not.toMatch(/Host preflight found issues/);
+
+    const rejected = runInstallerHostAdmissionTest(host);
+    expect(rejected.result.status).toBe(1);
+    expect(rejected.output).toContain("host.docker.unavailable");
   });
 
   it("fails closed when selected provider host preparation throws", () => {
