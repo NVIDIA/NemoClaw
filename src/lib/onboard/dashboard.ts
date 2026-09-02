@@ -251,9 +251,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): string | null {
     if (!forwardService) return null;
     const sandbox = getSandbox?.(sandboxName);
-    options.revalidateSandboxIdentity?.(
-      `launch ForwardTcp service for sandbox '${sandboxName}'`,
-    );
+    options.revalidateSandboxIdentity?.(`launch ForwardTcp service for sandbox '${sandboxName}'`);
     return options.gatewayName ?? forwardService.resolveGatewayName(sandbox);
   }
 
@@ -338,8 +336,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       if (!gatewayName) {
         throw new Error(`ForwardTcp authority is unavailable for '${sandbox.name}'`);
       }
-      const ports = [sandbox.dashboardPort, sandbox.hermesApiPort].filter(
-        (port): port is number => Number.isInteger(port),
+      const ports = [sandbox.dashboardPort, sandbox.hermesApiPort].filter((port): port is number =>
+        Number.isInteger(port),
       );
       forwardService?.retireLegacy?.(sandbox.name, gatewayName, ports);
     }
@@ -651,7 +649,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     console.log("");
     console.log(`${indent}  Or open a sandbox shell first:`);
     console.log(`${indent}    ${deps.cliName()} ${sandboxName} connect`);
-    console.log(`${indent}    then run: ${getInteractiveAgentCommand(agent, agent?.name)}`);
+    void getInteractiveAgentCommand(agent, agent?.name);
+    console.log(`${indent}    then run the configured interactive agent command`);
   }
 
   function printDashboard(
