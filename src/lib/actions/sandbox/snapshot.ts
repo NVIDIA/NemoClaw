@@ -105,6 +105,7 @@ import {
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
+  restoreExistingMcpBridgeRuntime,
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
@@ -1511,6 +1512,17 @@ async function runSnapshotRestoreUnlocked(
         snapshotExit(1);
       }
     }
+  }
+  const snapshotTarget = registry.getSandbox(targetSandbox);
+  if (
+    snapshotTarget?.agent === "langchain-deepagents-code" &&
+    Object.keys(snapshotTarget.mcp?.bridges ?? {}).length > 0
+  ) {
+    await restoreExistingMcpBridgeRuntime(
+      targetSandbox,
+      Object.values(snapshotTarget.mcp?.bridges ?? {}),
+      { applyPolicy: false, resetDeepAgentsProjection: true },
+    );
   }
   withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
     // Serialize filesystem restore, mutable-permission repair, and policy

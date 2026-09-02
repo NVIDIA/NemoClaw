@@ -49,6 +49,7 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
+  mcp?: SandboxEntry["mcp"];
 };
 export { type DcodeProbeState, dcodeProbeOutput } from "./dcode-probe-test-fixture";
 
@@ -197,6 +198,7 @@ export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
+export const restoreExistingMcpBridgeRuntimeMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
   (
     name: string,
@@ -373,6 +375,10 @@ vi.mock("./restore-gateway-pairing", () => ({
   waitForRestoredSandboxGatewaySupervisor: waitForRestoredSandboxGatewaySupervisorMock,
 }));
 
+vi.mock("./mcp-bridge-restart", () => ({
+  restoreExistingMcpBridgeRuntime: restoreExistingMcpBridgeRuntimeMock,
+}));
+
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
   assertHermesPortableCommandUnavailableMock.mockReset();
@@ -432,6 +438,7 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
+  restoreExistingMcpBridgeRuntimeMock.mockReset().mockResolvedValue(undefined);
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,
     output: "",

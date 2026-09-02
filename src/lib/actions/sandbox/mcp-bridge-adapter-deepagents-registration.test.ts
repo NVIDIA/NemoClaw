@@ -10,6 +10,39 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { buildDeepAgentsMcpRegisterCommand } from "./mcp-bridge-adapter-deepagents";
 import { DEEPAGENTS_MCP_CONFIG_PATH } from "./mcp-bridge-adapter-status";
 
+function resetUnsafeSnapshotProjection(
+  options: {
+    danglingSymlink?: boolean;
+    fifo?: boolean;
+    symlink?: boolean;
+  },
+  initialConfig: { mcpServers: Record<string, never> } | undefined,
+) {
+  const registration = runDeepAgentsConfigCommand(
+    buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
+      resetManagedProjection: true,
+    }),
+    initialConfig,
+    "v2",
+    undefined,
+    0o600,
+    options,
+  );
+  expect(registration.status, registration.stderr).toBe(0);
+  expect(registration.config).toEqual({
+    mcpServers: {
+      github: {
+        type: "http",
+        url: baseEntry.url,
+        headers: {
+          Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+        },
+      },
+    },
+  });
+  return { initialConfig, registration };
+}
+
 describe("Deep Agents MCP config adapter registration", () => {
   it("constructs a dedicated NemoClaw MCP projection with placeholders", () => {
     const command = buildDeepAgentsMcpRegisterCommand(baseEntry);
@@ -74,6 +107,27 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(registration.status).toBe(2);
     expect(registration.stderr).toContain("only mcpServers is allowed");
     expect(registration.config).toEqual(initialConfig);
+  });
+
+  it("replaces an unsafe symbolic link during snapshot restore without following it (#10756)", () => {
+    const { initialConfig, registration } = resetUnsafeSnapshotProjection(
+      { symlink: true },
+      { mcpServers: {} },
+    );
+
+    expect(registration.managedSymlinkTargetText).toBe(
+      `${JSON.stringify(initialConfig, null, 2)}\n`,
+    );
+  });
+
+  it("replaces an unsafe FIFO during snapshot restore without opening it (#10756)", () => {
+    resetUnsafeSnapshotProjection({ fifo: true }, { mcpServers: {} });
+  });
+
+  it("replaces an unsafe dangling symlink during snapshot restore (#10756)", () => {
+    const { registration } = resetUnsafeSnapshotProjection({ danglingSymlink: true }, undefined);
+
+    expect(registration.managedSymlinkTargetExists).toBe(false);
   });
 
   it("preserves a sibling revision while revising the target server", () => {

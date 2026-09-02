@@ -22,6 +22,7 @@ export type {
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
+export { restoreExistingMcpBridgeRuntime } from "../mcp-bridge-restart";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,

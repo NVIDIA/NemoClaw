@@ -157,6 +157,7 @@ export function registerAgentAdapter(
     replaceExisting?: boolean;
     teardownRollback?: boolean;
     credentialRevision?: McpAttachedCredentialRevision;
+    resetDeepAgentsProjection?: boolean;
   } = {},
 ): void {
   switch (adapter) {
@@ -186,6 +187,7 @@ export function registerAgentAdapter(
         options.replaceExisting === true,
         options.teardownRollback === true,
         options.credentialRevision,
+        options.resetDeepAgentsProjection === true,
       );
       return;
   }
@@ -198,7 +200,11 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
   entry: McpBridgeEntry,
   envValues: Record<string, string>,
   initialCredentialRevision: McpAttachedCredentialRevision,
-  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
+  options: {
+    replaceExisting?: boolean;
+    teardownRollback?: boolean;
+    resetDeepAgentsProjection?: boolean;
+  } = {},
 ): McpAttachedCredentialRevision {
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
@@ -206,6 +212,7 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
   );
   let credentialRevision = initialCredentialRevision;
   let replaceExisting = options.replaceExisting === true;
+  let resetDeepAgentsProjection = options.resetDeepAgentsProjection === true;
   for (
     let registration = 1;
     registration <= MAX_CREDENTIAL_REVISION_REGISTRATIONS;
@@ -215,7 +222,9 @@ export function registerAgentAdapterAtCurrentCredentialRevision(
       replaceExisting,
       teardownRollback: options.teardownRollback === true,
       credentialRevision,
+      resetDeepAgentsProjection,
     });
+    resetDeepAgentsProjection = false;
     let candidateRevision: McpAttachedCredentialRevision | undefined;
     let stableObservations = 0;
     let observedRevision: McpAttachedCredentialRevision | undefined;

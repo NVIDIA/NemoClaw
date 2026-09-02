@@ -122,6 +122,60 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.restoreSandboxStateMock).toHaveBeenCalledTimes(2);
   });
 
+  it("repairs the managed Deep Agents MCP projection before restoring snapshot files (#10756)", async () => {
+    f.getLatestBackupMock.mockReturnValue({
+      snapshotVersion: 4,
+      name: "stable",
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "langchain-deepagents-code",
+            adapter: "deepagents-config",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            policyName: "mcp-bridge-github",
+            addedAt: "2026-06-01T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    f.restoreExistingMcpBridgeRuntimeMock.mockImplementation(async () => {
+      f.lifecycleMock.events.push("restore-mcp-projection");
+    });
+    f.restoreSandboxStateMock.mockImplementation(() => {
+      f.lifecycleMock.events.push("restore-snapshot-state");
+      return {
+        success: true,
+        restoredDirs: [".state"],
+        restoredFiles: ["config.toml"],
+        failedDirs: [],
+        failedFiles: [],
+      };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(f.restoreExistingMcpBridgeRuntimeMock).toHaveBeenCalledWith(
+      "alpha",
+      [expect.objectContaining({ server: "github" })],
+      { applyPolicy: false, resetDeepAgentsProjection: true },
+    );
+    expect(f.lifecycleMock.events).toEqual([
+      "restore-mcp-projection",
+      "lock:restore sandbox snapshot",
+      "restore-snapshot-state",
+    ]);
+  });
+
   it("keeps active-timer restore, permission repair, and policy reconciliation serialized", async () => {
     f.lifecycleMock.readTimerMarkerMock.mockReturnValue({
       pid: 4242,
