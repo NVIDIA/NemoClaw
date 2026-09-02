@@ -39,13 +39,6 @@ on:
 # credential or the untrusted PR worktree.
 permissions: {}
 
-# Admit one complete advisor run at a time so all specialists can return fast
-# feedback without concurrent PRs overwhelming the shared inference endpoint.
-concurrency:
-  group: pr-review-advisor-global
-  cancel-in-progress: false
-  queue: max
-
 jobs:
   discover-specialists:
     name: Discover review specialists and collect GitHub context
