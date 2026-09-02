@@ -369,6 +369,7 @@
     },
     {
       "live": "test/e2e/live/channels-add-remove.test.ts",
+      "liveSources": ["test/e2e/live/channels-add-remove-helpers.ts"],
       "fast": [
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/channels/channels-add-preset.test.ts",
