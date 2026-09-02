@@ -101,6 +101,32 @@ process.stdout.write("__RESULT__" + JSON.stringify({
     expect(result.stderr).not.toContain("Preset not found");
   });
 
+  it("loadPresetForSandbox fails closed when WeChat policy input is invalid (#10606)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-policy-input-"));
+    const script = String.raw`
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({
+  name: "wechat-invalid",
+  agent: "openclaw",
+});
+process.stdout.write("__RESULT__" + JSON.stringify({
+  preset: policies.loadPresetForSandbox("wechat-invalid", "wechat", {
+    messagingConfig: { WECHAT_BASE_URL: "https://idc-3.weixin.qq.com.evil.example" },
+  }),
+}));
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.split("__RESULT__")[1].trim())).toEqual({ preset: null });
+  });
+
   it("gateway preset matching skips unsupported Deep Agents messaging policies without lookup noise (#6185)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-gateway-agent-"));
     const openshellPath = path.join(tmpDir, "openshell");
