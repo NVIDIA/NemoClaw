@@ -54,8 +54,15 @@ vi.mock("./ssrf.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./ssrf.js")>()),
   validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
 }));
+vi.mock("./private-networks.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./private-networks.js")>()),
+  isPrivateHostname: (host: string) =>
+    new Set(["0.0.0.0", "10.0.0.1", "127.0.0.1", "169.254.169.254"]).has(host),
+}));
 
 const { actionApply, actionReconcile, actionStatus } = await import("./runner.js");
+const { validateEndpointUrl } = await import("./ssrf.js");
+const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
 const additions = {
   nim_service: {
@@ -79,12 +86,29 @@ function runDirectory(runId: string): string {
 
 describe("blueprint policy convenience", () => {
   let livePolicy: Record<string, unknown>;
+  let policyHistory: Map<number, Record<string, unknown>>;
+  let policyVersion: number;
   let globalActive: boolean;
   let basePolicyFailure: string | null;
   let basePolicyOutput: string | null;
   let basePolicyReads: number;
   let mutateBasePolicyOnRead: number | null;
   let mutateBasePolicy: (() => void) | null;
+  let mutateBeforePolicySet: (() => void) | null;
+  let policySetDiagnostic: string | null;
+  let policySetBehavior: "applied" | "ambiguous-applied" | "ambiguous-unapplied" | "rejected";
+
+  function recordHostMutation(mutation: (() => void) | null): void {
+    mutation?.();
+    policyVersion += mutation === null ? 0 : 1;
+    mutation === null ? undefined : policyHistory.set(policyVersion, structuredClone(livePolicy));
+  }
+
+  function recordPolicyWrite(policy: Record<string, unknown>): void {
+    livePolicy = policy;
+    policyVersion += 1;
+    policyHistory.set(policyVersion, structuredClone(livePolicy));
+  }
 
   beforeEach(() => {
     store.clear();
@@ -95,14 +119,25 @@ describe("blueprint policy convenience", () => {
       future_section: { preserve: true },
       network_policies: { host_added: { endpoints: [{ host: "host.example", port: 443 }] } },
     };
+    policyVersion = 1;
+    policyHistory = new Map([[policyVersion, structuredClone(livePolicy)]]);
     globalActive = false;
     basePolicyFailure = null;
     basePolicyOutput = null;
     basePolicyReads = 0;
     mutateBasePolicyOnRead = null;
     mutateBasePolicy = null;
+    mutateBeforePolicySet = null;
+    policySetDiagnostic = null;
+    policySetBehavior = "applied";
+    mockedValidateEndpoint
+      .mockReset()
+      .mockImplementation(async (url: string) => resolvedEndpointFor(url));
     mockExeca.mockReset().mockImplementation(async (_command: string, args: string[]) => {
       const joined = args.join(" ");
+      const revisionRead = /^policy get -g test-gateway --rev (\d+) --base test-sandbox$/u.exec(
+        joined,
+      );
       switch (joined) {
         case "status":
           return gatewayStatusResult();
@@ -120,10 +155,20 @@ describe("blueprint policy convenience", () => {
             globalActive ? "global" : "sandbox",
             livePolicy.network_policies as Record<string, unknown>,
             livePolicy,
+            `sha256:test-policy-${String(policyVersion)}`,
+            policyVersion,
           );
+        case revisionRead?.[0]:
+          return {
+            exitCode: 0,
+            stdout: YAML.stringify(
+              policyHistory.get(Number.parseInt(revisionRead?.[1] ?? "0", 10)) ?? livePolicy,
+            ),
+            stderr: "",
+          };
         case "policy get -g test-gateway --base test-sandbox":
           basePolicyReads += 1;
-          (basePolicyReads === mutateBasePolicyOnRead ? mutateBasePolicy : null)?.();
+          recordHostMutation(basePolicyReads === mutateBasePolicyOnRead ? mutateBasePolicy : null);
           return basePolicyFailure
             ? { exitCode: 1, stdout: "", stderr: basePolicyFailure }
             : {
@@ -135,8 +180,35 @@ describe("blueprint policy convenience", () => {
       switch (`${args[0]} ${args[1]}`) {
         case "policy set": {
           const path = args[args.indexOf("--policy") + 1];
-          livePolicy = YAML.parse(String(store.get(path)?.content ?? ""));
-          return successResult();
+          const concurrentMutation = mutateBeforePolicySet;
+          mutateBeforePolicySet = null;
+          recordHostMutation(concurrentMutation);
+          const requestedPolicy = YAML.parse(String(store.get(path)?.content ?? "")) as Record<
+            string,
+            unknown
+          >;
+          switch (policySetBehavior) {
+            case "rejected":
+              return {
+                exitCode: 1,
+                stdout: "",
+                stderr:
+                  policySetDiagnostic ??
+                  "Error: code: 'failed_precondition', message: 'write rejected'",
+              };
+            case "ambiguous-unapplied":
+              return {
+                exitCode: 1,
+                stdout: "",
+                stderr: policySetDiagnostic ?? "h2 protocol error",
+              };
+            case "ambiguous-applied":
+              recordPolicyWrite(requestedPolicy);
+              return { exitCode: 1, stdout: "", stderr: "h2 protocol error" };
+            default:
+              recordPolicyWrite(requestedPolicy);
+              return successResult();
+          }
         }
         case "provider get":
           return {
@@ -169,6 +241,91 @@ describe("blueprint policy convenience", () => {
     expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
   });
 
+  it("writes the DNS-pinned address returned by policy hostname validation", async () => {
+    mockedValidateEndpoint.mockResolvedValueOnce({
+      url: "http://integrate.api.nvidia.com:443",
+      pinnedUrl: "http://93.184.216.34:443/",
+      protocol: "http:",
+      hostname: "integrate.api.nvidia.com",
+      resolvedAddress: "93.184.216.34",
+      resolvedFamily: 4,
+      dnsResolved: true,
+    });
+
+    await actionApply("default", blueprint());
+
+    expect(livePolicy.network_policies).toMatchObject({
+      nim_service: {
+        endpoints: [{ host: "93.184.216.34", port: 443, access: "full" }],
+      },
+    });
+  });
+
+  it.each(["*", "*.example.com", "0.0.0.0", "169.254.169.254", "127.0.0.1", "10.0.0.1"])(
+    "rejects unsafe policy host %s before any lifecycle mutation",
+    async (host) => {
+      const value = structuredClone(blueprint());
+      value.components!.policy!.additions!.nim_service.endpoints[0].host = host;
+
+      await expect(actionApply("default", value)).rejects.toThrow(
+        "Blueprint policy addition 'nim_service' endpoint 1 is rejected",
+      );
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect([...store.keys()].some((path) => path.includes("/.nemoclaw/state/runs/"))).toBe(false);
+    },
+  );
+
+  it("rejects a policy hostname that resolves to a private address before any lifecycle mutation", async () => {
+    const value = structuredClone(blueprint());
+    value.components!.policy!.additions!.nim_service.endpoints[0].host = "rebind.example.com";
+    mockedValidateEndpoint.mockRejectedValueOnce(
+      new Error("Endpoint URL resolves to private/internal address 127.0.0.1"),
+    );
+
+    await expect(actionApply("default", value)).rejects.toThrow(
+      /Blueprint policy addition 'nim_service' endpoint 1 is rejected:.*127\.0\.0\.1/iu,
+    );
+    expect(mockedValidateEndpoint).toHaveBeenCalledWith("http://rebind.example.com:443");
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect([...store.keys()].some((path) => path.includes("/.nemoclaw/state/runs/"))).toBe(false);
+  });
+
+  it("rejects a DNS validation result that does not pin the policy hostname", async () => {
+    mockedValidateEndpoint.mockResolvedValueOnce({
+      url: "http://integrate.api.nvidia.com:443",
+      pinnedUrl: "http://integrate.api.nvidia.com:443/",
+      protocol: "http:",
+      hostname: "integrate.api.nvidia.com",
+      resolvedAddress: "93.184.216.34",
+      resolvedFamily: 4,
+      dnsResolved: true,
+    });
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /policy hostname validation did not return a pinned IP address/iu,
+    );
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it("verifies policy additions before creating the inference provider or route", async () => {
+    await actionApply("default", blueprint());
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    const policySet = commands.findIndex((command) => command.startsWith("policy set "));
+    const policyVerification = commands.findIndex(
+      (command, index) =>
+        index > policySet &&
+        command === "policy get -g test-gateway --full --output json test-sandbox",
+    );
+    const providerCreate = commands.findIndex((command) => command.startsWith("provider create "));
+    const inferenceSet = commands.findIndex((command) => command.startsWith("inference set "));
+
+    expect(policySet).toBeGreaterThanOrEqual(0);
+    expect(policyVerification).toBeGreaterThan(policySet);
+    expect(providerCreate).toBeGreaterThan(policyVerification);
+    expect(inferenceSet).toBeGreaterThan(providerCreate);
+  });
+
   it("rebases additions when an unrelated host edit races the initial base-policy read", async () => {
     mutateBasePolicyOnRead = 2;
     mutateBasePolicy = () => {
@@ -188,6 +345,55 @@ describe("blueprint policy convenience", () => {
         nim_service: additions.nim_service,
       }),
     );
+  });
+
+  it("rebases additions when an unrelated host edit races the policy write", async () => {
+    mutateBeforePolicySet = () => {
+      livePolicy.network_policies = {
+        ...(livePolicy.network_policies as Record<string, unknown>),
+        concurrent_after_read: {
+          endpoints: [{ host: "after-read.example", port: 443 }],
+        },
+      };
+    };
+
+    await actionApply("default", blueprint());
+
+    expect(livePolicy.network_policies).toEqual(
+      expect.objectContaining({
+        concurrent_after_read: expect.any(Object),
+        nim_service: additions.nim_service,
+      }),
+    );
+    expect(
+      mockExeca.mock.calls.filter(
+        ([, args]) => Array.isArray(args) && args[0] === "policy" && args[1] === "set",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("restores a blueprint-owned host edit that races the policy write", async () => {
+    mutateBeforePolicySet = () => {
+      livePolicy.network_policies = {
+        ...(livePolicy.network_policies as Record<string, unknown>),
+        nim_service: {
+          name: "nim_service",
+          endpoints: [{ host: "operator-after-read.example", port: 443, access: "full" }],
+        },
+      };
+    };
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      "network policy 'nim_service' changed concurrently",
+    );
+    expect(livePolicy.network_policies).toMatchObject({
+      nim_service: { endpoints: [{ host: "operator-after-read.example" }] },
+    });
+    expect(
+      mockExeca.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "provider" && args[1] === "create",
+      ),
+    ).toBe(false);
   });
 
   it("stops when a host edit races the blueprint-owned policy key", async () => {
@@ -238,18 +444,70 @@ describe("blueprint policy convenience", () => {
     );
   });
 
-  it("surfaces a failed OpenShell policy write", async () => {
-    const implementation = mockExeca.getMockImplementation();
-    expect(implementation).toBeDefined();
-    mockExeca.mockImplementation(async (command: string, args: string[]) =>
-      args[0] === "policy" && args[1] === "set"
-        ? { exitCode: 1, stdout: "", stderr: "write rejected" }
-        : implementation!(command, args),
-    );
+  it("rejects literal credentials before creating a blueprint policy handoff", async () => {
+    livePolicy.process = {
+      environment: { SERVICE_API_KEY: "opaque-live-policy-credential" },
+    };
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
-      /Failed to apply policy additions: write rejected/,
+      "Cannot prepare the blueprint policy update because the live OpenShell policy contains a literal credential value.",
     );
+    expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
+    expect(
+      mockExeca.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "policy" && args[1] === "set",
+      ),
+    ).toBe(false);
+  });
+
+  it("redacts a rejected OpenShell policy-write diagnostic", async () => {
+    const urlCredential = "opaque-url-credential";
+    const assignmentCredential = "opaque-lowercase-credential";
+    policySetBehavior = "rejected";
+    policySetDiagnostic =
+      `Error: code: 'failed_precondition', message: 'write rejected at ` +
+      `https://operator:${urlCredential}@api.example apiKey=${assignmentCredential}'`;
+
+    const failure = await actionApply("default", blueprint()).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/Failed to apply policy additions: write rejected/);
+    expect((failure as Error).message).not.toContain(urlCredential);
+    expect((failure as Error).message).not.toContain(assignmentCredential);
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands.some((command) => command.startsWith("provider create "))).toBe(false);
+    expect(commands.some((command) => command.startsWith("inference set "))).toBe(false);
+  });
+
+  it("accepts an ambiguous write only when typed readback contains the requested additions", async () => {
+    policySetBehavior = "ambiguous-applied";
+
+    await actionApply("default", blueprint());
+
+    expect(livePolicy.network_policies).toMatchObject({ nim_service: additions.nim_service });
+  });
+
+  it("redacts an ambiguous policy-write diagnostic before stopping", async () => {
+    const urlCredential = "opaque-url-credential";
+    const assignmentCredential = "opaque-lowercase-credential";
+    policySetBehavior = "ambiguous-unapplied";
+    policySetDiagnostic =
+      `h2 protocol error at https://operator:${urlCredential}@api.example ` +
+      `apiKey=${assignmentCredential}`;
+
+    const failure = await actionApply("default", blueprint()).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(
+      /Could not confirm the blueprint policy update: h2 protocol error/,
+    );
+    expect((failure as Error).message).not.toContain(urlCredential);
+    expect((failure as Error).message).not.toContain(assignmentCredential);
+    expect(livePolicy.network_policies).not.toHaveProperty("nim_service");
   });
 
   it("fails closed when policy inspection throws", async () => {
