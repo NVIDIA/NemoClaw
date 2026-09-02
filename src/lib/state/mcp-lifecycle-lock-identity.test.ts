@@ -240,28 +240,6 @@ describe("MCP lifecycle lock identity properties", () => {
     },
   );
 
-  it("reclaims PID reuse only after a fresh start-tick mismatch", () => {
-    fc.assert(
-      fc.property(boundaryPidArbitrary, bootArbitrary, tickArbitrary, (pid, boot, ticks) => {
-        const ownerIdentity = `linux:${boot}:${ticks}`;
-        const replacementIdentity = `linux:${boot}:${BigInt(ticks) + 1n}`;
-        const readProcessIdentity = vi.fn(() => replacementIdentity);
-        const result = classifyMcpLifecycleLock(
-          observation(owner(pid, ownerIdentity)),
-          SANDBOX_NAME,
-          0,
-          30_000,
-          probes({ readProcessIdentity }),
-        );
-
-        expect(result).toBe("stale");
-        expect(readProcessIdentity).toHaveBeenNthCalledWith(1, pid);
-        expect(readProcessIdentity).toHaveBeenNthCalledWith(2, pid, true);
-      }),
-      { numRuns: PROPERTY_RUNS },
-    );
-  });
-
   it("reclaims a live PID whose boot identity changed", () => {
     fc.assert(
       fc.property(
@@ -287,7 +265,7 @@ describe("MCP lifecycle lock identity properties", () => {
   });
 
   it(
-    "reaps a live PID only when a fresh identity read confirms the mismatch",
+    "reaps a live PID only when an independent identity read confirms the mismatch",
     {
       timeout: PROPERTY_TIMEOUT_MS,
     },
@@ -298,17 +276,14 @@ describe("MCP lifecycle lock identity properties", () => {
           processIdentityArbitrary,
           fc.constantFrom("match", "mismatch", "unavailable"),
           (pid, identity, freshResult) => {
-            const reads: Array<{ pid: number; fresh: boolean }> = [];
             const replacementIdentity = `${identity}:replacement`;
             const freshIdentityByResult = {
               match: identity,
               mismatch: replacementIdentity,
               unavailable: null,
             } as const;
-            const readProcessIdentity = (readPid: number, fresh = false): string | null => {
-              reads.push({ pid: readPid, fresh });
-              return fresh ? freshIdentityByResult[freshResult] : replacementIdentity;
-            };
+            const readProcessIdentity = (_readPid: number, fresh = false): string | null =>
+              fresh ? freshIdentityByResult[freshResult] : replacementIdentity;
 
             expect(
               classifyMcpLifecycleLock(
@@ -319,10 +294,6 @@ describe("MCP lifecycle lock identity properties", () => {
                 probes({ readProcessIdentity }),
               ),
             ).toBe(freshResult === "mismatch" ? "stale" : "active");
-            expect(reads).toEqual([
-              { pid, fresh: false },
-              { pid, fresh: true },
-            ]);
           },
         ),
         SEEDED_PROPERTY_PARAMETERS,

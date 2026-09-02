@@ -47,6 +47,86 @@ function restoreClaimedLockFileGenerationSync(targetPath: string, quarantinePath
   fs.rmSync(quarantinePath, { force: true });
 }
 
+function reclaimRemovalFailure(
+  targetPath: string,
+  quarantinePath: string,
+  removalError: unknown,
+  canonicalState: "replacement" | "restored",
+  restorationError: unknown | null,
+  quarantineRetained: boolean,
+): Error {
+  const restoration =
+    restorationError !== null
+      ? `Restoration at '${targetPath}' also failed: ${String(restorationError)}.`
+      : canonicalState === "restored"
+        ? `The claimed generation was restored at '${targetPath}' without overwriting any replacement.`
+        : `A replacement at '${targetPath}' was preserved.`;
+  const retained = quarantineRetained
+    ? ` The claimed generation remains at '${quarantinePath}'; verify that it is inactive before removing only that path.`
+    : "";
+  return new Error(
+    `Failed to remove claimed lock generation '${quarantinePath}': ${String(removalError)}. ${restoration}${retained}`,
+  );
+}
+
+async function recoverClaimedLockFileAfterRemovalFailure(
+  targetPath: string,
+  quarantinePath: string,
+  removalError: unknown,
+): Promise<never> {
+  let canonicalState: "replacement" | "restored" = "restored";
+  let restorationError: unknown | null = null;
+  try {
+    await fs.promises.link(quarantinePath, targetPath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "EEXIST") canonicalState = "replacement";
+    else restorationError = error;
+  }
+  let quarantineRetained = false;
+  try {
+    await fs.promises.rm(quarantinePath, { force: true });
+  } catch {
+    quarantineRetained = true;
+  }
+  throw reclaimRemovalFailure(
+    targetPath,
+    quarantinePath,
+    removalError,
+    canonicalState,
+    restorationError,
+    quarantineRetained,
+  );
+}
+
+function recoverClaimedLockFileAfterRemovalFailureSync(
+  targetPath: string,
+  quarantinePath: string,
+  removalError: unknown,
+): never {
+  let canonicalState: "replacement" | "restored" = "restored";
+  let restorationError: unknown | null = null;
+  try {
+    fs.linkSync(quarantinePath, targetPath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "EEXIST") canonicalState = "replacement";
+    else restorationError = error;
+  }
+  let quarantineRetained = false;
+  try {
+    fs.rmSync(quarantinePath, { force: true });
+  } catch {
+    quarantineRetained = true;
+  }
+  throw reclaimRemovalFailure(
+    targetPath,
+    quarantinePath,
+    removalError,
+    canonicalState,
+    restorationError,
+    quarantineRetained,
+  );
+}
+
 /** Atomically remove only the exact regular-file generation observed earlier. */
 export async function reclaimLockFileGeneration<T extends LockFileGeneration>(
   targetPath: string,
@@ -81,7 +161,11 @@ export async function reclaimLockFileGeneration<T extends LockFileGeneration>(
     await restoreClaimedLockFileGeneration(targetPath, quarantinePath);
     throw error;
   }
-  await fs.promises.rm(quarantinePath, { force: true });
+  try {
+    await fs.promises.rm(quarantinePath, { force: true });
+  } catch (error) {
+    await recoverClaimedLockFileAfterRemovalFailure(targetPath, quarantinePath, error);
+  }
   return true;
 }
 
@@ -119,6 +203,10 @@ export function reclaimLockFileGenerationSync<T extends LockFileGeneration>(
     restoreClaimedLockFileGenerationSync(targetPath, quarantinePath);
     throw error;
   }
-  fs.rmSync(quarantinePath, { force: true });
+  try {
+    fs.rmSync(quarantinePath, { force: true });
+  } catch (error) {
+    recoverClaimedLockFileAfterRemovalFailureSync(targetPath, quarantinePath, error);
+  }
   return true;
 }

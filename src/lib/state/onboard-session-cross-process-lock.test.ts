@@ -344,30 +344,19 @@ describe("cross-process onboard lock", () => {
     }
   });
 
-  it("never reports two successful recovery writes after losing one record (#9833)", async () => {
-    const readyA = path.join(tempHome, "writer-a.ready");
-    const readyB = path.join(tempHome, "writer-b.ready");
+  it("reports exactly one successful recovery write while another writer owns the lock (#9833)", async () => {
     const childScript = `
       const fs = require("node:fs");
       const session = require(process.argv[1]);
-      const ownReady = process.argv[2];
-      const peerReady = process.argv[3];
-      const role = process.argv[4];
+      const role = process.argv[2];
+      const useBarrier = process.argv[3] === "barrier";
       const originalWriteFileSync = fs.writeFileSync;
-      const wait = (milliseconds) => Atomics.wait(
-        new Int32Array(new SharedArrayBuffer(4)),
-        0,
-        0,
-        milliseconds,
-      );
       let synchronized = false;
       fs.writeFileSync = (...args) => {
-        if (!synchronized && typeof args[0] === "number") {
+        if (useBarrier && !synchronized && typeof args[0] === "number") {
           synchronized = true;
-          originalWriteFileSync(ownReady, role);
-          const deadline = Date.now() + 750;
-          while (!fs.existsSync(peerReady) && Date.now() < deadline) wait(10);
-          if (role === "b") wait(100);
+          process.stdout.write("ready\\n");
+          fs.readSync(0, Buffer.alloc(1), 0, 1, null);
         }
         return originalWriteFileSync(...args);
       };
@@ -386,39 +375,66 @@ describe("cross-process onboard lock", () => {
           },
           reason: "retained_after_sandbox_creation_failure",
         });
-        process.stdout.write(JSON.stringify({ ok: true, recordId: recorded.recordId }));
+        process.stdout.write("result:" + JSON.stringify({ ok: true, recordId: recorded.recordId }));
       } catch (error) {
-        process.stdout.write(JSON.stringify({ ok: false, error: String(error) }));
+        process.stdout.write("result:" + JSON.stringify({ ok: false, error: String(error) }));
       }
     `;
-    const runWriter = (role: "a" | "b", ownReady: string, peerReady: string) =>
-      new Promise<{ ok: boolean }>((resolve, reject) => {
-        const child = spawn(
-          process.execPath,
-          ["--require", "tsx/cjs", "-e", childScript, sessionPath, ownReady, peerReady, role],
-          { env: { ...process.env, HOME: tempHome }, stdio: ["ignore", "pipe", "pipe"] },
-        );
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (chunk) => (stdout += String(chunk)));
-        child.stderr.on("data", (chunk) => (stderr += String(chunk)));
-        child.once("error", reject);
-        child.once("close", (code) => {
-          code === 0
-            ? resolve(JSON.parse(stdout) as { ok: boolean })
-            : reject(new Error(`recovery writer exited ${String(code)}: ${stderr}`));
-        });
-      });
+    const runWriter = (role: "a" | "b", useBarrier: boolean) => {
+      const child = spawn(
+        process.execPath,
+        [
+          "--require",
+          "tsx/cjs",
+          "-e",
+          childScript,
+          sessionPath,
+          role,
+          useBarrier ? "barrier" : "unblocked",
+        ],
+        { env: { ...process.env, HOME: tempHome }, stdio: ["pipe", "pipe", "pipe"] },
+      );
+      const result = new Promise<{ ok: boolean; error?: string; recordId?: string }>(
+        (resolve, reject) => {
+          let stdout = "";
+          let stderr = "";
+          child.stdout.on("data", (chunk) => (stdout += String(chunk)));
+          child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+          child.once("error", reject);
+          child.once("close", (code) => {
+            const marker = stdout.lastIndexOf("result:");
+            code === 0 && marker >= 0
+              ? resolve(
+                  JSON.parse(stdout.slice(marker + "result:".length)) as {
+                    ok: boolean;
+                    error?: string;
+                    recordId?: string;
+                  },
+                )
+              : reject(new Error(`recovery writer exited ${String(code)}: ${stderr || stdout}`));
+          });
+        },
+      );
+      return { child, result };
+    };
 
-    const results = await Promise.all([
-      runWriter("a", readyA, readyB),
-      runWriter("b", readyB, readyA),
-    ]);
-    const successfulWrites = results.filter((result) => result.ok).length;
+    const winner = runWriter("a", true);
+    const [ready] = await once(winner.child.stdout, "data");
+    expect(String(ready)).toContain("ready");
+    const loser = await runWriter("b", false).result;
+    winner.child.stdin.write("\n");
+    winner.child.stdin.end();
+    const winningResult = await winner.result;
     const records = session.listRetainedSandboxRecoveryRecords();
 
-    expect(successfulWrites).toBeGreaterThan(0);
-    expect(records).toHaveLength(successfulWrites);
+    expect(winningResult.ok).toBe(true);
+    expect(loser.ok).toBe(false);
+    expect(loser.error).toContain("Cannot update onboarding recovery");
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      recordId: winningResult.recordId,
+      sandboxName: "writer-a",
+    });
   });
 
   it("reconstructs retained recovery after an independent writer failure and restart (#9833)", () => {

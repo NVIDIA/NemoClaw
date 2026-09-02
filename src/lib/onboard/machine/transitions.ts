@@ -72,6 +72,31 @@ export const ONBOARD_MACHINE_NEXT_STATES: Readonly<
   {} as Record<OnboardMachineState, readonly OnboardMachineState[]>,
 );
 
+export function nextMachineStateAfterCompletedStep(
+  stepName: string | null | undefined,
+  session: { agent: string | null },
+): OnboardMachineState | null {
+  switch (stepName) {
+    case "preflight":
+      return "gateway";
+    case "gateway":
+      return "provider_selection";
+    case "provider_selection":
+      return "inference";
+    case "inference":
+      return "sandbox";
+    case "sandbox":
+      return session.agent ? "agent_setup" : "openclaw";
+    case "openclaw":
+    case "agent_setup":
+      return "policies";
+    case "policies":
+      return "finalizing";
+    default:
+      return null;
+  }
+}
+
 export class InvalidOnboardMachineTransitionError extends Error {
   readonly from: OnboardMachineState;
   readonly to: OnboardMachineState;

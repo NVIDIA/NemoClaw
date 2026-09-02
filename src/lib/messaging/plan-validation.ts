@@ -15,6 +15,8 @@ import {
 } from "./persistence";
 import { normalizeMessagingChannelId } from "./post-agent-install-selection";
 
+export { compactSandboxMessagingPlanForPersistence } from "./persistence";
+
 export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
   agent?: MessagingAgentId | string | null;
@@ -68,10 +70,7 @@ export function parseSandboxMessagingPlan(
     }
     if (Object.hasOwn(channel, "active") && typeof channel.active !== "boolean") return null;
     if (Object.hasOwn(channel, "disabled") && typeof channel.disabled !== "boolean") return null;
-    if (
-      Object.hasOwn(channel, "pendingRemoval") &&
-      typeof channel.pendingRemoval !== "boolean"
-    ) {
+    if (Object.hasOwn(channel, "pendingRemoval") && typeof channel.pendingRemoval !== "boolean") {
       return null;
     }
     if (Object.hasOwn(channel, "inputs") && !Array.isArray(channel.inputs)) return null;

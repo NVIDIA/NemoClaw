@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
-import { nextMachineStateAfterCompletedStep } from "../state/onboard-step-state";
+import { nextMachineStateAfterCompletedStep } from "./machine/transitions";
 import { machineStateFromOnboardSessionStep } from "./machine/events";
 import type { OnboardMachineState } from "./machine/types";
 

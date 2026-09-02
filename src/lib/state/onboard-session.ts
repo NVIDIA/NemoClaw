@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
@@ -25,19 +26,24 @@ import {
   type WebSearchConfig,
 } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
-import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
-import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
+import {
+  compactSandboxMessagingPlanForPersistence,
+  parseSandboxMessagingPlan,
+} from "../messaging/plan-validation";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { describeGatewayOwner, type GatewayOwnerDescription } from "../onboard/gateway-ownership";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
   machineStateFromOnboardSessionStep,
+  redactSensitiveText,
+  redactUrl,
 } from "../onboard/machine/events";
 import {
   assertValidOnboardMachineTransition,
   isOnboardMachineState,
   isTerminalOnboardMachineState,
+  nextMachineStateAfterCompletedStep,
 } from "../onboard/machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
 import { normalizeReasoningEffort, type ReasoningEffort } from "../onboard/reasoning-mode";
@@ -50,40 +56,38 @@ import {
   reconcileStationExpressInstallerResumeRetirement,
   type StationExpressResumeIntent,
 } from "../onboard/station-express-resume";
-import { redactSensitiveText, redactUrl } from "../security/redact";
-import type { LockFileGeneration } from "./lock-generation/storage";
+import { reclaimLockFileGenerationSync, type LockFileGeneration } from "./lock-generation/storage";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   classifyOnboardLockContents,
   createOnboardLockRecord,
-  listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   MAX_ONBOARD_LOCK_BYTES,
-  openRegularFileNoFollow,
-  reclaimLockFileGenerationSync,
+  type OnboardLockDisposition,
+  type OnboardLockRecord,
+} from "./onboard-session/lock-holder";
+import {
+  listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
-  type OnboardLockDisposition,
-  type OnboardLockRecord,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
-} from "./onboard-session/index";
+} from "./onboard-session/retained-sandbox-recovery";
 import {
   assignSafeToolDisclosureUpdate,
   normalizeSessionToolDisclosure,
   preserveInvalidSessionToolDisclosure,
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
-import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
-import type { SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
+import type { SandboxHostMount } from "./registry/types";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
-export type { RetainedSandboxRecoveryRecord } from "./onboard-session/index";
+export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -836,7 +840,7 @@ function parseStoredCheckpoint(value: unknown): OnboardCheckpoint | null {
   return inspected.status === "loaded" ? inspected.checkpoint : null;
 }
 
-// redactSensitiveText and redactUrl imported from ./redact (#2381).
+// Preserve the session-module redaction exports used by existing callers (#2381).
 export { redactSensitiveText, redactUrl };
 
 export function sanitizeFailure(

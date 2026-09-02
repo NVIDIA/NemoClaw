@@ -7,10 +7,7 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
-import {
-  openRegularFileNoFollow,
-  type OpenRegularFile,
-} from "../adapters/fs/regular-file";
+import { openRegularFileNoFollow, type OpenRegularFile } from "../adapters/fs/regular-file";
 import { resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import {
   assertGatewayStatePathSafe,
@@ -22,17 +19,16 @@ import {
 import {
   classifyOnboardLockContents,
   createOnboardLockRecord,
-  listRetainedSandboxRecoveryRecords,
   MAX_ONBOARD_LOCK_BYTES,
-  retainedSandboxRecoveryFile,
   type OnboardLockDisposition,
   type OnboardLockRecord,
-  type RetainedSandboxRecoveryRecord,
-} from "./onboard-session/index";
+} from "./onboard-session/lock-holder";
 import {
-  reclaimLockFileGenerationSync,
-  type LockFileGeneration,
-} from "./lock-generation/storage";
+  listRetainedSandboxRecoveryRecords,
+  retainedSandboxRecoveryFile,
+  type RetainedSandboxRecoveryRecord,
+} from "./onboard-session/retained-sandbox-recovery";
+import { reclaimLockFileGenerationSync, type LockFileGeneration } from "./lock-generation/storage";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
 
 const MIGRATION_LOCK = ".gateway-state-migration.lock";
@@ -878,9 +874,7 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
       if (disposition.provenance !== "local") {
         const record = disposition.record;
         const recordedEnvironment = [
-          record.hostIdentity === null
-            ? null
-            : `host ${JSON.stringify(record.hostIdentity)}`,
+          record.hostIdentity === null ? null : `host ${JSON.stringify(record.hostIdentity)}`,
           record.pidNamespaceIdentity === null
             ? null
             : `PID namespace ${JSON.stringify(record.pidNamespaceIdentity)}`,

@@ -82,4 +82,77 @@ describe("lock file generation storage", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("restores the claimed generation when synchronous removal fails", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lock-generation-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    fs.writeFileSync(lockPath, "stale");
+    const expected = { ...fs.statSync(lockPath), reclaimable: true };
+    const remove = vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+      throw new Error("injected removal failure");
+    });
+    try {
+      expect(() => reclaimLockFileGenerationSync(lockPath, expected)).toThrow(
+        /injected removal failure.*restored/u,
+      );
+      expect(readFileSnapshot(lockPath)).toBe("stale");
+      expect(fs.readdirSync(stateDir).filter((name) => name.includes(".reclaim-"))).toEqual([]);
+    } finally {
+      remove.mockRestore();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a replacement when claimed-generation removal fails", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lock-generation-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    fs.writeFileSync(lockPath, "stale");
+    const expected = { ...fs.statSync(lockPath), reclaimable: true };
+    const remove = vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+      throw new Error("injected removal failure");
+    });
+    try {
+      expect(() =>
+        reclaimLockFileGenerationSync(lockPath, expected, {
+          assertAfterClaim: () => fs.writeFileSync(lockPath, "replacement"),
+        }),
+      ).toThrow(/injected removal failure.*replacement.*preserved/u);
+      expect(readFileSnapshot(lockPath)).toBe("replacement");
+      expect(fs.readdirSync(stateDir).filter((name) => name.includes(".reclaim-"))).toEqual([]);
+    } finally {
+      remove.mockRestore();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a retained asynchronous quarantine when removal keeps failing", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lock-generation-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    fs.writeFileSync(lockPath, "stale");
+    const expected = { ...fs.statSync(lockPath), reclaimable: true };
+    const originalRemove = fs.promises.rm.bind(fs.promises);
+    const remove = vi
+      .spyOn(fs.promises, "rm")
+      .mockImplementation((candidate, options) =>
+        String(candidate).includes(".reclaim-")
+          ? Promise.reject(new Error("persistent removal failure"))
+          : originalRemove(candidate, options),
+      );
+    try {
+      let message = "";
+      try {
+        await reclaimLockFileGeneration(lockPath, expected);
+      } catch (error) {
+        message = String(error);
+      }
+      const retained = fs.readdirSync(stateDir).find((name) => name.includes(".reclaim-"));
+      expect(retained).toBeDefined();
+      expect(message).toContain(path.join(stateDir, retained!));
+      expect(message).toContain("verify that it is inactive before removing only that path");
+      expect(readFileSnapshot(lockPath)).toBe("stale");
+    } finally {
+      remove.mockRestore();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });
