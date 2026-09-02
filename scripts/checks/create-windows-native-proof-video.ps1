@@ -283,6 +283,15 @@ try {
     if (-not (Test-Path -LiteralPath $runtimeWinRt -PathType Leaf)) {
         Fail-ProofVideo 'System.Runtime.WindowsRuntime.dll is missing.'
     }
+    $frameworkReferenceRoot = Join-Path $programFilesX86 'Reference Assemblies\Microsoft\Framework\.NETFramework'
+    $systemRuntimeFacade = @(Get-ChildItem -LiteralPath $frameworkReferenceRoot -Directory | Where-Object {
+        $_.Name -cmatch '^v[0-9]+\.[0-9]+(\.[0-9]+)?$'
+    } | Sort-Object { [version]$_.Name.TrimStart('v') } -Descending | ForEach-Object {
+        Get-Item -LiteralPath (Join-Path $_.FullName 'Facades\System.Runtime.dll') -ErrorAction SilentlyContinue
+    } | Select-Object -First 1)
+    if ($systemRuntimeFacade.Count -ne 1) {
+        Fail-ProofVideo 'The .NET Framework System.Runtime facade is missing.'
+    }
 
     $encoderSource = @'
 using System;
@@ -341,6 +350,7 @@ public static class NemoClawProofVideoEncoder
         "/out:$encoderAssemblyPath",
         "/reference:$($windowsWinMd[0].FullName)",
         "/reference:$runtimeWinRt",
+        "/reference:$($systemRuntimeFacade[0].FullName)",
         $encoderSourcePath
     )
     & $compiler @compilerArguments
