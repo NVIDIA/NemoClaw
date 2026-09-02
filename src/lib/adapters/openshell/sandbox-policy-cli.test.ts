@@ -3,7 +3,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import * as openshellRuntime from "./runtime";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 import type { CapturedOpenShellCommandResult } from "./sandbox-observer-cli";
 import {
@@ -11,7 +10,6 @@ import {
   createCliOpenShellSandboxPolicyReader,
   createSyncCliOpenShellSandboxPolicyWriter,
   createSyncCliOpenShellSandboxPolicyReader,
-  readCliOpenShellSandboxPolicy,
 } from "./sandbox-policy-cli";
 
 const POLICY = "version: 1\nnetwork_policies: {}";
@@ -140,23 +138,25 @@ describe("CLI OpenShell sandbox policy reader", () => {
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
-  it("uses the bounded canonical capture boundary and preserves missing-binary guidance", async () => {
-    const capture = vi
-      .spyOn(openshellRuntime, "captureResolvedOpenshell")
-      .mockImplementation(() => {
-        throw new Error("OpenShell is unavailable");
-      });
-
+  it("preserves typed missing-binary guidance from the bounded capture boundary", async () => {
+    const capture = vi.fn(() =>
+      captured({
+        status: null,
+        output: "",
+        error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
+      }),
+    );
+    const reader = createCliOpenShellSandboxPolicyReader({ capture });
     await expect(
-      readCliOpenShellSandboxPolicy({
+      reader.readSandboxPolicy({
         target: namedOpenShellGateway("nemoclaw"),
         sandboxName: "alpha",
         scope: "base",
       }),
-    ).resolves.toMatchObject({ result: { ok: false, error: { kind: "command" } } });
+    ).resolves.toMatchObject({ ok: false, error: { kind: "command" } });
     expect(capture).toHaveBeenCalledWith(
       ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
-      expect.objectContaining({ maxBuffer: 1024 * 1024, replaceEnv: true, timeout: 15_000 }),
+      expect.objectContaining({ maxBuffer: 1024 * 1024, timeout: 15_000 }),
     );
   });
 });

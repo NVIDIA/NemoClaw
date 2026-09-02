@@ -16,7 +16,7 @@ import { isValidName } from "../../sandbox-name-contract";
 import { stripCredentials } from "../../security/credential-filter";
 import { stripAnsi } from "./client";
 import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
-import * as openshellPolicyRuntime from "./runtime";
+import { captureSanitizedResolvedOpenshell } from "./runtime";
 import type { OpenShellSandboxResult } from "./sandbox-observer";
 import {
   classifyCliOpenShellCommandError,
@@ -50,8 +50,13 @@ export type {
 export { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary };
 
 type SyncCapturePolicyCommand = (
-  ...args: Parameters<CaptureOpenShellCommand>
+  args: string[],
+  options: Parameters<CaptureOpenShellCommand>[1] & { readonly maxBuffer: number },
 ) => CapturedOpenShellCommandResult;
+type CapturePolicyCommand = (
+  args: string[],
+  options: Parameters<SyncCapturePolicyCommand>[1],
+) => CapturedOpenShellCommandResult | Promise<CapturedOpenShellCommandResult>;
 type PolicyReaderDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
 type PolicyWriterDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
 type CapturedPolicySetCommandResult = Readonly<{
@@ -130,30 +135,6 @@ export function redactOpenShellSandboxPolicyReadForDisplay(input: {
   return { raw: metadata ? `${metadata}\n---\n${yaml}` : yaml, yaml };
 }
 
-const capturePolicyWithRunner: SyncCapturePolicyCommand = (args, options) => {
-  const env = openshellPolicyRuntime.buildOpenShellSubprocessEnv();
-  for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
-    if (process.env[name] !== undefined) env[name] = process.env[name];
-  }
-  const gatewayIndex = args.indexOf("-g");
-  if (gatewayIndex >= 0 && args[gatewayIndex + 1]) env.OPENSHELL_GATEWAY = args[gatewayIndex + 1];
-  try {
-    return openshellPolicyRuntime.captureResolvedOpenshell(args, {
-      ...options,
-      env,
-      maxBuffer: POLICY_READ_MAX_BYTES,
-      replaceEnv: true,
-    });
-  } catch (error) {
-    if (!(error instanceof Error) || error.message !== "OpenShell is unavailable") throw error;
-    return {
-      status: null,
-      output: "",
-      error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
-    };
-  }
-};
-
 function assertPolicyRequest(request: {
   readonly sandboxName: string;
   readonly target: ReadOpenShellSandboxPolicyRequest["target"];
@@ -203,6 +184,7 @@ function captureOptions(timeoutMs?: number, defaultTimeoutMs?: number) {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,
+    maxBuffer: POLICY_READ_MAX_BYTES,
     timeout: timeoutMs ?? defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
   } as const;
 }
@@ -319,7 +301,7 @@ function parsePolicyRevision(
 }
 
 export function createCliOpenShellSandboxPolicyRead(
-  deps: PolicyReaderDeps<CaptureOpenShellCommand>,
+  deps: PolicyReaderDeps<CapturePolicyCommand>,
 ): CliOpenShellSandboxPolicyRead {
   return async (request) => {
     const captured = await deps.capture(
@@ -335,7 +317,7 @@ export function createCliOpenShellSandboxPolicyRead(
 }
 
 export function createCliOpenShellSandboxPolicyReader(
-  deps: PolicyReaderDeps<CaptureOpenShellCommand>,
+  deps: PolicyReaderDeps<CapturePolicyCommand>,
 ): OpenShellSandboxPolicyReader {
   const read = createCliOpenShellSandboxPolicyRead(deps);
   return {
@@ -394,7 +376,7 @@ export function createSyncCliOpenShellSandboxPolicyReader(
 }
 
 export function createCliOpenShellSandboxPolicyWriter(
-  deps: PolicyWriterDeps<CaptureOpenShellCommand>,
+  deps: PolicyWriterDeps<CapturePolicyCommand>,
 ): OpenShellSandboxPolicyWriter {
   return {
     setSandboxPolicy: async (request) => {
@@ -426,11 +408,11 @@ export function createSyncCliOpenShellSandboxPolicyWriter(
 }
 
 export const readCliOpenShellSandboxPolicy = createCliOpenShellSandboxPolicyRead({
-  capture: capturePolicyWithRunner,
+  capture: captureSanitizedResolvedOpenshell,
 });
 export const syncCliOpenShellSandboxPolicyReader = createSyncCliOpenShellSandboxPolicyReader({
-  capture: capturePolicyWithRunner,
+  capture: captureSanitizedResolvedOpenshell,
 });
 export const syncCliOpenShellSandboxPolicyWriter = createSyncCliOpenShellSandboxPolicyWriter({
-  capture: capturePolicyWithRunner,
+  capture: captureSanitizedResolvedOpenshell,
 });

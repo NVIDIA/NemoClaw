@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   resolveGatewayRebuildAuthority: vi.fn(),
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell: mocks.captureOpenshell,
   runOpenshell: vi.fn(),
 }));

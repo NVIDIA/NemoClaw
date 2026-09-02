@@ -146,4 +146,27 @@ describe("bounded rebuild policy handoff", () => {
     expect(fs.existsSync(handoffPath)).toBe(false);
     expect(withHandoff).not.toHaveProperty("rebuildPolicyHandoff");
   });
+
+  it.each([
+    ["permissive mode", (filePath: string) => fs.chmodSync(filePath, 0o640)],
+    ["extra hard link", (filePath: string) => fs.linkSync(filePath, `${filePath}.linked`)],
+  ] as const)(
+    "rejects a digest-matching handoff with %s",
+    (_unsafeMetadata, makeUnsafe) => {
+      const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-authority-"));
+      tempDirs.push(backupPath);
+      const published = manifest(backupPath);
+      __test.writeManifest(backupPath, published);
+      const policy = "version: 1\nnetwork_policies: {}\n";
+      const withHandoff = writeRebuildPolicyHandoff(published, policy);
+      const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+
+      makeUnsafe(handoffPath);
+
+      expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
+      expect(() => writeRebuildPolicyHandoff(withHandoff, policy)).toThrow(
+        "Existing rebuild policy handoff does not match its content identity",
+      );
+    },
+  );
 });

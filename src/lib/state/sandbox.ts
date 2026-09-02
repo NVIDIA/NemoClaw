@@ -2525,12 +2525,24 @@ function readBoundRebuildPolicyHandoff(filePath: string): string | null {
   try {
     descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = fstatSync(descriptor, { bigint: true });
-    if (!before.isFile() || before.size > 8n * 1024n * 1024n) return null;
+    const uid = process.getuid?.();
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      (uid !== undefined && before.uid !== BigInt(uid)) ||
+      (before.mode & 0o777n) !== 0o600n ||
+      before.size > 8n * 1024n * 1024n
+    ) {
+      return null;
+    }
     const content = readFileSync(descriptor, "utf8");
     const after = fstatSync(descriptor, { bigint: true });
     if (
       before.dev !== after.dev ||
       before.ino !== after.ino ||
+      before.uid !== after.uid ||
+      before.mode !== after.mode ||
+      before.nlink !== after.nlink ||
       before.size !== after.size ||
       before.mtimeNs !== after.mtimeNs ||
       before.ctimeNs !== after.ctimeNs

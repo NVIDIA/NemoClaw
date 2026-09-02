@@ -41,6 +41,11 @@ type RunnerOptions = {
   maxBuffer?: number;
 };
 
+type SanitizedCaptureOptions = Omit<RunnerOptions, "env" | "replaceEnv"> & {
+  maxBuffer: number;
+  timeout: number;
+};
+
 let openshellBin: string | null = null;
 
 /** Resolve and cache the OpenShell binary path, exiting if it is not installed. */
@@ -114,6 +119,33 @@ export function captureResolvedOpenshell(args: CommandArgs, opts: RunnerOptions 
     errorLine: console.error,
     exit: (code: number) => process.exit(code),
   });
+}
+
+/**
+ * Capture a bounded OpenShell command with the shared credential-minimizing
+ * environment used by gateway-pinned policy and identity reads.
+ */
+export function captureSanitizedResolvedOpenshell(
+  args: CommandArgs,
+  opts: SanitizedCaptureOptions,
+) {
+  const env = buildOpenShellSubprocessEnv();
+  for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  const gatewayIndex = args.indexOf("-g");
+  if (gatewayIndex >= 0 && args[gatewayIndex + 1]) env.OPENSHELL_GATEWAY = args[gatewayIndex + 1];
+  try {
+    return captureResolvedOpenshell(args, { ...opts, env, replaceEnv: true });
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "OpenShell is unavailable") throw error;
+    return {
+      status: null,
+      output: "",
+      error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
+    };
+  }
 }
 
 /** Capture the SSH config OpenShell emits for a sandbox. */

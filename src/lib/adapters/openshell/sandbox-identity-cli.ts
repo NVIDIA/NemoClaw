@@ -55,33 +55,6 @@ function validateIdentityName(name: string, label: string): string {
   );
 }
 
-function captureSandboxIdentityWithRunner(
-  args: string[],
-  options: Parameters<CaptureSandboxIdentityCommand>[1],
-): CapturedOpenShellCommandResult {
-  const env = openshellRuntime.buildOpenShellSubprocessEnv();
-  for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
-    const value = process.env[name];
-    if (value !== undefined) env[name] = value;
-  }
-  const gatewayIndex = args.indexOf("-g");
-  if (gatewayIndex >= 0 && args[gatewayIndex + 1]) env.OPENSHELL_GATEWAY = args[gatewayIndex + 1];
-  try {
-    return openshellRuntime.captureResolvedOpenshell(args, {
-      ...options,
-      env,
-      replaceEnv: true,
-    });
-  } catch (error) {
-    if (!(error instanceof Error) || error.message !== "OpenShell is unavailable") throw error;
-    return {
-      status: null,
-      output: "",
-      error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
-    };
-  }
-}
-
 const IDENTITY_ERROR_MESSAGES = {
   authentication: "OpenShell could not authenticate the sandbox identity read.",
   command: "The OpenShell sandbox identity read failed.",
@@ -115,7 +88,7 @@ export function createSyncCliOpenShellSandboxIdentityInspector(deps: {
 }
 
 const syncCliOpenShellSandboxIdentityInspector = createSyncCliOpenShellSandboxIdentityInspector({
-  capture: captureSandboxIdentityWithRunner,
+  capture: openshellRuntime.captureSanitizedResolvedOpenshell,
 });
 
 /** Read and fingerprint one sandbox ID without exposing the ID in diagnostics. */
