@@ -152,6 +152,31 @@ describe("managed-image cohort publication contract", () => {
         runId: RUN_ID,
       }),
     ).toEqual({
+      catalog: Object.fromEntries(
+        SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, agentIndex) => {
+          const image = MANAGED_IMAGE_REPOSITORIES[agent];
+          const workloadDigest = digest(agentIndex + 10);
+          return [
+            agent,
+            {
+              contractVersion: 1,
+              agent,
+              platform: "linux/amd64",
+              image,
+              digest: workloadDigest,
+              reference: `${image}@${workloadDigest}`,
+              source: {
+                repository: "NVIDIA/NemoClaw",
+                revision: REVISION,
+                release: null,
+                cohort: COHORT,
+              },
+              startupProfileContractVersion: 1,
+              capabilityContractVersion: 1,
+            },
+          ];
+        }),
+      ),
       cohort: COHORT,
       receipt: {
         kind: "nemoclaw-managed-image-cohort-receipt-v1",
