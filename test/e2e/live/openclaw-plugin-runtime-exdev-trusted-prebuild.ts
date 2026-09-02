@@ -42,6 +42,10 @@ export function createTrustedPluginFixtureDockerfile(options: {
   versionSourceName: string;
 }): string {
   const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
+  assert(
+    options.source.includes(runtimeAnchor),
+    "trusted EXDEV fixture requires the managed runtime anchor",
+  );
   const runtime = options.source.replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
   const extension = String.raw`
 

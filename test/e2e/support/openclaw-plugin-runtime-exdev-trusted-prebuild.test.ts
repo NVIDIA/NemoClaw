@@ -17,6 +17,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
   createOpenShellTrustedImageWrapper,
+  createTrustedPluginFixtureDockerfile,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
@@ -36,6 +37,17 @@ const DRIVER_CONFIG_JSON = JSON.stringify({
 });
 
 afterEach(() => vi.unstubAllEnvs());
+
+it("rejects a managed Dockerfile without the runtime anchor (#9844)", () => {
+  expect(() =>
+    createTrustedPluginFixtureDockerfile({
+      crossDeviceVersionSourceName: "weather-version-v2.ts",
+      pluginDirName: "weather-plugin",
+      source: "FROM scratch AS builder\n",
+      versionSourceName: "weather-version-v1.ts",
+    }),
+  ).toThrow("trusted EXDEV fixture requires the managed runtime anchor");
+});
 
 function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
   return {
