@@ -395,7 +395,9 @@ export function runDeepAgentsConfigCommand(
       .replaceAll(DEEPAGENTS_MCP_CONFIG_PATH, configPath)
       .replaceAll("/sandbox/.deepagents/.mcp.json", legacyConfigPath)
       .replaceAll("/opt/venv/bin/python3", fixturePython.executablePath);
-    const result = spawnSync("bash", ["-c", fixtureCommand], {
+    const fixtureCommandPath = path.join(tmp, "managed-command.sh");
+    fs.writeFileSync(fixtureCommandPath, fixtureCommand, { mode: 0o600 });
+    const result = spawnSync("bash", [fixtureCommandPath], {
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -427,10 +429,18 @@ export function runDeepAgentsConfigCommand(
         : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
     const readRegularFile = (target: string): string | null => {
+      let descriptor: number | null = null;
       try {
-        return fs.lstatSync(target).isFile() ? fs.readFileSync(target, "utf-8") : null;
+        if (!fs.lstatSync(target).isFile()) return null;
+        descriptor = fs.openSync(
+          target,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+        );
+        return fs.fstatSync(descriptor).isFile() ? fs.readFileSync(descriptor, "utf-8") : null;
       } catch {
         return null;
+      } finally {
+        if (descriptor !== null) fs.closeSync(descriptor);
       }
     };
     const managedSymlinkTargetText = readRegularFile(managedSymlinkTarget);
