@@ -1574,7 +1574,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const effectiveMessagingConfig =
       getMessagingChannelConfigFromPlan(plannedMessagingState?.plan) ??
       getStoredMessagingChannelConfig(sandboxName, createCheckpointSession);
-    const effectiveMessagingAgent = plannedMessagingState?.plan?.agent ?? agent?.name;
+    const effectiveMessagingAgent = plannedMessagingState?.plan?.agent ?? effectiveAgent.name;
     const openingPendingCreateIdentity = pendingVerifiedCreateCheckpointForSession({
       sandboxName,
       gatewayName: GATEWAY_NAME,
