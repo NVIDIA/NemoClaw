@@ -30,6 +30,8 @@ import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "
 import { type CaptureResult, run, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 
+export { sleepSeconds };
+
 import {
   isLocalOllamaRouteOwner,
   OLLAMA_HOST_DOCKER_INTERNAL,

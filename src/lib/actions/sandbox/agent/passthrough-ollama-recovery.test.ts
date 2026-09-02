@@ -65,6 +65,8 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("at http://host.docker.internal:11434");
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
+    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).not.toContain("rerun this command");
   });
 
   it.each([
@@ -88,6 +90,8 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("http://host.docker.internal:11434");
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
+    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).not.toContain("rerun this command");
   });
 
   it.each([
@@ -119,7 +123,8 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("qwen3.6:35b");
     expect(stderr).toContain("Restore Ollama access");
     expect(stderr).toContain("confirm that it serves");
-    expect(stderr).toContain("then rerun this command");
+    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).not.toContain("rerun this command");
   });
 
   it("reports a warm-up skipped after the command timeout budget is exhausted", () => {
@@ -203,7 +208,8 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("OPENAI_API_KEY=<REDACTED>");
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("Restore Ollama access to that endpoint");
-    expect(stderr).toContain("then rerun this command");
+    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).not.toContain("rerun this command");
     expect(stderr).not.toContain(exposedToken);
     expect(stderr).not.toContain("END-OF-DETAIL");
     expect(stderr).not.toContain("\u001b");

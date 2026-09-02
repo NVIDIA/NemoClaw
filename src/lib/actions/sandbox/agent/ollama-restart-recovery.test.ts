@@ -201,6 +201,22 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(runCaptureExImpl).not.toHaveBeenCalled();
   });
 
+  it("skips the warm-up when the daemon status response is malformed", () => {
+    const runCaptureExImpl = vi.fn(() => successfulWarmResult());
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        { runCaptureImpl: () => "not-json", runCaptureExImpl },
+      ),
+    ).toEqual({
+      kind: "skipped",
+      reason: "unreachable",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
+    expect(runCaptureExImpl).not.toHaveBeenCalled();
+  });
+
   it("reports a bounded warm-up timeout", () => {
     expect(
       maybeWarmOllamaAfterDaemonRestart(

@@ -202,7 +202,7 @@ export function probeOllamaRuntimeModelStatus(
       ...(hasSizeVram ? { sizeVram: rawSizeVram } : {}),
     };
   } catch {
-    return { probed: true, loaded: false, cpuOnly: false };
+    return { probed: false, loaded: false, cpuOnly: false };
   }
 }
 

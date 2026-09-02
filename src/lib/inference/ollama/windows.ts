@@ -13,19 +13,9 @@ const {
   isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
   setResolvedOllamaHost,
+  sleepSeconds,
 } = require("../local");
 const { OLLAMA_PORT } = require("../../core/ports");
-
-// Avoid starting a subprocess for each fixed readiness delay.
-// The supported Windows-host Ollama path runs through WSL PowerShell interop.
-// Native Windows activation remains gated by #8178.
-const sleepBuffer = new SharedArrayBuffer(4);
-const sleepArray = new Int32Array(sleepBuffer);
-
-function sleep(seconds: number): void {
-  if (seconds <= 0) return;
-  Atomics.wait(sleepArray, 0, 0, seconds * 1000);
-}
 
 function psSingleQuote(value: string): string {
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -128,7 +118,7 @@ function awaitWindowsOllamaReady(opts: { prepareDockerEnvironment?: () => unknow
     opts.prepareDockerEnvironment,
   );
   for (let attempt = 0; attempt < 15; attempt++) {
-    sleep(2);
+    sleepSeconds(2);
     const probe = capture(
       [
         "curl",
@@ -201,7 +191,7 @@ function launchAndAwaitWindowsOllama(
     console.error(`  PowerShell launch via ${attempt.label} failed: ${detail}`);
     if (i < launchAttempts.length - 1) {
       killWindowsOllamaProcesses();
-      sleep(1);
+      sleepSeconds(1);
     }
   }
   return false;
@@ -219,7 +209,7 @@ function setupWindowsOllamaWith0000Binding(
     console.log("  Stopping existing Ollama on Windows host...");
   }
   killWindowsOllamaProcesses();
-  sleep(1);
+  sleepSeconds(1);
   return launchAndAwaitWindowsOllama({
     watcherPath: watcherPath || undefined,
     installedPath: opts.installedPath,
@@ -245,7 +235,7 @@ module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   setupWindowsOllamaWith0000Binding,
-  sleep,
+  sleep: sleepSeconds,
   switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 };
