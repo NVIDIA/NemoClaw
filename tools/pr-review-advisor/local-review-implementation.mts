@@ -288,9 +288,15 @@ function stageArtifacts(
 
 function validateSpecialistArtifacts(root: string, interest: string): void {
   const directory = path.join(root, "artifacts", "pr-review-specialist-" + interest);
-  const expected = [`pr-review-${interest}-session.jsonl`, `pr-review-${interest}-summary.md`];
+  const expected = [
+    `pr-review-${interest}-findings.json`,
+    `pr-review-${interest}-session.jsonl`,
+    `pr-review-${interest}-summary.md`,
+  ];
   if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(expected))
-    throw new Error("Specialist artifacts do not match the existing Markdown and JSONL contract");
+    throw new Error(
+      "Specialist artifacts do not match the Markdown, finding-ledger, and JSONL contract",
+    );
   if (
     expected.some((name) => {
       const stat = fs.lstatSync(path.join(directory, name));

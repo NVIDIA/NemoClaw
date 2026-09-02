@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { pullRequestReviewStateDigest } from "../../../tools/pr-review-advisor/review-state.mts";
 
 import { claimRepairAttempt } from "../../../tools/pr-review-advisor-repair/claim.mts";
 import {
@@ -26,12 +27,16 @@ import {
   assertPublicationPullRequest,
   atomicUpdate,
   dispatchGeneratedHeadValidation,
+  ensureVerifiedRepairCommit,
+  ensureGeneratedHeadValidation,
+  publicationHeadAction,
   publishValidatedRepair,
   reconstructValidatedTree,
   waitForVerifiedCommit,
 } from "../../../tools/pr-review-advisor-repair/publish.mts";
+import { collectReconciliationSource } from "../../../tools/pr-review-advisor-repair/reconcile.mts";
 import {
-  collectRepairSelection,
+  collectRepairSelectionAuthority,
   expectedAdvisorArtifactNames,
   type GitHubRequest as SelectionGitHubRequest,
 } from "../../../tools/pr-review-advisor-repair/select.mts";
@@ -48,41 +53,69 @@ function finding(): FindingInput {
 }
 
 function selection(overrides: Record<string, unknown> = {}): SelectionBundle {
-  const head = "a".repeat(40);
+  const head =
+    typeof overrides.sourceHeadSha === "string" ? overrides.sourceHeadSha : "a".repeat(40);
+  const reviewState = {
+    version: 1 as const,
+    repository: "NVIDIA/NemoClaw",
+    prNumber: 42,
+    headSha: head,
+    issueComments: [],
+    reviews: [],
+    threads: [],
+  };
+  const defaults = {
+    version: 1,
+    repository: "NVIDIA/NemoClaw",
+    prNumber: 42,
+    pullRequest: {
+      state: "open",
+      draft: false,
+      author: "contributor",
+      baseRef: "main",
+      headRepository: "NVIDIA/NemoClaw",
+      headRef: "fix/demo",
+      maintainerCanModify: true,
+    },
+    sourceHeadSha: head,
+    baseSha: "b".repeat(40),
+    advisor: {
+      workflowSha: "c".repeat(40),
+      runId: 700,
+      runAttempt: 2,
+      artifactIds: Array.from({ length: 10 }, (_value, index) => index + 100),
+      artifactDigests: Array.from(
+        { length: 10 },
+        (_value, index) => `sha256:${String(index).padStart(64, "0")}`,
+      ),
+      findingLedgerDigest: `sha256:${"d".repeat(64)}`,
+      reviewStateDigest: pullRequestReviewStateDigest(reviewState),
+    },
+    optIn: {
+      kind: "phase1-maintainer-dispatch",
+      actor: "maintainer",
+      triggeringActor: "maintainer",
+      headSha: head,
+      findingIds: [finding().id],
+    },
+    productScope: {
+      kind: "accepted-issue",
+      identity: "#10791",
+    },
+    findings: [finding()],
+  };
   return selectRepairAttempt(
     parseSelectionInput({
-      version: 1,
-      repository: "NVIDIA/NemoClaw",
-      prNumber: 42,
-      pullRequest: {
-        state: "open",
-        draft: false,
-        author: "contributor",
-        baseRef: "main",
-        headRepository: "NVIDIA/NemoClaw",
-        headRef: "fix/demo",
-        maintainerCanModify: true,
-      },
-      sourceHeadSha: head,
-      baseSha: "b".repeat(40),
+      ...defaults,
+      ...overrides,
       advisor: {
-        workflowSha: "c".repeat(40),
-        runId: 700,
-        runAttempt: 2,
-        artifactIds: Array.from({ length: 10 }, (_value, index) => index + 100),
+        ...defaults.advisor,
+        ...((overrides.advisor as Record<string, unknown> | undefined) ?? {}),
       },
       optIn: {
-        kind: "phase1-maintainer-dispatch",
-        actor: "maintainer",
-        triggeringActor: "maintainer",
-        headSha: head,
+        ...defaults.optIn,
+        ...((overrides.optIn as Record<string, unknown> | undefined) ?? {}),
       },
-      productScope: {
-        kind: "accepted-issue",
-        identity: "#10791",
-      },
-      findings: [finding()],
-      ...overrides,
     }),
   );
 }
@@ -241,7 +274,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       });
     const request = requestMock as unknown as SelectionGitHubRequest;
 
-    const collected = await collectRepairSelection(
+    const collected = await collectRepairSelectionAuthority(
       {
         token: "token",
         prNumber: 42,
@@ -251,12 +284,12 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         triggeringActor: "maintainer-two",
         productScopeKind: "maintainer-decision",
         productScopeIdentity: "#10791-maintainer-comment",
-        findingsJson: JSON.stringify([finding()]),
+        findingIdsJson: JSON.stringify([finding().id]),
       },
       request,
     );
 
-    expect(collected.selection.input.optIn).toMatchObject({
+    expect(collected.authority.optIn).toMatchObject({
       actor: "maintainer-one",
       triggeringActor: "maintainer-two",
       headSha: sourceHeadSha,
@@ -289,6 +322,53 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         },
       }),
     ).toThrow("identity or ownership changed");
+  });
+
+  it("binds reconciliation to one bounded artifact from the original repair run (#10791)", async () => {
+    const sourceRunId = 900;
+    const validationArtifactId = 901;
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        permission: "write",
+        role_name: "maintain",
+        user: { login: "maintainer", permissions: { admin: false, maintain: true } },
+      })
+      .mockResolvedValueOnce({
+        id: sourceRunId,
+        run_attempt: 1,
+        event: "workflow_dispatch",
+        status: "completed",
+        conclusion: "failure",
+        name: "Automation / PR Review Advisor Repair",
+        path: ".github/workflows/pr-review-advisor-repair.yaml",
+        head_branch: "main",
+        repository: { full_name: "NVIDIA/NemoClaw" },
+      })
+      .mockResolvedValueOnce({
+        id: validationArtifactId,
+        name: `pr-review-advisor-repair-phase1-validation-${sourceRunId}-1`,
+        expired: false,
+        size_in_bytes: 1024,
+        digest: `sha256:${"a".repeat(64)}`,
+        workflow_run: { id: sourceRunId },
+      });
+
+    await expect(
+      collectReconciliationSource({
+        sourceRunId,
+        validationArtifactId,
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        token: "token",
+        request: request as unknown as SelectionGitHubRequest,
+      }),
+    ).resolves.toEqual({
+      sourceRunId,
+      sourceRunAttempt: 1,
+      validationArtifactId,
+      validationArtifactDigest: `sha256:${"a".repeat(64)}`,
+    });
   });
 
   it("rejects a validation receipt whose patch digest does not match (#10791)", () => {
@@ -447,6 +527,132 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         }),
       }),
     );
+  });
+
+  it("reconciliation dispatches only missing exact-head validation workflows (#10791)", async () => {
+    const bundle = selection();
+    const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
+    const commitSha = "d".repeat(40);
+    const existingRun = {
+      event: "workflow_dispatch",
+      head_sha: commitSha,
+      display_title: `Generated-head ${bundle.attemptKey}`,
+    };
+    let claimId = 1000;
+    const request = vi.fn(
+      async (apiPath: string, _token: string, options?: { method?: string }) => {
+        return apiPath.includes(`/commits/${commitSha}/check-runs`)
+          ? { total_count: 0, check_runs: [] }
+          : apiPath === "repos/NVIDIA/NemoClaw/check-runs" && options?.method === "POST"
+            ? { id: (claimId += 1) }
+            : apiPath.includes("/check-runs/") && options?.method === "PATCH"
+              ? {}
+              : options?.method === "POST"
+                ? {}
+                : apiPath.includes("pr.yaml/runs")
+                  ? { total_count: 1, workflow_runs: [existingRun] }
+                  : { total_count: 0, workflow_runs: [] };
+      },
+    );
+
+    await expect(
+      ensureGeneratedHeadValidation(
+        receipt,
+        commitSha,
+        "token",
+        request as unknown as NonNullable<Parameters<typeof ensureGeneratedHeadValidation>[3]>,
+      ),
+    ).resolves.toHaveLength(6);
+    expect(
+      request.mock.calls.filter(
+        ([apiPath, , options]) =>
+          String(apiPath).endsWith("/dispatches") && options?.method === "POST",
+      ),
+    ).toHaveLength(5);
+    expect(
+      request.mock.calls.some(
+        ([apiPath, , options]) =>
+          apiPath.includes("pr.yaml/dispatches") && options?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed when a durable dispatch claim exists before its run is visible (#10791)", async () => {
+    const bundle = selection();
+    const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
+    const commitSha = "d".repeat(40);
+    const request = vi.fn(
+      async (apiPath: string, _token: string, _options?: { method?: string }) => {
+        return apiPath.includes(`/commits/${commitSha}/check-runs`)
+          ? {
+              total_count: 1,
+              check_runs: [
+                {
+                  name: "Advisor repair validation dispatch",
+                  external_id: `${bundle.attemptKey}:pr.yaml`,
+                },
+              ],
+            }
+          : { total_count: 0, workflow_runs: [] };
+      },
+    );
+
+    await expect(
+      ensureGeneratedHeadValidation(
+        receipt,
+        commitSha,
+        "token",
+        request as unknown as NonNullable<Parameters<typeof ensureGeneratedHeadValidation>[3]>,
+      ),
+    ).rejects.toThrow("dispatch is durably claimed but its exact run is not visible");
+    expect(
+      request.mock.calls.some(
+        ([apiPath, , options]) =>
+          String(apiPath).endsWith("/dispatches") && options?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("resumes only from the exact verified repair commit head (#10791)", () => {
+    const sourceHeadSha = "a".repeat(40);
+    const commitSha = "d".repeat(40);
+    expect(publicationHeadAction(sourceHeadSha, sourceHeadSha, commitSha)).toBe("atomic-update");
+    expect(publicationHeadAction(sourceHeadSha, commitSha, commitSha)).toBe(
+      "resume-generated-head",
+    );
+    expect(() => publicationHeadAction(sourceHeadSha, "f".repeat(40), commitSha)).toThrow(
+      "neither the approved source nor the verified repair commit",
+    );
+  });
+
+  it("reuses an exact verified live repair commit without creating a second commit (#10791)", async () => {
+    const bundle = selection();
+    const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
+    const commitSha = "d".repeat(40);
+    const message = `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${bundle.attemptKey}`;
+    const request = vi.fn().mockResolvedValue({
+      sha: commitSha,
+      message,
+      tree: { sha: receipt.candidateTreeSha },
+      parents: [{ sha: receipt.sourceHeadSha }],
+      verification: { verified: true, reason: "valid" },
+    });
+
+    await expect(
+      ensureVerifiedRepairCommit({
+        liveHeadSha: commitSha,
+        repository: "/unused-on-resume",
+        receipt,
+        candidateTreeSha: receipt.candidateTreeSha,
+        token: "token",
+        request,
+        wait: async () => {
+          throw new Error("exact verified commit unexpectedly required a retry");
+        },
+      }),
+    ).resolves.toBe(commitSha);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith(`repos/NVIDIA/NemoClaw/git/commits/${commitSha}`, "token");
   });
 
   it("rejects an unconfirmed compare-and-swap ref update (#10791)", async () => {
@@ -608,8 +814,41 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
             },
           ],
         ],
+        ...bundle.input.advisor.artifactIds.map((artifactId, index): [string, unknown[]] => [
+          `GET repos/NVIDIA/NemoClaw/actions/artifacts/${artifactId}`,
+          [
+            {
+              id: artifactId,
+              expired: false,
+              digest: bundle.input.advisor.artifactDigests[index],
+              workflow_run: {
+                id: bundle.input.advisor.runId,
+                head_sha: bundle.input.advisor.workflowSha,
+              },
+            },
+          ],
+        ]),
+        [
+          `GET repos/NVIDIA/NemoClaw/commits/${commitSha}/check-runs?per_page=100`,
+          [{ total_count: 0, check_runs: [] }],
+        ],
+        [
+          "POST repos/NVIDIA/NemoClaw/check-runs",
+          workflowNames.map((_workflow, index) => ({ id: 1000 + index })),
+        ],
+        ...workflowNames.map((workflow): [string, unknown[]] => [
+          `GET repos/NVIDIA/NemoClaw/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=fix%2Fdemo&per_page=100`,
+          [
+            { total_count: 0, workflow_runs: [] },
+            { total_count: 0, workflow_runs: [] },
+          ],
+        ]),
         ...workflowNames.map((workflow): [string, unknown[]] => [
           `POST repos/NVIDIA/NemoClaw/actions/workflows/${workflow}/dispatches`,
+          [{}],
+        ]),
+        ...workflowNames.map((_workflow, index): [string, unknown[]] => [
+          `PATCH repos/NVIDIA/NemoClaw/check-runs/${1000 + index}`,
           [{}],
         ]),
       ];
@@ -633,6 +872,16 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       const graphql = vi.fn(async () => ({
         data: { updateRefs: { clientMutationId: commitSha } },
       }));
+      const reviewState = {
+        version: 1 as const,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: bundle.input.prNumber,
+        headSha: sourceHeadSha,
+        issueComments: [],
+        reviews: [],
+        threads: [],
+      };
+      const collectReviewState = vi.fn(async () => reviewState);
 
       const publication = await publishValidatedRepair({
         sourceCheckout: repository,
@@ -642,6 +891,10 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         token: "token",
         request,
         graphql,
+        wait: async () => {
+          throw new Error("publisher unexpectedly retried commit verification");
+        },
+        collectReviewState,
       });
 
       expect(publication).toMatchObject({
@@ -651,6 +904,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         commitSha,
         headRef: bundle.input.pullRequest.headRef,
       });
+      expect(collectReviewState).toHaveBeenCalledTimes(2);
       expect(Array.from(responses.values()).flat()).toEqual([]);
       expect(
         requestMock.mock.calls.find(

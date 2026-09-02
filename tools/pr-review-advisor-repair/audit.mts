@@ -30,7 +30,7 @@ export type AttemptReceipt = {
     advisorRunId: number | null;
     productScopeKind: string;
     productScopeIdentity: string;
-    findingsSha256: string;
+    findingIdsSha256: string;
     repositoryEgressAuthorized: boolean;
   };
   emergencySwitch: {
@@ -99,7 +99,7 @@ export function createAttemptReceipt(env: NodeJS.ProcessEnv): AttemptReceipt {
       advisorRunId: positiveInteger(env.ADVISOR_RUN_ID),
       productScopeKind: bounded(env.PRODUCT_SCOPE_KIND, 64),
       productScopeIdentity: bounded(env.PRODUCT_SCOPE_IDENTITY, 256),
-      findingsSha256: sha256(env.FINDINGS_JSON ?? ""),
+      findingIdsSha256: sha256(env.FINDING_IDS_JSON ?? ""),
       repositoryEgressAuthorized,
     },
     emergencySwitch: {

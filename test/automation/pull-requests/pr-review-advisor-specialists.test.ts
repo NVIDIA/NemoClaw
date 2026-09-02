@@ -10,6 +10,10 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-tools.mts";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import {
+  createAdvisorFindingToolController,
+  RECORD_ADVISOR_FINDINGS_TOOL,
+} from "../../../tools/pr-review-advisor/finding-ledger.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
 import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
 import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
@@ -55,7 +59,9 @@ describe("PR review advisor specialist prompts", () => {
     const file = writeSpecialistDiff(directory, "diff evidence");
 
     expect(file).toBe(expected);
-    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(expected);
+    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(
+      fs.realpathSync(expected),
+    );
     expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
@@ -200,7 +206,8 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.atomicTerminalToolName).toBeUndefined();
-      expect(turn.terminalSubmitToolName).toBeUndefined();
+      expect(turn.terminalSubmitToolName).toBe(RECORD_ADVISOR_FINDINGS_TOOL);
+      expect(turn.terminalSubmitRepairPrompt).toContain(RECORD_ADVISOR_FINDINGS_TOOL);
     },
   );
 
@@ -245,7 +252,7 @@ describe("PR review advisor specialist prompts", () => {
     expect(expected).toContain("Concrete reduction.");
   });
 
-  it("passes terminology tracing only to the documentation specialist runner (#9968)", async () => {
+  it("passes finding recording to every specialist and terminology tracing only to documentation (#9968)", async () => {
     const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-runner-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const git = (args: string[]) =>
@@ -300,13 +307,15 @@ describe("PR review advisor specialist prompts", () => {
       Object.fromEntries(
         ADVISOR_INTERESTS.map((interest) => [
           interest,
-          interest === "documentation" ? [TERMINOLOGY_TRACE_TOOL] : [],
+          interest === "documentation"
+            ? [TERMINOLOGY_TRACE_TOOL, RECORD_ADVISOR_FINDINGS_TOOL]
+            : [RECORD_ADVISOR_FINDINGS_TOOL],
         ]),
       ),
     );
     const documentationTools =
       captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
-    const trace = documentationTools[0] as CallableTool;
+    const trace = documentationTools.find(({ name }) => name === TERMINOLOGY_TRACE_TOOL) as CallableTool;
     const evidence = await trace.execute(
       "trace-1",
       { term: "checkout-bound" },
@@ -324,14 +333,71 @@ describe("PR review advisor specialist prompts", () => {
       const turn = buildSpecialistInvestigateTurn(interest, context);
       const expected =
         interest === "documentation"
-          ? ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL]
-          : ["read", "grep", "find", "ls"];
+          ? [
+              "read",
+              "grep",
+              "find",
+              "ls",
+              RECORD_ADVISOR_FINDINGS_TOOL,
+              TERMINOLOGY_TRACE_TOOL,
+            ]
+          : ["read", "grep", "find", "ls", RECORD_ADVISOR_FINDINGS_TOOL];
 
       expect(turn.activeToolNames).toEqual(expected);
-      expect(turn.activeToolNames).not.toContain("record_findings");
+      expect(turn.activeToolNames).toContain(RECORD_ADVISOR_FINDINGS_TOOL);
       expect(turn.activeToolNames).not.toContain("record_review_receipt");
       expect(turn.activeToolNames).not.toContain("recommend_e2e");
       expect(turn.activeToolNames).not.toContain("submit_review");
     },
   );
+
+  it("commits a canonical exact-head finding ledger through one terminal tool", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({ headSha, interest: "behavior" });
+    const record = controller.tools[0] as CallableTool;
+
+    await record.execute(
+      "record-1",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "The fallback loses the recorded value.",
+            path: "src/lib/example.ts",
+            line: 42,
+            impact: "A valid invocation returns the wrong state.",
+            smallestSafeFix: "Preserve the value when the fallback runs.",
+            regressionTest: "Add a focused fallback-state regression.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    const ledger = controller.snapshot();
+    expect(ledger).toMatchObject({
+      version: 1,
+      revision: 1,
+      identity: "exact-head",
+      headSha,
+      interest: "behavior",
+      status: "findings",
+      noFindingsReason: null,
+    });
+    expect(ledger.findings[0]?.id).toMatch(/^F-behavior-[0-9a-f]{20}$/u);
+    await expect(
+      record.execute(
+        "record-2",
+        { findings: [], noFindingsReason: "No blocking behavior issue remains." },
+        undefined,
+        undefined,
+        undefined as never,
+      ),
+    ).rejects.toThrow("already has a committed receipt");
+  });
 });

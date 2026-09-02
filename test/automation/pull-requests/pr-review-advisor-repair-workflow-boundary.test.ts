@@ -101,12 +101,14 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     ]);
     expect(workflowSource).not.toMatch(/^\s+(?:push|pull_request|pull_request_target):/mu);
     expect(repair.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(String(collect.if)).toContain("github.ref == 'refs/heads/main'");
     expect(collect).not.toHaveProperty("concurrency");
     expect(repair).not.toHaveProperty("concurrency");
     expect(validate).not.toHaveProperty("concurrency");
     expect(publish).not.toHaveProperty("concurrency");
     expect(publish.permissions).toEqual({
       actions: "write",
+      checks: "write",
       contents: "write",
       "pull-requests": "read",
     });
@@ -123,6 +125,11 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     expect(namedStep(collect, "Upload the attempt audit receipt").if).toBe("always()");
     expect(repair.if).toContain("vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true'");
     expect(validate.if).toContain("vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true'");
+    expect(
+      namedStep(publish, "Create a verified commit and atomically update the live head").env,
+    ).toMatchObject({
+      ADVISOR_REPAIR_PHASE1_ENABLED: "${{ vars.ADVISOR_REPAIR_PHASE1_ENABLED }}",
+    });
     expect(record(validate.outputs).validated).toBe("${{ steps.validate.outputs.validated }}");
     expect(String(publish.if)).toContain("needs.validate.outputs.validated == 'true'");
     expect(claim.permissions).toEqual({ actions: "read", checks: "write", contents: "read" });
@@ -207,7 +214,7 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     expect(
       record(namedStep(collect, "Download the exact Advisor artifact IDs").with),
     ).toMatchObject({
-      "artifact-ids": "${{ steps.select.outputs.artifact_ids }}",
+      "artifact-ids": "${{ steps.metadata.outputs.artifact_ids }}",
       "run-id": "${{ inputs.advisor_run_id }}",
       "merge-multiple": false,
     });
@@ -391,6 +398,10 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     expect(publisherSource).toContain("await waitForVerifiedCommit");
     expect(publisherSource).toContain("beforeOid: input.receipt.sourceHeadSha");
     expect(publisherSource).toContain("parseValidatedReceiptForPublication");
+    expect(publisherSource).toContain('env.ADVISOR_REPAIR_PHASE1_ENABLED !== "true"');
+    expect(publisherSource).toContain(
+      'throw new RepairContractError("Phase 1 publication is disabled")',
+    );
     expect(publisherSource).not.toContain("parseSelectionBundle");
     expect(publisherSource).toContain('GIT_CONFIG_GLOBAL: "/dev/null"');
     expect(publisherSource).toContain('GIT_CONFIG_NOSYSTEM: "1"');

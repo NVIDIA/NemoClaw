@@ -55,12 +55,16 @@ export type SelectionInput = {
     runId: number;
     runAttempt: number;
     artifactIds: number[];
+    artifactDigests: string[];
+    findingLedgerDigest: string;
+    reviewStateDigest: string;
   };
   optIn: {
     kind: "phase1-maintainer-dispatch";
     actor: string;
     triggeringActor: string;
     headSha: string;
+    findingIds: string[];
   };
   productScope: {
     kind: "accepted-issue" | "maintainer-decision";
@@ -80,7 +84,7 @@ export type SelectionDecision = {
 export type SelectionBundle = {
   version: 1;
   phase: "phase1-manual-publication";
-  identityStatus: "exact-head-dispatcher-supplied";
+  identityStatus: "exact-head-advisor-ledger";
   attemptKey: string;
   input: SelectionInput;
   decisions: SelectionDecision[];
@@ -420,7 +424,19 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   }
 
   const advisor = record(input.advisor, "advisor");
-  exactKeys(advisor, ["workflowSha", "runId", "runAttempt", "artifactIds"], "advisor");
+  exactKeys(
+    advisor,
+    [
+      "workflowSha",
+      "runId",
+      "runAttempt",
+      "artifactIds",
+      "artifactDigests",
+      "findingLedgerDigest",
+      "reviewStateDigest",
+    ],
+    "advisor",
+  );
   if (!Array.isArray(advisor.artifactIds) || advisor.artifactIds.length !== 10) {
     throw new RepairContractError("advisor.artifactIds must contain exactly ten artifacts");
   }
@@ -430,9 +446,15 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   if (new Set(artifactIds).size !== artifactIds.length) {
     throw new RepairContractError("advisor.artifactIds must be unique");
   }
+  if (!Array.isArray(advisor.artifactDigests) || advisor.artifactDigests.length !== 10) {
+    throw new RepairContractError("advisor.artifactDigests must contain exactly ten digests");
+  }
+  const artifactDigests = advisor.artifactDigests.map((item, index) =>
+    digest(item, `advisor.artifactDigests[${index}]`),
+  );
 
   const optIn = record(input.optIn, "optIn");
-  exactKeys(optIn, ["kind", "actor", "triggeringActor", "headSha"], "optIn");
+  exactKeys(optIn, ["kind", "actor", "triggeringActor", "headSha", "findingIds"], "optIn");
   if (optIn.kind !== "phase1-maintainer-dispatch") {
     throw new RepairContractError("Phase 1 requires an explicit maintainer dispatch opt-in");
   }
@@ -449,6 +471,15 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   const findings = input.findings.map(parseFinding);
   if (new Set(findings.map(({ id }) => id)).size !== findings.length) {
     throw new RepairContractError("finding identifiers must be unique");
+  }
+  const optInFindingIds = sortedUniqueStrings(optIn.findingIds, "optIn.findingIds").map(
+    (item, index) => findingId(item, `optIn.findingIds[${index}]`),
+  );
+  if (optInFindingIds.length === 0) {
+    throw new RepairContractError("Phase 1 requires at least one exact Advisor finding opt-in");
+  }
+  if (optInFindingIds.some((id) => !findings.some((finding) => finding.id === id))) {
+    throw new RepairContractError("manual opt-in references an unknown Advisor finding");
   }
 
   const sourceHeadSha = sha(input.sourceHeadSha, "sourceHeadSha");
@@ -477,12 +508,16 @@ export function parseSelectionInput(value: unknown): SelectionInput {
       runId: integer(advisor.runId, "advisor.runId"),
       runAttempt: integer(advisor.runAttempt, "advisor.runAttempt"),
       artifactIds,
+      artifactDigests,
+      findingLedgerDigest: digest(advisor.findingLedgerDigest, "advisor.findingLedgerDigest"),
+      reviewStateDigest: digest(advisor.reviewStateDigest, "advisor.reviewStateDigest"),
     },
     optIn: {
       kind: "phase1-maintainer-dispatch",
       actor: githubLogin(optIn.actor, "optIn.actor"),
       triggeringActor: githubLogin(optIn.triggeringActor, "optIn.triggeringActor"),
       headSha: optInHeadSha,
+      findingIds: optInFindingIds,
     },
     productScope: {
       kind: productScope.kind as SelectionInput["productScope"]["kind"],
@@ -492,7 +527,8 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   };
 }
 
-function skipReason(finding: FindingInput): string | null {
+function skipReason(finding: FindingInput, optInFindingIds: readonly string[]): string | null {
+  if (!optInFindingIds.includes(finding.id)) return "not-opted-in";
   if (finding.exclusions.length > 0) return `excluded:${[...finding.exclusions].sort()[0]}`;
   if (finding.repairClass === "unsupported") return "unsupported:repair-class";
   if (!finding.path) return "unsupported:path-required";
@@ -506,7 +542,7 @@ export function selectRepairAttempt(input: SelectionInput): SelectionBundle {
   const decisions = [...input.findings]
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((finding): SelectionDecision => {
-      const reason = skipReason(finding);
+      const reason = skipReason(finding, input.optIn.findingIds);
       return {
         id: finding.id,
         repairClass: finding.repairClass,
@@ -539,7 +575,7 @@ export function selectRepairAttempt(input: SelectionInput): SelectionBundle {
   return {
     version: 1,
     phase: "phase1-manual-publication",
-    identityStatus: "exact-head-dispatcher-supplied",
+    identityStatus: "exact-head-advisor-ledger",
     attemptKey: `sha256:${sha256(canonicalJson(identity))}`,
     input,
     decisions,
@@ -691,7 +727,15 @@ export function parseValidatedReceiptForPublication(
   const advisorInput = record(input.advisor, "validation receipt advisor");
   exactKeys(
     advisorInput,
-    ["workflowSha", "runId", "runAttempt", "artifactIds"],
+    [
+      "workflowSha",
+      "runId",
+      "runAttempt",
+      "artifactIds",
+      "artifactDigests",
+      "findingLedgerDigest",
+      "reviewStateDigest",
+    ],
     "validation receipt advisor",
   );
   if (!Array.isArray(advisorInput.artifactIds) || advisorInput.artifactIds.length !== 10) {
@@ -705,11 +749,28 @@ export function parseValidatedReceiptForPublication(
   if (new Set(artifactIds).size !== artifactIds.length) {
     throw new RepairContractError("validation receipt advisor.artifactIds must be unique");
   }
+  if (!Array.isArray(advisorInput.artifactDigests) || advisorInput.artifactDigests.length !== 10) {
+    throw new RepairContractError(
+      "validation receipt advisor.artifactDigests must contain exactly ten digests",
+    );
+  }
+  const artifactDigests = advisorInput.artifactDigests.map((item, index) =>
+    digest(item, `validation receipt advisor.artifactDigests[${index}]`),
+  );
   const advisor: SelectionInput["advisor"] = {
     workflowSha: sha(advisorInput.workflowSha, "validation receipt advisor.workflowSha"),
     runId: integer(advisorInput.runId, "validation receipt advisor.runId"),
     runAttempt: integer(advisorInput.runAttempt, "validation receipt advisor.runAttempt"),
     artifactIds,
+    artifactDigests,
+    findingLedgerDigest: digest(
+      advisorInput.findingLedgerDigest,
+      "validation receipt advisor.findingLedgerDigest",
+    ),
+    reviewStateDigest: digest(
+      advisorInput.reviewStateDigest,
+      "validation receipt advisor.reviewStateDigest",
+    ),
   };
 
   const findingIds = sortedUniqueStrings(input.findingIds, "validation receipt findingIds").map(
@@ -843,7 +904,7 @@ export function parseValidatedReceiptForPublication(
   const optInInput = record(input.optIn, "validation receipt optIn");
   exactKeys(
     optInInput,
-    ["kind", "actor", "triggeringActor", "headSha"],
+    ["kind", "actor", "triggeringActor", "headSha", "findingIds"],
     "validation receipt optIn",
   );
   if (optInInput.kind !== "phase1-maintainer-dispatch") {
@@ -861,7 +922,19 @@ export function parseValidatedReceiptForPublication(
       "validation receipt optIn.triggeringActor",
     ),
     headSha: optInHeadSha,
+    findingIds: sortedUniqueStrings(
+      optInInput.findingIds,
+      "validation receipt optIn.findingIds",
+    ).map((item, index) => findingId(item, `validation receipt optIn.findingIds[${index}]`)),
   };
+  if (
+    optIn.findingIds.length === 0 ||
+    findingIds.some((finding) => !optIn.findingIds.includes(finding))
+  ) {
+    throw new RepairContractError(
+      "validation receipt selected findings must be covered by the exact Advisor opt-in",
+    );
+  }
 
   const recomputedAttemptKey = `sha256:${sha256(
     canonicalJson({

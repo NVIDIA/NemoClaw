@@ -56,8 +56,8 @@ export function getCommits(base: string, head: string): string[] {
     .slice(0, 50);
 }
 
-export function getHeadSha(head: string): string {
-  return execFileSync("git", ["rev-parse", head], { encoding: "utf8" }).trim();
+export function getHeadSha(head: string, cwd?: string): string {
+  return execFileSync("git", ["rev-parse", head], { encoding: "utf8", cwd }).trim();
 }
 
 export function gitOutput(commands: string[][], maxBuffer: number, cwd?: string): string | undefined {

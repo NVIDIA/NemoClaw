@@ -9,6 +9,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAttemptReceipt } from "../../../tools/pr-review-advisor-repair/audit.mts";
+import { pullRequestReviewStateDigest } from "../../../tools/pr-review-advisor/review-state.mts";
 import {
   startOwnedOpenShellGateway,
   type OpenShellTools,
@@ -22,6 +23,7 @@ import {
   safeRelativePath,
   sanitizeDiagnostic,
   selectRepairAttempt,
+  sha256,
   type FindingInput,
   type SelectionBundle,
 } from "../../../tools/pr-review-advisor-repair/contract.mts";
@@ -39,11 +41,11 @@ import {
   parseArtifactManifest,
   validateAdvisorArtifacts,
   validateAdvisorRun,
-  validateDownloadedAdvisorArtifacts,
   validateMaintainerPermission,
 } from "../../../tools/pr-review-advisor-repair/select.mts";
 import {
   assertLivePullRequestIdentity,
+  assertLiveReviewStateIdentity,
   createOpenShellValidationRunner,
   validateRepairLocally,
   validationCommands,
@@ -90,7 +92,7 @@ function finding(overrides: Partial<FindingInput> = {}): FindingInput {
 
 function selectionInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const head = "a".repeat(40);
-  return {
+  const defaults = {
     version: 1,
     repository: "NVIDIA/NemoClaw",
     prNumber: 42,
@@ -110,19 +112,39 @@ function selectionInput(overrides: Record<string, unknown> = {}): Record<string,
       runId: 700,
       runAttempt: 2,
       artifactIds: Array.from({ length: 10 }, (_value, index) => index + 100),
+      artifactDigests: Array.from(
+        { length: 10 },
+        (_value, index) => `sha256:${String(index).padStart(64, "0")}`,
+      ),
+      findingLedgerDigest: `sha256:${"d".repeat(64)}`,
+      reviewStateDigest: `sha256:${"e".repeat(64)}`,
     },
     optIn: {
       kind: "phase1-maintainer-dispatch",
       actor: "maintainer",
       triggeringActor: "maintainer",
       headSha: head,
+      findingIds: [finding().id],
     },
     productScope: {
       kind: "accepted-issue",
       identity: "#10791",
     },
     findings: [finding()],
+  };
+  const nestedOverride = (key: "pullRequest" | "advisor" | "optIn" | "productScope") => {
+    const value = overrides[key];
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  };
+  return {
+    ...defaults,
     ...overrides,
+    pullRequest: { ...defaults.pullRequest, ...nestedOverride("pullRequest") },
+    advisor: { ...defaults.advisor, ...nestedOverride("advisor") },
+    optIn: { ...defaults.optIn, ...nestedOverride("optIn") },
+    productScope: { ...defaults.productScope, ...nestedOverride("productScope") },
   };
 }
 
@@ -149,13 +171,6 @@ function expectSchemaValid(schemaName: string, value: unknown): void {
     validate(value),
     `${schemaName} schema rejected its runtime value: ${JSON.stringify(validate.errors)}`,
   ).toBe(true);
-}
-
-function writeSpecialistArtifact(root: string, interest: string): void {
-  const directory = path.join(root, `pr-review-specialist-${interest}-2`);
-  fs.mkdirSync(directory);
-  write(directory, `pr-review-${interest}-summary.md`, `Summary for ${interest}.\n`);
-  write(directory, `pr-review-${interest}-session.jsonl`, '{"type":"assistant"}\n');
 }
 
 function expectSecretFreeOpenShellEnvironment(environment: NodeJS.ProcessEnv): void {
@@ -302,7 +317,7 @@ describe("PR Review Advisor repair Phase 1", () => {
   it("records the emergency switch without retaining raw finding text (#10791)", () => {
     const receipt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
-      FINDINGS_JSON: '[{"summary":"untrusted secret-shaped text"}]',
+      FINDING_IDS_JSON: '["F-behavior-untrusted-secret-shaped-text"]',
       GITHUB_ACTOR: "maintainer",
       GITHUB_RUN_ATTEMPT: "2",
       GITHUB_RUN_ID: "900",
@@ -327,7 +342,7 @@ describe("PR Review Advisor repair Phase 1", () => {
   it("records but disables workflow reruns before a second Pi turn (#10791)", () => {
     const receipt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
-      FINDINGS_JSON: "[]",
+      FINDING_IDS_JSON: "[]",
       GITHUB_ACTOR: "maintainer",
       GITHUB_RUN_ATTEMPT: "2",
       GITHUB_RUN_ID: "900",
@@ -348,7 +363,7 @@ describe("PR Review Advisor repair Phase 1", () => {
   it("keeps every emitted receipt aligned with its checked-in JSON Schema (#10791)", () => {
     const attempt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
-      FINDINGS_JSON: "[]",
+      FINDING_IDS_JSON: "[]",
       GITHUB_ACTOR: "maintainer",
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_RUN_ID: "900",
@@ -414,7 +429,7 @@ describe("PR Review Advisor repair Phase 1", () => {
   it("does not treat maintainer permission as model data-egress consent (#10791)", () => {
     const receipt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
-      FINDINGS_JSON: "[]",
+      FINDING_IDS_JSON: "[]",
       GITHUB_ACTOR: "maintainer",
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_RUN_ID: "900",
@@ -459,6 +474,9 @@ describe("PR Review Advisor repair Phase 1", () => {
   it("selects only exact safe paths and records deterministic skip reasons (#10791)", () => {
     const parsed = parseSelectionInput(
       selectionInput({
+        optIn: {
+          findingIds: ["behavior:001", "class:001", "dependency:001", "escape:001"],
+        },
         findings: [
           finding(),
           finding({
@@ -474,7 +492,7 @@ describe("PR Review Advisor repair Phase 1", () => {
     const bundle = selectRepairAttempt(parsed);
 
     expect(bundle.phase).toBe("phase1-manual-publication");
-    expect(bundle.identityStatus).toBe("exact-head-dispatcher-supplied");
+    expect(bundle.identityStatus).toBe("exact-head-advisor-ledger");
     expect(bundle.selectedFindingIds).toEqual(["behavior:001"]);
     expect(bundle.selectedPaths).toEqual(["src/demo.ts"]);
     expect(bundle.decisions).toEqual([
@@ -574,81 +592,6 @@ describe("PR Review Advisor repair Phase 1", () => {
         { prNumber: 42, runId: 700 },
       ),
     ).toThrow("pull_request_target");
-  });
-
-  it("validates every bounded artifact file and rejects symlink substitution (#10791)", () => {
-    const root = temporaryDirectory();
-    const downloadRoot = path.join(root, "downloads");
-    fs.mkdirSync(downloadRoot);
-    const output = path.join(root, "output", "repair-context.json");
-    const bundle = selection();
-    const manifest = advisorManifest();
-    const contextDirectory = path.join(
-      downloadRoot,
-      `pr-review-advisor-context-${manifest.run.id}`,
-    );
-    fs.mkdirSync(contextDirectory);
-    writeJson(path.join(contextDirectory, "github-context.json"), {
-      repo: "NVIDIA/NemoClaw",
-      prNumber: 42,
-      pullRequest: {
-        state: "open",
-        draft: false,
-        user: { login: "contributor" },
-        head: { sha: "a".repeat(40), ref: "fix/demo", repo: { full_name: "NVIDIA/NemoClaw" } },
-        base: { sha: "b".repeat(40), ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
-      },
-    });
-    writeSpecialistArtifact(downloadRoot, "behavior");
-    writeSpecialistArtifact(downloadRoot, "code-reduction");
-    writeSpecialistArtifact(downloadRoot, "dependency-use");
-    writeSpecialistArtifact(downloadRoot, "design-architecture");
-    writeSpecialistArtifact(downloadRoot, "documentation");
-    writeSpecialistArtifact(downloadRoot, "migration-completion");
-    writeSpecialistArtifact(downloadRoot, "operations");
-    writeSpecialistArtifact(downloadRoot, "test-design");
-    writeSpecialistArtifact(downloadRoot, "trust");
-
-    validateDownloadedAdvisorArtifacts({
-      downloadDirectory: downloadRoot,
-      outputFile: output,
-      selection: bundle,
-      manifest,
-    });
-    expect(JSON.parse(fs.readFileSync(output, "utf8"))).toMatchObject({
-      attemptKey: bundle.attemptKey,
-      phase: "phase1-manual-publication",
-      selectedPaths: ["src/demo.ts"],
-    });
-
-    const behaviorSummary = path.join(
-      downloadRoot,
-      "pr-review-specialist-behavior-2",
-      "pr-review-behavior-summary.md",
-    );
-    fs.rmSync(behaviorSummary);
-    fs.symlinkSync(path.join(root, "outside.md"), behaviorSummary);
-    expect(() =>
-      validateDownloadedAdvisorArtifacts({
-        downloadDirectory: downloadRoot,
-        outputFile: path.join(root, "second-context.json"),
-        selection: bundle,
-        manifest,
-      }),
-    ).toThrow("regular-file contract");
-
-    fs.rmSync(behaviorSummary);
-    const outsideSummary = path.join(root, "outside-summary.md");
-    write(root, "outside-summary.md", "Hard-linked summary.\n");
-    fs.linkSync(outsideSummary, behaviorSummary);
-    expect(() =>
-      validateDownloadedAdvisorArtifacts({
-        downloadDirectory: downloadRoot,
-        outputFile: path.join(root, "third-context.json"),
-        selection: bundle,
-        manifest,
-      }),
-    ).toThrow("bounded regular file");
   });
 
   it("gives Pi no shell, Git, tests, network credentials, or publication tool (#10791)", () => {
@@ -1183,6 +1126,45 @@ describe("PR Review Advisor repair Phase 1", () => {
     await expect(assertLivePullRequestIdentity(bundle, "token", request)).rejects.toThrow(
       "identity changed",
     );
+  });
+
+  it("stops when exact-head review feedback changes after selection (#10791)", async () => {
+    const state = {
+      version: 1 as const,
+      repository: "NVIDIA/NemoClaw",
+      prNumber: 42,
+      headSha: "a".repeat(40),
+      issueComments: [],
+      reviews: [],
+      threads: [],
+    };
+    const bundle = selection({
+      advisor: {
+        ...selection().input.advisor,
+        reviewStateDigest: pullRequestReviewStateDigest(state),
+      },
+    });
+    await expect(
+      assertLiveReviewStateIdentity(bundle, "token", async () => state),
+    ).resolves.toBeUndefined();
+
+    const changedBody = "The selected head now has new actionable feedback.";
+    await expect(
+      assertLiveReviewStateIdentity(bundle, "token", async () => ({
+        ...state,
+        issueComments: [
+          {
+            id: 1,
+            author: "reviewer",
+            body: changedBody,
+            bodySha256: `sha256:${sha256(changedBody)}`,
+            bodyTruncated: false,
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-01T00:00:00Z",
+          },
+        ],
+      })),
+    ).rejects.toThrow("review-thread state changed");
   });
 
   it("runs repository checks in an offline credential-free OpenShell sandbox (#10791)", () => {

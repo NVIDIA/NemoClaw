@@ -9,6 +9,11 @@ import { pathToFileURL } from "node:url";
 
 import { githubApi, githubGraphql } from "../advisors/github.mts";
 import {
+  collectPullRequestReviewState,
+  pullRequestReviewStateDigest,
+  type PullRequestReviewState,
+} from "../pr-review-advisor/review-state.mts";
+import {
   CANONICAL_REPOSITORY,
   MAX_PATCH_BYTES,
   parseValidatedReceiptForPublication,
@@ -63,6 +68,8 @@ export type PublicationReceipt = {
   dispatchedWorkflows: string[];
 };
 
+export type PublicationHeadAction = "atomic-update" | "resume-generated-head";
+
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) throw new RepairContractError(`${name} is required`);
@@ -74,6 +81,18 @@ function fullSha(value: unknown, label: string): string {
     throw new RepairContractError(`${label} must be a full SHA`);
   }
   return value;
+}
+
+export function publicationHeadAction(
+  sourceHeadSha: string,
+  liveHeadSha: string,
+  commitSha: string,
+): PublicationHeadAction {
+  if (liveHeadSha === sourceHeadSha) return "atomic-update";
+  if (liveHeadSha === commitSha) return "resume-generated-head";
+  throw new RepairContractError(
+    "live pull request head is neither the approved source nor the verified repair commit",
+  );
 }
 
 export function publisherGitEnvironment(home: string): NodeJS.ProcessEnv {
@@ -123,13 +142,25 @@ export function assertPublicationPullRequest(
   receipt: ValidationReceipt,
   pull: PullRequest,
 ): { repositoryId: string } {
+  const identity = publicationPullRequestIdentity(receipt, pull);
+  if (identity.headSha !== receipt.sourceHeadSha) {
+    throw new RepairContractError(
+      "live pull request identity or ownership changed before publication",
+    );
+  }
+  return { repositoryId: identity.repositoryId };
+}
+
+function publicationPullRequestIdentity(
+  receipt: ValidationReceipt,
+  pull: PullRequest,
+): { repositoryId: string; headSha: string } {
   if (
     pull.number !== receipt.prNumber ||
     pull.state !== "open" ||
     pull.draft !== false ||
     pull.maintainer_can_modify !== true ||
     pull.user?.login !== receipt.author ||
-    pull.head?.sha !== receipt.sourceHeadSha ||
     pull.head?.ref !== receipt.headRef ||
     pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
     pull.base?.sha !== receipt.baseSha ||
@@ -140,11 +171,12 @@ export function assertPublicationPullRequest(
       "live pull request identity or ownership changed before publication",
     );
   }
+  const headSha = fullSha(pull.head?.sha, "live pull request head SHA");
   const repositoryId = pull.base.repo.node_id;
   if (typeof repositoryId !== "string" || !repositoryId) {
     throw new RepairContractError("canonical repository node identity is missing");
   }
-  return { repositoryId };
+  return { repositoryId, headSha };
 }
 
 export function reconstructValidatedTree(input: {
@@ -352,6 +384,55 @@ export async function waitForVerifiedCommit(
   throw new RepairContractError("GitHub did not verify the repair commit before publication");
 }
 
+export async function ensureVerifiedRepairCommit(input: {
+  liveHeadSha: string;
+  repository: string;
+  receipt: ValidationReceipt;
+  candidateTreeSha: string;
+  token: string;
+  request: GitHubRequest;
+  wait?: (milliseconds: number) => Promise<void>;
+}): Promise<string> {
+  const message = `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${input.receipt.attemptKey}`;
+  let commitSha: string;
+  if (input.liveHeadSha === input.receipt.sourceHeadSha) {
+    await createGitHubTree({
+      repository: input.repository,
+      sourceHeadSha: input.receipt.sourceHeadSha,
+      candidateTreeSha: input.candidateTreeSha,
+      token: input.token,
+      request: input.request,
+    });
+    const commit = await input.request<{ sha?: unknown }>(
+      `repos/${CANONICAL_REPOSITORY}/git/commits`,
+      input.token,
+      {
+        method: "POST",
+        body: {
+          message,
+          tree: input.candidateTreeSha,
+          parents: [input.receipt.sourceHeadSha],
+        },
+      },
+    );
+    commitSha = fullSha(commit.sha, "created repair commit SHA");
+  } else {
+    commitSha = fullSha(input.liveHeadSha, "live generated repair commit SHA");
+  }
+  await waitForVerifiedCommit(
+    {
+      commitSha,
+      message,
+      parentSha: input.receipt.sourceHeadSha,
+      treeSha: input.candidateTreeSha,
+    },
+    input.token,
+    input.request,
+    input.wait,
+  );
+  return commitSha;
+}
+
 export async function atomicUpdate(input: {
   repositoryId: string;
   headRef: string;
@@ -390,6 +471,7 @@ const GENERATED_HEAD_WORKFLOWS = [
   "installer-hash-check.yaml",
   "code-scanning.yaml",
 ] as const;
+const GENERATED_HEAD_DISPATCH_CLAIM = "Advisor repair validation dispatch";
 
 async function assertValidationWorkflowsActive(
   token: string,
@@ -404,6 +486,34 @@ async function assertValidationWorkflowsActive(
       throw new RepairContractError(`generated-head workflow is not active: ${workflow}`);
     }
   }
+}
+
+export async function assertAdvisorArtifactsCurrent(
+  receipt: ValidationReceipt,
+  token: string,
+  request: GitHubRequest = githubApi,
+): Promise<void> {
+  const artifacts = await Promise.all(
+    receipt.advisor.artifactIds.map((artifactId) =>
+      request<{
+        id?: unknown;
+        expired?: unknown;
+        digest?: unknown;
+        workflow_run?: { id?: unknown; head_sha?: unknown };
+      }>(`repos/${CANONICAL_REPOSITORY}/actions/artifacts/${artifactId}`, token),
+    ),
+  );
+  artifacts.forEach((artifact, index) => {
+    if (
+      artifact.id !== receipt.advisor.artifactIds[index] ||
+      artifact.expired !== false ||
+      artifact.digest !== receipt.advisor.artifactDigests[index] ||
+      artifact.workflow_run?.id !== receipt.advisor.runId ||
+      artifact.workflow_run?.head_sha !== receipt.advisor.workflowSha
+    ) {
+      throw new RepairContractError("Advisor artifact identity changed before publication");
+    }
+  });
 }
 
 export async function dispatchGeneratedHeadValidation(
@@ -445,6 +555,150 @@ export async function dispatchGeneratedHeadValidation(
   return [...GENERATED_HEAD_WORKFLOWS, "pr-review-advisor.yaml"];
 }
 
+export async function ensureGeneratedHeadValidation(
+  receipt: ValidationReceipt,
+  commitSha: string,
+  token: string,
+  request: GitHubRequest = githubApi,
+): Promise<string[]> {
+  const workflows = [...GENERATED_HEAD_WORKFLOWS, "pr-review-advisor.yaml"];
+  const checks = await request<{ total_count?: unknown; check_runs?: unknown }>(
+    `repos/${CANONICAL_REPOSITORY}/commits/${commitSha}/check-runs?per_page=100`,
+    token,
+  );
+  if (!Array.isArray(checks.check_runs) || checks.total_count !== checks.check_runs.length) {
+    throw new RepairContractError("generated-head dispatch claim listing is incomplete");
+  }
+  for (const workflow of workflows) {
+    const externalId = `${receipt.attemptKey}:${workflow}`;
+    const claims = (checks.check_runs as Array<Record<string, unknown>>).filter(
+      (check) => check.name === GENERATED_HEAD_DISPATCH_CLAIM && check.external_id === externalId,
+    );
+    if (claims.length > 1) {
+      throw new RepairContractError(`${workflow} has duplicate generated-head dispatch claims`);
+    }
+    const matches = await matchingGeneratedHeadRuns(receipt, commitSha, workflow, token, request);
+    if (matches.length > 1) {
+      throw new RepairContractError(`${workflow} has duplicate generated-head dispatches`);
+    }
+    if (matches.length === 0) {
+      if (claims.length === 1) {
+        throw new RepairContractError(
+          `${workflow} dispatch is durably claimed but its exact run is not visible; retry reconciliation later`,
+        );
+      }
+      const claim = await request<{ id?: unknown }>(
+        `repos/${CANONICAL_REPOSITORY}/check-runs`,
+        token,
+        {
+          method: "POST",
+          body: {
+            name: GENERATED_HEAD_DISPATCH_CLAIM,
+            head_sha: commitSha,
+            status: "in_progress",
+            external_id: externalId,
+            output: {
+              title: `Claim ${workflow} generated-head dispatch`,
+              summary: `Attempt: ${receipt.attemptKey}`,
+            },
+          },
+        },
+      );
+      if (!Number.isSafeInteger(claim.id) || Number(claim.id) < 1) {
+        throw new RepairContractError(`${workflow} dispatch claim has no GitHub identity`);
+      }
+      const afterClaim = await matchingGeneratedHeadRuns(
+        receipt,
+        commitSha,
+        workflow,
+        token,
+        request,
+      );
+      if (afterClaim.length > 1) {
+        throw new RepairContractError(`${workflow} has duplicate generated-head dispatches`);
+      }
+      if (afterClaim.length === 0) {
+        await dispatchGeneratedHeadWorkflow(receipt, commitSha, workflow, token, request);
+      }
+      await request(`repos/${CANONICAL_REPOSITORY}/check-runs/${Number(claim.id)}`, token, {
+        method: "PATCH",
+        body: {
+          status: "completed",
+          conclusion: "neutral",
+          output: {
+            title: `${workflow} generated-head dispatch accepted`,
+            summary: `Attempt: ${receipt.attemptKey}`,
+          },
+        },
+      });
+    }
+  }
+  return workflows;
+}
+
+async function matchingGeneratedHeadRuns(
+  receipt: ValidationReceipt,
+  commitSha: string,
+  workflow: string,
+  token: string,
+  request: GitHubRequest,
+): Promise<Array<Record<string, unknown>>> {
+  const runs = await request<{ total_count?: unknown; workflow_runs?: unknown }>(
+    `repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=${encodeURIComponent(receipt.headRef)}&per_page=100`,
+    token,
+  );
+  if (!Array.isArray(runs.workflow_runs) || runs.total_count !== runs.workflow_runs.length) {
+    throw new RepairContractError(`${workflow} generated-head run listing is incomplete`);
+  }
+  return (runs.workflow_runs as Array<Record<string, unknown>>).filter(
+    (run) =>
+      run.event === "workflow_dispatch" &&
+      run.head_sha === commitSha &&
+      typeof run.display_title === "string" &&
+      run.display_title.includes(receipt.attemptKey),
+  );
+}
+
+async function dispatchGeneratedHeadWorkflow(
+  receipt: ValidationReceipt,
+  commitSha: string,
+  workflow: string,
+  token: string,
+  request: GitHubRequest,
+): Promise<void> {
+  const common = {
+    pr_number: String(receipt.prNumber),
+    source_head_sha: commitSha,
+    base_sha: receipt.baseSha,
+    repair_attempt_key: receipt.attemptKey,
+  };
+  if (workflow === "pr-review-advisor.yaml") {
+    await request(
+      `repos/${CANONICAL_REPOSITORY}/actions/workflows/pr-review-advisor.yaml/dispatches`,
+      token,
+      {
+        method: "POST",
+        body: {
+          ref: receipt.headRef,
+          inputs: {
+            target_repo: CANONICAL_REPOSITORY,
+            target_pr: String(receipt.prNumber),
+            target_base: "main",
+            source_head_sha: commitSha,
+            base_sha: receipt.baseSha,
+            repair_attempt_key: receipt.attemptKey,
+          },
+        },
+      },
+    );
+    return;
+  }
+  await request(`repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/dispatches`, token, {
+    method: "POST",
+    body: { ref: receipt.headRef, inputs: common },
+  });
+}
+
 export async function publishValidatedRepair(input: {
   sourceCheckout: string;
   receipt: ValidationReceipt;
@@ -454,6 +708,11 @@ export async function publishValidatedRepair(input: {
   request?: GitHubRequest;
   graphql?: GraphqlRequest;
   wait?: (milliseconds: number) => Promise<void>;
+  collectReviewState?: (
+    repository: string,
+    prNumber: number,
+    token: string,
+  ) => Promise<PullRequestReviewState>;
 }): Promise<PublicationReceipt> {
   const request = input.request ?? githubApi;
   const graphql =
@@ -462,7 +721,22 @@ export async function publishValidatedRepair(input: {
     `repos/${CANONICAL_REPOSITORY}/pulls/${input.receipt.prNumber}`,
     input.token,
   );
-  const { repositoryId } = assertPublicationPullRequest(input.receipt, pull);
+  const initialIdentity = publicationPullRequestIdentity(input.receipt, pull);
+  const { repositoryId } = initialIdentity;
+  const collectReviewState = input.collectReviewState ?? collectPullRequestReviewState;
+  if (initialIdentity.headSha === input.receipt.sourceHeadSha) {
+    const initialReviewState = await collectReviewState(
+      CANONICAL_REPOSITORY,
+      input.receipt.prNumber,
+      input.token,
+    );
+    if (
+      initialReviewState.headSha !== input.receipt.sourceHeadSha ||
+      pullRequestReviewStateDigest(initialReviewState) !== input.receipt.advisor.reviewStateDigest
+    ) {
+      throw new RepairContractError("live review-thread state changed before publication");
+    }
+  }
   await assertValidationWorkflowsActive(input.token, request);
   const reconstructed = reconstructValidatedTree({
     sourceCheckout: input.sourceCheckout,
@@ -470,51 +744,47 @@ export async function publishValidatedRepair(input: {
     patchFile: input.patchFile,
     stagingDirectory: input.stagingDirectory,
   });
-  await createGitHubTree({
+  const commitSha = await ensureVerifiedRepairCommit({
+    liveHeadSha: initialIdentity.headSha,
     repository: reconstructed.repository,
-    sourceHeadSha: input.receipt.sourceHeadSha,
+    receipt: input.receipt,
     candidateTreeSha: reconstructed.treeSha,
     token: input.token,
     request,
+    wait: input.wait,
   });
-  const commitMessage = `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${input.receipt.attemptKey}`;
-  const commit = await request<{ sha?: unknown }>(
-    `repos/${CANONICAL_REPOSITORY}/git/commits`,
-    input.token,
-    {
-      method: "POST",
-      body: {
-        message: commitMessage,
-        tree: reconstructed.treeSha,
-        parents: [input.receipt.sourceHeadSha],
-      },
-    },
-  );
-  const commitSha = fullSha(commit.sha, "created repair commit SHA");
-  await waitForVerifiedCommit(
-    {
-      commitSha,
-      message: commitMessage,
-      parentSha: input.receipt.sourceHeadSha,
-      treeSha: reconstructed.treeSha,
-    },
-    input.token,
-    request,
-    input.wait,
-  );
   const current = await request<PullRequest>(
     `repos/${CANONICAL_REPOSITORY}/pulls/${input.receipt.prNumber}`,
     input.token,
   );
-  assertPublicationPullRequest(input.receipt, current);
-  await atomicUpdate({
-    repositoryId,
-    headRef: input.receipt.headRef,
-    beforeOid: input.receipt.sourceHeadSha,
-    afterOid: commitSha,
-    graphql,
-  });
-  const dispatchedWorkflows = await dispatchGeneratedHeadValidation(
+  const currentIdentity = publicationPullRequestIdentity(input.receipt, current);
+  await assertAdvisorArtifactsCurrent(input.receipt, input.token, request);
+  const headAction = publicationHeadAction(
+    input.receipt.sourceHeadSha,
+    currentIdentity.headSha,
+    commitSha,
+  );
+  if (headAction === "atomic-update") {
+    const currentReviewState = await collectReviewState(
+      CANONICAL_REPOSITORY,
+      input.receipt.prNumber,
+      input.token,
+    );
+    if (
+      currentReviewState.headSha !== input.receipt.sourceHeadSha ||
+      pullRequestReviewStateDigest(currentReviewState) !== input.receipt.advisor.reviewStateDigest
+    ) {
+      throw new RepairContractError("live review-thread state changed at the publication boundary");
+    }
+    await atomicUpdate({
+      repositoryId,
+      headRef: input.receipt.headRef,
+      beforeOid: input.receipt.sourceHeadSha,
+      afterOid: commitSha,
+      graphql,
+    });
+  }
+  const dispatchedWorkflows = await ensureGeneratedHeadValidation(
     input.receipt,
     commitSha,
     input.token,
@@ -532,6 +802,9 @@ export async function publishValidatedRepair(input: {
 }
 
 async function main(env: NodeJS.ProcessEnv): Promise<void> {
+  if (env.ADVISOR_REPAIR_PHASE1_ENABLED !== "true") {
+    throw new RepairContractError("Phase 1 publication is disabled");
+  }
   const patchFile = required(env, "VALIDATED_PATCH_FILE");
   const patch = readBoundedRegularFile(patchFile, MAX_PATCH_BYTES);
   const receipt = parseValidatedReceiptForPublication(

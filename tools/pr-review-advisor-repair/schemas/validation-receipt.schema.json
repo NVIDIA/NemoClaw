@@ -37,7 +37,15 @@
     "advisor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workflowSha", "runId", "runAttempt", "artifactIds"],
+      "required": [
+        "workflowSha",
+        "runId",
+        "runAttempt",
+        "artifactIds",
+        "artifactDigests",
+        "findingLedgerDigest",
+        "reviewStateDigest"
+      ],
       "properties": {
         "workflowSha": { "$ref": "#/$defs/sha" },
         "runId": { "type": "integer", "minimum": 1 },
@@ -48,7 +56,15 @@
           "maxItems": 10,
           "uniqueItems": true,
           "items": { "type": "integer", "minimum": 1 }
-        }
+        },
+        "artifactDigests": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "findingLedgerDigest": { "$ref": "#/$defs/digest" },
+        "reviewStateDigest": { "$ref": "#/$defs/digest" }
       }
     },
     "findingIds": {
@@ -122,12 +138,19 @@
     "optIn": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "actor", "triggeringActor", "headSha"],
+      "required": ["kind", "actor", "triggeringActor", "headSha", "findingIds"],
       "properties": {
         "kind": { "const": "phase1-maintainer-dispatch" },
         "actor": { "$ref": "#/$defs/githubLogin" },
         "triggeringActor": { "$ref": "#/$defs/githubLogin" },
-        "headSha": { "$ref": "#/$defs/sha" }
+        "headSha": { "$ref": "#/$defs/sha" },
+        "findingIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/findingId" }
+        }
       }
     },
     "outcome": { "enum": ["validated", "rejected", "skipped"] },

@@ -54,12 +54,19 @@ function selection(summary: string) {
         runId: 700,
         runAttempt: 2,
         artifactIds: Array.from({ length: 10 }, (_value, index) => index + 100),
+        artifactDigests: Array.from(
+          { length: 10 },
+          (_value, index) => `sha256:${String(index).padStart(64, "0")}`,
+        ),
+        findingLedgerDigest: `sha256:${"d".repeat(64)}`,
+        reviewStateDigest: `sha256:${"e".repeat(64)}`,
       },
       optIn: {
         kind: "phase1-maintainer-dispatch",
         actor: "maintainer",
         triggeringActor: "maintainer",
         headSha: head,
+        findingIds: ["behavior:001"],
       },
       productScope: { kind: "maintainer-decision", identity: summary },
       findings: [
@@ -88,7 +95,7 @@ describe("PR Review Advisor repair job summaries", () => {
     const sentinel = "UNTRUSTED_MARKDOWN_SENTINEL";
     const attempt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
-      FINDINGS_JSON: JSON.stringify([{ summary: sentinel }]),
+      FINDING_IDS_JSON: JSON.stringify([`F-behavior-${sentinel}`]),
       GITHUB_ACTOR: "maintainer",
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_RUN_ID: "900",
@@ -174,7 +181,7 @@ describe("PR Review Advisor repair job summaries", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const receipt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
-      FINDINGS_JSON: "[]",
+      FINDING_IDS_JSON: "[]",
       GITHUB_ACTOR: "maintainer",
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_RUN_ID: "900",

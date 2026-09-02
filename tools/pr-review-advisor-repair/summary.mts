@@ -13,7 +13,7 @@ type AttemptSummaryReceipt = {
   dispatch: {
     prNumber: number | null;
     advisorRunId: number | null;
-    findingsSha256: string;
+    findingIdsSha256: string;
     repositoryEgressAuthorized: boolean;
   };
   emergencySwitch: { enabled: boolean };
@@ -112,7 +112,7 @@ export function appendAttemptJobSummary(
       ["Workflow run", receipt.workflow.runId],
       ["Workflow attempt", receipt.workflow.runAttempt],
       ["Workflow SHA", receipt.workflow.workflowSha],
-      ["Findings digest", receipt.dispatch.findingsSha256],
+      ["Finding IDs digest", receipt.dispatch.findingIdsSha256],
       ["Emergency switch", receipt.emergencySwitch.enabled],
       ["Repository egress authorized", receipt.dispatch.repositoryEgressAuthorized],
     ]),

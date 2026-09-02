@@ -38,7 +38,7 @@
         "advisorRunId",
         "productScopeKind",
         "productScopeIdentity",
-        "findingsSha256",
+        "findingIdsSha256",
         "repositoryEgressAuthorized"
       ],
       "properties": {
@@ -48,7 +48,7 @@
         "advisorRunId": { "type": ["integer", "null"], "minimum": 1 },
         "productScopeKind": { "type": "string", "maxLength": 64 },
         "productScopeIdentity": { "type": "string", "maxLength": 256 },
-        "findingsSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "findingIdsSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "repositoryEgressAuthorized": { "type": "boolean" }
       }
     },

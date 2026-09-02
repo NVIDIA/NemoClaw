@@ -10,6 +10,11 @@ import { pathToFileURL } from "node:url";
 
 import { githubRest } from "../advisors/github.mts";
 import {
+  collectPullRequestReviewState,
+  pullRequestReviewStateDigest,
+  type PullRequestReviewState,
+} from "../pr-review-advisor/review-state.mts";
+import {
   createOpenShellSandbox,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
@@ -802,6 +807,24 @@ export async function assertLivePullRequestIdentity(
   }
 }
 
+export async function assertLiveReviewStateIdentity(
+  selection: SelectionBundle,
+  token: string,
+  collect: (
+    repository: string,
+    prNumber: number,
+    token: string,
+  ) => Promise<PullRequestReviewState> = collectPullRequestReviewState,
+): Promise<void> {
+  const state = await collect(CANONICAL_REPOSITORY, selection.input.prNumber, token);
+  if (
+    state.headSha !== selection.input.sourceHeadSha ||
+    pullRequestReviewStateDigest(state) !== selection.input.advisor.reviewStateDigest
+  ) {
+    throw new RepairContractError("live review-thread state changed after selection");
+  }
+}
+
 export function validateRepairLocally(input: {
   sourceCheckout: string;
   selection: SelectionBundle;
@@ -1060,6 +1083,7 @@ async function runValidation(env: NodeJS.ProcessEnv): Promise<void> {
   try {
     const token = required(env, "GITHUB_TOKEN");
     await assertLivePullRequestIdentity(selection, token);
+    await assertLiveReviewStateIdentity(selection, token);
     const proposalFile = required(env, "PROPOSAL_FILE");
     const proposal = parseProposalReceipt(readBoundedJson(proposalFile, 512 * 1024), selection);
     if (proposal.outcome === "proposed") {
@@ -1085,6 +1109,7 @@ async function runValidation(env: NodeJS.ProcessEnv): Promise<void> {
     await gateway?.stop();
     gateway = undefined;
     await assertLivePullRequestIdentity(selection, token);
+    await assertLiveReviewStateIdentity(selection, token);
     writeValidationArtifacts(artifactDirectory, result.receipt, result.patch);
     fs.appendFileSync(
       required(env, "GITHUB_OUTPUT"),
