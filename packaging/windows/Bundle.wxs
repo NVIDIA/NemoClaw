@@ -20,6 +20,7 @@
     <Chain>
       <ExePackage
         Id="MxcSystemDrivePreparation"
+        CacheId="MxcSystemDrivePreparation-0.8.0-arm64"
         SourceFile="$(var.WxcHostPrepPath)"
         InstallArguments="prepare-system-drive"
         PerMachine="yes"
@@ -28,6 +29,7 @@
         Vital="yes" />
       <ExePackage
         Id="MxcNullDevicePreparation"
+        CacheId="MxcNullDevicePreparation-0.8.0-arm64"
         SourceFile="$(var.WxcHostPrepPath)"
         InstallArguments="prepare-null-device"
         PerMachine="yes"
