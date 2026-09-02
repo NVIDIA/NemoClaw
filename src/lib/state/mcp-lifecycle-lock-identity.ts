@@ -129,6 +129,14 @@ const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
   readProcessIdentity: readMcpLockProcessIdentity,
 };
 
+function pidNamespaceIdentityMatchesLocal(
+  ownerIdentity: string | null | undefined,
+  localIdentity: string | null,
+): boolean {
+  if (localIdentity !== null) return ownerIdentity === localIdentity;
+  return process.platform !== "linux" && ownerIdentity === null;
+}
+
 /** Require stable host evidence before treating an owner as exactly local. */
 export function mcpLifecycleLockOwnerHasLocalProvenance(
   owner: McpLifecycleLockOwner,
@@ -136,7 +144,10 @@ export function mcpLifecycleLockOwnerHasLocalProvenance(
   return (
     LOCAL_HOST_IDENTITY !== null &&
     owner.hostIdentity === LOCAL_HOST_IDENTITY &&
-    owner.pidNamespaceIdentity === LOCAL_PID_NAMESPACE_IDENTITY
+    pidNamespaceIdentityMatchesLocal(
+      owner.pidNamespaceIdentity,
+      LOCAL_PID_NAMESPACE_IDENTITY,
+    )
   );
 }
 
@@ -185,10 +196,10 @@ export function classifyMcpLifecycleLock(
     return "active";
   }
   if (
-    (probes.localPidNamespaceIdentity !== null && !owner.pidNamespaceIdentity) ||
-    (owner.pidNamespaceIdentity !== null &&
-      owner.pidNamespaceIdentity !== undefined &&
-      owner.pidNamespaceIdentity !== probes.localPidNamespaceIdentity)
+    !pidNamespaceIdentityMatchesLocal(
+      owner.pidNamespaceIdentity,
+      probes.localPidNamespaceIdentity,
+    )
   ) {
     return "active";
   }

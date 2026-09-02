@@ -54,7 +54,7 @@ function onboardLockHolderProvenance(
     if (lock.pidNamespaceIdentity === null) return "unknown";
     return lock.pidNamespaceIdentity === probes.localPidNamespaceIdentity ? "local" : "foreign";
   }
-  return lock.pidNamespaceIdentity === null ? "local" : "unknown";
+  return process.platform !== "linux" && lock.pidNamespaceIdentity === null ? "local" : "unknown";
 }
 
 /**

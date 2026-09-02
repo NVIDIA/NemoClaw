@@ -450,6 +450,31 @@ describe("MCP lifecycle lock identity properties", () => {
     );
   });
 
+  it("fails closed on Linux when both PID namespace identities are unavailable", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const processIsAlive = vi.fn(() => true);
+    const readProcessIdentity = vi.fn(() => "linux:boot-b:100");
+    try {
+      expect(
+        classifyMcpLifecycleLock(
+          observation(owner(202, "linux:boot-a:100", { pidNamespaceIdentity: null })),
+          SANDBOX_NAME,
+          0,
+          30_000,
+          probes({
+            localPidNamespaceIdentity: null,
+            processIsAlive,
+            readProcessIdentity,
+          }),
+        ),
+      ).toBe("active");
+      expect(processIsAlive).not.toHaveBeenCalled();
+      expect(readProcessIdentity).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it(
     "makes corrupt or wrong-sandbox generations stale exactly at the grace boundary",
     {

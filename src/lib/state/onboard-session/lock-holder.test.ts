@@ -199,6 +199,40 @@ describe("onboarding lock classification", () => {
     expect(readStrongIdentity).not.toHaveBeenCalled();
   });
 
+  it("holds an owner as unknown on Linux when both PID namespace identities are unavailable", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const isAlive = vi.fn(() => false);
+    const readStrongIdentity = vi.fn(() => "linux:boot-b:100");
+    try {
+      expect(
+        classifyOnboardLockContents(
+          JSON.stringify({
+            pid: 202,
+            processStartIdentity: "linux:boot-a:100",
+            hostIdentity: liveProbes.localHostIdentity,
+            pidNamespaceIdentity: null,
+          }),
+          0,
+          100_000,
+          {
+            ...liveProbes,
+            localPidNamespaceIdentity: null,
+            isAlive,
+            readStrongIdentity,
+          },
+        ),
+      ).toMatchObject({
+        state: "held",
+        identityVerified: false,
+        provenance: "unknown",
+      });
+      expect(isAlive).not.toHaveBeenCalled();
+      expect(readStrongIdentity).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it.each([
     [
       "foreign host",
