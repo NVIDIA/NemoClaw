@@ -34,6 +34,7 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { stripCredentials } from "../security/credential-filter.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellGatewayEndpointBoundary from "../shared/openshell-gateway-endpoint-boundary.cjs";
 import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-external-target-boundary.cjs";
@@ -78,7 +79,6 @@ const sourceOrGeneratedOpenShellPolicyBoundary =
 const {
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
-  isOpenShellSandboxPolicyCredentialFree,
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
   withoutProviderComposedPolicies,
@@ -625,7 +625,8 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
 }
 
 function assertBlueprintPolicyHandoffCredentialFree(policySource: string): void {
-  if (!isOpenShellSandboxPolicyCredentialFree(policySource)) {
+  const policy = parseOpenShellPolicy(policySource).policy;
+  if (!isDeepStrictEqual(stripCredentials(policy), policy)) {
     throw new Error(
       "Cannot prepare the blueprint policy update because the live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry.",
     );

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import {
   assertPolicyRequirementContainment as assertCanonicalPolicyRequirementContainment,
   buildOpenShellSandboxPolicyInspectionArgs as buildCanonicalOpenShellSandboxPolicyInspectionArgs,
@@ -9,7 +11,6 @@ import {
   buildOpenShellSandboxPolicySetArgs as buildCanonicalOpenShellSandboxPolicySetArgs,
   classifyOpenShellGlobalPolicyHistory as classifyCanonicalOpenShellGlobalPolicyHistory,
   classifyOpenShellSandboxPolicySetResult as classifyCanonicalOpenShellSandboxPolicySetResult,
-  isOpenShellSandboxPolicyCredentialFree as isCanonicalOpenShellSandboxPolicyCredentialFree,
   parseActiveGlobalPolicyMetadata as parseCanonicalActiveGlobalPolicyMetadata,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
   parseOpenShellSandboxPolicyRead as parseCanonicalOpenShellSandboxPolicyRead,
@@ -27,6 +28,7 @@ import {
 } from "../../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 
 import type { JsonObject } from "../../core/json-types";
+import { stripCredentials } from "../../security/credential-filter";
 
 // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
 // generatedBoundary: build:cli emits the canonical .cjs/.d.cts before this
@@ -46,8 +48,6 @@ export const buildOpenShellSandboxPolicySetArgs = buildCanonicalOpenShellSandbox
 export const parseOpenShellSandboxPolicyRead = parseCanonicalOpenShellSandboxPolicyRead;
 export const classifyOpenShellSandboxPolicySetResult =
   classifyCanonicalOpenShellSandboxPolicySetResult;
-export const isOpenShellSandboxPolicyCredentialFree =
-  isCanonicalOpenShellSandboxPolicyCredentialFree;
 export type {
   ActiveGlobalPolicyInspection,
   OpenShellGlobalPolicyHistoryState,
@@ -58,6 +58,12 @@ export type {
   OpenShellSandboxPolicySetOutcome,
   OpenShellSandboxPolicySetSubmission,
 };
+
+/** Reject a root CLI policy handoff whenever credential filtering changes it. */
+export function isOpenShellSandboxPolicyCredentialFree(content: string): boolean {
+  const policy = parseCanonicalOpenShellPolicy(content).policy;
+  return isDeepStrictEqual(stripCredentials(policy), policy);
+}
 
 export function withoutProviderComposedPolicies(policies: JsonObject): JsonObject {
   return withoutCanonicalProviderComposedPolicies(policies) as JsonObject;

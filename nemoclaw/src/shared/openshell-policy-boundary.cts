@@ -5,17 +5,6 @@ import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
-import * as importedCredentialFilterBoundary from "./credential-filter-boundary.cjs";
-
-type CredentialFilterBoundary = typeof import("./credential-filter-boundary.cjs");
-
-const sourceOrGeneratedCredentialFilterBoundary =
-  importedCredentialFilterBoundary as typeof importedCredentialFilterBoundary & {
-    default?: CredentialFilterBoundary;
-  };
-const { stripCredentials } =
-  sourceOrGeneratedCredentialFilterBoundary.default ?? sourceOrGeneratedCredentialFilterBoundary;
-
 export type OpenShellPolicyMapping = Record<string, unknown>;
 
 export type OpenShellSandboxPolicyReadScope = "base" | "effective";
@@ -123,12 +112,6 @@ export function parseOpenShellSandboxPolicyRead(raw: string): OpenShellSandboxPo
     document: parsed.yamlBody,
     appliedRevision: revision !== null && Number.isSafeInteger(revision) ? revision : null,
   };
-}
-
-/** Reject a policy handoff whenever shared credential filtering changes it. */
-export function isOpenShellSandboxPolicyCredentialFree(content: string): boolean {
-  const policy = parseOpenShellPolicy(content).policy;
-  return isDeepStrictEqual(stripCredentials(policy), policy);
 }
 
 /** Classify a policy write without trusting an unstructured nonzero diagnostic. */
