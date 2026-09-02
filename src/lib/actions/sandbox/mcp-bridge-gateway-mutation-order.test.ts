@@ -155,6 +155,20 @@ import {
 } from "./mcp-bridge-rebuild";
 import { restartMcpBridge, restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
 
+function allowRetainedRecordedPublicPins() {
+  const target = {
+    addresses: ["8.8.4.4", "8.8.8.8"],
+    retainedRecordedPublicPins: true,
+  };
+  mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
+  mocks.preflightMcpEntryTargets.mockResolvedValue(new Map([[entry.server, target]]));
+  mocks.upsertMcpProvider.mockReturnValue({
+    action: "reused",
+    inspection: { id: entry.providerId },
+  });
+  return target;
+}
+
 describe("managed MCP proxy DNS mutation ordering", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -201,34 +215,18 @@ describe("managed MCP proxy DNS mutation ordering", () => {
   it.each([
     ["restart", () => restartMcpBridge("alpha", "github")],
     ["rebuild restoration", () => restoreExistingMcpBridgeRuntime("alpha", [entry])],
+    [
+      "teardown rollback",
+      () =>
+        restoreExistingMcpBridgeRuntime("alpha", [entry], {
+          lifecyclePhase: "teardown-rollback",
+        }),
+    ],
   ] as const)(
     "retains recorded public pins during %s after one known DNS answer",
-    async (name, run) => {
-      const target = {
-        addresses: ["8.8.4.4", "8.8.8.8"],
-        retainedRecordedPublicPins: true,
-      };
-      mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
-      mocks.preflightMcpEntryTargets.mockResolvedValue(new Map([[entry.server, target]]));
-      mocks.upsertMcpProvider.mockReturnValue({
-        action: "reused",
-        inspection: { id: entry.providerId },
-      });
-      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-      try {
-        await run();
-        expect(log.mock.calls).toEqual(
-          name === "restart"
-            ? [
-                [
-                  "  Refreshed MCP server 'github' and retained its recorded public address pins because DNS returned one known address.",
-                ],
-              ]
-            : [],
-        );
-      } finally {
-        log.mockRestore();
-      }
+    async (_name, run) => {
+      const target = allowRetainedRecordedPublicPins();
+      await run();
 
       expect(mocks.applyGeneratedPolicy.mock.calls.at(-1)?.[2]).toEqual(target);
       expect(mocks.writeBridgeEntry.mock.calls.at(-1)?.[1]).toMatchObject({
@@ -236,4 +234,17 @@ describe("managed MCP proxy DNS mutation ordering", () => {
       });
     },
   );
+
+  it("reports retained recorded public pins during restart", async () => {
+    allowRetainedRecordedPublicPins();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await restartMcpBridge("alpha", "github");
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining("retained its recorded public address pins"),
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
 });

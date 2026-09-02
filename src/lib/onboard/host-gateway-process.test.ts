@@ -12,6 +12,7 @@ import {
   HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
   isHostPortFree,
+  readHostGatewayProcessEnvironment,
   type RunResult,
   scopedHostGatewayProcessAbsenceFailure,
   stopHostGatewayProcesses,
@@ -78,6 +79,28 @@ function otherUserUid(): number {
 }
 
 describe("host gateway cleanup boundaries", () => {
+  it("preserves spaces in process environment values read through ps", () => {
+    const pid = 2_147_483_646;
+    const configPath =
+      "/Users/Test User/Library/Application Support/NemoClaw/openshell-gateway.toml";
+    const { run } = makeRun(
+      new Map([
+        [
+          `ps eww -p ${pid} -o command=`,
+          ok(
+            `/usr/bin/openshell-gateway --port 8080 OPENSHELL_GATEWAY_CONFIG=${configPath} NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256=${"a".repeat(64)} PLAIN=value\n`,
+          ),
+        ],
+      ]),
+    );
+
+    expect(readHostGatewayProcessEnvironment(pid, { env: {}, run })).toMatchObject({
+      OPENSHELL_GATEWAY_CONFIG: configPath,
+      NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256: "a".repeat(64),
+      PLAIN: "value",
+    });
+  });
+
   it.each([
     ["free", 0, true],
     ["occupied", 1, false],

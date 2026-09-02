@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { parse as parseToml } from "smol-toml";
 import { describe, expect, it, vi } from "vitest";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import {
@@ -49,6 +50,13 @@ function readRegularFileUtf8(target: string): string {
 function legacyGatewayIdForStateDir(stateDir: string): string {
   const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
   return leaf ? `nemoclaw-${leaf}` : "nemoclaw";
+}
+
+function parseGatewayProxyConnectByHostname(toml: string): unknown {
+  const parsed = parseToml(toml) as {
+    openshell?: { drivers?: { docker?: { proxy_connect_by_hostname?: unknown } } };
+  };
+  return parsed.openshell?.drivers?.docker?.proxy_connect_by_hostname;
 }
 
 function writePreScopedGatewayConfig(
@@ -161,7 +169,9 @@ describe("docker-driver-gateway config TOML", () => {
 
       prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
 
-      expect(fs.readFileSync(configPath, "utf-8")).toContain("proxy_connect_by_hostname = false");
+      expect(parseGatewayProxyConnectByHostname(fs.readFileSync(configPath, "utf-8"))).toBe(
+        false,
+      );
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -181,6 +191,7 @@ describe("docker-driver-gateway config TOML", () => {
         prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
       ).toThrow(/does not match NemoClaw's generated form/);
       expect(fs.readFileSync(configPath, "utf-8")).toBe(unsafeToml);
+      expect(parseGatewayProxyConnectByHostname(unsafeToml)).toBe(true);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

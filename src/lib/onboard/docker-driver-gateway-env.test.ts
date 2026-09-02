@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { parse as parseToml } from "smol-toml";
 import { describe, expect, it, vi } from "vitest";
 
 import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-gateway-config-helpers";
@@ -173,12 +174,26 @@ describe("buildDockerDriverGatewayEnv", () => {
         NETAVARK_FW: "iptables",
         OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       });
-      const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
-      expect(toml).toContain('compute_drivers = ["podman"]');
-      expect(toml).toContain("[openshell.drivers.podman]");
-      expect(toml).toContain(`host_gateway_ip = "${PORTABLE_HOST_GATEWAY_IP}"`);
-      expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
-      expect(toml).not.toContain("supervisor_bin");
+      const config = parseToml(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")) as {
+        openshell: {
+          drivers: {
+            podman: {
+              host_gateway_ip: string;
+              socket_path: string;
+              supervisor_bin?: string;
+            };
+          };
+          gateway: { compute_drivers: string[] };
+        };
+      };
+      expect(config.openshell.gateway.compute_drivers).toEqual(["podman"]);
+      expect(config.openshell.drivers.podman).toEqual(
+        expect.objectContaining({
+          host_gateway_ip: PORTABLE_HOST_GATEWAY_IP,
+          socket_path: "/run/user/1001/podman/podman.sock",
+        }),
+      );
+      expect(config.openshell.drivers.podman).not.toHaveProperty("supervisor_bin");
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });

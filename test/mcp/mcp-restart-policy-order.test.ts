@@ -458,23 +458,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     240 - redactedProbeDetailPrefix.length,
   )}`;
 
-  const runCredentialRestart = ({
-    probeResponses,
-    statusErrors = {},
-    restartAll = false,
-  }: {
-    probeResponses: Record<
-      string,
-      {
-        ok: boolean | null;
-        httpStatus?: number;
-        controlHttpStatus?: number;
-        detail?: string;
-      }
-    >;
-    statusErrors?: Record<string, string>;
-    restartAll?: boolean;
-  }) => {
+  const runCredentialRestartScenario = (scenarioScript: string) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -563,28 +547,11 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
   stderr: "",
 });
-const probeResponses = ${JSON.stringify(probeResponses)};
-const statusErrors = ${JSON.stringify(statusErrors)};
-bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
-  statusCalls.push({ sandboxName, server, options });
-  if (statusErrors[server]) throw new Error(statusErrors[server]);
-  return [{ provider: { credentialResolution: probeResponses[server] } }];
-};
-
-registry.registerSandbox({
-  name: "alpha",
-  agent: "openclaw",
-  gatewayName: "nemoclaw",
-  mcp: {
-    bridges: ${restartAll ? "{ example: entry, later: laterEntry }" : "{ example: entry }"},
-  },
-});
-
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const report = (payload) => {
   process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 };
-bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then(
+const recordRestartResult = (restart) => restart.then(
   () => {
     report({
       outcome: "refreshed",
@@ -604,6 +571,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     });
   },
 );
+${scenarioScript}
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -629,17 +597,28 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
   };
 
   it("refuses a hostless restart whose stored credential is not verified (#10750)", () => {
-    const payload = runCredentialRestart({
-      probeResponses: {
-        example: {
-          ok: null,
-          httpStatus: 401,
-          controlHttpStatus: 401,
-          detail:
-            "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
-        },
+    const payload = runCredentialRestartScenario(String.raw`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { example: entry } },
+});
+bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
+  statusCalls.push({ sandboxName, server, options });
+  return [{
+    provider: {
+      credentialResolution: {
+        ok: null,
+        httpStatus: 401,
+        controlHttpStatus: 401,
+        detail: "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
       },
-    });
+    },
+  }];
+};
+recordRestartResult(bridge.restartMcpBridge("alpha", "example"));
+`);
 
     expect(payload).toEqual({
       outcome: "rejected",
@@ -659,18 +638,28 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
   }, 75_000);
 
   it("redacts and bounds an unverified credential probe detail (#10750)", () => {
-    const payload = runCredentialRestart({
-      probeResponses: {
-        example: {
-          ok: null,
-          httpStatus: 401,
-          controlHttpStatus: 401,
-          detail:
-            "MCP_TOKEN=untrusted-secret-value\nsandbox transport https://operator:credential@example.com failed; " +
-            "x".repeat(300),
-        },
+    const payload = runCredentialRestartScenario(String.raw`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { example: entry } },
+});
+bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
+  statusCalls.push({ sandboxName, server, options });
+  return [{
+    provider: {
+      credentialResolution: {
+        ok: null,
+        httpStatus: 401,
+        controlHttpStatus: 401,
+        detail: "MCP_TOKEN=untrusted-secret-value\nsandbox transport https://operator:credential@example.com failed; " + "x".repeat(300),
       },
-    });
+    },
+  }];
+};
+recordRestartResult(bridge.restartMcpBridge("alpha", "example"));
+`);
 
     expect(payload).toEqual({
       outcome: "rejected",
@@ -689,11 +678,23 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
   }, 75_000);
 
   it("reuses a stored credential when credential status reports success (#10750)", () => {
-    const payload = runCredentialRestart({
-      probeResponses: {
-        example: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
-      },
-    });
+    const payload = runCredentialRestartScenario(String.raw`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { example: entry } },
+});
+bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
+  statusCalls.push({ sandboxName, server, options });
+  return [{
+    provider: {
+      credentialResolution: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+    },
+  }];
+};
+recordRestartResult(bridge.restartMcpBridge("alpha", "example"));
+`);
 
     expect(payload).toEqual({
       outcome: "refreshed",
@@ -710,13 +711,21 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
   }, 75_000);
 
   it("preserves a redacted actionable status failure (#10750)", () => {
-    const payload = runCredentialRestart({
-      probeResponses: {},
-      statusErrors: {
-        example:
-          "sandbox transport https://operator:credential@example.com failed; MCP_TOKEN=untrusted-secret-value",
-      },
-    });
+    const payload = runCredentialRestartScenario(String.raw`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { example: entry } },
+});
+bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
+  statusCalls.push({ sandboxName, server, options });
+  throw new Error(
+    "sandbox transport https://operator:credential@example.com failed; MCP_TOKEN=untrusted-secret-value",
+  );
+};
+recordRestartResult(bridge.restartMcpBridge("alpha", "example"));
+`);
 
     expect(payload).toEqual({
       outcome: "rejected",
@@ -736,19 +745,28 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
   }, 75_000);
 
   it("preflights every selected server before mutating a hostless restart (#10750)", () => {
-    const payload = runCredentialRestart({
-      probeResponses: {
-        example: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
-        later: {
-          ok: null,
-          httpStatus: 401,
-          controlHttpStatus: 401,
-          detail:
-            "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
-        },
-      },
-      restartAll: true,
-    });
+    const payload = runCredentialRestartScenario(String.raw`
+const credentialResolutionByServer = {
+  example: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+  later: {
+    ok: null,
+    httpStatus: 401,
+    controlHttpStatus: 401,
+    detail: "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
+  },
+};
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { example: entry, later: laterEntry } },
+});
+bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
+  statusCalls.push({ sandboxName, server, options });
+  return [{ provider: { credentialResolution: credentialResolutionByServer[server] } }];
+};
+recordRestartResult(bridge.restartMcpBridge("alpha"));
+`);
 
     expect(payload).toMatchObject({
       outcome: "rejected",

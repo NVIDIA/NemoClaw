@@ -252,6 +252,20 @@ function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
   }
 }
 
+function parsePsProcessEnvironment(output: string): Record<string, string> | null {
+  const assignmentPattern = /(?:^|\s)([A-Z][A-Z0-9_]*)=/gu;
+  const assignments = [...output.matchAll(assignmentPattern)];
+  const environment: Record<string, string> = {};
+  for (const [index, assignment] of assignments.entries()) {
+    const key = assignment[1];
+    if (!key || assignment.index === undefined) continue;
+    const valueStart = assignment.index + assignment[0].length;
+    const valueEnd = assignments[index + 1]?.index ?? output.length;
+    environment[key] = output.slice(valueStart, valueEnd).trimEnd();
+  }
+  return Object.keys(environment).length > 0 ? environment : null;
+}
+
 /** Read the environment of an owned gateway process without invoking a shell. */
 export function readHostGatewayProcessEnvironment(
   pid: number,
@@ -273,15 +287,7 @@ export function readHostGatewayProcessEnvironment(
       env: deps.env,
     });
     if (command.status !== 0) return null;
-    const environment: Record<string, string> = {};
-    for (const token of command.stdout.split(/\s+/)) {
-      const separator = token.indexOf("=");
-      if (separator < 1) continue;
-      const key = token.slice(0, separator);
-      if (!/^[A-Z][A-Z0-9_]*$/u.test(key)) continue;
-      environment[key] = token.slice(separator + 1);
-    }
-    return Object.keys(environment).length > 0 ? environment : null;
+    return parsePsProcessEnvironment(command.stdout);
   }
 }
 
