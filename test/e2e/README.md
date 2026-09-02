@@ -983,9 +983,11 @@ inference, and confirms workspace absence.
 
 After preparation succeeds, the Launchable upload retains `lane.log` and each
 phase artifact created before exit. A preparation failure can produce no
-artifact. A later early failure can retain only `lane.log`. A successful job
-contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
-`cleanup.json` exists only after the job confirms workspace absence.
+artifact. Before workspace creation, the lane writes `workspace-recovery.json`;
+later failures retain it with `lane.log` and any partial phase artifacts. Follow
+the canonical Launchable-evidence recovery procedure when cleanup is incomplete.
+A successful job contains `launchable-e2e.json`, `full-e2e.log`, and
+`cleanup.json`; `cleanup.json` exists only after workspace absence is confirmed.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
 append bounded, redacted host state and fixed lifecycle classifications to
 `lane.log` before cleanup. On the host, the SSH command reads the system journal

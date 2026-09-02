@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   artifactDownloadArgs,
@@ -77,6 +78,14 @@ const reader = (
   readArtifact: () => artifact,
 });
 describe("Launchable evidence inspection", () => {
+  it.each(["test/e2e/README.md", ".agents/skills/nemoclaw-maintainer-e2e/references/main-runs.md"])(
+    "retains recovery guidance in %s (#10798)",
+    (file) => {
+      const guidance = readFileSync(new URL(`../../../${file}`, import.meta.url), "utf8");
+      expect(guidance).toContain("workspace-recovery.json");
+      expect(guidance).toContain("canonical Launchable-evidence recovery procedure");
+    },
+  );
   it("returns a versioned receipt from candidate-bound successful evidence (#10798)", () =>
     expect(inspectLaunchableEvidence({ candidate: SHA }, reader())).toEqual({
       version: 1,
