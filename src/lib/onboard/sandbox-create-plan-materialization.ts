@@ -166,6 +166,7 @@ function getHermesPortableInitialSandboxPolicy(
 export function prepareSandboxCreatePolicy(
   intent: SandboxCreateIntent,
   prepareInitialSandboxCreatePolicy: PrepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
+  messagingConfig?: MaterializeSandboxCreatePlanInput["messagingConfig"],
 ): {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly compatibilityPolicyPath: string | null;
@@ -184,6 +185,7 @@ export function prepareSandboxCreatePolicy(
       // composing them throws.
       sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
+      messagingConfig,
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
@@ -305,6 +307,7 @@ export function materializeSandboxCreatePlan({
   policylessCreate = false,
   deferSandboxEffectsUntilIdentityVerification = false,
   messagingTokenDefs,
+  messagingConfig,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
   getHermesToolGatewayProviderName,
@@ -317,21 +320,10 @@ export function materializeSandboxCreatePlan({
     managedStateMounts,
     managedStateMountDriverId,
   );
-  const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
-    intent.policy.basePolicyPath,
-    [...intent.policy.activeMessagingChannels],
-    {
-      directGpu: intent.policy.options.directGpu,
-      hostGpuAvailable: intent.policy.options.hostGpuAvailable,
-      additionalPresets: intent.policy.options.hostLocalInferenceRouteOnly
-        ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
-        : [...intent.policy.options.additionalPresets],
-      agentName: intent.policy.options.agentName,
-      sandboxName: intent.sandboxName,
-      policyTier: intent.policy.options.policyTier,
-    },
-    intent.gpuRoutePlan,
+  const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxCreatePolicy(
+    intent,
     prepareInitialSandboxCreatePolicy,
+    messagingConfig,
   );
   const createArgs = [
     "--from",

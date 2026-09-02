@@ -43,7 +43,10 @@ import {
 } from "../../messaging";
 import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
-import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import {
+  hydrateMessagingChannelConfig,
+  type MessagingChannelConfig,
+} from "../../messaging-channel-config";
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import {
   bridgeProviderNamesForChannel,
@@ -51,7 +54,10 @@ import {
   collectMessagingBridgeTokenDefs,
   staticMessagingProviderTypeForChannel,
 } from "../../onboard/messaging-bridge-provider";
-import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import {
+  getMessagingChannelConfigFromPlan,
+  getStoredMessagingChannelConfig,
+} from "../../onboard/messaging-config";
 import type { MessagingTokenDef } from "../../onboard/messaging-prep";
 import { getMessagingToken } from "../../onboard/messaging-token";
 import * as policies from "../../policy";
@@ -316,6 +322,13 @@ async function addSandboxPolicyUnlocked(
   }
 
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  const storedMessagingConfig = getStoredMessagingChannelConfig(
+    sandboxName,
+    safeLoadOnboardSession(),
+  );
+  const messagingPolicyOptions = storedMessagingConfig
+    ? { messagingConfig: storedMessagingConfig }
+    : {};
   const allPresets = filterSetupPolicyPresetsForAgent(
     policies.listPresets({ agent: sandboxAgent }),
     sandboxAgent,
@@ -350,7 +363,11 @@ async function addSandboxPolicyUnlocked(
         );
         process.exit(1);
       }
-      const appliedContent = policies.loadPresetForSandbox(sandboxName, preset.name);
+      const appliedContent = policies.loadPresetForSandbox(
+        sandboxName,
+        preset.name,
+        messagingPolicyOptions,
+      );
       if (!appliedContent) {
         console.error(`  Could not read the content of preset '${preset.name}'.`);
         process.exit(1);
@@ -420,7 +437,11 @@ async function addSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
+  const presetContent = policies.loadPresetForSandbox(
+    sandboxName,
+    answer,
+    messagingPolicyOptions,
+  );
   if (!presetContent) return;
 
   if (reapplyState) {
@@ -454,7 +475,12 @@ async function addSandboxPolicyUnlocked(
     if (confirm.trim().toLowerCase().startsWith("n")) return;
   }
 
-  if (!policies.applyPreset(sandboxName, answer, { suppressDisclosure: true })) {
+  if (
+    !policies.applyPreset(sandboxName, answer, {
+      suppressDisclosure: true,
+      ...messagingPolicyOptions,
+    })
+  ) {
     process.exit(1);
   }
   refreshSandboxPolicyContextFile(sandboxName);
@@ -1342,8 +1368,11 @@ function loadValidateAndDiscloseChannelPreset(
   sandboxName: string,
   channelName: string,
   verb: "add" | "start",
+  messagingConfig?: MessagingChannelConfig | null,
 ): policies.PresetPolicyState | null {
-  const presetContent = policies.loadPresetForSandbox(sandboxName, channelName);
+  const presetContent = policies.loadPresetForSandbox(sandboxName, channelName, {
+    messagingConfig,
+  });
   const presetPolicyKeys =
     presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
   if (presetContent === null || presetPolicyKeys.length === 0) {
@@ -1410,7 +1439,11 @@ async function addSandboxChannelUnlocked(
 
   // Disclose before credential collection, conflict prompts, or any gateway /
   // registry mutation. The core apply path rechecks immediately before set.
-  const disclosedPresetState = loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add");
+  const initialDisclosedPresetState = loadValidateAndDiscloseChannelPreset(
+    sandboxName,
+    canonical,
+    "add",
+  );
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
@@ -1418,6 +1451,11 @@ async function addSandboxChannelUnlocked(
   }
 
   const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies);
+  const messagingConfig = getMessagingChannelConfigFromPlan(plan);
+  const disclosedPresetState =
+    canonical === "wechat"
+      ? loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add", messagingConfig)
+      : initialDisclosedPresetState;
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened
@@ -1436,6 +1474,7 @@ async function addSandboxChannelUnlocked(
     if (
       !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
+        messagingConfig,
       })
     ) {
       process.exit(1);
@@ -1478,6 +1517,9 @@ async function addSandboxChannelUnlocked(
     process.exit(1);
   }
   const priorEntry = registry.getSandbox(sandboxName);
+  const priorMessagingConfig = getMessagingChannelConfigFromPlan(
+    registry.getHydratedMessagingPlanFromEntry(priorEntry),
+  );
   const wasAlreadyEnabled = registry
     .getConfiguredMessagingChannelsFromEntry(priorEntry)
     .includes(canonical);
@@ -1498,6 +1540,7 @@ async function addSandboxChannelUnlocked(
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
       disclosedPresetState,
       includeMessagingCredentialBindings: false,
+      messagingConfig,
     })
   ) {
     process.exit(1);
@@ -1509,6 +1552,7 @@ async function addSandboxChannelUnlocked(
     () =>
       applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
+        messagingConfig,
       }),
     dependencies.upsertMessagingProviders,
     cleanupCredentialFreePolicy,
@@ -1517,6 +1561,7 @@ async function addSandboxChannelUnlocked(
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
       priorCreds,
+      priorMessagingConfig,
     });
     process.exit(1);
   }
@@ -1530,6 +1575,7 @@ async function addSandboxChannelUnlocked(
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
       priorCreds,
+      priorMessagingConfig,
     });
     process.exit(1);
   }
@@ -1548,6 +1594,7 @@ async function rollbackChannelAdd(
   snapshot: {
     wasAlreadyEnabled: boolean;
     priorCreds: Record<string, string>;
+    priorMessagingConfig: MessagingChannelConfig | null;
   },
 ): Promise<{ ok: boolean; residual: string[] }> {
   if (snapshot.wasAlreadyEnabled) {
@@ -1559,6 +1606,13 @@ async function rollbackChannelAdd(
       persistChannelTokens(snapshot.priorCreds);
     }
     const residual: string[] = ["gateway-providers"];
+    if (
+      !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+        messagingConfig: snapshot.priorMessagingConfig,
+      })
+    ) {
+      residual.push("network-policy");
+    }
     console.error(
       `  ${YW}⚠${R} Rollback could not fully clean ${residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
     );
@@ -1621,6 +1675,7 @@ export function applyChannelPresetIfAvailable(
   options: {
     disclosedPresetState?: policies.PresetPolicyState | null;
     includeMessagingCredentialBindings?: boolean;
+    messagingConfig?: MessagingChannelConfig | null;
   } = {},
 ): boolean {
   try {
@@ -1632,9 +1687,11 @@ export function applyChannelPresetIfAvailable(
       ? policies.applyPreset(sandboxName, channelName, {
           disclosedPresetState: options.disclosedPresetState,
           includeMessagingCredentialBindings,
+          messagingConfig: options.messagingConfig,
         })
       : policies.applyPreset(sandboxName, channelName, {
           includeMessagingCredentialBindings,
+          messagingConfig: options.messagingConfig,
         });
     if (!applied) {
       console.error(

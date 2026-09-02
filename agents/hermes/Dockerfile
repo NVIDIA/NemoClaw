@@ -425,7 +425,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=521756ea979d58df44d52b7fc1c2f062a11db397835b925f15bc0265e33e48ea
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=c6609394bd9c4657fcbcbd9104a5e5c9a332e9a90712b597e3e9a6253e5be487
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -691,9 +691,10 @@ RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
 # Hermes v0.19.0's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
 # the OpenShell public and secret placeholders when each placeholder is bound
-# to its matching standard Langfuse key. raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
-# fails closed when the pinned upstream source shape changes.
-ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=c6aad6a7cb56083a3fbb54617ada3edae4bbae1348ba45565944144b07fc283b
+# to its matching standard Langfuse key. Raw keys keep Hermes' upstream
+# pk-lf-/sk-lf- validation, and every authenticated client requires an absolute
+# HTTPS base URL. The patcher fails closed when the pinned source shape changes.
+ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=a505357f9991d85e42d6cb2fcd320fb6f3a989f090a7969c0460265254e7d9c6
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \

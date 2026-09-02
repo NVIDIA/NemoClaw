@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import type { MessagingTokenDef } from "./messaging-prep";
@@ -213,9 +217,97 @@ describe("prepareSandboxCreatePolicy", () => {
       return { policyPath: "/tmp/policy.yaml", appliedPresets: [] };
     };
 
-    prepareSandboxCreatePolicy(intent, preparePolicy);
+    const messagingConfig = { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" };
+    prepareSandboxCreatePolicy(intent, preparePolicy, messagingConfig);
 
-    expect(seenOptions[0]).toMatchObject({ sandboxName: "bound-sandbox" });
+    expect(seenOptions[0]).toMatchObject({ sandboxName: "bound-sandbox", messagingConfig });
+  });
+
+  it("materializes the captured exact WeChat IDC endpoint in the create policy (#10606)", () => {
+    const resolved = resolveDiscordCreateIntent({ selected: false });
+    const sandboxName = "openclaw-wechat-idc";
+    const providerName = `${sandboxName}-wechat-bridge`;
+    const messagingTokenDefs: MessagingTokenDef[] = [
+      {
+        name: providerName,
+        envKey: "WECHAT_BOT_TOKEN",
+        token: "test-wechat-token",
+        providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      },
+    ];
+    const intent = {
+      ...resolved.intent,
+      sandboxName,
+      activeMessagingChannels: ["wechat"],
+      messagingProviderRequests: [
+        {
+          name: providerName,
+          envKey: "WECHAT_BOT_TOKEN",
+          providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          credentialConfigured: true,
+          channel: "wechat",
+        },
+      ],
+      policy: {
+        ...resolved.intent.policy,
+        basePolicyPath: path.join(
+          import.meta.dirname,
+          "..",
+          "..",
+          "..",
+          "nemoclaw-blueprint",
+          "policies",
+          "openclaw-sandbox.yaml",
+        ),
+        activeMessagingChannels: ["wechat"],
+        options: { ...resolved.intent.policy.options, agentName: "openclaw" },
+      },
+    };
+    const plan = materializeSandboxCreatePlan({
+      ...resolved,
+      intent,
+      fromRef: "/tmp/Dockerfile",
+      messagingTokenDefs,
+      messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => [providerName]),
+      getHermesToolGatewayProviderName: vi.fn(),
+    });
+
+    try {
+      const effective = YAML.parse(
+        fs.readFileSync(plan.initialSandboxPolicy.policyPath, "utf8"),
+      ) as {
+        network_policies: {
+          wechat_bridge: {
+            endpoints: Array<{
+              host: string;
+              port: number;
+              protocol: string;
+              enforcement: string;
+              credential_binding?: { provider?: string };
+              rules?: Array<{ allow?: { method?: string; path?: string } }>;
+            }>;
+          };
+        };
+      };
+      const endpoints = effective.network_policies.wechat_bridge.endpoints;
+
+      expect(endpoints.find(({ host }) => host === "idc-37.weixin.qq.com")).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        credential_binding: { provider: `${sandboxName}-wechat-bridge` },
+        rules: [
+          { allow: { method: "GET", path: "/**" } },
+          { allow: { method: "POST", path: "/**" } },
+        ],
+      });
+      expect(endpoints.filter(({ host }) => host.startsWith("idc-"))).toHaveLength(1);
+      expect(endpoints.map(({ host }) => host)).not.toContain("*.weixin.qq.com");
+    } finally {
+      plan.initialSandboxPolicy.cleanup?.();
+    }
   });
 });
 
