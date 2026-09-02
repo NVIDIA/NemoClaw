@@ -42,10 +42,10 @@ export interface DeepAgentsManagedFixtureOptions {
   directory?: boolean;
   fifo?: boolean;
   mode?: number;
+  statAfterManagedEloopAsRegular?: boolean;
   swapAfterManagedOpen?: "fifo" | "symlink";
-  swapAfterManagedOpenError?: "fifo" | "symlink";
+  swapAfterMissingManagedOpen?: "fifo" | "symlink";
   swapBeforeManagedLink?: string;
-  swapRejectedManagedSymlinkToRegular?: string;
   swapOnManagedOpen?: "fifo" | "socket" | "symlink";
   swapOnManagedRead?: "fifo" | "symlink";
   swapOnManagedSeek?: string;
@@ -56,8 +56,14 @@ export interface DeepAgentsManagedFixtureOptions {
 type ManagedSwap = {
   content?: string;
   kind: "fifo" | "regular" | "socket" | "symlink";
-  phase: "after-open" | "before-link" | "before-open" | "open-error" | "read" | "seek";
-  restoreSymlink?: boolean;
+  phase:
+    | "after-missing-open"
+    | "after-open"
+    | "before-link"
+    | "before-open"
+    | "eloop-regular-stat"
+    | "read"
+    | "seek";
 };
 
 function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSwap | undefined {
@@ -67,19 +73,14 @@ function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSw
   if (options.swapAfterManagedOpen) {
     return { kind: options.swapAfterManagedOpen, phase: "after-open" };
   }
-  if (options.swapAfterManagedOpenError) {
-    return { kind: options.swapAfterManagedOpenError, phase: "open-error" };
-  }
-  if (options.swapRejectedManagedSymlinkToRegular !== undefined) {
-    return {
-      content: options.swapRejectedManagedSymlinkToRegular,
-      kind: "regular",
-      phase: "open-error",
-      restoreSymlink: true,
-    };
+  if (options.swapAfterMissingManagedOpen) {
+    return { kind: options.swapAfterMissingManagedOpen, phase: "after-missing-open" };
   }
   if (options.swapOnManagedRead) {
     return { kind: options.swapOnManagedRead, phase: "read" };
+  }
+  if (options.statAfterManagedEloopAsRegular) {
+    return { kind: "symlink", phase: "eloop-regular-stat" };
   }
   if (options.swapBeforeManagedLink !== undefined) {
     return { content: options.swapBeforeManagedLink, kind: "regular", phase: "before-link" };
@@ -107,7 +108,7 @@ function createManagedSwapPythonExecutable(
     `managed_swap_kind = ${JSON.stringify(managedSwap.kind)}`,
     `managed_swap_phase = ${JSON.stringify(managedSwap.phase)}`,
     `managed_swap_content = ${JSON.stringify(managedSwap.content ?? "")}`,
-    `managed_restore_symlink = ${managedSwap.restoreSymlink === true ? "True" : "False"}`,
+    "managed_eloop_stage = 0",
     "managed_socket = None",
     "managed_swapped = False",
     "def replace_managed_path():",
@@ -130,22 +131,32 @@ function createManagedSwapPythonExecutable(
     "        with open(managed_path, 'w', encoding='utf-8') as replacement:",
     "            replacement.write(managed_swap_content)",
     "        os.chmod(managed_path, 0o600)",
+    "def replace_managed_symlink_with_regular():",
+    "    global managed_eloop_stage",
+    "    os.unlink(managed_path)",
+    "    with open(managed_target, 'rb') as source, open(managed_path, 'wb') as replacement:",
+    "        replacement.write(source.read())",
+    "    os.chmod(managed_path, 0o600)",
+    "    managed_eloop_stage = 1",
     "def restore_managed_symlink():",
-    "    if not managed_restore_symlink or not managed_swapped:",
-    "        return",
-    "    try:",
-    "        os.unlink(managed_path)",
-    "    except FileNotFoundError:",
-    "        pass",
+    "    global managed_eloop_stage",
+    "    os.unlink(managed_path)",
     "    os.symlink(managed_target, managed_path)",
+    "    managed_eloop_stage = 2",
     "def managed_profile(_frame, event, target):",
+    "    if managed_swap_phase == 'eloop-regular-stat':",
+    "        if managed_eloop_stage == 0 and event == 'c_exception' and target is os.open:",
+    "            replace_managed_symlink_with_regular()",
+    "        elif managed_eloop_stage == 1 and event == 'c_return' and target is os.stat:",
+    "            restore_managed_symlink()",
+    "        return",
     "    if managed_swapped:",
     "        return",
     "    if managed_swap_phase == 'before-open' and event == 'c_call' and target is os.open:",
     "        replace_managed_path()",
     "    elif managed_swap_phase == 'after-open' and event == 'c_return' and target is os.open:",
     "        replace_managed_path()",
-    "    elif managed_swap_phase == 'open-error' and event == 'c_exception' and target is os.open:",
+    "    elif managed_swap_phase == 'after-missing-open' and event == 'c_exception' and target is os.open:",
     "        replace_managed_path()",
     "    elif managed_swap_phase == 'read' and event == 'c_call' and target is os.read:",
     "        replace_managed_path()",
@@ -160,7 +171,8 @@ function createManagedSwapPythonExecutable(
     "    exec(compile(source, '<nemoclaw-managed-command>', 'exec'), namespace)",
     "finally:",
     "    sys.setprofile(None)",
-    "    restore_managed_symlink()",
+    "    if managed_swap_phase == 'eloop-regular-stat' and managed_eloop_stage == 1:",
+    "        restore_managed_symlink()",
     "",
   ].join("\n");
   fs.writeFileSync(scriptPath, wrapper, { mode: 0o600 });
@@ -199,10 +211,7 @@ export function runDeepAgentsConfigCommand(
       { mode },
     );
   };
-  const managedSymlink =
-    managedOptions.symlink === true ||
-    managedOptions.danglingSymlink === true ||
-    managedOptions.swapRejectedManagedSymlinkToRegular !== undefined;
+  const managedSymlink = managedOptions.symlink === true || managedOptions.danglingSymlink === true;
   const managedInitialPath = managedSymlink ? managedSymlinkTarget : configPath;
   if (managedOptions.directory) {
     fs.mkdirSync(configPath, { recursive: true, mode: managedOptions.mode ?? 0o700 });
@@ -212,10 +221,13 @@ export function runDeepAgentsConfigCommand(
     if (fifo.status !== 0) throw new Error(fifo.stderr || "could not create managed fixture FIFO");
     fs.chmodSync(configPath, managedOptions.mode ?? 0o600);
   } else {
-    if (!managedOptions.danglingSymlink) {
+    if (!managedOptions.danglingSymlink && managedSwap?.phase !== "after-missing-open") {
       initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
       if (initialConfig !== undefined)
         fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
+    }
+    if (managedSwap?.phase === "after-missing-open") {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
     }
     if (managedSymlink) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -224,9 +236,6 @@ export function runDeepAgentsConfigCommand(
   }
   if (managedSwap?.kind === "symlink") {
     initializeConfig(managedSymlinkTarget, initialConfig, managedOptions.mode);
-  }
-  if (managedSwap?.phase === "open-error") {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
   }
   initializeConfig(legacyConfigPath, initialLegacyConfig);
   if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);

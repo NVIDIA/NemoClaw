@@ -7,6 +7,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  baseEntry,
+  runDeepAgentsConfigCommand,
+} from "../../../../test/helpers/mcp-bridge-adapter-deepagents-fixture";
+
+import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
@@ -190,11 +196,36 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
-  it("returns a type-specific failure for unsafe Deep Agents projections (#10754)", () => {
-    const home = createTempHome("nemoclaw-mcp-status-projection-");
-    const { stdout } = runHarness(
-      home,
-      String.raw`
+  it(
+    "returns a type-specific failure for unsafe Deep Agents projection races (#10754)",
+    { timeout: 120_000 },
+    () => {
+      const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
+      const projection = { mcpServers: {} };
+      const unsafeResults = [
+        ...(["symlink", "fifo"] as const).map((appearedType) =>
+          runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
+            swapAfterMissingManagedOpen: appearedType,
+            timeoutMs: 30_000,
+          }),
+        ),
+        runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
+          statAfterManagedEloopAsRegular: true,
+          symlink: true,
+          timeoutMs: 30_000,
+        }),
+      ];
+      unsafeResults.forEach((result) => {
+        expect(result.status).toBe(2);
+        expect(result.stdout.trim()).toBe("");
+        expect(result.stderr).toContain("Unsafe managed Deep Agents MCP projection path:");
+        expect(result.configIsSymlink || result.configIsFifo).toBe(true);
+      });
+      const unsafeDetails = unsafeResults.map((result) => result.stderr.trim());
+      const home = createTempHome("nemoclaw-mcp-status-projection-");
+      const { stdout } = runHarness(
+        home,
+        String.raw`
   const current = registry.getSandbox("alpha");
   registry.updateSandbox("alpha", {
     agent: "langchain-deepagents-code",
@@ -210,12 +241,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     },
   });
   const outcomes = [];
-  for (const [scenario, detail] of [
-    ["static symlink", "Unsafe managed Deep Agents MCP projection path: symbolic link"],
-    ["static FIFO", "Unsafe managed Deep Agents MCP projection path: FIFO"],
-    ["symlink after absent open", "Unsafe managed Deep Agents MCP projection path: symbolic link"],
-    ["masked ELOOP symlink", "Unsafe managed Deep Agents MCP projection path: symbolic link"],
-  ]) {
+  for (const detail of ${JSON.stringify(unsafeDetails)}) {
     processRecovery.executeSandboxCommand = () => ({
       status: 2,
       stdout: "",
@@ -225,7 +251,6 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     errorLines.length = 0;
     await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
     outcomes.push({
-      scenario,
       detail,
       exitCode: process.exitCode ?? 0,
       stdout: logLines.join("\n"),
@@ -235,23 +260,22 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   }
   process.stdout.write(JSON.stringify(outcomes));
 `,
-    );
-    const outcomes = JSON.parse(stdout) as Array<{
-      scenario: string;
-      detail: string;
-      exitCode: number;
-      stdout: string;
-      stderr: string;
-    }>;
+      );
+      const outcomes = JSON.parse(stdout) as Array<{
+        detail: string;
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+      }>;
 
-    expect(outcomes).toHaveLength(4);
-    outcomes.forEach((outcome) => {
-      expect(outcome.scenario).toBeTruthy();
-      expect(outcome.exitCode).toBe(2);
-      expect(outcome.stdout).toBe("");
-      expect(outcome.stderr).toContain(outcome.detail);
-    });
-  });
+      expect(outcomes).toHaveLength(3);
+      outcomes.forEach((outcome) => {
+        expect(outcome.exitCode).toBe(2);
+        expect(outcome.stdout).toBe("");
+        expect(outcome.stderr).toContain(outcome.detail);
+      });
+    },
+  );
 
   it("probes by default for a single named server and surfaces the wire failure (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-single-");
