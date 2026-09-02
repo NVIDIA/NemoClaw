@@ -1296,9 +1296,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     .map((entry) => entry.trim())
     .filter(Boolean);
   if (
-    sparseCheckout.length !== 3 ||
+    sparseCheckout.length !== 4 ||
     !sparseCheckout.includes("ci/onboard-performance-budget.json") ||
     !sparseCheckout.includes("scripts/audit-test-runtime.mts") ||
+    !sparseCheckout.includes("scripts/lib/read-artifact-zip.mts") ||
     !sparseCheckout.includes("scripts/scorecard")
   ) {
     errors.push(
