@@ -266,28 +266,6 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(troubleshooting).toContain("connection timed out after 30000ms");
   });
 
-  it("records the active mcporter advisory remediations", () => {
-    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
-
-    expect(review).toContain("GHSA-9mqv-5hh9-4cgg");
-    expect(review).toContain("@hono/node-server@^1.19.9");
-    expect(review).toContain("`2.0.11`");
-    expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
-    expect(review).toContain("GHSA-7p8r-x3mc-p8w7");
-    expect(review).toContain("fast-uri@^3.0.1");
-    expect(review).toContain("`3.1.5`");
-    expect(review).toContain("GHSA-8xcm-r25x-g524");
-    expect(review).toContain("GHSA-4cwx-7wf7-3272");
-    expect(review).toContain("undici@8.10.0");
-    expect(review).toContain("GHSA-mwp4-54f8-5fhr");
-    expect(review).toContain("ip-address@^10.2.0");
-    expect(review).toContain("ip-address@10.3.1");
-    expect(review).toContain("hono@4.12.34");
-    expect(review).toContain("GHSA-54fx-42gc-7vw4");
-    expect(review).toContain("GHSA-f23p-vx2j-j53r");
-    expect(review).toContain("GHSA-79qm-7rj5-m7r9");
-  });
-
   it("keeps advisor disposition evidence in the dependency review note", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 

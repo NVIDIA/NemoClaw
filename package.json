@@ -171,5 +171,8 @@
     "typebox": "1.1.38",
     "typescript": "6.0.3",
     "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "fast-uri": "3.1.6"
   }
 }
