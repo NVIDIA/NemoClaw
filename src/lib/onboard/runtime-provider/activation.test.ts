@@ -152,6 +152,7 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
         engineId: "contract-fixture",
         displayName: "Contract fixture",
       })),
+      capture: () => ({ status: 0, stdout: "", stderr: "" }),
     },
   };
 }
@@ -276,11 +277,36 @@ describe("runtime provider activation catalog", () => {
     ).toEqual([true, true, true]);
   });
 
-  it("leaves Docker and Kubernetes unchanged with no production candidate registration", () => {
-    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
-    expect(Object.keys(createCurrentRuntimeProviderBundles())).toEqual(["docker", "kubernetes"]);
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  it("registers qualified Podman without changing the established providers", () => {
+    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([
+      "docker",
+      "kubernetes",
+      "podman",
+    ]);
+    expect(Object.keys(createCurrentRuntimeProviderBundles())).toEqual([
+      "docker",
+      "kubernetes",
+      "podman",
+    ]);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("mxc");
+  });
+
+  it("exposes one stable read-only view of the lazily constructed current registry", () => {
+    const firstPodman = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman;
+
+    expect(firstPodman).toBeDefined();
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman).toBe(firstPodman);
+    expect(() => {
+      (CURRENT_RUNTIME_PROVIDER_BUNDLES as Record<string, RuntimeProviderBundle>).podman =
+        CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    }).toThrow(TypeError);
+    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([
+      "docker",
+      "kubernetes",
+      "podman",
+    ]);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman).toBe(firstPodman);
   });
 
   it("rejects native-artifact bootstrap from production activation (#8178)", () => {

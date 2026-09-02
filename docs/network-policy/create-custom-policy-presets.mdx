@@ -48,7 +48,11 @@ Replace `/path/to/requesting-binary` with the exact executable path reported for
   `/opt/venv/bin/python3*`. Authorize only the process that needs the reviewed endpoint.
 </AgentOnly>
 
-The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens. It must not collide with a maintained preset name such as `slack` or `pypi`. Rename `preset.name` if NemoClaw reports a collision. Custom preset `network_policies` entries must not use `npm_yarn`. NemoClaw reserves that key for the maintained `npm` preset and rejects the file before applying it.
+The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens.
+It must not collide with a maintained preset name such as `slack` or `pypi`.
+Rename `preset.name` if NemoClaw reports a collision.
+Custom preset `network_policies` entries must not use `npm_yarn` or `personal_open_internet`.
+NemoClaw reserves those keys for maintained presets and rejects the file before preview or application.
 
 Each endpoint must name a specific host or a scoped subdomain wildcard such as `*.example.com`. NemoClaw rejects catch-all destinations, including `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0`. Rule matchers must match the endpoint protocol.
 

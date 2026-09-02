@@ -667,7 +667,7 @@ describe("onboard dashboard helpers", () => {
     expect(output).toMatch(/Browser:\n\s+https?:\/\/\S+/);
     expect(output).not.toContain("#token=");
     expect(output).not.toContain("dashboard-url --quiet");
-    expect(output).toContain("then run: openclaw tui");
+    expect(output).toContain("then run the configured interactive agent command");
   });
 
   it("offers launch first and keeps connect in the OpenClaw ready summary (#6006)", () => {
@@ -680,7 +680,7 @@ describe("onboard dashboard helpers", () => {
         "",
         "      Or open a sandbox shell first:",
         "        nemoclaw my-gpt-claw connect",
-        "        then run: openclaw tui",
+        "        then run the configured interactive agent command",
       ].join("\n"),
     );
     expect(output.indexOf("nemoclaw launch my-gpt-claw")).toBeLessThan(
@@ -701,7 +701,7 @@ describe("onboard dashboard helpers", () => {
         "",
         "    Or open a sandbox shell first:",
         "      nemohermes my-hermes connect",
-        "      then run: hermes",
+        "      then run the configured interactive agent command",
       ].join("\n"),
     );
     expect(output).not.toContain("openclaw tui");
@@ -720,7 +720,7 @@ describe("onboard dashboard helpers", () => {
         "",
         "    Or open a sandbox shell first:",
         "      nemoclaw my-dcode connect",
-        "      then run: dcode",
+        "      then run the configured interactive agent command",
       ].join("\n"),
     );
     expect(output).not.toContain("openclaw tui");

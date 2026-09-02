@@ -61,6 +61,32 @@ export function bindHermesDiscordPolicyEndpoint(
   fs.chmodSync(policyFile, 0o600);
 }
 
+export function unbindProviderPolicyEndpoints(policyFile: string, providerName: string): void {
+  const policy = readPolicy(policyFile);
+  Object.values(policy.network_policies ?? {})
+    .map((entry) =>
+      typeof entry === "object" && entry !== null && !Array.isArray(entry)
+        ? ((entry as { endpoints?: unknown }).endpoints ?? [])
+        : [],
+    )
+    .filter((endpoints): endpoints is unknown[] => Array.isArray(endpoints))
+    .flat()
+    .filter(
+      (endpoint): endpoint is Record<string, unknown> =>
+        typeof endpoint === "object" && endpoint !== null && !Array.isArray(endpoint),
+    )
+    .filter(
+      (endpoint) =>
+        typeof endpoint.credential_binding === "object" &&
+        endpoint.credential_binding !== null &&
+        !Array.isArray(endpoint.credential_binding) &&
+        (endpoint.credential_binding as { provider?: unknown }).provider === providerName,
+    )
+    .forEach((endpoint) => delete endpoint.credential_binding);
+  fs.writeFileSync(policyFile, YAML.stringify(policy));
+  fs.chmodSync(policyFile, 0o600);
+}
+
 export function assertHermesDiscordPolicyEndpointBinaries(
   policyFile: string,
   host: string,
@@ -113,13 +139,16 @@ function main(): void {
     return;
   }
 
-  const [policyFile, providerName, host, rawPort, protocol] = args;
-  if (!policyFile || !providerName || !host || !rawPort || !protocol) {
+  const unbind = args[0] === "--unbind-provider";
+  const [policyFile, providerName, host, rawPort, protocol] = args.slice(unbind ? 1 : 0);
+  if (!policyFile || !providerName || (!unbind && (!host || !rawPort || !protocol))) {
     throw new Error(
       "usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port> <protocol>",
     );
   }
-  bindHermesDiscordPolicyEndpoint(policyFile, providerName, host, Number(rawPort), protocol);
+  unbind
+    ? unbindProviderPolicyEndpoints(policyFile, providerName)
+    : bindHermesDiscordPolicyEndpoint(policyFile, providerName, host!, Number(rawPort), protocol!);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

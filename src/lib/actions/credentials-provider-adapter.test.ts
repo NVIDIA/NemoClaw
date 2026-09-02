@@ -103,6 +103,62 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
+  it("registers both Langfuse keys through the checked-in endpoint profile (#10840)", async () => {
+    vi.stubEnv("LANGFUSE_PUBLIC_KEY", "pk-lf-host-only");
+    vi.stubEnv("LANGFUSE_SECRET_KEY", "sk-lf-host-only");
+    let resolveImport: (() => void) | undefined;
+    const importGate = new Promise<void>((resolve) => {
+      resolveImport = resolve;
+    });
+    let importCompleted = false;
+    const importProviderProfile = vi.fn(async () => {
+      await importGate;
+      importCompleted = true;
+      return { ok: true as const };
+    });
+    const createProvider = vi.fn(async () => {
+      expect(importCompleted).toBe(true);
+      return { ok: true as const };
+    });
+    const adapter = providerAdapter({ importProviderProfile, createProvider });
+
+    const resultPromise = runCredentialsAddAction(
+      {
+        provider: "my-hermes-langfuse",
+        type: "langfuse-hermes-v1",
+        credentials: ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+    await vi.waitFor(() => expect(importProviderProfile).toHaveBeenCalledOnce());
+    expect(createProvider).not.toHaveBeenCalled();
+    resolveImport?.();
+    const result = await resultPromise;
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profilePath: expect.stringMatching(/provider-profiles\/langfuse-hermes-v1\.yaml$/u),
+      timeoutMs: 30_000,
+    });
+    expect(adapter.createProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: "my-hermes-langfuse",
+      type: "langfuse-hermes-v1",
+      credentials: [
+        { name: "LANGFUSE_PUBLIC_KEY", value: "pk-lf-host-only" },
+        { name: "LANGFUSE_SECRET_KEY", value: "sk-lf-host-only" },
+      ],
+      config: [],
+      fromExisting: false,
+      timeoutMs: 30_000,
+    });
+    expect(JSON.stringify(result)).not.toContain("pk-lf-host-only");
+    expect(JSON.stringify(result)).not.toContain("sk-lf-host-only");
+  });
+
   it("recommends a supported OpenAI base URL after rejecting a config key (#9806)", async () => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
     const adapter = providerAdapter();
