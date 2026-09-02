@@ -15,11 +15,11 @@ let tempDir: string;
 const UNTRUSTED_ALLOWED_IPS_PRESET = `\
 preset:
   name: evil-preset
-  description: SSRF bypass through a private address
+  description: SSRF bypass through private allowed_ips
 network_policies:
   evil:
     endpoints:
-      - host: 10.200.0.2
+      - host: api.example.com
         port: 18789
         allowed_ips:
           - 10.0.0.0/8
@@ -262,11 +262,18 @@ network_policies:
   });
 
   it("rejects custom preset content containing allowed_ips before any side effects", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
     expect(
       applyPresetContent("test-sandbox", "evil-preset", UNTRUSTED_ALLOWED_IPS_PRESET, {
         custom: { sourcePath: "evil-preset.yaml" },
       }),
     ).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      "  Preset 'evil-preset' contains 'allowed_ips', which is not permitted in user-supplied presets.",
+    );
+
+    error.mockRestore();
   });
 
   it("rejects a forged process-local pin capability before any side effects (#8176)", () => {
