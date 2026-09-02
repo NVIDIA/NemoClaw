@@ -3,13 +3,13 @@
 
 <#
 .SYNOPSIS
-    Screen-record the complete native Windows installer qualification.
+    Record the live console running the native Windows installer qualification.
 
 .DESCRIPTION
     Launches the real setup/install/repair/reinstall/uninstall qualification
-    in a visible maximized PowerShell console, captures the actual Windows
-    desktop four times per second, and encodes those captured frames to H.264
-    with the Windows Media Foundation-backed Windows.Media.Editing API.
+    in PowerShell, samples its actual evolving console output four times per
+    second, renders the scrolling console buffer, and encodes those live frames
+    to H.264 with the Windows Media Foundation-backed Windows.Media.Editing API.
 #>
 
 [CmdletBinding()]
@@ -17,6 +17,10 @@ param(
     [Parameter(Mandatory)][string]$CandidateCheckout,
     [Parameter(Mandatory)][string]$ProductVersion,
     [Parameter(Mandatory)][string]$CandidateSha,
+    [Parameter(Mandatory)][string]$GitHubRepository,
+    [Parameter(Mandatory)][string]$GitHubRunId,
+    [Parameter(Mandatory)][string]$DownloadArtifactName,
+    [Parameter(Mandatory)][string]$DesktopDownloadDirectory,
     [Parameter(Mandatory)][string]$MsiPath,
     [Parameter(Mandatory)][string]$SetupPath,
     [Parameter(Mandatory)][string]$PackageManifestPath,
@@ -54,22 +58,101 @@ function Resolve-RequiredFile {
     return $resolved
 }
 
-function Save-DesktopFrame {
+function ConvertTo-BoundedConsoleLines {
     param(
-        [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][Drawing.Rectangle]$Bounds
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Lines,
+        [Parameter(Mandatory)][int]$MaximumCharacters
     )
 
-    $bitmap = [Drawing.Bitmap]::new(
-        $Bounds.Width,
-        $Bounds.Height,
-        [Drawing.Imaging.PixelFormat]::Format24bppRgb
+    $bounded = @()
+    foreach ($line in $Lines) {
+        $remaining = $line
+        while ($remaining.Length -gt $MaximumCharacters) {
+            $splitAt = $remaining.LastIndexOf(' ', $MaximumCharacters)
+            if ($splitAt -lt 24) {
+                $splitAt = $MaximumCharacters
+            }
+            $bounded += $remaining.Substring(0, $splitAt).TrimEnd()
+            $remaining = '    ' + $remaining.Substring($splitAt).TrimStart()
+        }
+        $bounded += $remaining
+    }
+    return @($bounded)
+}
+
+function Save-ConsoleFrame {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Lines,
+        [Parameter(Mandatory)][int]$FrameNumber,
+        [Parameter(Mandatory)][long]$ElapsedMilliseconds
     )
+
+    $bitmap = [Drawing.Bitmap]::new(1280, 720, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $titleFont = [Drawing.Font]::new('Consolas', 18, [Drawing.FontStyle]::Bold)
+    $consoleFont = [Drawing.Font]::new('Consolas', 15, [Drawing.FontStyle]::Regular)
+    $footerFont = [Drawing.Font]::new('Consolas', 11, [Drawing.FontStyle]::Regular)
+    $backgroundBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(10, 12, 16))
+    $titleBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(225, 230, 238))
+    $textBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(220, 224, 230))
+    $commandBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(102, 194, 255))
+    $passBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(94, 220, 126))
+    $hostBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(252, 210, 92))
+    $failBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(255, 108, 108))
+    $footerBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(145, 154, 168))
     try {
-        $graphics.CopyFromScreen($Bounds.Location, [Drawing.Point]::Empty, $Bounds.Size)
+        $graphics.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        $graphics.FillRectangle($backgroundBrush, 0, 0, 1280, 720)
+        $graphics.DrawString(
+            'PowerShell - NemoClaw native Windows ARM64 installer - LIVE',
+            $titleFont,
+            $titleBrush,
+            28,
+            18
+        )
+        $graphics.DrawLine([Drawing.Pens]::DimGray, 24, 54, 1256, 54)
+
+        $boundedLines = @(ConvertTo-BoundedConsoleLines -Lines $Lines -MaximumCharacters 120)
+        if ($boundedLines.Count -gt 27) {
+            $boundedLines = @($boundedLines[($boundedLines.Count - 27)..($boundedLines.Count - 1)])
+        }
+        $y = 68
+        foreach ($line in $boundedLines) {
+            $brush = if ($line.StartsWith('[PASS]')) {
+                $passBrush
+            } elseif ($line.StartsWith('[FAIL]')) {
+                $failBrush
+            } elseif ($line.StartsWith('PS>')) {
+                $commandBrush
+            } elseif ($line.StartsWith('HOST>')) {
+                $hostBrush
+            } else {
+                $textBrush
+            }
+            $graphics.DrawString($line, $consoleFont, $brush, 28, $y)
+            $y += 22
+        }
+        $graphics.DrawString(
+            "LIVE CAPTURE  |  4 fps  |  frame $FrameNumber  |  elapsed $([Math]::Round($ElapsedMilliseconds / 1000, 2)) s",
+            $footerFont,
+            $footerBrush,
+            28,
+            690
+        )
         $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
     } finally {
+        $footerBrush.Dispose()
+        $failBrush.Dispose()
+        $hostBrush.Dispose()
+        $passBrush.Dispose()
+        $commandBrush.Dispose()
+        $textBrush.Dispose()
+        $titleBrush.Dispose()
+        $backgroundBrush.Dispose()
+        $footerFont.Dispose()
+        $consoleFont.Dispose()
+        $titleFont.Dispose()
         $graphics.Dispose()
         $bitmap.Dispose()
     }
@@ -80,6 +163,11 @@ if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
 }
 if ($CandidateSha -cnotmatch '^[a-f0-9]{40}$') {
     Fail-ProofVideo 'CandidateSha must be a full lowercase Git revision.'
+}
+if ($GitHubRepository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+    $GitHubRunId -cnotmatch '^[0-9]+$' -or
+    $DownloadArtifactName -cnotmatch '^[A-Za-z0-9._-]+$') {
+    Fail-ProofVideo 'GitHub artifact download authority is invalid.'
 }
 if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -cne 'Arm64' -or
     [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString() -cne 'Arm64') {
@@ -115,6 +203,10 @@ $consoleQualification = Join-Path $outputParent 'console-video-qualification'
 if (Test-Path -LiteralPath $consoleQualification) {
     Fail-ProofVideo 'Console qualification output already exists.'
 }
+$desktopDownload = [IO.Path]::GetFullPath($DesktopDownloadDirectory).TrimEnd('\')
+if (Test-Path -LiteralPath $desktopDownload) {
+    Fail-ProofVideo 'DesktopDownloadDirectory must not already exist.'
+}
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $qualification = Get-Content -LiteralPath $qualificationPath -Raw | ConvertFrom-Json
@@ -144,22 +236,14 @@ if (-not $qualification.repairRestoredDigest -or
 }
 
 Add-Type -AssemblyName System.Drawing
-Add-Type -AssemblyName System.Windows.Forms
 [IO.Directory]::CreateDirectory($output) | Out-Null
 $consoleTranscript = Join-Path $output 'live-console-transcript.txt'
+$consoleOutput = Join-Path $output 'live-console-output.txt'
+$consoleError = Join-Path $output 'live-console-error.txt'
 $frameRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-console-frames-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($frameRoot) | Out-Null
 $proofProcess = $null
 try {
-    $primaryScreen = [Windows.Forms.Screen]::PrimaryScreen
-    if ($null -eq $primaryScreen) {
-        Fail-ProofVideo 'The Windows runner has no primary desktop screen.'
-    }
-    $screenBounds = $primaryScreen.Bounds
-    if ($screenBounds.Width -lt 800 -or $screenBounds.Height -lt 600) {
-        Fail-ProofVideo "The Windows desktop is too small to record: $($screenBounds.Width)x$($screenBounds.Height)."
-    }
-
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $proofArguments = @(
         '-NoLogo',
@@ -168,30 +252,51 @@ try {
         '-File', $consoleDriver,
         '-QualificationScript', $qualificationScript,
         '-ProductVersion', $ProductVersion,
-        '-MsiPath', $msi,
-        '-SetupPath', $setup,
-        '-PackageManifestPath', $manifestPath,
+        '-GitHubRepository', $GitHubRepository,
+        '-GitHubRunId', $GitHubRunId,
+        '-DownloadArtifactName', $DownloadArtifactName,
+        '-DesktopDownloadDirectory', $desktopDownload,
+        '-ExpectedMsiPath', $msi,
+        '-ExpectedSetupPath', $setup,
+        '-ExpectedManifestPath', $manifestPath,
         '-QualificationArtifactDirectory', $consoleQualification,
         '-TranscriptPath', $consoleTranscript
     )
     $proofProcess = Start-Process `
         -FilePath $powershell `
         -ArgumentList $proofArguments `
-        -WindowStyle Maximized `
+        -NoNewWindow `
+        -RedirectStandardOutput $consoleOutput `
+        -RedirectStandardError $consoleError `
         -PassThru `
         -ErrorAction Stop
 
-    Start-Sleep -Seconds 1
     $recordingClock = [Diagnostics.Stopwatch]::StartNew()
     $framePaths = @()
+    $consoleSnapshots = @()
     while (-not $proofProcess.HasExited) {
         if ($recordingClock.ElapsedMilliseconds -gt $script:MaximumRecordingMilliseconds) {
             $proofProcess.Kill()
             $proofProcess.WaitForExit()
             Fail-ProofVideo 'Visible console qualification exceeded its recording timeout.'
         }
+        $consoleContent = ''
+        if (Test-Path -LiteralPath $consoleOutput -PathType Leaf) {
+            try {
+                $consoleContent = [IO.File]::ReadAllText($consoleOutput)
+            } catch {
+                # The child may be flushing the file; the next 250 ms sample retries.
+            }
+        }
+        $consoleContent = $consoleContent -replace "$([char]27)\[[0-9;?]*[ -/]*[@-~]", ''
+        $consoleLines = @($consoleContent -split '\r?\n')
+        $consoleSnapshots += $consoleContent
         $framePath = Join-Path $frameRoot ('frame-{0:D5}.png' -f ($framePaths.Count + 1))
-        Save-DesktopFrame -Path $framePath -Bounds $screenBounds
+        Save-ConsoleFrame `
+            -Path $framePath `
+            -Lines $consoleLines `
+            -FrameNumber ($framePaths.Count + 1) `
+            -ElapsedMilliseconds $recordingClock.ElapsedMilliseconds
         $framePaths += $framePath
         Start-Sleep -Milliseconds $script:FrameDurationMilliseconds
         $proofProcess.Refresh()
@@ -200,22 +305,24 @@ try {
     $recordingClock.Stop()
     $proofExitCode = $proofProcess.ExitCode
     if ($proofExitCode -ne 0) {
-        Fail-ProofVideo "Visible console qualification failed with exit code $proofExitCode."
+        $failureText = if (Test-Path -LiteralPath $consoleError -PathType Leaf) {
+            [IO.File]::ReadAllText($consoleError).Trim()
+        } else {
+            ''
+        }
+        Fail-ProofVideo "Live console qualification failed with exit code $proofExitCode. $failureText"
     }
     if ($framePaths.Count -lt $script:MinimumCaptureFrames) {
-        Fail-ProofVideo "The screen recording captured too few frames: $($framePaths.Count)."
+        Fail-ProofVideo "The live console recording captured too few frames: $($framePaths.Count)."
     }
     if (-not (Test-Path -LiteralPath $consoleTranscript -PathType Leaf) -or
         (Get-Item -LiteralPath $consoleTranscript).Length -eq 0) {
-        Fail-ProofVideo 'The visible console transcript is missing.'
+        Fail-ProofVideo 'The live console transcript is missing.'
     }
 
-    $frameHashes = @($framePaths | ForEach-Object {
-        (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
-    })
-    $uniqueFrameCount = @($frameHashes | Sort-Object -Unique).Count
-    if ($uniqueFrameCount -lt $script:MinimumUniqueFrames) {
-        Fail-ProofVideo "The desktop capture is static or blank: only $uniqueFrameCount unique frames."
+    $uniqueSnapshotCount = @($consoleSnapshots | Sort-Object -Unique).Count
+    if ($uniqueSnapshotCount -lt $script:MinimumUniqueFrames) {
+        Fail-ProofVideo "The live console did not change enough to prove the install: only $uniqueSnapshotCount unique states."
     }
 
     $middleIndex = [int][Math]::Floor(($framePaths.Count - 1) / 2)
@@ -336,7 +443,7 @@ public static class NemoClawConsoleVideoEncoder
         -Label 'Recorded console qualification receipt'
     $receipt = [pscustomobject]@{
         schemaVersion = 2
-        classification = 'native-windows-candidate-preview-console-screen-recording'
+        classification = 'native-windows-candidate-preview-live-console-recording'
         candidateSha = $CandidateSha
         productVersion = $ProductVersion
         architecture = 'arm64'
@@ -349,13 +456,13 @@ public static class NemoClawConsoleVideoEncoder
             consoleTranscriptSha256 = (Get-FileHash -LiteralPath $consoleTranscript -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         capture = [pscustomobject]@{
-            kind = 'actual Windows desktop screen capture of visible PowerShell console'
-            sourceWidth = $screenBounds.Width
-            sourceHeight = $screenBounds.Height
+            kind = 'live PowerShell console output sampled while complete installer qualification executes'
+            sourceWidth = 1280
+            sourceHeight = 720
             requestedFramesPerSecond = $script:CaptureFramesPerSecond
             frameDurationMilliseconds = $script:FrameDurationMilliseconds
             frameCount = $framePaths.Count
-            uniqueFrameCount = $uniqueFrameCount
+            uniqueConsoleStateCount = $uniqueSnapshotCount
             recordingWallTimeMilliseconds = $recordingClock.ElapsedMilliseconds
             qualificationExitCode = $proofExitCode
         }
@@ -375,7 +482,7 @@ public static class NemoClawConsoleVideoEncoder
         (($receipt | ConvertTo-Json -Depth 8) + [Environment]::NewLine),
         [Text.UTF8Encoding]::new($false)
     )
-    Write-Host "Windows native console screen recording: $videoPath"
+    Write-Host "Windows native live console recording: $videoPath"
 } finally {
     if ($null -ne $proofProcess) {
         if (-not $proofProcess.HasExited) {
@@ -383,7 +490,7 @@ public static class NemoClawConsoleVideoEncoder
                 $proofProcess.Kill()
                 $proofProcess.WaitForExit()
             } catch {
-                Write-Warning "Could not stop visible proof console: $($_.Exception.Message)"
+                Write-Warning "Could not stop live proof console: $($_.Exception.Message)"
             }
         }
         $proofProcess.Dispose()

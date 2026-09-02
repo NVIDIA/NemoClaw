@@ -22,6 +22,7 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -337,8 +338,21 @@ jobs:
             -PackageManifestPath "$packageRoot\package-manifest.json" `
             -ArtifactDirectory "$packageRoot\qualification"
 
+      - name: Upload installer for the recorded GitHub download
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-download-source-${{ github.sha }}
+          path: |
+            ${{ steps.windows-package.outputs.package_root }}/NemoClaw-${{ steps.windows-package.outputs.product_version }}-windows-arm64.msi
+            ${{ steps.windows-package.outputs.package_root }}/NemoClawSetup-${{ steps.windows-package.outputs.product_version }}-windows-arm64.exe
+            ${{ steps.windows-package.outputs.package_root }}/package-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Create native Windows proof-of-life video
         shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
@@ -349,6 +363,10 @@ jobs:
             -CandidateCheckout $candidate `
             -ProductVersion $version `
             -CandidateSha $env:GITHUB_SHA `
+            -GitHubRepository $env:GITHUB_REPOSITORY `
+            -GitHubRunId $env:GITHUB_RUN_ID `
+            -DownloadArtifactName "windows-native-download-source-$env:GITHUB_SHA" `
+            -DesktopDownloadDirectory "$env:USERPROFILE\Desktop\NemoClawDownload" `
             -MsiPath "$packageRoot\NemoClaw-$version-windows-arm64.msi" `
             -SetupPath "$packageRoot\NemoClawSetup-$version-windows-arm64.exe" `
             -PackageManifestPath "$packageRoot\package-manifest.json" `
