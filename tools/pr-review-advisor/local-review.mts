@@ -68,7 +68,12 @@ function groupExists(pid: number): boolean {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    // Darwin can report EPERM briefly while a killed process group is still
+    // being reaped. Keep waiting rather than treating that transitional state
+    // as proof that cleanup failed.
+    if (code === "EPERM") return true;
     throw error;
   }
 }
