@@ -302,6 +302,11 @@ export interface SandboxStateOptions<
     getRegistrySandboxMessagingAuthority(
       sandboxName: string,
     ): import("../../../messaging/plan-authority").RegistryMessagingAuthority;
+    inspectGatewayCredential(
+      name: string,
+      type: string,
+      credentialEnv: string,
+    ): import("../../gateway-provider-metadata").GatewayCredentialOnlyProviderInspection;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;

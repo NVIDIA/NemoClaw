@@ -326,6 +326,8 @@ export function createDeps(
       error: calls.error,
       exitProcess: calls.exit,
       ...overrides,
+      inspectGatewayCredential:
+        overrides.inspectGatewayCredential ?? (() => ({ kind: "exact" as const })),
       checkGatewayRouteCompatibility:
         overrides.checkGatewayRouteCompatibility ?? calls.checkGatewayRouteCompatibility,
       withDashboardPortReservationLock: runWithDashboardPortReservationLock,
