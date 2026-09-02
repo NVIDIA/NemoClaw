@@ -961,9 +961,10 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       createdProviderNames,
     );
   }
-  // Gateway-side token minting is configured AFTER the providers exist (best-effort,
-  // self-gates without a bridge token def). Secret material stays gateway-side —
-  // never written into the sandbox.
+  // Configure gateway-side token minting after provider creation. This self-gates
+  // when no bridge token definition exists. A configuration failure stops onboarding
+  // and cleans up newly created providers where possible. Secret material stays
+  // gateway-side and is never written into the sandbox.
   let refreshResult;
   try {
     refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
