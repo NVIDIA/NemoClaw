@@ -70,11 +70,15 @@ export {
 
 const ADVISOR_BASE_URL_ENV = "PR_REVIEW_ADVISOR_BASE_URL";
 
-export function advisorRetrySettings(_modelId?: string) {
+export function advisorRetrySettings(modelId = DEFAULT_ADVISOR_MODEL, identity = "advisor") {
+  let hash = 0;
+  for (const character of `${modelId}:${identity}`) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
   return {
     enabled: true,
-    maxRetries: 4,
-    baseDelayMs: 6_000,
+    maxRetries: 5,
+    baseDelayMs: 12_000 + (hash % 8_000),
     provider: {
       maxRetries: 0,
       maxRetryDelayMs: 60_000,
@@ -381,7 +385,7 @@ export async function runReadOnlyAdvisor(
 
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
-    retry: advisorRetrySettings(),
+    retry: advisorRetrySettings(modelId, options.logPrefix),
   });
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
