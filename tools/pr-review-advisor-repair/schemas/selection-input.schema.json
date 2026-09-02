@@ -35,7 +35,7 @@
       "properties": {
         "state": { "const": "open" },
         "draft": { "const": false },
-        "author": { "$ref": "#/$defs/identity" },
+        "author": { "$ref": "#/$defs/githubLogin" },
         "baseRef": { "const": "main" },
         "headRepository": { "const": "NVIDIA/NemoClaw" },
         "headRef": { "type": "string", "minLength": 1, "maxLength": 255 },
@@ -67,8 +67,8 @@
       "required": ["kind", "actor", "triggeringActor", "headSha"],
       "properties": {
         "kind": { "const": "phase1-maintainer-dispatch" },
-        "actor": { "$ref": "#/$defs/identity" },
-        "triggeringActor": { "$ref": "#/$defs/identity" },
+        "actor": { "$ref": "#/$defs/githubLogin" },
+        "triggeringActor": { "$ref": "#/$defs/githubLogin" },
         "headSha": { "$ref": "#/$defs/sha" }
       }
     },
@@ -91,6 +91,10 @@
   "$defs": {
     "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "identity": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "githubLogin": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\\[bot\\])?$"
+    },
     "finding": {
       "type": "object",
       "additionalProperties": false,

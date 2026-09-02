@@ -11,13 +11,11 @@ import { githubApi, githubGraphql } from "../advisors/github.mts";
 import {
   CANONICAL_REPOSITORY,
   MAX_PATCH_BYTES,
-  parseSelectionBundle,
-  parseValidationReceipt,
+  parseValidatedReceiptForPublication,
   readBoundedJson,
   readBoundedRegularFile,
   RepairContractError,
   sanitizeDiagnostic,
-  type SelectionBundle,
   type ValidationReceipt,
 } from "./contract.mts";
 import { appendPublicationJobSummary } from "./summary.mts";
@@ -49,6 +47,7 @@ type PullRequest = {
 
 type TreeEntry = {
   path: string;
+  status: "A" | "D" | "M";
   mode: "100644";
   type: "blob";
   sha: string | null;
@@ -77,10 +76,12 @@ function fullSha(value: unknown, label: string): string {
   return value;
 }
 
-function gitEnvironment(home: string): NodeJS.ProcessEnv {
+export function publisherGitEnvironment(home: string): NodeJS.ProcessEnv {
   return {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
+    GIT_LFS_SKIP_SMUDGE: "1",
+    GIT_OPTIONAL_LOCKS: "0",
     GIT_TERMINAL_PROMPT: "0",
     HOME: home,
     LANG: "C.UTF-8",
@@ -95,29 +96,43 @@ function git(
   env: NodeJS.ProcessEnv,
   buffer = false,
 ): string | Buffer {
-  return execFileSync("git", args, {
-    cwd: repository,
-    env,
-    encoding: buffer ? undefined : "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: MAX_PATCH_BYTES + 1024 * 1024,
-  });
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "filter.lfs.smudge=",
+      "-c",
+      "filter.lfs.required=false",
+      "-c",
+      "diff.external=",
+      ...args,
+    ],
+    {
+      cwd: repository,
+      env,
+      encoding: buffer ? undefined : "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: MAX_PATCH_BYTES + 1024 * 1024,
+    },
+  );
 }
 
 export function assertPublicationPullRequest(
-  selection: SelectionBundle,
+  receipt: ValidationReceipt,
   pull: PullRequest,
 ): { repositoryId: string } {
   if (
-    pull.number !== selection.input.prNumber ||
+    pull.number !== receipt.prNumber ||
     pull.state !== "open" ||
     pull.draft !== false ||
     pull.maintainer_can_modify !== true ||
-    pull.user?.login !== selection.input.pullRequest.author ||
-    pull.head?.sha !== selection.input.sourceHeadSha ||
-    pull.head?.ref !== selection.input.pullRequest.headRef ||
+    pull.user?.login !== receipt.author ||
+    pull.head?.sha !== receipt.sourceHeadSha ||
+    pull.head?.ref !== receipt.headRef ||
     pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
-    pull.base?.sha !== selection.input.baseSha ||
+    pull.base?.sha !== receipt.baseSha ||
     pull.base?.ref !== "main" ||
     pull.base?.repo?.full_name !== CANONICAL_REPOSITORY
   ) {
@@ -134,21 +149,20 @@ export function assertPublicationPullRequest(
 
 export function reconstructValidatedTree(input: {
   sourceCheckout: string;
-  selection: SelectionBundle;
+  receipt: ValidationReceipt;
   patchFile: string;
-  expectedTree: string;
   stagingDirectory: string;
 }): { repository: string; treeSha: string } {
   const home = path.join(input.stagingDirectory, "home");
   const repository = path.join(input.stagingDirectory, "repo");
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-  const env = gitEnvironment(home);
+  const env = publisherGitEnvironment(home);
   git(
     input.stagingDirectory,
     ["clone", "--no-local", "--no-hardlinks", "--no-checkout", input.sourceCheckout, repository],
     env,
   );
-  git(repository, ["checkout", "--detach", input.selection.input.sourceHeadSha], env);
+  git(repository, ["checkout", "--detach", input.receipt.sourceHeadSha], env);
   git(
     repository,
     ["apply", "--check", "--index", "--binary", "--whitespace=error-all", input.patchFile],
@@ -157,9 +171,10 @@ export function reconstructValidatedTree(input: {
   git(repository, ["apply", "--index", "--binary", "--whitespace=error-all", input.patchFile], env);
   git(repository, ["diff", "--cached", "--check", "HEAD", "--"], env);
   const treeSha = String(git(repository, ["write-tree"], env)).trim();
-  if (treeSha !== input.expectedTree) {
+  if (treeSha !== input.receipt.candidateTreeSha) {
     throw new RepairContractError("publisher reconstructed a different candidate tree");
   }
+  assertCandidateMatchesReceipt(repository, input.receipt, env);
   return { repository, treeSha };
 }
 
@@ -188,7 +203,13 @@ function candidateTreeEntries(
       throw new RepairContractError("publisher candidate contains an unsupported Git change");
     }
     if (status === "D") {
-      entries.push({ path: changedPath, mode: "100644", type: "blob", sha: null });
+      entries.push({
+        path: changedPath,
+        status: "D",
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      });
       continue;
     }
     const line = String(
@@ -198,9 +219,49 @@ function candidateTreeEntries(
     if (!match || match[2] !== changedPath) {
       throw new RepairContractError("publisher candidate contains an unsupported Git object");
     }
-    entries.push({ path: changedPath, mode: "100644", type: "blob", sha: match[1] });
+    entries.push({
+      path: changedPath,
+      status: status as "A" | "M",
+      mode: "100644",
+      type: "blob",
+      sha: match[1],
+    });
   }
   return entries;
+}
+
+function assertCandidateMatchesReceipt(
+  repository: string,
+  receipt: ValidationReceipt,
+  env: NodeJS.ProcessEnv,
+): void {
+  const entries = candidateTreeEntries(
+    repository,
+    receipt.sourceHeadSha,
+    receipt.candidateTreeSha,
+    env,
+  ).sort((left, right) => left.path.localeCompare(right.path));
+  if (entries.length !== receipt.changedPaths.length) {
+    throw new RepairContractError("publisher candidate differs from the validation receipt");
+  }
+  entries.forEach((entry, index) => {
+    const expected = receipt.changedPaths[index];
+    const objectName = entry.status === "D" ? `${receipt.sourceHeadSha}:${entry.path}` : entry.sha;
+    const bytes = objectName
+      ? Number(String(git(repository, ["cat-file", "-s", objectName], env)).trim())
+      : Number.NaN;
+    if (
+      !expected ||
+      entry.path !== expected.path ||
+      entry.status !== expected.status ||
+      entry.mode !== expected.mode ||
+      entry.type !== expected.type ||
+      !Number.isSafeInteger(bytes) ||
+      bytes !== expected.bytes
+    ) {
+      throw new RepairContractError("publisher candidate differs from the validation receipt");
+    }
+  });
 }
 
 async function createGitHubTree(input: {
@@ -210,7 +271,7 @@ async function createGitHubTree(input: {
   token: string;
   request: GitHubRequest;
 }): Promise<string> {
-  const env = gitEnvironment(path.join(input.repository, ".publisher-home"));
+  const env = publisherGitEnvironment(path.join(input.repository, ".publisher-home"));
   const entries = candidateTreeEntries(
     input.repository,
     input.sourceHeadSha,
@@ -234,7 +295,15 @@ async function createGitHubTree(input: {
     input.token,
     {
       method: "POST",
-      body: { base_tree: input.sourceHeadSha, tree: entries },
+      body: {
+        base_tree: input.sourceHeadSha,
+        tree: entries.map(({ path: entryPath, mode, type, sha: entrySha }) => ({
+          path: entryPath,
+          mode,
+          type,
+          sha: entrySha,
+        })),
+      },
     },
   );
   if (created.sha !== input.candidateTreeSha) {
@@ -338,21 +407,21 @@ async function assertValidationWorkflowsActive(
 }
 
 export async function dispatchGeneratedHeadValidation(
-  selection: SelectionBundle,
+  receipt: ValidationReceipt,
   commitSha: string,
   token: string,
   request: GitHubRequest = githubApi,
 ): Promise<string[]> {
   const common = {
-    pr_number: String(selection.input.prNumber),
+    pr_number: String(receipt.prNumber),
     source_head_sha: commitSha,
-    base_sha: selection.input.baseSha,
-    repair_attempt_key: selection.attemptKey,
+    base_sha: receipt.baseSha,
+    repair_attempt_key: receipt.attemptKey,
   };
   for (const workflow of GENERATED_HEAD_WORKFLOWS) {
     await request(`repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/dispatches`, token, {
       method: "POST",
-      body: { ref: selection.input.pullRequest.headRef, inputs: common },
+      body: { ref: receipt.headRef, inputs: common },
     });
   }
   await request(
@@ -361,14 +430,14 @@ export async function dispatchGeneratedHeadValidation(
     {
       method: "POST",
       body: {
-        ref: selection.input.pullRequest.headRef,
+        ref: receipt.headRef,
         inputs: {
           target_repo: CANONICAL_REPOSITORY,
-          target_pr: String(selection.input.prNumber),
+          target_pr: String(receipt.prNumber),
           target_base: "main",
           source_head_sha: commitSha,
-          base_sha: selection.input.baseSha,
-          repair_attempt_key: selection.attemptKey,
+          base_sha: receipt.baseSha,
+          repair_attempt_key: receipt.attemptKey,
         },
       },
     },
@@ -378,7 +447,6 @@ export async function dispatchGeneratedHeadValidation(
 
 export async function publishValidatedRepair(input: {
   sourceCheckout: string;
-  selection: SelectionBundle;
   receipt: ValidationReceipt;
   patchFile: string;
   stagingDirectory: string;
@@ -391,26 +459,25 @@ export async function publishValidatedRepair(input: {
   const graphql =
     input.graphql ?? ((query, variables) => githubGraphql(input.token, query, variables));
   const pull = await request<PullRequest>(
-    `repos/${CANONICAL_REPOSITORY}/pulls/${input.selection.input.prNumber}`,
+    `repos/${CANONICAL_REPOSITORY}/pulls/${input.receipt.prNumber}`,
     input.token,
   );
-  const { repositoryId } = assertPublicationPullRequest(input.selection, pull);
+  const { repositoryId } = assertPublicationPullRequest(input.receipt, pull);
   await assertValidationWorkflowsActive(input.token, request);
   const reconstructed = reconstructValidatedTree({
     sourceCheckout: input.sourceCheckout,
-    selection: input.selection,
+    receipt: input.receipt,
     patchFile: input.patchFile,
-    expectedTree: input.receipt.candidateTreeSha,
     stagingDirectory: input.stagingDirectory,
   });
   await createGitHubTree({
     repository: reconstructed.repository,
-    sourceHeadSha: input.selection.input.sourceHeadSha,
+    sourceHeadSha: input.receipt.sourceHeadSha,
     candidateTreeSha: reconstructed.treeSha,
     token: input.token,
     request,
   });
-  const commitMessage = `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${input.selection.attemptKey}`;
+  const commitMessage = `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${input.receipt.attemptKey}`;
   const commit = await request<{ sha?: unknown }>(
     `repos/${CANONICAL_REPOSITORY}/git/commits`,
     input.token,
@@ -419,7 +486,7 @@ export async function publishValidatedRepair(input: {
       body: {
         message: commitMessage,
         tree: reconstructed.treeSha,
-        parents: [input.selection.input.sourceHeadSha],
+        parents: [input.receipt.sourceHeadSha],
       },
     },
   );
@@ -428,7 +495,7 @@ export async function publishValidatedRepair(input: {
     {
       commitSha,
       message: commitMessage,
-      parentSha: input.selection.input.sourceHeadSha,
+      parentSha: input.receipt.sourceHeadSha,
       treeSha: reconstructed.treeSha,
     },
     input.token,
@@ -436,43 +503,39 @@ export async function publishValidatedRepair(input: {
     input.wait,
   );
   const current = await request<PullRequest>(
-    `repos/${CANONICAL_REPOSITORY}/pulls/${input.selection.input.prNumber}`,
+    `repos/${CANONICAL_REPOSITORY}/pulls/${input.receipt.prNumber}`,
     input.token,
   );
-  assertPublicationPullRequest(input.selection, current);
+  assertPublicationPullRequest(input.receipt, current);
   await atomicUpdate({
     repositoryId,
-    headRef: input.selection.input.pullRequest.headRef,
-    beforeOid: input.selection.input.sourceHeadSha,
+    headRef: input.receipt.headRef,
+    beforeOid: input.receipt.sourceHeadSha,
     afterOid: commitSha,
     graphql,
   });
   const dispatchedWorkflows = await dispatchGeneratedHeadValidation(
-    input.selection,
+    input.receipt,
     commitSha,
     input.token,
     request,
   );
   return {
     version: 1,
-    attemptKey: input.selection.attemptKey,
-    sourceHeadSha: input.selection.input.sourceHeadSha,
+    attemptKey: input.receipt.attemptKey,
+    sourceHeadSha: input.receipt.sourceHeadSha,
     candidateTreeSha: input.receipt.candidateTreeSha,
     commitSha,
-    headRef: input.selection.input.pullRequest.headRef,
+    headRef: input.receipt.headRef,
     dispatchedWorkflows,
   };
 }
 
 async function main(env: NodeJS.ProcessEnv): Promise<void> {
-  const selection = parseSelectionBundle(
-    readBoundedJson(required(env, "SELECTION_FILE"), 1024 * 1024),
-  );
   const patchFile = required(env, "VALIDATED_PATCH_FILE");
   const patch = readBoundedRegularFile(patchFile, MAX_PATCH_BYTES);
-  const receipt = parseValidationReceipt(
+  const receipt = parseValidatedReceiptForPublication(
     readBoundedJson(required(env, "VALIDATION_RECEIPT_FILE"), 1024 * 1024),
-    selection,
     patch,
   );
   const stagingRoot = required(env, "PUBLISH_STAGING_ROOT");
@@ -481,7 +544,6 @@ async function main(env: NodeJS.ProcessEnv): Promise<void> {
   try {
     const publication = await publishValidatedRepair({
       sourceCheckout: required(env, "SOURCE_CHECKOUT"),
-      selection,
       receipt,
       patchFile,
       stagingDirectory,

@@ -51,6 +51,16 @@ function completedSuccessfully(
   return true;
 }
 
+function exactCompletion(
+  matches: Array<{ status?: unknown; conclusion?: unknown }>,
+  name: string,
+): boolean {
+  if (matches.length > 1) {
+    throw new RepairContractError(`${name} has ambiguous generated-head validation results`);
+  }
+  return matches.length === 1 ? completedSuccessfully(matches[0]!, name) : false;
+}
+
 export async function verifyGeneratedHeadOnce(input: {
   commitSha: string;
   headRef: string;
@@ -74,11 +84,7 @@ export async function verifyGeneratedHeadOnce(input: {
         check.head_sha === input.commitSha &&
         check.app?.slug === "github-actions",
     );
-    if (matches.length === 0) {
-      pending = true;
-      continue;
-    }
-    if (!matches.some((check) => completedSuccessfully(check, name))) pending = true;
+    if (!exactCompletion(matches, name)) pending = true;
   }
 
   for (const workflow of REQUIRED_WORKFLOWS) {
@@ -96,11 +102,7 @@ export async function verifyGeneratedHeadOnce(input: {
         typeof run.display_title === "string" &&
         run.display_title.includes(input.attemptKey),
     );
-    if (matches.length === 0) {
-      pending = true;
-      continue;
-    }
-    if (!matches.some((run) => completedSuccessfully(run, workflow))) pending = true;
+    if (!exactCompletion(matches, workflow)) pending = true;
   }
   return pending ? "pending" : "success";
 }

@@ -87,6 +87,10 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
       type: "boolean",
     });
     expect(workflow.permissions).toEqual({});
+    expect(workflow.concurrency).toEqual({
+      group: "pr-review-advisor-repair-phase1-${{ inputs.pr_number }}",
+      "cancel-in-progress": false,
+    });
     expect(Object.keys(jobs).sort()).toEqual([
       "claim",
       "collect",
@@ -97,6 +101,10 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     ]);
     expect(workflowSource).not.toMatch(/^\s+(?:push|pull_request|pull_request_target):/mu);
     expect(repair.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(collect).not.toHaveProperty("concurrency");
+    expect(repair).not.toHaveProperty("concurrency");
+    expect(validate).not.toHaveProperty("concurrency");
+    expect(publish).not.toHaveProperty("concurrency");
     expect(publish.permissions).toEqual({
       actions: "write",
       contents: "write",
@@ -115,6 +123,8 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     expect(namedStep(collect, "Upload the attempt audit receipt").if).toBe("always()");
     expect(repair.if).toContain("vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true'");
     expect(validate.if).toContain("vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true'");
+    expect(record(validate.outputs).validated).toBe("${{ steps.validate.outputs.validated }}");
+    expect(String(publish.if)).toContain("needs.validate.outputs.validated == 'true'");
     expect(claim.permissions).toEqual({ actions: "read", checks: "write", contents: "read" });
     expect(verify.permissions).toEqual({ actions: "read", checks: "read", contents: "read" });
   });
@@ -136,42 +146,62 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
       steps(job).find((step) => String(step.uses ?? "").startsWith("actions/checkout@")),
     );
     expect(trustedCheckouts).toHaveLength(6);
+    const trustedSparseCheckout =
+      [
+        "/scripts/install-openshell.sh",
+        "/tools/advisors/",
+        "/tools/openshell-agent/",
+        "/tools/pr-review-advisor/",
+        "/tools/pr-review-advisor-repair/",
+      ].join("\n") + "\n";
     expect(trustedCheckouts.map((checkout) => checkout?.with)).toEqual([
       expect.objectContaining({
         ref: "${{ github.workflow_sha }}",
         "persist-credentials": false,
         lfs: false,
         submodules: false,
+        "sparse-checkout": trustedSparseCheckout,
+        "sparse-checkout-cone-mode": false,
       }),
       expect.objectContaining({
         ref: "${{ github.workflow_sha }}",
         "persist-credentials": false,
         lfs: false,
         submodules: false,
+        "sparse-checkout": trustedSparseCheckout,
+        "sparse-checkout-cone-mode": false,
       }),
       expect.objectContaining({
         ref: "${{ github.workflow_sha }}",
         "persist-credentials": false,
         lfs: false,
         submodules: false,
+        "sparse-checkout": trustedSparseCheckout,
+        "sparse-checkout-cone-mode": false,
       }),
       expect.objectContaining({
         ref: "${{ github.workflow_sha }}",
         "persist-credentials": false,
         lfs: false,
         submodules: false,
+        "sparse-checkout": trustedSparseCheckout,
+        "sparse-checkout-cone-mode": false,
       }),
       expect.objectContaining({
         ref: "${{ github.workflow_sha }}",
         "persist-credentials": false,
         lfs: false,
         submodules: false,
+        "sparse-checkout": trustedSparseCheckout,
+        "sparse-checkout-cone-mode": false,
       }),
       expect.objectContaining({
         ref: "${{ github.workflow_sha }}",
         "persist-credentials": false,
         lfs: false,
         submodules: false,
+        "sparse-checkout": trustedSparseCheckout,
+        "sparse-checkout-cone-mode": false,
       }),
     ]);
     expect(
@@ -181,31 +211,72 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
       "run-id": "${{ inputs.advisor_run_id }}",
       "merge-multiple": false,
     });
-    expect(
-      record(namedStep(repair, "Download the exact selection artifact ID").with),
-    ).toMatchObject({
+    expect(record(namedStep(claim, "Download the exact selection artifact ID").with)).toEqual({
       "artifact-ids": "${{ needs.collect.outputs.selection_artifact_id }}",
-      "run-id": "${{ github.run_id }}",
+      path: "${{ env.SELECTION_DIR }}",
       "merge-multiple": true,
     });
-    expect(record(namedStep(validate, "Download the exact repair artifact ID").with)).toMatchObject(
-      {
-        "artifact-ids": "${{ needs.repair.outputs.repair_artifact_id }}",
-        "run-id": "${{ github.run_id }}",
-        "merge-multiple": true,
-      },
-    );
-    expect(
-      record(namedStep(publish, "Download the exact validation artifact ID").with),
-    ).toMatchObject({
+    expect(record(namedStep(repair, "Download the exact selection artifact ID").with)).toEqual({
+      "artifact-ids": "${{ needs.collect.outputs.selection_artifact_id }}",
+      path: "${{ env.SELECTION_DIR }}",
+      "merge-multiple": true,
+    });
+    expect(record(namedStep(validate, "Download the exact selection artifact ID").with)).toEqual({
+      "artifact-ids": "${{ needs.collect.outputs.selection_artifact_id }}",
+      path: "${{ env.SELECTION_DIR }}",
+      "merge-multiple": true,
+    });
+    expect(record(namedStep(validate, "Download the exact repair artifact ID").with)).toEqual({
+      "artifact-ids": "${{ needs.repair.outputs.repair_artifact_id }}",
+      path: "${{ env.REPAIR_DIR }}",
+      "merge-multiple": true,
+    });
+    expect(record(namedStep(publish, "Download the exact validation artifact ID").with)).toEqual({
       "artifact-ids": "${{ needs.validate.outputs.validation_artifact_id }}",
-      "run-id": "${{ github.run_id }}",
+      path: "${{ env.VALIDATION_DIR }}",
       "merge-multiple": true,
     });
+    expect(
+      steps(publish).some((step) => step.name === "Download the exact selection artifact ID"),
+    ).toBe(false);
+    expect(
+      steps(publish).filter((step) =>
+        String(step.uses ?? "").startsWith("actions/download-artifact@"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      JSON.stringify(
+        namedStep(publish, "Create a verified commit and atomically update the live head"),
+      ),
+    ).not.toContain("SELECTION_FILE");
     expect(record(namedStep(publish, "Checkout the exact selected PR head").with)).toMatchObject({
       ref: "${{ needs.collect.outputs.source_head_sha }}",
       "persist-credentials": false,
     });
+    expect(
+      [repair, validate, publish].map(
+        (job) => namedStep(job, "Checkout the exact selected PR head").with,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        "fetch-depth": 0,
+        "persist-credentials": false,
+        lfs: false,
+        submodules: false,
+      }),
+      expect.objectContaining({
+        "fetch-depth": 0,
+        "persist-credentials": false,
+        lfs: false,
+        submodules: false,
+      }),
+      expect.objectContaining({
+        "fetch-depth": 0,
+        "persist-credentials": false,
+        lfs: false,
+        submodules: false,
+      }),
+    ]);
   });
 
   it("isolates the model credential and gives Pi no bash or test tool (#10791)", () => {
@@ -316,9 +387,19 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
   });
 
   it("publishes by verified one-parent commit and non-force compare-and-swap (#10791)", () => {
-    expect(publisherSource).toContain("parents: [input.selection.input.sourceHeadSha]");
+    expect(publisherSource).toContain("parents: [input.receipt.sourceHeadSha]");
     expect(publisherSource).toContain("await waitForVerifiedCommit");
-    expect(publisherSource).toContain("beforeOid: input.selection.input.sourceHeadSha");
+    expect(publisherSource).toContain("beforeOid: input.receipt.sourceHeadSha");
+    expect(publisherSource).toContain("parseValidatedReceiptForPublication");
+    expect(publisherSource).not.toContain("parseSelectionBundle");
+    expect(publisherSource).toContain('GIT_CONFIG_GLOBAL: "/dev/null"');
+    expect(publisherSource).toContain('GIT_CONFIG_NOSYSTEM: "1"');
+    expect(publisherSource).toContain('GIT_LFS_SKIP_SMUDGE: "1"');
+    expect(publisherSource).toContain('"core.hooksPath=/dev/null"');
+    expect(publisherSource).toContain('"filter.lfs.smudge="');
+    expect(publisherSource).toContain('"filter.lfs.required=false"');
+    expect(publisherSource).toContain('"diff.external="');
+    expect(publisherSource).toContain('"--no-hardlinks"');
     expect(publisherSource).toContain("force: false");
     expect(publisherSource).not.toMatch(/git\s+push/iu);
   });

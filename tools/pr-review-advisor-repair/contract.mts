@@ -118,11 +118,13 @@ export type ValidationReceipt = {
   attemptKey: string;
   repository: typeof CANONICAL_REPOSITORY;
   prNumber: number;
+  author: string;
   headRef: string;
   sourceHeadSha: string;
   baseSha: string;
   advisor: SelectionInput["advisor"];
   findingIds: string[];
+  selectedPaths: string[];
   patchSha256: string;
   candidateTreeSha: string;
   changedPaths: ChangedPath[];
@@ -211,6 +213,33 @@ function findingId(value: unknown, label: string): string {
   const result = boundedString(value, label, 128);
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(result)) {
     throw new RepairContractError(`${label} is not a supported finding identifier`);
+  }
+  return result;
+}
+
+function githubLogin(value: unknown, label: string): string {
+  const result = boundedString(value, label, 44);
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?$/u.test(result)) {
+    throw new RepairContractError(`${label} is not a supported GitHub login`);
+  }
+  return result;
+}
+
+function branchRef(value: unknown, label: string): string {
+  const result = boundedString(value, label, 255);
+  if (
+    result === "@" ||
+    result.startsWith("-") ||
+    result.startsWith("/") ||
+    result.endsWith("/") ||
+    result.endsWith(".") ||
+    result.endsWith(".lock") ||
+    result.includes("..") ||
+    result.includes("@{") ||
+    result.includes("//") ||
+    /[ ~^:?*\[\\]/u.test(result)
+  ) {
+    throw new RepairContractError(`${label} is not a supported branch ref`);
   }
   return result;
 }
@@ -435,10 +464,10 @@ export function parseSelectionInput(value: unknown): SelectionInput {
     pullRequest: {
       state: "open",
       draft: false,
-      author: boundedString(pullRequest.author, "pullRequest.author", 256),
+      author: githubLogin(pullRequest.author, "pullRequest.author"),
       baseRef: "main",
       headRepository: CANONICAL_REPOSITORY,
-      headRef: boundedString(pullRequest.headRef, "pullRequest.headRef", 255),
+      headRef: branchRef(pullRequest.headRef, "pullRequest.headRef"),
       maintainerCanModify: true,
     },
     sourceHeadSha,
@@ -451,8 +480,8 @@ export function parseSelectionInput(value: unknown): SelectionInput {
     },
     optIn: {
       kind: "phase1-maintainer-dispatch",
-      actor: boundedString(optIn.actor, "optIn.actor", 256),
-      triggeringActor: boundedString(optIn.triggeringActor, "optIn.triggeringActor", 256),
+      actor: githubLogin(optIn.actor, "optIn.actor"),
+      triggeringActor: githubLogin(optIn.triggeringActor, "optIn.triggeringActor"),
       headSha: optInHeadSha,
     },
     productScope: {
@@ -616,9 +645,8 @@ export function parseProposalReceipt(value: unknown, selection: SelectionBundle)
   };
 }
 
-export function parseValidationReceipt(
+export function parseValidatedReceiptForPublication(
   value: unknown,
-  selection: SelectionBundle,
   patch: Buffer,
 ): ValidationReceipt {
   const input = record(value, "validation receipt");
@@ -629,11 +657,13 @@ export function parseValidationReceipt(
       "attemptKey",
       "repository",
       "prNumber",
+      "author",
       "headRef",
       "sourceHeadSha",
       "baseSha",
       "advisor",
       "findingIds",
+      "selectedPaths",
       "patchSha256",
       "candidateTreeSha",
       "changedPaths",
@@ -648,30 +678,57 @@ export function parseValidationReceipt(
   if (input.version !== 1 || input.outcome !== "validated" || input.reason !== null) {
     throw new RepairContractError("validation receipt is not an accepted candidate");
   }
-  if (
-    digest(input.attemptKey, "validation receipt attemptKey") !== selection.attemptKey ||
-    input.repository !== selection.input.repository ||
-    integer(input.prNumber, "validation receipt prNumber") !== selection.input.prNumber ||
-    boundedString(input.headRef, "validation receipt headRef", 255) !==
-      selection.input.pullRequest.headRef ||
-    sha(input.sourceHeadSha, "validation receipt sourceHeadSha") !==
-      selection.input.sourceHeadSha ||
-    sha(input.baseSha, "validation receipt baseSha") !== selection.input.baseSha ||
-    canonicalJson(input.advisor) !== canonicalJson(selection.input.advisor) ||
-    canonicalJson(input.productScope) !== canonicalJson(selection.input.productScope) ||
-    canonicalJson(input.optIn) !== canonicalJson(selection.input.optIn)
-  ) {
-    throw new RepairContractError("validation receipt identity differs from selection");
+  if (input.repository !== CANONICAL_REPOSITORY) {
+    throw new RepairContractError("validation receipt repository must be canonical");
   }
+  const attemptKey = digest(input.attemptKey, "validation receipt attemptKey");
+  const prNumber = integer(input.prNumber, "validation receipt prNumber");
+  const author = githubLogin(input.author, "validation receipt author");
+  const headRef = branchRef(input.headRef, "validation receipt headRef");
+  const sourceHeadSha = sha(input.sourceHeadSha, "validation receipt sourceHeadSha");
+  const baseSha = sha(input.baseSha, "validation receipt baseSha");
+
+  const advisorInput = record(input.advisor, "validation receipt advisor");
+  exactKeys(
+    advisorInput,
+    ["workflowSha", "runId", "runAttempt", "artifactIds"],
+    "validation receipt advisor",
+  );
+  if (!Array.isArray(advisorInput.artifactIds) || advisorInput.artifactIds.length !== 10) {
+    throw new RepairContractError(
+      "validation receipt advisor.artifactIds must contain exactly ten artifacts",
+    );
+  }
+  const artifactIds = advisorInput.artifactIds.map((item, index) =>
+    integer(item, `validation receipt advisor.artifactIds[${index}]`),
+  );
+  if (new Set(artifactIds).size !== artifactIds.length) {
+    throw new RepairContractError("validation receipt advisor.artifactIds must be unique");
+  }
+  const advisor: SelectionInput["advisor"] = {
+    workflowSha: sha(advisorInput.workflowSha, "validation receipt advisor.workflowSha"),
+    runId: integer(advisorInput.runId, "validation receipt advisor.runId"),
+    runAttempt: integer(advisorInput.runAttempt, "validation receipt advisor.runAttempt"),
+    artifactIds,
+  };
+
   const findingIds = sortedUniqueStrings(input.findingIds, "validation receipt findingIds").map(
     (item, index) => findingId(item, `validation receipt findingIds[${index}]`),
   );
-  if (
-    findingIds.length !== selection.selectedFindingIds.length ||
-    findingIds.some((item, index) => item !== selection.selectedFindingIds[index])
-  ) {
-    throw new RepairContractError("validation receipt finding set differs from selection");
+  if (findingIds.length === 0) {
+    throw new RepairContractError("validation receipt finding set must be non-empty");
   }
+  const selectedPaths = sortedUniqueStrings(
+    input.selectedPaths,
+    "validation receipt selectedPaths",
+  );
+  if (
+    selectedPaths.length === 0 ||
+    selectedPaths.some((selectedPath) => !repairClassForPath(selectedPath))
+  ) {
+    throw new RepairContractError("validation receipt selected paths are unsupported");
+  }
+
   const patchSha256 = boundedString(input.patchSha256, "validation receipt patchSha256", 64);
   if (!/^[0-9a-f]{64}$/u.test(patchSha256) || patchSha256 !== sha256(patch)) {
     throw new RepairContractError("validation receipt patch digest is invalid");
@@ -698,7 +755,7 @@ export function parseValidationReceipt(
       `validation receipt changedPaths[${index}].path`,
       512,
     );
-    if (!selection.selectedPaths.includes(changedPath)) {
+    if (!selectedPaths.includes(changedPath) || !repairClassForPath(changedPath)) {
       throw new RepairContractError("validation receipt changed a path outside selection");
     }
     if (
@@ -768,25 +825,122 @@ export function parseValidationReceipt(
     }
     return { argv, exitCode: 0 };
   });
+
+  const productScopeInput = record(input.productScope, "validation receipt productScope");
+  exactKeys(productScopeInput, ["kind", "identity"], "validation receipt productScope");
+  if (!["accepted-issue", "maintainer-decision"].includes(String(productScopeInput.kind))) {
+    throw new RepairContractError("validation receipt product scope is unsupported");
+  }
+  const productScope: SelectionInput["productScope"] = {
+    kind: productScopeInput.kind as SelectionInput["productScope"]["kind"],
+    identity: boundedString(
+      productScopeInput.identity,
+      "validation receipt productScope.identity",
+      256,
+    ),
+  };
+
+  const optInInput = record(input.optIn, "validation receipt optIn");
+  exactKeys(
+    optInInput,
+    ["kind", "actor", "triggeringActor", "headSha"],
+    "validation receipt optIn",
+  );
+  if (optInInput.kind !== "phase1-maintainer-dispatch") {
+    throw new RepairContractError("validation receipt opt-in is unsupported");
+  }
+  const optInHeadSha = sha(optInInput.headSha, "validation receipt optIn.headSha");
+  if (optInHeadSha !== sourceHeadSha) {
+    throw new RepairContractError("validation receipt opt-in is bound to a different source head");
+  }
+  const optIn: SelectionInput["optIn"] = {
+    kind: "phase1-maintainer-dispatch",
+    actor: githubLogin(optInInput.actor, "validation receipt optIn.actor"),
+    triggeringActor: githubLogin(
+      optInInput.triggeringActor,
+      "validation receipt optIn.triggeringActor",
+    ),
+    headSha: optInHeadSha,
+  };
+
+  const recomputedAttemptKey = `sha256:${sha256(
+    canonicalJson({
+      repository: CANONICAL_REPOSITORY,
+      prNumber,
+      sourceHeadSha,
+      baseSha,
+      advisor: {
+        workflowSha: advisor.workflowSha,
+        runId: advisor.runId,
+        runAttempt: advisor.runAttempt,
+        artifactIds: [...advisor.artifactIds].sort((left, right) => left - right),
+      },
+      optIn,
+      productScope,
+      findingIds,
+      paths: selectedPaths,
+    }),
+  )}`;
+  if (attemptKey !== recomputedAttemptKey) {
+    throw new RepairContractError("validation receipt attempt digest is invalid");
+  }
+
   return {
     version: 1,
-    attemptKey: selection.attemptKey,
+    attemptKey,
     repository: CANONICAL_REPOSITORY,
-    prNumber: selection.input.prNumber,
-    headRef: selection.input.pullRequest.headRef,
-    sourceHeadSha: selection.input.sourceHeadSha,
-    baseSha: selection.input.baseSha,
-    advisor: selection.input.advisor,
+    prNumber,
+    author,
+    headRef,
+    sourceHeadSha,
+    baseSha,
+    advisor,
     findingIds,
+    selectedPaths,
     patchSha256,
     candidateTreeSha,
     changedPaths,
     validation: { candidateDigestBefore, candidateDigestAfter, commands },
-    productScope: selection.input.productScope,
-    optIn: selection.input.optIn,
+    productScope,
+    optIn,
     outcome: "validated",
     reason: null,
   };
+}
+
+export function parseValidationReceipt(
+  value: unknown,
+  selection: SelectionBundle,
+  patch: Buffer,
+): ValidationReceipt {
+  const receipt = parseValidatedReceiptForPublication(value, patch);
+  if (
+    receipt.attemptKey !== selection.attemptKey ||
+    receipt.repository !== selection.input.repository ||
+    receipt.prNumber !== selection.input.prNumber ||
+    receipt.author !== selection.input.pullRequest.author ||
+    receipt.headRef !== selection.input.pullRequest.headRef ||
+    receipt.sourceHeadSha !== selection.input.sourceHeadSha ||
+    receipt.baseSha !== selection.input.baseSha ||
+    canonicalJson(receipt.advisor) !== canonicalJson(selection.input.advisor) ||
+    canonicalJson(receipt.productScope) !== canonicalJson(selection.input.productScope) ||
+    canonicalJson(receipt.optIn) !== canonicalJson(selection.input.optIn)
+  ) {
+    throw new RepairContractError("validation receipt identity differs from selection");
+  }
+  if (
+    receipt.findingIds.length !== selection.selectedFindingIds.length ||
+    receipt.findingIds.some((item, index) => item !== selection.selectedFindingIds[index])
+  ) {
+    throw new RepairContractError("validation receipt finding set differs from selection");
+  }
+  if (
+    receipt.selectedPaths.length !== selection.selectedPaths.length ||
+    receipt.selectedPaths.some((item, index) => item !== selection.selectedPaths[index])
+  ) {
+    throw new RepairContractError("validation receipt selected paths differ from selection");
+  }
+  return receipt;
 }
 
 const DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;

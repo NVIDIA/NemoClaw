@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { claimRepairAttempt } from "../../../tools/pr-review-advisor-repair/claim.mts";
 import {
+  parseValidatedReceiptForPublication,
   parseValidationReceipt,
   parseSelectionInput,
   selectRepairAttempt,
@@ -84,6 +85,40 @@ function selection(overrides: Record<string, unknown> = {}): SelectionBundle {
       ...overrides,
     }),
   );
+}
+
+function validationReceipt(
+  bundle: SelectionBundle,
+  patch: Buffer,
+  overrides: Partial<ValidationReceipt> = {},
+): ValidationReceipt {
+  const candidateDigest = `sha256:${sha256("candidate")}`;
+  return {
+    version: 1,
+    attemptKey: bundle.attemptKey,
+    repository: "NVIDIA/NemoClaw",
+    prNumber: bundle.input.prNumber,
+    author: bundle.input.pullRequest.author,
+    headRef: bundle.input.pullRequest.headRef,
+    sourceHeadSha: bundle.input.sourceHeadSha,
+    baseSha: bundle.input.baseSha,
+    advisor: bundle.input.advisor,
+    findingIds: bundle.selectedFindingIds,
+    selectedPaths: bundle.selectedPaths,
+    patchSha256: sha256(patch),
+    candidateTreeSha: "f".repeat(40),
+    changedPaths: [{ path: "src/demo.ts", status: "M", mode: "100644", type: "blob", bytes: 24 }],
+    validation: {
+      candidateDigestBefore: candidateDigest,
+      candidateDigestAfter: candidateDigest,
+      commands: [{ argv: ["npm", "run", "test:fast"], exitCode: 0 }],
+    },
+    productScope: bundle.input.productScope,
+    optIn: bundle.input.optIn,
+    outcome: "validated",
+    reason: null,
+    ...overrides,
+  };
 }
 
 function git(repository: string, args: string[]): string {
@@ -233,9 +268,10 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
 
   it("rejects a changed PR author at the publication boundary (#10791)", () => {
     const bundle = selection();
+    const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
 
     expect(() =>
-      assertPublicationPullRequest(bundle, {
+      assertPublicationPullRequest(receipt, {
         number: bundle.input.prNumber,
         state: "open",
         draft: false,
@@ -264,11 +300,13 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       attemptKey: bundle.attemptKey,
       repository: "NVIDIA/NemoClaw",
       prNumber: bundle.input.prNumber,
+      author: bundle.input.pullRequest.author,
       headRef: bundle.input.pullRequest.headRef,
       sourceHeadSha: bundle.input.sourceHeadSha,
       baseSha: bundle.input.baseSha,
       advisor: bundle.input.advisor,
       findingIds: bundle.selectedFindingIds,
+      selectedPaths: bundle.selectedPaths,
       patchSha256: "0".repeat(64),
       candidateTreeSha: "f".repeat(40),
       changedPaths: [{ path: "src/demo.ts", status: "M", mode: "100644", type: "blob", bytes: 24 }],
@@ -284,6 +322,29 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     };
 
     expect(() => parseValidationReceipt(receipt, bundle, patch)).toThrow("patch digest is invalid");
+  });
+
+  it("parses a self-contained validator receipt and recomputes its attempt identity (#10791)", () => {
+    const bundle = selection();
+    const patch = Buffer.from("validated patch\n");
+    const receipt = validationReceipt(bundle, patch);
+
+    expect(parseValidatedReceiptForPublication(receipt, patch)).toEqual(receipt);
+    expect(() =>
+      parseValidatedReceiptForPublication(
+        { ...receipt, selectedPaths: ["scripts/unsafe.sh"] },
+        patch,
+      ),
+    ).toThrow("selected paths are unsupported");
+    expect(() =>
+      parseValidatedReceiptForPublication({ ...receipt, author: "bad login" }, patch),
+    ).toThrow("supported GitHub login");
+    expect(() =>
+      parseValidatedReceiptForPublication(
+        { ...receipt, attemptKey: `sha256:${"0".repeat(64)}` },
+        patch,
+      ),
+    ).toThrow("attempt digest is invalid");
   });
 
   it("binds generated-head validation to the live exact PR and checks DCO (#10791)", async () => {
@@ -368,7 +429,12 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     });
 
     const request = vi.fn().mockResolvedValue({});
-    await dispatchGeneratedHeadValidation(bundle, afterOid, "token", request);
+    await dispatchGeneratedHeadValidation(
+      validationReceipt(bundle, Buffer.from("validated patch")),
+      afterOid,
+      "token",
+      request,
+    );
     expect(request).toHaveBeenCalledTimes(6);
     expect(request.mock.calls.at(-1)?.[2]).toEqual(
       expect.objectContaining({
@@ -443,11 +509,13 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         attemptKey: bundle.attemptKey,
         repository: "NVIDIA/NemoClaw",
         prNumber: bundle.input.prNumber,
+        author: bundle.input.pullRequest.author,
         headRef: bundle.input.pullRequest.headRef,
         sourceHeadSha,
         baseSha,
         advisor: bundle.input.advisor,
         findingIds: bundle.selectedFindingIds,
+        selectedPaths: bundle.selectedPaths,
         patchSha256: sha256(patch),
         candidateTreeSha,
         changedPaths: [
@@ -472,12 +540,27 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       expect(() =>
         reconstructValidatedTree({
           sourceCheckout: repository,
-          selection: bundle,
+          receipt: { ...receipt, candidateTreeSha: "f".repeat(40) },
           patchFile,
-          expectedTree: "f".repeat(40),
           stagingDirectory: path.join(root, "mismatched-publisher"),
         }),
       ).toThrow("reconstructed a different candidate tree");
+      expect(() =>
+        reconstructValidatedTree({
+          sourceCheckout: repository,
+          receipt: {
+            ...receipt,
+            changedPaths: [
+              {
+                ...receipt.changedPaths[0]!,
+                bytes: receipt.changedPaths[0]!.bytes + 1,
+              },
+            ],
+          },
+          patchFile,
+          stagingDirectory: path.join(root, "mismatched-receipt-metadata"),
+        }),
+      ).toThrow("candidate differs from the validation receipt");
       const commitSha = "d".repeat(40);
       const pullRequest = {
         number: bundle.input.prNumber,
@@ -553,7 +636,6 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
 
       const publication = await publishValidatedRepair({
         sourceCheckout: repository,
-        selection: bundle,
         receipt,
         patchFile,
         stagingDirectory: path.join(root, "publisher"),
@@ -726,5 +808,39 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         request,
       }),
     ).rejects.toThrow("checks failed generated-head validation");
+  });
+
+  it("fails closed on ambiguous duplicate generated-head evidence (#10791)", async () => {
+    const bundle = selection();
+    const commitSha = "d".repeat(40);
+    const successfulCheck = {
+      name: "checks",
+      head_sha: commitSha,
+      status: "completed",
+      conclusion: "success",
+      app: { slug: "github-actions" },
+    };
+    const checks = [
+      ...["changes", "commit-lint", "dco-check", "check-hash"].map((name) => ({
+        ...successfulCheck,
+        name,
+      })),
+      successfulCheck,
+      { ...successfulCheck },
+    ];
+    const request = vi.fn().mockResolvedValueOnce({
+      total_count: checks.length,
+      check_runs: checks,
+    });
+
+    await expect(
+      verifyGeneratedHeadOnce({
+        commitSha,
+        headRef: bundle.input.pullRequest.headRef,
+        attemptKey: bundle.attemptKey,
+        token: "token",
+        request,
+      }),
+    ).rejects.toThrow("ambiguous generated-head validation results");
   });
 });

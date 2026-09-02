@@ -831,11 +831,13 @@ export function validateRepairLocally(input: {
     attemptKey: input.selection.attemptKey,
     repository: CANONICAL_REPOSITORY as typeof CANONICAL_REPOSITORY,
     prNumber: input.selection.input.prNumber,
+    author: input.selection.input.pullRequest.author,
     headRef: input.selection.input.pullRequest.headRef,
     sourceHeadSha: input.selection.input.sourceHeadSha,
     baseSha: input.selection.input.baseSha,
     advisor: input.selection.input.advisor,
     findingIds: input.selection.selectedFindingIds,
+    selectedPaths: input.selection.selectedPaths,
     patchSha256: sha256(patch),
     productScope: input.selection.input.productScope,
     optIn: input.selection.input.optIn,
@@ -995,11 +997,13 @@ function rejectedReceipt(
     attemptKey: selection.attemptKey,
     repository: CANONICAL_REPOSITORY,
     prNumber: selection.input.prNumber,
+    author: selection.input.pullRequest.author,
     headRef: selection.input.pullRequest.headRef,
     sourceHeadSha: selection.input.sourceHeadSha,
     baseSha: selection.input.baseSha,
     advisor: selection.input.advisor,
     findingIds: selection.selectedFindingIds,
+    selectedPaths: selection.selectedPaths,
     patchSha256: patchDigest,
     candidateTreeSha: EMPTY_SHA,
     changedPaths: [],
@@ -1082,6 +1086,10 @@ async function runValidation(env: NodeJS.ProcessEnv): Promise<void> {
     gateway = undefined;
     await assertLivePullRequestIdentity(selection, token);
     writeValidationArtifacts(artifactDirectory, result.receipt, result.patch);
+    fs.appendFileSync(
+      required(env, "GITHUB_OUTPUT"),
+      `validated=${result.receipt.outcome === "validated"}\n`,
+    );
     appendValidationJobSummary(env.GITHUB_STEP_SUMMARY, result.receipt);
   } catch (error) {
     let failure: unknown = error;
