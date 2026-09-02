@@ -283,9 +283,7 @@ export function bindTypedPolicyWriter(
 export function bindTypedPolicyReader(
   adapter: typeof import("../../src/lib/adapters/openshell/sandbox-policy-cli"),
   readDocument: (
-    request: Parameters<
-      typeof adapter.syncCliOpenShellSandboxPolicyReader.readSandboxPolicy
-    >[0],
+    request: Parameters<typeof adapter.syncCliOpenShellSandboxPolicyReader.readSandboxPolicy>[0],
   ) => string,
 ): MockInstance {
   return vi
@@ -438,17 +436,19 @@ export function createShieldsFlowHarness(
     (command, runOptions) => runner.run(command, runOptions),
     policySetBodies,
   );
-  bindTypedPolicyReader(policyAdapter, (request) =>
-    policySetBodies.at(-1) ??
-    String(
-      runner.runCapture([
-        "policy",
-        "get",
-        ...(request.target.kind === "named" ? ["-g", request.target.gatewayName] : []),
-        "--base",
-        request.sandboxName,
-      ]),
-    ),
+  bindTypedPolicyReader(
+    policyAdapter,
+    (request) =>
+      policySetBodies.at(-1) ??
+      String(
+        runner.runCapture([
+          "policy",
+          "get",
+          ...(request.target.kind === "named" ? ["-g", request.target.gatewayName] : []),
+          "--base",
+          request.sandboxName,
+        ]),
+      ),
   );
   vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
   vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(

@@ -33,7 +33,7 @@ export {
   isCredentialField,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
-  redactSensitiveDiagnostic,
+  redactCredentialText,
   sanitizeEnvFileContent,
   stripCredentials,
   valueLooksLikeSecret,

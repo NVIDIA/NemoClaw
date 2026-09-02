@@ -783,14 +783,10 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
     );
     restoreRequired = true;
     expect(
-      setPolicyDocument(
-        options.sandboxName,
-        buildIdentityPolicy(basePolicyYaml, options.mcpUrl),
-        {
-          nonFatal: true,
-          operation: "apply the exact-main live-exe identity policy",
-        },
-      ),
+      setPolicyDocument(options.sandboxName, buildIdentityPolicy(basePolicyYaml, options.mcpUrl), {
+        nonFatal: true,
+        operation: "apply the exact-main live-exe identity policy",
+      }),
       "exact-main-policy-hot-update",
     ).toBe(true);
     const effective = await readPolicyStatus(

@@ -294,14 +294,10 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     try {
       if (policyMutationAttempted && basePolicyPath) {
         expect(
-          setPolicyDocument(
-            options.sandboxName,
-            fs.readFileSync(basePolicyPath, "utf8"),
-            {
-              nonFatal: true,
-              operation: "restore the raw OpenShell allowed_ips rebinding proof policy",
-            },
-          ),
+          setPolicyDocument(options.sandboxName, fs.readFileSync(basePolicyPath, "utf8"), {
+            nonFatal: true,
+            operation: "restore the raw OpenShell allowed_ips rebinding proof policy",
+          }),
           "raw-openshell-rebinding-policy-restore",
         ).toBe(true);
         await new Promise((resolve) => setTimeout(resolve, options.policySettleMs));

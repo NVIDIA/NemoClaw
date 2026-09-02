@@ -258,10 +258,8 @@ const DIAGNOSTIC_ASSIGNMENT_PATTERN =
   /\b([A-Za-z][A-Za-z0-9._-]{0,127})([ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/gu;
 
 function redactDiagnosticAssignments(value: string): string {
-  return value.replace(
-    DIAGNOSTIC_ASSIGNMENT_PATTERN,
-    (match, key: string, separator: string) =>
-      isCredentialField(key) ? `${key}${separator}<REDACTED>` : match,
+  return value.replace(DIAGNOSTIC_ASSIGNMENT_PATTERN, (match, key: string, separator: string) =>
+    isCredentialField(key) ? `${key}${separator}<REDACTED>` : match,
   );
 }
 
@@ -287,7 +285,7 @@ function redactDiagnosticUrl(value: string): string {
 }
 
 /** Fully redact credential-shaped assignments, bearer values, and URL credentials. */
-export function redactSensitiveDiagnostic(value: string): string {
+export function redactCredentialText(value: string): string {
   let result = value.replace(DIAGNOSTIC_URL_PATTERN, redactDiagnosticUrl);
   for (const pattern of SECRET_PATTERNS) {
     pattern.lastIndex = 0;

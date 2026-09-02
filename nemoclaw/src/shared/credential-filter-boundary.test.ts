@@ -13,7 +13,7 @@ import {
   isCredentialField,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
-  redactSensitiveDiagnostic,
+  redactCredentialText,
   sanitizeEnvFileContent,
   SECRET_BLOCK_PATTERNS,
   SECRET_PATTERNS,
@@ -107,15 +107,19 @@ describe("shared credential filter", () => {
     });
   });
 
-  it("redacts URL and non-uppercase assignment credentials from diagnostics", () => {
-    const redacted = redactSensitiveDiagnostic(
-      "failed at https://operator:opaque-url-secret@example.com/path password=opaque-lower-secret",
+  it("fully redacts credential-bearing URLs and non-uppercase assignments in diagnostics", () => {
+    const urlCredential = "opaque-url-credential";
+    const assignmentCredential = "opaque-lowercase-credential";
+    const redacted = redactCredentialText(
+      `policy write failed at https://operator:${urlCredential}@api.example apiKey=${assignmentCredential}`,
     );
 
-    expect(redacted).toContain("https://example.com/path");
-    expect(redacted).toContain("password=<REDACTED>");
-    expect(redacted).not.toContain("opaque-url-secret");
-    expect(redacted).not.toContain("opaque-lower-secret");
+    expect(redacted).toContain("policy write failed at");
+    expect(redacted).toContain("https://api.example/");
+    expect(redacted).toContain("apiKey=<REDACTED>");
+    expect(redacted).not.toContain(urlCredential);
+    expect(redacted).not.toContain(assignmentCredential);
+    expect(redacted).toContain("<REDACTED>");
   });
 
   it.each([

@@ -49,6 +49,16 @@ function collectPackedPaths(): ReadonlySet<string> {
 const packedPaths = collectPackedPaths();
 
 describe("OpenShell policy boundary package contract", () => {
+  it("builds only the canonical CLI policy boundary", () => {
+    expect(
+      fs.existsSync(path.join(repoRoot, "dist/lib/adapters/openshell/policy-boundary.js")),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, "dist/lib/policy/merge.js"))).toBe(false);
+    expect(fs.existsSync(path.join(repoRoot, "dist/lib/policy/merge.js.map"))).toBe(false);
+    expect(fs.existsSync(path.join(repoRoot, "dist/lib/policy/merge.d.ts"))).toBe(false);
+    expect(fs.existsSync(path.join(repoRoot, "dist/lib/policy/merge.d.ts.map"))).toBe(false);
+  });
+
   it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
     "pins the YAML parser used by both production package boundaries [case %#]",
     (packageRoot) => {

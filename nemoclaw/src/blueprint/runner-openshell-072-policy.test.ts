@@ -93,8 +93,8 @@ describe("blueprint policy convenience", () => {
   let mutateBasePolicyOnRead: number | null;
   let mutateBasePolicy: (() => void) | null;
   let mutateBeforePolicySet: (() => void) | null;
-  let policySetBehavior: "applied" | "ambiguous-applied" | "ambiguous-unapplied" | "rejected";
   let policySetDiagnostic: string | null;
+  let policySetBehavior: "applied" | "ambiguous-applied" | "ambiguous-unapplied" | "rejected";
 
   function recordHostMutation(mutation: (() => void) | null): void {
     mutation?.();
@@ -126,8 +126,8 @@ describe("blueprint policy convenience", () => {
     mutateBasePolicyOnRead = null;
     mutateBasePolicy = null;
     mutateBeforePolicySet = null;
-    policySetBehavior = "applied";
     policySetDiagnostic = null;
+    policySetBehavior = "applied";
     mockExeca.mockReset().mockImplementation(async (_command: string, args: string[]) => {
       const joined = args.join(" ");
       const revisionRead = /^policy get -g test-gateway --rev (\d+) --base test-sandbox$/u.exec(
@@ -187,7 +187,9 @@ describe("blueprint policy convenience", () => {
               return {
                 exitCode: 1,
                 stdout: "",
-                stderr: `Error: code: 'failed_precondition', message: '${policySetDiagnostic ?? "write rejected"}'`,
+                stderr:
+                  policySetDiagnostic ??
+                  "Error: code: 'failed_precondition', message: 'write rejected'",
               };
             case "ambiguous-unapplied":
               return {
@@ -401,33 +403,26 @@ describe("blueprint policy convenience", () => {
     ).toBe(false);
   });
 
-  it("surfaces a failed OpenShell policy write", async () => {
+  it("redacts a rejected OpenShell policy-write diagnostic", async () => {
+    const urlCredential = "opaque-url-credential";
+    const assignmentCredential = "opaque-lowercase-credential";
     policySetBehavior = "rejected";
+    policySetDiagnostic =
+      `Error: code: 'failed_precondition', message: 'write rejected at ` +
+      `https://operator:${urlCredential}@api.example apiKey=${assignmentCredential}'`;
 
-    await expect(actionApply("default", blueprint())).rejects.toThrow(
-      /Failed to apply policy additions: write rejected/,
+    const failure = await actionApply("default", blueprint()).then(
+      () => null,
+      (error: unknown) => error,
     );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/Failed to apply policy additions: write rejected/);
+    expect((failure as Error).message).not.toContain(urlCredential);
+    expect((failure as Error).message).not.toContain(assignmentCredential);
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(commands.some((command) => command.startsWith("provider create "))).toBe(false);
     expect(commands.some((command) => command.startsWith("inference set "))).toBe(false);
   });
-
-  it.each(["rejected", "ambiguous-unapplied"] as const)(
-    "redacts credentials from %s policy-write diagnostics",
-    async (behavior) => {
-      policySetBehavior = behavior;
-      policySetDiagnostic =
-        behavior === "rejected"
-          ? "write rejected at https://operator:opaque-url-secret@example.com/path password=opaque-lower-secret"
-          : "h2 protocol error at https://operator:opaque-url-secret@example.com/path password=opaque-lower-secret";
-
-      const error = await actionApply("default", blueprint()).catch((reason: unknown) => reason);
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain("<REDACTED>");
-      expect((error as Error).message).not.toContain("opaque-url-secret");
-      expect((error as Error).message).not.toContain("opaque-lower-secret");
-    },
-  );
 
   it("accepts an ambiguous write only when typed readback contains the requested additions", async () => {
     policySetBehavior = "ambiguous-applied";
@@ -437,12 +432,24 @@ describe("blueprint policy convenience", () => {
     expect(livePolicy.network_policies).toMatchObject({ nim_service: additions.nim_service });
   });
 
-  it("stops after an ambiguous write whose typed readback does not contain the request", async () => {
+  it("redacts an ambiguous policy-write diagnostic before stopping", async () => {
+    const urlCredential = "opaque-url-credential";
+    const assignmentCredential = "opaque-lowercase-credential";
     policySetBehavior = "ambiguous-unapplied";
+    policySetDiagnostic =
+      `h2 protocol error at https://operator:${urlCredential}@api.example ` +
+      `apiKey=${assignmentCredential}`;
 
-    await expect(actionApply("default", blueprint())).rejects.toThrow(
+    const failure = await actionApply("default", blueprint()).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(
       /Could not confirm the blueprint policy update: h2 protocol error/,
     );
+    expect((failure as Error).message).not.toContain(urlCredential);
+    expect((failure as Error).message).not.toContain(assignmentCredential);
     expect(livePolicy.network_policies).not.toHaveProperty("nim_service");
   });
 
