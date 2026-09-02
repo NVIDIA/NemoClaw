@@ -231,6 +231,7 @@ const {
   installOllamaOnWindowsHost,
   setupWindowsOllamaWith0000Binding,
   switchToWindowsOllamaHost,
+  printWindowsOllamaSnapshotDiagnostics,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
 const vllmInference = require("./inference/vllm");
@@ -995,6 +996,7 @@ const {
   switchToWindowsOllamaHost,
   installOllamaOnWindowsHost,
   setupWindowsOllamaWith0000Binding,
+  printWindowsOllamaSnapshotDiagnostics,
   printWindowsOllamaTimeoutDiagnostics,
   resetOllamaHostCache,
   installOllamaOnMacOS,

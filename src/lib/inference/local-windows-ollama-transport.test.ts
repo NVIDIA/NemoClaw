@@ -366,16 +366,18 @@ describe("Windows-host Ollama transport", () => {
 
   it("validates a Windows-host model through Docker Desktop (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const cleanup = vi.fn(() => ({ ok: true as const }));
     const capture = respondsOnlyThroughDockerDesktop(
       "/api/show",
       JSON.stringify({ capabilities: ["tools"] }),
     );
-    const captureEx = vi.fn((command: readonly string[]) => {
+    const captureEx = vi.fn((command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
       const expected =
         command[0] === "docker" &&
         command[1] === "run" &&
         command[2] === "--rm" &&
         command[3] === CONTAINER_REACHABILITY_IMAGE &&
+        options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker" &&
         command.some((argument) => argument === "http://host.docker.internal:11434/api/generate");
       return {
         stdout: expected ? JSON.stringify({ done: true, response: "ready" }) : "",
@@ -385,10 +387,17 @@ describe("Windows-host Ollama transport", () => {
       };
     });
 
-    expect(validateOllamaModel("qwen3.5:9b", capture, () => false, captureEx)).toEqual({
-      ok: true,
-    });
+    expect(
+      validateOllamaModel("qwen3.5:9b", capture, () => false, captureEx, {
+        prepareDockerEnvironment: () => ({
+          env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+          isolatedCredentialConfig: true,
+          cleanup,
+        }),
+      }),
+    ).toEqual({ ok: true });
     expect(captureEx).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it("validates health and container reachability through Docker Desktop (#10553)", () => {

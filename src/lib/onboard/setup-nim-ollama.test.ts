@@ -60,6 +60,7 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
       commit: () => {},
       rollback: () => {},
     }),
+    printWindowsOllamaSnapshotDiagnostics: () => {},
     printWindowsOllamaTimeoutDiagnostics: () => {},
     resetOllamaHostCache: () => {},
     installOllamaOnMacOS: () => ({ ok: true }),
@@ -344,6 +345,34 @@ describe("createSetupNimOllamaHandlers", () => {
 
     expect(install).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it("reports a Windows snapshot failure without claiming a startup timeout", async () => {
+    const snapshotDiagnostic = vi.fn();
+    const timeoutDiagnostic = vi.fn();
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        isNonInteractive: () => false,
+        printWindowsOllamaSnapshotDiagnostics: snapshotDiagnostic,
+        printWindowsOllamaTimeoutDiagnostics: timeoutDiagnostic,
+        setupWindowsOllamaWith0000Binding: () => ({ ok: false, reason: "snapshot" }),
+      }),
+    );
+
+    await expect(
+      handleWindowsHostOllamaSelection(
+        null,
+        "start-windows-ollama",
+        "qwen3:8b",
+        false,
+        true,
+        "C:/Ollama/ollama.exe",
+        makeState(),
+      ),
+    ).resolves.toBe("retry-selection");
+
+    expect(snapshotDiagnostic).toHaveBeenCalledOnce();
+    expect(timeoutDiagnostic).not.toHaveBeenCalled();
   });
 
   it("commits a new Windows Ollama install after model selection", async () => {

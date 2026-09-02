@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -327,16 +326,20 @@ type WindowsOllamaInstallOperations = WindowsOllamaSetupOperations & {
   awaitReady: () => boolean;
 };
 
-type WindowsOllamaMutationSession = {
+export type WindowsOllamaMutationSession = {
   commit: () => void;
   rollback: () => void;
 };
 
-type WindowsOllamaInstallResult =
-  | { ok: false; path: string; reason: "install" | "readiness" }
+export type WindowsOllamaFailureReason = "binding" | "install" | "readiness" | "snapshot";
+
+export type WindowsOllamaInstallResult =
+  | { ok: false; path: string; reason: WindowsOllamaFailureReason }
   | ({ ok: true; path: string } & WindowsOllamaMutationSession);
 
-type WindowsOllamaSetupResult = { ok: false } | ({ ok: true } & WindowsOllamaMutationSession);
+export type WindowsOllamaSetupResult =
+  | { ok: false; reason: Exclude<WindowsOllamaFailureReason, "install"> }
+  | ({ ok: true } & WindowsOllamaMutationSession);
 
 function registerWindowsOllamaInterruptHandler(
   handler: (signal: WindowsOllamaInterruptSignal) => void,
@@ -428,10 +431,10 @@ function applyWindowsOllamaBinding(
   snapshot: WindowsOllamaHostSnapshot,
   operations: WindowsOllamaSetupOperations,
   markMutated: () => void,
-): boolean {
+): { ok: true } | { ok: false; reason: "binding" | "readiness" } {
   if (!operations.persistBinding()) {
     console.error("  Could not persist the Windows Ollama host binding.");
-    return false;
+    return { ok: false, reason: "binding" };
   }
   markMutated();
   if (opts.announceStop) {
@@ -445,7 +448,9 @@ function applyWindowsOllamaBinding(
       installedPath: opts.installedPath,
     },
     operations.launchOperations,
-  );
+  )
+    ? { ok: true }
+    : { ok: false, reason: "readiness" };
 }
 
 async function installOllamaOnWindowsHost(
@@ -455,7 +460,7 @@ async function installOllamaOnWindowsHost(
   const snapshot = operations.captureSnapshot();
   if (!snapshot) {
     console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
-    return { ok: false, path: "", reason: "install" };
+    return { ok: false, path: "", reason: "snapshot" };
   }
   const mutation = beginWindowsOllamaMutation(snapshot, operations);
   mutation.markMutated();
@@ -475,11 +480,15 @@ async function installOllamaOnWindowsHost(
     if (!operations.awaitReady()) {
       console.log("  Installer did not leave a reachable Ollama daemon; restarting it...");
       opts.beforeRestart?.();
-      if (
-        !applyWindowsOllamaBinding({ installedPath }, snapshot, operations, mutation.markMutated)
-      ) {
+      const setupResult = applyWindowsOllamaBinding(
+        { installedPath },
+        snapshot,
+        operations,
+        mutation.markMutated,
+      );
+      if (!setupResult.ok) {
         mutation.rollback();
-        return { ok: false, path: installedPath, reason: "readiness" };
+        return { ok: false, path: installedPath, reason: setupResult.reason };
       }
     }
     return { ok: true, path: installedPath, commit: mutation.commit, rollback: mutation.rollback };
@@ -499,13 +508,14 @@ function setupWindowsOllamaWith0000Binding(
   const snapshot = operations.captureSnapshot();
   if (!snapshot) {
     console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
-    return { ok: false };
+    return { ok: false, reason: "snapshot" };
   }
   const mutation = beginWindowsOllamaMutation(snapshot, operations);
   try {
-    if (!applyWindowsOllamaBinding(opts, snapshot, operations, mutation.markMutated)) {
+    const setupResult = applyWindowsOllamaBinding(opts, snapshot, operations, mutation.markMutated);
+    if (!setupResult.ok) {
       mutation.rollback();
-      return { ok: false };
+      return setupResult;
     }
     return { ok: true, commit: mutation.commit, rollback: mutation.rollback };
   } catch (error) {
@@ -533,11 +543,20 @@ function printWindowsOllamaTimeoutDiagnostics(): void {
   );
 }
 
+function printWindowsOllamaSnapshotDiagnostics(): void {
+  console.error("  NemoClaw could not inspect the existing Windows Ollama state.");
+  console.error(
+    "  In Windows PowerShell, verify that the current user can query the User-scope OLLAMA_HOST value and existing Ollama processes, then retry:",
+  );
+  console.error("    nemoclaw onboard");
+}
+
 module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   setupWindowsOllamaWith0000Binding,
   sleep: sleepSeconds,
   switchToWindowsOllamaHost,
+  printWindowsOllamaSnapshotDiagnostics,
   printWindowsOllamaTimeoutDiagnostics,
 };

@@ -2035,8 +2035,9 @@ export function getOllamaProbeCommand(
   });
   const host = getResolvedOllamaHost();
   const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
-  return getOllamaApiCommand(
-    buildValidatedCurlCommandArgs([
+  return [
+    "curl",
+    ...buildValidatedCurlCommandArgs([
       "-sS",
       "--max-time",
       String(timeoutSeconds),
@@ -2046,8 +2047,7 @@ export function getOllamaProbeCommand(
       payload,
       endpoint,
     ]),
-    host,
-  );
+  ];
 }
 
 export function validateOllamaModel(
@@ -2055,10 +2055,17 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
   runCaptureExImpl?: RunCaptureExFn,
-  options: { allowToolsIncompatible?: boolean } = {},
+  options: {
+    allowToolsIncompatible?: boolean;
+    prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+  } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
-  const captureEx = createOllamaApiCaptureEx(runCaptureExImpl ?? runCaptureEx);
+  const captureEx = createOllamaApiCaptureEx(
+    runCaptureExImpl ?? runCaptureEx,
+    getResolvedOllamaHost(),
+    options.prepareDockerEnvironment,
+  );
   const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
   const sparkHost = isSpark();
   const probeCmd = getOllamaProbeCommand(model);

@@ -3,6 +3,10 @@
 
 import type { OllamaStartupOutcome } from "./ollama-startup";
 import type { SetupNimSelectionState } from "./setup-nim-selection";
+import type {
+  WindowsOllamaInstallResult,
+  WindowsOllamaSetupResult,
+} from "../inference/ollama/windows";
 
 const {
   getRequestedModelFromEnv,
@@ -11,14 +15,6 @@ const {
 } = require("./providers");
 
 type SetupNimSelectionResult = "selected" | "retry-selection";
-
-type WindowsOllamaInstallResult =
-  | { ok: false; path: string; reason: "install" | "readiness" }
-  | { ok: true; path: string; commit: () => void; rollback: () => void };
-
-type WindowsOllamaSetupResult =
-  | { ok: false }
-  | { ok: true; commit: () => void; rollback: () => void };
 
 type SetupNimOllamaDeps = {
   OLLAMA_PORT: number;
@@ -64,6 +60,7 @@ type SetupNimOllamaDeps = {
     announceStop?: boolean;
     installedPath?: string | null;
   }) => WindowsOllamaSetupResult;
+  printWindowsOllamaSnapshotDiagnostics?: () => void;
   printWindowsOllamaTimeoutDiagnostics: () => void;
   resetOllamaHostCache: () => void;
   installOllamaOnMacOS: (args: {
@@ -237,9 +234,11 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
             state.revalidateSandboxIdentity?.("start the Windows Ollama runtime"),
         });
         if (!installResult.ok) {
-          if (installResult.reason === "readiness") {
+          if (installResult.reason === "snapshot") {
+            deps.printWindowsOllamaSnapshotDiagnostics?.();
+          } else if (installResult.reason === "readiness") {
             deps.printWindowsOllamaTimeoutDiagnostics();
-          } else {
+          } else if (installResult.reason === "install") {
             console.error(
               "  Install did not produce ollama.exe on PATH. Check the installer output above.",
             );
@@ -256,7 +255,11 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
           installedPath: winOllamaInstalledPath || undefined,
         });
         if (!setupResult.ok) {
-          deps.printWindowsOllamaTimeoutDiagnostics();
+          if (setupResult.reason === "snapshot") {
+            deps.printWindowsOllamaSnapshotDiagnostics?.();
+          } else if (setupResult.reason === "readiness") {
+            deps.printWindowsOllamaTimeoutDiagnostics();
+          }
           if (deps.isNonInteractive()) deps.process.exit(1);
           return "retry-selection";
         }

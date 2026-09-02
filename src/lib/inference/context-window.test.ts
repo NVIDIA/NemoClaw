@@ -160,7 +160,7 @@ describe("resolveContextWindowForModel default dependencies (#8974)", () => {
         cleanup();
       }
     });
-    vi.mocked(getOllamaProbeCommand).mockReturnValue(["docker", "run", "ollama-probe"]);
+    vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
     vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(16384);
 
     expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);

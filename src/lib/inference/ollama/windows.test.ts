@@ -206,6 +206,7 @@ function captureDefaultWindowsRollbackInvocation(userHost: string | null) {
   try {
     expect(windows.setupWindowsOllamaWith0000Binding({ installedPath: daemonPath })).toEqual({
       ok: false,
+      reason: "readiness",
     });
   } finally {
     restore();
@@ -254,7 +255,7 @@ function createWindowsInstallBoundary(options: {
 }
 
 describe("Windows Ollama helper", () => {
-  it("routes timeout recovery through the credential-isolated NemoClaw probe", () => {
+  it("describes Docker-client isolation in Windows Ollama timeout diagnostics", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
 
@@ -270,6 +271,24 @@ describe("Windows Ollama helper", () => {
     expect(diagnostic).toContain("isolated Docker client configuration");
     expect(diagnostic).toContain("removes that temporary configuration afterward");
     expect(diagnostic).not.toContain("docker run");
+  });
+
+  it("describes a snapshot inspection failure without claiming a startup timeout", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      windows.printWindowsOllamaSnapshotDiagnostics();
+    } finally {
+      restore();
+    }
+
+    const diagnostic = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+    errorSpy.mockRestore();
+    expect(diagnostic).toContain("User-scope OLLAMA_HOST");
+    expect(diagnostic).toContain("existing Ollama processes");
+    expect(diagnostic).toContain("nemoclaw onboard");
+    expect(diagnostic).not.toContain("Timed out waiting for Ollama to start");
   });
 
   it("continues probing after a nonempty invalid Docker readiness response (#10100)", () => {
@@ -377,7 +396,7 @@ describe("Windows Ollama helper", () => {
           { installedPath: daemonPath },
           boundary.operations,
         ),
-      ).toEqual({ ok: false });
+      ).toEqual({ ok: false, reason: "readiness" });
     } finally {
       restore();
       logSpy.mockRestore();
@@ -406,6 +425,7 @@ describe("Windows Ollama helper", () => {
     try {
       expect(windows.setupWindowsOllamaWith0000Binding({}, boundary.operations)).toEqual({
         ok: false,
+        reason: "readiness",
       });
     } finally {
       restore();
@@ -608,7 +628,7 @@ describe("Windows Ollama helper", () => {
           { installedPath: daemonPath },
           boundary.operations,
         ),
-      ).toEqual({ ok: false });
+      ).toEqual({ ok: false, reason: "readiness" });
     } finally {
       restore();
       logSpy.mockRestore();
