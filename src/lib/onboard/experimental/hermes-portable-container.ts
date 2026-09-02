@@ -477,8 +477,18 @@ export function configureHermesPortableRestartPolicy(
 export function observeHermesPortableAuthenticatedHealth(
   receipt: HermesPortableConfiguredReceipt,
   deps: HermesPortableContainerDeps,
+  beforeObservation?: HermesPortableContainerInspection,
 ): "ready" | "unavailable" {
-  const before = assertCurrentHermesPortableContainer(receipt, deps);
+  const before = beforeObservation ?? assertCurrentHermesPortableContainer(receipt, deps);
+  if (beforeObservation) {
+    const { running: _expectedRunning, restartPolicy: _expectedRestart, ...expected } =
+      receipt.container;
+    const { running: _observedRunning, restartPolicy: _observedRestart, ...observed } =
+      before.authority;
+    if (!isDeepStrictEqual(observed, expected)) {
+      fail("reused health observation disagrees with receipt identity");
+    }
+  }
   if (!before.authority.running || before.paused) {
     fail("authenticated health requires the exact container to be running and unpaused");
   }

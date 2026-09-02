@@ -882,6 +882,13 @@ describe("Hermes portable lifecycle", () => {
 
     expect(result).toEqual({ kind: "recovered" });
     expect(healthAttempts).toBe(2);
+    // The two health attempts each retain a fresh post-health inspection, while
+    // reusing only their same-iteration pre-health observation. This is three
+    // fewer captures than the pre-reuse path for this recovery fixture.
+    const healthRunInspects = podman.mock.calls.filter(
+      ([args]) => args[0] === "container" && args[1] === "inspect",
+    );
+    expect(healthRunInspects).toHaveLength(11);
     expect(launchOpenShell).toHaveBeenCalledTimes(1);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1); expect(launchOpenShell).toHaveBeenCalledWith([
       "sandbox",

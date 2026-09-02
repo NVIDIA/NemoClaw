@@ -5,12 +5,15 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
   assertPodmanExecutableAuthority,
+  assertPodmanExecutableMetadataAuthority,
   capturePodmanExecutableAuthority,
   createPodmanContainerEngine,
+  createPodmanExecutableOperationProof,
   resolvePodmanExecutablePath,
   type PodmanBoundContainerEngine,
   type PodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,
+  type PodmanExecutableOperationProof,
   type PodmanSocketAuthority,
   type PodmanSocketAuthorityDeps,
 } from "../../adapters/podman";
@@ -137,6 +140,10 @@ function createHermesPortablePodmanOperationCommandAuthority(
   >,
   sourceEnv: NodeJS.ProcessEnv = process.env,
   deps: HermesPortablePodmanAuthorityDeps = {},
+  executableProof: PodmanExecutableOperationProof = createPodmanExecutableOperationProof(
+    authority.executable,
+    deps.executableAuthorityDeps,
+  ),
 ): HermesPortablePodmanCommandAuthority {
   requireExpectedAuthority(authority);
   requireRuntimeAuthority(runtimeAuthority, socketAuthority, deps);
@@ -148,6 +155,7 @@ function createHermesPortablePodmanOperationCommandAuthority(
     socketAuthority,
     executable: authority.executable.executablePath,
     executableAuthority: authority.executable,
+    executableProof,
     commandEnvironment,
     ...(deps.capture ? { capture: deps.capture } : {}),
     ...(deps.socketAuthorityDeps ? { authorityDeps: deps.socketAuthorityDeps } : {}),
@@ -213,6 +221,10 @@ export function createHermesPortablePodmanOperationEngines(
   sourceEnv: NodeJS.ProcessEnv = process.env,
   deps: HermesPortablePodmanAuthorityDeps = {},
 ): HermesPortablePodmanOperationEngines {
+  const executableProof = createPodmanExecutableOperationProof(
+    authority.executable,
+    deps.executableAuthorityDeps,
+  );
   const create = (operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle") =>
     createHermesPortablePodmanOperationCommandAuthority(
       authority,
@@ -221,6 +233,7 @@ export function createHermesPortablePodmanOperationEngines(
       operation,
       sourceEnv,
       deps,
+      executableProof,
     );
   const hostDoctor = create("host-doctor");
   const hostLocalInference = create("host-local-inference");
@@ -232,6 +245,7 @@ export function createHermesPortablePodmanOperationEngines(
     "state-mutation",
     sourceEnv,
     deps,
+    executableProof,
   );
   return Object.freeze({
     hostDoctor: hostDoctor.engine,
@@ -293,11 +307,9 @@ export function captureHermesPortablePodmanExecutableFileAuthority(
   requireRuntimeAuthority(receipt.runtimeAuthority, socketAuthority, deps);
   buildHermesPortablePodmanEnvironment(receipt.runtimeAuthority, sourceEnv);
   requireResolvedExecutable(receipt.podmanExecutableAuthority, sourceEnv, deps);
-  return Object.freeze({
-    version: HERMES_PORTABLE_PODMAN_VERSION,
-    executable: capturePodmanExecutableAuthority(
-      receipt.podmanExecutableAuthority.executable.executablePath,
-      deps.executableAuthorityDeps,
-    ),
-  });
+  assertPodmanExecutableMetadataAuthority(
+    receipt.podmanExecutableAuthority.executable,
+    deps.executableAuthorityDeps,
+  );
+  return receipt.podmanExecutableAuthority;
 }

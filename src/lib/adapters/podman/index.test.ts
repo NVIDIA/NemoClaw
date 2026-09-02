@@ -10,6 +10,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ContainerEngineCommandCapture } from "../container-engine";
 import {
   createPodmanContainerEngine,
+  createPodmanExecutableOperationProof,
+  capturePodmanExecutableAuthority,
   localPodmanEnvironment,
   resolvePodmanExecutablePath,
   type PodmanExecutableAuthorityDeps,
@@ -578,6 +580,90 @@ describe("Podman container engine command adapter", () => {
     first.capture(["info"]);
     expect(firstReadFile).toHaveBeenCalledTimes(2);
     expect(secondReadFile).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a caller-forged executable proof", () => {
+    const authority = capturePodmanExecutableAuthority(
+      "/usr/bin/podman",
+      executableAuthorityDeps(),
+    );
+    const forged = {
+      authority,
+      executablePath: authority.executablePath,
+      assertMetadataAuthority: vi.fn(),
+      assertContentAuthority: vi.fn(),
+      guardCommand: vi.fn(),
+    };
+
+    expect(() =>
+      createPodmanContainerEngine({
+        operation: "state-mutation",
+        socketAuthority: AUTHORITY,
+        executableProof: forged,
+        assertAuthority: vi.fn(),
+        capture: vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" })),
+      }),
+    ).toThrow("was not created by this adapter");
+  });
+
+  it("shares the periodic rehash interval across engines using one proof", () => {
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const engine = () =>
+      createPodmanContainerEngine({
+        operation: "host-local-inference",
+        socketAuthority: AUTHORITY,
+        executableProof: proof,
+        executableAuthorityDeps: deps,
+        assertAuthority: vi.fn(),
+        capture: vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" })),
+      });
+    const first = engine();
+    const second = engine();
+    readFile.mockClear();
+
+    for (let index = 0; index < 32; index += 1) first.capture(["info"]);
+    for (let index = 0; index < 31; index += 1) second.capture(["info"]);
+    expect(readFile).not.toHaveBeenCalled();
+    second.capture(["info"]);
+    expect(readFile).toHaveBeenCalledOnce();
+  });
+
+  it("shares a latched executable failure across engines using one proof", () => {
+    const generation = { executableInode: 42n };
+    const defaults = executableAuthorityDeps();
+    const lstat = vi.fn((filePath: string) => {
+      const stat = defaults.lstat?.(filePath) as PodmanExecutableStat;
+      return filePath === "/usr/bin/podman" ? { ...stat, ino: generation.executableInode } : stat;
+    });
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { lstat });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const firstCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const secondCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const first = createPodmanContainerEngine({
+      operation: "host-local-inference",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: firstCapture,
+    });
+    const second = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: secondCapture,
+    });
+    generation.executableInode = 44n;
+
+    expect(() => first.capture(["info"])).toThrow("changed after it was qualified");
+    generation.executableInode = 42n;
+    expect(() => second.capture(["info"])).toThrow("changed after it was qualified");
+    expect(firstCapture).not.toHaveBeenCalled();
+    expect(secondCapture).not.toHaveBeenCalled();
   });
 
   it("latches executable authority failure even when socket failure wins the first guard", () => {

@@ -494,7 +494,14 @@ function createContainerDeps(
     },
     rawPodman,
     assertPodmanTransactionCurrent: authority.assertTransactionCurrent,
-    assertSocketAuthority: () => authority.engine.assertAuthority(),
+    // engine.capture already sandwiches every Podman subprocess with socket
+    // and executable guards. Container helpers add semantic pre/post checks;
+    // keep those socket-only instead of triggering another full executable hash.
+    assertSocketAuthority: () =>
+      (authorityDeps?.assertSocketAuthority ?? assertPodmanSocketAuthority)(
+        receipt.socketAuthority,
+        authorityDeps?.socketAuthorityDeps,
+      ),
   };
 }
 
@@ -1139,7 +1146,11 @@ export function recoverHermesPortableSandboxLifecycle(
     if (!startedByRecovery) {
       timing.increment("authenticatedHealth");
       const initialHealth = timing.measure("authenticatedHealth", () =>
-        observeHermesPortableAuthenticatedHealth(qualified.receipt, transactionContainerDeps),
+        observeHermesPortableAuthenticatedHealth(
+          qualified.receipt,
+          transactionContainerDeps,
+          qualified.container,
+        ),
       );
       if (qualified.hasTransactionAuthority) {
         timing.measure("healthPollCurrentness", () =>
@@ -1225,7 +1236,11 @@ export function recoverHermesPortableSandboxLifecycle(
       );
       timing.increment("authenticatedHealth");
       const health = timing.measure("authenticatedHealth", () =>
-        observeHermesPortableAuthenticatedHealth(qualified.receipt, currentContainerDeps),
+        observeHermesPortableAuthenticatedHealth(
+          qualified.receipt,
+          currentContainerDeps,
+          qualified.container,
+        ),
       );
       if (qualified.hasTransactionAuthority) {
         timing.measure("healthPollCurrentness", () =>

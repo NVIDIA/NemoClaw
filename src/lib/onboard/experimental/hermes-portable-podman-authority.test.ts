@@ -234,6 +234,32 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
+  it("rejects retained file proof when Podman executable metadata drifts", () => {
+    const generation = { executableInode: 10n, parentInode: 20n };
+    const capture = successfulCapture();
+    const deps = authorityDeps(capture, executableDeps(generation));
+    const runtime = runtimeAuthority();
+    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
+    const recorded = captureHermesPortablePodmanExecutableAuthority(
+      socketAuthority(),
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    capture.mockClear();
+    generation.executableInode = 11n;
+
+    expect(() =>
+      captureHermesPortablePodmanExecutableFileAuthority(
+        socketAuthority(),
+        { runtimeAuthority: runtime, podmanExecutableAuthority: recorded },
+        sourceEnv,
+        deps,
+      ),
+    ).toThrow("changed after it was qualified");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it("binds one inference inspection without repeating Podman version or info", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     const capture = successfulCapture();

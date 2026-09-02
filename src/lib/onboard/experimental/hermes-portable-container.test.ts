@@ -14,6 +14,7 @@ import {
   configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
   hermesPortableContainerInternals,
+  observeHermesPortableAuthenticatedHealth,
   probeHermesPortableAuthenticatedHealth,
   startHermesPortableContainer,
   stopHermesPortableContainer,
@@ -281,6 +282,42 @@ describe("Hermes portable container authority", () => {
       }),
     ).toThrow("restart-policy update failed");
     expect(podman).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses one validated observation before same-iteration authenticated health", () => {
+    const podman = vi.fn(() => inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const deps = { podman, authenticatedHealth, assertSocketAuthority: vi.fn() };
+    const before = hermesPortableContainerInternals.parseInspection(
+      inspect("unless-stopped").stdout,
+      { sandboxName: receipt.sandboxName, sandboxId: receipt.container.sandboxId, containerId: ID },
+    );
+
+    expect(observeHermesPortableAuthenticatedHealth(receipt, deps, before)).toBe("ready");
+    expect(podman).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a mismatched reused observation before authenticated health", () => {
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+    const receipt = activeReceipt();
+    const before = hermesPortableContainerInternals.parseInspection(
+      inspect("unless-stopped").stdout,
+      { sandboxName: receipt.sandboxName, sandboxId: receipt.container.sandboxId, containerId: ID },
+    );
+    const mismatched = {
+      ...before,
+      authority: { ...before.authority, imageId: "c".repeat(64) },
+    };
+
+    expect(() =>
+      observeHermesPortableAuthenticatedHealth(
+        receipt,
+        { podman: vi.fn(), authenticatedHealth, assertSocketAuthority: vi.fn() },
+        mismatched,
+      ),
+    ).toThrow("reused health observation disagrees with receipt identity");
+    expect(authenticatedHealth).not.toHaveBeenCalled();
   });
 
   it("proves Bearer-authenticated health inside the exact container without host credentials (#9203)", () => {
