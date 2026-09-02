@@ -206,7 +206,7 @@ describe("local PR review advisor", () => {
         'let detached = false; try { execFileSync("git", ["symbolic-ref", "-q", "HEAD"], { stdio: "ignore" }); } catch { detached = true; }',
         'const policy = fs.readFileSync(path.join(source, "tools/pr-review-advisor/policy.txt"), "utf8").trim();',
         'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
-        'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH, git: fs.existsSync(".git"), gitHead, detached }));',
+        'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH, path: process.env.PATH, git: fs.existsSync(".git"), gitHead, detached }));',
       ].join("\n"),
     );
     const npmBin = installFakeNpm(source);
@@ -305,10 +305,17 @@ describe("local PR review advisor", () => {
     ).not.toBe(trustedChild.pid);
     expect(trustedChild).toEqual({
       pid: expect.any(Number),
+      path: expect.any(String),
       git: true,
       gitHead: git(source, ["rev-parse", "origin/main"]),
       detached: true,
     });
+    expect(trustedChild.path).not.toContain(maliciousBin);
+    expect(trustedChild.path.split(path.delimiter)).toEqual(
+      expect.arrayContaining(
+        ["/opt/homebrew/bin"].filter(fs.existsSync).map((directory) => fs.realpathSync(directory)),
+      ),
+    );
     expect(fs.existsSync(path.join(source, "contributor-module-executed"))).toBe(false);
     expect(fs.existsSync(path.join(source, "git-malicious-env"))).toBe(false);
     expect(fs.existsSync(bootstrapFilterMarker)).toBe(false);
@@ -560,6 +567,36 @@ describe("local PR review advisor", () => {
     expect(result).toMatchObject(expected);
     expect(path.basename(removedRoot)).toMatch(/^nemoclaw-local-review-/u);
     expect(fs.existsSync(removedRoot)).toBe(false);
+  });
+
+  it("removes read-only prepared directories after failure (#10791)", async () => {
+    const source = repository();
+    const temporaryParent = temporaryDirectory();
+    vi.stubEnv("TMPDIR", temporaryParent);
+    const lifecycle: LocalReviewLifecycle = {
+      ...artifactLifecycle(),
+      prepare: async (env) => {
+        const locked = path.join(env.RUNNER_TEMP as string, "locked");
+        fs.mkdirSync(locked);
+        fs.writeFileSync(path.join(locked, "evidence.txt"), "review evidence\n");
+        fs.chmodSync(locked, 0o555);
+        throw new Error("prepare failed");
+      },
+    };
+
+    try {
+      await expect(
+        runLocalReview({
+          source,
+          specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+          lifecycle,
+        }),
+      ).rejects.toThrow("prepare failed");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(fs.readdirSync(temporaryParent)).toEqual([]);
   });
 
   it("stops between specialists and restores a received signal after cleanup (#10611)", async () => {
