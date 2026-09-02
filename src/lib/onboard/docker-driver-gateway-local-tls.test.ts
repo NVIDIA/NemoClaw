@@ -246,6 +246,28 @@ describe("docker-driver-gateway-local-tls", () => {
     }
   });
 
+  it("adds the rootless host gateway SAN for the native Podman runtime", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-tls-"));
+    const calls: string[][] = [];
+    try {
+      expect(() =>
+        ensureDockerDriverGatewayLocalTlsBundle({
+          env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+          gatewayBin: "/opt/openshell/openshell-gateway",
+          platform: "linux",
+          stateDir,
+          spawnSyncImpl: ((_command: string, args: string[]) => {
+            calls.push(args);
+            return { status: 0, stdout: "", stderr: "" };
+          }) as never,
+        }),
+      ).toThrow("did not create a complete");
+      expect(calls[0]).toEqual(expect.arrayContaining(["--server-san", PORTABLE_HOST_GATEWAY_IP]));
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves an existing complete mTLS bundle without regenerating certs", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-tls-"));
     const contents = writeBundle(stateDir, TEST_CERT_PEM, TEST_KEY_PEM);
@@ -267,8 +289,11 @@ describe("docker-driver-gateway-local-tls", () => {
 
       expect(bundle.localTlsDir).toBe(path.join(stateDir, "tls"));
       expect(certgenCalls).toBe(0);
-      expect(Object.entries(contents).every(([filePath, content]) =>
-          Object.is(fs.readFileSync(filePath, "utf-8"), content))).toBe(true);
+      expect(
+        Object.entries(contents).every(([filePath, content]) =>
+          Object.is(fs.readFileSync(filePath, "utf-8"), content),
+        ),
+      ).toBe(true);
       expect(fs.statSync(paths.serverKeyPath).mode & 0o777).toBe(0o600);
       expect(fs.statSync(paths.clientKeyPath).mode & 0o777).toBe(0o600);
     } finally {

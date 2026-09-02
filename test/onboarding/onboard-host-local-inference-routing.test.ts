@@ -471,7 +471,6 @@ describe("onboard host-local inference routing", () => {
       const route = fixture(application, "ollama");
       const legacyRun = vi.fn();
       const legacyValidate = vi.fn();
-      const legacyWarmup = vi.fn();
       const legacyOllamaProof = vi.fn();
       const verify = vi.fn(() => {
         route.events.push("gateway-route-verify");
@@ -495,10 +494,11 @@ describe("onboard host-local inference routing", () => {
           applyLocalInferenceRoute: undefined,
           run: legacyRun,
           validateLocalProvider: legacyValidate,
-          getOllamaWarmupCommand: legacyWarmup,
           localInference: {
             validateOllamaModelWithToolsOverride: legacyOllamaProof,
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            runOllamaWarmup: () => {},
+            persistResolvedOllamaHost: () => () => {},
           },
           verifyInferenceRoute: verify,
           verifyOnboardInferenceSmoke: smoke,
@@ -579,7 +579,6 @@ describe("onboard host-local inference routing", () => {
       );
       expect(legacyRun).not.toHaveBeenCalled();
       expect(legacyValidate).not.toHaveBeenCalled();
-      expect(legacyWarmup).not.toHaveBeenCalled();
       expect(legacyOllamaProof).not.toHaveBeenCalled();
       expect(route.gatewayRollback).not.toHaveBeenCalled();
     },

@@ -168,6 +168,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "verifies changed Hugging Face catalog references without credentials",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "keeps package access out of pull request controlled execution",
       "category": "security"
     },

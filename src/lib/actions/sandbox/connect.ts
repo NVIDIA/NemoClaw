@@ -69,6 +69,7 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceSetArgs,
+  sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
   buildSandboxInferenceRouteProbeArgs,
@@ -733,7 +734,7 @@ function writeHermesPortableLifecycleRecoveryTiming(
   evidence: HermesPortableLifecycleRecoveryTimingEvidence,
 ): void {
   console.log(
-    `  Hermes Portable lifecycle recovery timing: entryQualification=${String(evidence.entryQualificationMs)}ms containerStart=${String(evidence.containerStartMs)}ms postStartCurrentness=${String(evidence.postStartCurrentnessMs)}ms execReady=${String(evidence.execReadyMs)}ms preHealthCurrentness=${String(evidence.preHealthCurrentnessMs)}ms authenticatedHealth=${String(evidence.authenticatedHealthMs)}ms startupLaunch=${String(evidence.startupLaunchMs)}ms healthPollCurrentness=${String(evidence.healthPollCurrentnessMs)}ms finalQualification=${String(evidence.finalQualificationMs)}ms rollback=${String(evidence.rollbackMs)}ms qualificationCount=${String(evidence.qualificationCount)} transactionCurrentnessCount=${String(evidence.transactionCurrentnessCount)} containerInspectionCount=${String(evidence.containerInspectionCount)} containerStartCount=${String(evidence.containerStartCount)} execReadyAttempts=${String(evidence.execReadyAttempts)} authenticatedHealthCount=${String(evidence.authenticatedHealthCount)} startupLaunchCount=${String(evidence.startupLaunchCount)} rollbackCount=${String(evidence.rollbackCount)} total=${String(evidence.totalMs)}ms containerAction=${evidence.containerAction} result=${evidence.result}`,
+    `  Hermes Portable lifecycle recovery timing: entryQualification=${String(evidence.entryQualificationMs)}ms containerStart=${String(evidence.containerStartMs)}ms postStartCurrentness=${String(evidence.postStartCurrentnessMs)}ms execReady=${String(evidence.execReadyMs)}ms execReadyCurrentness=${String(evidence.execReadyCurrentnessMs)}ms execReadyCommand=${String(evidence.execReadyCommandMs)}ms execReadySleep=${String(evidence.execReadySleepMs)}ms preHealthCurrentness=${String(evidence.preHealthCurrentnessMs)}ms authenticatedHealth=${String(evidence.authenticatedHealthMs)}ms authenticatedHealthPodman=${String(evidence.authenticatedHealthPodmanMs)}ms authenticatedHealthOpenShell=${String(evidence.authenticatedHealthOpenShellMs)}ms authenticatedHealthSleep=${String(evidence.authenticatedHealthSleepMs)}ms startupLaunch=${String(evidence.startupLaunchMs)}ms healthPollCurrentness=${String(evidence.healthPollCurrentnessMs)}ms finalQualification=${String(evidence.finalQualificationMs)}ms rollback=${String(evidence.rollbackMs)}ms qualificationCount=${String(evidence.qualificationCount)} transactionCurrentnessCount=${String(evidence.transactionCurrentnessCount)} containerInspectionCount=${String(evidence.containerInspectionCount)} containerStartCount=${String(evidence.containerStartCount)} execReadyAttempts=${String(evidence.execReadyAttempts)} authenticatedHealthCount=${String(evidence.authenticatedHealthCount)} startupLaunchCount=${String(evidence.startupLaunchCount)} rollbackCount=${String(evidence.rollbackCount)} total=${String(evidence.totalMs)}ms containerAction=${evidence.containerAction} result=${evidence.result}`,
   );
 }
 
@@ -1148,10 +1149,8 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // runs the gateway as `nemoclaw-openshell-gateway` with host networking, and
   // the vm driver has no cluster container either, so both recover the route via
   // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
-  // usesGatewayMetadataProbe (snapshot.ts) and the `!== "docker"` guard on the
-  // snapshot DNS-proxy step. (#3403)
-  const driver = sb?.openshellDriver;
-  return driver !== "vm" && driver !== "docker";
+  // usesGatewayMetadataProbe (snapshot.ts). (#3403)
+  return sandboxUsesLegacyClusterGateway(sb);
 }
 
 function reapplyVmInferenceRoute(
@@ -2679,6 +2678,16 @@ async function prepareConnectSandboxWithinLifecycleFence(
               probeOnly: true,
               probeTiming,
             });
+            if (!hermesPortable) {
+              probeTiming!.measure("gateway", () =>
+                waitForSandboxReadyOrExit(sandboxName, {
+                  allowInitialErrorAfterStart: true,
+                  allowDockerRuntimeInspection: false,
+                  defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+                  retryCommand: "connect --probe-only",
+                }),
+              );
+            }
             requalify();
           },
         });
@@ -2797,11 +2806,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
     console.log("");
     // Same resolver `launch` uses, so the hint cannot drift from the command
     // that `nemoclaw launch <name>` actually runs (#6006).
-    const agentCmd = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+    void agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
-    console.log(
-      `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
-    );
+    console.log(`  ${D}Inside the sandbox, run the configured command to start chatting.${R}`);
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );
