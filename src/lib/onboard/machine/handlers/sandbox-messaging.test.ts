@@ -678,6 +678,32 @@ describe("reconcileSandboxMessaging plan authority", () => {
     });
   });
 
+  it("preserves the messaging plan when gateway credential inspection is unavailable (#10667)", async () => {
+    const registryPlan = discordPlan(hashCredential("discord-token") ?? "", "hermes");
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    deps.providerMatchesGatewayCredential.mockImplementation(() => {
+      throw new Error("Could not inspect credential provider 'alpha-discord-bridge'.");
+    });
+
+    await expect(
+      reconcileSandboxMessaging({
+        resume: false,
+        session: null,
+        sandboxName: "alpha",
+        agent: { name: "hermes" },
+        deps,
+      }),
+    ).rejects.toThrow("Could not inspect credential provider 'alpha-discord-bridge'");
+
+    expect(deps.writePlanToEnv).toHaveBeenCalledExactlyOnceWith(registryPlan);
+    expect(deps.clearPlanEnv).not.toHaveBeenCalled();
+    expect(deps.note).not.toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
+  });
+
   it("uses the registry plan without reading an invalid environment plan", async () => {
     const registryToken = "123456:registry-token";
     const registryPlan = telegramPlan(hashCredential(registryToken) ?? "");

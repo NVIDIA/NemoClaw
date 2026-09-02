@@ -275,19 +275,31 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): boolean {
-    const staticProfileMatches = messagingBridgeProvider.matchesRegisteredStaticMessagingProfile(
+    const staticProfile = messagingBridgeProvider.inspectRegisteredStaticMessagingProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (staticProfileMatches === false) return false;
-    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(
-      providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
+    if (staticProfile.kind === "indeterminate") {
+      throw new Error(
+        `Could not inspect static provider profile '${binding.type}' on OpenShell gateway '${deps.getGatewayName()}'. Verify the gateway is reachable, then retry the command.`,
+      );
+    }
+    if (staticProfile.kind === "collision") return false;
+
+    const provider = gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
       {
         name: binding.name,
         type: binding.type,
         credentialKey: binding.credentialEnv,
       },
+      runOpenshell,
     );
+    if (provider.kind === "indeterminate") {
+      throw new Error(
+        `Could not inspect credential provider '${binding.name}' on OpenShell gateway '${deps.getGatewayName()}'. Verify the gateway is reachable, then retry the command.`,
+      );
+    }
+    return provider.kind === "exact";
   }
 
   function providerMatchesGatewayCredential(

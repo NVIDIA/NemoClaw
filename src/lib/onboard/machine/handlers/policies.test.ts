@@ -118,6 +118,73 @@ describe("policy state handler", () => {
     );
   });
 
+  it.each([
+    {
+      condition: "both bindings match",
+      providerMatchesGatewayCredential: () => true,
+      expectedEnabled: ["slack"],
+      expectedDisabled: [] as string[],
+    },
+    {
+      condition: "one binding is missing",
+      providerMatchesGatewayCredential: (_name: string, _type: string, credentialEnv: string) =>
+        credentialEnv === "SLACK_BOT_TOKEN",
+      expectedEnabled: [] as string[],
+      expectedDisabled: ["slack"],
+    },
+  ])(
+    "requires every Slack binding before retaining its policy when $condition (#10667)",
+    async ({ providerMatchesGatewayCredential, expectedEnabled, expectedDisabled }) => {
+      const slackPlan = makeMessagingPlan({
+        channels: ["slack"],
+        agent: "hermes",
+        credentialBindings: [
+          {
+            channelId: "slack",
+            credentialId: "slackBotToken",
+            sourceInput: "botToken",
+            providerName: "my-assistant-slack-bridge",
+            providerEnvKey: "SLACK_BOT_TOKEN",
+            placeholder: "openshell:resolve:env:SLACK_BOT_TOKEN",
+            credentialAvailable: true,
+          },
+          {
+            channelId: "slack",
+            credentialId: "slackAppToken",
+            sourceInput: "appToken",
+            providerName: "my-assistant-slack-app",
+            providerEnvKey: "SLACK_APP_TOKEN",
+            placeholder: "openshell:resolve:env:SLACK_APP_TOKEN",
+            credentialAvailable: true,
+          },
+        ],
+      });
+      const providerMatcher = vi.fn(providerMatchesGatewayCredential);
+      const { deps, calls } = createPolicyHandlerDeps({
+        getActiveSandbox: vi.fn(() => ({ messaging: { plan: slackPlan } })),
+        providerMatchesGatewayCredential: providerMatcher,
+      });
+      calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
+        configuredChannels.includes("slack") ? [] : ["slack"],
+      );
+
+      await handlePoliciesState({
+        ...basePolicyHandlerOptions(deps),
+        selectedMessagingChannels: [],
+        agent: { name: "hermes" },
+      });
+
+      expect(providerMatcher).toHaveBeenCalledTimes(2);
+      expect(calls.setupPolicies).toHaveBeenCalledWith(
+        "my-assistant",
+        expect.objectContaining({
+          enabledChannels: expectedEnabled,
+          disabledChannels: expectedDisabled,
+        }),
+      );
+    },
+  );
+
   it("merges live messaging channels into policy requirements", async () => {
     const { deps, calls } = createPolicyHandlerDeps();
     await handlePoliciesState({

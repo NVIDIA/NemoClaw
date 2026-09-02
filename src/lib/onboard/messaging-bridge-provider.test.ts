@@ -10,6 +10,7 @@ import {
   collectMessagingBridgeTokenDefs,
   configureMessagingBridgeRefreshes,
   ensureMessagingBridgeProfiles,
+  inspectRegisteredStaticMessagingProfile,
   listMessagingBridgeProfiles,
   matchesRegisteredStaticMessagingProfile,
   MESSAGING_BRIDGE_PENDING_VALUE,
@@ -669,6 +670,38 @@ describe("matchesRegisteredStaticMessagingProfile", () => {
       }),
     ).toBeNull();
     expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes static profile drift from an unavailable gateway inspection", () => {
+    const deps = {
+      root: "/repo",
+      profiles: [DISCORD_PROFILE],
+      readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+    };
+
+    expect(
+      inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        ...deps,
+        runOpenshell: () => ({ status: 1, stderr: "gateway unavailable" }),
+      }),
+    ).toEqual({ kind: "indeterminate" });
+    expect(
+      inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        ...deps,
+        runOpenshell: () => {
+          throw new Error("transport closed");
+        },
+      }),
+    ).toEqual({ kind: "indeterminate" });
+    expect(
+      inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        ...deps,
+        runOpenshell: () => ({
+          status: 0,
+          stdout: JSON.stringify({ ...DISCORD_PROFILE_DOC, binaries: ["/usr/bin/curl"] }),
+        }),
+      }),
+    ).toEqual({ kind: "collision" });
   });
 });
 

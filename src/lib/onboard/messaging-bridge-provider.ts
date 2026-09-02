@@ -122,6 +122,12 @@ export interface MatchRegisteredStaticMessagingProfileDeps {
   readonly readFileSync?: (file: string) => string;
 }
 
+export type RegisteredStaticMessagingProfileInspection =
+  | { readonly kind: "collision" }
+  | { readonly kind: "exact" }
+  | { readonly kind: "indeterminate" }
+  | { readonly kind: "not-static" };
+
 export interface ConfigureMessagingBridgeRefreshesDeps extends MessagingBridgeSecretResolveDeps {
   readonly runOpenshell: RunOpenshell;
   readonly redact: (input: string) => string;
@@ -204,25 +210,43 @@ function staticProfileMatchesCheckedInBoundary(
   }
 }
 
+/** Distinguish a checked-in static profile from drift and gateway inspection failure. */
+export function inspectRegisteredStaticMessagingProfile(
+  providerType: string,
+  deps: MatchRegisteredStaticMessagingProfileDeps,
+): RegisteredStaticMessagingProfileInspection {
+  const profile = (deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root })).find(
+    (candidate) => candidate.profileId === providerType && candidate.strategy === null,
+  );
+  if (!profile) return { kind: "not-static" };
+  try {
+    const exported = deps.runOpenshell(
+      ["provider", "profile", "export", profile.profileId, "--output", "json"],
+      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (exported.status !== 0) return { kind: "indeterminate" };
+    return {
+      kind: staticProfileMatchesCheckedInBoundary(
+        profile,
+        bufferOrStringToText(exported.stdout),
+        deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
+      )
+        ? "exact"
+        : "collision",
+    };
+  } catch {
+    return { kind: "indeterminate" };
+  }
+}
+
 /** Compare a registered static profile with its checked-in credential boundary. */
 export function matchesRegisteredStaticMessagingProfile(
   providerType: string,
   deps: MatchRegisteredStaticMessagingProfileDeps,
 ): boolean | null {
-  const profile = (deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root })).find(
-    (candidate) => candidate.profileId === providerType && candidate.strategy === null,
-  );
-  if (!profile) return null;
-  const exported = deps.runOpenshell(
-    ["provider", "profile", "export", profile.profileId, "--output", "json"],
-    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (exported.status !== 0) return false;
-  return staticProfileMatchesCheckedInBoundary(
-    profile,
-    bufferOrStringToText(exported.stdout),
-    deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
-  );
+  const inspection = inspectRegisteredStaticMessagingProfile(providerType, deps);
+  if (inspection.kind === "not-static") return null;
+  return inspection.kind === "exact";
 }
 
 function isSafeChannelId(value: string): boolean {
