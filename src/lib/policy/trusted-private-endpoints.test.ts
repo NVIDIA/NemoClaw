@@ -19,6 +19,92 @@ function lookup(records: Record<string, string[]>): EndpointDnsLookupFn {
 }
 
 describe("trusted private custom policy preparation", () => {
+  it.each([
+    "10.20.30.40",
+    "127.0.0.1",
+    "169.254.169.254",
+    "fe80::1",
+    "metadata.google.internal",
+  ])("rejects an untrusted private or special-use endpoint host %s", async (host) => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - host: "${host}"
+        port: 80
+        protocol: rest
+`);
+
+    await expect(prepareTrustedPrivatePolicyPresets([input], [])).rejects.toThrow(
+      /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+    );
+  });
+
+  it("preserves public and OpenShell bridge endpoints without private trust", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: api.example.com, port: 443, protocol: rest }
+      - { host: host.openshell.internal, port: 8080, protocol: rest }
+`);
+
+    await expect(prepareTrustedPrivatePolicyPresets([input], [])).resolves.toEqual([{ ...input }]);
+  });
+
+  it("pins an explicitly trusted private IP literal", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: 10.20.30.40, port: 443, protocol: rest }
+`);
+
+    const [prepared] = await prepareTrustedPrivatePolicyPresets([input], ["10.20.30.40"]);
+    const document = YAML.parse(prepared.content) as {
+      network_policies: { service: { endpoints: Array<{ allowed_ips?: string[] }> } };
+    };
+
+    expect(document.network_policies.service.endpoints[0]?.allowed_ips).toEqual(["10.20.30.40"]);
+    expect(
+      isTrustedPrivatePolicyPinCapability(prepared.content, prepared.trustedPrivatePinCapability),
+    ).toBe(true);
+  });
+
+  it("rejects an explicitly declared link-local metadata IP", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: 169.254.169.254, port: 80, protocol: rest }
+`);
+
+    await expect(
+      prepareTrustedPrivatePolicyPresets([input], ["169.254.169.254"]),
+    ).rejects.toThrow(/failed destination preflight/i);
+  });
+
+  it("does not let one trusted endpoint authorize an untrusted special-use sibling", async () => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  service:
+    endpoints:
+      - { host: api.corp.example, port: 443, protocol: rest }
+      - { host: 169.254.169.254, port: 80, protocol: rest }
+`);
+
+    await expect(
+      prepareTrustedPrivatePolicyPresets([input], ["api.corp.example"], {
+        lookup: lookup({ "api.corp.example": ["10.20.30.40"] }),
+      }),
+    ).rejects.toThrow(/169\.254\.169\.254.*is rejected/i);
+  });
+
   it("pins trusted endpoints across every policy protocol (#8176)", async () => {
     const input = preset(`preset:
   name: private
