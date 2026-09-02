@@ -141,10 +141,10 @@ describe("PR review advisor specialist prompts", () => {
       { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
     );
     const matrix = JSON.parse(output) as Array<Record<string, unknown>>;
-    const expected = ADVISOR_SPECIALISTS.map(({ interest, label }) => ({
+    const expected = ADVISOR_SPECIALISTS.map(({ interest, label }, index) => ({
       interest,
       label,
-      model: "azure/openai/gpt-5.6-terra",
+      model: index % 2 === 0 ? "openai/openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
       artifact_dir: `pr-review-specialist-${interest}`,
       artifact_name: `pr-review-specialist-${interest}`,
     }));
