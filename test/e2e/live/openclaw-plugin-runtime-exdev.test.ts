@@ -72,6 +72,7 @@ const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
   },
 });
 type WeatherFixtureVersion = "v1" | "v2";
+type WeatherRuntimeVersion = WeatherFixtureVersion | "v1-exdev";
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -214,15 +215,11 @@ type GatewayToolInvocation = {
   result?: { details?: unknown };
 };
 
-type WeatherRuntimeProof = {
-  fixtureVersion: WeatherFixtureVersion;
-};
-
 async function assertWeatherPluginRuntime(
   sandbox: SandboxClient,
   phase: string,
-  expectedFixtureVersion: WeatherFixtureVersion,
-): Promise<WeatherRuntimeProof> {
+  expectedFixtureVersion: WeatherRuntimeVersion,
+): Promise<unknown> {
   // Exercise OpenClaw's documented HTTP tool surface with the managed bearer
   // token supplied on stdin so the credential never enters process arguments.
   const invokeProbe = await sandbox.execShell(
@@ -249,15 +246,26 @@ async function assertWeatherPluginRuntime(
     },
   });
 
-  return {
-    fixtureVersion: expectedFixtureVersion,
-  };
+  return (invocation.result?.details as { fixtureVersion?: unknown } | undefined)?.fixtureVersion;
 }
 
 const crossDevicePluginInstallSource = `set -eu
 rm -rf ${EXDEV_TMPFS_SOURCE}
 mkdir -p ${EXDEV_TMPFS_SOURCE} /sandbox/.openclaw/extensions
 cp -R ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/. ${EXDEV_TMPFS_SOURCE}/
+node <<'NODE'
+const fs = require("node:fs");
+const versionPath = "${EXDEV_TMPFS_SOURCE}/dist/version.js";
+const source = fs.readFileSync(versionPath, "utf8");
+const compiledVersion = /WEATHER_FIXTURE_VERSION\\s*=\\s*["']v1["']/;
+if (!compiledVersion.test(source)) {
+  throw new Error("trusted EXDEV fixture did not contain compiled version v1");
+}
+fs.writeFileSync(
+  versionPath,
+  source.replace(compiledVersion, 'WEATHER_FIXTURE_VERSION = "v1-exdev"'),
+);
+NODE
 source_device=$(stat -c '%d' ${EXDEV_TMPFS_SOURCE})
 target_device=$(stat -c '%d' /sandbox/.openclaw/extensions)
 printf 'source_device=%s target_device=%s\n' "$source_device" "$target_device"
@@ -354,8 +362,8 @@ test(
         "clone and prepare the current plugin fixture",
         "install and validate current OpenShell",
         "build and onboard plugin v1",
-        "install plugin v1 across filesystems",
-        "restart the gateway and confirm plugin v1",
+        "install a distinct plugin payload across filesystems",
+        "restart the gateway and confirm the installed payload",
         "recreate the sandbox with plugin v2",
       ],
     },
@@ -367,7 +375,7 @@ test(
       regressionTargets: ["#6108"],
       contract: [
         "the current checkout builds and onboards the weather plugin as v1",
-        "tools.invoke proves v1 survives restart and recreation installs v2",
+        "tools.invoke proves the distinct cross-device payload survives restart and recreation installs v2",
         "the repository-controlled fixture is prebuilt with local BuildKit and handed to OpenShell as a local image",
         `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT}`,
         `sandbox proves ${EXDEV_TMPFS_SOURCE} and the OpenClaw extension target are distinct devices`,
@@ -536,9 +544,7 @@ test(
     });
     const onboardText = onboard.value ? resultText(onboard.value) : "onboard returned no result";
     expect(onboard.outcome, onboardText).toBe("passed");
-    const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
-
-    progress.phase("install plugin v1 across filesystems");
+    progress.phase("install a distinct plugin payload across filesystems");
     const crossDeviceInstall = await sandbox.execShell(SANDBOX_NAME, crossDevicePluginInstall, {
       artifactName: "openclaw-plugin-exdev-production-install",
       env: liveEnv(),
@@ -548,7 +554,7 @@ test(
     expect(crossDeviceInstall.exitCode, crossDeviceInstallText).toBe(0);
     expect(crossDeviceInstallText).toMatch(/source_device=\d+ target_device=\d+/);
 
-    progress.phase("restart the gateway and confirm plugin v1");
+    progress.phase("restart the gateway and confirm the installed payload");
     const restart = await host.command(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"],
@@ -559,7 +565,11 @@ test(
       },
     );
     expect(restart.exitCode, resultText(restart)).toBe(0);
-    const weatherAfterRestart = await assertWeatherPluginRuntime(sandbox, "after-restart", "v1");
+    const weatherAfterRestart = await assertWeatherPluginRuntime(
+      sandbox,
+      "after-restart",
+      "v1-exdev",
+    );
 
     // Change an actual build-context input so recreation must produce a distinct
     // plugin artifact and expose v2 through the same runtime boundary.
@@ -611,10 +621,8 @@ test(
       recreateExitCode: recreate.exitCode,
       testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
       assertions: {
-        v1SurvivedRestart:
-          weatherAfterOnboard.fixtureVersion === "v1" &&
-          weatherAfterRestart.fixtureVersion === "v1",
-        recreationInstalledV2: weatherAfterRecreate.fixtureVersion === "v2",
+        crossDevicePayloadSurvivedRestart: weatherAfterRestart === "v1-exdev",
+        recreationInstalledV2: weatherAfterRecreate === "v2",
         distinctDevices: /source_device=\d+ target_device=\d+/.test(crossDeviceInstallText),
         productionInstallCompleted: crossDeviceInstall.exitCode === 0,
       },
