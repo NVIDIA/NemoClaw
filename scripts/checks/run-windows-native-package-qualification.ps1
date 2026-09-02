@@ -312,40 +312,61 @@ function Get-ProhibitedProcessSnapshot {
 }
 
 function Start-ProhibitedProcessAudit {
-    $sourceIdentifier = 'NemoClawNativePackage-' + [guid]::NewGuid().ToString('N')
-    Register-WmiEvent -Class Win32_ProcessStartTrace -SourceIdentifier $sourceIdentifier | Out-Null
-    return $sourceIdentifier
+    $auditId = [guid]::NewGuid().ToString('N')
+    $startSourceIdentifier = "NemoClawNativePackageStart-$auditId"
+    $stopSourceIdentifier = "NemoClawNativePackageStop-$auditId"
+    Register-WmiEvent -Class Win32_ProcessStartTrace -SourceIdentifier $startSourceIdentifier | Out-Null
+    Register-WmiEvent -Class Win32_ProcessStopTrace -SourceIdentifier $stopSourceIdentifier | Out-Null
+    return [pscustomobject]@{
+        startSourceIdentifier = $startSourceIdentifier
+        stopSourceIdentifier = $stopSourceIdentifier
+    }
 }
 
 function Stop-ProhibitedProcessAudit {
     param(
-        [Parameter(Mandatory)][string]$SourceIdentifier,
+        [Parameter(Mandatory)][object]$Audit,
         [Parameter(Mandatory)][int]$RootProcessId
     )
 
     Start-Sleep -Milliseconds $script:ProcessAuditSettleMilliseconds
     $records = @()
-    foreach ($auditEvent in @(Get-Event -SourceIdentifier $SourceIdentifier -ErrorAction SilentlyContinue)) {
-        $processEvent = $auditEvent.SourceEventArgs.NewEvent
-        $records += [pscustomobject]@{
-            processId = [int]$processEvent.ProcessID
-            parentProcessId = [int]$processEvent.ParentProcessID
-            processName = [string]$processEvent.ProcessName
+    foreach ($source in @(
+        [pscustomobject]@{ identifier = $Audit.startSourceIdentifier; kind = 'start' }
+        [pscustomobject]@{ identifier = $Audit.stopSourceIdentifier; kind = 'stop' }
+    )) {
+        foreach ($auditEvent in @(Get-Event -SourceIdentifier $source.identifier -ErrorAction SilentlyContinue)) {
+            $processEvent = $auditEvent.SourceEventArgs.NewEvent
+            $parentProcessId = 0
+            if ($source.kind -ceq 'start') {
+                $parentProcessId = [int]$processEvent.ParentProcessID
+            }
+            $records += [pscustomobject]@{
+                eventIdentifier = $auditEvent.EventIdentifier
+                kind = $source.kind
+                parentProcessId = $parentProcessId
+                processId = [int]$processEvent.ProcessID
+                processName = [string]$processEvent.ProcessName
+                timeGenerated = $auditEvent.TimeGenerated
+            }
+            Remove-Event -EventIdentifier $auditEvent.EventIdentifier
         }
-        Remove-Event -EventIdentifier $auditEvent.EventIdentifier
+        Unregister-Event -SourceIdentifier $source.identifier -ErrorAction SilentlyContinue
     }
-    Unregister-Event -SourceIdentifier $SourceIdentifier -ErrorAction SilentlyContinue
 
     $tracked = @{}
     $tracked[[string]$RootProcessId] = $true
     $descendantStarts = @()
-    foreach ($record in $records) {
-        if ($tracked.ContainsKey([string]$record.parentProcessId)) {
+    foreach ($record in @($records | Sort-Object timeGenerated, eventIdentifier)) {
+        if ($record.kind -ceq 'stop') {
+            [void]$tracked.Remove([string]$record.processId)
+        } elseif ($tracked.ContainsKey([string]$record.parentProcessId)) {
             $descendantStarts += $record
             $tracked[[string]$record.processId] = $true
         }
     }
-    $prohibitedStarts = @($records | Where-Object {
+    $startRecords = @($records | Where-Object { $_.kind -ceq 'start' })
+    $prohibitedStarts = @($startRecords | Where-Object {
         $name = $_.processName.ToLowerInvariant()
         $name -in @('bash.exe', 'docker.exe', 'dockerd.exe', 'wsl.exe') -or
         $name.StartsWith('com.docker') -or $name.StartsWith('ubuntu')
@@ -356,7 +377,7 @@ function Stop-ProhibitedProcessAudit {
         $name.StartsWith('com.docker') -or $name.StartsWith('ubuntu')
     })
     return [pscustomobject]@{
-        allStarts = $records
+        allStarts = $startRecords
         descendantStarts = $descendantStarts
         prohibitedStarts = $prohibitedStarts
         packageDescendantProhibitedStarts = $packageDescendantProhibitedStarts
@@ -583,7 +604,7 @@ try {
     }
     Write-Host '[PASS] Windows Installer uninstall removed files, registrations, and PATH'
 
-    $auditResult = Stop-ProhibitedProcessAudit -SourceIdentifier $processAudit -RootProcessId $PID
+    $auditResult = Stop-ProhibitedProcessAudit -Audit $processAudit -RootProcessId $PID
     $processAuditStopped = $true
     $setupProcessName = (Split-Path -Leaf $setup).ToLowerInvariant()
     if (@($auditResult.descendantStarts | Where-Object {
@@ -595,7 +616,7 @@ try {
     $packageDescendantProhibitedStarts = @($auditResult.packageDescendantProhibitedStarts)
     if ($packageDescendantProhibitedStarts.Count -ne 0) {
         $names = @($packageDescendantProhibitedStarts | ForEach-Object {
-            $_.processName
+            "$($_.processName)(pid=$($_.processId),parent=$($_.parentProcessId))"
         } | Sort-Object -Unique) -join ', '
         Fail-PackageQualification "Package operations started a prohibited descendant process: $names"
     }
@@ -668,7 +689,7 @@ try {
 } finally {
     if (-not $processAuditStopped) {
         try {
-            Stop-ProhibitedProcessAudit -SourceIdentifier $processAudit -RootProcessId $PID | Out-Null
+            Stop-ProhibitedProcessAudit -Audit $processAudit -RootProcessId $PID | Out-Null
         } catch {
             Write-Warning "Could not stop prohibited-process audit during cleanup: $($_.Exception.Message)"
         }
