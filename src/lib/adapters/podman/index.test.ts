@@ -631,6 +631,114 @@ describe("Podman container engine command adapter", () => {
     expect(readFile).toHaveBeenCalledOnce();
   });
 
+  it("rehashes stable-metadata content at commands 64 and 128 across engines", () => {
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const firstCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const secondCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const first = createPodmanContainerEngine({
+      operation: "host-local-inference",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: firstCapture,
+    });
+    const second = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: secondCapture,
+    });
+    readFile.mockClear();
+
+    for (let index = 0; index < 32; index += 1) first.capture(["info"]);
+    for (let index = 0; index < 31; index += 1) second.capture(["info"]);
+    expect(readFile).not.toHaveBeenCalled();
+    second.capture(["info"]);
+    expect(readFile).toHaveBeenCalledOnce();
+
+    for (let index = 0; index < 63; index += 1) {
+      (index % 2 === 0 ? first : second).capture(["info"]);
+    }
+    expect(readFile).toHaveBeenCalledOnce();
+    first.capture(["info"]);
+    expect(readFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects stable-metadata changed bytes at command 64 before dispatch and latches across engines", () => {
+    const changedBytes = Buffer.from("changed--podman-binary!", "utf8");
+    expect(changedBytes).toHaveLength(PODMAN_BYTES.length);
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const firstCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const secondCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const first = createPodmanContainerEngine({
+      operation: "host-local-inference",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: firstCapture,
+    });
+    const second = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: secondCapture,
+    });
+    readFile.mockClear();
+
+    for (let index = 0; index < 63; index += 1) {
+      (index % 2 === 0 ? first : second).capture(["info"]);
+    }
+    readFile.mockReturnValue(changedBytes);
+    expect(() => second.capture(["info"])).toThrow("changed after it was qualified");
+    expect(firstCapture.mock.calls.length + secondCapture.mock.calls.length).toBe(63);
+    readFile.mockReturnValue(PODMAN_BYTES);
+    expect(() => first.capture(["info"])).toThrow("changed after it was qualified");
+    expect(firstCapture.mock.calls.length + secondCapture.mock.calls.length).toBe(63);
+  });
+
+  it("counts a thrown capture after its after-guard toward the shared rehash boundary", () => {
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const thrown = new Error("capture failed");
+    const firstCapture = vi.fn(() => {
+      throw thrown;
+    });
+    const secondCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const first = createPodmanContainerEngine({
+      operation: "host-local-inference",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: firstCapture,
+    });
+    const second = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: secondCapture,
+    });
+    readFile.mockClear();
+
+    expect(() => first.capture(["info"])).toThrow(thrown);
+    for (let index = 0; index < 62; index += 1) second.capture(["info"]);
+    expect(readFile).not.toHaveBeenCalled();
+    second.capture(["info"]);
+    expect(readFile).toHaveBeenCalledOnce();
+    expect(firstCapture).toHaveBeenCalledOnce();
+    expect(secondCapture).toHaveBeenCalledTimes(63);
+  });
+
   it("shares a latched executable failure across engines using one proof", () => {
     const generation = { executableInode: 42n };
     const defaults = executableAuthorityDeps();
