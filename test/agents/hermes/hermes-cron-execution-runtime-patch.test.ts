@@ -14,12 +14,15 @@ const probes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const fixtures: string[] = [];
 
 const upstreamExecutions = `\
+import sqlite3
 from hermes_constants import get_hermes_home
 
 EXECUTIONS_FILE = None
 
 def _connect():
     path = EXECUTIONS_FILE or (get_hermes_home().resolve() / "cron" / "executions.db")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return sqlite3.connect(path)
 `;
 
 const upstreamBackup = `\
@@ -30,13 +33,13 @@ _QUICK_STATE_FILES = (
 )
 `;
 
-function fixtureFiles(options: { executions?: string; backup?: string } = {}) {
+function fixtureFiles() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-cron-runtime-"));
   fixtures.push(fixture);
   const executions = path.join(fixture, "executions.py");
   const backup = path.join(fixture, "backup.py");
-  fs.writeFileSync(executions, options.executions ?? upstreamExecutions);
-  fs.writeFileSync(backup, options.backup ?? upstreamBackup);
+  fs.writeFileSync(executions, upstreamExecutions);
+  fs.writeFileSync(backup, upstreamBackup);
   return { executions, backup };
 }
 
@@ -54,50 +57,48 @@ afterEach(() => {
 });
 
 describe("Hermes cron execution runtime patch", () => {
-  it("relocates the ledger and quick snapshot entry together and remains idempotent", () => {
+  it("opens the ledger in writable runtime state and snapshots that path", () => {
     const files = fixtureFiles();
 
-    const first = runPatcher(files.executions, files.backup);
-    expect(first.status, first.stderr).toBe(0);
-    expect(fs.readFileSync(files.executions, "utf8")).toContain(
-      'path = EXECUTIONS_FILE or (get_hermes_home().resolve() / "runtime" / "cron-executions.db")',
-    );
-    expect(fs.readFileSync(files.backup, "utf8")).toContain('"runtime/cron-executions.db"');
-    expect(fs.readFileSync(files.executions, "utf8")).not.toContain('/ "cron" / "executions.db"');
-    expect(fs.readFileSync(files.backup, "utf8")).not.toContain('"cron/executions.db"');
-
-    const second = runPatcher(files.executions, files.backup);
-    expect(second.status, second.stderr).toBe(0);
-  });
-
-  it("fails closed before either file changes when a pinned source shape drifts", () => {
-    const driftedBackup = upstreamBackup.replace(
-      '"cron/executions.db"',
-      '"cron/execution-history.db"',
-    );
-    const files = fixtureFiles({ backup: driftedBackup });
-
     const result = runPatcher(files.executions, files.backup);
+    expect(result.status, result.stderr).toBe(0);
+    const fixture = path.dirname(files.executions);
+    const probe = `\
+import importlib.util
+import json
+import pathlib
+import sys
+import types
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("cron execution runtime source shape changed");
-    expect(fs.readFileSync(files.executions, "utf8")).toBe(upstreamExecutions);
-    expect(fs.readFileSync(files.backup, "utf8")).toBe(driftedBackup);
-  });
+home = pathlib.Path(sys.argv[3]).resolve()
+constants = types.ModuleType("hermes_constants")
+constants.get_hermes_home = lambda: home
+sys.modules["hermes_constants"] = constants
 
-  it("rejects a partially applied pair instead of splitting the runtime contract", () => {
-    const files = fixtureFiles({
-      executions: upstreamExecutions.replace(
-        '/ "cron" / "executions.db")',
-        '/ "runtime" / "cron-executions.db")',
-      ),
+def load(name, source):
+    spec = importlib.util.spec_from_file_location(name, source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+executions = load("patched_executions", sys.argv[1])
+backup = load("patched_backup", sys.argv[2])
+connection = executions._connect()
+database_path = pathlib.Path(connection.execute("PRAGMA database_list").fetchone()[2])
+connection.close()
+print(json.dumps({"database": str(database_path.relative_to(home)), "snapshot": list(backup._QUICK_STATE_FILES)}))
+`;
+    const probeResult = spawnSync(
+      "python3",
+      ["-I", "-c", probe, files.executions, files.backup, fixture],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    expect(probeResult.status, probeResult.stderr).toBe(0);
+    expect(JSON.parse(probeResult.stdout)).toEqual({
+      database: "runtime/cron-executions.db",
+      snapshot: ["state.db", "cron/jobs.json", "runtime/cron-executions.db"],
     });
-
-    const result = runPatcher(files.executions, files.backup);
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("only partially applied");
-    expect(fs.readFileSync(files.backup, "utf8")).toBe(upstreamBackup);
+    expect(fs.existsSync(path.join(fixture, "cron", "executions.db"))).toBe(false);
   });
 
   function runCronRuntimeProbe(databasePath: string) {

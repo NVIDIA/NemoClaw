@@ -93,6 +93,11 @@ const HERMES_INTEGRITY_FILES = [
     target: "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
   },
   {
+    arg: "NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256",
+    source: "agents/hermes/hindsight-lazy-integrity.patch",
+    target: "/opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch",
+  },
+  {
     arg: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
     source: "agents/hermes/patch-neutral-platform-env-activation.py",
     target: "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",

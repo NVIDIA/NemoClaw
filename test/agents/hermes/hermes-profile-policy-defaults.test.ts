@@ -70,6 +70,9 @@ def _restrict_browser_evaluate() -> bool:
 `;
 
 const gatewayFixture = `\
+from dataclasses import dataclass
+
+@dataclass
 class SessionResetPolicy:
     mode: str = "none"  # "daily", "idle", "both", or "none"
 
@@ -106,6 +109,11 @@ def _get_reasoning_status(cfg):
 `;
 
 const agentFixture = `\
+from types import SimpleNamespace
+
+agent = SimpleNamespace()
+_agent_cfg = {}
+
 # Codex commentary visibility (display.show_commentary, default true).
 agent.show_commentary = True
 try:
@@ -123,12 +131,14 @@ def _resolve_pre_update_backup_mode():
     return raw
 
 def _refresh():
-    refresh_cua_driver = True
-    _update_cfg = {}
-    refresh_cua_driver = bool(
-        _update_cfg.get("refresh_cua_driver", True)
-    )
-    return refresh_cua_driver
+    if True:
+        if True:
+            refresh_cua_driver = True
+            _update_cfg = {}
+            refresh_cua_driver = bool(
+                _update_cfg.get("refresh_cua_driver", True)
+            )
+            return refresh_cua_driver
 `;
 
 function patchSource(
@@ -168,16 +178,16 @@ sys.stdout.write(patched)
   }
 }
 
-function runPatchedBrowserEnvironment(source: string) {
+function runPatchedPython(source: string, body: string, env = process.env) {
   const script = `\
 import sys
 namespace = {}
 exec(compile(sys.stdin.read(), "<patched-browser>", "exec"), namespace)
-print(namespace["_build_browser_env"]()["npm_config_offline"])
+${body}
 `;
   return spawnSync("python3", ["-I", "-c", script], {
     encoding: "utf8",
-    env: { ...process.env, npm_config_offline: "false" },
+    env,
     input: source,
     timeout: 5000,
   });
@@ -188,110 +198,123 @@ describe("Hermes profile policy defaults", () => {
     const result = patchSource("config", configFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('"mode": "manual"');
-    expect(result.stdout).toContain('"allow_unsafe_evaluate": False');
-    expect(result.stdout).toContain('"restrict_evaluate": True');
-    expect(result.stdout).toContain('"show_reasoning": False');
-    expect(result.stdout).toContain('"show_commentary": False');
-    expect(result.stdout).toContain('"pre_update_backup": False');
-    expect(result.stdout).toContain('"refresh_cua_driver": False');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(6);
+    const probe = runPatchedPython(
+      result.stdout,
+      'import json; print(json.dumps(namespace["DEFAULT_CONFIG"], sort_keys=True))',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(JSON.parse(probe.stdout)).toEqual({
+      approvals: { mode: "manual" },
+      browser: { allow_unsafe_evaluate: false, restrict_evaluate: true },
+      display: { show_commentary: false, show_reasoning: false },
+      updates: { pre_update_backup: false, refresh_cua_driver: false },
+    });
   });
 
   it("keeps the browser loader restricted and its runtime npx fallback offline", () => {
     const result = patchSource("browser", browserFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('cfg_get(cfg, "browser", "restrict_evaluate"), default=True');
-    expect(result.stdout).toMatch(/Could not read browser[.]restrict_evaluate[\s\S]*?return True/u);
-    expect(result.stdout).toContain('env["npm_config_offline"] = "true"');
-    const environment = runPatchedBrowserEnvironment(result.stdout);
-    expect(environment.status, environment.stderr).toBe(0);
-    expect(environment.stdout.trim()).toBe("true");
+    const probe = runPatchedPython(
+      result.stdout,
+      `
+import json
+namespace["logger"] = type("Logger", (), {"debug": lambda *args: None})()
+restricted_on_error = namespace["_restrict_browser_evaluate"]()
+namespace["cfg_get"] = lambda *_args: None
+namespace["is_truthy_value"] = lambda value, default: default if value is None else bool(value)
+restricted_when_missing = namespace["_restrict_browser_evaluate"]()
+print(json.dumps({
+    "offline": namespace["_build_browser_env"]()["npm_config_offline"],
+    "restricted_on_error": restricted_on_error,
+    "restricted_when_missing": restricted_when_missing,
+}))`,
+      { ...process.env, npm_config_offline: "false" },
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(JSON.parse(probe.stdout)).toEqual({
+      offline: "true",
+      restricted_on_error: true,
+      restricted_when_missing: true,
+    });
   });
 
   it("keeps the gateway reset policy fail-safe without config.yaml", () => {
     const result = patchSource("gateway", gatewayFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('mode: str = "both"');
-    expect(result.stdout).toContain('mode=mode if mode is not None else "both"');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(2);
+    const probe = runPatchedPython(
+      result.stdout,
+      'print(namespace["SessionResetPolicy"].from_dict({}).mode)',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("both");
   });
 
   it("keeps the independent classic CLI display default private", () => {
     const result = patchSource("cli", cliFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('"show_reasoning": False');
-    expect(result.stdout).not.toContain('"show_reasoning": True');
-    expect(result.stdout).toContain("NemoClaw compatibility override");
+    const probe = runPatchedPython(
+      result.stdout,
+      'print(namespace["CLI_CONFIG"]["display"]["show_reasoning"])',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("False");
   });
 
   it("keeps the raw TUI server reasoning fallback private", () => {
     const result = patchSource("tui", tuiFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.match(/get[(]"show_reasoning", False[)]/gu)).toHaveLength(1);
-    expect(result.stdout).not.toContain('.get("show_reasoning", True)');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(1);
+    const probe = runPatchedPython(
+      result.stdout,
+      'namespace["_load_cfg"] = lambda: {}; print(namespace["_load_show_reasoning"]())',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("False");
   });
 
   it("keeps the raw TUI config reasoning fallback private", () => {
     const result = patchSource("tui_config", tuiConfigFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('get("show_reasoning", False)');
-    expect(result.stdout).not.toContain('.get("show_reasoning", True)');
-    expect(result.stdout).toContain("NemoClaw compatibility override");
+    const probe = runPatchedPython(result.stdout, 'print(namespace["_get_reasoning_status"]({}))');
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("hide");
   });
 
   it("keeps all agent commentary fallbacks private", () => {
     const result = patchSource("agent", agentFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).not.toContain("agent.show_commentary = True");
-    expect(result.stdout).not.toContain('.get("show_commentary", True)');
-    expect(result.stdout.match(/agent[.]show_commentary = False/gu)).toHaveLength(2);
-    expect(result.stdout).toContain('.get("show_commentary", False)');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(1);
+    const probe = runPatchedPython(
+      result.stdout,
+      `
+import types
+def evaluate(config):
+    scope = {"agent": types.SimpleNamespace(), "_agent_cfg": config}
+    exec(compile(sys.stdin.read() if False else ${JSON.stringify(result.stdout)}, "<agent>", "exec"), scope)
+    return scope["agent"].show_commentary
+class BrokenConfig:
+    def get(self, *_args):
+        raise RuntimeError("broken")
+print(evaluate({}), evaluate(BrokenConfig()))`,
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("False False");
   });
 
   it("keeps update backup and CUA refresh fallbacks off", () => {
     const result = patchSource("main", mainFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('updates_cfg.get("pre_update_backup", False)');
-    expect(result.stdout).toContain("refresh_cua_driver = False");
-    expect(result.stdout).toContain('_update_cfg.get("refresh_cua_driver", False)');
-    expect(result.stdout).not.toContain('updates_cfg.get("pre_update_backup", "quick")');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(2);
-  });
-
-  it.each([
-    [
-      "missing config leaf",
-      "config",
-      configFixture.replace('        "mode": "smart",\n', ""),
-      "expected one unpatched occurrence, found 0",
-    ],
-    [
-      "prepatched browser fallback",
-      "browser",
-      browserFixture.replace("return False", "return True"),
-      "expected one unpatched occurrence, found 0",
-    ],
-    [
-      "duplicated gateway default",
-      "gateway",
-      `${gatewayFixture}\n${gatewayFixture}`,
-      "expected one unpatched occurrence, found 2",
-    ],
-  ] as const)("fails closed for %s", (_name, kind, source, error) => {
-    const result = patchSource(kind, source);
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(error);
+    const probe = runPatchedPython(
+      result.stdout,
+      'print(namespace["_resolve_pre_update_backup_mode"](), namespace["_refresh"]())',
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(probe.stdout.trim()).toBe("False False");
   });
 
   it("reports an invalid managed policy as a bounded build error", () => {

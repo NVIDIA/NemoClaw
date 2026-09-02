@@ -94,6 +94,8 @@ COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/patch-session-list-preview.py
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
+COPY agents/hermes/hindsight-lazy-integrity.patch /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
+COPY agents/hermes/hindsight-client-probe-requirements.txt /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
@@ -430,7 +432,23 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=4bceb3bd7449eaf5af2680b8cfbbdbaaef33c8760e130ed066da58e8dfabce67
+# Hermes 0.20.6 pins the Hindsight version but does not authenticate a
+# same-version wheel selected by its lazy installer. Bind that production
+# boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
+ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
+    | sha256sum -c - \
+    && git -C /opt/hermes apply --check \
+        --include=tools/lazy_deps.py \
+        /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
+    && git -C /opt/hermes apply \
+        --include=tools/lazy_deps.py \
+        /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
+    && rm /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
+
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=9d617ac7cd4e977cfb91ce5dcf0a82c7f6a3c1078a86bcea41cf20329613cf93
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -707,9 +725,10 @@ RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
 # Hermes v0.20.6's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
 # the OpenShell public and secret placeholders when each placeholder is bound
-# to its matching standard Langfuse key. raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
-# fails closed when the pinned upstream source shape changes.
-ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=67c1de0303bb4676c8c5a98b30368dc9a704664549d1b21b2ff8bced89ae259e
+# to its matching standard Langfuse key. Raw keys keep Hermes' upstream
+# pk-lf-/sk-lf- validation, and every authenticated client requires an absolute
+# HTTPS base URL. The patcher fails closed when the pinned source shape changes.
+ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=f4a55e70cb39bee31ce95f5da1b0fec1ce5d7d5a7c47fa7506e216b7e98b494d
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
@@ -1236,8 +1255,9 @@ RUN set -eu; \
 # bundled ensurepip payload while this layer is still root, then verify the
 # sandbox can read but cannot modify the virtual environment used by the lazy
 # installer. Dockerfile.base separately installs and imports the official
-# Hindsight client. This layer uses a build-only wheel with the same package
-# identity to isolate the lazy-installer and durable-target contract from PyPI.
+# Hindsight client. First present a changed wheel with the same package
+# identity and require the production lazy installer to reject it. Then use
+# that same boundary to install the reviewed artifacts into durable state.
 # The nested write-denial shell returns success after every prohibited mutation
 # fails. Create the wheel before resetting the target so the sandbox installer
 # is the next Python process to use it.
@@ -1294,7 +1314,7 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
-    && HOME=/sandbox \
+    && if HOME=/sandbox \
         PIP_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
         PIP_NO_INDEX=1 \
         UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
@@ -1305,19 +1325,32 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
         HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" \
+        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)"; then \
+        echo "ERROR: Hermes accepted a Hindsight wheel that did not match the reviewed hash" >&2; exit 1; \
+    fi \
+    && test ! -e /sandbox/.hermes/lazy-packages/hindsight_client \
     && rm -rf /tmp/nemoclaw-hindsight-probe \
+    && rm -rf /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && HOME=/sandbox \
+        UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
+        UV_NO_CACHE=1 \
+        HERMES_HOME=/sandbox/.hermes \
+        HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" \
     && HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client, importlib.metadata as m; from pathlib import Path; target = Path('/sandbox/.hermes/lazy-packages').resolve(); assert m.version('hindsight-client') == '0.6.1'; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(target)" \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client, importlib.metadata as m; from pathlib import Path; target = Path('/sandbox/.hermes/lazy-packages').resolve(); assert m.version('hindsight-client') == '0.6.1'; assert m.version('aiohttp-retry') == '2.9.1'; assert Path(hindsight_client.__file__).resolve().is_relative_to(target)" \
     && lazy_plan='{"version":1,"readOnlyRoots":["lazy-packages"],"confidentialRoots":[],"readOnlyPrefixes":[],"confidentialPrefixes":[],"writableSubpaths":[]}' \
     && /usr/local/lib/nemoclaw/state-dir-guard.py lock \
         --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
     && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client; from pathlib import Path; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(Path('/sandbox/.hermes/lazy-packages').resolve())" \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client; from pathlib import Path; assert Path(hindsight_client.__file__).resolve().is_relative_to(Path('/sandbox/.hermes/lazy-packages').resolve())" \
     && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe' 2>/dev/null; then \
         echo "ERROR: gateway can modify locked Hermes lazy packages" >&2; exit 1; \
@@ -1472,6 +1505,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
+    && check_absent /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
     && check_absent /opt/nemoclaw-hermes-config/managed_policy.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
@@ -1489,6 +1523,7 @@ RUN check_metadata() { \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
+    && check_metadata /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/managed_policy.py 'root:root 444' \

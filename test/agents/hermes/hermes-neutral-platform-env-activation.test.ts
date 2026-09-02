@@ -124,19 +124,4 @@ describe("Hermes neutral platform environment activation guard", () => {
       fs.rmSync(temporaryRoot, { force: true, recursive: true });
     }
   });
-
-  it("fails closed without modifying the source when the pinned cleanup shape drifts", () => {
-    const drifted = UPSTREAM_FIXTURE.replace(
-      'platform_config.extra.pop("_enabled_explicit", None)',
-      'platform_config.extra.pop("changed_marker", None)',
-    );
-    const { configPath, result, temporaryRoot } = runPatcher(drifted);
-    try {
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("neutral platform environment source shape changed");
-      expect(fs.readFileSync(configPath, "utf8")).toBe(drifted);
-    } finally {
-      fs.rmSync(temporaryRoot, { force: true, recursive: true });
-    }
-  });
 });

@@ -125,6 +125,46 @@ Use these details when your first-run path needs more control.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling those services.
   </Accordion>
 
+  <Accordion title="Add Langfuse observability">
+    Register Langfuse keys with OpenShell instead of writing them into the sandbox.
+    The checked-in `langfuse-hermes-v1` profile binds both keys to Langfuse Cloud and the managed Hermes Python runtime.
+
+    ```bash
+    export LANGFUSE_PUBLIC_KEY=pk-lf-...
+    export LANGFUSE_SECRET_KEY=sk-lf-...
+
+    nemohermes credentials add my-hermes-langfuse \
+      --type langfuse-hermes-v1 \
+      --credential LANGFUSE_PUBLIC_KEY \
+      --credential LANGFUSE_SECRET_KEY
+
+    unset LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+    nemohermes my-hermes rebuild
+    ```
+
+    Connect to the rebuilt sandbox and enable the bundled plugin, then restart the managed Hermes gateway from the host.
+
+    ```bash
+    nemohermes my-hermes connect
+    hermes plugins enable observability/langfuse
+    exit
+    nemohermes my-hermes gateway restart
+    ```
+
+    Hermes receives revision-scoped `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
+    OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
+    The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
+    Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
+    A copied revision can shadow the current provider value after rotation or rebuild.
+
+    For a self-hosted Langfuse deployment, copy `nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml` to a new profile, change its `id` and exact `endpoints[0].host`, and import that reviewed profile before running `credentials add` with the new type.
+    When `HERMES_LANGFUSE_BASE_URL` uses a non-default HTTPS port, change `endpoints[0].port` to that exact port too.
+    Keep the profile limited to the HTTPS ingestion origin and `/api/public/**` paths.
+    Store only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
+    Do not use the cloud profile for a self-hosted host because OpenShell will correctly refuse to resolve its credentials there.
+    Use the same exact-host profile process when a hosted Langfuse project uses an origin other than `cloud.langfuse.com`.
+  </Accordion>
+
   <Accordion title="Automate or repeat onboarding">
     The hosted installer follows the maintained last-known-good (`lkg`) release tag by default.
     For a scripted installation, provide the required values before running the installer.

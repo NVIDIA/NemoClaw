@@ -38,6 +38,8 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/generate-config.ts",
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/hindsight-client-probe-requirements.txt",
+  "agents/hermes/hindsight-lazy-integrity.patch",
   "agents/hermes/host/managed-tool-gateway-matrix.json",
   "agents/hermes/image-build-probes.py",
   // Dockerfile copies the policy into build-time and runtime locations.

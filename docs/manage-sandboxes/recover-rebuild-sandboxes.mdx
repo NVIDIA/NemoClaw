@@ -295,7 +295,10 @@ After the rebuild succeeds, retrieve the replacement token before reconnecting A
 
 <Warning>
 The command prints the replacement Hermes API bearer token to standard output.
-The token grants access to this sandbox's Hermes API until another rebuild replaces it or you delete the sandbox.
+The token remains valid while the sandbox exists and its `API_SERVER_KEY` stays unchanged and valid.
+A rebuild replaces the token.
+Gateway startup also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters.
+If API authentication fails after a gateway restart, retrieve the current token again with `nemohermes <sandbox-name> gateway-token --quiet`.
 Do not log, share, or commit the token.
 </Warning>
 

@@ -16,8 +16,19 @@ const patcherPath = fileURLToPath(
 );
 
 const pinnedValidatorFixture = `\
+import os
 import re
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
+
+Langfuse = Any
+_LANGFUSE_CLIENT = None
+_INIT_FAILED = object()
+
+class _Logger:
+    def warning(self, *_args: Any) -> None:
+        pass
+
+logger = _Logger()
 
 _LANGFUSE_KEY_PREFIXES: Dict[str, str] = {
     "HERMES_LANGFUSE_PUBLIC_KEY": "pk-lf-",
@@ -26,6 +37,9 @@ _LANGFUSE_KEY_PREFIXES: Dict[str, str] = {
 
 def _redact_key_preview(value: str) -> str:
     return repr(value[:6] + "...")
+
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
 
 def _validate_langfuse_key(env_name: str, value: str) -> Optional[str]:
     expected = _LANGFUSE_KEY_PREFIXES.get(env_name, "")
@@ -37,6 +51,13 @@ def _validate_langfuse_key(env_name: str, value: str) -> Optional[str]:
         f"{env_name}={_redact_key_preview(value)} "
         f"(expected {expected!r} prefix)"
     )
+
+
+def _get_langfuse() -> Optional[Langfuse]:
+    global _LANGFUSE_CLIENT
+    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+    return None
 `;
 
 const validatorAssertions = `\
@@ -49,6 +70,17 @@ assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:e
 assert _validate_langfuse_key("HERMES_LANGFUSE_SECRET_KEY", "openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "openshell:resolve:env:v123456789012345678901_LANGFUSE_PUBLIC_KEY") is not None
 assert _validate_langfuse_key("HERMES_LANGFUSE_PUBLIC_KEY", "prefix-openshell:resolve:env:LANGFUSE_PUBLIC_KEY") is not None
+assert _validate_langfuse_base_url("https://cloud.langfuse.com") is None
+assert _validate_langfuse_base_url("https://langfuse.example.test:8443/base") is None
+assert _validate_langfuse_base_url("http://cloud.langfuse.com") is not None
+assert _validate_langfuse_base_url("https://user:pass@cloud.langfuse.com") is not None
+assert _validate_langfuse_base_url("https://cloud.langfuse.com?project=other") is not None
+assert _validate_langfuse_base_url("https://cloud.langfuse.com#fragment") is not None
+assert _validate_langfuse_base_url("https://cloud.langfuse.com:invalid") is not None
+os.environ["HERMES_LANGFUSE_BASE_URL"] = "http://cloud.langfuse.com"
+assert _get_langfuse() is None
+assert _LANGFUSE_CLIENT is _INIT_FAILED
+del os.environ["HERMES_LANGFUSE_BASE_URL"]
 `;
 
 function runPython(source: string, assertions: string) {
@@ -73,7 +105,7 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
     expect(() =>
       patchLangfuseCredentials(
         `${pinnedValidatorFixture}\n${pinnedValidatorFixture.replace(
-          "from typing import Dict, Optional\n",
+          "from typing import Any, Dict, Optional\n",
           "",
         )}`,
       ),
