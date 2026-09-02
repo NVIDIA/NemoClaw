@@ -18,16 +18,14 @@ import {
 } from "./exact-artifact-download.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
-const CANDIDATE_WORKFLOW_FILE = "managed-images.yaml";
-const CANDIDATE_WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
-const CANDIDATE_WORKFLOW_PATH = `.github/workflows/${CANDIDATE_WORKFLOW_FILE}`;
-const BASE_WORKFLOW_PATH = ".github/workflows/managed-runtime-base-qualification.yaml";
-const CANDIDATE_JOB = "PR exact all-agent managed runtime activation";
+const WORKFLOW_FILE = "managed-runtime-base-qualification.yaml";
+const WORKFLOW_NAME = "E2E / Exact Base Managed Runtime";
+const WORKFLOW_PATH = `.github/workflows/${WORKFLOW_FILE}`;
+const CANDIDATE_JOB = "Candidate all-agent managed runtime activation";
 const BASE_JOB = "Exact base all-agent managed runtime activation";
 const SCENARIO_ID = "managed-runtime-activation-v1";
 const TEST_PATH = "test/e2e/live/managed-image-activation-e2e.test.ts";
 const RECEIPT_KIND = "nemoclaw-managed-runtime-activation-v1";
-const SELECTION_KIND = "nemoclaw-managed-runtime-candidate-selection-v1";
 const COMPARISON_KIND = "nemoclaw-managed-runtime-comparison-v1";
 const RECEIPT_FILE = "receipt.json";
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -51,6 +49,20 @@ interface ArtifactIdentity {
   readonly name: string;
   readonly digest: string;
   readonly size: number;
+}
+
+type EvidenceFailureClass =
+  | "artifact-metadata"
+  | "artifact-missing"
+  | "evidence-download"
+  | "evidence-verification"
+  | "job-selection"
+  | "receipt-download"
+  | "receipt-parse";
+
+export interface ManagedRuntimeEvidenceFailure {
+  readonly class: EvidenceFailureClass;
+  readonly message: string;
 }
 
 export interface ManagedRuntimeReceipt {
@@ -98,12 +110,7 @@ export interface ManagedRuntimeReceipt {
   readonly outcome: StepOutcome;
 }
 
-export interface ManagedRuntimeCandidateSelection {
-  readonly kind: typeof SELECTION_KIND;
-  readonly pullRequest: number;
-  readonly candidateSha: string;
-  readonly baseSha: string;
-  readonly workflow: { readonly id: number; readonly path: typeof CANDIDATE_WORKFLOW_PATH };
+export interface ManagedRuntimeRunEvidence {
   readonly run: { readonly id: number; readonly attempt: number };
   readonly job: { readonly id: number; readonly conclusion: StepOutcome };
   readonly receipt: ManagedRuntimeReceipt | null;
@@ -111,6 +118,7 @@ export interface ManagedRuntimeCandidateSelection {
     readonly receipt: ArtifactIdentity | null;
     readonly evidence: ArtifactIdentity | null;
   };
+  readonly failure: ManagedRuntimeEvidenceFailure | null;
 }
 
 export interface ManagedRuntimeComparison {
@@ -123,6 +131,7 @@ export interface ManagedRuntimeComparison {
     readonly jobConclusion: StepOutcome;
     readonly receiptArtifact: ArtifactIdentity | null;
     readonly evidenceArtifact: ArtifactIdentity | null;
+    readonly evidenceFailure: ManagedRuntimeEvidenceFailure | null;
   };
   readonly base: {
     readonly runId: number;
@@ -130,6 +139,7 @@ export interface ManagedRuntimeComparison {
     readonly jobConclusion: StepOutcome;
     readonly receiptArtifact: ArtifactIdentity | null;
     readonly evidenceArtifact: ArtifactIdentity | null;
+    readonly evidenceFailure: ManagedRuntimeEvidenceFailure | null;
   };
   readonly scenario: {
     readonly id: typeof SCENARIO_ID;
@@ -192,25 +202,6 @@ function stepOutcome(value: unknown, label: string): StepOutcome {
 
 function artifactIdentity(value: BoundArtifactIdentity): ArtifactIdentity {
   return { id: value.id, name: value.name, digest: value.digest, size: value.size };
-}
-
-function parseArtifactIdentity(value: unknown, label: string): ArtifactIdentity | null {
-  if (value === null) return null;
-  const artifact = record(value, label);
-  exactKeys(artifact, ["digest", "id", "name", "size"], label);
-  if (
-    typeof artifact.name !== "string" ||
-    artifact.name.length > 255 ||
-    !/^[A-Za-z0-9._-]+$/u.test(artifact.name)
-  ) {
-    throw new Error(`${label} name is invalid`);
-  }
-  return {
-    id: positiveInteger(artifact.id, `${label} id`),
-    name: artifact.name,
-    digest: digest(artifact.digest, `${label} digest`),
-    size: positiveInteger(artifact.size, `${label} size`),
-  };
 }
 
 function hash(bytes: Buffer | string): string {
@@ -326,7 +317,7 @@ export function createManagedRuntimeReceipt(input: {
     input.role === "candidate" ? candidateSha : baseSha,
     "managed runtime source SHA",
   );
-  const expectedPath = input.role === "candidate" ? CANDIDATE_WORKFLOW_PATH : BASE_WORKFLOW_PATH;
+  const expectedPath = WORKFLOW_PATH;
   const expectedJob = input.role === "candidate" ? CANDIDATE_JOB : BASE_JOB;
   exactString(input.workflowPath, expectedPath, "managed runtime workflow path");
   exactString(input.job, expectedJob, "managed runtime job");
@@ -369,6 +360,7 @@ export function parseManagedRuntimeReceipt(
     readonly role: Role;
     readonly runAttempt: number;
     readonly runId: number;
+    readonly workflowSha: string;
   },
 ): ManagedRuntimeReceipt {
   const receipt = record(value, "managed runtime receipt");
@@ -412,17 +404,17 @@ export function parseManagedRuntimeReceipt(
     "managed runtime workflow",
   );
   exactString(workflow.repository, REPOSITORY, "managed runtime workflow repository");
-  exactString(
-    workflow.path,
-    expected.role === "candidate" ? CANDIDATE_WORKFLOW_PATH : BASE_WORKFLOW_PATH,
-    "managed runtime workflow path",
-  );
+  exactString(workflow.path, WORKFLOW_PATH, "managed runtime workflow path");
   exactString(
     workflow.job,
     expected.role === "candidate" ? CANDIDATE_JOB : BASE_JOB,
     "managed runtime workflow job",
   );
-  sha(workflow.sha, "managed runtime workflow SHA");
+  exactString(
+    workflow.sha,
+    sha(expected.workflowSha, "expected managed runtime workflow SHA"),
+    "managed runtime workflow SHA",
+  );
   if (workflow.runId !== expected.runId || workflow.runAttempt !== expected.runAttempt) {
     throw new Error("managed runtime receipt does not match the workflow attempt");
   }
@@ -527,12 +519,12 @@ export function parseManagedRuntimeReceipt(
   return receipt as unknown as ManagedRuntimeReceipt;
 }
 
-function validateCandidateWorkflow(value: unknown): number {
-  const workflow = record(value, "managed runtime candidate workflow");
-  exactString(workflow.name, CANDIDATE_WORKFLOW_NAME, "managed runtime candidate workflow name");
-  exactString(workflow.path, CANDIDATE_WORKFLOW_PATH, "managed runtime candidate workflow path");
-  exactString(workflow.state, "active", "managed runtime candidate workflow state");
-  return positiveInteger(workflow.id, "managed runtime candidate workflow id");
+function validateWorkflow(value: unknown): number {
+  const workflow = record(value, "managed runtime qualification workflow");
+  exactString(workflow.name, WORKFLOW_NAME, "managed runtime qualification workflow name");
+  exactString(workflow.path, WORKFLOW_PATH, "managed runtime qualification workflow path");
+  exactString(workflow.state, "active", "managed runtime qualification workflow state");
+  return positiveInteger(workflow.id, "managed runtime qualification workflow id");
 }
 
 function bindOptionalArtifact(
@@ -597,160 +589,18 @@ function verifyEvidenceArchive(archive: Buffer, receipt: ManagedRuntimeReceipt):
   }
 }
 
-export async function selectManagedRuntimeCandidate(
-  input: {
-    readonly baseSha: string;
-    readonly candidateSha: string;
-    readonly pullRequest: number;
-    readonly runAttempt: number;
-    readonly runId: number;
-    readonly token: string;
-  },
-  options: {
-    readonly request?: (apiPath: string) => Promise<unknown>;
-    readonly downloadArtifact?: (identity: BoundArtifactIdentity) => Promise<Buffer>;
-  } = {},
-): Promise<ManagedRuntimeCandidateSelection> {
-  const baseSha = sha(input.baseSha, "base SHA");
-  const candidateSha = sha(input.candidateSha, "candidate SHA");
-  const pullRequest = positiveInteger(input.pullRequest, "pull request number");
-  const runId = positiveInteger(input.runId, "candidate run id");
-  const runAttempt = positiveInteger(input.runAttempt, "candidate run attempt");
-  if (!input.token) throw new Error("GITHUB_TOKEN is required");
-  const request = options.request ?? ((apiPath: string) => githubRequest(apiPath, input.token));
-  const download =
-    options.downloadArtifact ??
-    ((identity: BoundArtifactIdentity) => downloadBoundArtifact(identity, input.token));
-  const pull = record(await request(`/repos/${REPOSITORY}/pulls/${pullRequest}`), "pull request");
-  exactString(pull.state, "open", "pull request state");
-  exactString(
-    record(pull.head, "pull request source").sha,
-    candidateSha,
-    "pull request source SHA",
-  );
-  exactString(record(pull.base, "pull request base").sha, baseSha, "pull request base SHA");
-  const workflowId = validateCandidateWorkflow(
-    await request(`/repos/${REPOSITORY}/actions/workflows/${CANDIDATE_WORKFLOW_FILE}`),
-  );
-  const run = record(
-    await request(`/repos/${REPOSITORY}/actions/runs/${runId}`),
-    "candidate workflow run",
-  );
-  if (run.workflow_id !== workflowId || run.run_attempt !== runAttempt) {
-    throw new Error("candidate workflow run does not match the requested workflow attempt");
-  }
-  exactString(run.path, CANDIDATE_WORKFLOW_PATH, "candidate workflow run path");
-  exactString(run.event, "pull_request", "candidate workflow run event");
-  exactString(run.head_sha, candidateSha, "candidate workflow run commit");
-  exactString(run.status, "completed", "candidate workflow run status");
-  exactString(
-    record(run.repository, "candidate workflow repository").full_name,
-    REPOSITORY,
-    "candidate workflow repository",
-  );
-  exactString(
-    record(run.head_repository, "candidate workflow source repository").full_name,
-    REPOSITORY,
-    "candidate workflow source repository",
-  );
-  if (
-    !Array.isArray(run.pull_requests) ||
-    run.pull_requests.length !== 1 ||
-    record(run.pull_requests[0], "candidate workflow pull request").number !== pullRequest
-  ) {
-    throw new Error("candidate workflow run does not match the pull request");
-  }
-  exactString(
-    record(
-      record(run.pull_requests[0], "candidate workflow pull request").head,
-      "candidate workflow pull request source",
-    ).sha,
-    candidateSha,
-    "candidate workflow pull request source SHA",
-  );
-  const jobs = record(
-    await collectPaginated(
-      request,
-      `/repos/${REPOSITORY}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100`,
-      "jobs",
-    ),
-    "candidate workflow jobs",
-  );
-  if (!Array.isArray(jobs.jobs)) throw new Error("candidate workflow job listing is invalid");
-  const matches = jobs.jobs
-    .map((value) => record(value, "candidate workflow job"))
-    .filter((job) => job.name === CANDIDATE_JOB);
-  if (matches.length !== 1)
-    throw new Error("candidate managed runtime job is missing or ambiguous");
-  const job = matches[0]!;
-  exactString(job.status, "completed", "candidate managed runtime job status");
-  const conclusion = stepOutcome(job.conclusion, "candidate managed runtime job conclusion");
-  const jobId = positiveInteger(job.id, "candidate managed runtime job id");
-  const receiptName = `managed-runtime-activation-receipt-${runId}-${runAttempt}`;
-  const evidenceName = `managed-image-activation-${runId}-${runAttempt}`;
-  const [receiptMetadata, evidenceMetadata] = await Promise.all([
-    request(
-      `/repos/${REPOSITORY}/actions/runs/${runId}/artifacts?name=${encodeURIComponent(receiptName)}&per_page=100`,
-    ),
-    request(
-      `/repos/${REPOSITORY}/actions/runs/${runId}/artifacts?name=${encodeURIComponent(evidenceName)}&per_page=100`,
-    ),
-  ]);
-  const receiptIdentity = bindOptionalArtifact(receiptMetadata, {
-    headSha: candidateSha,
-    name: receiptName,
-    runAttempt,
-    runId,
-  });
-  const evidenceIdentity = bindOptionalArtifact(evidenceMetadata, {
-    headSha: candidateSha,
-    maxArchiveBytes: 128 * 1024 * 1024,
-    name: evidenceName,
-    runAttempt,
-    runId,
-  });
-  const receipt = receiptIdentity
-    ? receiptFromArchive(await download(receiptIdentity), {
-        baseSha,
-        candidateSha,
-        role: "candidate",
-        runAttempt,
-        runId,
-      })
-    : null;
-  if (receipt && evidenceIdentity) {
-    verifyEvidenceArchive(await download(evidenceIdentity), receipt);
-  }
-  return {
-    kind: SELECTION_KIND,
-    pullRequest,
-    candidateSha,
-    baseSha,
-    workflow: { id: workflowId, path: CANDIDATE_WORKFLOW_PATH },
-    run: { id: runId, attempt: runAttempt },
-    job: { id: jobId, conclusion },
-    receipt,
-    artifacts: {
-      receipt: receiptIdentity ? artifactIdentity(receiptIdentity) : null,
-      evidence: evidenceIdentity ? artifactIdentity(evidenceIdentity) : null,
-    },
-  };
-}
-
 function matchingOutcome(job: StepOutcome, receipt: ManagedRuntimeReceipt): boolean {
   return job === receipt.outcome || (job === "failure" && receipt.outcome === "failure");
 }
 
 export function classifyManagedRuntimeComparison(input: {
-  readonly baseArtifact: ArtifactIdentity | null;
-  readonly baseEvidenceArtifact: ArtifactIdentity | null;
-  readonly baseJobConclusion: StepOutcome;
-  readonly baseReceipt: ManagedRuntimeReceipt | null;
-  readonly baseRunAttempt: number;
-  readonly baseRunId: number;
-  readonly candidate: ManagedRuntimeCandidateSelection;
+  readonly base: ManagedRuntimeRunEvidence;
+  readonly baseSha: string;
+  readonly candidate: ManagedRuntimeRunEvidence;
+  readonly candidateSha: string;
 }): ManagedRuntimeComparison {
   const candidate = input.candidate;
+  const base = input.base;
   const common = {
     kind: COMPARISON_KIND,
     candidate: {
@@ -759,15 +609,21 @@ export function classifyManagedRuntimeComparison(input: {
       jobConclusion: candidate.job.conclusion,
       receiptArtifact: candidate.artifacts.receipt,
       evidenceArtifact: candidate.artifacts.evidence,
+      evidenceFailure: candidate.failure,
     },
     base: {
-      runId: input.baseRunId,
-      runAttempt: input.baseRunAttempt,
-      jobConclusion: input.baseJobConclusion,
-      receiptArtifact: input.baseArtifact,
-      evidenceArtifact: input.baseEvidenceArtifact,
+      runId: base.run.id,
+      runAttempt: base.run.attempt,
+      jobConclusion: base.job.conclusion,
+      receiptArtifact: base.artifacts.receipt,
+      evidenceArtifact: base.artifacts.evidence,
+      evidenceFailure: base.failure,
     },
-    scenario: { id: SCENARIO_ID, candidateSha: candidate.candidateSha, baseSha: candidate.baseSha },
+    scenario: {
+      id: SCENARIO_ID,
+      candidateSha: sha(input.candidateSha, "comparison candidate SHA"),
+      baseSha: sha(input.baseSha, "comparison base SHA"),
+    },
   } as const;
   const infrastructure = (reason: string): ManagedRuntimeComparison => ({
     ...common,
@@ -777,32 +633,40 @@ export function classifyManagedRuntimeComparison(input: {
   if (candidate.job.conclusion === "cancelled" || candidate.job.conclusion === "skipped") {
     return infrastructure("coordination cancellation did not produce a product verdict");
   }
+  if (candidate.failure) {
+    return infrastructure(
+      `candidate evidence failure [${candidate.failure.class}]: ${candidate.failure.message}`,
+    );
+  }
   if (!candidate.receipt || !candidate.artifacts.receipt || !candidate.artifacts.evidence) {
     return infrastructure("candidate evidence is missing or incomplete");
   }
-  if (input.baseJobConclusion === "cancelled" || input.baseJobConclusion === "skipped") {
+  if (base.job.conclusion === "cancelled" || base.job.conclusion === "skipped") {
     return infrastructure("coordination cancellation did not produce a product verdict");
   }
-  if (!input.baseReceipt || !input.baseArtifact || !input.baseEvidenceArtifact) {
+  if (base.failure) {
+    return infrastructure(`base evidence failure [${base.failure.class}]: ${base.failure.message}`);
+  }
+  if (!base.receipt || !base.artifacts.receipt || !base.artifacts.evidence) {
     return infrastructure("base evidence is missing or incomplete");
   }
   if (
     !matchingOutcome(candidate.job.conclusion, candidate.receipt) ||
-    !matchingOutcome(input.baseJobConclusion, input.baseReceipt)
+    !matchingOutcome(base.job.conclusion, base.receipt)
   ) {
     return infrastructure("workflow conclusions do not match the authenticated scenario receipts");
   }
   if (
-    JSON.stringify(candidate.receipt.scenario) !== JSON.stringify(input.baseReceipt.scenario) ||
-    candidate.receipt.candidateSha !== input.baseReceipt.candidateSha ||
-    candidate.receipt.baseSha !== input.baseReceipt.baseSha
+    JSON.stringify(candidate.receipt.scenario) !== JSON.stringify(base.receipt.scenario) ||
+    candidate.receipt.candidateSha !== base.receipt.candidateSha ||
+    candidate.receipt.baseSha !== base.receipt.baseSha
   ) {
     return infrastructure("candidate and base evidence use different scenario identities");
   }
-  if (!candidate.receipt.evidence.cleanup.proven || !input.baseReceipt.evidence.cleanup.proven) {
+  if (!candidate.receipt.evidence.cleanup.proven || !base.receipt.evidence.cleanup.proven) {
     return infrastructure("candidate or base cleanup is not proven");
   }
-  if (input.baseJobConclusion === "failure") {
+  if (base.job.conclusion === "failure") {
     return {
       ...common,
       classification: "base-failure",
@@ -816,173 +680,301 @@ export function classifyManagedRuntimeComparison(input: {
       reason: "the candidate failed after the identical exact-base scenario passed",
     };
   }
-  if (candidate.job.conclusion !== "success" || input.baseJobConclusion !== "success") {
+  if (candidate.job.conclusion !== "success" || base.job.conclusion !== "success") {
     return infrastructure("scenario outcomes are not classifiable");
   }
   return { ...common, classification: "pass", reason: "candidate and exact-base scenarios passed" };
 }
 
-function readCandidateSelection(target: string): ManagedRuntimeCandidateSelection {
-  const selection = record(
-    JSON.parse(fs.readFileSync(target, "utf8")) as unknown,
-    "managed runtime candidate selection",
-  );
-  exactString(selection.kind, SELECTION_KIND, "managed runtime candidate selection kind");
-  exactKeys(
-    selection,
-    [
-      "artifacts",
-      "baseSha",
-      "candidateSha",
-      "job",
-      "kind",
-      "pullRequest",
-      "receipt",
-      "run",
-      "workflow",
-    ],
-    "managed runtime candidate selection",
-  );
-  const run = record(selection.run, "managed runtime candidate selection run");
-  exactKeys(run, ["attempt", "id"], "managed runtime candidate selection run");
-  const job = record(selection.job, "managed runtime candidate selection job");
-  exactKeys(job, ["conclusion", "id"], "managed runtime candidate selection job");
-  const artifacts = record(selection.artifacts, "managed runtime candidate selection artifacts");
-  exactKeys(artifacts, ["evidence", "receipt"], "managed runtime candidate selection artifacts");
-  const workflow = record(selection.workflow, "managed runtime candidate selection workflow");
-  exactKeys(workflow, ["id", "path"], "managed runtime candidate selection workflow");
-  exactString(
-    workflow.path,
-    CANDIDATE_WORKFLOW_PATH,
-    "managed runtime candidate selection workflow path",
-  );
-  const candidateSha = sha(selection.candidateSha, "managed runtime selection candidate SHA");
-  const baseSha = sha(selection.baseSha, "managed runtime selection base SHA");
-  const runId = positiveInteger(run.id, "managed runtime selection run id");
-  const runAttempt = positiveInteger(run.attempt, "managed runtime selection run attempt");
-  const receipt = selection.receipt
-    ? parseManagedRuntimeReceipt(selection.receipt, {
-        baseSha,
-        candidateSha,
-        role: "candidate",
-        runAttempt,
-        runId,
-      })
-    : null;
-  const receiptArtifact = parseArtifactIdentity(
-    artifacts.receipt,
-    "managed runtime candidate receipt artifact",
-  );
-  const evidenceArtifact = parseArtifactIdentity(
-    artifacts.evidence,
-    "managed runtime candidate evidence artifact",
-  );
-  if (
-    receiptArtifact &&
-    receiptArtifact.name !== `managed-runtime-activation-receipt-${runId}-${runAttempt}`
-  ) {
-    throw new Error("managed runtime candidate receipt artifact name is invalid");
-  }
-  if (
-    evidenceArtifact &&
-    evidenceArtifact.name !== `managed-image-activation-${runId}-${runAttempt}`
-  ) {
-    throw new Error("managed runtime candidate evidence artifact name is invalid");
-  }
+function sanitizeEvidenceFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const sanitized = message
+    .replace(/(authorization\s*:)[^\r\n]*/giu, "$1 [REDACTED]")
+    .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu, "[REDACTED]")
+    .replace(/\b(?:gh[opusr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED]")
+    .replace(/(https?:\/\/)[^/@\s]+@/giu, "$1[REDACTED]@")
+    .replace(/\/(?:home|Users)\/[^/\s]+/gu, "/[HOME]")
+    .replace(/[\r\n\t]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  return (sanitized || "operation failed without diagnostics").slice(0, 500);
+}
+
+function evidenceFailure(
+  failureClass: EvidenceFailureClass,
+  error: unknown,
+): ManagedRuntimeEvidenceFailure {
+  return { class: failureClass, message: sanitizeEvidenceFailure(error) };
+}
+
+function artifactNames(role: Role, runId: number, runAttempt: number) {
+  const prefix = role === "candidate" ? "managed-runtime-candidate" : "managed-runtime-base";
   return {
-    kind: SELECTION_KIND,
-    pullRequest: positiveInteger(selection.pullRequest, "managed runtime selection pull request"),
-    candidateSha,
-    baseSha,
-    workflow: {
-      id: positiveInteger(workflow.id, "managed runtime candidate selection workflow id"),
-      path: CANDIDATE_WORKFLOW_PATH,
-    },
-    run: { id: runId, attempt: runAttempt },
-    job: {
-      id: positiveInteger(job.id, "managed runtime selection job id"),
-      conclusion: stepOutcome(job.conclusion, "managed runtime selection job conclusion"),
-    },
-    receipt,
-    artifacts: {
-      receipt: receiptArtifact,
-      evidence: evidenceArtifact,
-    },
+    receipt: `${prefix}-receipt-${runId}-${runAttempt}`,
+    evidence: `${prefix}-evidence-${runId}-${runAttempt}`,
   };
 }
 
-async function readBaseArtifact(
-  name: string,
-  maxArchiveBytes: number | undefined,
-  input: {
-    readonly headSha: string;
-    readonly runAttempt: number;
-    readonly runId: number;
-    readonly token: string;
-  },
-  request: (apiPath: string) => Promise<unknown>,
-): Promise<BoundArtifactIdentity | null> {
-  return bindOptionalArtifact(
-    await request(
-      `/repos/${REPOSITORY}/actions/runs/${input.runId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
-    ),
-    {
-      headSha: input.headSha,
-      name,
-      runAttempt: input.runAttempt,
-      runId: input.runId,
-      ...(maxArchiveBytes === undefined ? {} : { maxArchiveBytes }),
-    },
-  );
+function selectCurrentJob(
+  jobs: readonly unknown[],
+  role: Role,
+  expectedConclusion: StepOutcome,
+): { id: number; conclusion: StepOutcome } | ManagedRuntimeEvidenceFailure {
+  const expectedName = role === "candidate" ? CANDIDATE_JOB : BASE_JOB;
+  const matches = jobs
+    .map((value) => record(value, "managed runtime qualification job"))
+    .filter((job) => job.name === expectedName);
+  if (matches.length !== 1) {
+    return evidenceFailure(
+      "job-selection",
+      new Error(`${role} managed runtime job is missing or ambiguous`),
+    );
+  }
+  const job = matches[0]!;
+  try {
+    exactString(job.status, "completed", `${role} managed runtime job status`);
+    const conclusion = stepOutcome(job.conclusion, `${role} managed runtime job conclusion`);
+    exactString(conclusion, expectedConclusion, `${role} managed runtime job conclusion`);
+    return { id: positiveInteger(job.id, `${role} managed runtime job id`), conclusion };
+  } catch (error) {
+    return evidenceFailure("job-selection", error);
+  }
 }
 
-async function classifyCurrentRun(
-  candidate: ManagedRuntimeCandidateSelection,
+async function readCurrentRunEvidence(
+  role: Role,
+  input: {
+    readonly baseSha: string;
+    readonly candidateSha: string;
+    readonly expectedConclusion: StepOutcome;
+    readonly headSha: string;
+    readonly jobs: readonly unknown[];
+    readonly runAttempt: number;
+    readonly runId: number;
+    readonly workflowSha: string;
+  },
+  request: (apiPath: string) => Promise<unknown>,
+  download: (identity: BoundArtifactIdentity) => Promise<Buffer>,
+): Promise<ManagedRuntimeRunEvidence> {
+  const selectedJob = selectCurrentJob(input.jobs, role, input.expectedConclusion);
+  const run = { id: input.runId, attempt: input.runAttempt };
+  if ("class" in selectedJob) {
+    return {
+      run,
+      job: { id: 0, conclusion: input.expectedConclusion },
+      receipt: null,
+      artifacts: { receipt: null, evidence: null },
+      failure: selectedJob,
+    };
+  }
+  const names = artifactNames(role, input.runId, input.runAttempt);
+  let receiptIdentity: BoundArtifactIdentity | null = null;
+  let evidenceIdentity: BoundArtifactIdentity | null = null;
+  try {
+    const [receiptMetadata, evidenceMetadata] = await Promise.all([
+      request(
+        `/repos/${REPOSITORY}/actions/runs/${input.runId}/artifacts?name=${encodeURIComponent(names.receipt)}&per_page=100`,
+      ),
+      request(
+        `/repos/${REPOSITORY}/actions/runs/${input.runId}/artifacts?name=${encodeURIComponent(names.evidence)}&per_page=100`,
+      ),
+    ]);
+    receiptIdentity = bindOptionalArtifact(receiptMetadata, {
+      headSha: input.headSha,
+      name: names.receipt,
+      runAttempt: input.runAttempt,
+      runId: input.runId,
+    });
+    evidenceIdentity = bindOptionalArtifact(evidenceMetadata, {
+      headSha: input.headSha,
+      maxArchiveBytes: 128 * 1024 * 1024,
+      name: names.evidence,
+      runAttempt: input.runAttempt,
+      runId: input.runId,
+    });
+  } catch (error) {
+    return {
+      run,
+      job: selectedJob,
+      receipt: null,
+      artifacts: { receipt: null, evidence: null },
+      failure: evidenceFailure("artifact-metadata", error),
+    };
+  }
+  const artifacts = {
+    receipt: receiptIdentity ? artifactIdentity(receiptIdentity) : null,
+    evidence: evidenceIdentity ? artifactIdentity(evidenceIdentity) : null,
+  };
+  if (!receiptIdentity || !evidenceIdentity) {
+    return {
+      run,
+      job: selectedJob,
+      receipt: null,
+      artifacts,
+      failure: evidenceFailure(
+        "artifact-missing",
+        new Error(`${role} receipt or evidence artifact is missing`),
+      ),
+    };
+  }
+  let receiptArchive: Buffer;
+  try {
+    receiptArchive = await download(receiptIdentity);
+  } catch (error) {
+    return {
+      run,
+      job: selectedJob,
+      receipt: null,
+      artifacts,
+      failure: evidenceFailure("receipt-download", error),
+    };
+  }
+  let receipt: ManagedRuntimeReceipt;
+  try {
+    receipt = receiptFromArchive(receiptArchive, {
+      baseSha: input.baseSha,
+      candidateSha: input.candidateSha,
+      role,
+      runAttempt: input.runAttempt,
+      runId: input.runId,
+      workflowSha: input.workflowSha,
+    });
+  } catch (error) {
+    return {
+      run,
+      job: selectedJob,
+      receipt: null,
+      artifacts,
+      failure: evidenceFailure("receipt-parse", error),
+    };
+  }
+  let evidenceArchive: Buffer;
+  try {
+    evidenceArchive = await download(evidenceIdentity);
+  } catch (error) {
+    return {
+      run,
+      job: selectedJob,
+      receipt,
+      artifacts,
+      failure: evidenceFailure("evidence-download", error),
+    };
+  }
+  try {
+    verifyEvidenceArchive(evidenceArchive, receipt);
+  } catch (error) {
+    return {
+      run,
+      job: selectedJob,
+      receipt,
+      artifacts,
+      failure: evidenceFailure("evidence-verification", error),
+    };
+  }
+  return { run, job: selectedJob, receipt, artifacts, failure: null };
+}
+
+export async function classifyManagedRuntimeCurrentRun(
   input: {
     readonly baseJobConclusion: StepOutcome;
-    readonly headSha: string;
+    readonly baseSha: string;
+    readonly candidateJobConclusion: StepOutcome;
+    readonly candidateSha: string;
+    readonly eventName: "pull_request_target" | "workflow_dispatch";
+    readonly pullRequest: number;
     readonly runAttempt: number;
     readonly runId: number;
     readonly token: string;
+    readonly workflowSha: string;
   },
+  options: {
+    readonly request?: (apiPath: string) => Promise<unknown>;
+    readonly downloadArtifact?: (identity: BoundArtifactIdentity) => Promise<Buffer>;
+  } = {},
 ): Promise<ManagedRuntimeComparison> {
-  const request = (apiPath: string) => githubRequest(apiPath, input.token);
-  const receiptName = `managed-runtime-base-receipt-${input.runId}-${input.runAttempt}`;
-  const evidenceName = `managed-runtime-base-evidence-${input.runId}-${input.runAttempt}`;
-  let receiptIdentity: BoundArtifactIdentity | null = null;
-  let evidenceIdentity: BoundArtifactIdentity | null = null;
-  let receipt: ManagedRuntimeReceipt | null = null;
-  try {
-    [receiptIdentity, evidenceIdentity] = await Promise.all([
-      readBaseArtifact(receiptName, undefined, input, request),
-      readBaseArtifact(evidenceName, 128 * 1024 * 1024, input, request),
-    ]);
-    if (receiptIdentity) {
-      receipt = receiptFromArchive(await downloadBoundArtifact(receiptIdentity, input.token), {
-        baseSha: candidate.baseSha,
-        candidateSha: candidate.candidateSha,
-        role: "base",
-        runAttempt: input.runAttempt,
-        runId: input.runId,
-      });
-    }
-    if (receipt && evidenceIdentity) {
-      verifyEvidenceArchive(await downloadBoundArtifact(evidenceIdentity, input.token), receipt);
-    }
-  } catch {
-    receiptIdentity = null;
-    evidenceIdentity = null;
-    receipt = null;
+  const baseSha = sha(input.baseSha, "base SHA");
+  const candidateSha = sha(input.candidateSha, "candidate SHA");
+  const workflowSha = sha(input.workflowSha, "qualification workflow SHA");
+  exactString(workflowSha, baseSha, "qualification workflow source");
+  const pullRequest = positiveInteger(input.pullRequest, "pull request number");
+  const runId = positiveInteger(input.runId, "qualification run id");
+  const runAttempt = positiveInteger(input.runAttempt, "qualification run attempt");
+  if (!input.token) throw new Error("GITHUB_TOKEN is required");
+  const request = options.request ?? ((apiPath: string) => githubRequest(apiPath, input.token));
+  const download =
+    options.downloadArtifact ??
+    ((identity: BoundArtifactIdentity) => downloadBoundArtifact(identity, input.token));
+  const pull = record(await request(`/repos/${REPOSITORY}/pulls/${pullRequest}`), "pull request");
+  exactString(pull.state, "open", "pull request state");
+  const pullBase = record(pull.base, "pull request base");
+  const pullHead = record(pull.head, "pull request source");
+  exactString(pullBase.sha, baseSha, "pull request base SHA");
+  exactString(pullHead.sha, candidateSha, "pull request source SHA");
+  exactString(
+    record(pullBase.repo, "pull request base repository").full_name,
+    REPOSITORY,
+    "pull request base repository",
+  );
+  exactString(
+    record(pullHead.repo, "pull request source repository").full_name,
+    REPOSITORY,
+    "pull request source repository",
+  );
+  const workflowId = validateWorkflow(
+    await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
+  );
+  const runPayload = record(
+    await request(`/repos/${REPOSITORY}/actions/runs/${runId}`),
+    "qualification workflow run",
+  );
+  if (runPayload.workflow_id !== workflowId || runPayload.run_attempt !== runAttempt) {
+    throw new Error("qualification run does not match the current workflow attempt");
   }
-  return classifyManagedRuntimeComparison({
-    baseArtifact: receiptIdentity ? artifactIdentity(receiptIdentity) : null,
-    baseEvidenceArtifact: evidenceIdentity ? artifactIdentity(evidenceIdentity) : null,
-    baseJobConclusion: input.baseJobConclusion,
-    baseReceipt: receipt,
-    baseRunAttempt: input.runAttempt,
-    baseRunId: input.runId,
-    candidate,
-  });
+  exactString(runPayload.name, WORKFLOW_NAME, "qualification workflow run name");
+  exactString(runPayload.path, WORKFLOW_PATH, "qualification workflow run path");
+  exactString(runPayload.event, input.eventName, "qualification workflow run event");
+  const headSha = sha(runPayload.head_sha, "qualification workflow run head SHA");
+  exactString(headSha, baseSha, "qualification workflow run head SHA");
+  exactString(
+    record(runPayload.repository, "qualification workflow repository").full_name,
+    REPOSITORY,
+    "qualification workflow repository",
+  );
+  const jobsPayload = record(
+    await collectPaginated(
+      request,
+      `/repos/${REPOSITORY}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100`,
+      "jobs",
+    ),
+    "qualification workflow jobs",
+  );
+  if (!Array.isArray(jobsPayload.jobs)) {
+    throw new Error("qualification workflow job listing is invalid");
+  }
+  const common = {
+    baseSha,
+    candidateSha,
+    headSha,
+    jobs: jobsPayload.jobs,
+    runAttempt,
+    runId,
+    workflowSha,
+  } as const;
+  const [candidate, base] = await Promise.all([
+    readCurrentRunEvidence(
+      "candidate",
+      { ...common, expectedConclusion: input.candidateJobConclusion },
+      request,
+      download,
+    ),
+    readCurrentRunEvidence(
+      "base",
+      { ...common, expectedConclusion: input.baseJobConclusion },
+      request,
+      download,
+    ),
+  ]);
+  return classifyManagedRuntimeComparison({ base, baseSha, candidate, candidateSha });
 }
 
 function writeJsonExclusive(target: string, value: unknown): void {
@@ -1027,41 +1019,37 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     );
     return;
   }
-  if (argv[0] === "select-candidate") {
-    if (argv.length !== 2) throw new Error("expected one candidate selection path");
-    const selection = await selectManagedRuntimeCandidate({
-      baseSha: env.BASE_SHA ?? "",
-      candidateSha: env.CANDIDATE_SHA ?? "",
-      pullRequest: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
-      runAttempt: requiredInteger(env.CANDIDATE_RUN_ATTEMPT, "CANDIDATE_RUN_ATTEMPT"),
-      runId: requiredInteger(env.CANDIDATE_RUN_ID, "CANDIDATE_RUN_ID"),
-      token: env.GITHUB_TOKEN ?? "",
-    });
-    writeJsonExclusive(argv[1], selection);
-    if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
-    fs.appendFileSync(
-      env.GITHUB_OUTPUT,
-      `candidate_sha=${selection.candidateSha}\nbase_sha=${selection.baseSha}\ncandidate_outcome=${selection.job.conclusion}\ncandidate_ready=${selection.receipt && selection.artifacts.receipt && selection.artifacts.evidence ? "true" : "false"}\n`,
-      "utf8",
-    );
-    return;
-  }
   if (argv[0] === "classify") {
-    if (argv.length !== 3) throw new Error("expected candidate selection and comparison paths");
-    const comparison = await classifyCurrentRun(readCandidateSelection(argv[1]), {
+    if (argv.length !== 2) throw new Error("expected one comparison receipt path");
+    const eventName = env.GITHUB_EVENT_NAME;
+    if (eventName !== "pull_request_target" && eventName !== "workflow_dispatch") {
+      throw new Error("managed runtime qualification event is invalid");
+    }
+    const comparison = await classifyManagedRuntimeCurrentRun({
       baseJobConclusion: stepOutcome(env.BASE_JOB_CONCLUSION, "BASE_JOB_CONCLUSION"),
-      headSha: sha(env.GITHUB_SHA, "GITHUB_SHA"),
+      baseSha: env.BASE_SHA ?? "",
+      candidateJobConclusion: stepOutcome(env.CANDIDATE_JOB_CONCLUSION, "CANDIDATE_JOB_CONCLUSION"),
+      candidateSha: env.CANDIDATE_SHA ?? "",
+      eventName,
+      pullRequest: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
       runAttempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
       runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
       token: env.GITHUB_TOKEN ?? "",
+      workflowSha: env.GITHUB_WORKFLOW_SHA ?? "",
     });
-    writeJsonExclusive(argv[2], comparison);
+    writeJsonExclusive(argv[1], comparison);
+    if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
+    fs.appendFileSync(
+      env.GITHUB_OUTPUT,
+      `classification=${comparison.classification}\nreason=${comparison.reason}\n`,
+      "utf8",
+    );
     if (comparison.classification === "infrastructure-failure") process.exitCode = 2;
     if (comparison.classification === "base-failure") process.exitCode = 3;
     if (comparison.classification === "candidate-failure") process.exitCode = 4;
     return;
   }
-  throw new Error("expected classify, record, or select-candidate");
+  throw new Error("expected classify or record");
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {

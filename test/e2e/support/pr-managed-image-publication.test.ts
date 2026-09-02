@@ -272,6 +272,37 @@ describe("exact PR managed-image publication", () => {
     expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
   });
 
+  it("requires an authenticated candidate catalog even when image inputs are unchanged", async () => {
+    const input = { ...resolverInput(), requireCandidateCatalog: true };
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        input,
+        candidateRequest({ imageChanged: false }),
+        downloadContract,
+      ),
+    ).resolves.toBe("candidate-catalog");
+    expect(fs.existsSync(input.outputPath)).toBe(true);
+  });
+
+  it("waits for the explicitly selected managed-image workflow attempt", async () => {
+    const download = vi.fn(downloadContract);
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        {
+          ...resolverInput(),
+          requireCandidateCatalog: true,
+          runAttempt: 1,
+          runId: RUN_ID + 1,
+        },
+        candidateRequest({ imageChanged: false }),
+        download,
+      ),
+    ).rejects.toThrow("exact managed-image workflow run is missing or still in progress");
+    expect(download).not.toHaveBeenCalled();
+  });
+
   it("keeps artifact download evidence out of the machine-readable selection", async () => {
     const input = resolverInput();
     const apiRequest = candidateRequest({ imageChanged: true });
@@ -533,7 +564,7 @@ describe("exact PR managed-image publication", () => {
         candidateRequest({ imageChanged: true, missingAgent: "hermes" }),
         download,
       ),
-    ).rejects.toThrow("exact artifact identity is missing or ambiguous");
+    ).rejects.toThrow("hermes managed-image contract artifact is not available yet");
     expect(download).toHaveBeenCalledTimes(1);
   });
 

@@ -128,21 +128,22 @@ coverage retains that assertion for environments with supervisor-authoritative D
 
 ### Exact-base managed runtime comparison
 
-The manual `E2E / Exact Base Managed Runtime` workflow compares one completed same-repository
-managed-image PR activation with the identical scenario at that PR's current base commit. Dispatch
-it from `main` with the open PR number, candidate SHA, base SHA, candidate workflow run ID, and run
-attempt. The controller authenticates those values against the current PR and exact managed-image
-workflow attempt. Historical run metadata about the PR base is not authority for the comparison.
+The `E2E / Exact Base Managed Runtime` workflow runs automatically for relevant same-repository
+pull-request changes. A maintainer can also dispatch it from `main` with the open PR number,
+candidate SHA, and base SHA; the candidate managed-image run ID and attempt are optional replay
+selectors. The controller executes from the exact PR base, authenticates the current PR, and waits
+for the exact successful managed-image producer before candidate code executes. Historical run
+metadata about the PR base is not authority for the comparison.
 
-The candidate job records its candidate and base SHAs, workflow source and attempt, OpenShell
-version, complete immutable image identity, scenario path, evidence file digests, and cleanup
-result. The comparison workflow binds that receipt and its evidence artifacts by artifact ID and
-digest. It then starts a fresh runner, checks out the exact base SHA, selects the nearest successful
-managed-image cohort on that base's first-parent history, and runs
-`managed-image-activation-e2e.test.ts` with the same agent set and platform. The base run emits the
-same receipt shape before classification.
+The base-controlled workflow runs `managed-image-activation-e2e.test.ts` once with the exact
+candidate CLI and candidate image cohort, then once with the exact base CLI and nearest successful
+base image cohort. Both runs use the same trusted scenario controller, agent set, and platform.
+Each job records the candidate and base SHAs, workflow source and attempt, OpenShell version,
+complete immutable image identity, scenario path, evidence file digests, and cleanup result. The
+classifier binds both receipts and evidence artifacts to the current qualification run by artifact
+ID and digest.
 
-The comparison has four outcomes:
+The classifier has four outcomes:
 
 - `pass`: both authenticated scenarios pass and prove cleanup.
 - `candidate-failure`: the exact-base scenario passes and the candidate scenario fails.
@@ -150,8 +151,10 @@ The comparison has four outcomes:
 - `infrastructure-failure`: a run is cancelled or skipped, evidence is missing or mismatched, the
   scenarios differ, or cleanup is not proven.
 
-An infrastructure failure does not produce a product verdict. This workflow covers the managed
-runtime activation scenario only; it does not qualify the Hermes dependency lane.
+These are classifier outcomes. If candidate authentication fails, the workflow stops before
+classification and produces no product verdict. An `infrastructure-failure` outcome also does not
+produce a product verdict. This workflow covers the managed runtime activation scenario only; it
+does not qualify the Hermes dependency lane.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a

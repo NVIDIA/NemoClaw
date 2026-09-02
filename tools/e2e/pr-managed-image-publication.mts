@@ -50,6 +50,13 @@ export interface ManagedImagePublicationRun {
   readonly id: number;
 }
 
+export class ManagedImagePublicationPendingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ManagedImagePublicationPendingError";
+  }
+}
+
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
@@ -264,11 +271,24 @@ function validateWorkflow(payload: unknown): number {
 /** Select one successful exact-candidate managed-image workflow run. */
 export function selectManagedImagePublicationRun(
   payload: unknown,
-  expected: { readonly headSha: string; readonly prNumber: number; readonly workflowId: number },
+  expected: {
+    readonly headSha: string;
+    readonly prNumber: number;
+    readonly runAttempt?: number;
+    readonly runId?: number;
+    readonly workflowId: number;
+  },
 ): ManagedImagePublicationRun {
   if (!SHA_PATTERN.test(expected.headSha)) throw new Error("candidate SHA is invalid");
   positiveInteger(expected.prNumber, "PR number");
   positiveInteger(expected.workflowId, "managed-image workflow id");
+  if ((expected.runId === undefined) !== (expected.runAttempt === undefined)) {
+    throw new Error("managed-image run ID and attempt must be selected together");
+  }
+  if (expected.runId !== undefined) positiveInteger(expected.runId, "managed-image run id");
+  if (expected.runAttempt !== undefined) {
+    positiveInteger(expected.runAttempt, "managed-image run attempt");
+  }
   const response = record(payload, "managed-image workflow runs");
   if (!Array.isArray(response.workflow_runs)) {
     throw new Error("exact managed-image workflow run listing is invalid");
@@ -314,11 +334,26 @@ export function selectManagedImagePublicationRun(
     ) {
       throw new Error("managed-image workflow run does not match the PR number");
     }
-    if (run.status === "completed" && run.conclusion === "success") {
+    const selectedAttempt =
+      expected.runId === undefined ||
+      (id === expected.runId && attempt === expected.runAttempt);
+    if (selectedAttempt && run.status === "completed" && run.conclusion === "success") {
       successfulRuns.push({ attempt, headSha: expected.headSha, id });
     }
   }
   if (successfulRuns.length === 0) {
+    const selectedRuns = response.workflow_runs
+      .map((value) => record(value, "managed-image workflow run"))
+      .filter(
+        (run) =>
+          expected.runId === undefined ||
+          (run.id === expected.runId && run.run_attempt === expected.runAttempt),
+      );
+    if (selectedRuns.length === 0 || selectedRuns.some((run) => run.status !== "completed")) {
+      throw new ManagedImagePublicationPendingError(
+        "exact managed-image workflow run is missing or still in progress",
+      );
+    }
     throw new Error(
       `managed-image workflow for candidate ${expected.headSha} must complete successfully before live E2E`,
     );
@@ -336,8 +371,11 @@ export async function resolvePrManagedImageCatalog(
     readonly candidateSha: string;
     readonly outputPath: string;
     readonly prNumber: number;
+    readonly requireCandidateCatalog?: boolean;
+    readonly runAttempt?: number;
+    readonly runId?: number;
     readonly token: string;
-    readonly workflowSource: string;
+    readonly workflowSource?: string;
   },
   request: (apiPath: string) => Promise<unknown> = (apiPath) =>
     githubRequest(apiPath, input.token, {
@@ -356,11 +394,23 @@ export async function resolvePrManagedImageCatalog(
     throw new Error("candidate repository is invalid");
   }
   positiveInteger(input.prNumber, "PR number");
+  if ((input.runId === undefined) !== (input.runAttempt === undefined)) {
+    throw new Error("managed-image run ID and attempt must be selected together");
+  }
+  if (input.runId !== undefined) positiveInteger(input.runId, "managed-image run id");
+  if (input.runAttempt !== undefined) {
+    positiveInteger(input.runAttempt, "managed-image run attempt");
+  }
   if (!input.token) throw new Error("GITHUB_TOKEN is required");
   validatePr(await request(`/repos/${REPOSITORY}/pulls/${input.prNumber}`), input);
-  const changedFiles = await readChangedFiles(input, request);
-  const patterns = parseBaseImagePushPaths(input.workflowSource);
-  if (!baseImageInputsChanged(changedFiles, patterns)) return "base-cohort";
+  if (input.requireCandidateCatalog !== true) {
+    if (typeof input.workflowSource !== "string" || !input.workflowSource.trim()) {
+      throw new Error("base-image workflow source is required");
+    }
+    const changedFiles = await readChangedFiles(input, request);
+    const patterns = parseBaseImagePushPaths(input.workflowSource);
+    if (!baseImageInputsChanged(changedFiles, patterns)) return "base-cohort";
+  }
   if (input.candidateRepository !== REPOSITORY) {
     throw new Error("exact PR managed-image publication requires a branch in NVIDIA/NemoClaw");
   }
@@ -371,7 +421,14 @@ export async function resolvePrManagedImageCatalog(
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`;
   const run = selectManagedImagePublicationRun(
     await collectPaginated(request, runsPath, "workflow_runs"),
-    { headSha: input.candidateSha, prNumber: input.prNumber, workflowId },
+    {
+      headSha: input.candidateSha,
+      prNumber: input.prNumber,
+      workflowId,
+      ...(input.runId === undefined
+        ? {}
+        : { runId: input.runId, runAttempt: input.runAttempt }),
+    },
   );
 
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-managed-catalog-"));
@@ -382,6 +439,16 @@ export async function resolvePrManagedImageCatalog(
       const metadata = await request(
         `/repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
       );
+      const artifactPage = record(metadata, `${agent} managed-image artifact response`);
+      if (
+        artifactPage.total_count === 0 &&
+        Array.isArray(artifactPage.artifacts) &&
+        artifactPage.artifacts.length === 0
+      ) {
+        throw new ManagedImagePublicationPendingError(
+          `${agent} managed-image contract artifact is not available yet`,
+        );
+      }
       const identity = bindNamedExactArtifact(
         metadata,
         { headSha: run.headSha, runAttempt: run.attempt, runId: run.id },
@@ -408,6 +475,35 @@ export async function resolvePrManagedImageCatalog(
   }
 }
 
+export async function waitForPrManagedImageCatalog(
+  input: Parameters<typeof resolvePrManagedImageCatalog>[0] & {
+    readonly pollSeconds: number;
+    readonly waitSeconds: number;
+  },
+  request?: (apiPath: string) => Promise<unknown>,
+  downloadArtifact?: (identity: BoundArtifactIdentity) => Promise<Buffer>,
+  wait: (milliseconds: number) => Promise<void> = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
+): Promise<PrManagedImageSelection> {
+  if (!Number.isSafeInteger(input.waitSeconds) || input.waitSeconds < 0 || input.waitSeconds > 7_200) {
+    throw new Error("managed-image wait seconds must be an integer from 0 through 7200");
+  }
+  if (!Number.isSafeInteger(input.pollSeconds) || input.pollSeconds < 5 || input.pollSeconds > 120) {
+    throw new Error("managed-image poll seconds must be an integer from 5 through 120");
+  }
+  const deadline = Date.now() + input.waitSeconds * 1_000;
+  for (;;) {
+    try {
+      return await resolvePrManagedImageCatalog(input, request, downloadArtifact);
+    } catch (error) {
+      if (!(error instanceof ManagedImagePublicationPendingError) || Date.now() >= deadline) {
+        throw error;
+      }
+      await wait(Math.min(input.pollSeconds * 1_000, Math.max(1, deadline - Date.now())));
+    }
+  }
+}
+
 function requiredInteger(value: string | undefined, label: string): number {
   if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error(`${label} is required`);
   return positiveInteger(Number(value), label);
@@ -430,14 +526,33 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     return;
   }
   if (argv.length !== 1) throw new Error("expected one managed-image catalog output path");
-  const selection = await resolvePrManagedImageCatalog({
+  const requireCandidateCatalog = env.PR_MANAGED_IMAGE_REQUIRE_CANDIDATE_CATALOG === "1";
+  const runId = env.PR_MANAGED_IMAGE_RUN_ID
+    ? requiredInteger(env.PR_MANAGED_IMAGE_RUN_ID, "PR_MANAGED_IMAGE_RUN_ID")
+    : undefined;
+  const runAttempt = env.PR_MANAGED_IMAGE_RUN_ATTEMPT
+    ? requiredInteger(env.PR_MANAGED_IMAGE_RUN_ATTEMPT, "PR_MANAGED_IMAGE_RUN_ATTEMPT")
+    : undefined;
+  const waitSeconds = env.PR_MANAGED_IMAGE_WAIT_SECONDS
+    ? Number(env.PR_MANAGED_IMAGE_WAIT_SECONDS)
+    : 0;
+  const pollSeconds = env.PR_MANAGED_IMAGE_POLL_SECONDS
+    ? Number(env.PR_MANAGED_IMAGE_POLL_SECONDS)
+    : 30;
+  const selection = await waitForPrManagedImageCatalog({
     baseSha: env.BASE_SHA ?? "",
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",
     candidateSha: env.CANDIDATE_SHA ?? "",
     outputPath: argv[0],
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
+    requireCandidateCatalog,
+    ...(runId === undefined ? {} : { runId, runAttempt }),
     token: env.GITHUB_TOKEN ?? "",
-    workflowSource: fs.readFileSync(BASE_IMAGE_WORKFLOW_PATH, "utf8"),
+    ...(requireCandidateCatalog
+      ? {}
+      : { workflowSource: fs.readFileSync(BASE_IMAGE_WORKFLOW_PATH, "utf8") }),
+    waitSeconds,
+    pollSeconds,
   });
   process.stdout.write(`${selection}\n`);
 }

@@ -34,6 +34,7 @@ on:
       - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
+      - ".github/workflows/managed-runtime-base-qualification.yaml"
       - ".dockerignore"
       - "Dockerfile"
       - "agents/**"
@@ -57,6 +58,7 @@ on:
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "tools/e2e/managed-runtime-comparison.mts"
+      - "tools/e2e/pr-managed-image-publication.mts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
       - "tsconfig.runtime-preloads.json"
@@ -859,6 +861,9 @@ jobs:
 
   pr-managed-activation:
     name: PR exact all-agent managed runtime activation
+    # This PR-controlled lane is fast feedback only. The base-controlled
+    # E2E / Exact Base Managed Runtime workflow owns the product verdict.
+    continue-on-error: true
     needs: pr-build-and-entrypoint
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
@@ -884,19 +889,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Checkout base-controlled activation receipt writer
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .trusted-managed-runtime-comparison
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/scorecard/read-artifact-zip.mts
-            tools/e2e/base-image-publication.mts
-            tools/e2e/exact-artifact-download.mts
-            tools/e2e/managed-runtime-comparison.mts
-          sparse-checkout-cone-mode: false
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -964,46 +956,6 @@ jobs:
           export OPENSHELL_BIN="$(command -v openshell)"
           npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/managed-image-activation-e2e.test.ts
-
-      - name: Record managed runtime activation receipt
-        if: ${{ always() && hashFiles('.trusted-managed-runtime-comparison/tools/e2e/managed-runtime-comparison.mts') != '' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          MANAGED_IMAGE_REVISION: ${{ github.event.pull_request.head.sha }}
-          MANAGED_RUNTIME_CATALOG: ${{ env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG }}
-          MANAGED_RUNTIME_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
-          MANAGED_RUNTIME_JOB: PR exact all-agent managed runtime activation
-          MANAGED_RUNTIME_OUTCOME: ${{ steps.activation.outcome }}
-          MANAGED_RUNTIME_ROLE: candidate
-          MANAGED_RUNTIME_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-          MANAGED_RUNTIME_WORKFLOW_PATH: .github/workflows/managed-images.yaml
-          OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
-        run: >-
-          node --experimental-strip-types --no-warnings
-          .trusted-managed-runtime-comparison/tools/e2e/managed-runtime-comparison.mts
-          record
-          "${RUNNER_TEMP}/managed-runtime-activation-receipt/receipt.json"
-
-      - name: Upload managed runtime activation evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: e2e-artifacts/live/managed-image-activation/
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload managed runtime activation receipt
-        if: ${{ always() && hashFiles('.trusted-managed-runtime-comparison/tools/e2e/managed-runtime-comparison.mts') != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-runtime-activation-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-activation-receipt/receipt.json
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
 
   pr-openclaw-mcp-discovery:
     name: PR exact OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
