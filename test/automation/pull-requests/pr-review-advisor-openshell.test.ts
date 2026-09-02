@@ -538,8 +538,13 @@ describe("PR review advisor OpenShell wrapper", () => {
     ).toThrow("must use an approved advisor inference endpoint");
   });
 
-  it("preserves hosted provider compatibility", () => {
-    const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
+  it("registers the selected advisor model", () => {
+    const selectedModel = "openai/openai/gpt-5.6-terra";
+    const config = openAiAdvisorProviderConfig(
+      "PR_REVIEW_ADVISOR_API_KEY",
+      ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+      selectedModel,
+    ) as {
       apiKey: string;
       baseUrl: string;
       models: Array<{ id: string; compat?: Record<string, unknown>; reasoning: boolean }>;
@@ -549,7 +554,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
     expect(config.models).toContainEqual(
       expect.objectContaining({
-        id: DEFAULT_ADVISOR_MODEL,
+        id: selectedModel,
         reasoning: false,
         compat: expect.objectContaining({
           supportsDeveloperRole: false,
