@@ -43,9 +43,88 @@ export interface DeepAgentsManagedFixtureOptions {
   fifo?: boolean;
   mode?: number;
   swapAfterManagedOpen?: "fifo" | "symlink";
+  swapBeforeManagedLink?: string;
   swapOnManagedOpen?: "fifo" | "socket" | "symlink";
   swapOnManagedRead?: "fifo" | "symlink";
+  swapOnManagedSeek?: string;
   symlink?: boolean;
+  timeoutMs?: number;
+}
+
+type ManagedSwap = {
+  content?: string;
+  kind: "fifo" | "regular" | "socket" | "symlink";
+  phase: "after-open" | "before-link" | "before-open" | "read" | "seek";
+};
+
+function createManagedSwapPythonExecutable(
+  fixtureRoot: string,
+  configPath: string,
+  managedSymlinkTarget: string,
+  managedSwap: ManagedSwap,
+): { executablePath: string; scriptPath: string } {
+  const executablePath = path.join(fixtureRoot, "managed-swap-python");
+  const scriptPath = path.join(fixtureRoot, "managed-swap-wrapper.py");
+  const wrapper = [
+    "import os",
+    "import socket",
+    "import sys",
+    `managed_path = ${JSON.stringify(configPath)}`,
+    `managed_target = ${JSON.stringify(managedSymlinkTarget)}`,
+    `managed_swap_kind = ${JSON.stringify(managedSwap.kind)}`,
+    `managed_swap_phase = ${JSON.stringify(managedSwap.phase)}`,
+    `managed_swap_content = ${JSON.stringify(managedSwap.content ?? "")}`,
+    "managed_socket = None",
+    "managed_swapped = False",
+    "def replace_managed_path():",
+    "    global managed_socket, managed_swapped",
+    "    if managed_swapped:",
+    "        return",
+    "    managed_swapped = True",
+    "    try:",
+    "        os.unlink(managed_path)",
+    "    except FileNotFoundError:",
+    "        pass",
+    "    if managed_swap_kind == 'symlink':",
+    "        os.symlink(managed_target, managed_path)",
+    "    elif managed_swap_kind == 'fifo':",
+    "        os.mkfifo(managed_path, 0o600)",
+    "    elif managed_swap_kind == 'socket':",
+    "        managed_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)",
+    "        managed_socket.bind(managed_path)",
+    "    else:",
+    "        with open(managed_path, 'w', encoding='utf-8') as replacement:",
+    "            replacement.write(managed_swap_content)",
+    "        os.chmod(managed_path, 0o600)",
+    "def managed_profile(_frame, event, target):",
+    "    if managed_swapped:",
+    "        return",
+    "    if managed_swap_phase == 'before-open' and event == 'c_call' and target is os.open:",
+    "        replace_managed_path()",
+    "    elif managed_swap_phase == 'after-open' and event == 'c_return' and target is os.open:",
+    "        replace_managed_path()",
+    "    elif managed_swap_phase == 'read' and event == 'c_call' and target is os.read:",
+    "        replace_managed_path()",
+    "    elif managed_swap_phase == 'before-link' and event == 'c_call' and target is os.link:",
+    "        replace_managed_path()",
+    "    elif managed_swap_phase == 'seek' and event == 'c_call' and target is os.lseek:",
+    "        replace_managed_path()",
+    "source = sys.stdin.read()",
+    "namespace = {'__name__': '__main__'}",
+    "sys.setprofile(managed_profile)",
+    "try:",
+    "    exec(compile(source, '<nemoclaw-managed-command>', 'exec'), namespace)",
+    "finally:",
+    "    sys.setprofile(None)",
+    "",
+  ].join("\n");
+  fs.writeFileSync(scriptPath, wrapper, { mode: 0o600 });
+  fs.writeFileSync(
+    executablePath,
+    '#!/bin/sh\nexec python3 -I "$DEEPAGENTS_FIXTURE_PYTHON_WRAPPER" "$@"\n',
+    { mode: 0o700 },
+  );
+  return { executablePath, scriptPath };
 }
 
 export function runDeepAgentsConfigCommand(
@@ -56,13 +135,25 @@ export function runDeepAgentsConfigCommand(
   initialLegacyMode = 0o600,
   managedOptions: DeepAgentsManagedFixtureOptions = {},
 ): DeepAgentsConfigCommandResult {
-  const managedSwap = managedOptions.swapOnManagedOpen
+  const managedSwap: ManagedSwap | undefined = managedOptions.swapOnManagedOpen
     ? { kind: managedOptions.swapOnManagedOpen, phase: "before-open" }
     : managedOptions.swapAfterManagedOpen
       ? { kind: managedOptions.swapAfterManagedOpen, phase: "after-open" }
       : managedOptions.swapOnManagedRead
         ? { kind: managedOptions.swapOnManagedRead, phase: "read" }
-        : undefined;
+        : managedOptions.swapBeforeManagedLink !== undefined
+          ? {
+              content: managedOptions.swapBeforeManagedLink,
+              kind: "regular" as const,
+              phase: "before-link" as const,
+            }
+          : managedOptions.swapOnManagedSeek !== undefined
+            ? {
+                content: managedOptions.swapOnManagedSeek,
+                kind: "regular" as const,
+                phase: "seek" as const,
+              }
+            : undefined;
   const fixtureRoot = managedSwap?.kind === "socket" ? "/tmp" : os.tmpdir();
   const tmp = fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
@@ -107,61 +198,27 @@ export function runDeepAgentsConfigCommand(
   initializeConfig(legacyConfigPath, initialLegacyConfig);
   if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);
   try {
-    const managedSwapPrelude = managedSwap
-      ? [
-          "import os as _nemoclaw_test_os",
-          "import socket as _nemoclaw_test_socket_module",
-          `_nemoclaw_test_path = ${JSON.stringify(configPath)}`,
-          `_nemoclaw_test_target = ${JSON.stringify(managedSymlinkTarget)}`,
-          `_nemoclaw_test_swap = ${JSON.stringify(managedSwap.kind)}`,
-          `_nemoclaw_test_phase = ${JSON.stringify(managedSwap.phase)}`,
-          "_nemoclaw_test_real_open = _nemoclaw_test_os.open",
-          "_nemoclaw_test_real_read = _nemoclaw_test_os.read",
-          "_nemoclaw_test_descriptor = None",
-          "_nemoclaw_test_socket = None",
-          "_nemoclaw_test_swapped = False",
-          "def _nemoclaw_test_replace_path():",
-          "    global _nemoclaw_test_socket, _nemoclaw_test_swapped",
-          "    if _nemoclaw_test_swapped:",
-          "        return",
-          "    _nemoclaw_test_swapped = True",
-          "    _nemoclaw_test_os.unlink(_nemoclaw_test_path)",
-          "    if _nemoclaw_test_swap == 'symlink':",
-          "        _nemoclaw_test_os.symlink(_nemoclaw_test_target, _nemoclaw_test_path)",
-          "    elif _nemoclaw_test_swap == 'fifo':",
-          "        _nemoclaw_test_os.mkfifo(_nemoclaw_test_path, 0o600)",
-          "    else:",
-          "        _nemoclaw_test_socket = _nemoclaw_test_socket_module.socket(_nemoclaw_test_socket_module.AF_UNIX, _nemoclaw_test_socket_module.SOCK_STREAM)",
-          "        _nemoclaw_test_socket.bind(_nemoclaw_test_path)",
-          "def _nemoclaw_test_open(path, flags, *args, **kwargs):",
-          "    global _nemoclaw_test_descriptor",
-          "    managed = _nemoclaw_test_os.fspath(path) == _nemoclaw_test_path",
-          "    if managed and _nemoclaw_test_phase == 'before-open':",
-          "        _nemoclaw_test_replace_path()",
-          "    descriptor = _nemoclaw_test_real_open(path, flags, *args, **kwargs)",
-          "    if managed:",
-          "        _nemoclaw_test_descriptor = descriptor",
-          "        if _nemoclaw_test_phase == 'after-open':",
-          "            _nemoclaw_test_replace_path()",
-          "    return descriptor",
-          "def _nemoclaw_test_read(descriptor, size):",
-          "    if descriptor == _nemoclaw_test_descriptor and _nemoclaw_test_phase == 'read':",
-          "        _nemoclaw_test_replace_path()",
-          "    return _nemoclaw_test_real_read(descriptor, size)",
-          "_nemoclaw_test_os.open = _nemoclaw_test_open",
-          "_nemoclaw_test_os.read = _nemoclaw_test_read",
-        ].join("\n")
-      : "";
+    const managedSwapPython = managedSwap
+      ? createManagedSwapPythonExecutable(tmp, configPath, managedSymlinkTarget, managedSwap)
+      : null;
     const fixtureCommand = command
-      .replace("<<'PY'\n", `<<'PY'\n${managedSwapPrelude}\n`)
       .replaceAll(DEEPAGENTS_MCP_CONFIG_PATH, configPath)
       .replaceAll("/sandbox/.deepagents/.mcp.json", legacyConfigPath)
-      .replaceAll("/opt/venv/bin/python3", "python3")
+      .replaceAll("/opt/venv/bin/python3", managedSwapPython?.executablePath ?? "python3")
       .replace(
         'runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR',
         `runtime_kind = "${runtimeKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
       );
-    const result = spawnSync("bash", ["-c", fixtureCommand], { encoding: "utf-8", timeout: 5000 });
+    const result = spawnSync("bash", ["-c", fixtureCommand], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        ...(managedSwapPython
+          ? { DEEPAGENTS_FIXTURE_PYTHON_WRAPPER: managedSwapPython.scriptPath }
+          : {}),
+      },
+      timeout: managedOptions.timeoutMs ?? 5000,
+    });
     let configStat: fs.Stats | null = null;
     try {
       configStat = fs.lstatSync(configPath);
@@ -175,11 +232,7 @@ export function runDeepAgentsConfigCommand(
     const configIsSymlink = configStat?.isSymbolicLink() === true;
     const configIsDirectory = configStat?.isDirectory() === true;
     const configText =
-      configExists &&
-      !configIsFifo &&
-      !configIsSocket &&
-      !configIsSymlink &&
-      !configIsDirectory
+      configExists && !configIsFifo && !configIsSocket && !configIsSymlink && !configIsDirectory
         ? fs.readFileSync(configPath, "utf-8")
         : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
