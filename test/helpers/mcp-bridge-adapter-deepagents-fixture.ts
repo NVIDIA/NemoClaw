@@ -42,7 +42,9 @@ export interface DeepAgentsManagedFixtureOptions {
   directory?: boolean;
   fifo?: boolean;
   mode?: number;
+  statAfterManagedEloopAsRegular?: boolean;
   swapAfterManagedOpen?: "fifo" | "symlink";
+  swapAfterMissingManagedOpen?: "fifo" | "symlink";
   swapOnManagedOpen?: "fifo" | "socket" | "symlink";
   swapOnManagedRead?: "fifo" | "symlink";
   symlink?: boolean;
@@ -58,11 +60,15 @@ export function runDeepAgentsConfigCommand(
 ): DeepAgentsConfigCommandResult {
   const managedSwap = managedOptions.swapOnManagedOpen
     ? { kind: managedOptions.swapOnManagedOpen, phase: "before-open" }
-    : managedOptions.swapAfterManagedOpen
-      ? { kind: managedOptions.swapAfterManagedOpen, phase: "after-open" }
-      : managedOptions.swapOnManagedRead
-        ? { kind: managedOptions.swapOnManagedRead, phase: "read" }
-        : undefined;
+    : managedOptions.swapAfterMissingManagedOpen
+      ? { kind: managedOptions.swapAfterMissingManagedOpen, phase: "after-missing-open" }
+      : managedOptions.swapAfterManagedOpen
+        ? { kind: managedOptions.swapAfterManagedOpen, phase: "after-open" }
+        : managedOptions.swapOnManagedRead
+          ? { kind: managedOptions.swapOnManagedRead, phase: "read" }
+          : managedOptions.statAfterManagedEloopAsRegular
+            ? { kind: "symlink", phase: "eloop-regular-stat" }
+            : undefined;
   const fixtureRoot = managedSwap?.kind === "socket" ? "/tmp" : os.tmpdir();
   const tmp = fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
@@ -91,10 +97,13 @@ export function runDeepAgentsConfigCommand(
     if (fifo.status !== 0) throw new Error(fifo.stderr || "could not create managed fixture FIFO");
     fs.chmodSync(configPath, managedOptions.mode ?? 0o600);
   } else {
-    if (!managedOptions.danglingSymlink) {
+    if (!managedOptions.danglingSymlink && managedSwap?.phase !== "after-missing-open") {
       initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
       if (initialConfig !== undefined)
         fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
+    }
+    if (managedSwap?.phase === "after-missing-open") {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
     }
     if (managedSymlink) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -110,6 +119,7 @@ export function runDeepAgentsConfigCommand(
     const managedSwapPrelude = managedSwap
       ? [
           "import os as _nemoclaw_test_os",
+          "import errno as _nemoclaw_test_errno",
           "import socket as _nemoclaw_test_socket_module",
           `_nemoclaw_test_path = ${JSON.stringify(configPath)}`,
           `_nemoclaw_test_target = ${JSON.stringify(managedSymlinkTarget)}`,
@@ -117,7 +127,10 @@ export function runDeepAgentsConfigCommand(
           `_nemoclaw_test_phase = ${JSON.stringify(managedSwap.phase)}`,
           "_nemoclaw_test_real_open = _nemoclaw_test_os.open",
           "_nemoclaw_test_real_read = _nemoclaw_test_os.read",
+          "_nemoclaw_test_real_stat = _nemoclaw_test_os.stat",
           "_nemoclaw_test_descriptor = None",
+          "_nemoclaw_test_saw_eloop = False",
+          "_nemoclaw_test_returned_regular_stat = False",
           "_nemoclaw_test_socket = None",
           "_nemoclaw_test_swapped = False",
           "def _nemoclaw_test_replace_path():",
@@ -125,7 +138,10 @@ export function runDeepAgentsConfigCommand(
           "    if _nemoclaw_test_swapped:",
           "        return",
           "    _nemoclaw_test_swapped = True",
-          "    _nemoclaw_test_os.unlink(_nemoclaw_test_path)",
+          "    try:",
+          "        _nemoclaw_test_os.unlink(_nemoclaw_test_path)",
+          "    except FileNotFoundError:",
+          "        pass",
           "    if _nemoclaw_test_swap == 'symlink':",
           "        _nemoclaw_test_os.symlink(_nemoclaw_test_target, _nemoclaw_test_path)",
           "    elif _nemoclaw_test_swap == 'fifo':",
@@ -134,11 +150,18 @@ export function runDeepAgentsConfigCommand(
           "        _nemoclaw_test_socket = _nemoclaw_test_socket_module.socket(_nemoclaw_test_socket_module.AF_UNIX, _nemoclaw_test_socket_module.SOCK_STREAM)",
           "        _nemoclaw_test_socket.bind(_nemoclaw_test_path)",
           "def _nemoclaw_test_open(path, flags, *args, **kwargs):",
-          "    global _nemoclaw_test_descriptor",
+          "    global _nemoclaw_test_descriptor, _nemoclaw_test_saw_eloop",
           "    managed = _nemoclaw_test_os.fspath(path) == _nemoclaw_test_path",
           "    if managed and _nemoclaw_test_phase == 'before-open':",
           "        _nemoclaw_test_replace_path()",
-          "    descriptor = _nemoclaw_test_real_open(path, flags, *args, **kwargs)",
+          "    try:",
+          "        descriptor = _nemoclaw_test_real_open(path, flags, *args, **kwargs)",
+          "    except OSError as exc:",
+          "        if managed and _nemoclaw_test_phase == 'after-missing-open' and exc.errno == _nemoclaw_test_errno.ENOENT:",
+          "            _nemoclaw_test_replace_path()",
+          "        if managed and _nemoclaw_test_phase == 'eloop-regular-stat' and exc.errno == _nemoclaw_test_errno.ELOOP:",
+          "            _nemoclaw_test_saw_eloop = True",
+          "        raise",
           "    if managed:",
           "        _nemoclaw_test_descriptor = descriptor",
           "        if _nemoclaw_test_phase == 'after-open':",
@@ -148,8 +171,16 @@ export function runDeepAgentsConfigCommand(
           "    if descriptor == _nemoclaw_test_descriptor and _nemoclaw_test_phase == 'read':",
           "        _nemoclaw_test_replace_path()",
           "    return _nemoclaw_test_real_read(descriptor, size)",
+          "def _nemoclaw_test_stat(path, *args, **kwargs):",
+          "    global _nemoclaw_test_returned_regular_stat",
+          "    managed = _nemoclaw_test_os.fspath(path) == _nemoclaw_test_path",
+          "    if managed and _nemoclaw_test_phase == 'eloop-regular-stat' and _nemoclaw_test_saw_eloop and not _nemoclaw_test_returned_regular_stat:",
+          "        _nemoclaw_test_returned_regular_stat = True",
+          "        return _nemoclaw_test_real_stat(_nemoclaw_test_target, follow_symlinks=False)",
+          "    return _nemoclaw_test_real_stat(path, *args, **kwargs)",
           "_nemoclaw_test_os.open = _nemoclaw_test_open",
           "_nemoclaw_test_os.read = _nemoclaw_test_read",
+          "_nemoclaw_test_os.stat = _nemoclaw_test_stat",
         ].join("\n")
       : "";
     const fixtureCommand = command
@@ -175,11 +206,7 @@ export function runDeepAgentsConfigCommand(
     const configIsSymlink = configStat?.isSymbolicLink() === true;
     const configIsDirectory = configStat?.isDirectory() === true;
     const configText =
-      configExists &&
-      !configIsFifo &&
-      !configIsSocket &&
-      !configIsSymlink &&
-      !configIsDirectory
+      configExists && !configIsFifo && !configIsSocket && !configIsSymlink && !configIsDirectory
         ? fs.readFileSync(configPath, "utf-8")
         : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);

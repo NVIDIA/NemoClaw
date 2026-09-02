@@ -98,14 +98,9 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(fifo.stdout.trim()).toBe("");
     expect(fifo.stderr).toContain("Unsafe managed Deep Agents MCP projection path: FIFO");
 
-    const directory = runDeepAgentsConfigCommand(
-      statusCommand,
-      undefined,
-      "v2",
-      undefined,
-      0o600,
-      { directory: true },
-    );
+    const directory = runDeepAgentsConfigCommand(statusCommand, undefined, "v2", undefined, 0o600, {
+      directory: true,
+    });
     expect(directory.status).toBe(2);
     expect(directory.stdout.trim()).toBe("");
     expect(directory.stderr).toContain(
@@ -154,9 +149,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     );
     expect(racedFifo.status).toBe(2);
     expect(racedFifo.stdout.trim()).toBe("");
-    expect(racedFifo.stderr).toContain(
-      "Unsafe managed Deep Agents MCP projection path: FIFO",
-    );
+    expect(racedFifo.stderr).toContain("Unsafe managed Deep Agents MCP projection path: FIFO");
     expect(racedFifo.configIsFifo).toBe(true);
 
     const racedSocket = runDeepAgentsConfigCommand(
@@ -224,7 +217,49 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(replacedWhileReadingWithSymlink.managedSymlinkTargetText).toBe(
       `${JSON.stringify(emptyProjection, null, 2)}\n`,
     );
+
+    const replacedAfterEloop = runDeepAgentsConfigCommand(
+      statusCommand,
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { statAfterManagedEloopAsRegular: true, symlink: true },
+    );
+    expect(replacedAfterEloop.status).toBe(2);
+    expect(replacedAfterEloop.stdout.trim()).toBe("");
+    expect(replacedAfterEloop.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    );
+    expect(replacedAfterEloop.configIsSymlink).toBe(true);
+    expect(replacedAfterEloop.managedSymlinkTargetText).toBe(
+      `${JSON.stringify(emptyProjection, null, 2)}\n`,
+    );
   });
+
+  it.each([
+    { appearedType: "symlink" as const, diagnostic: "symbolic link" },
+    { appearedType: "fifo" as const, diagnostic: "FIFO" },
+  ])(
+    "classifies a $diagnostic that appears after a missing-path open (#10754)",
+    ({ appearedType, diagnostic }) => {
+      const result = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpStatusCommand(baseEntry),
+        emptyProjection,
+        "v2",
+        undefined,
+        0o600,
+        { swapAfterMissingManagedOpen: appearedType },
+      );
+
+      expect(result.status).toBe(2);
+      expect(result.stdout.trim()).toBe("");
+      expect(result.stderr).toContain(
+        `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
+      );
+      expect(appearedType === "symlink" ? result.configIsSymlink : result.configIsFifo).toBe(true);
+    },
+  );
 
   it("keeps the generic diagnostic for ordinary projection inspection failures (#10754)", () => {
     const result = runDeepAgentsConfigCommand(
