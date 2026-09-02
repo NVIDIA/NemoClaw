@@ -11,7 +11,6 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import * as policyOwner from "../../../src/lib/policy/index.ts";
-import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/credential-policy-boundary-build.ts";
 import type { CredentialPolicyEndpointExpectation } from "../fixtures/credential-policy-transaction.ts";
 import { managedRegistrationSource, SANDBOX_ID } from "../../helpers/live-policy-fixture.ts";
 
@@ -65,7 +64,10 @@ describe("credential-bound E2E policy endpoint", () => {
       killSignal: "SIGKILL",
       timeout: SPAWN_TEST_TIMEOUT_MS,
     });
-    await requireSuccessfulPolicyBoundaryBuild(result);
+    expect(
+      result.status,
+      [result.stderr, result.stdout, result.error?.message].filter(Boolean).join("\n"),
+    ).toBe(0);
     ({ applyCredentialPolicyBinding, bindCredentialPolicyDocument } =
       await import("../fixtures/credential-policy-transaction.ts"));
   }, SPAWN_TEST_TIMEOUT_MS);
