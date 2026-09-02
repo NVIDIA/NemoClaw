@@ -84,8 +84,20 @@ async function inspectExpectedMessagingBinding(
 }
 
 function throwAfterCleanup(deps: ProviderPreparationDeps, message: string): never {
-  deps.cleanupCreateSources();
-  throw new Error(message);
+  const providerFailure = new Error(message);
+  try {
+    deps.cleanupCreateSources();
+  } catch (error) {
+    const cleanupFailure =
+      error instanceof Error
+        ? error
+        : new Error("Temporary sandbox create-source cleanup failed.");
+    throw new AggregateError(
+      [providerFailure, cleanupFailure],
+      `${message} Temporary sandbox create-source cleanup also failed.`,
+    );
+  }
+  throw providerFailure;
 }
 
 function requireExactMessagingBinding(

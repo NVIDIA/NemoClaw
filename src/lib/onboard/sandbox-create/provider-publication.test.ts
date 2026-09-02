@@ -69,8 +69,7 @@ function publicationInput(
   };
 }
 
-function createHarness(adapter = typedProviderAdapter()) {
-  const cleanupCreateSources = vi.fn();
+function createHarness(adapter = typedProviderAdapter(), cleanupCreateSources = vi.fn()) {
   const runOpenshell = vi.fn(() => {
     throw new Error("Raw provider commands must stay behind OpenShellProviderAdapter.");
   });
@@ -362,6 +361,62 @@ describe("sandbox provider preparation", () => {
       config: [],
     });
     expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+  });
+
+  it("reports provider and temporary-source cleanup failures together (#9806)", async () => {
+    const updateProvider: OpenShellProviderAdapter["updateProvider"] = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        kind: "command" as const,
+        reason: "failed" as const,
+        message: "provider update rejected request 25",
+      },
+    }));
+    const cleanupFailure = new AggregateError(
+      [new Error("The temporary sandbox build context could not be removed.")],
+      "Temporary sandbox create sources remain.",
+    );
+    const cleanupCreateSources = vi.fn(() => {
+      throw cleanupFailure;
+    });
+    const harness = createHarness(
+      typedProviderAdapter({ updateProvider }),
+      cleanupCreateSources,
+    );
+
+    const failure = await publishAttachedProvidersBeforeDockerSandboxCreation(
+      publicationInput({
+        inferenceProvider: "inference",
+        messagingProviders: [],
+        messagingProviderRequests: [],
+      }),
+      harness.deps,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure).toMatchObject({
+      message:
+        "Could not publish attached provider 'inference' before managed sandbox creation: provider update rejected request 25 Temporary sandbox create-source cleanup also failed.",
+    });
+    expect((failure as AggregateError).errors).toEqual([
+      expect.objectContaining({
+        message:
+          "Could not publish attached provider 'inference' before managed sandbox creation: provider update rejected request 25",
+      }),
+      cleanupFailure,
+    ]);
+    expect(harness.adapter.getProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      providerName: "inference",
+    });
+    expect(harness.adapter.updateProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      providerName: "inference",
+      credentials: [],
+      config: [],
+    });
+    expect(cleanupCreateSources).toHaveBeenCalledOnce();
+    expect(harness.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("reruns publication from desired state after a partial failure (#9806)", async () => {

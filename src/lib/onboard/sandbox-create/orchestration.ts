@@ -2778,12 +2778,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       gatewayName: GATEWAY_NAME,
     };
     const providerPreparationDeps = {
-      providerExistsInGateway,
       runOpenshell,
-      cleanupCreateSources: () => {
-        cleanupInitialCreateSource();
-        cleanupBuildContext();
-      },
+      cleanupCreateSources: cleanupSandboxCreateSources,
     };
     const providerEffectBoundary = createProviderEffectBoundary({
       deferred: createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
