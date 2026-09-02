@@ -119,11 +119,7 @@ try {
     }
 
     $project = Join-Path $sourceRoot 'packaging\windows\NemoClaw.Bundle.wixproj'
-    $buildArguments = @(
-        'build', $project,
-        '--configuration', 'Release',
-        '--nologo',
-        '--disable-build-servers',
+    $commonProperties = @(
         "-p:ProductVersion=$ProductVersion",
         "-p:PayloadRoot=$payload",
         "-p:SourceRoot=$sourceRoot",
@@ -133,6 +129,29 @@ try {
         '-p:ContinuousIntegrationBuild=true',
         '-p:RestoreIgnoreFailedSources=false'
     )
+    $restoreArguments = @(
+        'restore', $project,
+        '--nologo',
+        '--force',
+        '--no-cache',
+        '--packages', $restorePackages
+    ) + $commonProperties
+    & dotnet @restoreArguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-WindowsPackageBuild 'Pinned WiX dependency restore failed.'
+    }
+    $bootstrapperExtension = Join-Path $restorePackages 'wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll'
+    if (-not (Test-Path -LiteralPath $bootstrapperExtension -PathType Leaf)) {
+        Fail-WindowsPackageBuild 'Pinned WiX BootstrapperApplications extension was not restored.'
+    }
+
+    $buildArguments = @(
+        'build', $project,
+        '--configuration', 'Release',
+        '--nologo',
+        '--no-restore',
+        '--disable-build-servers'
+    ) + $commonProperties
     & dotnet @buildArguments
     if ($LASTEXITCODE -ne 0) {
         Fail-WindowsPackageBuild 'WiX build failed.'
