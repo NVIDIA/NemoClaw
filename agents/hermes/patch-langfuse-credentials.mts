@@ -113,20 +113,20 @@ def _get_langfuse() -> Optional[Langfuse]:
   {
     name: "HTTPS base URL gate",
     old: `\
-    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
 `,
     patched: `\
-    base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
-    base_url_issue = _validate_langfuse_base_url(base_url)
-    if base_url_issue:
-        logger.warning(
-            "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
-            base_url_issue,
-        )
-        _LANGFUSE_CLIENT = _INIT_FAILED
-        return None
-    environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
+        base_url = _env("HERMES_LANGFUSE_BASE_URL") or _env("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        base_url_issue = _validate_langfuse_base_url(base_url)
+        if base_url_issue:
+            logger.warning(
+                "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
+                base_url_issue,
+            )
+            _LANGFUSE_CLIENT = _INIT_FAILED
+            return None
+        environment = _env("HERMES_LANGFUSE_ENV") or _env("LANGFUSE_ENV")
 `,
   },
 ] as const;
