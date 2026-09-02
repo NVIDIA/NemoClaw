@@ -24,6 +24,7 @@ import {
 import {
   reconcileOpenClawPluginOnboardPairing,
   runOpenClawPluginOnboardWithPairingResume,
+  runOpenClawPluginRecreateWithPairingResume,
 } from "../live/openclaw-plugin-runtime-exdev-onboard.ts";
 import {
   resolveOpenShellSiblingComponents,
@@ -283,6 +284,63 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
       );
     },
   );
+});
+
+describe("OpenClaw plugin recreation pairing resume", () => {
+  it("resumes recreation once after canonical pairing appears late (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const attempts = [
+      onboardResult(
+        1,
+        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+      ),
+      onboardResult(0),
+    ];
+    const onEvidence = vi.fn();
+
+    const result = await runOpenClawPluginRecreateWithPairingResume({
+      sandboxName,
+      run: vi.fn(async (attempt) => attempts[attempt - 1]),
+      reconcile: vi.fn(async () => true),
+      onEvidence,
+    });
+
+    expect(result.outcome).toBe("passed");
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
+        outcome: "passed-after-retry",
+      }),
+    );
+  });
+
+  it("does not resume recreation when reconciliation fails (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const run = vi.fn(async () =>
+      onboardResult(
+        1,
+        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+      ),
+    );
+    const onEvidence = vi.fn();
+
+    const result = await runOpenClawPluginRecreateWithPairingResume({
+      sandboxName,
+      run,
+      reconcile: vi.fn(async () => false),
+      onEvidence,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
+        outcome: "failed-no-retry",
+        attempts: [expect.objectContaining({ reconciled: false, retryScheduled: false })],
+      }),
+    );
+  });
 });
 
 function createWrapperFixture() {

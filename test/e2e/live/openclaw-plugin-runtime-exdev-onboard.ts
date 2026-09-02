@@ -8,7 +8,8 @@ import {
   type RetryEvidence,
 } from "../../../tools/e2e/retry-evidence.mts";
 
-const OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
+const ONBOARD_OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
+const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
 const OWNER = "openclaw-plugin-runtime-exdev";
 
 type OnboardPairingRetryOptions<T extends CommandExitResult> = {
@@ -58,12 +59,12 @@ export function classifyOpenClawPluginOnboard<T extends CommandExitResult>(
   };
 }
 
-/** Resume once when the startup watcher has not yet published canonical pairing. */
-export function runOpenClawPluginOnboardWithPairingResume<T extends CommandExitResult>(
+function runOpenClawPluginWithPairingResume<T extends CommandExitResult>(
   options: OnboardPairingRetryOptions<T>,
+  operation: string,
 ): Promise<BoundedRetryResult<T>> {
   return runBoundedRetry({
-    operation: OPERATION,
+    operation,
     owner: OWNER,
     idempotence: "reconciled-mutation",
     maxAttempts: 2,
@@ -72,6 +73,20 @@ export function runOpenClawPluginOnboardWithPairingResume<T extends CommandExitR
     reconcile: options.reconcile,
     onEvidence: options.onEvidence,
   });
+}
+
+/** Resume initial onboarding once when the startup watcher has not published canonical pairing. */
+export function runOpenClawPluginOnboardWithPairingResume<T extends CommandExitResult>(
+  options: OnboardPairingRetryOptions<T>,
+): Promise<BoundedRetryResult<T>> {
+  return runOpenClawPluginWithPairingResume(options, ONBOARD_OPERATION);
+}
+
+/** Resume sandbox recreation once when the startup watcher has not published canonical pairing. */
+export function runOpenClawPluginRecreateWithPairingResume<T extends CommandExitResult>(
+  options: OnboardPairingRetryOptions<T>,
+): Promise<BoundedRetryResult<T>> {
+  return runOpenClawPluginWithPairingResume(options, RECREATE_OPERATION);
 }
 
 /** Require the paused finalization session and its live runtime before resume can continue. */

@@ -30,6 +30,7 @@ import { parseJsonFromText } from "./json-envelope.ts";
 import {
   reconcileOpenClawPluginOnboardPairing,
   runOpenClawPluginOnboardWithPairingResume,
+  runOpenClawPluginRecreateWithPairingResume,
 } from "./openclaw-plugin-runtime-exdev-onboard.ts";
 import {
   buildTrustedPluginFixtureImage,
@@ -445,6 +446,25 @@ test(
       openshellWrapper,
       openshell,
     );
+    const reconcilePairing = (artifactName: string) =>
+      reconcileOpenClawPluginOnboardPairing({
+        expectedFromDockerfile: customPluginContext.dockerfilePath,
+        sandboxName: SANDBOX_NAME,
+        captureDiagnostics: () =>
+          captureIssue4462FailureDiagnostics(sandbox, {
+            env: sandboxEnv,
+            redactionValues: ["nemoclaw-exdev-dummy-key"],
+            sandboxName: SANDBOX_NAME,
+          }),
+        listSandbox: () =>
+          sandbox.list({
+            artifactName,
+            env: sandboxEnv,
+            timeoutMs: PROBE_TIMEOUT_MS,
+          }),
+        loadSession,
+        resolveTarget: () => resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME),
+      });
 
     progress.phase("build and onboard plugin v1");
     const previousLocalBaseImageBuild = process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD;
@@ -512,25 +532,7 @@ test(
             timeoutMs: ONBOARD_TIMEOUT_MS,
           },
         ),
-      reconcile: () =>
-        reconcileOpenClawPluginOnboardPairing({
-          expectedFromDockerfile: customPluginContext.dockerfilePath,
-          sandboxName: SANDBOX_NAME,
-          captureDiagnostics: () =>
-            captureIssue4462FailureDiagnostics(sandbox, {
-              env: sandboxEnv,
-              redactionValues: ["nemoclaw-exdev-dummy-key"],
-              sandboxName: SANDBOX_NAME,
-            }),
-          listSandbox: () =>
-            sandbox.list({
-              artifactName: "openclaw-plugin-exdev-onboard-pairing-reconcile",
-              env: sandboxEnv,
-              timeoutMs: PROBE_TIMEOUT_MS,
-            }),
-          loadSession,
-          resolveTarget: () => resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME),
-        }),
+      reconcile: () => reconcilePairing("openclaw-plugin-exdev-onboard-pairing-reconcile"),
       onEvidence: async (evidence) => {
         await artifacts.writeJson("openclaw-plugin-exdev-onboard-retry.json", evidence);
       },
@@ -583,30 +585,44 @@ test(
       version: "v2",
     });
     openshellWrapper.selectImage(pluginImageV2);
-    const recreate = await host.command(
-      "node",
-      [
-        CLI_ENTRYPOINT,
-        "onboard",
-        "--fresh",
-        "--recreate-sandbox",
-        "--non-interactive",
-        "--yes",
-        "--yes-i-accept-third-party-software",
-        "--name",
-        SANDBOX_NAME,
-        "--agent",
-        "openclaw",
-        "--from",
-        customPluginContext.dockerfilePath,
-      ],
-      {
-        artifactName: "openclaw-weather-plugin-recreate",
-        env: sandboxEnv,
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+    const recreate = await runOpenClawPluginRecreateWithPairingResume({
+      sandboxName: SANDBOX_NAME,
+      run: (attempt) =>
+        host.command(
+          "node",
+          attempt === 1
+            ? [
+                CLI_ENTRYPOINT,
+                "onboard",
+                "--fresh",
+                "--recreate-sandbox",
+                "--non-interactive",
+                "--yes",
+                "--yes-i-accept-third-party-software",
+                "--name",
+                SANDBOX_NAME,
+                "--agent",
+                "openclaw",
+                "--from",
+                customPluginContext.dockerfilePath,
+              ]
+            : [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
+          {
+            artifactName:
+              attempt === 1
+                ? "openclaw-weather-plugin-recreate"
+                : "openclaw-weather-plugin-recreate-pairing-resume",
+            env: sandboxEnv,
+            timeoutMs: ONBOARD_TIMEOUT_MS,
+          },
+        ),
+      reconcile: () => reconcilePairing("openclaw-weather-plugin-recreate-pairing-reconcile"),
+      onEvidence: async (evidence) => {
+        await artifacts.writeJson("openclaw-weather-plugin-recreate-retry.json", evidence);
       },
-    );
-    expect(recreate.exitCode, resultText(recreate)).toBe(0);
+    });
+    const recreateText = recreate.value ? resultText(recreate.value) : "recreate returned no result";
+    expect(recreate.outcome, recreateText).toBe("passed");
     const weatherAfterRecreate = await assertWeatherPluginRuntime(sandbox, "after-recreate", "v2");
 
     await artifacts.target.complete({
@@ -614,7 +630,7 @@ test(
       onboardExitCode: onboard.value!.exitCode,
       crossDeviceInstallExitCode: crossDeviceInstall.exitCode,
       restartExitCode: restart.exitCode,
-      recreateExitCode: recreate.exitCode,
+      recreateExitCode: recreate.value!.exitCode,
       testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
       assertions: {
         crossDevicePayloadSurvivedRestart: weatherAfterRestart === "v1-exdev",
