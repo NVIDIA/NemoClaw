@@ -174,7 +174,7 @@ export function parseOllamaRuntimeModelStatus(
   if (!output) return { probed: false, loaded: false, cpuOnly: false };
 
   try {
-    const parsed = JSON.parse(String(output || "")) as { models?: unknown } | null;
+    const parsed = JSON.parse(output) as { models?: unknown } | null;
     if (!parsed || !Array.isArray(parsed.models)) {
       return { probed: false, loaded: false, cpuOnly: false };
     }
