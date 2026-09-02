@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { GATEWAY_PORT } from "../core/ports";
 import { REPOSITORY_ROOT } from "../core/repository-root";
+import { resolveHostConfigStateDir } from "./config-io";
 import { nemoclawStateRoot } from "./state-root";
 
 export const ROOT = REPOSITORY_ROOT;
@@ -16,14 +17,5 @@ export function resolveNemoclawHomeDir(homeDir: string = process.env.HOME ?? os.
 }
 
 export function resolveNemoclawStateDir(homeDir?: string): string {
-  if (
-    homeDir === undefined &&
-    process.env.VITEST === "true" &&
-    (process.env.HOME ?? "") === process.env.NEMOCLAW_TEST_BASE_HOME &&
-    process.env.NEMOCLAW_TEST_STATE_DIR &&
-    path.isAbsolute(process.env.NEMOCLAW_TEST_STATE_DIR)
-  ) {
-    return process.env.NEMOCLAW_TEST_STATE_DIR;
-  }
-  return path.join(resolveNemoclawHomeDir(homeDir), "state");
+  return resolveHostConfigStateDir(homeDir);
 }

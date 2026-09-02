@@ -78,9 +78,17 @@ describe("messaging credential provider profile", () => {
         stderr: "request failed with discord-credential-must-not-leak",
       });
 
-    expect(() =>
-      ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell }),
-    ).toThrow("Could not import the OpenShell messaging credential profile.");
+    let thrown: unknown;
+    try {
+      ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(
+      "Could not import the OpenShell messaging credential profile.",
+    );
+    expect((thrown as Error).message).not.toContain("discord-credential-must-not-leak");
   });
 
   it("reports a messaging-specific export failure (#10155)", () => {

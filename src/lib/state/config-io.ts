@@ -30,6 +30,21 @@ function hostNemoclawDir(): string {
   return path.resolve(nemoclawStateRoot(home, GATEWAY_PORT));
 }
 
+/** Resolve the host state subdirectory used by durable config records. */
+export function resolveHostConfigStateDir(homeDir?: string): string {
+  if (
+    homeDir === undefined &&
+    process.env.VITEST === "true" &&
+    (process.env.HOME ?? "") === process.env.NEMOCLAW_TEST_BASE_HOME &&
+    process.env.NEMOCLAW_TEST_STATE_DIR &&
+    path.isAbsolute(process.env.NEMOCLAW_TEST_STATE_DIR)
+  ) {
+    return process.env.NEMOCLAW_TEST_STATE_DIR;
+  }
+  const home = homeDir ?? process.env.HOME ?? os.homedir();
+  return path.join(path.resolve(nemoclawStateRoot(home, GATEWAY_PORT)), "state");
+}
+
 function isHostNemoclawRoot(dirPath: string): boolean {
   return path.resolve(dirPath) === hostNemoclawDir();
 }

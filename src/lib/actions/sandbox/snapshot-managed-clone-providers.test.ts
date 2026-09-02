@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -22,6 +24,7 @@ import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/
 import type { SnapshotRestoreAuthority } from "../../state/sandbox";
 import {
   cleanupManagedCloneProviderTransaction,
+  createManagedCloneProviderRecoveryStore,
   type ManagedCloneProviderBinding,
   ManagedCloneProviderTransactionError,
   prepareManagedCloneProviderTransaction,
@@ -1031,6 +1034,137 @@ describe("managed clone provider transaction", () => {
       providers: [{ outcome: "delete-failed" }],
     });
     expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(true);
+  });
+
+  it("recovers an exact orphan from durable state after a process restart", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-provider-recovery-"));
+    try {
+      const first = { ...TOKEN_BINDING, providerName: "destination-first-token" };
+      const second = {
+        ...TOKEN_BINDING,
+        providerName: "destination-second-token",
+        providerEnvKey: "SECOND_TOKEN",
+      };
+      const profile = managedStartupE2eProfile("openclaw");
+      const source = entry("source", profile);
+      const runner = providerRunner();
+      const firstStore = createManagedCloneProviderRecoveryStore(stateDir);
+      const prepared = prepareManagedCloneProviderTransaction({
+        handoff: handoff(profile, source),
+        destination: null,
+        additionalBindings: [first, second],
+        environment: {
+          RUNTIME_TOKEN: "test-only-runtime-token",
+          SECOND_TOKEN: "test-only-second-token",
+        },
+        recoveryStore: firstStore,
+        runOpenshell: runner.run,
+        transactionId: "a".repeat(32),
+      });
+      runner.setFailDelete(true);
+
+      expect(() =>
+        provisionManagedCloneProviderTransaction(prepared, {
+          ...authorityDeps(source),
+          environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
+          recoveryStore: firstStore,
+          runOpenshell: runner.run,
+        }),
+      ).toThrow(/credential SECOND_TOKEN disappeared/u);
+      expect(firstStore.load("destination")).toMatchObject({
+        transactionId: "a".repeat(32),
+        providers: [first, second],
+      });
+      expect(runner.live.get(first.providerName)).toEqual({
+        providerName: first.providerName,
+        providerType: first.providerType,
+        providerEnvKey: first.providerEnvKey,
+      });
+
+      runner.setFailDelete(false);
+      const restartedStore = createManagedCloneProviderRecoveryStore(stateDir);
+      const retry = prepareManagedCloneProviderTransaction({
+        handoff: handoff(profile, source),
+        destination: null,
+        additionalBindings: [first, second],
+        environment: {
+          RUNTIME_TOKEN: "test-only-runtime-token",
+          SECOND_TOKEN: "test-only-second-token",
+        },
+        recoveryStore: restartedStore,
+        runOpenshell: runner.run,
+        transactionId: "b".repeat(32),
+      });
+      expect(retry.providers.map((provider) => provider.action)).toEqual([
+        "recover-and-create",
+        "create",
+      ]);
+
+      const receipt = provisionManagedCloneProviderTransaction(retry, {
+        ...authorityDeps(source),
+        environment: {
+          RUNTIME_TOKEN: "test-only-runtime-token",
+          SECOND_TOKEN: "test-only-second-token",
+        },
+        recoveryStore: restartedStore,
+        runOpenshell: runner.run,
+      });
+      expect(runner.commands).toContain(`provider delete ${first.providerName}`);
+      expect(runner.live.get(first.providerName)).toEqual({
+        providerName: first.providerName,
+        providerType: first.providerType,
+        providerEnvKey: first.providerEnvKey,
+      });
+      expect(runner.live.get(second.providerName)).toEqual({
+        providerName: second.providerName,
+        providerType: second.providerType,
+        providerEnvKey: second.providerEnvKey,
+      });
+      expect(restartedStore.load("destination")).toBeNull();
+      expect(
+        cleanupManagedCloneProviderTransaction(receipt, runner.run, restartedStore).status,
+      ).toBe("complete");
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves a changed same-name provider during durable recovery", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-provider-recovery-"));
+    try {
+      const profile = managedStartupE2eProfile("openclaw");
+      const source = entry("source", profile);
+      const changed = { ...TOKEN_BINDING, providerType: "other" };
+      const runner = providerRunner([changed]);
+      const recoveryStore = createManagedCloneProviderRecoveryStore(stateDir);
+      recoveryStore.persist({
+        schemaVersion: 1,
+        transactionId: "c".repeat(32),
+        destinationSandboxName: "destination",
+        providers: [TOKEN_BINDING],
+      });
+
+      expect(() =>
+        prepareManagedCloneProviderTransaction({
+          handoff: handoff(profile, source),
+          destination: null,
+          additionalBindings: [TOKEN_BINDING],
+          environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
+          recoveryStore,
+          runOpenshell: runner.run,
+          transactionId: "d".repeat(32),
+        }),
+      ).toThrow(/changed from its durable recovery binding.*preserving/u);
+      expect(runner.commands.some((command) => command.startsWith("provider delete"))).toBe(false);
+      expect(runner.live.get(TOKEN_BINDING.providerName)).toMatchObject({
+        providerName: changed.providerName,
+        providerType: changed.providerType,
+        providerEnvKey: changed.providerEnvKey,
+      });
+      expect(recoveryStore.load("destination")).not.toBeNull();
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
   });
 
   it("rejects a cloned or fabricated cleanup receipt", () => {

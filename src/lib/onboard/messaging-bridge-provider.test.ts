@@ -229,47 +229,55 @@ describe("configureMessagingBridgeRefreshes", () => {
   });
 
   it("fails closed when the secret is unavailable", () => {
+    const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
-      runOpenshell: vi.fn(),
+      runOpenshell,
       redact,
       getCredential: () => null,
       log: noLog,
       profiles: [GC_PROFILE],
     });
     expect(result.ok).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("fails closed when the service account JSON cannot be parsed", () => {
+    const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
-      runOpenshell: vi.fn(),
+      runOpenshell,
       redact,
       getCredential: () => "not json",
       log: noLog,
       profiles: [GC_PROFILE],
     });
     expect(result.ok).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("fails closed when client_email or private_key is missing", () => {
+    const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
-      runOpenshell: vi.fn(),
+      runOpenshell,
       redact,
       getCredential: () => JSON.stringify({ client_email: "x@y" }),
       log: noLog,
       profiles: [GC_PROFILE],
     });
     expect(result.ok).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("fails closed when client_email or private_key is blank", () => {
+    const runOpenshell = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
-      runOpenshell: vi.fn(),
+      runOpenshell,
       redact,
       getCredential: () => JSON.stringify({ client_email: " ", private_key: "\n" }),
       log: noLog,
       profiles: [GC_PROFILE],
     });
     expect(result.ok).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("keeps private keys off argv while configuring refresh", () => {
@@ -510,7 +518,9 @@ describe("configureMessagingBridgeRefreshes", () => {
   });
 
   it("bounds refresh configuration and fails closed when the command times out", () => {
-    const runOpenshell = vi.fn().mockReturnValueOnce({ status: null, stderr: "operation timed out" });
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: null, stderr: "operation timed out" });
 
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
@@ -578,9 +588,7 @@ describe("ensureMessagingBridgeProfiles", () => {
       ["provider", "profile", "export", GC_PROFILE.profileId, "--output", "json"],
     ]);
     expect(runOpenshell.mock.calls.map(([, options]) => options.timeout)).toEqual([
-      30_000,
-      30_000,
-      30_000,
+      30_000, 30_000, 30_000,
     ]);
     expect(exit).not.toHaveBeenCalled();
   });
@@ -794,10 +802,7 @@ describe("ensureMessagingBridgeProfiles", () => {
     });
     expect(exit).toHaveBeenCalledWith(1);
     expect(runOpenshell).toHaveBeenCalledTimes(2);
-    expect(runOpenshell.mock.calls.map(([, options]) => options.timeout)).toEqual([
-      30_000,
-      30_000,
-    ]);
+    expect(runOpenshell.mock.calls.map(([, options]) => options.timeout)).toEqual([30_000, 30_000]);
   });
 });
 

@@ -37,6 +37,11 @@ import {
 } from "../../../state/registry/rebuild-authority";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
+import {
+  createManagedCloneProviderRecoveryStore as createRecoveryStore,
+  type ManagedCloneProviderRecoveryRecord,
+  type ManagedCloneProviderRecoveryStore,
+} from "./managed-clone-provider-recovery";
 
 const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 export const MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS = 30_000;
@@ -78,7 +83,7 @@ export interface ManagedCloneProviderBinding {
 
 export interface PreparedManagedCloneProvider {
   readonly binding: ManagedCloneProviderBinding;
-  readonly action: "create" | "reuse-destination-owned";
+  readonly action: "create" | "recover-and-create" | "reuse-destination-owned";
 }
 
 export interface PreparedManagedCloneProviderTransaction {
@@ -91,6 +96,8 @@ export interface PreparedManagedCloneProviderTransaction {
   readonly sourceRegistryAuthority: SandboxRebuildAuthority;
   readonly snapshotRestoreAuthority: sandboxState.SnapshotRestoreAuthority;
   readonly destinationRegistryAuthority?: SandboxRebuildAuthority;
+  readonly destinationOwnedBindings: readonly ManagedCloneProviderBinding[];
+  readonly priorRecovery: ManagedCloneProviderRecoveryRecord | null;
   readonly providers: readonly PreparedManagedCloneProvider[];
 }
 
@@ -119,6 +126,7 @@ export type ManagedCloneProviderCleanupOutcome =
 
 export interface ManagedCloneProviderCleanupResult {
   readonly status: "complete" | "partial";
+  readonly recovery: "cleared" | "not-recorded" | "retained";
   readonly providers: readonly {
     readonly providerName: string;
     readonly outcome: ManagedCloneProviderCleanupOutcome;
@@ -148,6 +156,12 @@ export class ManagedCloneProviderTransactionError extends Error {
 
 const issuedReceipts = new WeakSet<object>();
 const completedCleanup = new WeakMap<object, Set<string>>();
+
+export function createManagedCloneProviderRecoveryStore(
+  stateDir?: string,
+): ManagedCloneProviderRecoveryStore {
+  return createRecoveryStore({ isValidSandboxName: isValidName, isValidProviderName }, stateDir);
+}
 
 function fail(message: string, cause?: unknown): never {
   throw new ManagedCloneProviderTransactionError(
@@ -388,6 +402,7 @@ export function prepareManagedCloneProviderTransaction(input: {
     destination: Readonly<SandboxEntry>,
   ) => readonly ManagedCloneProviderBinding[];
   readonly environment?: NodeJS.ProcessEnv;
+  readonly recoveryStore?: ManagedCloneProviderRecoveryStore;
   readonly runOpenshell: ManagedCloneProviderRunner;
   readonly transactionId?: string;
 }): PreparedManagedCloneProviderTransaction {
@@ -428,6 +443,14 @@ export function prepareManagedCloneProviderTransaction(input: {
         ...(input.resolveAdditionalDestinationOwnedBindings?.(input.destination) ?? []),
       ])
     : [];
+  let priorRecovery: ManagedCloneProviderRecoveryRecord | null;
+  try {
+    priorRecovery = (input.recoveryStore ?? createManagedCloneProviderRecoveryStore()).load(
+      destinationSandboxName,
+    );
+  } catch (error) {
+    fail("could not read durable provider recovery state", error);
+  }
   const environment = input.environment ?? process.env;
   const providers: PreparedManagedCloneProvider[] = [];
   for (const binding of desired) {
@@ -440,10 +463,24 @@ export function prepareManagedCloneProviderTransaction(input: {
     }
     const inspection = inspectProvider(binding, input.runOpenshell);
     if (inspection.kind === "collision") {
+      if (
+        priorRecovery?.providers.some(
+          (candidate) => candidate.providerName === binding.providerName,
+        )
+      ) {
+        fail(
+          `provider '${binding.providerName}' changed from its durable recovery binding; ` +
+            "preserving the incompatible live provider",
+        );
+      }
       fail(`provider '${binding.providerName}' has an incompatible live binding`);
     }
     if (inspection.kind === "exact") {
       if (!input.destination || !owned.some((candidate) => sameBinding(candidate, binding))) {
+        if (priorRecovery?.providers.some((candidate) => sameBinding(candidate, binding))) {
+          providers.push({ binding, action: "recover-and-create" });
+          continue;
+        }
         fail(
           `provider '${binding.providerName}' exists without exact destination ownership; ` +
             "refusing credential reuse",
@@ -477,6 +514,8 @@ export function prepareManagedCloneProviderTransaction(input: {
     sourceRegistryAuthority: structuredClone(input.handoff.sourceRegistryAuthority),
     snapshotRestoreAuthority: structuredClone(input.handoff.snapshotRestoreAuthority),
     ...(destinationRegistryAuthority === undefined ? {} : { destinationRegistryAuthority }),
+    destinationOwnedBindings: owned,
+    priorRecovery,
     providers,
   });
 }
@@ -581,6 +620,73 @@ function configureCreatedMessagingRefreshes(
   if (!result.ok) fail("could not configure gateway token minting for a messaging bridge");
 }
 
+function pendingRecoveryRecord(
+  prepared: PreparedManagedCloneProviderTransaction,
+): ManagedCloneProviderRecoveryRecord | null {
+  const providers = prepared.providers
+    .filter((provider) => provider.action !== "reuse-destination-owned")
+    .map((provider) => ({
+      providerName: provider.binding.providerName,
+      providerType: provider.binding.providerType,
+      providerEnvKey: provider.binding.providerEnvKey,
+      ...(provider.binding.sourceCredentialEnvKey === undefined
+        ? {}
+        : { sourceCredentialEnvKey: provider.binding.sourceCredentialEnvKey }),
+      source: provider.binding.source,
+    }));
+  return providers.length === 0
+    ? null
+    : {
+        schemaVersion: 1,
+        transactionId: prepared.transactionId,
+        destinationSandboxName: prepared.destinationSandboxName,
+        providers,
+      };
+}
+
+function reconcilePriorRecovery(
+  prepared: PreparedManagedCloneProviderTransaction,
+  input: {
+    readonly runOpenshell: ManagedCloneProviderRunner;
+    readonly readSandbox: ReadSandbox;
+    readonly captureSnapshotRestoreAuthority?: CaptureSnapshotRestoreAuthority;
+  },
+  store: ManagedCloneProviderRecoveryStore,
+): void {
+  const recovery = prepared.priorRecovery;
+  if (!recovery) return;
+  if (!isDeepStrictEqual(store.load(prepared.destinationSandboxName), recovery)) {
+    fail("durable provider recovery authority changed after clone preflight");
+  }
+  for (const binding of [...recovery.providers].reverse()) {
+    revalidateManagedCloneMutationAuthority(prepared, input);
+    const inspection = inspectProvider(binding, input.runOpenshell);
+    if (inspection.kind === "missing") continue;
+    if (
+      inspection.kind === "exact" &&
+      prepared.destinationOwnedBindings.some((candidate) => sameBinding(candidate, binding))
+    ) {
+      continue;
+    }
+    if (inspection.kind === "collision") {
+      fail(
+        `recovery provider '${binding.providerName}' changed from its recorded binding; ` +
+          "preserving the live provider",
+      );
+    }
+    const deletion = deleteProviderWithRecovery(binding.providerName, {
+      runOpenshell: input.runOpenshell,
+      allowedSandboxes: [prepared.destinationSandboxName],
+    });
+    if (!deletion.ok || inspectProvider(binding, input.runOpenshell).kind !== "missing") {
+      fail(`could not clean exact recovery provider '${binding.providerName}'`);
+    }
+  }
+  if (!store.clear(recovery)) {
+    fail("durable provider recovery authority changed before retirement");
+  }
+}
+
 /**
  * Materialize missing providers under one process-local ownership ledger.
  * A non-zero create followed by an exact provider is explicitly ambiguous:
@@ -590,6 +696,7 @@ export function provisionManagedCloneProviderTransaction(
   prepared: PreparedManagedCloneProviderTransaction,
   input: {
     readonly environment?: NodeJS.ProcessEnv;
+    readonly recoveryStore?: ManagedCloneProviderRecoveryStore;
     readonly runOpenshell: ManagedCloneProviderRunner;
     readonly readSandbox: ReadSandbox;
     readonly captureSnapshotRestoreAuthority?: CaptureSnapshotRestoreAuthority;
@@ -601,10 +708,13 @@ export function provisionManagedCloneProviderTransaction(
   },
 ): ManagedCloneProviderTransactionReceipt {
   const environment = input.environment ?? process.env;
+  const recoveryStore = input.recoveryStore ?? createManagedCloneProviderRecoveryStore();
   const confirmed: ManagedCloneProviderOwnershipReceipt[] = [];
+  const recovery = pendingRecoveryRecord(prepared);
   try {
     // Fence every shared gateway mutation, including provider profile import.
     revalidateManagedCloneMutationAuthority(prepared, input);
+    reconcilePriorRecovery(prepared, input, recoveryStore);
     const messagingProfiles = listMessagingBridgeProfiles({ root: REPOSITORY_ROOT });
     if (
       prepared.providers.some(
@@ -625,6 +735,7 @@ export function provisionManagedCloneProviderTransaction(
         exit: () => fail("could not register an OpenShell messaging provider profile"),
       },
     );
+    if (recovery) recoveryStore.persist(recovery);
     for (const provider of prepared.providers) {
       revalidateManagedCloneMutationAuthority(prepared, input);
       const current = inspectProvider(provider.binding, input.runOpenshell);
@@ -706,10 +817,17 @@ export function provisionManagedCloneProviderTransaction(
       environment,
       input.runOpenshell,
     );
+    if (recovery && !recoveryStore.clear(recovery)) {
+      fail("durable provider recovery authority changed before successful retirement");
+    }
     return issueReceipt(prepared, confirmed);
   } catch (cause) {
     const partialReceipt = issueReceipt(prepared, confirmed);
-    const rollback = cleanupManagedCloneProviderTransaction(partialReceipt, input.runOpenshell);
+    const rollback = cleanupManagedCloneProviderTransaction(
+      partialReceipt,
+      input.runOpenshell,
+      recoveryStore,
+    );
     const detail = cause instanceof Error ? cause.message : String(cause);
     throw new ManagedCloneProviderTransactionError(detail, {
       cause,
@@ -727,6 +845,7 @@ export function provisionManagedCloneProviderTransaction(
 export function cleanupManagedCloneProviderTransaction(
   receipt: ManagedCloneProviderTransactionReceipt,
   runOpenshell: ManagedCloneProviderRunner,
+  recoveryStore: ManagedCloneProviderRecoveryStore = createManagedCloneProviderRecoveryStore(),
 ): ManagedCloneProviderCleanupResult {
   if (!issuedReceipts.has(receipt)) {
     fail("cleanup requires the exact process-local ownership receipt");
@@ -783,14 +902,39 @@ export function cleanupManagedCloneProviderTransaction(
     cleaned.add(providerName);
     outcomes.push({ providerName, outcome: "deleted" });
   }
+  const providerCleanupComplete = outcomes.every((result) =>
+    ["already-cleaned", "already-missing", "deleted", "reused-preserved"].includes(result.outcome),
+  );
+  let recovery: ManagedCloneProviderCleanupResult["recovery"] = "not-recorded";
+  try {
+    const recorded = recoveryStore.load(receipt.destinationSandboxName);
+    if (recorded) {
+      recovery = "retained";
+      if (
+        recorded.transactionId === receipt.transactionId &&
+        recorded.destinationSandboxName === receipt.destinationSandboxName
+      ) {
+        const recordedProvidersAbsent = recorded.providers.every((binding) => {
+          try {
+            return inspectProvider(binding, runOpenshell).kind === "missing";
+          } catch {
+            return false;
+          }
+        });
+        if (providerCleanupComplete && recordedProvidersAbsent && recoveryStore.clear(recorded)) {
+          recovery = "cleared";
+        }
+      }
+    }
+  } catch {
+    recovery = "retained";
+  }
   return cloneAndDeepFreeze({
-    status: outcomes.every((result) =>
-      ["already-cleaned", "already-missing", "deleted", "reused-preserved"].includes(
-        result.outcome,
-      ),
-    )
-      ? ("complete" as const)
-      : ("partial" as const),
+    status:
+      providerCleanupComplete && recovery !== "retained"
+        ? ("complete" as const)
+        : ("partial" as const),
+    recovery,
     providers: outcomes,
   });
 }
