@@ -75,7 +75,7 @@ export function runDeepAgentsConfigCommand(
   } else {
     initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
     if (initialConfig !== undefined) fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
-    if (managedOptions.symlink && initialConfig !== undefined) {
+    if (managedOptions.symlink) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.symlinkSync(managedSymlinkTarget, configPath);
     }
@@ -92,9 +92,10 @@ export function runDeepAgentsConfigCommand(
         `runtime_kind = "${runtimeKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
       );
     const canonicalEnvironment = Object.fromEntries(
-      [...command.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(
-        ([, name]) => [name!, `openshell:resolve:env:${name!}`],
-      ),
+      [...command.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(([, name]) => [
+        name!,
+        `openshell:resolve:env:${name!}`,
+      ]),
     );
     const result = spawnSync("bash", ["-c", fixtureCommand], {
       encoding: "utf-8",

@@ -10,6 +10,7 @@ import {
   DEFAULT_OPENCLAW_CONFIG_DIR,
   openClawMcporterRoot,
 } from "./mcp-bridge-adapters";
+import { UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX } from "./mcp-bridge-adapter-status";
 import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
 import {
   type HermesMcpReconciliationResult,
@@ -96,12 +97,14 @@ function getAdapterRegistration(
 ): McpBridgeStatus["adapter"] {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
-  if (credentialObservationDetail) {
-    return {
-      registered: null,
-      detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
-    };
-  }
+  const credentialInspectionFailure = credentialObservationDetail
+    ? {
+        registered: null,
+        detail: `Adapter inspection was skipped because ${credentialObservationDetail}.`,
+      }
+    : undefined;
+  if (credentialInspectionFailure && adapter !== "deepagents-config")
+    return credentialInspectionFailure;
   if (adapter === "hermes-config" && hermesReconciliation) {
     return hermesReconciliation.ok
       ? { registered: true }
@@ -119,7 +122,19 @@ function getAdapterRegistration(
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
   const result = executeSandboxCommand(sandboxName, command);
-  if (!result) return { registered: null, detail: "sandbox unreachable" };
+  if (!result)
+    return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
+  if (result.status !== 0 && adapter === "deepagents-config") {
+    const detail = redactBridgeSecretsForDisplay(
+      result.stderr || result.stdout || "not found",
+      entry,
+      resolvePersistedCredentialEnvForRedaction(entry.env),
+    ).trim();
+    if (detail.startsWith(`${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}:`)) {
+      throw new McpBridgeError(detail, 2);
+    }
+  }
+  if (credentialInspectionFailure) return credentialInspectionFailure;
   if (result.status === 0) {
     const output = result.stdout.trim();
     if (output === "registered") return { registered: true };

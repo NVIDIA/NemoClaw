@@ -345,6 +345,70 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(JSON.stringify(outcomes)).not.toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
   });
 
+  it("rejects unsafe managed Deep Agents projection entries before credential handling (#10754)", () => {
+    const home = createTempHome("nemoclaw-mcp-unsafe-deepagents-projection-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
+  const current = registry.getSandbox("alpha");
+  current.agent = "langchain-deepagents-code";
+  current.mcp.bridges.github.agent = "langchain-deepagents-code";
+  current.mcp.bridges.github.adapter = "deepagents-config";
+  registry.updateSandbox("alpha", current);
+  providerCredentialObservation = "absent";
+  const cases = [
+    { name: "dangling symbolic link", config: undefined, options: { symlink: true } },
+    { name: "symbolic link", config: { mcpServers: {} }, options: { symlink: true } },
+    { name: "FIFO", config: undefined, options: { fifo: true } },
+  ];
+  const outcomes = [];
+  for (const fixture of cases) {
+    process.exitCode = undefined;
+    logLines.length = 0;
+    errorLines.length = 0;
+    processRecovery.executeSandboxCommand = (_sandboxName, command) =>
+      deepAgentsFixture.runDeepAgentsConfigCommand(
+        command,
+        fixture.config,
+        "v2",
+        undefined,
+        0o600,
+        fixture.options,
+      );
+    await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github"]);
+    outcomes.push({
+      name: fixture.name,
+      exitCode: process.exitCode ?? 0,
+      stdout: logLines.join("\n"),
+      stderr: errorLines.join("\n"),
+    });
+  }
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify(outcomes));
+`,
+    );
+    const outcomes = JSON.parse(stdout) as Array<{
+      name: string;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }>;
+
+    expect(outcomes.map(({ name, exitCode }) => ({ name, exitCode }))).toEqual([
+      { name: "dangling symbolic link", exitCode: 2 },
+      { name: "symbolic link", exitCode: 2 },
+      { name: "FIFO", exitCode: 2 },
+    ]);
+    outcomes.forEach((outcome) => {
+      expect(outcome.stdout, outcome.name).toBe("");
+      expect(outcome.stderr, outcome.name).toContain(
+        `Unsafe managed Deep Agents MCP projection path: ${outcome.name.replace("dangling ", "")}`,
+      );
+      expect(outcome.stderr, outcome.name).not.toContain("adapter does not match");
+    });
+  });
+
   it("skips status probe traffic until exact policy and provider readiness are verified (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-readiness-");
     const { stdout } = runHarness(

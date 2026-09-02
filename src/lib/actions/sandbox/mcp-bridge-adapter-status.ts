@@ -16,6 +16,8 @@ import {
 // `.mcp.json` discovery is disabled in the managed image so user-authored MCP
 // state can never be layered over the validated registry projection.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+export const UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX =
+  "Unsafe managed Deep Agents MCP projection path";
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
@@ -260,6 +262,9 @@ export function buildDeepAgentsMcpStatusCommand(
     "config_path = managed_path if is_v2 else legacy_path",
     "try:",
     "    data = read_managed_projection(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
+    "except UnsafeManagedProjectionError as exc:",
+    `    print(f'${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: {exc} at {config_path}', file=sys.stderr)`,
+    "    raise SystemExit(2)",
     "except FileNotFoundError:",
     "    data = {}",
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",
