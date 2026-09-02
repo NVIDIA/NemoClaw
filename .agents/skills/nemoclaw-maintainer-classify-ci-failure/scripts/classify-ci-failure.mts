@@ -36,10 +36,8 @@ type ProcessResult = {
 };
 export type ClassifierExecutablePaths = {
   bash: string;
-  base64: string;
   dd: string;
   gh: string;
-  rm: string;
   stat: string;
   tail: string;
   wc: string;
@@ -50,9 +48,7 @@ export type ClassifierRuntime = {
 };
 const SYSTEM_EXECUTABLES = {
   bash: "/usr/bin/bash",
-  base64: "/usr/bin/base64",
   dd: "/usr/bin/dd",
-  rm: "/usr/bin/rm",
   stat: "/usr/bin/stat",
   tail: "/usr/bin/tail",
   wc: "/usr/bin/wc",
@@ -575,17 +571,6 @@ async function classifyCiFailureWithRuntime(
     const safe = redact(String(message));
     return new Error(safe.slice(0, 2000) || "Diagnostic unavailable");
   };
-  const github = async (args: string[], timeoutMs = 30000) => {
-    const result = await execute(
-      executables.gh,
-      args,
-      input.workdir,
-      timeoutMs,
-      subprocessEnvironment,
-    );
-    if (result.exitCode !== 0) throw diagnosticError(result.stderr.text || result.stdout.text);
-    return { stdout: result.stdout.text, stderr: result.stderr.text };
-  };
   const isGithubAccessFailure = (detail: string): boolean =>
     [
       "authentication",
@@ -602,6 +587,24 @@ async function classifyCiFailureWithRuntime(
       "GitHub access failed. Run gh auth status, then ask the user to correct authentication, authorization, SSO, or token scope before retrying." +
         (detail ? "\n" + detail : ""),
     );
+  const github = async (args: string[], timeoutMs = 30000) => {
+    const result = await execute(
+      executables.gh,
+      args,
+      input.workdir,
+      timeoutMs,
+      subprocessEnvironment,
+    );
+    if (result.exitCode !== 0) {
+      const detail = result.stderr.text + "\n" + result.stdout.text;
+      if (isGithubAccessFailure(detail))
+        throw githubAccessFailure(
+          project(result.stderr.text || result.stdout.text, 1500, 1000).text,
+        );
+      throw diagnosticError(result.stderr.text || result.stdout.text);
+    }
+    return { stdout: result.stdout.text, stderr: result.stderr.text };
+  };
   const run = async (command: string, timeoutMs = 30000) => {
     const result = await execute(
       executables.bash,
@@ -823,7 +826,7 @@ async function classifyCiFailureWithRuntime(
       try {
         const archive = dir + "/artifact.zip";
         const download = await run(
-          `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; ${q(executables.gh)} api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; ${q(executables.dd)} bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; ${q(executables.dd)} bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(${q(executables.dd)} bs=1 count=1 iflag=fullblock status=none | ${q(executables.base64)} -w0); bytes=$(${q(executables.stat)} -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; ${q(executables.rm)} -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
+          `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; ${q(executables.gh)} api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; ${q(executables.dd)} bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; ${q(executables.dd)} bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(${q(executables.dd)} bs=1 count=1 iflag=fullblock status=none | ${q(executables.wc)} -c); extra_status=$?; bytes=$(${q(executables.stat)} -c %s -- "$output") || exit 1; state=ok; if [ "$extra_status" -ne 0 ]; then state=reader; elif [ "$extra" -ne 0 ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
           60000,
         );
         const [downloadStatus, readerStatus, downloadState, downloadBytesText] =

@@ -95,38 +95,46 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
     "const block=()=>{ if(process.env.BLOCK_DESCENDANT_MARKER) { process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); } if(process.env.BLOCK_GROUP_MARKER) fs.writeFileSync(process.env.BLOCK_GROUP_MARKER,String(process.pid)); if(process.env.BLOCK_DESCENDANT_MARKER) { const child=spawn(process.execPath,['-e',\"process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:process.env.EXIT_GROUP_LEADER ? ['ignore',process.stdout,process.stderr] : 'ignore'}); fs.writeFileSync(process.env.BLOCK_DESCENDANT_MARKER,String(child.pid)); if(process.env.EXIT_GROUP_LEADER) { fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); process.exit(0); } } fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); setInterval(()=>{},1000); };",
     "const a=process.argv.slice(2).join(' ');",
     "fs.appendFileSync(process.env.GH_CALLS,a+'\\n');",
-    "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') { if(process.env.BLOCK_METADATA) { block(); } else console.log(JSON.stringify({id:123,run_id:456,name:process.env.JOB_NAME||'CLI tests',status:'completed',conclusion:'failure',html_url:process.env.JOB_URL||'https://example.test/job'})); }",
+    "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') { if(process.env.BLOCK_METADATA) { block(); } else if(process.env.FAIL_METADATA) { console.error(process.env.FAIL_METADATA); process.exit(8); } else console.log(JSON.stringify({id:123,run_id:456,name:process.env.JOB_NAME||'CLI tests',status:'completed',conclusion:'failure',html_url:process.env.JOB_URL||'https://example.test/job'})); }",
     "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.BLOCK_LOG) { block(); } else if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } else process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
-    "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') { const artifacts=process.env.DUPLICATE_ARTIFACTS ? [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)},{id:790,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}] : [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]; process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:artifacts.length,artifacts})); }",
-    "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') { if(process.env.BLOCK_ARTIFACT) { block(); } else process.stdout.write(fs.readFileSync(process.env.ZIP_PATH)); }",
+    "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') { if(process.env.FAIL_INVENTORY) { console.error(process.env.FAIL_INVENTORY); process.exit(8); } const artifacts=process.env.DUPLICATE_ARTIFACTS ? [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)},{id:790,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}] : [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]; process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:artifacts.length,artifacts})); }",
+    "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') { if(process.env.BLOCK_ARTIFACT) { block(); } else if(process.env.STREAM_BYTES) process.stdout.write(Buffer.alloc(Number(process.env.STREAM_BYTES))); else process.stdout.write(fs.readFileSync(process.env.ZIP_PATH)); }",
     "else { console.error('unexpected '+a); process.exit(9); }",
   ].join("\n");
   writeFileSync(gh, fake);
   chmodSync(gh, 0o755);
-  const rm = join(bin, "rm");
+  const dd = join(bin, "dd");
   writeFileSync(
-    rm,
+    dd,
     [
       `#!${process.execPath}`,
-      "const fs=require('fs'); const path=require('path');",
-      "const target=process.argv.at(-1);",
-      "if(path.basename(target).startsWith('nemoclaw-ci-')) {",
-      " const observation={name:path.basename(target),mode:fs.statSync(target).mode&0o777};",
-      " const log=path.join(target,'job.log'); if(fs.existsSync(log)) observation.logBytes=fs.statSync(log).size;",
-      " fs.appendFileSync(process.env.CLEANUP_OBSERVATIONS,JSON.stringify(observation)+'\\n');",
-      " if(process.env.FAIL_CLEANUP===observation.name.split('.')[0]) { console.error('cleanup BUILD_TOKEN=cleanup-secret failed at '+target); process.exit(7); }",
-      "}",
-      "fs.rmSync(target,{recursive:true,force:true});",
+      "const {spawnSync}=require('node:child_process');",
+      "if(process.env.FAIL_PROBE_DD && process.argv.includes('count=1')) process.exit(7);",
+      "const result=spawnSync('/usr/bin/dd',process.argv.slice(2),{stdio:'inherit'});",
+      "process.exit(result.status ?? 1);",
     ].join("\n"),
   );
-  chmodSync(rm, 0o755);
+  chmodSync(dd, 0o755);
+  const wc = join(bin, "wc");
+  writeFileSync(
+    wc,
+    [
+      `#!${process.execPath}`,
+      "const {spawnSync}=require('node:child_process');",
+      "if(process.env.FAIL_PROBE_WC && process.argv.includes('-c')) process.exit(7);",
+      "const result=spawnSync('/usr/bin/wc',process.argv.slice(2),{stdio:'inherit'});",
+      "process.exit(result.status ?? 1);",
+    ].join("\n"),
+  );
+  chmodSync(wc, 0o755);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: bin + ":" + process.env.PATH,
     TMPDIR: root,
     GH_CALLS: join(root, "calls"),
+    TEST_DD: dd,
     TEST_GH: gh,
-    CLEANUP_OBSERVATIONS: join(root, "cleanup-observations.jsonl"),
+    TEST_WC: wc,
     TEST_LOG: log,
     LOG_PREFIX_LINES: "0",
     ZIP_PATH: zip,
@@ -168,7 +176,7 @@ function importedClassifierArgs(env: NodeJS.ProcessEnv, extra: string[]): string
       `import { classifyCiFailureWithRuntimeForTest } from ${JSON.stringify(new URL("file://" + script).href)};`,
       `const input = ${JSON.stringify(input)};`,
       "const environment = { ...process.env };",
-      "const executables = { bash: '/usr/bin/bash', base64: '/usr/bin/base64', dd: '/usr/bin/dd', gh: process.env.TEST_GH, rm: '/usr/bin/rm', stat: '/usr/bin/stat', tail: '/usr/bin/tail', wc: '/usr/bin/wc' };",
+      "const executables = { bash: '/usr/bin/bash', dd: process.env.TEST_DD || '/usr/bin/dd', gh: process.env.TEST_GH, stat: '/usr/bin/stat', tail: '/usr/bin/tail', wc: process.env.TEST_WC || '/usr/bin/wc' };",
       "void classifyCiFailureWithRuntimeForTest(input, { executables, environment }).then((value) => console.log(JSON.stringify(value, null, 2))).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });",
     ].join("\n"),
   ];
@@ -497,13 +505,43 @@ describe("CI failure classifier process", () => {
     expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
   });
 
-  test("preserves the primary log failure while direct cleanup ignores a fake rm", () => {
+  test.each([
+    [
+      "job metadata",
+      "FAIL_METADATA",
+      [],
+      "authentication required BUILD_TOKEN=metadata-access-secret",
+    ],
+    [
+      "artifact inventory",
+      "FAIL_INVENTORY",
+      ["--artifact-name", "results"],
+      "HTTP 403 resource not accessible BUILD_TOKEN=inventory-access-secret",
+    ],
+  ] as const)(
+    "fails %s access with bounded, redacted recovery guidance",
+    (_kind, variable, extra, failure) => {
+      const item = fixture("ordinary output");
+      item.env[variable] = failure;
+      const result = run(item.env, [...extra]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("GitHub access failed. Run gh auth status");
+      expect(result.stderr).toContain(
+        "ask the user to correct authentication, authorization, SSO, or token scope",
+      );
+      expect(result.stderr).toContain("BUILD_TOKEN=[REDACTED]");
+      expect(result.stderr).not.toMatch(/metadata-access-secret|inventory-access-secret/u);
+      expect(result.stderr.length).toBeLessThanOrEqual(2001);
+    },
+  );
+
+  test("preserves the primary log failure and directly removes its temporary directory", () => {
     const item = fixture("AssertionError: retained tail");
     const credential = "cleanup-path-secret";
     const tempRoot = join(item.root, `BUILD_TOKEN=${credential}`);
     mkdirSync(tempRoot, { recursive: true });
     item.env.TMPDIR = tempRoot;
-    item.env.FAIL_CLEANUP = "nemoclaw-ci-log";
     item.env.FAIL_LOG = "primary log download failure";
     const result = run(item.env);
     expect(result.status).not.toBe(0);
@@ -513,7 +551,6 @@ describe("CI failure classifier process", () => {
     expect(result.stderr).not.toContain("cleanup-secret");
     expect(result.stderr.length).toBeLessThanOrEqual(2001);
     expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
-    expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
   });
   test.each([
     ["malformed", Buffer.from("not a zip")],
@@ -540,6 +577,49 @@ describe("CI failure classifier process", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
   });
+  test("allows an artifact stream at the exact compressed-size limit", () => {
+    const item = fixture("SIGKILL");
+    item.env.STREAM_BYTES = "25000000";
+    item.env.ZIP_SIZE = "25000000";
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
+    expect(result.stderr).not.toContain("compressed stream exceeds");
+    expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
+  });
+
+  test("rejects one byte beyond the compressed-size limit", () => {
+    const item = fixture("SIGKILL");
+    item.env.STREAM_BYTES = "25000001";
+    item.env.ZIP_SIZE = "25000000";
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Selected artifact compressed stream exceeds the 25,000,000-byte limit",
+    );
+    expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
+  });
+
+  test("rejects the artifact stream when the extra-byte dd probe fails", () => {
+    const item = fixture("SIGKILL", { exitCode: 1 });
+    item.env.FAIL_PROBE_DD = "1";
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Could not download selected artifact");
+    expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
+  });
+
+  test("rejects the artifact stream when the extra-byte wc probe fails", () => {
+    const item = fixture("SIGKILL", { exitCode: 1 });
+    item.env.FAIL_PROBE_WC = "1";
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Could not download selected artifact");
+    expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
+  });
+
   test("rejects artifact metadata that differs from downloaded bytes", () => {
     const item = fixture("SIGKILL");
     item.env.ZIP_SIZE = String(Number(item.env.ZIP_SIZE) + 1);
@@ -581,20 +661,18 @@ describe("CI failure classifier process", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("exceeds the 1,000,000-byte limit");
   });
-  test("preserves an artifact validation failure while direct cleanup ignores a fake rm", () => {
+  test("preserves an artifact validation failure and directly removes its temporary directory", () => {
     const item = fixture("SIGKILL", undefined, Buffer.from("not a zip"));
     const credential = "artifact-cleanup-path-secret";
     const tempRoot = join(item.root, `BUILD_TOKEN=${credential}`);
     mkdirSync(tempRoot, { recursive: true });
     item.env.TMPDIR = tempRoot;
-    item.env.FAIL_CLEANUP = "nemoclaw-ci-classify";
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
     expect(result.stderr).not.toContain("cleanup-secret");
     expect(result.stderr).not.toContain(credential);
     expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
-    expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
   });
   test("reads a real ZIP artifact and removes private temporary directories", () => {
     const item = fixture("SIGKILL", {
@@ -609,7 +687,6 @@ describe("CI failure classifier process", () => {
     expect(value.artifact.filesRead).toBe(1);
     expect(value.artifact.failures[0].signal).toBe("SIGKILL");
     expect(result.stdout).not.toContain("artifact-secret");
-    expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
     const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
     expect(
       existsSync(temporaryRoot)
@@ -828,7 +905,6 @@ describe("CI failure classifier process", () => {
         ? readdirSync(temporaryRoot).filter((name) => name.startsWith("nemoclaw-ci-"))
         : [];
       expect(remaining).toEqual([]);
-      expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
     },
   );
 
