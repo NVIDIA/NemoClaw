@@ -1385,8 +1385,9 @@ export function probeOllamaEndpointInventory(
   host: string,
   runCaptureImpl?: RunCaptureFn,
   timeoutMilliseconds = 5_000,
+  prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
 ): string[] | null {
-  const capture = createOllamaApiCapture(runCaptureImpl, host);
+  const capture = createOllamaApiCapture(runCaptureImpl, host, prepareDockerEnvironment);
   const normalizedTimeoutMilliseconds =
     Number.isFinite(timeoutMilliseconds) && timeoutMilliseconds > 0
       ? Math.floor(timeoutMilliseconds)

@@ -16,7 +16,7 @@ export { OLLAMA_LOCAL_PROVIDER };
 export type OllamaRestartRecoveryFn = (
   route: OllamaRestartRecoveryRoute,
   options?: OllamaRestartRecoveryOptions,
-) => OllamaRestartRecoveryResult;
+) => OllamaRestartRecoveryResult | Promise<OllamaRestartRecoveryResult>;
 
 export interface OllamaRestartRecoveryProcess {
   stderr: { write(s: string): unknown };
@@ -50,7 +50,7 @@ function describeWarmFailure(reason: OllamaRestartRecoveryFailureReason): string
 
 function reportRecovery(
   route: OllamaRestartRecoveryRoute,
-  result: OllamaRestartRecoveryResult,
+  result: Exclude<OllamaRestartRecoveryResult, { kind: "cancelled" }>,
   proc: OllamaRestartRecoveryProcess,
 ): void {
   const model = boundedOllamaRestartRecoveryDetail(route.model, "the registered model");
@@ -122,16 +122,18 @@ function reportRecovery(
   }
 }
 
-/** Run best-effort Ollama recovery without blocking the canonical agent error path. */
-export function runOllamaRestartRecovery(
+/** Continue after best-effort recovery failures, but preserve an operator cancellation. */
+export async function runOllamaRestartRecovery(
   route: OllamaRestartRecoveryRoute,
   proc: OllamaRestartRecoveryProcess,
   options: OllamaRestartRecoveryOptions = {},
   recoverOllama: OllamaRestartRecoveryFn = maybeWarmOllamaAfterDaemonRestart,
-): void {
+): Promise<NodeJS.Signals | null> {
   proc.stderr.write("  Checking whether the Ollama model is loaded...\n");
   try {
-    reportRecovery(route, recoverOllama(route, options), proc);
+    const result = await recoverOllama(route, options);
+    if (result.kind === "cancelled") return result.signal;
+    reportRecovery(route, result, proc);
   } catch (error) {
     const model = boundedOllamaRestartRecoveryDetail(route.model, "the registered model");
     const endpoint = recordedEndpointLabel(route);
@@ -142,4 +144,5 @@ export function runOllamaRestartRecovery(
         `serves '${model}'. NemoClaw will retry the warm-up before the next agent command.\n`,
     );
   }
+  return null;
 }

@@ -10,12 +10,20 @@
  */
 
 import { createBearerAuthConfig, createXApiKeyAuthConfig } from "../adapters/http/auth-config";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
 import { getProviderSelectionConfig } from "./config";
-import type { LocalProviderHealthProbeOptions } from "./local";
-import { probeLocalProviderHealth } from "./local";
+import {
+  createOllamaApiCapture,
+  getResolvedOllamaHost,
+  loadPersistedOllamaHost,
+  type LocalProviderHealthProbeOptions,
+  OLLAMA_PORT,
+  probeLocalProviderHealth,
+  type RunCaptureFn,
+} from "./local";
 import { MIN_PROBE_REPLY_TOKENS } from "./max-tokens-field";
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
@@ -52,6 +60,43 @@ export interface ProviderHealthProbeOptions {
   model?: string | null;
   getCredentialImpl?: (envName: string) => string | null | undefined;
   isWsl?: boolean;
+}
+
+export type OllamaHostInventoryProbeOptions = {
+  getOllamaHost?: () => string;
+  runCaptureImpl?: RunCaptureFn;
+  prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
+};
+
+/** Probe the persisted raw Ollama daemon through its platform-specific host transport. */
+export function probeOllamaHostInventory(options: OllamaHostInventoryProbeOptions = {}): {
+  endpoint: string;
+  output: string;
+} {
+  const host = options.getOllamaHost
+    ? options.getOllamaHost()
+    : (loadPersistedOllamaHost() ?? getResolvedOllamaHost());
+  const endpoint = `http://${host}:${OLLAMA_PORT}/api/tags`;
+  const capture = createOllamaApiCapture(
+    options.runCaptureImpl,
+    host,
+    options.prepareDockerEnvironment,
+  );
+  const output = capture(
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sS",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "4",
+        endpoint,
+      ]),
+    ],
+    { ignoreError: true, timeout: 6000 },
+  );
+  return { endpoint, output };
 }
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);

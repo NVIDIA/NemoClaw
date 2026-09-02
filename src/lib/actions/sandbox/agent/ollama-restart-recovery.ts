@@ -14,26 +14,36 @@
 // supported Ollama versions persist runners across restart, or when NemoClaw
 // manages daemon lifecycle and can warm the model at restart time instead.
 
+import { spawn, type StdioOptions } from "node:child_process";
+
 import { buildValidatedCurlCommandArgs } from "../../../adapters/http/curl-args";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
   describeModelInventory,
   createOllamaApiCapture,
   createOllamaApiCaptureEx,
-  getOllamaApiCommand,
   getResolvedOllamaHost,
   ollamaInventoryContainsModel,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
+  parseOllamaModelInventory,
+  prepareOllamaApiExecution,
   probeOllamaEndpointInventory,
   type RunCaptureFn,
   type RunCaptureExFn,
 } from "../../../inference/local";
 import {
   type OllamaRuntimeModelStatus,
+  parseOllamaRuntimeModelStatus,
   probeOllamaRuntimeModelStatus,
 } from "../../../inference/ollama-runtime-context";
-import { redact, redactFull } from "../../../runner";
+import { buildSubprocessEnv, redact, redactFull } from "../../../runner";
+import type { SandboxExecSignalSource } from "../exec";
+import {
+  type AgentDispatchChild,
+  type AgentDispatchSpawner,
+  runAgentDispatch,
+} from "./passthrough-dispatch";
 
 export interface OllamaRestartRecoveryRoute {
   provider?: string | null;
@@ -56,11 +66,15 @@ export interface OllamaRestartRecoveryDeps extends OllamaRestartRecoveryOptions 
     host: string,
     runCaptureImpl?: RunCaptureFn,
     timeoutMilliseconds?: number,
+    prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2],
   ) => string[] | null;
   runCaptureExImpl?: RunCaptureExFn;
   getOllamaHost?: () => string;
   runCaptureImpl?: RunCaptureFn;
   prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
+  runRecoveryCaptureImpl?: OllamaRecoveryCaptureFn;
+  signalSource?: SandboxExecSignalSource;
+  spawnRecoveryChild?: OllamaRecoverySpawner;
   now?: () => number;
 }
 
@@ -77,6 +91,7 @@ export type OllamaRestartRecoveryResult =
   | { kind: "skipped"; reason: "deadline-exhausted"; endpoint: string }
   | { kind: "skipped"; reason: "model-absent"; endpoint: string; inventoryLabel: string }
   | { kind: "warmed"; ok: true }
+  | { kind: "cancelled"; signal: NodeJS.Signals }
   | {
       kind: "warmed";
       ok: false;
@@ -88,6 +103,7 @@ export type OllamaRestartRecoveryResult =
 export const OLLAMA_LOCAL_PROVIDER = "ollama-local";
 const OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS = 300;
 const OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS = 5_000;
+const OLLAMA_RESTART_RECOVERY_MAX_BUFFER_BYTES = 1024 * 1024;
 const OPENSHELL_HOST_BRIDGE = "host.openshell.internal";
 const ALLOWED_RAW_OLLAMA_HOSTS = new Set([
   OLLAMA_LOCALHOST,
@@ -156,6 +172,111 @@ function resolveRawOllamaHost(
   return getAllowedFallbackHost(getOllamaHost);
 }
 
+export type OllamaRecoveryCaptureResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  signal?: NodeJS.Signals | null;
+  error?: Error;
+};
+
+export type OllamaRecoveryCaptureFn = (
+  command: readonly string[],
+  options: {
+    host: string;
+    timeoutMilliseconds: number;
+    prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
+    signalSource?: SandboxExecSignalSource;
+    spawnRecoveryChild?: OllamaRecoverySpawner;
+  },
+) => Promise<OllamaRecoveryCaptureResult>;
+
+export type OllamaRecoverySpawner = (
+  binary: string,
+  args: readonly string[],
+  stdio: StdioOptions,
+  env: NodeJS.ProcessEnv,
+) => AgentDispatchChild;
+
+const defaultOllamaRecoverySpawner: OllamaRecoverySpawner = (binary, args, stdio, env) =>
+  spawn(binary, [...args], { stdio, env }) as unknown as AgentDispatchChild;
+
+/** Capture one bounded recovery command through the shared signal-aware child supervisor. */
+export async function runOllamaRecoveryCapture(
+  command: readonly string[],
+  options: Parameters<OllamaRecoveryCaptureFn>[1],
+): Promise<OllamaRecoveryCaptureResult> {
+  const execution = prepareOllamaApiExecution(command, options.host, {
+    env: buildSubprocessEnv(),
+    prepareDockerEnvironment: options.prepareDockerEnvironment,
+    operation: "Ollama restart recovery",
+  });
+  const [binary, ...args] = execution.command;
+  if (!binary) {
+    execution.cleanup();
+    return {
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      timedOut: false,
+      error: new Error("Ollama recovery command is empty"),
+    };
+  }
+
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const spawnRecoveryChild = options.spawnRecoveryChild ?? defaultOllamaRecoverySpawner;
+  const spawnChild: AgentDispatchSpawner = (runBinary, runArgs, stdio) => {
+    const child = spawnRecoveryChild(runBinary, runArgs, stdio, execution.env ?? {});
+    timeout = setTimeout(() => {
+      timedOut = true;
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    }, options.timeoutMilliseconds);
+    timeout.unref?.();
+    return child;
+  };
+
+  try {
+    const result = await runAgentDispatch(
+      binary,
+      args,
+      { maxBufferBytes: OLLAMA_RESTART_RECOVERY_MAX_BUFFER_BYTES, stdinIsTty: true },
+      { signalSource: options.signalSource, spawnChild },
+    );
+    return {
+      stdout: result.stdout.trim(),
+      stderr: result.stderr.trim(),
+      exitCode: result.status,
+      timedOut: timedOut || result.status === 28,
+      signal: result.signal,
+      ...(result.error ? { error: result.error } : {}),
+    };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    execution.cleanup();
+  }
+}
+
+function buildOllamaProbeCommand(
+  hostname: string,
+  path: "/api/ps" | "/api/tags",
+  timeoutMilliseconds: number,
+): string[] {
+  const maxTimeSeconds = timeoutMilliseconds / 1000;
+  return [
+    "curl",
+    ...buildValidatedCurlCommandArgs([
+      "-sf",
+      "--connect-timeout",
+      String(Math.min(3, maxTimeSeconds)),
+      "--max-time",
+      String(maxTimeSeconds),
+      `http://${hostname}:${OLLAMA_PORT}${path}`,
+    ]),
+  ];
+}
+
 function buildWarmCommand(model: string, hostname: string, maxTimeSeconds: number): string[] {
   const body = JSON.stringify({
     model,
@@ -165,8 +286,9 @@ function buildWarmCommand(model: string, hostname: string, maxTimeSeconds: numbe
     keep_alive: "15m",
     options: { num_predict: 16 },
   });
-  return getOllamaApiCommand(
-    buildValidatedCurlCommandArgs([
+  return [
+    "curl",
+    ...buildValidatedCurlCommandArgs([
       "-sS",
       "--connect-timeout",
       "3",
@@ -178,8 +300,7 @@ function buildWarmCommand(model: string, hostname: string, maxTimeSeconds: numbe
       body,
       `http://${hostname}:${OLLAMA_PORT}/api/generate`,
     ]),
-    hostname,
-  );
+  ];
 }
 
 function recoveryDeadlineMilliseconds(
@@ -231,10 +352,10 @@ export function boundedOllamaRestartRecoveryDetail(value: unknown, fallback: str
  * Warm a registered local Ollama model only when `/api/ps` proves that the
  * daemon is reachable and the selected model is no longer loaded.
  */
-export function maybeWarmOllamaAfterDaemonRestart(
+export async function maybeWarmOllamaAfterDaemonRestart(
   route: OllamaRestartRecoveryRoute,
   deps: OllamaRestartRecoveryDeps = {},
-): OllamaRestartRecoveryResult {
+): Promise<OllamaRestartRecoveryResult> {
   if (normalizeRouteValue(route.provider) !== OLLAMA_LOCAL_PROVIDER) {
     return { kind: "skipped", reason: "not-ollama" };
   }
@@ -260,24 +381,39 @@ export function maybeWarmOllamaAfterDaemonRestart(
   if (probeBudgetMilliseconds === 0) {
     return { kind: "skipped", reason: "deadline-exhausted", endpoint: rawEndpoint };
   }
-  const rawCapture = createOllamaApiCapture(
-    deps.runCaptureImpl,
-    rawHost,
-    deps.prepareDockerEnvironment,
-  );
-  const rawCaptureEx = createOllamaApiCaptureEx(
-    deps.runCaptureExImpl,
-    rawHost,
-    deps.prepareDockerEnvironment,
-  );
   let status: OllamaRuntimeModelStatus;
   try {
-    status = probe(
-      model,
-      () => rawHost,
-      rawCapture,
-      Math.min(OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS, probeBudgetMilliseconds),
+    const statusTimeoutMilliseconds = Math.min(
+      OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS,
+      probeBudgetMilliseconds,
     );
+    if (deps.probeRuntimeModelStatus || deps.runCaptureImpl) {
+      const rawCapture = createOllamaApiCapture(
+        deps.runCaptureImpl,
+        rawHost,
+        deps.prepareDockerEnvironment,
+      );
+      status = probe(model, () => rawHost, rawCapture, statusTimeoutMilliseconds);
+    } else {
+      const capture = deps.runRecoveryCaptureImpl ?? runOllamaRecoveryCapture;
+      const result = await capture(
+        buildOllamaProbeCommand(rawHost, "/api/ps", statusTimeoutMilliseconds),
+        {
+          host: rawHost,
+          timeoutMilliseconds: statusTimeoutMilliseconds,
+          prepareDockerEnvironment: deps.prepareDockerEnvironment,
+          signalSource: deps.signalSource,
+          spawnRecoveryChild: deps.spawnRecoveryChild,
+        },
+      );
+      if (result.signal && !result.timedOut) {
+        return { kind: "cancelled", signal: result.signal };
+      }
+      status =
+        result.exitCode === 0 && !result.error
+          ? parseOllamaRuntimeModelStatus(model, result.stdout)
+          : { probed: false, loaded: false, cpuOnly: false };
+    }
   } catch {
     return { kind: "skipped", reason: "unreachable", endpoint: rawEndpoint };
   }
@@ -295,9 +431,24 @@ export function maybeWarmOllamaAfterDaemonRestart(
   const warmupTimeoutSeconds = warmupTimeoutMilliseconds / 1000;
 
   try {
-    const result = rawCaptureEx(buildWarmCommand(model, rawHost, warmupTimeoutSeconds), {
-      timeout: warmupTimeoutMilliseconds,
-    });
+    const command = buildWarmCommand(model, rawHost, warmupTimeoutSeconds);
+    const result = deps.runCaptureExImpl
+      ? createOllamaApiCaptureEx(
+          deps.runCaptureExImpl,
+          rawHost,
+          deps.prepareDockerEnvironment,
+        )(command, { timeout: warmupTimeoutMilliseconds })
+      : await (deps.runRecoveryCaptureImpl ?? runOllamaRecoveryCapture)(command, {
+          host: rawHost,
+          timeoutMilliseconds: warmupTimeoutMilliseconds,
+          prepareDockerEnvironment: deps.prepareDockerEnvironment,
+          signalSource: deps.signalSource,
+          spawnRecoveryChild: deps.spawnRecoveryChild,
+        });
+    const asyncResult = result as Partial<OllamaRecoveryCaptureResult>;
+    if (asyncResult.signal && !result.timedOut) {
+      return { kind: "cancelled", signal: asyncResult.signal };
+    }
     if (result.timedOut) {
       return {
         kind: "warmed",
@@ -307,6 +458,18 @@ export function maybeWarmOllamaAfterDaemonRestart(
         detail: boundedOllamaRestartRecoveryDetail(
           result.stderr,
           `warm-up exceeded ${String(warmupTimeoutSeconds)} seconds`,
+        ),
+      };
+    }
+    if (asyncResult.error) {
+      return {
+        kind: "warmed",
+        ok: false,
+        reason: "spawn-failed",
+        endpoint: rawEndpoint,
+        detail: boundedOllamaRestartRecoveryDetail(
+          asyncResult.error,
+          "warm-up process could not start",
         ),
       };
     }
@@ -331,17 +494,38 @@ export function maybeWarmOllamaAfterDaemonRestart(
     if (response === "ollama-error") {
       const inventoryBudgetMilliseconds = remainingRecoveryMilliseconds(recoveryDeadline, now);
       if (inventoryBudgetMilliseconds > 0) {
-        const probeInventory = deps.probeModelInventory ?? probeOllamaEndpointInventory;
         let inventory: string[] | null = null;
         try {
-          inventory = probeInventory(
-            rawHost,
-            rawCapture,
-            Math.min(
-              OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS,
-              inventoryBudgetMilliseconds,
-            ),
+          const inventoryTimeoutMilliseconds = Math.min(
+            OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS,
+            inventoryBudgetMilliseconds,
           );
+          if (deps.probeModelInventory || deps.runCaptureImpl) {
+            inventory = (deps.probeModelInventory ?? probeOllamaEndpointInventory)(
+              rawHost,
+              deps.runCaptureImpl,
+              inventoryTimeoutMilliseconds,
+              deps.prepareDockerEnvironment,
+            );
+          } else {
+            const inventoryResult = await (deps.runRecoveryCaptureImpl ?? runOllamaRecoveryCapture)(
+              buildOllamaProbeCommand(rawHost, "/api/tags", inventoryTimeoutMilliseconds),
+              {
+                host: rawHost,
+                timeoutMilliseconds: inventoryTimeoutMilliseconds,
+                prepareDockerEnvironment: deps.prepareDockerEnvironment,
+                signalSource: deps.signalSource,
+                spawnRecoveryChild: deps.spawnRecoveryChild,
+              },
+            );
+            if (inventoryResult.signal && !inventoryResult.timedOut) {
+              return { kind: "cancelled", signal: inventoryResult.signal };
+            }
+            inventory =
+              inventoryResult.exitCode === 0 && !inventoryResult.error
+                ? parseOllamaModelInventory(inventoryResult.stdout)
+                : null;
+          }
         } catch {
           // Inventory only refines the original warm-up error.
         }

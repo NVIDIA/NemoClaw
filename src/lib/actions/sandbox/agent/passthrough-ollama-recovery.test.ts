@@ -18,7 +18,7 @@ describe("runOllamaRestartRecovery", () => {
   it.each([
     ["auth proxy", "http://host.openshell.internal:11435/v1"],
     ["WSL direct bridge", "http://host.openshell.internal:11434/v1"],
-  ])("forwards the persisted %s route to recovery", (_name, endpointUrl) => {
+  ])("forwards the persisted %s route to recovery", async (_name, endpointUrl) => {
     const recoverOllama = vi.fn(() => ({
       kind: "skipped" as const,
       reason: "already-loaded" as const,
@@ -30,33 +30,40 @@ describe("runOllamaRestartRecovery", () => {
       endpointUrl,
     };
 
-    runOllamaRestartRecovery(route, proc, {}, recoverOllama);
+    await runOllamaRestartRecovery(route, proc, {}, recoverOllama);
 
     expect(recoverOllama).toHaveBeenCalledWith(route, {});
     expect(writes.join("")).toContain("Ollama model 'qwen3.6:35b' is already loaded");
   });
 
-  it("reports a successful warm-up", () => {
+  it("reports a successful warm-up", async () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
-      kind: "warmed",
-      ok: true,
-    }));
+    await runOllamaRestartRecovery(
+      { provider: "ollama-local", model: "qwen3.6:35b" },
+      proc,
+      {},
+      () => ({ kind: "warmed", ok: true }),
+    );
 
     expect(writes.join("")).toContain("Ollama model 'qwen3.6:35b' is loaded and ready");
   });
 
-  it("reports a timeout before continuing to OpenClaw", () => {
+  it("reports a timeout before continuing to OpenClaw", async () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
-      kind: "warmed",
-      ok: false,
-      reason: "timeout",
-      endpoint: "http://host.docker.internal:11434",
-      detail: "curl timed out after 300 seconds",
-    }));
+    await runOllamaRestartRecovery(
+      { provider: "ollama-local", model: "qwen3.6:35b" },
+      proc,
+      {},
+      () => ({
+        kind: "warmed",
+        ok: false,
+        reason: "timeout",
+        endpoint: "http://host.docker.internal:11434",
+        detail: "curl timed out after 300 seconds",
+      }),
+    );
 
     const stderr = writes.join("");
     expect(stderr).toContain("Checking whether the Ollama model is loaded");
@@ -74,16 +81,21 @@ describe("runOllamaRestartRecovery", () => {
     ["ollama-error", "Ollama returned an error"],
     ["invalid-response", "Ollama returned an invalid response"],
     ["spawn-failed", "the warm-up process could not start"],
-  ] as const)("reports a %s warm-up failure", (reason, message) => {
+  ] as const)("reports a %s warm-up failure", async (reason, message) => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
-      kind: "warmed",
-      ok: false,
-      reason,
-      endpoint: "http://host.docker.internal:11434",
-      detail: "bounded failure detail",
-    }));
+    await runOllamaRestartRecovery(
+      { provider: "ollama-local", model: "qwen3.6:35b" },
+      proc,
+      {},
+      () => ({
+        kind: "warmed",
+        ok: false,
+        reason,
+        endpoint: "http://host.docker.internal:11434",
+        detail: "bounded failure detail",
+      }),
+    );
 
     const stderr = writes.join("");
     expect(stderr).toContain(message);
@@ -98,25 +110,32 @@ describe("runOllamaRestartRecovery", () => {
     ["already-loaded", "Ollama model 'qwen3.6:35b' is already loaded"],
     ["missing-model", "No Ollama model is recorded for this sandbox"],
     ["not-ollama", "Checking whether the Ollama model is loaded"],
-  ] as const)("handles the %s skip reason", (reason, message) => {
+  ] as const)("reports the diagnostic for the %s recovery result", async (reason, message) => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
-      kind: "skipped",
-      reason,
-    }));
+    await runOllamaRestartRecovery(
+      { provider: "ollama-local", model: "qwen3.6:35b" },
+      proc,
+      {},
+      () => ({ kind: "skipped", reason }),
+    );
 
     expect(writes.join("")).toContain(message);
   });
 
-  it("reports the endpoint, model, and recovery action when Ollama is unreachable", () => {
+  it("reports the endpoint, model, and recovery action when Ollama is unreachable", async () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
-      kind: "skipped",
-      reason: "unreachable",
-      endpoint: "http://host.docker.internal:11434",
-    }));
+    await runOllamaRestartRecovery(
+      { provider: "ollama-local", model: "qwen3.6:35b" },
+      proc,
+      {},
+      () => ({
+        kind: "skipped",
+        reason: "unreachable",
+        endpoint: "http://host.docker.internal:11434",
+      }),
+    );
 
     const stderr = writes.join("");
     expect(stderr).toContain("http://host.docker.internal:11434");
@@ -127,10 +146,10 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).not.toContain("rerun this command");
   });
 
-  it("reports a warm-up skipped after the command timeout budget is exhausted", () => {
+  it("reports a warm-up skipped after the command timeout budget is exhausted", async () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery(
+    await runOllamaRestartRecovery(
       { provider: "ollama-local", model: "qwen3.6:35b" },
       proc,
       { timeoutSeconds: 1 },
@@ -149,10 +168,10 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("continuing to OpenClaw dispatch");
   });
 
-  it("names the endpoint and its reported models when the model is absent (#9455)", () => {
+  it("names the endpoint and its reported models when the model is absent (#9455)", async () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery(
+    await runOllamaRestartRecovery(
       {
         provider: "ollama-local",
         model: "gemma4:26b",
@@ -178,13 +197,13 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).not.toContain("Ollama was unreachable during the restart check");
   });
 
-  it("redacts and bounds recovery exceptions", () => {
+  it("redacts and bounds recovery exceptions", async () => {
     const { writes, proc } = makeProcMock();
     const exposedToken = "sk-proj-NOT-A-REAL-SECRET-1234567890";
     const directionalControls =
       "\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
 
-    expect(() =>
+    await expect(
       runOllamaRestartRecovery(
         {
           provider: "ollama-local",
@@ -199,7 +218,7 @@ describe("runOllamaRestartRecovery", () => {
           );
         },
       ),
-    ).not.toThrow();
+    ).resolves.toBeNull();
     const stderr = writes.join("");
     expect(stderr).toContain("Ollama restart recovery for 'qwen3.6:35b");
     expect(stderr).toContain("at the recorded endpoint http://host.openshell.internal:11434/v1");
@@ -361,6 +380,30 @@ describe("agent passthrough Ollama recovery ordering", () => {
 
     expect(events).toEqual(["diagnostic", "dispatch"]);
     expect(diagnostics.join("")).toContain("failed unexpectedly");
+  });
+
+  it("does not dispatch after Ollama recovery receives SIGTERM", async () => {
+    const events: string[] = [];
+    const route = {
+      provider: "ollama-local",
+      model: "qwen3.6:35b",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+    };
+    const deps = makePassthroughDeps(route, events);
+    const runRecovery = vi.fn(async () => {
+      events.push("recovery-cancelled");
+      return "SIGTERM" as const;
+    });
+
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "main", "-m", "ping"] },
+        { ...deps, runOllamaRestartRecovery: runRecovery },
+      ),
+    ).rejects.toThrow("__exit:143");
+
+    expect(events).toEqual(["recovery-cancelled"]);
   });
 
   it("does not run Ollama recovery for a non-Ollama route", async () => {

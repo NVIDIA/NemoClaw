@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
+import { GATEWAY_PORT } from "../../core/ports";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
-import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
+import {
+  type OllamaHostInventoryProbeOptions,
+  probeOllamaHostInventory,
+} from "../../inference/health";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   resolveCurrentRuntimeProviderBundle,
@@ -169,15 +172,15 @@ export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
   }
 }
 
-export function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
-  const endpoint = `http://127.0.0.1:${OLLAMA_PORT}/api/tags`;
-  const result = captureHostCommand(
-    "curl",
-    buildValidatedCurlCommandArgs(["-sS", "--connect-timeout", "2", "--max-time", "4", endpoint]),
-    6000,
-  );
+export type OllamaDoctorCheckDeps = OllamaHostInventoryProbeOptions;
+
+export function ollamaDoctorCheck(
+  currentProvider: string,
+  deps: OllamaDoctorCheckDeps = {},
+): DoctorCheck {
+  const { endpoint, output } = probeOllamaHostInventory(deps);
   const required = currentProvider === "ollama-local";
-  if (result.status !== 0) {
+  if (!output) {
     return {
       group: "Local services",
       label: "Ollama",
@@ -189,7 +192,7 @@ export function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
 
   let modelCount = "unknown model count";
   try {
-    const parsed = JSON.parse(result.stdout);
+    const parsed = JSON.parse(output);
     if (Array.isArray(parsed.models)) modelCount = `${parsed.models.length} model(s)`;
   } catch {
     /* keep generic detail */

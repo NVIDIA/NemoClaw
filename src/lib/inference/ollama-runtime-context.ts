@@ -163,6 +163,14 @@ export function probeOllamaRuntimeModelStatus(
     ],
     { ignoreError: true, timeout: boundedTimeoutMilliseconds },
   );
+  return parseOllamaRuntimeModelStatus(model, output);
+}
+
+/** Parse one completed Ollama `/api/ps` response without performing I/O. */
+export function parseOllamaRuntimeModelStatus(
+  model: string,
+  output: string,
+): OllamaRuntimeModelStatus {
   if (!output) return { probed: false, loaded: false, cpuOnly: false };
 
   try {

@@ -421,6 +421,7 @@ function validateName(name: string, label = "name"): string {
 
 export {
   ROOT,
+  buildSubprocessEnv,
   redact,
   redactFull,
   run,

@@ -242,7 +242,9 @@ export interface AgentPassthroughDeps {
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
   execNonJson?: typeof runAgentNonJsonPassthrough;
-  runOllamaRestartRecovery?: typeof runOllamaRestartRecovery;
+  runOllamaRestartRecovery?: (
+    ...args: Parameters<typeof runOllamaRestartRecovery>
+  ) => ReturnType<typeof runOllamaRestartRecovery> | NodeJS.Signals | null | void;
   getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   now?: () => number;
   process?: {
@@ -596,7 +598,14 @@ export async function runAgentPassthrough(
     if (lookup.kind === "agent" && lookup.provider === OLLAMA_LOCAL_PROVIDER) {
       const recoverOllama = deps.runOllamaRestartRecovery ?? runOllamaRestartRecovery;
       const timeoutSeconds = recoveryBudgetSeconds(commandDeadline, now);
-      recoverOllama(lookup, proc, timeoutSeconds === null ? {} : { timeoutSeconds });
+      const recoverySignal = await recoverOllama(
+        lookup,
+        proc,
+        timeoutSeconds === null ? {} : { timeoutSeconds },
+      );
+      if (recoverySignal) {
+        return proc.exit(computeExitCode({ status: null, signal: recoverySignal }).code);
+      }
     }
     maybeEmitShieldsRelockWarning(proc, sandboxName, deps.getRecentShieldsAutoRestore);
     dispatchCommand = commandWithRemainingDeadline(command, commandDeadline, now);
