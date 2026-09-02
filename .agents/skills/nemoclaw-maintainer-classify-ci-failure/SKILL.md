@@ -9,7 +9,7 @@ user_invocable: true
 
 # Classify a CI Failure
 
-Run the read-only classifier from a NemoClaw checkout:
+Run the classifier from a NemoClaw checkout:
 
 ```bash
 node --experimental-strip-types --no-warnings \
