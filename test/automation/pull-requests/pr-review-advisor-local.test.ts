@@ -200,6 +200,7 @@ describe("local PR review advisor", () => {
         'import path from "node:path";',
         'import { execFileSync } from "node:child_process";',
         'import { hostValue } from "./trusted-host.mts";',
+        'if (process.argv[1] !== fs.realpathSync(process.argv[1])) throw new Error("implementation entry path is not canonical");',
         "const source = process.argv[2];",
         'const gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();',
         'let detached = false; try { execFileSync("git", ["symbolic-ref", "-q", "HEAD"], { stdio: "ignore" }); } catch { detached = true; }',
@@ -267,6 +268,10 @@ describe("local PR review advisor", () => {
       'require("node:fs").writeFileSync("contributor-module-executed", "yes")\n',
     );
 
+    const bootstrapRoot = temporaryDirectory();
+    const bootstrapAlias = path.join(temporaryDirectory(), "bootstrap-alias");
+    fs.symlinkSync(bootstrapRoot, bootstrapAlias, "dir");
+
     const result = spawnSync(
       process.execPath,
       ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
@@ -282,6 +287,7 @@ describe("local PR review advisor", () => {
           NODE_PATH: maliciousBin,
           SECRET_TOKEN: "must-not-reach-npm",
           npm_config_cache: path.join(source, "npm-cache"),
+          TMPDIR: bootstrapAlias,
         },
       },
     );

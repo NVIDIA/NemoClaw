@@ -174,9 +174,10 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
     if (received) return { code: result.code, signal: received };
     if (result.code !== 0 || result.signal)
       throw new Error("npm failed while preparing the trusted local review checkout");
+    const implementation = fs.realpathSync(path.join(checkout, IMPLEMENTATION));
     result = await run(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", path.join(checkout, IMPLEMENTATION), source],
+      ["--experimental-strip-types", "--no-warnings", implementation, source],
       { cwd: checkout, env, inherit: true },
     );
     return { code: result.code, signal: received ?? result.signal };
