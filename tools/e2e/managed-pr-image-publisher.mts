@@ -63,17 +63,25 @@ function exactString(value: unknown, expected: string | number, label: string): 
 }
 
 function boundedJson(file: string, label: string): unknown {
-  const metadata = fs.lstatSync(file);
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4 * 1024 * 1024) {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
     throw new Error(`${label} must be a bounded regular file`);
   }
-  return JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
-}
-
-async function sha256(file: string): Promise<string> {
-  const digest = createHash("sha256");
-  await pipeline(fs.createReadStream(file), digest);
-  return `sha256:${digest.digest("hex")}`;
+  try {
+    const metadata = fs.fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.size > 4 * 1024 * 1024) {
+      throw new Error(`${label} must be a bounded regular file`);
+    }
+    const contents = fs.readFileSync(descriptor);
+    if (contents.byteLength > 4 * 1024 * 1024) {
+      throw new Error(`${label} must be a bounded regular file`);
+    }
+    return JSON.parse(contents.toString("utf8")) as unknown;
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function descriptor(value: unknown, label: string): JsonRecord {
@@ -96,19 +104,42 @@ async function validateBlob(
   value: unknown,
   label: string,
   mediaTypes: ReadonlySet<string>,
-): Promise<{ digest: string; file: string }> {
+): Promise<{ digest: string; json?: unknown }> {
   const candidate = descriptor(value, label);
   if (!mediaTypes.has(String(candidate.mediaType))) {
     throw new Error(`${label} media type is invalid`);
   }
   const digest = String(candidate.digest);
   const file = expectedBlobPath(layoutRoot, digest);
-  const metadata = fs.lstatSync(file);
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size !== candidate.size) {
-    throw new Error(`${label} blob metadata does not match its descriptor`);
+  const handle = await fs.promises
+    .open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+    .catch(() => {
+      throw new Error(`${label} blob metadata does not match its descriptor`);
+    });
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size !== candidate.size) {
+      throw new Error(`${label} blob metadata does not match its descriptor`);
+    }
+    if (mediaTypes !== LAYER_MEDIA_TYPES && metadata.size > 4 * 1024 * 1024) {
+      throw new Error(`${label} must be a bounded regular file`);
+    }
+    const digestBuilder = createHash("sha256");
+    let json: unknown;
+    if (mediaTypes === LAYER_MEDIA_TYPES) {
+      await pipeline(handle.createReadStream({ autoClose: false }), digestBuilder);
+    } else {
+      const contents = await handle.readFile();
+      digestBuilder.update(contents);
+      json = JSON.parse(contents.toString("utf8")) as unknown;
+    }
+    if (`sha256:${digestBuilder.digest("hex")}` !== digest) {
+      throw new Error(`${label} blob digest does not match`);
+    }
+    return { digest, json };
+  } finally {
+    await handle.close();
   }
-  if ((await sha256(file)) !== digest) throw new Error(`${label} blob digest does not match`);
-  return { digest, file };
 }
 
 function validateExpectedIdentity(expected: ManagedPrImageExpectedIdentity): void {
@@ -230,7 +261,7 @@ export async function validateManagedPrImageBundle(
     "OCI platform manifest",
     MANIFEST_MEDIA_TYPES,
   );
-  const manifest = record(boundedJson(manifestBlob.file, "OCI manifest"), "OCI manifest");
+  const manifest = record(manifestBlob.json, "OCI manifest");
   exactString(manifest.schemaVersion, 2, "OCI manifest schema version");
   const configBlob = await validateBlob(
     layoutRoot,
@@ -255,10 +286,7 @@ export async function validateManagedPrImageBundle(
     );
     referenced.add(validated.digest);
   }
-  const config = record(
-    boundedJson(configBlob.file, "OCI image configuration"),
-    "OCI image configuration",
-  );
+  const config = record(configBlob.json, "OCI image configuration");
   exactString(config.os, "linux", "OCI image operating system");
   exactString(config.architecture, expectedArch, "OCI image architecture");
   const runtime = record(config.config, "OCI runtime configuration");

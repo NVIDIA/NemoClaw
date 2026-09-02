@@ -549,7 +549,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
           npx --no-install tsx ../trusted/tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/mcp-bridge.test.ts
@@ -751,7 +752,8 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
           version="$("$OPENSHELL_BIN" --version)"
           [[ "$version" != *$'\n'* && "$version" != *$'\r'* && -n "$version" ]]
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
@@ -771,7 +773,8 @@ jobs:
           set -euo pipefail
           test "$(git -C ../candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
           sg nemoclaw-runtime -c \
             'npx --no-install tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-activation-e2e.test.ts'
 
@@ -1024,7 +1027,8 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
           version="$("$OPENSHELL_BIN" --version)"
           [[ "$version" != *$'\n'* && "$version" != *$'\r'* && -n "$version" ]]
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
@@ -1036,7 +1040,8 @@ jobs:
           set -euo pipefail
           test "$(git -C ../base rev-parse --verify HEAD)" = "$BASE_SHA"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
           npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/managed-image-activation-e2e.test.ts
 
