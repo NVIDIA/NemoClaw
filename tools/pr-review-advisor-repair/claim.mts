@@ -49,6 +49,7 @@ async function listRepairClaims(
   request: GitHubRequest,
 ): Promise<CheckRun[]> {
   const checkRuns: CheckRun[] = [];
+  const seenCheckRunIds = new Set<number>();
   let expectedTotal: number | undefined;
   for (let page = 1; checkRuns.length < MAX_CLAIM_CHECK_RUNS; page += 1) {
     const suffix = page === 1 ? "" : `&page=${page}`;
@@ -69,7 +70,17 @@ async function listRepairClaims(
     if (Number(listing.total_count) !== expectedTotal) {
       throw new RepairContractError("repair attempt check listing changed during pagination");
     }
-    checkRuns.push(...(listing.check_runs as CheckRun[]));
+    const pageCheckRuns = listing.check_runs as CheckRun[];
+    const pageCheckRunIds = pageCheckRuns.map(({ id }) => id);
+    if (
+      pageCheckRunIds.some(
+        (id) => !Number.isSafeInteger(id) || Number(id) < 1 || seenCheckRunIds.has(Number(id)),
+      )
+    ) {
+      throw new RepairContractError("repair attempt check listing changed during pagination");
+    }
+    pageCheckRunIds.forEach((id) => seenCheckRunIds.add(Number(id)));
+    checkRuns.push(...pageCheckRuns);
     if (checkRuns.length === expectedTotal) return checkRuns;
     if (checkRuns.length > expectedTotal || listing.check_runs.length === 0) break;
   }

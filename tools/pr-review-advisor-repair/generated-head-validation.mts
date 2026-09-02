@@ -60,6 +60,7 @@ export async function listGeneratedHeadWorkflowRuns(
   request: GitHubRequest,
 ): Promise<Array<Record<string, unknown>>> {
   const collected: Array<Record<string, unknown>> = [];
+  const seenRunIds = new Set<number>();
   let expectedTotal: number | undefined;
   for (let page = 1; collected.length < MAX_WORKFLOW_RUNS; page += 1) {
     const suffix = page === 1 ? "" : `&page=${page}`;
@@ -82,7 +83,19 @@ export async function listGeneratedHeadWorkflowRuns(
         `${workflow} generated-head run listing changed during pagination`,
       );
     }
-    collected.push(...(response.workflow_runs as Array<Record<string, unknown>>));
+    const pageRuns = response.workflow_runs as Array<Record<string, unknown>>;
+    const pageRunIds = pageRuns.map(({ id }) => id);
+    if (
+      pageRunIds.some(
+        (id) => !Number.isSafeInteger(id) || Number(id) < 1 || seenRunIds.has(Number(id)),
+      )
+    ) {
+      throw new RepairContractError(
+        `${workflow} generated-head run listing changed during pagination`,
+      );
+    }
+    pageRunIds.forEach((id) => seenRunIds.add(Number(id)));
+    collected.push(...pageRuns);
     if (collected.length === expectedTotal) return collected;
     if (collected.length > expectedTotal || response.workflow_runs.length === 0) break;
   }

@@ -323,6 +323,25 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     expect(request.mock.calls[1]?.[0]).toContain("&page=2");
   });
 
+  it("rejects overlapping repair-claim pages with an unchanged total (#10791)", async () => {
+    const bundle = selection();
+    const firstPage = Array.from({ length: 100 }, (_value, index) => ({ id: index + 1 }));
+    const request = vi.fn(async (apiPath: string) =>
+      apiPath.endsWith("&page=2")
+        ? { total_count: 101, check_runs: [{ id: 100 }] }
+        : { total_count: 101, check_runs: firstPage },
+    );
+
+    await expect(
+      claimRepairAttempt(
+        bundle,
+        "token",
+        "https://example.test/run",
+        request as unknown as NonNullable<Parameters<typeof claimRepairAttempt>[3]>,
+      ),
+    ).rejects.toThrow("changed during pagination");
+  });
+
   it("aggregates every generated-head workflow run page (#10791)", async () => {
     const firstPage = Array.from({ length: 100 }, (_value, index) => ({ id: index + 1 }));
     const request = vi.fn(async (apiPath: string) =>
@@ -339,6 +358,23 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       ),
     ).resolves.toHaveLength(101);
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects overlapping workflow-run pages with an unchanged total (#10791)", async () => {
+    const firstPage = Array.from({ length: 100 }, (_value, index) => ({ id: index + 1 }));
+    const request = vi.fn(async (apiPath: string) =>
+      apiPath.endsWith("&page=2")
+        ? { total_count: 101, workflow_runs: [{ id: 100 }] }
+        : { total_count: 101, workflow_runs: firstPage },
+    );
+
+    await expect(
+      listGeneratedHeadWorkflowRuns(
+        "pr.yaml",
+        "token",
+        request as unknown as Parameters<typeof listGeneratedHeadWorkflowRuns>[2],
+      ),
+    ).rejects.toThrow("changed during pagination");
   });
 
   it("requires both dispatch identities to have maintain permission (#10791)", async () => {
@@ -737,6 +773,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
     const commitSha = "d".repeat(40);
     const existingRun = {
+      id: 7001,
       event: "workflow_dispatch",
       head_branch: "main",
       head_sha: "e".repeat(40),
@@ -808,6 +845,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
     const commitSha = "d".repeat(40);
     const existingRun = {
+      id: 7001,
       event: "workflow_dispatch",
       head_branch: "main",
       head_sha: bundle.input.baseSha,
