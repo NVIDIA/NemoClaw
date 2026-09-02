@@ -5,13 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   formatReliabilityReport,
+  githubArchive,
+  githubJson,
   normalizeReliabilityRun,
   type ReliabilitySample,
   summarizeReliability,
 } from "../../../tools/e2e/same-commit-reliability.mts";
 import { readValidatedArtifactZipEntries } from "../../../scripts/scorecard/read-artifact-zip.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
-import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
@@ -118,11 +119,195 @@ function mappedRequest(entries: ReadonlyArray<readonly [string, unknown]>) {
   };
 }
 
-function workflowStep(job: WorkflowJob, name: string): WorkflowStep {
-  const found = job.steps?.find((step) => step.name === name);
-  expect(found, `missing workflow step ${name}`).toBeDefined();
-  return found!;
-}
+describe("bounded GitHub reads", () => {
+  it("bounds a never-resolving GET and redacts its token from diagnostics", async () => {
+    const path = "repos/NVIDIA/NemoClaw/actions/runs/999";
+    const token = "secret-token-value";
+    const request = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        );
+      });
+    });
+
+    const failure = githubJson(path, token, {
+      fetch: request as typeof fetch,
+      maxAttempts: 2,
+      attemptTimeoutMs: 5,
+      delayMs: 0,
+    });
+    await expect(failure).rejects.toThrow(
+      `GitHub GET ${path} failed (timeout); attempts [1:timeout, 2:timeout]`,
+    );
+    await expect(failure).rejects.not.toThrow(token);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[0]?.[1]).toMatchObject({ method: "GET" });
+  });
+
+  it("accepts a JSON body exactly at its explicit byte boundary", async () => {
+    const body = '{"value":"ok"}';
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+
+    await expect(
+      githubJson("repos/NVIDIA/NemoClaw/actions/runs/1000", "token", {
+        fetch: request,
+        maxJsonBytes: Buffer.byteLength(body),
+      }),
+    ).resolves.toEqual({ value: "ok" });
+  });
+
+  it("cancels a JSON stream when it crosses its explicit byte boundary", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"value":"too large"}'));
+      },
+      cancel,
+    });
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+
+    await expect(
+      githubJson("repos/NVIDIA/NemoClaw/actions/runs/1001", "token", {
+        fetch: request,
+        maxAttempts: 1,
+        maxJsonBytes: 8,
+      }),
+    ).rejects.toThrow("failed (too-large); attempts [1:too-large]");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("redacts a malformed JSON response from terminal and attempt evidence", async () => {
+    const secret = "unique-malformed-json-secret-7e1305";
+    const path = "repos/NVIDIA/NemoClaw/actions/runs/1001-json";
+    const attemptEvidence: { path: string; attempt: number; outcome: string }[] = [];
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(`{"value":"${secret}"`));
+
+    const failure = githubJson(path, "token", {
+      fetch: request,
+      maxAttempts: 1,
+      attemptEvidence,
+    });
+    await expect(failure).rejects.toThrow(
+      `GitHub GET ${path} failed (invalid-json); attempts [1:invalid-json]`,
+    );
+    await expect(failure).rejects.not.toThrow(secret);
+    expect(JSON.stringify(attemptEvidence)).not.toContain(secret);
+    expect(attemptEvidence).toEqual([{ path, attempt: 1, outcome: "invalid-json" }]);
+  });
+
+  it("reports a transient status and successful retry as bounded structured evidence", async () => {
+    const cancel = vi.fn();
+    const unavailable = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("unavailable"));
+        },
+        cancel,
+      }),
+      { status: 503 },
+    );
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(unavailable)
+      .mockResolvedValueOnce(Response.json({ value: "ok" }));
+    const attemptEvidence: { path: string; attempt: number; outcome: string }[] = [];
+    const path = "repos/NVIDIA/NemoClaw/actions/runs/1002";
+
+    await expect(
+      githubJson(path, "token", { fetch: request, delayMs: 0, attemptEvidence }),
+    ).resolves.toEqual({ value: "ok" });
+    expect(attemptEvidence).toEqual([
+      { path, attempt: 1, outcome: "status:503" },
+      { path, attempt: 2, outcome: "success" },
+    ]);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("normalizes an arbitrary transport error without retaining its message", async () => {
+    const secret = "unique-transport-error-secret-264b91";
+    const path = "repos/NVIDIA/NemoClaw/actions/runs/1002-transport";
+    const attemptEvidence: { path: string; attempt: number; outcome: string }[] = [];
+    const request = vi.fn<typeof fetch>().mockRejectedValue(new Error(`socket failed: ${secret}`));
+
+    const failure = githubJson(path, "token", {
+      fetch: request,
+      maxAttempts: 1,
+      attemptEvidence,
+    });
+    await expect(failure).rejects.toThrow(
+      `GitHub GET ${path} failed (transport); attempts [1:transport]`,
+    );
+    await expect(failure).rejects.not.toThrow(secret);
+    expect(JSON.stringify(attemptEvidence)).not.toContain(secret);
+    expect(attemptEvidence).toEqual([{ path, attempt: 1, outcome: "transport" }]);
+  });
+
+  it("recovers when the response transport fails while reading its body", async () => {
+    const pull = vi
+      .fn<(controller: ReadableStreamDefaultController<Uint8Array>) => void>()
+      .mockImplementationOnce((controller) =>
+        controller.enqueue(new TextEncoder().encode('{"value":')),
+      )
+      .mockImplementationOnce((controller) => controller.error(new TypeError("terminated")));
+    const interrupted = new Response(new ReadableStream<Uint8Array>({ pull }));
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(interrupted)
+      .mockResolvedValueOnce(Response.json({ value: "recovered" }));
+    const attemptEvidence: { path: string; attempt: number; outcome: string }[] = [];
+
+    await expect(
+      githubJson("repos/NVIDIA/NemoClaw/actions/runs/1003", "token", {
+        fetch: request,
+        delayMs: 0,
+        attemptEvidence,
+      }),
+    ).resolves.toEqual({ value: "recovered" });
+    expect(attemptEvidence.map(({ outcome }) => outcome)).toEqual(["transport", "success"]);
+  });
+
+  it("cancels a terminal 401 body before throwing without retry", async () => {
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), { status: 401 });
+    const request = vi.fn<typeof fetch>().mockResolvedValue(response);
+
+    await expect(
+      githubJson("repos/NVIDIA/NemoClaw/actions/runs/1004", "token", { fetch: request }),
+    ).rejects.toThrow("failed (status:401); attempts [1:status:401]");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a terminal 403 body before throwing without retry", async () => {
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), { status: 403 });
+    const request = vi.fn<typeof fetch>().mockResolvedValue(response);
+
+    await expect(
+      githubJson("repos/NVIDIA/NemoClaw/actions/runs/1005", "token", { fetch: request }),
+    ).rejects.toThrow("failed (status:403); attempts [1:status:403]");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an oversized artifact stream before retaining the full response", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(6));
+        controller.enqueue(new Uint8Array(6));
+      },
+      cancel,
+    });
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+
+    await expect(githubArchive(7, 10, "token", { fetch: request, maxAttempts: 1 })).rejects.toThrow(
+      "GitHub GET repos/NVIDIA/NemoClaw/actions/artifacts/7/zip failed (too-large); attempts [1:too-large]",
+    );
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+});
 
 describe("same-commit E2E reliability", () => {
   it("keeps commits and run sources separate while reporting recovery and flips", () => {

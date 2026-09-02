@@ -746,36 +746,219 @@ function formatEvidenceCounts(counts: Record<EvidenceState, number>): string {
   return `complete: ${counts.complete}, malformed: ${counts.malformed}, missing: ${counts.missing}`;
 }
 
-async function githubJson(path: string, token: string): Promise<unknown> {
-  const response = await fetch(`https://api.github.com/${path}`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
-  if (!response.ok) throw new Error(`GitHub API ${path} failed with ${response.status}`);
-  return response.json();
+const GITHUB_READ_RETRY_POLICY = Object.freeze({
+  operation: "github-http-get",
+  owner: "same-commit-reliability",
+  idempotence: "read-only" as const,
+  maxAttempts: 3,
+  attemptTimeoutMs: 15_000,
+  delayMs: 250,
+  maxJsonBytes: 1024 * 1024,
+  maxReportedAttempts: 100,
+  transientStatuses: new Set([408, 429, 500, 502, 503, 504]),
+});
+
+export type GithubReadAttempt = {
+  path: string;
+  attempt: number;
+  outcome: string;
+};
+
+type GithubReadOptions = {
+  fetch?: typeof fetch;
+  maxAttempts?: number;
+  attemptTimeoutMs?: number;
+  delayMs?: number;
+  maxJsonBytes?: number;
+  attemptEvidence?: GithubReadAttempt[];
+};
+
+type GithubAttemptFailure = {
+  outcome: string;
+  retryable: boolean;
+};
+
+type GithubFailureCategory = "invalid-json" | "too-large" | "transport";
+
+class GithubHttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super("GitHub HTTP status failure");
+  }
 }
 
-async function githubArchive(artifactId: number, maxBytes: number, token: string): Promise<Buffer> {
-  const response = await fetch(
-    `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`,
-    {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    },
+class GithubCategorizedError extends Error {
+  constructor(readonly category: GithubFailureCategory) {
+    super(`GitHub HTTP ${category} failure`);
+  }
+}
+
+function githubAttemptFailure(error: unknown, timedOut: boolean): GithubAttemptFailure {
+  if (timedOut) return { outcome: "timeout", retryable: true };
+  if (error instanceof GithubHttpStatusError) {
+    return {
+      outcome: `status:${error.status}`,
+      retryable: GITHUB_READ_RETRY_POLICY.transientStatuses.has(error.status),
+    };
+  }
+  if (error instanceof GithubCategorizedError) {
+    return { outcome: error.category, retryable: error.category === "transport" };
+  }
+  // Treat every residual error as transport failure. In particular, never retain an
+  // arbitrary Error.message because fetch implementations and parsers can include
+  // credentials or untrusted response excerpts in it.
+  return { outcome: "transport", retryable: true };
+}
+
+function recordGithubAttempt(
+  evidence: GithubReadAttempt[] | undefined,
+  path: string,
+  attempt: number,
+  outcome: string,
+): void {
+  if (evidence && evidence.length < GITHUB_READ_RETRY_POLICY.maxReportedAttempts) {
+    evidence.push({ path, attempt, outcome });
+  }
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The status remains authoritative when a failed response body cannot be cancelled cleanly.
+  }
+}
+
+async function boundedGithubRead<T>(
+  path: string,
+  token: string,
+  consume: (response: Response) => Promise<T>,
+  options: GithubReadOptions = {},
+): Promise<T> {
+  const fetchRequest = options.fetch ?? fetch;
+  const maxAttempts = Math.min(
+    GITHUB_READ_RETRY_POLICY.maxAttempts,
+    Math.max(1, options.maxAttempts ?? GITHUB_READ_RETRY_POLICY.maxAttempts),
   );
-  if (!response.ok) throw new Error(`GitHub artifact ${artifactId} failed with ${response.status}`);
-  const length = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(length) && length > maxBytes)
-    throw new Error("GitHub artifact exceeds bound");
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length > maxBytes) throw new Error("GitHub artifact exceeds bound");
-  return bytes;
+  const attemptTimeoutMs = options.attemptTimeoutMs ?? GITHUB_READ_RETRY_POLICY.attemptTimeoutMs;
+  const delayMs = options.delayMs ?? GITHUB_READ_RETRY_POLICY.delayMs;
+  const attempts: string[] = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
+    try {
+      const response = await fetchRequest(`https://api.github.com/${path}`, {
+        method: "GET",
+        signal: controller.signal,
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted) throw error;
+        throw new GithubCategorizedError("transport");
+      });
+      if (!response.ok) {
+        await cancelResponseBody(response);
+        throw new GithubHttpStatusError(response.status);
+      }
+      const value = await consume(response);
+      attempts.push(`${attempt}:success`);
+      recordGithubAttempt(options.attemptEvidence, path, attempt, "success");
+      return value;
+    } catch (error) {
+      const failure = githubAttemptFailure(error, controller.signal.aborted);
+      attempts.push(`${attempt}:${failure.outcome}`);
+      recordGithubAttempt(options.attemptEvidence, path, attempt, failure.outcome);
+      if (!failure.retryable || attempt === maxAttempts) {
+        throw new Error(
+          `GitHub GET ${path} failed (${failure.outcome}); attempts [${attempts.join(", ")}]`,
+        );
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error(`GitHub GET ${path} exhausted without terminal evidence`);
+}
+
+async function readBoundedResponse(response: Response, maxBytes: number): Promise<Buffer> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const length = Number(contentLength);
+    if (Number.isFinite(length) && length > maxBytes) {
+      await cancelResponseBody(response);
+      throw new GithubCategorizedError("too-large");
+    }
+  }
+  if (!response.body) throw new GithubCategorizedError("transport");
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let retainedBytes = 0;
+  try {
+    while (true) {
+      let part: { done: boolean; value?: Uint8Array };
+      try {
+        part = await reader.read();
+      } catch {
+        throw new GithubCategorizedError("transport");
+      }
+      if (part.done) return Buffer.concat(chunks, retainedBytes);
+      const value = part.value;
+      if (!value) throw new GithubCategorizedError("transport");
+      if (retainedBytes + value.byteLength > maxBytes) {
+        await reader.cancel();
+        throw new GithubCategorizedError("too-large");
+      }
+      chunks.push(Buffer.from(value));
+      retainedBytes += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function githubJson(
+  path: string,
+  token: string,
+  options: GithubReadOptions = {},
+): Promise<unknown> {
+  const maxBytes = Math.min(
+    GITHUB_READ_RETRY_POLICY.maxJsonBytes,
+    Math.max(1, options.maxJsonBytes ?? GITHUB_READ_RETRY_POLICY.maxJsonBytes),
+  );
+  return boundedGithubRead(
+    path,
+    token,
+    async (response) => {
+      const text = (await readBoundedResponse(response, maxBytes)).toString("utf8");
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new GithubCategorizedError("invalid-json");
+      }
+    },
+    options,
+  );
+}
+
+export async function githubArchive(
+  artifactId: number,
+  maxBytes: number,
+  token: string,
+  options?: GithubReadOptions,
+): Promise<Buffer> {
+  const path = `repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`;
+  const boundedBytes = Math.min(MAX_ARTIFACT_BYTES, Math.max(1, maxBytes));
+  return boundedGithubRead(
+    path,
+    token,
+    (response) => readBoundedResponse(response, boundedBytes),
+    options,
+  );
 }
 
 function requiredEnvironment(name: string): string {
@@ -788,9 +971,11 @@ async function main(): Promise<void> {
   const token = requiredEnvironment("GITHUB_TOKEN");
   const currentRunId = Number(requiredEnvironment("SOURCE_RUN_ID"));
   if (!positiveInteger(currentRunId)) throw new Error("SOURCE_RUN_ID must be a positive integer");
-  const requestJson = (path: string) => githubJson(path, token);
+  const httpAttempts: GithubReadAttempt[] = [];
+  const requestOptions = { attemptEvidence: httpAttempts };
+  const requestJson = (path: string) => githubJson(path, token, requestOptions);
   const requestArchive = (artifactId: number, maxBytes: number) =>
-    githubArchive(artifactId, maxBytes, token);
+    githubArchive(artifactId, maxBytes, token, requestOptions);
   const response = record(
     await requestJson(
       `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?status=completed&per_page=${MAX_RUNS}`,
@@ -823,6 +1008,7 @@ async function main(): Promise<void> {
     schemaVersion: 1,
     currentRunId,
     candidateSha: currentSample?.candidateSha ?? null,
+    httpAttempts,
     groups,
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
