@@ -30,11 +30,14 @@ const JSON_SECRET_FIELD =
   /("[^"\r\n]*(?:secret|token|password|api[_-]?key|authorization)[^"\r\n]*"\s*:\s*)"(?:\\.|[^"\\\r\n])*"/giu;
 const STANDALONE_SECRET =
   /\b(?:(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|nv(?:api|cf)-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{20,})\b/gu;
+const SECRET_QUERY_FIELD =
+  /([?&](?:X-Amz-(?:Credential|Signature|Security-Token)|X-Goog-(?:Credential|Signature)|sig|access_token|token)=)(?!\[REDACTED\])[^&#\s"']*/giu;
 const redact = (value: string): string =>
   value
     .replace(JSON_SECRET_FIELD, '$1"[REDACTED]"')
     .replace(/(\bauthorization\s*:\s*)[^\r\n]*/giu, "$1[REDACTED]")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/giu, "$1[REDACTED]@")
+    .replace(SECRET_QUERY_FIELD, "$1[REDACTED]")
     .replace(SECRET_ASSIGNMENT, "$1[REDACTED]")
     .replace(STANDALONE_SECRET, "[REDACTED]")
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED]");

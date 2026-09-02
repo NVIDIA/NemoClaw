@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -170,6 +170,41 @@ describe("CI failure classifier process", () => {
       expect(result.stdout).not.toContain(exposed ?? secret);
     },
   );
+  test("redacts signed URL credentials in selected logs without changing other query fields", () => {
+    const signedUrl =
+      "https://storage.test/object?keep=visible&X-Amz-Credential=aws-credential&X-Amz-Signature=aws-signature&X-Amz-Security-Token=aws-session&X-Goog-Credential=google-credential&X-Goog-Signature=google-signature&sig=azure-signature&access_token=oauth-token&token=common-token&tail=retained#fragment";
+    const item = fixture(`${signedUrl}\nAssertionError: expected true`);
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.log.stdout).toContain(
+      "?keep=visible&X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]&X-Amz-Security-Token=[REDACTED]&X-Goog-Credential=[REDACTED]&X-Goog-Signature=[REDACTED]&sig=[REDACTED]&access_token=[REDACTED]&token=[REDACTED]&tail=retained#fragment",
+    );
+    expect(result.stdout).not.toMatch(
+      /aws-credential|aws-signature|aws-session|google-credential|google-signature|azure-signature|oauth-token|common-token/,
+    );
+  });
+  test("redacts signed URL credentials in artifact errors and commands", () => {
+    const item = fixture("ordinary output", {
+      exitCode: 1,
+      error:
+        "download failed https://storage.test/object?X-Amz-Credential=error-credential&X-Amz-Signature=error-signature&X-Amz-Security-Token=error-session&keep=error-visible",
+      command:
+        "curl 'https://storage.test/object?X-Goog-Credential=command-credential&X-Goog-Signature=command-google-signature&sig=command-signature&access_token=command-access&token=command-token&keep=command-visible'",
+    });
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status, result.stderr).toBe(0);
+    const failure = JSON.parse(result.stdout).artifact.failures[0];
+    expect(failure.error).toContain(
+      "?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]&X-Amz-Security-Token=[REDACTED]&keep=error-visible",
+    );
+    expect(failure.command).toContain(
+      "?X-Goog-Credential=[REDACTED]&X-Goog-Signature=[REDACTED]&sig=[REDACTED]&access_token=[REDACTED]&token=[REDACTED]&keep=command-visible",
+    );
+    expect(result.stdout).not.toMatch(
+      /error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
+    );
+  });
   test("rejects invalid input before invoking GitHub", () => {
     const item = fixture("unused");
     const r = run(item.env, ["--repo", "bad/repo/extra"]);
