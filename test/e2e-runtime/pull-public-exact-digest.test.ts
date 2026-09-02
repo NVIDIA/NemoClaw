@@ -13,6 +13,7 @@ const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh")
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
 
 type Scenario =
+  | "docker-exit-one-then-success"
   | "exhausted"
   | "modern-transient-then-success"
   | "near-match"
@@ -51,6 +52,10 @@ fi
 if [ "$SCENARIO" = "modern-transient-then-success" ] && [ "$count" -eq 1 ]; then
   echo "Error response from daemon: failed to resolve reference \"$EXPECTED_REFERENCE\": $EXPECTED_REFERENCE: not found" >&2
   exit 44
+fi
+if [ "$SCENARIO" = "docker-exit-one-then-success" ] && [ "$count" -eq 1 ]; then
+  echo "unexpected registry response" >&2
+  exit 1
 fi
 if [ "$SCENARIO" = "exhausted" ] || { [ "$SCENARIO" = "transient-then-success" ] && [ "$count" -eq 1 ]; }; then
   echo "ERROR: $EXPECTED_REFERENCE: not found" >&2
@@ -135,6 +140,18 @@ describe("pull-public-exact-digest", () => {
     expect(result.stderr).toContain("outcome=transient-external attempt=1/5 retry-in=2s");
     expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
     expect(result.stdout + result.stderr).not.toContain(`${reference}: not found`);
+  });
+
+  it("retries Docker's generic pull failure without exposing its output", () => {
+    const result = runPuller("docker-exit-one-then-success");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.count).toBe(2);
+    expect(result.sleeps).toEqual(["2"]);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr).toContain("outcome=transient-external attempt=1/5 retry-in=2s");
+    expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
+    expect(result.stdout + result.stderr).not.toContain("unexpected registry response");
   });
 
   it("does not retry a non-exact Docker error", () => {
