@@ -16,28 +16,27 @@ describe("PR review advisor security boundaries", () => {
     vi.restoreAllMocks();
   });
 
-  it("removes the model credential from the tool environment after in-memory setup", async () => {
+  it("removes the model credential after registering the selected model in memory", async () => {
     const credentialEnv = "PR_REVIEW_ADVISOR_TEST_API_KEY";
     vi.stubEnv(credentialEnv, "test-secret");
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
 
     try {
-      await expect(
-        runReadOnlyAdvisor({
-          cwd: ROOT,
-          promptTurns: [],
-          systemPrompt: "test",
-          configDir,
-          htmlExportPath: path.join(configDir, "session.html"),
-          timeoutMs: 1000,
-          heartbeatMs: 1000,
-          maxCaptureBytes: 1024,
-          modelId: "missing-model",
-          credentialEnv,
-          logPrefix: "test",
-          logProgress: () => undefined,
-        }),
-      ).rejects.toThrow(/Could not configure advisor model/);
+      const result = await runReadOnlyAdvisor({
+        cwd: ROOT,
+        promptTurns: [],
+        systemPrompt: "test",
+        configDir,
+        htmlExportPath: path.join(configDir, "session.html"),
+        timeoutMs: 1000,
+        heartbeatMs: 1000,
+        maxCaptureBytes: 1024,
+        modelId: "missing-model",
+        credentialEnv,
+        logPrefix: "test",
+        logProgress: () => undefined,
+      });
+      expect(result.fatalError).toBeUndefined();
       expect(process.env[credentialEnv]).toBeUndefined();
     } finally {
       fs.rmSync(configDir, { recursive: true, force: true });
