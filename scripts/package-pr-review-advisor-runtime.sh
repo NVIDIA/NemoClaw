@@ -7,7 +7,7 @@ out="${1:?output directory required}"
 test -d "$ADVISOR_DIR/node_modules" && test ! -L "$ADVISOR_DIR/node_modules"
 rm -rf -- "$out"; mkdir -p -- "$out/stage/bin"
 cp -a -- "$ADVISOR_DIR/node_modules" "$out/stage/node_modules"
-for name in rg fdfind; do source_path="$(command -v "$name")"; test -f "$source_path" && test ! -L "$source_path"; cp -- "$source_path" "$out/stage/bin/$name"; done
+for name in rg fdfind; do source_path="$(readlink -f "$(command -v "$name")")"; test -f "$source_path" && test ! -L "$source_path"; cp -- "$source_path" "$out/stage/bin/$name"; done
 cp -- "$out/stage/bin/fdfind" "$out/stage/bin/fd"
 printf '%s\n' "$GITHUB_WORKFLOW_SHA" > "$out/stage/workflow-sha"
 printf '%s\n' "$GITHUB_RUN_ID" > "$out/stage/run-id"
