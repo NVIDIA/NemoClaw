@@ -17,6 +17,7 @@ import {
 } from "../../onboard/gateway-teardown-authority";
 import {
   observeSandboxOnGateway,
+  observeSandboxPresenceOnGateway,
   type SandboxRecreateObserver,
   type SandboxRecreateTarget,
 } from "../../onboard/sandbox-recreate-probe";
@@ -29,6 +30,7 @@ import {
   type SandboxRecreateSourcePresence,
   sandboxRecreatePhaseReached,
 } from "../../onboard/sandbox-recreate-transaction";
+import { isValidName } from "../../sandbox-name-contract";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type {
@@ -38,6 +40,7 @@ import type {
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
+  clearRebuildPolicyHandoff,
   listBackups,
   type RebuildManifest,
   type SnapshotEntry,
@@ -48,12 +51,23 @@ import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 const REBUILD_RECOVERY_FILE = ".nemoclaw-rebuild-recovery.json";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-type RebuildRecoveryBackupRecord = {
+type RebuildRecoveryBackupRecordV1 = {
   readonly schemaVersion: 1;
   readonly transactionId: string;
   readonly sandboxName: string;
   readonly backupTimestamp: string;
 };
+
+type RebuildRecoveryBackupRecordV2 = {
+  readonly schemaVersion: 2;
+  readonly transactionId: string;
+  readonly sandboxName: string;
+  readonly backupTimestamp: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+};
+
+type RebuildRecoveryBackupRecord = RebuildRecoveryBackupRecordV1 | RebuildRecoveryBackupRecordV2;
 
 type RebuildRecoveryBackupIdentity = {
   readonly sandboxName: string;
@@ -64,9 +78,14 @@ type RebuildRecoveryBackupIdentity = {
 interface RebuildRecoveryBackupDeps {
   readonly listBackups?: typeof listBackups;
   readonly validateManifest?: typeof validateRebuildRecoveryManifest;
+  readonly observePresence?: typeof observeSandboxPresenceOnGateway;
+  readonly clearPolicyHandoff?: typeof clearRebuildPolicyHandoff;
 }
 
 function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
+  if (!isValidName(input.sandboxName)) {
+    throw new Error("Rebuild recovery sandbox identity is invalid.");
+  }
   if (!UUID_PATTERN.test(input.transactionId)) {
     throw new Error("Rebuild recovery transaction identity is invalid.");
   }
@@ -104,17 +123,34 @@ function validatedRecoveryManifest(
 function parseRecoveryRecord(raw: string): RebuildRecoveryBackupRecord | null {
   try {
     const value = JSON.parse(raw) as Record<string, unknown>;
+    const expectedKeys =
+      value?.schemaVersion === 2
+        ? [
+            "backupTimestamp",
+            "gatewayName",
+            "gatewayPort",
+            "sandboxName",
+            "schemaVersion",
+            "transactionId",
+          ]
+        : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
     if (
       !value ||
       typeof value !== "object" ||
       Array.isArray(value) ||
-      JSON.stringify(Object.keys(value).sort()) !==
-        JSON.stringify(["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"]) ||
-      value.schemaVersion !== 1 ||
+      JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys) ||
+      (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
       typeof value.transactionId !== "string" ||
       !UUID_PATTERN.test(value.transactionId) ||
       typeof value.sandboxName !== "string" ||
-      typeof value.backupTimestamp !== "string"
+      !isValidName(value.sandboxName) ||
+      typeof value.backupTimestamp !== "string" ||
+      (value.schemaVersion === 2 &&
+        (typeof value.gatewayName !== "string" ||
+          !isValidName(value.gatewayName) ||
+          !Number.isSafeInteger(value.gatewayPort) ||
+          Number(value.gatewayPort) < 1 ||
+          Number(value.gatewayPort) > 65_535))
     ) {
       return null;
     }
@@ -181,10 +217,21 @@ function recoveryRecordMatches(
 
 /** Bind one published backup to the active outer rebuild transaction. */
 export function recordRebuildRecoveryBackup(
-  input: RebuildRecoveryBackupIdentity & { readonly backupManifest: RebuildManifest },
+  input: RebuildRecoveryBackupIdentity &
+    Pick<SandboxRecreateTarget, "gatewayName" | "gatewayPort"> & {
+      readonly backupManifest: RebuildManifest;
+    },
   deps: RebuildRecoveryBackupDeps = {},
 ): void {
   validateRecoveryIdentity(input);
+  if (
+    !isValidName(input.gatewayName) ||
+    !Number.isSafeInteger(input.gatewayPort) ||
+    input.gatewayPort < 1 ||
+    input.gatewayPort > 65_535
+  ) {
+    throw new Error("Rebuild recovery gateway identity is invalid.");
+  }
   const manifest = validatedRecoveryManifest(input, input.backupManifest, deps);
   const existing = readRecoveryRecord(manifest.backupPath);
   if (existing) {
@@ -194,10 +241,12 @@ export function recordRebuildRecoveryBackup(
     return;
   }
   const record: RebuildRecoveryBackupRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     transactionId: input.transactionId,
     sandboxName: input.sandboxName,
     backupTimestamp: manifest.timestamp,
+    gatewayName: input.gatewayName,
+    gatewayPort: input.gatewayPort,
   };
   const descriptor = fs.openSync(
     recoveryPath(manifest.backupPath),
@@ -233,7 +282,9 @@ export function findRebuildRecoveryBackup(
 
 /** Retire the bounded recovery record after restore and post-restore succeed. */
 export function clearRebuildRecoveryBackup(
-  input: RebuildRecoveryBackupIdentity & { readonly backupManifest: RebuildManifest },
+  input: RebuildRecoveryBackupIdentity & {
+    readonly backupManifest: RebuildManifest;
+  },
   deps: RebuildRecoveryBackupDeps = {},
 ): void {
   validateRecoveryIdentity(input);
@@ -243,6 +294,113 @@ export function clearRebuildRecoveryBackup(
   }
   fs.unlinkSync(recoveryPath(manifest.backupPath));
   syncDirectory(manifest.backupPath);
+}
+
+export type RetiredRebuildRecovery = Readonly<{
+  backupPath: string;
+  gatewayName: string;
+  transactionId: string;
+}>;
+
+/**
+ * Retire one credential-bearing rebuild handoff only after its recorded
+ * gateway proves the old sandbox absent and the operator attests that required
+ * data recovery is complete.
+ */
+export function retireRebuildRecoveryBackup(
+  input: Readonly<{
+    sandboxName: string;
+    transactionId: string;
+    confirmDataRecovered: boolean;
+  }>,
+  deps: RebuildRecoveryBackupDeps = {},
+): RetiredRebuildRecovery {
+  validateRecoveryIdentity({ ...input, agentName: null });
+  if (!input.confirmDataRecovered) {
+    throw new Error(
+      "Recovery retirement requires --yes to confirm that required data recovery is complete.",
+    );
+  }
+
+  let selected: { manifest: RebuildManifest; record: RebuildRecoveryBackupRecordV2 } | undefined;
+  for (const candidate of (deps.listBackups ?? listBackups)(input.sandboxName)) {
+    const record = readRecoveryRecord(candidate.backupPath);
+    if (record?.transactionId !== input.transactionId) continue;
+    if (record.sandboxName !== input.sandboxName) {
+      throw new Error(
+        `Rebuild recovery identity does not match sandbox '${input.sandboxName}'. Recovery remains at '${candidate.backupPath}'.`,
+      );
+    }
+    if (record.schemaVersion !== 2) {
+      throw new Error(
+        `Rebuild recovery '${input.transactionId}' does not contain recorded gateway authority. Recovery remains at '${candidate.backupPath}'.`,
+      );
+    }
+    const identity = {
+      sandboxName: input.sandboxName,
+      agentName: candidate.agentType,
+      transactionId: input.transactionId,
+    };
+    const manifest = validatedRecoveryManifest(identity, candidate, deps);
+    if (!recoveryRecordMatches(record, identity, manifest)) {
+      throw new Error(
+        `Rebuild recovery identity changed before retirement. Recovery remains at '${candidate.backupPath}'.`,
+      );
+    }
+    selected = { manifest, record };
+    break;
+  }
+  if (!selected) {
+    throw new Error(
+      `No exact rebuild recovery record exists for sandbox '${input.sandboxName}' and transaction '${input.transactionId}'.`,
+    );
+  }
+
+  const { manifest, record } = selected;
+  try {
+    const presence = (deps.observePresence ?? observeSandboxPresenceOnGateway)({
+      sandboxName: input.sandboxName,
+      gatewayName: record.gatewayName,
+    });
+    if (presence !== "missing") {
+      throw new Error(
+        `OpenShell still reports sandbox '${input.sandboxName}' on recorded gateway '${record.gatewayName}'`,
+      );
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot retire rebuild recovery before confirmed sandbox deletion: ${detail}. Recovery remains at '${manifest.backupPath}'.`,
+      { cause: error },
+    );
+  }
+
+  if (!(deps.clearPolicyHandoff ?? clearRebuildPolicyHandoff)(manifest)) {
+    throw new Error(
+      `The retained rebuild policy handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+    );
+  }
+  try {
+    clearRebuildRecoveryBackup(
+      {
+        sandboxName: input.sandboxName,
+        agentName: manifest.agentType,
+        transactionId: input.transactionId,
+        backupManifest: manifest,
+      },
+      deps,
+    );
+  } catch (error) {
+    throw new Error(
+      `The rebuild recovery marker could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+      { cause: error },
+    );
+  }
+  return {
+    backupPath: manifest.backupPath,
+    gatewayName: record.gatewayName,
+    transactionId: input.transactionId,
+  };
 }
 
 export type RebuildRecreateJournalTarget = SandboxRecreateTarget;

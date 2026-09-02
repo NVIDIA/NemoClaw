@@ -26,7 +26,7 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
-import type { RebuildManifest } from "../../state/sandbox";
+import { writeRebuildPolicyHandoff, type RebuildManifest } from "../../state/sandbox";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
   clearRebuildRecoveryBackup,
@@ -35,6 +35,7 @@ import {
   observeRebuildSandbox,
   openRebuildRecreateJournal,
   recordRebuildRecoveryBackup,
+  retireRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 
 const SANDBOX_ID = "sbx-0d6f4c2a91";
@@ -560,6 +561,11 @@ describe("rebuild replacement recovery backup", () => {
     agentName: "openclaw",
     transactionId: selectedTransactionId,
   });
+  const recordedIdentity = (selectedTransactionId = transactionId) => ({
+    ...identity(selectedTransactionId),
+    gatewayName: "nemoclaw-18080",
+    gatewayPort: 18_080,
+  });
 
   beforeEach(() => {
     backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-recovery-test-"));
@@ -588,7 +594,7 @@ describe("rebuild replacement recovery backup", () => {
   });
 
   it("binds, resolves, and clears one transaction backup", () => {
-    recordRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
 
     const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
     expect(fs.statSync(recordPath).mode & 0o777).toBe(0o600);
@@ -601,15 +607,87 @@ describe("rebuild replacement recovery backup", () => {
   });
 
   it("rejects another transaction and preserves the original binding", () => {
-    recordRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
 
     expect(() =>
       recordRebuildRecoveryBackup(
-        { ...identity(otherTransactionId), backupManifest: manifest },
+        { ...recordedIdentity(otherTransactionId), backupManifest: manifest },
         deps(),
       ),
     ).toThrow("already belongs to another transaction");
     expect(findRebuildRecoveryBackup(identity(), deps())).not.toBeNull();
     expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
+  });
+
+  it("retires an unsafe handoff only for its exact absent sandbox transaction (#10150)", () => {
+    const policy = [
+      "version: 1",
+      "process:",
+      "  environment:",
+      "    SERVICE_API_KEY: opaque-retained-credential",
+      "",
+    ].join("\n");
+    manifest = writeRebuildPolicyHandoff(manifest, policy);
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
+    const handoffPath = path.join(backupPath, manifest.rebuildPolicyHandoff!.file);
+    const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
+    const observePresence = vi.fn(() => "missing" as const);
+
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        {
+          sandboxName: "alpha",
+          transactionId: otherTransactionId,
+          confirmDataRecovered: true,
+        },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("No exact rebuild recovery record");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "beta", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("does not match sandbox 'beta'");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: false },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("requires --yes");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence: () => "present" },
+      ),
+    ).toThrow(`Recovery remains at '${backupPath}'`);
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence, clearPolicyHandoff: () => false },
+      ),
+    ).toThrow(`Recovery remains at '${backupPath}'`);
+    expect(fs.existsSync(handoffPath)).toBe(true);
+    expect(fs.existsSync(recordPath)).toBe(true);
+
+    expect(
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence },
+      ),
+    ).toEqual({
+      backupPath,
+      gatewayName: "nemoclaw-18080",
+      transactionId,
+    });
+    expect(observePresence).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-18080",
+    });
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(fs.existsSync(recordPath)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).not.toHaveProperty("rebuildPolicyHandoff");
   });
 });

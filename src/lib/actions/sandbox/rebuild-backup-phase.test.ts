@@ -146,7 +146,14 @@ describe("rebuild policy handoff", () => {
 
     let refusal: Error | null = null;
     try {
-      runRebuildBackupPhase(input({ staleRecovery: true, preparedRecoveryManifest }), vi.fn());
+      runRebuildBackupPhase(
+        input({
+          staleRecovery: true,
+          preparedRecoveryManifest,
+          recoveryTransactionId: "11111111-1111-4111-8111-111111111111",
+        }),
+        vi.fn(),
+      );
     } catch (error) {
       refusal = error as Error;
     }
@@ -164,7 +171,10 @@ describe("rebuild policy handoff", () => {
     );
     expect(refusal?.message).toContain("Do not retry rebuild with the unsafe handoff");
     expect(refusal?.message).toContain(
-      `After required data is recovered and old-sandbox deletion is confirmed, remove the credential-bearing policy handoff at '${path.join(
+      "`nemoclaw alpha rebuild --retire-recovery 11111111-1111-4111-8111-111111111111 --yes`",
+    );
+    expect(refusal?.message).toContain(
+      `This removes the credential-bearing policy handoff at '${path.join(
         backupPath,
         preparedRecoveryManifest.rebuildPolicyHandoff!.file,
       )}'`,

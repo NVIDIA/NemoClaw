@@ -234,6 +234,7 @@ async function rebuildSandboxUnlocked(
       );
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
+      const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
 
       const backup = runRebuildBackupPhase({
         sandboxName,
@@ -247,6 +248,9 @@ async function rebuildSandboxUnlocked(
         },
         staleRecovery,
         preparedRecoveryManifest: recoveryManifest,
+        ...(activeRecoveryTransaction?.sandboxName === sandboxName
+          ? { recoveryTransactionId: activeRecoveryTransaction.id }
+          : {}),
         messagingPlan,
         webSearchConfig: durableConfig.webSearchConfig,
         log,
@@ -385,6 +389,8 @@ async function rebuildSandboxUnlocked(
       if (!recreateJournal.acceptedTarget && backup.backupManifest) {
         recordRebuildRecoveryBackup({
           ...rebuildRecoveryIdentity,
+          gatewayName: recreateOptions.targetGatewayName,
+          gatewayPort: recreateOptions.targetGatewayPort,
           backupManifest: backup.backupManifest,
         });
       }

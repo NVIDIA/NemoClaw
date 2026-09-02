@@ -139,9 +139,14 @@ describe("shields down policy rejection", () => {
 
   function createRejectedPolicyHarness() {
     return createShieldsFlowHarness(requireSource, tmpDir, {
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
   }
 
@@ -166,9 +171,11 @@ describe("shields down policy rejection", () => {
     expect(policyCommands.length).toBeGreaterThan(0);
     expect(policyCommands.every((command) => command.includes(gatewayName))).toBe(true);
     expect(harness.policyVerificationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: expect.objectContaining({ kind: "applied" }) }),
       "openclaw",
       expect.stringContaining("network_policies"),
       expect.objectContaining({ gatewayName }),
+      "apply the Shields down policy",
     );
   });
 
@@ -180,7 +187,7 @@ describe("shields down policy rejection", () => {
         reason: "verify",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
     expect(harness.isShieldsDown("openclaw")).toBe(false);
 
     const state = JSON.parse(
@@ -213,16 +220,21 @@ describe("shields down policy rejection", () => {
         send: vi.fn(() => true),
         kill: timerKill,
       }),
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
     expect(() =>
       harness.shieldsDown("openclaw", {
         reason: "verify recovery authority",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
 
     expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
       shieldsDown: true,
@@ -287,9 +299,14 @@ describe("shields down policy rejection", () => {
         send: vi.fn(() => true),
         kill: vi.fn(() => true),
       }),
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
 
     expect(() =>
@@ -297,7 +314,7 @@ describe("shields down policy rejection", () => {
         reason: "verify incomplete rejection",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
 
     const transitionName = fs
       .readdirSync(stateDir)

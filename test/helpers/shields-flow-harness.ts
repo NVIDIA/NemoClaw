@@ -272,13 +272,17 @@ export function bindTypedPolicyWriter(
 
 export function bindTypedPolicyReader(
   adapter: typeof import("../../src/lib/adapters/openshell/sandbox-policy-cli"),
-  readDocument: () => string,
+  readDocument: (
+    request: Parameters<
+      typeof adapter.syncCliOpenShellSandboxPolicyReader.readSandboxPolicy
+    >[0],
+  ) => string,
 ): MockInstance {
   return vi
     .spyOn(adapter.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy")
-    .mockImplementation(() => ({
+    .mockImplementation((request) => ({
       ok: true,
-      value: { document: readDocument(), appliedRevision: null },
+      value: { document: readDocument(request), appliedRevision: null },
     }));
 }
 
@@ -424,8 +428,17 @@ export function createShieldsFlowHarness(
     (command, runOptions) => runner.run(command, runOptions),
     policySetBodies,
   );
-  bindTypedPolicyReader(policyAdapter, () =>
-    String(runner.runCapture(["policy", "get", "-g", "nemoclaw", "--base", sandboxName])),
+  bindTypedPolicyReader(policyAdapter, (request) =>
+    policySetBodies.at(-1) ??
+    String(
+      runner.runCapture([
+        "policy",
+        "get",
+        ...(request.target.kind === "named" ? ["-g", request.target.gatewayName] : []),
+        "--base",
+        request.sandboxName,
+      ]),
+    ),
   );
   vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
   vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(
@@ -474,10 +487,7 @@ export function createShieldsFlowHarness(
     .spyOn(policy, "inspectPolicyMutationContext")
     .mockImplementation(policyMutationAuthority);
   vi.spyOn(policy, "recheckPolicyMutationContext").mockImplementation(policyMutationAuthority);
-  vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
-  const policyVerificationSpy = vi
-    .spyOn(policy, "confirmAppliedPolicySetSubmission")
-    .mockImplementation(() => undefined);
+  const policyVerificationSpy = vi.spyOn(policy, "confirmAppliedPolicySetSubmission");
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
   });
