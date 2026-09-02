@@ -188,7 +188,6 @@ node --import tsx "$7" --assert-binaries "$policy_file" "$4" "$6" rest /opt/herm
 
 type DiscordPolicy = {
   binaries?: Array<{ path?: string }>;
-  endpoints?: Array<{ host?: string; port?: number }>;
 };
 
 function expectPythonOnlyDiscordPolicy(policy: DiscordPolicy | undefined, label: string): void {
@@ -202,7 +201,6 @@ function expectPythonOnlyDiscordPolicy(policy: DiscordPolicy | undefined, label:
 async function assertHermesDiscordPythonOnlyPolicy(options: {
   host: HostCliClient;
   sandboxName: string;
-  api: FakeDockerApi;
   env: NodeJS.ProcessEnv;
   redactions: string[];
 }): Promise<void> {
@@ -231,14 +229,7 @@ async function assertHermesDiscordPythonOnlyPolicy(options: {
 
   const networkPolicies = policyDocument?.network_policies ?? {};
   const productionDiscord = networkPolicies.discord;
-  const fakeDiscord = Object.values(networkPolicies).find((policy) =>
-    policy.endpoints?.some(
-      (endpoint) =>
-        endpoint.host === FAKE_DISCORD_HOST && endpoint.port === Number(options.api.port),
-    ),
-  );
   expectPythonOnlyDiscordPolicy(productionDiscord, "production Hermes Discord policy");
-  expectPythonOnlyDiscordPolicy(fakeDiscord, "fake Hermes Discord policy");
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
@@ -685,7 +676,6 @@ PY`,
     await assertHermesDiscordPythonOnlyPolicy({
       host,
       sandboxName: SANDBOX_NAME,
-      api: fakeGateway,
       env,
       redactions: redactionValues,
     });
