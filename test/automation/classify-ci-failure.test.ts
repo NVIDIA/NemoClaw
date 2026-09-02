@@ -140,6 +140,12 @@ const classifierArgs = (extra: string[] = []) => [
 function run(env: NodeJS.ProcessEnv, extra: string[] = []) {
   return spawnSync(process.execPath, classifierArgs(extra), { encoding: "utf8", env });
 }
+function classifierTemporaryDirectories(prefix: "nemoclaw-ci-log." | "nemoclaw-ci-classify.") {
+  const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
+  return existsSync(temporaryRoot)
+    ? readdirSync(temporaryRoot).filter((name) => name.startsWith(prefix))
+    : [];
+}
 async function waitForFile(path: string): Promise<void> {
   await vi.waitFor(() => expect(existsSync(path)).toBe(true), { timeout: 2_000, interval: 10 });
 }
@@ -289,6 +295,23 @@ describe("CI failure classifier process", () => {
     expect(r.stderr).toContain(message);
     expect(readdirSync(item.root)).not.toContain("calls");
   });
+  test.each([
+    ["authentication", "authentication required BUILD_TOKEN=log-access-secret"],
+    ["authorization", "HTTP 403 resource not accessible BUILD_TOKEN=log-access-secret"],
+  ])("fails log acquisition with bounded, redacted %s recovery guidance", (_kind, failure) => {
+    const item = fixture("unused");
+    item.env.FAIL_LOG = failure;
+    const result = run(item.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("GitHub access failed. Run gh auth status");
+    expect(result.stderr).toContain("ask the user to correct authentication, authorization, SSO");
+    expect(result.stderr).toContain("BUILD_TOKEN=[REDACTED]");
+    expect(result.stderr).not.toContain("log-access-secret");
+    expect(result.stderr.length).toBeLessThanOrEqual(2001);
+    expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
+  });
+
   test("preserves the primary log failure while direct cleanup ignores a fake rm", () => {
     const item = fixture("AssertionError: retained tail");
     const credential = "cleanup-path-secret";
@@ -298,10 +321,13 @@ describe("CI failure classifier process", () => {
     item.env.FAIL_CLEANUP = "nemoclaw-ci-log";
     item.env.FAIL_LOG = "primary log download failure";
     const result = run(item.env);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).log.stderr).toContain("primary log download failure");
-    expect(result.stdout).not.toContain(credential);
-    expect(result.stdout).not.toContain("cleanup-secret");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("primary log download failure");
+    expect(result.stderr).not.toContain(credential);
+    expect(result.stderr).not.toContain("cleanup-secret");
+    expect(result.stderr.length).toBeLessThanOrEqual(2001);
+    expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
     expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
   });
   test.each([
@@ -382,6 +408,7 @@ describe("CI failure classifier process", () => {
     expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
     expect(result.stderr).not.toContain("cleanup-secret");
     expect(result.stderr).not.toContain(credential);
+    expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
     expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
   });
   test("reads a real ZIP artifact and removes private temporary directories", () => {
@@ -465,17 +492,22 @@ describe("CI failure classifier process", () => {
     expect(result.stdout).not.toContain(secret);
   });
 
-  test("terminates a no-stdio descendant after its command leader exits and times out", async () => {
+  test("retains a leader for an ignored-stdio process-group member until timeout", async () => {
     const root = mkdtempSync(join(tmpdir(), "classify-ci-timeout-"));
     roots.push(root);
     const marker = join(root, "descendant-pid");
     const program = [
       "const {spawn}=require('node:child_process');",
-      "const child=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:'ignore'});",
+      "const child=spawn(process.execPath,['-e',\"process.title='member ) name'; process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:'ignore'});",
       "require('node:fs').writeFileSync(process.argv[1],String(child.pid));",
     ].join("");
-    const result = await execute(process.execPath, ["-e", program, marker], root, 200);
+    const started = Date.now();
+    const pending = execute(process.execPath, ["-e", program, marker], root, 200);
+    await waitForFile(marker);
     const descendantPid = Number(readFileSync(marker, "utf8"));
+    expect(() => process.kill(descendantPid, 0)).not.toThrow();
+    const result = await pending;
+    expect(Date.now() - started).toBeGreaterThanOrEqual(200);
     expect(result.exitCode).not.toBe(0);
     expect(() => process.kill(descendantPid, 0)).toThrow();
   });

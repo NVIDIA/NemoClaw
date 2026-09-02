@@ -23,4 +23,4 @@ The script uses authenticated `gh` reads. It performs no GitHub writes. It bound
 
 Run the script from a Linux NemoClaw checkout with Node.js 22.19 or later, `/proc`, Bash, authenticated `gh`, and GNU coreutils (`base64`, `dd`, `rm`, `stat`, `tail`, and `wc`).
 
-Stop on GitHub authentication or authorization failure. Follow the repository GitHub access hard stop. Treat `unclassified` as bounded evidence, not proof that no known cause exists.
+Any nonzero log acquisition result is a classifier failure: the script exits nonzero with no success JSON and reports a bounded, redacted diagnostic after removing its temporary log directory. On GitHub authentication or authorization failure, stop, follow the repository GitHub access hard stop, and ask the user to correct the configured `gh` access (including SSO or token scope) before rerunning. Treat `unclassified` as bounded evidence, not proof that no known cause exists.

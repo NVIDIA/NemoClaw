@@ -102,19 +102,22 @@ const child = spawn(process.argv[1], process.argv.slice(2), {
 });
 let exitCode = 1;
 let childExited = false;
-const groupHasDescendants = () => {
+const groupHasOtherMembers = () => {
   for (const name of readdirSync("/proc")) {
     if (!/^\d+$/.test(name) || Number(name) === leader) continue;
     try {
       const stat = readFileSync("/proc/" + name + "/stat", "utf8");
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      if (Number(fields[2]) === leader) return true;
+      const commEnd = stat.lastIndexOf(")");
+      if (commEnd < 0 || stat[commEnd + 1] !== " ") continue;
+      // Fields after comm begin with state (3), PPID (4), and process group ID (5).
+      const fieldsAfterComm = stat.slice(commEnd + 2).trim().split(/\s+/);
+      if (Number(fieldsAfterComm[2]) === leader) return true;
     } catch {}
   }
   return false;
 };
 const drain = () => {
-  if (!childExited || groupHasDescendants()) return;
+  if (!childExited || groupHasOtherMembers()) return;
   clearInterval(poll);
   process.exit(exitCode);
 };
@@ -390,27 +393,28 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       throw await diagnosticError(result.stderr.text || result.stdout.text);
     return { stdout: result.stdout.text, stderr: result.stderr.text };
   };
+  const isGithubAccessFailure = (detail: string): boolean =>
+    [
+      "authentication",
+      "authorization",
+      "forbidden",
+      "not authorized",
+      "http 401",
+      "http 403",
+      "resource not accessible",
+      "sso",
+    ].some((value) => detail.toLowerCase().includes(value));
+  const githubAccessFailure = (detail: string): Error =>
+    new Error(
+      "GitHub access failed. Run gh auth status, then ask the user to correct authentication, authorization, SSO, or token scope before retrying." +
+        (detail ? "\n" + detail : ""),
+    );
   const run = async (command: string, timeoutMs = 30000) => {
     const result = await execute("bash", ["-c", command], input.workdir, timeoutMs);
-    const detail = (result.stderr.text + "\n" + result.stdout.text).toLowerCase();
-    if (
-      result.exitCode !== 0 &&
-      [
-        "authentication",
-        "authorization",
-        "forbidden",
-        "not authorized",
-        "http 401",
-        "http 403",
-        "resource not accessible",
-        "sso",
-      ].some((value) => detail.includes(value))
-    ) {
+    const detail = result.stderr.text + "\n" + result.stdout.text;
+    if (result.exitCode !== 0 && isGithubAccessFailure(detail)) {
       const projected = await project(result.stderr.text, 1500, 1000);
-      throw new Error(
-        "GitHub access failed; correct authentication or authorization before retrying." +
-          (projected.text ? "\n" + projected.text : ""),
-      );
+      throw githubAccessFailure(projected.text);
     }
     return result;
   };
@@ -496,11 +500,17 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
   }
   const logCleanupFailure = await cleanupTemporaryDirectory(logDir, "CI log");
   if (logFailure !== undefined) throw appendCleanupFailure(logFailure, logCleanupFailure);
-  if (logCleanupFailure) {
-    const primary =
-      logCode === 0 ? undefined : logStderr || `GitHub Actions log read failed (exit ${logCode})`;
-    throw appendCleanupFailure(primary ?? logCleanupFailure, primary ? logCleanupFailure : "");
+  const logAcquisitionFailure =
+    logCode === 0
+      ? undefined
+      : logStderr || `GitHub Actions log acquisition failed (exit ${logCode})`;
+  if (logAcquisitionFailure) {
+    const primary = isGithubAccessFailure(logAcquisitionFailure)
+      ? githubAccessFailure(logAcquisitionFailure)
+      : logAcquisitionFailure;
+    throw appendCleanupFailure(primary, logCleanupFailure);
   }
+  if (logCleanupFailure) throw new Error(logCleanupFailure);
   const logPattern =
     /FAIL|Failed Tests|AssertionError|Test timed out|Process completed|SIGKILL|timed out|Source-shape|Source architecture|grew by|adds JavaScript|NEMOCLAW_|npm audit report|docs-review|Documentation writer|Fern validation|check-docs|hadolint|shellcheck|Nemotron/i;
   const selectedIndexes = new Set<number>();
@@ -863,6 +873,14 @@ async function main(): Promise<void> {
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
   void main().catch((error: unknown) => {
-    console.error(redact(error instanceof Error ? error.message : String(error)));
+    const diagnostic = projectText({
+      lines: [error instanceof Error ? error.message : String(error)],
+      clipMode: "tail",
+      lineClipMode: "tail",
+      maxLines: 40,
+      maxCharacters: 2000,
+      maxLineCharacters: 1000,
+    });
+    console.error(diagnostic.text || "Diagnostic unavailable");
     process.exitCode = 1;
   });
