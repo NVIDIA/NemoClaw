@@ -167,6 +167,9 @@ jobs:
         run: >-
           node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-pr-image-publisher.mts validate "${RUNNER_TEMP}/managed-pr-image"
 
+      - name: Reject production OpenClaw build arguments
+        run: trusted/scripts/check-production-build-args.sh
+
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0

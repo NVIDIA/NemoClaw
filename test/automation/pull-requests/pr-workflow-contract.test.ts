@@ -929,6 +929,7 @@ describe("pull request and main workflow contracts", () => {
     expect(baseActivation.permissions).toEqual({ actions: "read", contents: "read" });
     expect(candidateActivation.needs).toEqual([
       "authenticate-source",
+      "publish-candidate-images",
       "package-openshell-sdk",
       "build-candidate-cli",
     ]);
