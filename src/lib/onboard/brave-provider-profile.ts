@@ -62,20 +62,6 @@ export function webSearchProviderProfilePath(
   return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${provider}.yaml`);
 }
 
-/**
- * Register the Brave Search provider profile with OpenShell so providers
- * created with `--type brave` drive the L7 proxy's X-Subscription-Token
- * rewrite. Skipped unless at least one token definition is Brave-typed and
- * has a usable token. Existing profiles must match the checked-in credential
- * boundary exactly; missing profiles are imported and verified before use.
- */
-export function ensureBraveProviderProfile(
-  tokenDefs: readonly TokenDefShape[],
-  deps: BraveProviderProfileDeps,
-): void {
-  ensureWebSearchProviderProfiles(tokenDefs, deps);
-}
-
 /** Register every selected web-search provider profile before token upsert. */
 export function ensureWebSearchProviderProfiles(
   tokenDefs: readonly TokenDefShape[],

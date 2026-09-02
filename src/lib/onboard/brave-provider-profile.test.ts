@@ -7,7 +7,6 @@ import { REPOSITORY_ROOT } from "../core/repository-root";
 import {
   BRAVE_PROVIDER_PROFILE_ID,
   braveProviderProfilePath,
-  ensureBraveProviderProfile,
   ensureWebSearchProviderProfiles,
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
   shouldEnableWebSearch,
@@ -24,7 +23,7 @@ function makeDeps(runOpenshell: ReturnType<typeof vi.fn>, overrides: Record<stri
       throw new Error(`exit:${code ?? 0}`);
     }),
     ...overrides,
-  } as Parameters<typeof ensureBraveProviderProfile>[1];
+  } as Parameters<typeof ensureWebSearchProviderProfiles>[1];
 }
 
 const MATCHING_BRAVE_EXPORT = {
@@ -137,16 +136,19 @@ function matchingProfileRunner() {
   return vi.fn((args: string[]) => exportsById[args[3] as keyof typeof exportsById]);
 }
 
-describe("ensureBraveProviderProfile", () => {
+describe("ensureWebSearchProviderProfiles", () => {
   it("does nothing when no token def is brave-typed", () => {
     const runOpenshell = vi.fn();
-    ensureBraveProviderProfile([{ providerType: "generic", token: "tok" }], makeDeps(runOpenshell));
+    ensureWebSearchProviderProfiles(
+      [{ providerType: "generic", token: "tok" }],
+      makeDeps(runOpenshell),
+    );
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("does nothing when the brave token def has no token", () => {
     const runOpenshell = vi.fn();
-    ensureBraveProviderProfile(
+    ensureWebSearchProviderProfiles(
       [{ providerType: BRAVE_PROVIDER_PROFILE_ID, token: null }],
       makeDeps(runOpenshell),
     );
@@ -155,7 +157,7 @@ describe("ensureBraveProviderProfile", () => {
 
   it("accepts an exact existing Brave profile without importing it", () => {
     const runOpenshell = matchingProfileRunner();
-    ensureBraveProviderProfile(
+    ensureWebSearchProviderProfiles(
       [{ providerType: BRAVE_PROVIDER_PROFILE_ID, token: "brv-test" }],
       makeDeps(runOpenshell),
     );
@@ -209,7 +211,7 @@ describe("ensureBraveProviderProfile", () => {
       .mockReturnValueOnce(MATCHING_BRAVE_EXPORT);
     const deps = makeDeps(runOpenshell);
     expect(() =>
-      ensureBraveProviderProfile(
+      ensureWebSearchProviderProfiles(
         [{ providerType: BRAVE_PROVIDER_PROFILE_ID, token: "brv-test" }],
         deps,
       ),
@@ -235,7 +237,7 @@ describe("ensureBraveProviderProfile", () => {
     }));
     const deps = makeDeps(runOpenshell);
     expect(() =>
-      ensureBraveProviderProfile(
+      ensureWebSearchProviderProfiles(
         [{ providerType: BRAVE_PROVIDER_PROFILE_ID, token: "brv-test" }],
         deps,
       ),
@@ -256,7 +258,7 @@ describe("ensureBraveProviderProfile", () => {
     const deps = makeDeps(runOpenshell);
 
     expect(() =>
-      ensureBraveProviderProfile(
+      ensureWebSearchProviderProfiles(
         [{ providerType: BRAVE_PROVIDER_PROFILE_ID, token: "brv-test" }],
         deps,
       ),

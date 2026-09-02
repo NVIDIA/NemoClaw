@@ -88,6 +88,52 @@ function attachMutatedProviderNames(error, names, createdNames = []) {
   return failure;
 }
 
+function cleanupCreatedMessagingProvidersAfterRefreshFailure(
+  error,
+  mutatedProviderNames,
+  createdProviderNames,
+  runOpenshell,
+) {
+  const cleanupFailures = [];
+  for (const providerName of createdProviderNames) {
+    try {
+      const result = runOpenshell(["provider", "delete", providerName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const output = `${result.stdout || ""}${result.stderr || ""}`;
+      if (result.status !== 0 && !/\bNotFound\b|not found/i.test(output)) {
+        cleanupFailures.push(providerName);
+      }
+    } catch {
+      cleanupFailures.push(providerName);
+    }
+  }
+
+  const createdProviders = new Set(createdProviderNames);
+  const updatedProviderNames = mutatedProviderNames.filter(
+    (providerName) => !createdProviders.has(providerName),
+  );
+  const original = error instanceof Error ? error : new Error(String(error));
+  const failure = attachMutatedProviderNames(
+    original,
+    [...updatedProviderNames, ...cleanupFailures],
+    cleanupFailures,
+  );
+  if (cleanupFailures.length > 0) {
+    const recovery = cleanupFailures
+      .map(
+        (providerName) =>
+          `Run \`openshell provider delete ${JSON.stringify(providerName)}\` against the same gateway, then retry onboarding.`,
+      )
+      .join(" ");
+    failure.message = `${failure.message} Automatic cleanup could not remove ${cleanupFailures
+      .map((providerName) => JSON.stringify(providerName))
+      .join(", ")}. ${recovery}`;
+  }
+  return failure;
+}
+
 // ── Constants ────────────────────────────────────────────────────
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -909,7 +955,12 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       normalizeCredentialValue,
     });
   } catch (error) {
-    throw attachMutatedProviderNames(error, mutatedProviderNames, createdProviderNames);
+    throw cleanupCreatedMessagingProvidersAfterRefreshFailure(
+      error,
+      mutatedProviderNames,
+      createdProviderNames,
+      runMessagingBridgeOpenshell,
+    );
   }
   // Fail-closed: an active bridge channel whose gateway token minting was not
   // configured can receive webhooks but cannot authenticate outbound replies.
@@ -917,10 +968,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // paths report residual work by throwing; the normal path exits like a failed
   // provider upsert above).
   if (refreshResult && !refreshResult.ok) {
-    const failure = attachMutatedProviderNames(
+    const failure = cleanupCreatedMessagingProvidersAfterRefreshFailure(
       new Error("Failed to configure gateway token minting for a messaging bridge."),
       mutatedProviderNames,
       createdProviderNames,
+      runMessagingBridgeOpenshell,
     );
     if (options.bestEffort) {
       throw failure;

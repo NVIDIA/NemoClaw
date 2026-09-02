@@ -12,6 +12,9 @@ import {
 } from "./credential-provider-registration";
 import type { MessagingTokenDef } from "./messaging-prep";
 
+const messagingBridgeProvider =
+  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
+
 const BRAVE_SECRET = "brv-resume-secret";
 const DISCORD_SECRET = "discord-resume-secret";
 const refuseAuthorityChange = (): never => {
@@ -942,6 +945,74 @@ describe("credential provider registration", () => {
     ).toHaveLength(1);
     expect(session.stagedCredentialProviders).toEqual([]);
   });
+
+  it.each([
+    { cleanup: "succeeds", deleteStatus: 0, deleteError: "", recovery: false },
+    { cleanup: "fails", deleteStatus: 1, deleteError: "gateway unavailable", recovery: true },
+  ])(
+    "cleans up a newly created bridge provider when refresh $cleanup",
+    async ({ deleteStatus, deleteError, recovery }) => {
+      const session = { stagedCredentialProviders: [] } as unknown as Session;
+      const resultByCommand = new Map([
+        ["get", { status: 1, stdout: "", stderr: "not found" }],
+        ["delete", { status: deleteStatus, stdout: "", stderr: deleteError }],
+      ]);
+      const runOpenshell = vi.fn(
+        (args: string[]) =>
+          resultByCommand.get(args[1] ?? "") ?? { status: 0, stdout: "", stderr: "" },
+      );
+      const deps = registrationDeps(runOpenshell, session);
+      const registration = createCredentialProviderRegistration(deps);
+      const tokenDef: MessagingTokenDef = {
+        name: "alpha-googlechat-bridge",
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: "sentinel-token",
+        providerType: "google-chat-bridge",
+      };
+      const ensureProfiles = vi
+        .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
+        .mockImplementation(() => undefined);
+      const configureRefreshes = vi
+        .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+        .mockReturnValue({ ok: false, reason: "token minting failed" });
+      const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+        throw new Error(`exit:${code ?? 0}`);
+      });
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      try {
+        await expect(
+          registration.stageSandboxCredentialProviders(
+            sandboxInput(requiredBindings([tokenDef])),
+            async () => ({ messagingTokenDefs: [tokenDef] }),
+          ),
+        ).rejects.toThrow("exit:1");
+
+        expect(runOpenshell).toHaveBeenCalledWith(
+          [
+            "provider",
+            "delete",
+            "-g",
+            "test-gateway",
+            "alpha-googlechat-bridge",
+          ],
+          expect.objectContaining({ ignoreError: true }),
+        );
+        expect(session.stagedCredentialProviders).toEqual([]);
+        const diagnostics = errorLog.mock.calls.flat().join("\n");
+        expect(diagnostics.includes("Automatic cleanup could not remove")).toBe(recovery);
+        expect(diagnostics.includes("alpha-googlechat-bridge")).toBe(recovery);
+        expect(
+          diagnostics.includes('openshell provider delete "alpha-googlechat-bridge"'),
+        ).toBe(recovery);
+      } finally {
+        errorLog.mockRestore();
+        exit.mockRestore();
+        configureRefreshes.mockRestore();
+        ensureProfiles.mockRestore();
+      }
+    },
+  );
 
   it("rechecks before persisting migrated messaging credentials (#9833)", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
