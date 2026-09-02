@@ -5,11 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deleteBotOwnedStickyComments, upsertStickyComment } from "../../../tools/advisors/github.mts";
+import {
+  deleteBotOwnedStickyComments,
+  upsertStickyComment,
+} from "../../../tools/advisors/github.mts";
 import { runReadOnlyAdvisor } from "../../../tools/advisors/session.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
-
 
 describe("PR review advisor security boundaries", () => {
   afterEach(() => {
@@ -22,22 +24,22 @@ describe("PR review advisor security boundaries", () => {
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
 
     try {
-      await expect(
-        runReadOnlyAdvisor({
-          cwd: ROOT,
-          promptTurns: [],
-          systemPrompt: "test",
-          configDir,
-          htmlExportPath: path.join(configDir, "session.html"),
-          timeoutMs: 1000,
-          heartbeatMs: 1000,
-          maxCaptureBytes: 1024,
-          modelId: "missing-model",
-          credentialEnv,
-          logPrefix: "test",
-          logProgress: () => undefined,
-        }),
-      ).rejects.toThrow(/Could not configure advisor model/);
+      const result = await runReadOnlyAdvisor({
+        cwd: ROOT,
+        promptTurns: [],
+        systemPrompt: "test",
+        configDir,
+        htmlExportPath: path.join(configDir, "session.html"),
+        timeoutMs: 1000,
+        heartbeatMs: 1000,
+        maxCaptureBytes: 1024,
+        modelId: "missing-model",
+        credentialEnv,
+        logPrefix: "test",
+        logProgress: () => undefined,
+      });
+      expect(result.fatalError).toBeUndefined();
+      expect(result.turnErrors).toEqual([]);
       expect(process.env[credentialEnv]).toBeUndefined();
     } finally {
       fs.rmSync(configDir, { recursive: true, force: true });
@@ -192,5 +194,4 @@ describe("PR review advisor security boundaries", () => {
     ).resolves.toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
-
 });
