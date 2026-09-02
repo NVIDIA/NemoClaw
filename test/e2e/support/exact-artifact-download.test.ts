@@ -62,6 +62,17 @@ function response(bytes: Buffer): Response {
   });
 }
 
+function cancelableResponse(
+  status: number,
+  headers: Record<string, string> = {},
+): { cancel: ReturnType<typeof vi.fn>; response: Response } {
+  const cancel = vi.fn<() => Promise<void>>().mockRejectedValue(new Error("cancel failed"));
+  return {
+    cancel,
+    response: new Response(new ReadableStream({ cancel }), { status, headers }),
+  };
+}
+
 function parseArtifactReadEvidence(message: string): Record<string, string> {
   const [operation, ...fields] = message.trim().split(/\s+/u);
   return {
@@ -176,6 +187,35 @@ describe("exact artifact download (#9340)", () => {
     expect(log.mock.calls.flat().join("\n")).not.toMatch(/secret|upstream body|Authorization/u);
   });
 
+  it("cancels a transient response before retry without masking the retry", async () => {
+    const bytes = archive();
+    const transient = cancelableResponse(503);
+    const fetchImpl = vi
+      .fn<(input: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(transient.response)
+      .mockImplementationOnce(async () => {
+        expect(transient.cancel).toHaveBeenCalledOnce();
+        return response(bytes);
+      });
+
+    await expect(
+      downloadBoundArtifact(identity(bytes), "token", { fetchImpl, sleep: async () => undefined }),
+    ).resolves.toEqual(bytes);
+    expect(transient.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a terminal non-OK response without masking its HTTP failure", async () => {
+    const terminal = cancelableResponse(404);
+    const fetchImpl = vi
+      .fn<(input: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(terminal.response);
+
+    await expect(downloadBoundArtifact(identity(), "token", { fetchImpl })).rejects.toThrow(
+      "HTTP 404",
+    );
+    expect(terminal.cancel).toHaveBeenCalledOnce();
+  });
+
   it("keeps default attempt evidence off machine-readable stdout", async () => {
     const bytes = archive();
     const fetchImpl = vi
@@ -259,29 +299,38 @@ describe("exact artifact download (#9340)", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("does not retry a content-length mismatch", async () => {
+  it("cancels a rejected Content-Length response without masking the identity failure", async () => {
     const bytes = archive();
+    const mismatched = cancelableResponse(200, { "content-length": String(bytes.length + 1) });
     const fetchImpl = vi
       .fn<(input: string, init: RequestInit) => Promise<Response>>()
-      .mockResolvedValue(
-        new Response(new Uint8Array(bytes), {
-          headers: { "content-length": String(bytes.length + 1) },
-        }),
-      );
+      .mockResolvedValue(mismatched.response);
+
     await expect(downloadBoundArtifact(identity(bytes), "token", { fetchImpl })).rejects.toThrow(
       "content length",
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(mismatched.cancel).toHaveBeenCalledOnce();
   });
 
   it("stops an unbounded response stream before retaining oversized content", async () => {
     const bytes = archive();
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(bytes));
+        controller.enqueue(new Uint8Array([0x78]));
+      },
+      cancel,
+    });
     const fetchImpl = vi
       .fn<(input: string, init: RequestInit) => Promise<Response>>()
-      .mockResolvedValue(new Response(new Uint8Array(Buffer.concat([bytes, Buffer.from("x")]))));
+      .mockResolvedValue(new Response(body));
+
     await expect(downloadBoundArtifact(identity(bytes), "token", { fetchImpl })).rejects.toThrow(
       "content size",
     );
+    expect(cancel).toHaveBeenCalledOnce();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
