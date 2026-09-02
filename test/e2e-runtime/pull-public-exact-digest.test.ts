@@ -14,7 +14,7 @@ const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha
 
 type Scenario = "exhausted" | "near-match" | "success" | "terminal" | "transient-then-success";
 
-function runPuller(scenario: Scenario, candidateReference = reference) {
+function runPuller(scenario: Scenario, candidateReference = reference, platform = "linux/amd64") {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-pull-"));
   const fakeBin = path.join(temporaryRoot, "bin");
   const countFile = path.join(temporaryRoot, "count");
@@ -33,7 +33,7 @@ count=$((count + 1))
 printf '%s\n' "$count" >"$COUNT_FILE"
 printf '%s\n' "$DOCKER_CONFIG" >>"$CONFIG_LOG"
 [ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
-[ "$*" = "pull --platform linux/amd64 $EXPECTED_REFERENCE" ] || exit 90
+[ "$*" = "pull --platform $EXPECTED_PLATFORM $EXPECTED_REFERENCE" ] || exit 90
 if [ "$SCENARIO" = "terminal" ]; then
   echo "denied: permission_denied" >&2
   exit 41
@@ -57,13 +57,14 @@ echo "pulled $EXPECTED_REFERENCE"
   );
 
   try {
-    const result = spawnSync(puller, [candidateReference, "linux/amd64"], {
+    const result = spawnSync(puller, [candidateReference, platform], {
       encoding: "utf8",
       env: {
         ...process.env,
         CONFIG_LOG: configLog,
         COUNT_FILE: countFile,
         DOCKER_AUTH_CONFIG: "must-not-reach-docker",
+        EXPECTED_PLATFORM: platform,
         EXPECTED_REFERENCE: candidateReference,
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: temporaryRoot,
@@ -99,6 +100,14 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual([]);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stdout).toContain("outcome=passed-first-attempt attempt=1/5");
+  });
+
+  it("supports an exact arm64 pull with the same credential boundary", () => {
+    const result = runPuller("success", reference, "linux/arm64");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.count).toBe(1);
+    expect(result.configsWereRemoved).toBe(true);
   });
 
   it("retries the exact transient GHCR not-found result and removes anonymous state", () => {
@@ -152,5 +161,13 @@ describe("pull-public-exact-digest", () => {
     expect(result.status).toBe(2);
     expect(result.count).toBe(0);
     expect(result.stderr).toContain("must be an exact lowercase GHCR digest");
+  });
+
+  it("rejects an unsupported platform before Docker runs", () => {
+    const result = runPuller("success", reference, "linux/s390x");
+
+    expect(result.status).toBe(2);
+    expect(result.count).toBe(0);
+    expect(result.stderr).toContain("must be linux/amd64 or linux/arm64");
   });
 });
