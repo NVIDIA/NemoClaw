@@ -10,7 +10,7 @@ import {
 } from "../../sandbox-name-contract";
 import { PolicyObservationError } from "./policy-state";
 import { openshellNotFoundDiagnosticLines } from "./command-argv";
-import * as openshellRuntime from "./runtime";
+import { captureSanitizedResolvedOpenshell } from "./sanitized-capture";
 import type { OpenShellSandboxError, OpenShellSandboxResult } from "./sandbox-observer";
 import {
   classifyCliOpenShellCommandError,
@@ -88,7 +88,7 @@ export function createSyncCliOpenShellSandboxIdentityInspector(deps: {
 }
 
 const syncCliOpenShellSandboxIdentityInspector = createSyncCliOpenShellSandboxIdentityInspector({
-  capture: openshellRuntime.captureSanitizedResolvedOpenshell,
+  capture: captureSanitizedResolvedOpenshell,
 });
 
 /** Read and fingerprint one sandbox ID without exposing the ID in diagnostics. */

@@ -19,7 +19,7 @@ import { isValidName } from "../../sandbox-name-contract";
 import { stripCredentials } from "../../security/credential-filter";
 import { stripAnsi } from "./client";
 import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
-import { captureSanitizedResolvedOpenshell } from "./runtime";
+import { captureSanitizedResolvedOpenshell } from "./sanitized-capture";
 import type { OpenShellSandboxResult } from "./sandbox-observer";
 import {
   classifyCliOpenShellCommandError,

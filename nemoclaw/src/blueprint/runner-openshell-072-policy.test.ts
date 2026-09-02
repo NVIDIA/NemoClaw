@@ -54,6 +54,11 @@ vi.mock("./ssrf.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./ssrf.js")>()),
   validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
 }));
+vi.mock("./private-networks.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./private-networks.js")>()),
+  isPrivateHostname: (host: string) =>
+    new Set(["0.0.0.0", "10.0.0.1", "127.0.0.1", "169.254.169.254"]).has(host),
+}));
 
 const { actionApply, actionReconcile, actionStatus } = await import("./runner.js");
 
@@ -222,6 +227,20 @@ describe("blueprint policy convenience", () => {
     );
     expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
   });
+
+  it.each(["*", "0.0.0.0", "169.254.169.254", "127.0.0.1", "10.0.0.1"])(
+    "rejects unsafe policy host %s before any lifecycle mutation",
+    async (host) => {
+      const value = structuredClone(blueprint());
+      value.components!.policy!.additions!.nim_service.endpoints[0].host = host;
+
+      await expect(actionApply("default", value)).rejects.toThrow(
+        "Blueprint policy addition 'nim_service' endpoint 1 is rejected",
+      );
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect([...store.keys()].some((path) => path.includes("/.nemoclaw/state/runs/"))).toBe(false);
+    },
+  );
 
   it("verifies policy additions before creating the inference provider or route", async () => {
     await actionApply("default", blueprint());

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   captureRecordedSandboxBasePolicy: vi.fn(),
+  recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
 }));
 
@@ -19,6 +20,10 @@ vi.mock("../../policy", async (importOriginal) => ({
 vi.mock("../../onboard/temp-files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
   secureTempFile: mocks.secureTempFile,
+}));
+vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-recreate-journal")>()),
+  recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
 
 import {
@@ -33,6 +38,7 @@ beforeEach(() => {
   mocks.captureRecordedSandboxBasePolicy
     .mockReset()
     .mockReturnValue("version: 1\nnetwork_policies: {}\n");
+  mocks.recordRebuildRecoveryBackup.mockReset();
   mocks.secureTempFile.mockReset().mockImplementation(() => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
     temporaryDirectories.push(directory);
@@ -51,6 +57,7 @@ describe("rebuild policy handoff", () => {
   const input = (overrides: Partial<RebuildBackupPhaseInput> = {}): RebuildBackupPhaseInput => ({
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
+    gatewayPort: 8080,
     sandboxEntry: { name: "alpha" },
     staleRecovery: false,
     preparedRecoveryManifest: null,
@@ -117,7 +124,7 @@ describe("rebuild policy handoff", () => {
     ).toThrow(/will not reconstruct policy from NemoClaw state/);
   });
 
-  it("routes an unsafe stale handoff to supported destroy and fresh-onboard recovery", () => {
+  it("binds an unsafe legacy handoff to a supported recovery transaction", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unsafe-recovery-"));
     temporaryDirectories.push(backupPath);
     const legacyCredentialPolicy = [
@@ -153,7 +160,6 @@ describe("rebuild policy handoff", () => {
         input({
           staleRecovery: true,
           preparedRecoveryManifest,
-          recoveryTransactionId: "11111111-1111-4111-8111-111111111111",
         }),
         vi.fn(),
       );
@@ -173,9 +179,8 @@ describe("rebuild policy handoff", () => {
       "Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`",
     );
     expect(refusal?.message).toContain("Do not retry rebuild with the unsafe handoff");
-    expect(refusal?.message).toContain(
-      "`nemoclaw alpha rebuild --retire-recovery 11111111-1111-4111-8111-111111111111 --yes`",
-    );
+    expect(refusal?.message).toContain("`nemoclaw alpha rebuild --retire-recovery ");
+    expect(refusal?.message).not.toContain("<transaction-id>");
     expect(refusal?.message).toContain(
       `This removes the credential-bearing policy handoff at '${path.join(
         backupPath,
@@ -185,6 +190,16 @@ describe("rebuild policy handoff", () => {
     expect(
       fs.existsSync(path.join(backupPath, preparedRecoveryManifest.rebuildPolicyHandoff!.file)),
     ).toBe(true);
+    expect(mocks.recordRebuildRecoveryBackup).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      agentName: "openclaw",
+      transactionId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      ),
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      backupManifest: preparedRecoveryManifest,
+    });
   });
 });
 
@@ -201,6 +216,7 @@ describe("rebuild backup safety", () => {
     return {
       sandboxName: "custom-openclaw",
       gatewayName: "nemoclaw",
+      gatewayPort: 8080,
       sandboxEntry: {
         name: "custom-openclaw",
         agent: "openclaw",

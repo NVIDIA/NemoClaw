@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -22,6 +23,7 @@ import { captureRecordedSandboxBasePolicy } from "../../policy";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
 export { clearRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
 
@@ -33,6 +35,7 @@ export type RebuildBackupManifest = Exclude<
 export interface RebuildBackupPhaseInput {
   sandboxName: string;
   gatewayName: string;
+  gatewayPort: number;
   sandboxEntry: RebuildSandboxEntry;
   staleRecovery: boolean;
   preparedRecoveryManifest: RebuildBackupManifest;
@@ -169,7 +172,21 @@ export function runRebuildBackupPhase(
     !isSandboxPolicyCredentialFree(retainedPolicy)
   ) {
     const retainedHandoffPath = path.join(backupManifest.backupPath, retainedHandoff.file);
-    const recoveryTransactionId = input.recoveryTransactionId ?? "<transaction-id>";
+    const recoveryTransactionId = input.recoveryTransactionId ?? randomUUID();
+    try {
+      recordRebuildRecoveryBackup({
+        sandboxName: input.sandboxName,
+        agentName: backupManifest.agentType,
+        transactionId: recoveryTransactionId,
+        gatewayName: input.gatewayName,
+        gatewayPort: input.gatewayPort,
+        backupManifest,
+      });
+    } catch (error) {
+      return input.bail(
+        `Cannot bind the retained credential-bearing policy handoff to a bounded recovery transaction: ${error instanceof Error ? error.message : String(error)} Recovery remains at '${backupManifest.backupPath}'.`,
+      );
+    }
     return input.bail(
       `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Recovery:\n` +
         `  1. Recover any required data from the backup before deletion. Keep the backup and policy handoff until that recovery is complete.\n` +

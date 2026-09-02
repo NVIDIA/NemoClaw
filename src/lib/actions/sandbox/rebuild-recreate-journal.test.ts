@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +28,7 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
-import { writeRebuildPolicyHandoff, type RebuildManifest } from "../../state/sandbox";
+import type { RebuildManifest } from "../../state/sandbox";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
   clearRebuildRecoveryBackup,
@@ -620,7 +621,7 @@ describe("rebuild replacement recovery backup", () => {
     expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
   });
 
-  it("retires an unsafe handoff only for its exact absent sandbox transaction (#10150)", () => {
+  it("binds and retires a legacy unsafe handoff with no active journal (#10150)", () => {
     const policy = [
       "version: 1",
       "process:",
@@ -628,11 +629,16 @@ describe("rebuild replacement recovery backup", () => {
       "    SERVICE_API_KEY: opaque-retained-credential",
       "",
     ].join("\n");
-    manifest = writeRebuildPolicyHandoff(manifest, policy);
-    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
+    const sha256 = createHash("sha256").update(policy).digest("hex");
+    const file = `rebuild-policy-handoff.${sha256}.yaml`;
+    fs.writeFileSync(path.join(backupPath, file), policy, { mode: 0o600 });
+    manifest = { ...manifest, rebuildPolicyHandoff: { file, sha256 } };
     const handoffPath = path.join(backupPath, manifest.rebuildPolicyHandoff!.file);
     const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
     const observePresence = vi.fn(() => "missing" as const);
+    expect(fs.existsSync(recordPath)).toBe(false);
+
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
 
     expect(() =>
       retireRebuildRecoveryBackup(
