@@ -251,8 +251,12 @@ case "$*" in
       echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
       exit 64
     fi
+    policy_file=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+    if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+      policy_file="${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    fi
     printf '%s\n' 'Policy for sandbox fixture' '---'
-    cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+    cat "$policy_file"
     ;;
   "policy get "*)
     echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
