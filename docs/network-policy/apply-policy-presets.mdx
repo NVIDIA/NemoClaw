@@ -96,8 +96,8 @@ Inspect the resulting live policy:
 $$nemoclaw <name> policy get
 ```
 
-The `discord` binary list must contain `/opt/hermes/.venv/bin/python3` and `/opt/hermes/.venv/bin/python`.
-It must not contain `/usr/bin/python3*` or `/usr/local/bin/node`.
+The `discord` binary list must contain `/opt/hermes/.venv/bin/python3`, `/opt/hermes/.venv/bin/python`, `/usr/bin/python3`, and the managed image's resolved interpreter `/usr/bin/python3.13`.
+It must not contain the broad `/usr/bin/python3*` wildcard or `/usr/local/bin/node`.
 The reapply operation retains the Discord credential binding and all policy entries outside the maintained `discord` entry.
 A later rebuild preserves this reconciled live policy.
 

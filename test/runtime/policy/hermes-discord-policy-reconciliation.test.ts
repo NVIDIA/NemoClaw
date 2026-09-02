@@ -49,7 +49,6 @@ const previousPolicy = YAML.parse(fs.readFileSync(process.env.POLICY_OUT, "utf-8
 previousPolicy.network_policies.discord.binaries.unshift(
   { path: "/usr/local/bin/node" },
   { path: "/usr/bin/python3*" },
-  { path: "/usr/bin/python3.13" },
 );
 fs.writeFileSync(process.env.POLICY_OUT, YAML.stringify(previousPolicy));
 const reapplyResult = policies.applyPreset("hermes-sandbox", "discord");
@@ -116,10 +115,14 @@ exit 1
     expect(payload.reapplyResult).toBe(true);
     const discordPolicy = YAML.parse(payload.policy).network_policies.discord;
     const binaries = discordPolicy.binaries.map((entry: { path: string }) => entry.path);
-    expect(binaries).toEqual(["/opt/hermes/.venv/bin/python3", "/opt/hermes/.venv/bin/python"]);
+    expect(binaries).toEqual([
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/hermes/.venv/bin/python",
+      "/usr/bin/python3",
+      "/usr/bin/python3.13",
+    ]);
     expect(binaries).not.toContain("/usr/local/bin/node");
     expect(binaries).not.toContain("/usr/bin/python3*");
-    expect(binaries).not.toContain("/usr/bin/python3.13");
     const discordComEndpoints = discordPolicy.endpoints.filter(
       (endpoint: { host?: string }) => endpoint.host === "discord.com",
     );

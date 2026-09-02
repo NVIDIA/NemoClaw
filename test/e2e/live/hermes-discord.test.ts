@@ -358,6 +358,52 @@ async function runHermesPythonDiscordGatewayProof(
   );
 }
 
+async function runHermesNodeDiscordDenial(
+  sandbox: SandboxClient,
+  port: string,
+  redactionValues: string[],
+): Promise<ShellProbeResult> {
+  return sandboxShWithArgs(
+    sandbox,
+    SANDBOX_NAME,
+    String.raw`/usr/local/bin/node <<'NODE'
+const http = require("node:http");
+const request = http.request({
+  host: "${FAKE_DISCORD_HOST}",
+  port: ${port},
+  path: "/gateway",
+  headers: {
+    Connection: "Upgrade",
+    Upgrade: "websocket",
+    "Sec-WebSocket-Key": Buffer.from("nemoclaw-denial").toString("base64"),
+    "Sec-WebSocket-Version": "13",
+  },
+}, (response) => {
+  let body = "";
+  response.setEncoding("utf8");
+  response.on("data", (chunk) => { body += chunk; });
+  response.on("end", () => {
+    console.log("response " + response.statusCode + " " + body.slice(0, 200));
+    process.exitCode = 3;
+  });
+});
+request.on("upgrade", () => {
+  console.log("unexpected websocket upgrade");
+  process.exitCode = 4;
+  request.destroy();
+});
+request.setTimeout(20000, () => request.destroy(new Error("timeout")));
+request.on("error", (error) => {
+  console.log("error " + error.message);
+  process.exitCode = 2;
+});
+request.end();
+NODE`,
+    [],
+    { artifactName: "hermes-node-discord-policy-denial", redactionValues, timeoutMs: 30_000 },
+  );
+}
+
 async function rawTokenSurfaceProbe(
   sandbox: SandboxClient,
   token: string,
@@ -619,6 +665,16 @@ PY`,
       redactions: redactionValues,
     });
 
+    const deniedNodeGateway = await runHermesNodeDiscordDenial(
+      sandbox,
+      fakeGateway.port,
+      redactionValues,
+    );
+    expect(deniedNodeGateway.exitCode, resultText(deniedNodeGateway)).not.toBe(0);
+    expect(resultText(deniedNodeGateway)).toMatch(
+      /response 403|policy[_ ]denied|not allowed by any policy/i,
+    );
+
     const nativeGateway = await runHermesPythonDiscordGatewayProof(
       sandbox,
       fakeGateway.port,
@@ -773,6 +829,7 @@ done`,
         hermesHealthy: true,
         configSchema: true,
         envPlaceholders: true,
+        nodeDiscordGatewayDenied: true,
         nativePythonDiscordGatewayRewrite: true,
         rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
         discordRestBoundaryReachedOrExternallyUnavailable: true,

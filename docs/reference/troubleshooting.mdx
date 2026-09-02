@@ -4408,7 +4408,7 @@ The issues below are common problems you may encounter when running Hermes throu
 
 ### Discord preset validation behind a proxy
 
-The Hermes Discord policy allows its virtual-environment Python interpreter and does not grant Node.js or `curl` Discord egress. A Node.js or `curl` failure is therefore not proof that the Discord preset is broken.
+The Hermes Discord policy allows its virtual-environment Python interpreter and the concrete system paths to which that interpreter resolves. It does not grant Node.js or `curl` Discord egress. A Node.js or `curl` failure is therefore not proof that the Discord preset is broken.
 
 Use the Hermes virtual-environment Python runtime inside the affected sandbox for the manual REST probe:
 
