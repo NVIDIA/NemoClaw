@@ -473,6 +473,20 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     status: 0,
     output: options.liveListOutput ?? "",
   });
+  // Backs the delete-boundary retained-sandbox identity re-check
+  // (`inspectOpenShellSandboxIdentityFingerprint`, #10863). Mirrors the same
+  // `sandbox-${name}` id convention `sandboxListJson` uses for `sandbox list`.
+  vi.spyOn(runtime, "captureResolvedOpenshell").mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    if (argv[0] === "sandbox" && argv[1] === "get") {
+      if (!sandboxPresent) {
+        return { status: 1, stdout: "", stderr: "sandbox not found" };
+      }
+      const name = argv.at(-1) ?? "";
+      return { status: 0, stdout: `Id: sandbox-${name}\n`, stderr: "" };
+    }
+    return { status: 0, stdout: "", stderr: "" };
+  });
   const dockerCaptureSpy = vi
     .spyOn(dockerRun, "dockerCapture")
     .mockImplementation((args: unknown) => {

@@ -810,6 +810,7 @@ async function destroySandboxUnlocked(
     sandboxConfirmedAbsent,
     presentSandboxIdentityFingerprint,
   } = destroyPreflight;
+  let confirmedRetainedSandboxIdentityFingerprint: string | null = null;
   if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
     // The live OpenShell sandbox with this mutable name may be the exact
     // retained sandbox recovery is waiting on, or (rarely) a replacement
@@ -830,6 +831,7 @@ async function destroySandboxUnlocked(
       preparedManagedLlamaCppCleanup?.abort();
       requestSandboxDestroyExit(1);
     }
+    confirmedRetainedSandboxIdentityFingerprint = retainedRecoveryAuthority.sandboxIdentityFingerprint;
   }
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.
@@ -880,6 +882,14 @@ async function destroySandboxUnlocked(
         ? { expectedRuntimeProviderIdentity: initialIdentity.providerIdentity }
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
+      ...(retainedRecoveryAuthority && confirmedRetainedSandboxIdentityFingerprint !== null
+        ? {
+            expectedRetainedSandboxIdentity: {
+              gatewayName: retainedRecoveryAuthority.gatewayName,
+              sandboxIdentityFingerprint: confirmedRetainedSandboxIdentityFingerprint,
+            },
+          }
+        : {}),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
   } catch (error) {

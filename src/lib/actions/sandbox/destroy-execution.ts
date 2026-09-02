@@ -78,6 +78,15 @@ type SandboxDestroyExecutionInput = {
   expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
   expectedContainerIdentityFingerprint?: string;
   expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
+  // Set only when a retained-sandbox recovery record's identity was proven
+  // against the live OpenShell sandbox during preflight (#10863). Re-proven
+  // immediately before the delete command fires, so a same-name replacement
+  // sandbox created after preflight cannot be deleted under the recovery
+  // record's authority.
+  expectedRetainedSandboxIdentity?: {
+    readonly gatewayName: string;
+    readonly sandboxIdentityFingerprint: string;
+  };
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -311,6 +320,7 @@ export async function executeSandboxDestroy({
   expectedContainerIdentities,
   expectedContainerIdentityFingerprint,
   expectedRuntimeProviderIdentity,
+  expectedRetainedSandboxIdentity,
   portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -389,9 +399,29 @@ export async function executeSandboxDestroy({
         };
       }
     };
+    const inspectRetainedSandboxIdentityContinuity = (): IdentityContinuity => {
+      if (!expectedRetainedSandboxIdentity) return { status: "match" };
+      const subject = "Retained sandbox identity";
+      try {
+        const inspectIdentity =
+          deps.inspectOpenShellSandboxIdentityFingerprint ??
+          inspectOpenShellSandboxIdentityFingerprint;
+        const liveFingerprint = inspectIdentity({
+          sandboxName,
+          gatewayName: expectedRetainedSandboxIdentity.gatewayName,
+        });
+        return liveFingerprint === expectedRetainedSandboxIdentity.sandboxIdentityFingerprint
+          ? { status: "match" }
+          : { status: "changed", subject };
+      } catch (error) {
+        return { status: "probe-failed", subject, detail: redactDestroyError(error) };
+      }
+    };
     const inspectIdentityContinuity = (): IdentityContinuity => {
       const pendingContinuity = inspectPendingCreateVerificationContinuity();
       if (pendingContinuity.status !== "match") return pendingContinuity;
+      const retainedContinuity = inspectRetainedSandboxIdentityContinuity();
+      if (retainedContinuity.status !== "match") return retainedContinuity;
       if (portableContainerAuthority) {
         try {
           portableContainerAuthority.revalidate();
