@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
@@ -79,12 +79,12 @@ export const policyChannelDependencies = {
     });
   },
   /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
-  clearStoppedDockerSandboxChannelState(
+  clearStoppedSandboxStateRoots(
     sandboxName: string,
     paths: readonly string[],
-  ): ReturnType<PrivilegedExecModule["clearStoppedDockerSandboxChannelState"]> {
+  ): ReturnType<PrivilegedExecModule["clearStoppedSandboxStateRoots"]> {
     const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
-    return cleanup.clearStoppedDockerSandboxChannelState(sandboxName, paths);
+    return cleanup.clearStoppedSandboxStateRoots(sandboxName, paths);
   },
   deleteMessagingProviderWithRecovery(
     providerName: string,

@@ -288,7 +288,10 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
           captureOpenshell(rootDir, args, {
             timeout: opts?.timeout,
           }),
-        { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+        {
+          gatewayName: resolveGatewayName(GATEWAY_PORT),
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        },
       ).inference,
     showServiceStatus,
     getServiceStatuses,

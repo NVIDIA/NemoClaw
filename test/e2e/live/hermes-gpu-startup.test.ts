@@ -18,6 +18,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
@@ -147,7 +148,11 @@ async function cleanupGatewayRegistrationBeforeTest(
     });
 }
 
-async function expectGatewayPortAvailable(host: HostCliClient, label: string): Promise<void> {
+async function expectGatewayPortAvailable(
+  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
+  label: string,
+): Promise<void> {
   const gatewayPort = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
   const portAvailable = await host.command(
     "node",
@@ -167,9 +172,15 @@ async function expectGatewayPortAvailable(host: HostCliClient, label: string): P
     `gateway port ${gatewayPort} remains occupied after cleanup: ${resultText(portAvailable)}`,
   ).toBe(0);
 
-  const labeledContainers = await host.command(
-    "docker",
-    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`],
+  const labeledContainers = await runtimeProvider.command(
+    [
+      "container",
+      "ps",
+      "--all",
+      "--quiet",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+    ],
     {
       artifactName: `${label}-labeled-containers-absent`,
       env: buildAvailabilityProbeEnv(),
@@ -179,9 +190,8 @@ async function expectGatewayPortAvailable(host: HostCliClient, label: string): P
   expect(labeledContainers.exitCode, resultText(labeledContainers)).toBe(0);
   expect(labeledContainers.stdout.trim()).toBe("");
 
-  const namedContainers = await host.command(
-    "docker",
-    ["ps", "-a", "--filter", `name=${SANDBOX_NAME}`, "--format", "{{.Names}}"],
+  const namedContainers = await runtimeProvider.command(
+    ["container", "ps", "--all", "--filter", `name=${SANDBOX_NAME}`, "--format", "{{.Names}}"],
     {
       artifactName: `${label}-backup-containers-absent`,
       env: buildAvailabilityProbeEnv(),
@@ -198,6 +208,7 @@ async function expectGatewayPortAvailable(host: HostCliClient, label: string): P
 
 async function cleanupHermes(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandbox: SandboxClient,
   label: string,
 ): Promise<void> {
@@ -218,11 +229,12 @@ async function cleanupHermes(
     env: commandEnv(),
     timeoutMs: 60_000,
   });
-  await expectGatewayPortAvailable(host, label);
+  await expectGatewayPortAvailable(host, runtimeProvider, label);
 }
 
 async function preCleanHermes(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandbox: SandboxClient,
   label: string,
 ): Promise<void> {
@@ -243,16 +255,21 @@ async function preCleanHermes(
   await expectSandboxAbsent(host, label);
   await cleanupOwnedGatewayRuntime(host, label);
   await cleanupGatewayRegistrationBeforeTest(host, label);
-  await expectGatewayPortAvailable(host, label);
+  await expectGatewayPortAvailable(host, runtimeProvider, label);
 }
 
 async function captureFailedGpuContainer(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   preRollbackDiagnosticsDir: string,
 ): Promise<void> {
   const sandboxFilter = `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`;
+  const runtimeInvocation = runtimeProvider.hostInvocation([]);
   const script = String.raw`set -u
+sandbox_filter="$1"
 diagnostics_dir="$2"
+shift 2
+runtime_command=("$@")
 if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
   printf '%s\n' "== pre-rollback diagnostics $diagnostics_dir =="
   for name in summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt; do
@@ -269,23 +286,31 @@ if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
 else
   printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
 fi
-ids="$(docker ps -aq --filter "$1")"
+ids="$("\${runtime_command[@]}" container ps --all --quiet --filter "$sandbox_filter")"
 if [ -z "$ids" ]; then
-  printf '%s\n' "no Docker container found for $1"
+  printf '%s\n' "no runtime container found for $sandbox_filter"
   exit 0
 fi
 for id in $ids; do
   printf '%s\n' "== container $id inspect =="
-  docker inspect --format '{{json .Name}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
+  "\${runtime_command[@]}" container inspect --format '{{json .Name}} {{json .Config.User}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .State}} {{json .HostConfig.RestartPolicy}}' "$id" 2>&1 || true
   printf '%s\n' "== container $id top =="
-  docker top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
+  "\${runtime_command[@]}" container top "$id" -eo user,pid,ppid,stat,args 2>&1 || true
   printf '%s\n' "== container $id logs =="
-  docker logs --tail 300 "$id" 2>&1 || true
+  "\${runtime_command[@]}" container logs --tail 300 "$id" 2>&1 || true
 done`;
   await captureDiagnosticsBestEffort(() =>
     host.command(
       "bash",
-      ["-lc", script, "hermes-gpu-failure-diagnostics", sandboxFilter, preRollbackDiagnosticsDir],
+      [
+        "-lc",
+        script,
+        "hermes-gpu-failure-diagnostics",
+        sandboxFilter,
+        preRollbackDiagnosticsDir,
+        runtimeInvocation.command,
+        ...runtimeInvocation.args,
+      ],
       {
         artifactName: "phase-2-hermes-gpu-startup-failure-diagnostics",
         env: buildAvailabilityProbeEnv(),
@@ -310,7 +335,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "hermes-gpu-startup",
       boundary: "install.sh --non-interactive --fresh + Hermes GPU-supervised startup",
@@ -320,14 +345,12 @@ test(
       scenario: GPU_STARTUP_SCENARIO,
     });
 
-    await preCleanHermes(host, sandbox, "pre-cleanup");
+    await preCleanHermes(host, runtimeProvider, sandbox, "pre-cleanup");
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-1-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-1-runtime-info",
+      scenarioLabel: "Hermes GPU startup",
     });
-    expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
 
     const hostAddress = "host.openshell.internal";
 
@@ -358,7 +381,7 @@ test(
     // resource operations after their OpenShell gateway has been removed.
     cleanup.trackDisposable("verify Hermes GPU gateway port is available", () =>
       cleanupUnlessVerified(cleanTeardownVerified, () =>
-        expectGatewayPortAvailable(host, "cleanup"),
+        expectGatewayPortAvailable(host, runtimeProvider, "cleanup"),
       ),
     );
     cleanup.trackGateway(cleanupHost, "nemoclaw", {
@@ -448,7 +471,7 @@ test(
     });
     const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
     await (install.exitCode !== 0
-      ? captureFailedGpuContainer(host, gpuDiagnosticsDir)
+      ? captureFailedGpuContainer(host, runtimeProvider, gpuDiagnosticsDir)
       : Promise.resolve());
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
@@ -487,6 +510,7 @@ test(
       gpuRoute: GPU_ROUTE,
       host,
       install,
+      runtimeProvider,
       sandbox,
       sandboxName: SANDBOX_NAME,
       status,
@@ -528,7 +552,7 @@ test(
     expect(inferencePosts.filter((request) => request.authorizationSent !== true)).toEqual([]);
 
     progress.phase("remove Hermes GPU resources");
-    await cleanupHermes(host, sandbox, "phase-5-clean-teardown");
+    await cleanupHermes(host, runtimeProvider, sandbox, "phase-5-clean-teardown");
     cleanTeardownVerified = true;
 
     await artifacts.target.complete({

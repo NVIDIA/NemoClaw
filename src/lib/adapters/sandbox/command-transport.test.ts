@@ -55,12 +55,15 @@ function createDependencies(
       output: "Host openshell-alpha.default\n  HostName 127.0.0.1\n",
       status: 0,
     })),
-    dockerSpawnSync: vi.fn(() => spawnResult("fallback-output")),
+    executePrivilegedSandboxCommand: vi.fn(() => ({
+      status: 0,
+      stdout: "fallback-output",
+      stderr: "",
+    })),
     extractSandboxExecCommandStdout: vi.fn((output: string) => output),
     getOpenshellBinary: vi.fn(() => "/usr/bin/openshell"),
     isDirectSandboxFallbackUnavailableError: vi.fn(() => false),
     openshellProbeTimeoutMs: 5000,
-    privilegedSandboxExecArgv: vi.fn(() => ["exec", "container-id", "sh", "-c", "marked:id"]),
     root: "/repo",
     withPrivilegedSandboxExecutionLease: <T>(
       _sandboxName: string,
@@ -222,8 +225,7 @@ describe("sandbox command transport privileged execution lease", () => {
         allowLocalDockerFallback: false,
       }),
     ).toBeNull();
-    expect(deps.privilegedSandboxExecArgv).not.toHaveBeenCalled();
-    expect(deps.dockerSpawnSync).not.toHaveBeenCalled();
+    expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
   it("holds one lease across OpenShell failure and the complete local fallback", () => {
@@ -259,9 +261,9 @@ describe("sandbox command transport privileged execution lease", () => {
         assertLeaseHeld("environment");
         return { PATH: "/usr/bin" };
       }),
-      dockerSpawnSync: vi.fn(() => {
-        assertLeaseHeld("fallback-spawn");
-        return spawnResult("fallback-output");
+      executePrivilegedSandboxCommand: vi.fn(() => {
+        assertLeaseHeld("fallback-execution");
+        return { status: 0, stdout: "fallback-output", stderr: "" };
       }),
       extractSandboxExecCommandStdout: vi.fn((output: string) => {
         assertLeaseHeld(`parse:${output}`);
@@ -270,10 +272,6 @@ describe("sandbox command transport privileged execution lease", () => {
       getOpenshellBinary: vi.fn(() => {
         assertLeaseHeld("openshell-resolution");
         return "/usr/bin/openshell";
-      }),
-      privilegedSandboxExecArgv: vi.fn(() => {
-        assertLeaseHeld("fallback-resolution");
-        return ["exec", "container-id", "sh", "-c", "marked:id"];
       }),
       withPrivilegedSandboxExecutionLease: withLease,
     });
@@ -295,9 +293,7 @@ describe("sandbox command transport privileged execution lease", () => {
       "environment",
       "openshell-spawn",
       "parse:unmarked-output",
-      "fallback-resolution",
-      "environment",
-      "fallback-spawn",
+      "fallback-execution",
       "parse:fallback-output",
       "lease:released",
     ]);
@@ -322,8 +318,7 @@ describe("sandbox command transport privileged execution lease", () => {
     );
     expect(deps.buildSandboxExecMarkedCommand).not.toHaveBeenCalled();
     expect(deps.getOpenshellBinary).not.toHaveBeenCalled();
-    expect(deps.privilegedSandboxExecArgv).not.toHaveBeenCalled();
-    expect(deps.dockerSpawnSync).not.toHaveBeenCalled();
+    expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
     expect(mocks.spawnSync).not.toHaveBeenCalled();
   });
 });

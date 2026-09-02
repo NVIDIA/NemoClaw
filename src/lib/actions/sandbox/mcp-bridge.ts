@@ -15,6 +15,7 @@ import {
   prepareMcpBridgesForDestroy as prepareMcpBridgesForDestroyLifecycle,
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
+import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
   type McpRebuildPreparation,
@@ -81,18 +82,9 @@ export {
   validateMcpCredentialEnvName,
   validateMcpServerName,
 } from "./mcp-bridge-validation";
+export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
-
-export interface McpDestroyPreparation {
-  entries: McpBridgeEntry[];
-  detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
-  /** True when phase one was completed by an earlier destroy process. */
-  destroyAlreadyPrepared: boolean;
-  /** True when a previous destroy already confirmed the sandbox was absent. */
-  destroyAlreadyPending: boolean;
-}
 
 export async function addMcpBridge(
   sandboxName: string,
@@ -122,8 +114,9 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
 
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
-  return prepareMcpBridgesForDestroyLifecycle(sandboxName);
+  return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(
@@ -333,7 +326,7 @@ export async function dispatchMcpBridgeCommand(
         const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName);
         if (json)
-          console.log(JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2));
+          process.stdout.write(`${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`);
         else renderMcpBridgeList(sandboxName, statuses, agent);
         return;
       }
@@ -355,12 +348,12 @@ export async function dispatchMcpBridgeCommand(
           discoverTools: tools,
         });
         if (json) {
-          console.log(
-            JSON.stringify(
+          process.stdout.write(
+            `${JSON.stringify(
               server ? statuses[0] : buildJsonSummary(sandboxName, agent, statuses),
               null,
               2,
-            ),
+            )}\n`,
           );
         } else renderMcpBridgeStatus(sandboxName, statuses, agent);
         return;

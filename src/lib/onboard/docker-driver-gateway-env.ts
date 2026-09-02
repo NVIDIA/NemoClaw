@@ -5,7 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+import {
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+} from "./experimental/docker-network-authority";
 import {
   GATEWAY_BIND_ADDRESS,
   getGatewayConnectHost,
@@ -34,6 +39,8 @@ import {
   PORTABLE_HOST_GATEWAY_IP,
   resolveDockerDriverNetworkName,
 } from "./docker-driver-platform";
+import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
+import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
@@ -69,13 +76,130 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
 
 export interface BuildDockerDriverGatewayEnvOptions {
   platform?: NodeJS.Platform;
+  architecture?: NodeJS.Architecture;
   gatewayPort?: number;
   stateDir: string;
   dockerNetworkName?: string;
   podmanSocketPath?: string;
+  gatewayHostRuntime?: RuntimeProviderGatewayHostRuntime;
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
   enableBindMounts?: boolean;
+}
+
+function preparePortableGatewayHostRuntime(
+  socketPath?: string,
+  platform: NodeJS.Platform = process.platform,
+): RuntimeProviderGatewayHostRuntime {
+  const run = (args: readonly string[], timeoutMs: number) => {
+    const result = dockerRun([...args], {
+      timeout: timeoutMs,
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    const error = result.error as NodeJS.ErrnoException | undefined;
+    return {
+      status: result.status ?? null,
+      signal: result.signal,
+      error: error?.message,
+      errorCode: error?.code ?? null,
+      timedOut: error?.code === "ETIMEDOUT",
+      stderr: result.stderr,
+      stdout: result.stdout,
+    };
+  };
+  const inspectNetwork = (networkName: string) => {
+    const raw = dockerCapture(
+      ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
+      { ignoreError: true },
+    );
+    return (parseDockerNetworkIpamEntries(raw) ?? []).find(
+      ({ gatewayIp }) => gatewayIp && !gatewayIp.includes(":"),
+    );
+  };
+  return {
+    providerId: "docker",
+    openShellDriver: "podman",
+    bindAddress: WILDCARD_GATEWAY_BIND_ADDRESS,
+    grpcHost: PORTABLE_HOST_GATEWAY_IP,
+    sshGatewayHost: getGatewayConnectHost(),
+    portCheckHost: WILDCARD_GATEWAY_BIND_ADDRESS,
+    socketPath: socketPath ?? null,
+    requiredServerIpSans: [PORTABLE_HOST_GATEWAY_IP],
+    sandboxHostAddress: PORTABLE_HOST_GATEWAY_IP,
+    usesHostGatewayRoute: true,
+    // The portable compatibility profile historically discovers OpenShell's
+    // Docker-compatible labels. Keep that independent from native Podman.
+    resourceOwnership: {
+      label: "openshell.ai/managed-by",
+      value: "openshell",
+    },
+    gatewayConfig: {
+      sandboxNamespace: "omitted",
+      hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
+      includeSupervisorBin: false,
+      processOwnership: "scoped-namespace",
+    },
+    network: {
+      sandboxSourceCidrs: () => {
+        const network = inspectNetwork(resolveDockerDriverNetworkName());
+        return network?.subnet ? [network.subnet] : [];
+      },
+      inspect: inspectNetwork,
+      usesHostGatewayRoute: () => {
+        if (platform !== "linux") return true;
+        const info = dockerCapture(
+          ["info", "--format", "{{.OperatingSystem}}\n{{range .Labels}}{{.}}\n{{end}}"],
+          { ignoreError: true },
+        );
+        return /Docker Desktop|com\.docker\.desktop\./iu.test(info);
+      },
+      run,
+      ensureProbeImageCached: (image) => {
+        const inspect = run(["image", "inspect", image], 10_000);
+        if (inspect.status === 0) return { ok: true, alreadyCached: true };
+        if (inspect.status === null || inspect.errorCode) {
+          return {
+            ok: false,
+            reason: "inspect_unavailable",
+            details: inspect.error ?? String(inspect.stderr ?? "").trim(),
+          };
+        }
+        const pull = run(["pull", image], 120_000);
+        if (pull.status === 0) return { ok: true, alreadyCached: false };
+        return {
+          ok: false,
+          reason: pull.timedOut ? "pull_timeout" : "pull_failed",
+          details: pull.error ?? String(pull.stderr ?? "").trim(),
+        };
+      },
+    },
+  };
+}
+
+export function prepareConfiguredGatewayHostRuntime(
+  options: {
+    architecture?: NodeJS.Architecture;
+    environment?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    socketPath?: string;
+  } = {},
+): RuntimeProviderGatewayHostRuntime {
+  const environment = options.environment ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
+  if (isPortableExperimentalProfile(environment)) {
+    return preparePortableGatewayHostRuntime(options.socketPath, platform);
+  }
+  const provider = resolveConfiguredRuntimeProvider(platform, architecture, environment);
+  if (!provider.gateway.supported) {
+    throw new Error("The selected runtime provider does not support a host-managed gateway.");
+  }
+  return provider.gateway.prepareHostRuntime({
+    environment,
+    platform,
+    socketPath: options.socketPath,
+  });
 }
 
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
@@ -87,30 +211,38 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
   home?: string;
 };
 
-export function getGatewayPortCheckOptions(): { host: string } {
+export function getGatewayPortCheckOptions(env: NodeJS.ProcessEnv = process.env): { host: string } {
   return {
-    host: isPortableExperimentalProfile() ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
+    host: prepareConfiguredGatewayHostRuntime({ environment: env }).portCheckHost,
   };
 }
 
 export function getGatewayStartNetworkEnv(
   gatewayPort: number = GATEWAY_PORT,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  const portable = isPortableExperimentalProfile();
+  const runtime = prepareConfiguredGatewayHostRuntime({ environment: env, platform });
   return {
-    OPENSHELL_BIND_ADDRESS: portable ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
+    OPENSHELL_BIND_ADDRESS: runtime.bindAddress,
     OPENSHELL_SERVER_PORT: String(gatewayPort),
-    OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
+    OPENSHELL_SSH_GATEWAY_HOST: runtime.sshGatewayHost,
     OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
   };
 }
 
-export function assertDockerDriverGatewayBindAddressSafe(gatewayEnv: Record<string, string>): void {
+export function assertDockerDriverGatewayBindAddressSafe(
+  gatewayEnv: Record<string, string>,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): void {
   if (gatewayEnv.OPENSHELL_BIND_ADDRESS !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
+  const selectedRuntime = prepareConfiguredGatewayHostRuntime({ environment, platform });
   if (
-    gatewayEnv.OPENSHELL_DRIVERS === "podman" &&
+    selectedRuntime.sandboxHostAddress !== null &&
     gatewayEnv.OPENSHELL_GRPC_ENDPOINT ===
-      `https://${PORTABLE_HOST_GATEWAY_IP}:${gatewayEnv.OPENSHELL_SERVER_PORT}`
+      `https://${selectedRuntime.grpcHost}:${gatewayEnv.OPENSHELL_SERVER_PORT}` &&
+    gatewayEnv.OPENSHELL_SSH_GATEWAY_HOST === selectedRuntime.sshGatewayHost
   ) {
     return;
   }
@@ -197,8 +329,11 @@ function assertGatewayJwtFile(key: string, filePath: string): void {
   );
 }
 
-export function assertDockerDriverGatewayAuthConfigSafe(gatewayEnv: Record<string, string>): void {
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
+export function assertDockerDriverGatewayAuthConfigSafe(
+  gatewayEnv: Record<string, string>,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  assertDockerDriverGatewayBindAddressSafe(gatewayEnv, environment);
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG?.trim();
   if (!configPath) {
     throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
@@ -234,44 +369,55 @@ export function warnIfGatewayWildcardBindAddress(): void {
 
 export function buildDockerDriverGatewayEnv({
   platform = process.platform,
+  architecture = process.arch,
   gatewayPort = GATEWAY_PORT,
   stateDir,
   dockerNetworkName,
   podmanSocketPath,
+  gatewayHostRuntime,
   getDockerSupervisorImage,
   resolveSandboxBin,
   enableBindMounts = false,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const portable = isPortableExperimentalProfile();
+  const runtime =
+    gatewayHostRuntime ??
+    prepareConfiguredGatewayHostRuntime({
+      architecture,
+      platform,
+      socketPath: podmanSocketPath,
+    });
   const resolvedDockerNetworkName = dockerNetworkName ?? resolveDockerDriverNetworkName();
   const env: Record<string, string> = {
-    OPENSHELL_DRIVERS: portable ? "podman" : "docker",
-    ...getGatewayStartNetworkEnv(gatewayPort),
+    NEMOCLAW_RUNTIME_PROVIDER_ID: runtime.providerId,
+    OPENSHELL_DRIVERS: runtime.openShellDriver,
+    OPENSHELL_BIND_ADDRESS: runtime.bindAddress,
+    OPENSHELL_SERVER_PORT: String(gatewayPort),
+    OPENSHELL_SSH_GATEWAY_HOST: runtime.sshGatewayHost,
+    OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
     ...buildDockerDriverGatewayLocalTlsEnv(stateDir),
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT: portable
-      ? `https://${PORTABLE_HOST_GATEWAY_IP}:${gatewayPort}`
-      : getDockerDriverGatewayEndpoint(gatewayPort),
+    OPENSHELL_GRPC_ENDPOINT: `https://${runtime.grpcHost}:${gatewayPort}`,
     OPENSHELL_DOCKER_NETWORK_NAME: resolvedDockerNetworkName,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };
   if (enableBindMounts) env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS = "1";
-  if (portable) {
-    env.NETAVARK_FW = "iptables";
-    if (podmanSocketPath !== undefined) {
-      const rawSocketPath = String(podmanSocketPath);
-      const normalizedSocketPath = rawSocketPath.trim();
-      if (
-        normalizedSocketPath === "" ||
-        rawSocketPath !== normalizedSocketPath ||
-        /[\0\r\n]/u.test(rawSocketPath) ||
-        !path.isAbsolute(normalizedSocketPath) ||
-        path.normalize(normalizedSocketPath) !== normalizedSocketPath
-      ) {
-        throw new Error("OpenShell Podman gateway socket must be a safe normalized absolute path.");
-      }
-      env.OPENSHELL_PODMAN_SOCKET = normalizedSocketPath;
+  if (portable) env.NETAVARK_FW = "iptables";
+  if (runtime.socketPath !== null) {
+    const rawSocketPath = String(runtime.socketPath);
+    const normalizedSocketPath = rawSocketPath.trim();
+    if (
+      normalizedSocketPath === "" ||
+      rawSocketPath !== normalizedSocketPath ||
+      /[\0\r\n]/u.test(rawSocketPath) ||
+      !path.isAbsolute(normalizedSocketPath) ||
+      path.normalize(normalizedSocketPath) !== normalizedSocketPath
+    ) {
+      throw new Error("OpenShell Podman gateway socket must be a safe normalized absolute path.");
     }
+    env.OPENSHELL_PODMAN_SOCKET = normalizedSocketPath;
+  }
+  if (portable) {
     const containersConf = process.env.CONTAINERS_CONF?.trim();
     if (containersConf) env.CONTAINERS_CONF = containersConf;
   }
@@ -287,6 +433,7 @@ export function buildDockerDriverGatewayEnv({
     // prepared recovery may safely attach the first scoped identity to it.
     allowOpenShell0044PreAuthDatabase:
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
+    gatewayRuntime: runtime,
   });
   return env;
 }
@@ -404,7 +551,7 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   const env = optionsWithEnv.env ?? process.env;
   const gatewayPort = Number(gatewayEnv.OPENSHELL_SERVER_PORT ?? GATEWAY_PORT);
   if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
-  assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
+  assertDockerDriverGatewayAuthConfigSafe(gatewayEnv, env);
   const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
   return startPackageManagedDockerDriverGateway({
     ...options,

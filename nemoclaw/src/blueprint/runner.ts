@@ -25,6 +25,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -34,12 +35,23 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { redactCredentialText, stripCredentials } from "../security/credential-filter.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellGatewayEndpointBoundary from "../shared/openshell-gateway-endpoint-boundary.cjs";
 import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-external-target-boundary.cjs";
+import * as importedOpenShellObservationBoundary from "../shared/openshell-observation-boundary.cjs";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
-import type { SanitizedExternalOpenShellTargetPlan } from "../shared/openshell-external-target-boundary.cjs";
+import type {
+  OpenShellCompatibilityRange,
+  SanitizedExternalOpenShellTargetPlan,
+} from "../shared/openshell-external-target-boundary.cjs";
+import type {
+  ExternalOpenShellGatewayStatus,
+  OpenShellGatewayHealthObserver,
+} from "../shared/openshell-observation-boundary.cjs";
+import { createBlueprintOpenShellPolicyClient } from "./openshell-policy.js";
+import { isPrivateHostname } from "./private-networks.js";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -71,7 +83,6 @@ const {
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
-  parseSandboxPolicyMetadata,
   withoutProviderComposedPolicies,
 } = sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
 
@@ -87,9 +98,17 @@ const sourceOrGeneratedOpenShellExternalTargetBoundary =
   importedOpenShellExternalTargetBoundary as typeof importedOpenShellExternalTargetBoundary & {
     default?: typeof importedOpenShellExternalTargetBoundary;
   };
-const { buildSanitizedExternalOpenShellTargetPlan } =
+const { buildSanitizedExternalOpenShellTargetPlan, withExternalOpenShellTargetCa } =
   sourceOrGeneratedOpenShellExternalTargetBoundary.default ??
   sourceOrGeneratedOpenShellExternalTargetBoundary;
+
+const sourceOrGeneratedOpenShellObservationBoundary =
+  importedOpenShellObservationBoundary as typeof importedOpenShellObservationBoundary & {
+    default?: typeof importedOpenShellObservationBoundary;
+  };
+const { observeExternalOpenShellGatewayHealth } =
+  sourceOrGeneratedOpenShellObservationBoundary.default ??
+  sourceOrGeneratedOpenShellObservationBoundary;
 
 // sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
 const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
@@ -99,6 +118,8 @@ const { assertValidName, assertValidProviderName, isValidName } =
   sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
 type Action = "plan" | "apply" | "status" | "reconcile" | "rollback";
+
+type ExternalOpenShellTargetStatus = ExternalOpenShellGatewayStatus & Readonly<{ run_id: string }>;
 
 type RollbackPlanSource = {
   sandbox_name?: unknown;
@@ -140,6 +161,10 @@ type PolicyAdditions = { [name: string]: PolicyAddition };
 
 type BlueprintPolicyInspection =
   import("../shared/openshell-policy-boundary.cjs").OpenShellPolicyInspection;
+type BlueprintPolicyRead =
+  import("../shared/openshell-policy-boundary.cjs").OpenShellSandboxPolicyRead;
+type BlueprintPolicySetSubmission =
+  import("../shared/openshell-policy-boundary.cjs").OpenShellSandboxPolicySetSubmission;
 
 type GatewayBinding = {
   name: string;
@@ -151,11 +176,23 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "
 const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
 const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
+const BLUEPRINT_KEYS = new Set([
+  "version",
+  "min_openshell_version",
+  "max_openshell_version",
+  "min_openclaw_version",
+  "digest",
+  "profiles",
+  "description",
+  "openshell_target",
+  "components",
+]);
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
 const POLICY_INSPECTION_TIMEOUT_MS = 30_000;
 const BLUEPRINT_POLICY_REBASE_ATTEMPTS = 3;
+const UNRESTRICTED_POLICY_HOSTS = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
 
 interface InferenceRouteBinding {
   provider: string;
@@ -217,7 +254,7 @@ const SENSITIVE_ERROR_ASSIGNMENT =
   /(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*)[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
-  let redacted = stderr;
+  let redacted = redactCredentialText(stderr);
   for (const secret of [...new Set(secretValues)]
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)) {
@@ -319,6 +356,83 @@ function isPolicyAdditions(value: unknown): value is PolicyAdditions {
   return isPlainObject(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
 }
 
+function normalizeBlueprintPolicyHost(raw: string): string {
+  const value = raw.trim();
+  if (!value || value !== raw) throw new Error("policy host is empty or not canonical");
+  if (UNRESTRICTED_POLICY_HOSTS.has(value.toLowerCase())) {
+    throw new Error("policy host grants unrestricted egress");
+  }
+
+  const wildcard = value.startsWith("*.");
+  const candidate = wildcard ? value.slice(2) : value;
+  if (
+    !candidate ||
+    candidate.includes("://") ||
+    /[\\/?#@%*]/u.test(candidate) ||
+    candidate.startsWith(".")
+  ) {
+    throw new Error("policy host must be an exact hostname, IP literal, or scoped wildcard");
+  }
+
+  if (candidate.startsWith("[") || candidate.endsWith("]")) {
+    if (!(candidate.startsWith("[") && candidate.endsWith("]"))) {
+      throw new Error("policy host contains malformed IPv6 brackets");
+    }
+    const address = candidate.slice(1, -1);
+    if (isIP(address) !== 6) throw new Error("policy host is not an IPv6 literal");
+    return address.toLowerCase();
+  }
+
+  const normalized = candidate.replace(/\.$/u, "").toLowerCase();
+  if (isIP(normalized) !== 0) return normalized;
+  if (normalized.includes(":")) throw new Error("policy host must not include a port");
+  if (/^\d+(?:\.\d+){3}$/u.test(normalized) || normalized.length > 253) {
+    throw new Error("policy host is malformed");
+  }
+  const labels = normalized.split(".");
+  if (
+    labels.some(
+      (label) => !label || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+    )
+  ) {
+    throw new Error("policy host is malformed");
+  }
+  return wildcard ? `*.${normalized}` : normalized;
+}
+
+async function resolveBlueprintPolicyAdditionHosts(
+  additions: PolicyAdditions,
+): Promise<PolicyAdditions> {
+  const resolved: PolicyAdditions = {};
+  for (const [policyName, addition] of Object.entries(additions)) {
+    const endpoints: PolicyEndpoint[] = [];
+    for (const [endpointIndex, endpoint] of addition.endpoints.entries()) {
+      try {
+        const host = normalizeBlueprintPolicyHost(endpoint.host);
+        if (isPrivateHostname(host)) throw new Error("policy host is private or reserved");
+        if (host.startsWith("*.")) {
+          throw new Error("scoped wildcard policy hosts cannot be DNS-pinned safely");
+        }
+        const urlHost = isIP(host) === 6 ? `[${host}]` : host;
+        const validated = await validateEndpointUrl(`http://${urlHost}:${String(endpoint.port)}`);
+        const pinnedHost = normalizeBlueprintPolicyHost(new URL(validated.pinnedUrl).hostname);
+        if (isIP(pinnedHost) === 0 && validated.dnsResolved) {
+          throw new Error("policy hostname validation did not return a pinned IP address");
+        }
+        endpoints.push({ ...endpoint, host: pinnedHost });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "policy host is unsafe";
+        throw new Error(
+          `Blueprint policy addition '${policyName}' endpoint ${String(endpointIndex + 1)} is rejected: ${detail}.`,
+          { cause: error },
+        );
+      }
+    }
+    resolved[policyName] = { ...addition, endpoints };
+  }
+  return resolved;
+}
+
 function isInferenceProfile(value: unknown): value is InferenceProfile {
   if (!isPlainObject(value)) {
     return false;
@@ -336,7 +450,7 @@ function isInferenceProfile(value: unknown): value is InferenceProfile {
 }
 
 function isBlueprint(value: unknown): value is Blueprint {
-  if (!isPlainObject(value)) {
+  if (!isPlainObject(value) || !Object.keys(value).every((key) => BLUEPRINT_KEYS.has(key))) {
     return false;
   }
 
@@ -590,11 +704,17 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
   return YAML.stringify(output);
 }
 
+function assertBlueprintPolicyHandoffCredentialFree(policySource: string): void {
+  const policy = parseOpenShellPolicy(policySource).policy;
+  if (!isDeepStrictEqual(stripCredentials(policy), policy)) {
+    throw new Error(
+      "Cannot prepare the blueprint policy update because the live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry.",
+    );
+  }
+}
+
 function blueprintBasePoliciesMatch(left: string, right: string): boolean {
-  return isDeepStrictEqual(
-    parseOpenShellPolicy(left).policy,
-    parseOpenShellPolicy(right).policy,
-  );
+  return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
 }
 
 function assertNoConflictingBlueprintPolicyChange(
@@ -640,12 +760,17 @@ export function loadBlueprint(): Blueprint {
   try {
     content = readFileSync(bpFile, "utf-8");
   } catch {
-    throw new Error(`blueprint.yaml not found at ${bpFile}`);
+    throw new Error("blueprint.yaml not found");
   }
-  const parsed: unknown = YAML.parse(content);
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    throw new Error("blueprint.yaml contains invalid YAML");
+  }
   if (!isBlueprint(parsed)) {
     throw new Error(
-      `blueprint.yaml at ${bpFile} must contain a YAML mapping with valid nested component shapes`,
+      "blueprint.yaml must contain a YAML mapping with valid nested component shapes",
     );
   }
   return parsed;
@@ -759,6 +884,30 @@ async function runBlueprintInspectionCommand(
   return result;
 }
 
+const blueprintOpenShellPolicyClient = createBlueprintOpenShellPolicyClient({
+  captureRead: (command, gatewayName) =>
+    runBlueprintInspectionCommand(command, gatewayName, {
+      kind: "policy",
+      subject: "sandbox",
+    }),
+  captureWrite: async (command, gatewayName) => {
+    try {
+      const result = await runCmd(command, {
+        gateway: gatewayName,
+        maxBuffer: POLICY_INSPECTION_MAX_BYTES,
+        reject: false,
+        timeout: POLICY_INSPECTION_TIMEOUT_MS,
+      });
+      return { status: result.exitCode, stderr: result.stderr };
+    } catch {
+      return {
+        status: null,
+        error: { message: "OpenShell policy write could not be observed" },
+      };
+    }
+  },
+});
+
 async function inspectBlueprintPolicy(gateway: string): Promise<BlueprintPolicyInspection | null>;
 async function inspectBlueprintPolicy(
   gateway: string,
@@ -768,42 +917,42 @@ async function inspectBlueprintPolicy(
   gateway: string,
   sandboxName?: string,
 ): Promise<BlueprintPolicyInspection | null> {
-  const subject = sandboxName === undefined ? "global" : "sandbox";
-  if (sandboxName === undefined) {
-    const history = await runBlueprintInspectionCommand(
-      ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
-      gateway,
-      { kind: "policy", subject },
-    );
-    const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
-    if (historyState === "absent") {
-      return null;
-    }
-    if (historyState === "invalid") {
-      throw new Error(
-        "OpenShell returned invalid global policy history. Policy-dependent operations must stop.",
-      );
-    }
-  }
-  const command =
-    sandboxName === undefined
-      ? ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"]
-      : ["openshell", "policy", "get", "-g", gateway, "--full", "--output", "json", sandboxName];
-  const result = await runBlueprintInspectionCommand(command, gateway, {
-    kind: "policy",
-    subject,
-  });
-  if (sandboxName === undefined) {
+  if (sandboxName !== undefined) {
     try {
-      const activeGlobalPolicy = parseActiveGlobalPolicyMetadata(result.stdout);
-      return activeGlobalPolicy.state === "active" ? activeGlobalPolicy.inspection : null;
+      return await blueprintOpenShellPolicyClient.inspectSandboxPolicy({
+        gatewayName: gateway,
+        sandboxName,
+      });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "OpenShell returned invalid metadata";
       throw new Error(`${detail}. Policy-dependent operations must stop.`);
     }
   }
+  const history = await runBlueprintInspectionCommand(
+    ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
+    gateway,
+    { kind: "policy", subject: "global" },
+  );
+  const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
+  if (historyState === "absent") {
+    return null;
+  }
+  if (historyState === "invalid") {
+    throw new Error(
+      "OpenShell returned invalid global policy history. Policy-dependent operations must stop.",
+    );
+  }
+  const result = await runBlueprintInspectionCommand(
+    ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"],
+    gateway,
+    {
+      kind: "policy",
+      subject: "global",
+    },
+  );
   try {
-    return parseSandboxPolicyMetadata(result.stdout, sandboxName);
+    const activeGlobalPolicy = parseActiveGlobalPolicyMetadata(result.stdout);
+    return activeGlobalPolicy.state === "active" ? activeGlobalPolicy.inspection : null;
   } catch (error) {
     const detail = error instanceof Error ? error.message : "OpenShell returned invalid metadata";
     throw new Error(`${detail}. Policy-dependent operations must stop.`);
@@ -836,14 +985,59 @@ function blueprintPolicyRequirementsSatisfied(
   }
 }
 
-async function readBlueprintBasePolicy(gatewayName: string, sandboxName: string): Promise<string> {
-  return (
-    await runBlueprintInspectionCommand(
-      ["openshell", "policy", "get", "-g", gatewayName, "--base", sandboxName],
+async function readBlueprintBasePolicy(
+  gatewayName: string,
+  sandboxName: string,
+): Promise<BlueprintPolicyRead> {
+  return blueprintOpenShellPolicyClient.readSandboxBasePolicy({ gatewayName, sandboxName });
+}
+
+async function readBlueprintPolicyRevision(
+  gatewayName: string,
+  sandboxName: string,
+  revision: number,
+): Promise<BlueprintPolicyRead> {
+  return blueprintOpenShellPolicyClient.readSandboxPolicyRevision({
+    gatewayName,
+    sandboxName,
+    revision,
+  });
+}
+
+async function submitBlueprintPolicyDocument(
+  gatewayName: string,
+  sandboxName: string,
+  policyPath: string,
+  policySource: string,
+): Promise<BlueprintPolicySetSubmission> {
+  assertBlueprintPolicyHandoffCredentialFree(policySource);
+  writeFileSync(policyPath, policySource, {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  try {
+    return await blueprintOpenShellPolicyClient.setSandboxPolicy({
       gatewayName,
-      { kind: "state", subject: "policy" },
-    )
-  ).stdout;
+      sandboxName,
+      policyPath,
+    });
+  } finally {
+    try {
+      unlinkSync(policyPath);
+    } catch {
+      if (existsSync(policyPath)) {
+        throw new Error(`Temporary blueprint policy remains at ${policyPath}`);
+      }
+    }
+  }
+}
+
+function blueprintPolicyWriteFailure(submission: BlueprintPolicySetSubmission): string {
+  return submission.outcome.kind === "rejected"
+    ? boundedCommandError(submission.outcome.message)
+    : submission.outcome.kind === "ambiguous"
+      ? boundedCommandError(submission.outcome.detail)
+      : `openshell policy set exited with status ${String(submission.status)}`;
 }
 
 async function applyBlueprintPolicyAdditions(
@@ -856,50 +1050,93 @@ async function applyBlueprintPolicyAdditions(
   const current = await inspectBlueprintPolicy(gateway.name, sandboxName);
   if (blueprintPolicyRequirementsSatisfied(current, additions)) return;
 
-  let basePolicySource = await readBlueprintBasePolicy(gateway.name, sandboxName);
+  let basePolicySource = (await readBlueprintBasePolicy(gateway.name, sandboxName)).document;
+  let replayConcurrentPolicy = false;
   const policyPath = join(temporaryDirectory, "policy-update.yaml");
 
   for (let attempt = 1; attempt <= BLUEPRINT_POLICY_REBASE_ATTEMPTS; attempt += 1) {
-    const latestPolicySource = await readBlueprintBasePolicy(gateway.name, sandboxName);
-    if (!blueprintBasePoliciesMatch(basePolicySource, latestPolicySource)) {
+    const beforeWrite = await inspectBlueprintPolicy(gateway.name, sandboxName);
+    const replayingConcurrentPolicy = replayConcurrentPolicy;
+    replayConcurrentPolicy = false;
+    const latestPolicySource = replayingConcurrentPolicy
+      ? basePolicySource
+      : (await readBlueprintBasePolicy(gateway.name, sandboxName)).document;
+    if (
+      !replayingConcurrentPolicy &&
+      !blueprintBasePoliciesMatch(basePolicySource, latestPolicySource)
+    ) {
       assertNoConflictingBlueprintPolicyChange(basePolicySource, latestPolicySource, additions);
       basePolicySource = latestPolicySource;
       continue;
     }
 
-    writeFileSync(policyPath, mergePolicyAdditions(latestPolicySource, additions), {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
-    try {
-      const result = await runCmd(
-        [
-          "openshell",
-          "policy",
-          "set",
-          "-g",
-          gateway.name,
-          "--policy",
-          policyPath,
-          "--wait",
-          sandboxName,
-        ],
-        { gateway: gateway.name, reject: false },
+    const mergedPolicySource = mergePolicyAdditions(latestPolicySource, additions);
+    const submission = await submitBlueprintPolicyDocument(
+      gateway.name,
+      sandboxName,
+      policyPath,
+      mergedPolicySource,
+    );
+    if (submission.outcome.kind === "rejected") {
+      throw new Error(
+        `Failed to apply policy additions: ${blueprintPolicyWriteFailure(submission)}`,
       );
-      if (result.exitCode !== 0) {
-        throw new Error(`Failed to apply policy additions: ${boundedCommandError(result.stderr)}`);
-      }
-    } finally {
-      try {
-        unlinkSync(policyPath);
-      } catch {
-        // The file contains policy material; surface cleanup failure even if set succeeded.
-        if (existsSync(policyPath)) {
-          throw new Error(`Temporary blueprint policy remains at ${policyPath}`);
-        }
-      }
     }
+
     const applied = await inspectBlueprintPolicy(gateway.name, sandboxName);
+    const appliedBase = await readBlueprintBasePolicy(gateway.name, sandboxName);
+    const requestedIsCurrent = blueprintBasePoliciesMatch(appliedBase.document, mergedPolicySource);
+    const concurrentRevision =
+      applied.policyIdentity.activeVersion > beforeWrite.policyIdentity.activeVersion + 1;
+
+    if (concurrentRevision) {
+      const externalPolicySource = requestedIsCurrent
+        ? (
+            await readBlueprintPolicyRevision(
+              gateway.name,
+              sandboxName,
+              applied.policyIdentity.activeVersion - 1,
+            )
+          ).document
+        : appliedBase.document;
+      try {
+        assertNoConflictingBlueprintPolicyChange(
+          latestPolicySource,
+          externalPolicySource,
+          additions,
+        );
+      } catch (error) {
+        if (requestedIsCurrent) {
+          const restoration = await submitBlueprintPolicyDocument(
+            gateway.name,
+            sandboxName,
+            policyPath,
+            externalPolicySource,
+          );
+          const restored = await readBlueprintBasePolicy(gateway.name, sandboxName);
+          if (
+            restoration.outcome.kind === "rejected" ||
+            !blueprintBasePoliciesMatch(restored.document, externalPolicySource)
+          ) {
+            throw new Error(
+              `Cannot reconcile the blueprint policy transition: the concurrent host policy could not be restored: ${blueprintPolicyWriteFailure(restoration)}.`,
+            );
+          }
+        }
+        throw error;
+      }
+      basePolicySource = externalPolicySource;
+      replayConcurrentPolicy = requestedIsCurrent;
+      continue;
+    }
+
+    if (!requestedIsCurrent) {
+      throw new Error(
+        submission.outcome.kind === "ambiguous"
+          ? `Could not confirm the blueprint policy update: ${blueprintPolicyWriteFailure(submission)}.`
+          : "OpenShell applied a different blueprint base policy than the requested document.",
+      );
+    }
     assertBlueprintPolicyRequirements(applied, additions);
     try {
       assertPolicyRequirementContainment(
@@ -1010,12 +1247,17 @@ async function resolveRunConfig(
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
   routerCfg: RouterConfig;
+  policyAdditions: PolicyAdditions;
 }> {
   const inferenceProfiles = blueprint.components?.inference?.profiles ?? {};
   if (!(profile in inferenceProfiles)) {
     const available = Object.keys(inferenceProfiles).join(", ");
     throw new Error(`Profile '${profile}' not found. Available: ${available}`);
   }
+
+  const policyAdditions = await resolveBlueprintPolicyAdditionHosts(
+    blueprint.components?.policy?.additions ?? {},
+  );
 
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
@@ -1045,7 +1287,7 @@ async function resolveRunConfig(
     assertValidProviderName(inferenceCfg.provider_name);
   }
 
-  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg };
+  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg, policyAdditions };
 }
 
 // ── Actions ─────────────────────────────────────────────────────
@@ -1324,7 +1566,7 @@ export async function actionPlan(
   const rid = emitRunId();
   progress(10, "Validating blueprint");
 
-  const { inferenceCfg, sandboxCfg, routerCfg } = await resolveRunConfig(
+  const { inferenceCfg, sandboxCfg, routerCfg, policyAdditions } = await resolveRunConfig(
     profile,
     blueprint,
     options?.endpointUrl,
@@ -1344,7 +1586,7 @@ export async function actionPlan(
     sandboxCfg,
     routerCfg,
     runtimeIdentityConfig: blueprint.components?.identity,
-    policyAdditions: blueprint.components?.policy?.additions ?? {},
+    policyAdditions,
     dryRun: options?.dryRun ?? false,
   });
 
@@ -1357,29 +1599,11 @@ export function actionExternalOpenShellTargetPlan(
   blueprint: Blueprint,
   options?: { dryRun?: boolean },
 ): ExternalOpenShellTargetRunPlan {
-  if (blueprint.openshell_target === undefined) {
-    throw new Error("blueprint does not declare an external OpenShell target");
-  }
-  if (
-    blueprint.min_openshell_version === undefined ||
-    blueprint.max_openshell_version === undefined
-  ) {
-    throw new Error(
-      "External OpenShell target planning requires blueprint min_openshell_version and max_openshell_version.",
-    );
-  }
-  for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
-    if (blueprint[field] !== undefined) {
-      throw new Error(`External OpenShell target planning does not accept '${field}'.`);
-    }
-  }
+  const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "planning");
 
+  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(target, compatibility);
   const rid = emitRunId();
   progress(10, "Validating external OpenShell target");
-  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(blueprint.openshell_target, {
-    minVersion: blueprint.min_openshell_version,
-    maxVersion: blueprint.max_openshell_version,
-  });
   const plan: ExternalOpenShellTargetRunPlan = {
     run_id: rid,
     openshell_target: targetPlan,
@@ -1388,6 +1612,66 @@ export function actionExternalOpenShellTargetPlan(
   progress(100, "External target plan complete");
   log(JSON.stringify(plan, null, 2));
   return plan;
+}
+
+function validateExternalOpenShellTargetBlueprint(
+  blueprint: Blueprint,
+  action: "planning" | "status",
+): Readonly<{ target: unknown; compatibility: OpenShellCompatibilityRange }> {
+  if (blueprint.openshell_target === undefined) {
+    throw new Error("blueprint does not declare an external OpenShell target");
+  }
+  if (blueprint.version === undefined || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(blueprint.version)) {
+    throw new Error(
+      `External OpenShell target ${action} requires blueprint version in X.Y.Z format.`,
+    );
+  }
+  if (
+    blueprint.min_openshell_version === undefined ||
+    blueprint.max_openshell_version === undefined
+  ) {
+    throw new Error(
+      `External OpenShell target ${action} requires blueprint min_openshell_version and max_openshell_version.`,
+    );
+  }
+  for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
+    if (blueprint[field] !== undefined) {
+      throw new Error(`External OpenShell target ${action} does not accept '${field}'.`);
+    }
+  }
+  return {
+    target: blueprint.openshell_target,
+    compatibility: {
+      minVersion: blueprint.min_openshell_version,
+      maxVersion: blueprint.max_openshell_version,
+    },
+  };
+}
+
+export async function actionExternalOpenShellTargetStatus(
+  blueprint: Blueprint,
+  observer: OpenShellGatewayHealthObserver,
+): Promise<ExternalOpenShellTargetStatus> {
+  const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "status");
+
+  const observation = await withExternalOpenShellTargetCa(
+    target,
+    compatibility,
+    async (target, caContents) => {
+      const rid = emitRunId();
+      progress(10, "Validating external OpenShell target");
+      const observed = await observeExternalOpenShellGatewayHealth(observer, {
+        target,
+        caBundle: caContents,
+        timeoutMs: 5_000,
+      });
+      if (!observed.ok) throw new Error(observed.error.message);
+      return Object.freeze({ run_id: rid, ...observed.value });
+    },
+  );
+  progress(100, "External target status complete");
+  log(JSON.stringify(observation, null, 2));
+  return observation;
 }
 
 export async function actionApply(
@@ -1414,18 +1698,16 @@ export async function actionApply(
 
   const rid = emitRunId();
 
-  const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
-    profile,
-    blueprint,
-    options?.endpointUrl,
-  );
+  const {
+    inferenceCfg,
+    sandboxCfg,
+    policyAdditions: resolvedPolicyAdditions,
+  } = await resolveRunConfig(profile, blueprint, options?.endpointUrl);
 
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
-  const policyAdditions = withoutProviderComposedPolicies(
-    blueprint.components?.policy?.additions ?? {},
-  );
+  const policyAdditions = withoutProviderComposedPolicies(resolvedPolicyAdditions);
   const runtimeIdentityConfig = blueprint.components?.identity;
   const providerName = inferenceCfg.provider_name ?? "default";
   const providerType = inferenceCfg.provider_type ?? "openai";
@@ -1535,6 +1817,12 @@ export async function actionApply(
 
     persistRunPlan();
 
+    if (Object.keys(policyAdditions).length > 0) {
+      progress(30, "Applying policy additions");
+      await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);
+    }
+    assertBlueprintPolicyRequirements(await requireLivePolicy(), policyAdditions);
+
     if (runtimeIdentityConfig) {
       const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
         gateway: policyGateway.name,
@@ -1576,7 +1864,7 @@ export async function actionApply(
           (inferenceCfg.timeout_secs === undefined ||
             activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
       }
-      progress(30, "Configuring runtime identity");
+      progress(40, "Configuring runtime identity");
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
       persistRunPlan();
     }
@@ -1703,13 +1991,7 @@ export async function actionApply(
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
     }
 
-    if (Object.keys(policyAdditions).length > 0) {
-      progress(78, "Applying policy additions");
-      await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);
-    }
-
     progress(85, "Saving run state");
-    assertBlueprintPolicyRequirements(await requireLivePolicy(), policyAdditions);
     persistRunPlan();
 
     progress(100, "Apply complete");
@@ -1920,6 +2202,7 @@ export async function actionRollback(rid: string): Promise<void> {
 export async function main(
   argv: string[] = process.argv.slice(2),
   options: {
+    gatewayHealthObserver?: OpenShellGatewayHealthObserver;
     snapshotCommand?: SnapshotCommandOptions;
     /** Code-only conformance-test seam. No CLI flag or environment input populates this policy. */
     runtimeIdentityProfilePolicy?: RuntimeIdentityProfilePolicy;
@@ -1933,6 +2216,7 @@ export async function main(
   let runId: string | undefined;
   let dryRun = false;
   let endpointUrl: string | undefined;
+  let externalTargetStatus = false;
 
   function requireValue(flag: string, i: number): string {
     if (i >= argv.length) throw new Error(`${flag} requires a value`);
@@ -1944,9 +2228,7 @@ export async function main(
       actionSnapshots(argv.slice(1), options.snapshotCommand);
       return;
     }
-    throw new Error(
-      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, reconcile, rollback, snapshots`,
-    );
+    throw new Error("Unknown action. Use: plan, apply, status, reconcile, rollback, snapshots");
   }
 
   for (let i = 1; i < argv.length; i++) {
@@ -1967,7 +2249,14 @@ export async function main(
       case "--endpoint-url":
         endpointUrl = requireValue("--endpoint-url", ++i);
         break;
+      case "--external-target":
+        externalTargetStatus = true;
+        break;
     }
+  }
+
+  if (externalTargetStatus && action !== "status") {
+    throw new Error("--external-target is accepted only with status");
   }
 
   switch (action) {
@@ -2000,7 +2289,20 @@ export async function main(
       break;
     }
     case "status":
-      actionStatus(runId);
+      if (externalTargetStatus) {
+        if (runId !== undefined) {
+          throw new Error("--external-target and --run-id cannot be used together");
+        }
+        if (profileProvided || planPath !== undefined || dryRun || endpointUrl !== undefined) {
+          throw new Error("External target status does not accept managed-run options");
+        }
+        if (options.gatewayHealthObserver === undefined) {
+          throw new Error("The external OpenShell gateway observer is unavailable.");
+        }
+        await actionExternalOpenShellTargetStatus(loadBlueprint(), options.gatewayHealthObserver);
+      } else {
+        actionStatus(runId);
+      }
       break;
     case "reconcile":
       if (!runId) {
