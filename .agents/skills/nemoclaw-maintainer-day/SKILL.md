@@ -11,8 +11,8 @@ user_invocable: true
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
 
-**Autonomy:** You may push small fixes after automated evaluation settles for one unchanged latest
-PR commit. You may approve a PR when all gates pass.
+**Autonomy:** You may push small fixes after required CI and scheduled automated reviews settle for
+one unchanged latest PR commit. You may approve a PR when all gates pass.
 Report contributor and approver overlap as an advisory. It does not change merge readiness or require another reviewer.
 Never merge. Ask the user about merge, product-scope, and architecture decisions. Also ask when contributor intent is unclear.
 

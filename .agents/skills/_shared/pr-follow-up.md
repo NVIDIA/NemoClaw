@@ -3,9 +3,10 @@
 
 # Follow Up on PR CI and Reviews
 
-Treat each latest PR commit as one candidate. Finish its automated evaluation before you replace it.
-Collect complete feedback and return the full disposition record, with valid findings grouped as one
-repair batch, to the lifecycle workflow that owns the change. Do not request reviews from maintainers.
+Treat each latest PR commit as one candidate. Finish required CI and scheduled automated reviews
+before you replace it. Collect complete feedback and return the full disposition record, with valid
+findings grouped as one repair batch, to the lifecycle workflow that owns the change. Do not request
+reviews from maintainers.
 
 ## Stabilize the candidate
 
@@ -51,7 +52,7 @@ Keep monitoring bounded. Return states, identifiers, and short excerpts; read fu
 | Duplicate, style suggestion, or false positive | Leave unchanged and preserve the evidence for its disposition. |
 | New scope or ambiguous, risky, broad, or design-changing feedback | Ask the user. Do not add the new surface as a repair. |
 | Required review or check is still pending | Report it. Do not classify the collection as complete. |
-| Advisor specialist failed or its review artifact is missing | Record the candidate SHA, specialist, workflow run and job identifiers, and expected artifact. Apply the bounded recovery action once only when a checked-in transient policy matches. Otherwise, or if recovery fails, keep the candidate unchanged and request an explicit maintainer decision or named escalation. |
+| Advisor specialist failed or its review artifact is missing | Record the candidate SHA, specialist, workflow run and job identifiers, and expected artifact. Keep the candidate unchanged and ask a NemoClaw maintainer to decide whether to rerun the full Advisor workflow for that commit or defer the PR. Do not rerun before that decision. |
 | No actionable finding after collection completes | Report the remaining checks. |
 
 Apply [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md) to valid code or CI findings, and record the operation and failure class.

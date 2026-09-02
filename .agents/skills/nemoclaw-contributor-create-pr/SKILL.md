@@ -9,9 +9,9 @@ description: Create a GitHub pull request with the NemoClaw template. Then, moni
 # Create GitHub Pull Request
 
 Publish one complete candidate from a feature branch based on the current canonical comparison ref.
-Treat each pushed commit as one candidate and finish its automated evaluation before another push.
-Stop unless branch state, implementation-owned validation, DCO declaration, and GitHub commit
-verification are complete. For access errors, follow
+Treat each pushed commit as one candidate. Finish required CI and scheduled automated reviews before
+another push. Stop unless branch state, implementation-owned validation, DCO declaration, and
+GitHub commit verification are complete. For access errors, follow
 [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md).
 
 ## Satisfy publication requirements
@@ -44,7 +44,20 @@ Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, 
 Select review evidence for the publication state before every agent-managed push:
 
 - For an initial publication, use the implementation handoff's self-review and any other available pre-publication review evidence. Do not query PR state or follow the open-PR workflow because the PR does not exist.
-- Before updating an open PR, follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide). Record the reviewed remote `headRefOid` and preserve the original PR objective, accepted scope, and deferred scope in the disposition record. Set the repair scope, group valid code-changing findings by root cause, and route only in-scope groups to `nemoclaw-contributor-implement-issue`. Pass the scope record and complete root-cause group with each repair. The shared contract does not repair, validate, commit, or push. After the implementation workflow returns its change and test evidence, inspect the returned repair, create one local repair commit, and record that commit as the expected publication SHA before trusted validation and guarded publication. Immediately before publication, require the remote `headRefOid` to still equal the reviewed remote SHA and require the push tool's expected commit to equal the local publication SHA. A local repair commit does not violate the remote guard; an unrelated remote update does. Do not push while automated evaluation is pending, a finding is unclassified, or an unresolved finding requires a change. Preserve the complete disposition record. Repeat collection for the reviewed remote commit as the final feedback check before the canonical base fetch.
+- Before updating an open PR:
+
+  1. Follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
+  2. Preserve the original PR objective, accepted scope, deferred scope, and complete disposition record.
+  3. Group valid code-changing findings by root cause and set the repair scope.
+  4. Route only in-scope groups to `nemoclaw-contributor-implement-issue` with the scope record and complete root-cause group.
+  5. Inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
+  6. Create one local repair commit and record it as the expected publication SHA.
+  7. Repeat collection for the reviewed remote commit before the canonical base fetch.
+  8. Do not push while required CI or a scheduled automated review is pending, a finding is unclassified, or an unresolved finding requires a change.
+  9. Immediately before publication, require the remote `headRefOid` to equal the reviewed remote SHA.
+  10. Require the push tool's expected commit to equal the local publication SHA.
+
+  A local repair commit does not violate the remote guard. An unrelated remote update does.
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 

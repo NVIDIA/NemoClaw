@@ -25,16 +25,16 @@
     ]
   },
   {
-    "id": "positive-recover-transient-advisor-failure",
-    "question": "Run the NemoClaw maintainer pass. Every check is terminal, but one Advisor specialist failed with a runner-loss signature covered by the checked-in transient retry policy and did not upload its review.",
+    "id": "advisor-failure-without-recovery-policy",
+    "question": "Run the NemoClaw maintainer pass. Every check is terminal, but one Advisor specialist failed and did not upload its review. No checked-in transient policy covers Advisor failures.",
     "expected_skill": "nemoclaw-maintainer-day",
-    "ground_truth": "A terminal Advisor failure keeps the candidate unchanged. The workflow records exact failure evidence, applies only the bounded recovery action authorized by a checked-in transient policy, and escalates if recovery is unavailable or fails.",
+    "ground_truth": "A terminal Advisor failure without a matching checked-in recovery policy keeps the candidate unchanged and requires an explicit NemoClaw maintainer decision.",
     "expected_behavior": [
       "Uses `nemoclaw-maintainer-day` and the shared PR follow-up contract.",
       "Records the candidate SHA, specialist name, workflow run and job identifiers, and missing review artifact.",
-      "Applies the bounded recovery action named by the matching checked-in transient policy at most once without changing the candidate.",
-      "Keeps review, repair, approval, base integration, and publication blocked until the specialist review is collected.",
-      "If recovery is unavailable or fails, preserves the blocking disposition and requests an explicit maintainer decision or named escalation instead of retrying again."
+      "Does not retry the specialist or the Advisor workflow.",
+      "Keeps review, repair, approval, base integration, and publication blocked.",
+      "Asks a NemoClaw maintainer to decide whether to rerun the full Advisor workflow for the unchanged commit or defer the PR."
     ]
   },
   {
