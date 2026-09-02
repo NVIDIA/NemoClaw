@@ -320,6 +320,35 @@ describe("Hermes portable container authority", () => {
     expect(authenticatedHealth).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["restart policy", { restartPolicy: "no" }, "running"],
+    ["status", {}, "exited"],
+  ])(
+    "rejects reused health observation with invalid %s before credentials run",
+    (_label, authority, status) => {
+      const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "200\n", stderr: "" }));
+      const receipt = activeReceipt();
+      const before = hermesPortableContainerInternals.parseInspection(
+        inspect("unless-stopped").stdout,
+        { sandboxName: receipt.sandboxName, sandboxId: receipt.container.sandboxId, containerId: ID },
+      );
+      const invalid = {
+        ...before,
+        authority: { ...before.authority, ...authority },
+        status,
+      };
+
+      expect(() =>
+        observeHermesPortableAuthenticatedHealth(
+          receipt,
+          { podman: vi.fn(), authenticatedHealth, assertSocketAuthority: vi.fn() },
+          invalid,
+        ),
+      ).toThrow("running, unpaused, and restart-policy qualified");
+      expect(authenticatedHealth).not.toHaveBeenCalled();
+    },
+  );
+
   it("proves Bearer-authenticated health inside the exact container without host credentials (#9203)", () => {
     const podman = vi
       .fn()

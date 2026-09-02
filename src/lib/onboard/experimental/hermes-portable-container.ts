@@ -489,8 +489,15 @@ export function observeHermesPortableAuthenticatedHealth(
       fail("reused health observation disagrees with receipt identity");
     }
   }
-  if (!before.authority.running || before.paused) {
-    fail("authenticated health requires the exact container to be running and unpaused");
+  if (
+    !before.authority.running ||
+    before.paused ||
+    before.authority.restartPolicy !== "unless-stopped" ||
+    before.status !== "running"
+  ) {
+    fail(
+      "authenticated health requires the exact container to be running, unpaused, and restart-policy qualified",
+    );
   }
   assertSocket(receipt, deps);
   if (!deps.authenticatedHealth) {
