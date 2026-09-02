@@ -1478,6 +1478,7 @@ repair_hermes_startup_layout() {
     echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
     if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
       echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
+      echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
       return 1
     fi
     return 0
@@ -1492,7 +1493,11 @@ repair_hermes_startup_layout() {
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770 || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770 || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770 || return 1
-  ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660 || return 1
+  if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
+    echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
+    echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+    return 1
+  fi
 }
 
 cleanup_stale_hermes_gateway_runtime() {

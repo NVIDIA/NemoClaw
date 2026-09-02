@@ -28,6 +28,53 @@ export function extractShellFunction(source: string, name: string): string {
   return `${name}() {${match[1]}\n}`;
 }
 
+export function lstatIfPresent(entry: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(entry);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export function filesystemFingerprint(entry: string): string {
+  const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const metadata = fs.fstatSync(fd);
+    const contents = metadata.isDirectory() ? "" : fs.readFileSync(fd, "utf8");
+    return `${metadata.dev}:${metadata.ino}:${metadata.uid}:${metadata.gid}:${metadata.mode & 0o7777}:${metadata.size}:${metadata.mtimeMs}:${contents}`;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+export function createHermesUnsafeLogFixture(
+  tmpDir: string,
+  hermesHome: string,
+  kind: "root-symlink" | "nested-symlink",
+): { before: string[]; fingerprint: () => string[] } {
+  const target = path.join(tmpDir, "unsafe-log-target");
+  const sentinel = path.join(target, "sentinel.log");
+  fs.mkdirSync(target);
+  fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
+  if (kind === "root-symlink") {
+    fs.symlinkSync(target, path.join(hermesHome, "logs"));
+  } else {
+    const nested = path.join(hermesHome, "logs", "curator", "nested");
+    fs.mkdirSync(nested, { recursive: true });
+    fs.symlinkSync(sentinel, path.join(nested, "sentinel-link"));
+  }
+  const fingerprint = () => [filesystemFingerprint(target), filesystemFingerprint(sentinel)];
+  return { before: fingerprint(), fingerprint };
+}
+
+export function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
+  const pidDir = path.join(procRoot, String(pid));
+  fs.mkdirSync(pidDir, { recursive: true });
+  fs.writeFileSync(path.join(pidDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
+  fs.writeFileSync(path.join(pidDir, "status"), "Name:\tfixture\nUid:\t1000\t1000\t1000\t1000\n");
+}
+
 export function runHermesBashHarness(
   lines: string[],
   configure?: (tmpDir: string) => Record<string, string>,
