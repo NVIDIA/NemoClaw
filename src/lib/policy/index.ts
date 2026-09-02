@@ -75,6 +75,7 @@ import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
 import {
   type ExternalPolicyPreset,
+  findUntrustedPrivatePolicyEndpointHost,
   isTrustedPrivatePolicyPinCapability,
   prepareTrustedPrivatePolicyPresets,
   type TrustedPrivatePolicyPinCapability,
@@ -2279,6 +2280,15 @@ function applyPresetContent(
     if (options.custom.trustedPrivatePinCapability && !trustedPrivateCapabilityValid) {
       console.error(
         `  Preset '${presetName}' has an invalid trusted-private pin capability for its content.`,
+      );
+      return false;
+    }
+    const untrustedPrivateHost = findUntrustedPrivatePolicyEndpointHost({
+      network_policies: np,
+    });
+    if (untrustedPrivateHost && !trustedPrivateCapabilityValid) {
+      console.error(
+        `  Preset '${presetName}' endpoint host '${untrustedPrivateHost}' is rejected. Add explicit trust only for RFC1918, CGNAT, or IPv6 unique local destinations.`,
       );
       return false;
     }
