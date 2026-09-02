@@ -822,7 +822,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  target("hermes-discord", {
+  managedRuntimeTarget("hermes-discord", {
     displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Discord",

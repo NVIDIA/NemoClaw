@@ -74,7 +74,7 @@
     "build:cli": "npm run prune:retired-cli && npm run build:policy-boundary && npm run build:runner-boundary && tsc -p tsconfig.src.json && node --experimental-strip-types --no-warnings scripts/lib/package-blueprint-runner-runtime.mts && node dist/lib/core/generate-build-identity.js && node dist/lib/inference/serving/generate-catalog.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "build:runner-boundary": "node -e \"require('node:fs').rmSync('nemoclaw/runner-dist', { recursive: true, force: true })\" && tsc -p nemoclaw/tsconfig.runner.json",
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "prune:retired-cli": "node -e \"const fs = require('node:fs'); for (const prefix of ['dist/commands/deploy', 'dist/lib/actions/deploy']) for (const suffix of ['.js', '.js.map', '.d.ts', '.d.ts.map']) fs.rmSync(prefix + suffix, { force: true }); fs.rmSync('dist/lib/deploy', { recursive: true, force: true })\"",
+    "prune:retired-cli": "node -e \"const fs = require('node:fs'); for (const prefix of ['dist/commands/deploy', 'dist/lib/actions/deploy', 'dist/lib/policy/merge']) for (const suffix of ['.js', '.js.map', '.d.ts', '.d.ts.map']) fs.rmSync(prefix + suffix, { force: true }); fs.rmSync('dist/lib/deploy', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.mts",
     "generate:agent-state-lock-plans": "node --import tsx scripts/lib/generate-agent-state-lock-plans.mts",

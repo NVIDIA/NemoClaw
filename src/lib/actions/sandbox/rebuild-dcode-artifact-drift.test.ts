@@ -11,7 +11,7 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 
 describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
@@ -44,11 +44,7 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       agentName: "langchain-deepagents-code",
       sandboxEntry: makeDcodeSandboxEntry(),
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
-      dcodeBaseImageIds: [
-        `sha256:${"a".repeat(64)}`,
-        `sha256:${"a".repeat(64)}`,
-        "sha256:changed",
-      ],
+      dcodeBaseImageIds: [`sha256:${"a".repeat(64)}`, `sha256:${"a".repeat(64)}`, "sha256:changed"],
     });
     configureDcodeSession(harness);
 
