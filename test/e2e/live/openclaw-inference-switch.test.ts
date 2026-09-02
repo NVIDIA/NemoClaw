@@ -46,7 +46,7 @@ import {
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
-import { runBoundedRetry } from "../fixtures/retry-policy.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
@@ -855,11 +855,9 @@ async function runOpenClawInferenceSetWithRetry(
   return runInferenceSetWithRetry({
     attempts,
     onEvidence: (evidence) => writeInferenceSwitchRetryEvidence(artifacts, evidence),
-    run: (attempt, verify) =>
-      runNemoclaw(host, home, verify ? args : [...args, "--no-verify"], {
-        artifactName: verify
-          ? `nemoclaw-inference-set-${attempt}`
-          : "nemoclaw-inference-set-no-verify-after-transient-failures",
+    run: (attempt) =>
+      runNemoclaw(host, home, args, {
+        artifactName: `nemoclaw-inference-set-${attempt}`,
         env: compatibleAnthropicSwitchEnv(switchBinding),
         redactionValues,
         timeoutMs: COMMAND_TIMEOUT_MS,

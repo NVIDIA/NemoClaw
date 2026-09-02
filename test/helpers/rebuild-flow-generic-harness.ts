@@ -388,6 +388,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     (mutator as (value: typeof session) => typeof session | void)(session);
     return session;
   });
+  vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((...args: unknown[]) => {
+    const [matches, mutator] = args as [
+      (current: typeof session) => boolean,
+      (current: typeof session) => unknown,
+    ];
+    return matches(session) ? (mutator(session), "updated") : "mismatch";
+  });
   const releaseOnboardLockSpy = vi
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);

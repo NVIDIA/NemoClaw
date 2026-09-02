@@ -353,7 +353,7 @@ export async function runRebuildDestroyPhase(
     }
   }
 
-  // MCP preparation can await external systems. Re-read the registry at the
+  // MCP preparation can await external systems; re-read the registry at the
   // synchronous delete edge so those checks and deletion use one target.
   if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
@@ -399,9 +399,12 @@ export async function runRebuildDestroyPhase(
     }
   }
 
+  // MCP adapter entries are already detached and scrubbed here. A journal write
+  // that fails must reattach them before the rebuild gives up, or the still
+  // running sandbox is left without its MCP wiring.
   let sourcePresence: RebuildRecreateSourcePresence;
   try {
-    sourcePresence = recreateJournal.observeSourceForDelete();
+    sourcePresence = recreateJournal.beginDelete();
   } catch (error) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
@@ -411,29 +414,9 @@ export async function runRebuildDestroyPhase(
     relockShieldsIfNeeded(true);
     const detail = error instanceof Error ? error.message : String(error);
     bail(
-      `Sandbox deletion could not be journaled: ${redactFull(detail)}${
-        mcpRecoveryFailure ? ` MCP provider recovery also failed: ${mcpRecoveryFailure}` : ""
-      }`,
-    );
-    return null;
-  }
-  try {
-    recreateJournal.markDeleting();
-  } catch (error) {
-    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-      sandboxName,
-      rebuildDetachedMcpProviderEntries,
-      rebuildScrubbedMcpAdapterEntries,
-    );
-    relockShieldsIfNeeded(true);
-    const detail = error instanceof Error ? error.message : String(error);
-    const recoveryFailures = [mcpRecoveryFailure].filter(Boolean);
-    bail(
-      `Sandbox deletion could not be journaled: ${redactFull(detail)}${
-        recoveryFailures.length > 0
-          ? ` Recovery also failed: ${recoveryFailures.join("; ")}`
-          : ""
-      }`,
+      mcpRecoveryFailure
+        ? `Sandbox deletion could not be journaled: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
     );
     return null;
   }
@@ -518,14 +501,6 @@ export async function runRebuildDestroyPhase(
     bail("Sandbox deletion could not be confirmed.");
     return null;
   }
-  if (!teardownSandboxDashboardForward(sandboxName)) {
-    console.error(
-      "  Sandbox deletion succeeded, but one or more ForwardTcp host ports did not release.",
-    );
-    input.onDeleteStateAmbiguous?.();
-    bail("Sandbox host ports did not release after deletion.");
-    return null;
-  }
   try {
     recreateJournal.confirmDeleted();
   } catch (error) {
@@ -538,6 +513,14 @@ export async function runRebuildDestroyPhase(
     input.onDeleteStateAmbiguous?.();
     const detail = error instanceof Error ? error.message : String(error);
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
+    return null;
+  }
+  if (!teardownSandboxDashboardForward(sandboxName)) {
+    console.error(
+      "  Sandbox deletion succeeded, but one or more ForwardTcp host ports did not release.",
+    );
+    input.onDeleteStateAmbiguous?.();
+    bail("Sandbox host ports did not release after deletion.");
     return null;
   }
   try {

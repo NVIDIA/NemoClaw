@@ -178,6 +178,12 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
       vi.spyOn(onboardSession, "loadSession").mockImplementation(loadSession),
       vi.spyOn(onboardSession, "updateSession").mockImplementation(updateSession),
+      vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+        const current = cloneSession(session);
+        return matches(current)
+          ? ((session = cloneSession(mutator(current) ?? current)), "updated")
+          : "mismatch";
+      }),
       vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
         acquired: true,
         lockFile: "/tmp/nemoclaw-onboard.lock",
