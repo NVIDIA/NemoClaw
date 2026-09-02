@@ -37,8 +37,9 @@ The first script selects the target version. The second lists shipped and open i
 
 ## Step 2: Pick One Action
 
-Before selecting an action, complete [PR follow-up](../_shared/pr-follow-up.md) successfully for one
-unchanged latest PR commit. Do not begin human review or push a repair before that collection completes.
+Before reviewing, repairing, approving, integrating, or pushing a PR, complete
+[PR follow-up](../_shared/pr-follow-up.md) successfully for one unchanged latest PR commit. This
+prerequisite does not apply to an item with no PR candidate.
 
 Select the first applicable action for an open item:
 
