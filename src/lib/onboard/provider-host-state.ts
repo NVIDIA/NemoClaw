@@ -5,13 +5,14 @@ import fs from "node:fs";
 
 import { dockerCapture as defaultDockerCapture } from "../adapters/docker";
 import {
+  createOllamaApiCapture,
   findReachableOllamaHost,
   getLocalProviderAvailabilityEndpoint,
-  getWindowsHostOllamaDockerReachabilityArgs,
   isLocalProviderProbeOutputHealthy,
-  isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_PORT,
+  probeOllamaEndpointInventory,
+  type RunCaptureFn,
 } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
 import { detectVllmProfile, type VllmProfile } from "../inference/vllm";
@@ -32,11 +33,8 @@ import { type OllamaInstallMenuResult, resolveOllamaInstallMenuEntry } from "./o
 import { buildVllmMenuEntries, type VllmMenuEntry } from "./vllm-menu";
 import { detectWindowsHostOllama, type WindowsHostOllamaState } from "./windows-host-ollama";
 
-type RunCapture = (args: string[], options?: { ignoreError?: boolean }) => string;
-type DockerCapture = (
-  args: string[],
-  options?: { env?: NodeJS.ProcessEnv; ignoreError?: boolean; timeout?: number },
-) => string;
+type RunCapture = RunCaptureFn;
+type DockerCapture = RunCaptureFn;
 type ReadTextFile = (filePath: string) => string | null;
 
 export interface InferenceProviderHostGpu {
@@ -92,6 +90,7 @@ export interface DetectInferenceProviderHostStateDeps {
   detectVllmProfile: (gpu: InferenceProviderHostGpu | null | undefined) => VllmProfile | null;
   getLocalProviderAvailabilityEndpoint: (provider: string) => string | null;
   detectLocalTcpListener: (port: number) => boolean | null;
+  prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
 }
 
 const LOCAL_PROVIDER_PROBE_CURL_ARGS = ["--connect-timeout", "2", "--max-time", "5"] as const;
@@ -164,6 +163,7 @@ function buildDeps(
     getLocalProviderAvailabilityEndpoint:
       overrides.getLocalProviderAvailabilityEndpoint ?? getLocalProviderAvailabilityEndpoint,
     detectLocalTcpListener: overrides.detectLocalTcpListener ?? detectLocalTcpListener,
+    prepareDockerEnvironment: overrides.prepareDockerEnvironment,
   };
 }
 
@@ -190,16 +190,21 @@ function probeVllmRunning(deps: DetectInferenceProviderHostStateDeps): boolean {
 function probeWindowsOllamaReachable(input: {
   isWsl: boolean;
   dockerRequirementSupported: boolean;
-  dockerCapture: DockerCapture;
+  runCapture: RunCapture;
+  prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
 }): boolean {
   if (!input.isWsl || !input.dockerRequirementSupported) return false;
   // A successful Docker run is not enough: a captive proxy, a stale listener, or
   // a stub on host.docker.internal can all answer with arbitrary 2xx bodies. Only
   // a body in the Ollama `/api/tags` wire format proves the Windows daemon is live.
-  const body = input.dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
-    ignoreError: true,
-  });
-  return isValidOllamaTagsResponseBody(body);
+  return (
+    probeOllamaEndpointInventory(
+      OLLAMA_HOST_DOCKER_INTERNAL,
+      input.runCapture,
+      5_000,
+      input.prepareDockerEnvironment,
+    ) !== null
+  );
 }
 
 function maybeWarnAboutDuplicateOllamaDaemons(input: {
@@ -263,7 +268,8 @@ export function detectInferenceProviderHostState(
       : probeWindowsOllamaReachable({
           isWsl,
           dockerRequirementSupported: windowsHostOllamaDockerRequirement.supported,
-          dockerCapture: deps.dockerCapture,
+          runCapture: deps.runCapture,
+          prepareDockerEnvironment: deps.prepareDockerEnvironment,
         });
 
   const wslNetworkingMode =
