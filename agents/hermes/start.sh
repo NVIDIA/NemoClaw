@@ -1262,10 +1262,10 @@ try:
 
     if os.geteuid() == 0:
         try:
-            uid = pwd.getpwnam("sandbox").pw_uid
+            uid = pwd.getpwnam("gateway").pw_uid
             gid = grp.getgrnam("sandbox").gr_gid
         except KeyError as exc:
-            print(f"[SECURITY] Refusing Hermes layout repair because sandbox account lookup failed: {exc}", file=sys.stderr)
+            print(f"[SECURITY] Refusing Hermes layout repair because gateway account lookup failed: {exc}", file=sys.stderr)
             sys.exit(1)
         os.fchown(fd, uid, gid)
     os.fchmod(fd, mode)
@@ -1301,9 +1301,11 @@ repair_hermes_startup_layout() {
   if hermes_config_root_is_locked; then
     # The locked-root posture seals config.yaml/.env, not the dir. The gateway
     # and runtime state parents were maintained above; also bring a missing
-    # prompt_toolkit history file into existence as a sandbox-owned regular
-    # file. Sandboxes built before the precreate landed would otherwise stay
-    # broken until the next `shields down` cycle.
+    # prompt_toolkit history file into existence as a gateway-owned regular
+    # file. The sandbox group retains append access, while the sticky config
+    # root prevents the sandbox user from replacing the entry after repair.
+    # Sandboxes built before the precreate landed would otherwise stay broken
+    # until the next `shields down` cycle.
     # Refusal (symlink, non-regular, create failure) is a hard stop: starting
     # the gateway with an unsafe .hermes_history under a locked root would
     # either let the TUI clobber an attacker-pointed path or repeat the

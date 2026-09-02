@@ -198,11 +198,7 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      // A harmless single-element no-op prefix. It must not be an empty array:
-      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
-      // `set -u`, aborting the harness before the validator runs. It also must
-      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
-      // `command` builtin execs the validator unchanged on every platform.
+      // Keep a nonempty no-op prefix: macOS Bash 3.2 rejects empty arrays, and BSD env has no `--`.
       '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
@@ -232,11 +228,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      // A harmless single-element no-op prefix. It must not be an empty array:
-      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
-      // `set -u`, aborting the harness before the validator runs. It also must
-      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
-      // `command` builtin execs the validator unchanged on every platform.
+      // Keep a nonempty no-op prefix: macOS Bash 3.2 rejects empty arrays, and BSD env has no `--`.
       '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
@@ -452,7 +444,6 @@ function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
   fs.writeFileSync(path.join(pidDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
   fs.writeFileSync(path.join(pidDir, "status"), "Name:\tfixture\nUid:\t1000\t1000\t1000\t1000\n");
 }
-
 function lstatIfPresent(entry: string): fs.Stats | null {
   try {
     return fs.lstatSync(entry);
@@ -461,15 +452,16 @@ function lstatIfPresent(entry: string): fs.Stats | null {
     throw error;
   }
 }
-
 function filesystemFingerprint(entry: string): string {
-  const stat = fs.statSync(entry);
-  const contents = stat.isDirectory()
-    ? fs.readdirSync(entry).join("\0")
-    : fs.readFileSync(entry, "utf8");
-  return [stat.dev, stat.ino, stat.uid, stat.gid, stat.mode & 0o7777, contents].join(":");
+  const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(fd);
+    const contents = stat.isDirectory() ? "" : fs.readFileSync(fd, "utf8");
+    return `${stat.dev}:${stat.ino}:${stat.uid}:${stat.gid}:${stat.mode & 0o7777}:${stat.size}:${stat.mtimeMs}:${contents}`;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
-
 type HermesStateDir = "sessions" | "gateway" | "runtime";
 
 function runHermesGatewayRuntimeCleanup(opts: {
@@ -496,6 +488,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   const runtimePid = path.join(runtimeDir, "gateway.pid");
   const runtimeLock = path.join(runtimeDir, "gateway.lock");
   const agentLogPath = path.join(hermesHome, "logs", "agent.log");
+  const historyOwnerLog = path.join(tmpDir, "history-owner.log");
   const configYamlPath = path.join(hermesHome, "config.yaml");
   const envFilePath = path.join(hermesHome, ".env");
   fs.mkdirSync(runtimeDir, { recursive: true });
@@ -596,13 +589,17 @@ function runHermesGatewayRuntimeCleanup(opts: {
   }
   fs.writeFileSync(
     path.join(tmpDir, "sitecustomize.py"),
-    [
-      "import os",
-      "",
-      "# Keep the Python helper aligned with the shell fixture's mocked id -u.",
-      "os.geteuid = lambda: 1000",
-      "",
-    ].join("\n"),
+    (opts.rootOwnedConfigRoot
+      ? [
+          "import grp, os, pwd, types",
+          `owner_log = ${JSON.stringify(historyOwnerLog)}`,
+          "open(owner_log, 'w').close()",
+          "os.geteuid = lambda: 0\nos.fchown = lambda fd, uid, gid: None",
+          "pwd.getpwnam = lambda name: (open(owner_log, 'w').write(name), types.SimpleNamespace(pw_uid=os.getuid()))[1]",
+          "grp.getgrnam = lambda name: types.SimpleNamespace(gr_gid=os.getgid())",
+        ]
+      : ["import os", "os.geteuid = lambda: 1000"]
+    ).join("\n"),
   );
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -708,11 +705,15 @@ function runHermesGatewayRuntimeCleanup(opts: {
       historyMode,
       historyKind,
       historyContent,
+      historyOwnerLookup: opts.rootOwnedConfigRoot
+        ? fs.readFileSync(historyOwnerLog, "utf-8").trim()
+        : "",
       symlinkTargetContent,
       unsafeStateBefore,
-      unsafeStateAfter: unsafeStatePath && unsafeStateTarget
-        ? `${fs.lstatSync(unsafeStatePath).isSymbolicLink() ? "symlink" : "file"}:${filesystemFingerprint(unsafeStateTarget)}`
-        : undefined,
+      unsafeStateAfter:
+        unsafeStatePath && unsafeStateTarget
+          ? `${fs.lstatSync(unsafeStatePath).isSymbolicLink() ? "symlink" : "file"}:${filesystemFingerprint(unsafeStateTarget)}`
+          : undefined,
       configYamlMode,
       configYamlContent,
       envFileMode,
@@ -1052,8 +1053,6 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).toBe("");
   });
 
-  // PATH-shadow regression lives in test/agents/hermes/hermes-start-path-shadow.test.ts.
-
   it("rejects raw secret-shaped values without printing the value", () => {
     const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({
@@ -1257,7 +1256,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     );
   });
 
-  it("preserves a pre-existing Hermes history file and re-asserts its mode", () => {
+  it("preserves a pre-existing Hermes history file and applies root-separated ownership", () => {
     const run = runHermesGatewayRuntimeCleanup({
       staleLock: false,
       stalePid: false,
@@ -1268,6 +1267,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyKind).toBe("regular");
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("pre-existing\n");
+    expect(run.historyOwnerLookup).toBe("gateway");
   });
 
   it.each([
@@ -1365,23 +1365,23 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.stderr).toContain(message);
   });
 
-  it.each([
-    undefined,
-    ["/usr/local/bin/hermes.real", "gateway", "run"],
-  ])("preserves runtime state for a live gateway process [case %#]", (liveGatewayArgv) => {
-    const run = runHermesGatewayRuntimeCleanup({
-      liveGateway: true,
-      liveGatewayArgv,
-      orphanSocat: true,
-    });
+  it.each([undefined, ["/usr/local/bin/hermes.real", "gateway", "run"]])(
+    "preserves runtime state for a live gateway process [case %#]",
+    (liveGatewayArgv) => {
+      const run = runHermesGatewayRuntimeCleanup({
+        liveGateway: true,
+        liveGatewayArgv,
+        orphanSocat: true,
+      });
 
-    expect(run.result.status).toBe(0);
-    expect(run.runtimePidExists).toBe(true);
-    expect(run.runtimeLockExists).toBe(true);
-    expect(run.legacyPidIsSymlink).toBe(true);
-    expect(run.killLog).toBe("");
-    expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
-  });
+      expect(run.result.status).toBe(0);
+      expect(run.runtimePidExists).toBe(true);
+      expect(run.runtimeLockExists).toBe(true);
+      expect(run.legacyPidIsSymlink).toBe(true);
+      expect(run.killLog).toBe("");
+      expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
+    },
+  );
 });
 
 function runShieldsUpRuntimeEnv(opts: { locked: boolean; presetValue?: string }) {

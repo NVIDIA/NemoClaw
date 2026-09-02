@@ -1277,8 +1277,19 @@ describe("Hermes sandbox provisioning", () => {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
-        expect(["logs", "logs/curator", "cache", "hooks", "image_cache", "audio_cache", "platforms"].every((dir) =>
-              Object.is((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8), "770"))).toBe(true);
+        expect(
+          [
+            "logs",
+            "logs/curator",
+            "cache",
+            "hooks",
+            "image_cache",
+            "audio_cache",
+            "platforms",
+          ].every((dir) =>
+            Object.is((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8), "770"),
+          ),
+        ).toBe(true);
         expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
@@ -1296,11 +1307,14 @@ describe("Hermes sandbox provisioning", () => {
         );
         expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
         expect(run.calls).toContain(
-          `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
+          `chown gateway:sandbox ${path.join(hermesDir, "sessions")} ${path.join(
             hermesDir,
-            "gateway",
-          )} ${path.join(hermesDir, "runtime")}`,
+            "cron",
+          )} ${path.join(hermesDir, "gateway")} ${path.join(hermesDir, "runtime")}`,
         );
+        const historyPath = path.join(hermesDir, ".hermes_history");
+        expect(run.calls).toContain(`chown gateway:sandbox ${historyPath}`);
+        expect((fs.statSync(historyPath).mode & 0o777).toString(8)).toBe("660");
       });
     } finally {
       runs.forEach((run) => {

@@ -221,6 +221,20 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
+    "Hermes history ownership does not preserve append access and sticky-entry protection",
+    String.raw`set -eu
+history=/sandbox/.hermes/.hermes_history
+test "$(stat -c '%U:%G %a' "$history")" = "gateway:sandbox 660"
+/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc 'printf "sandbox history probe\n" >>/sandbox/.hermes/.hermes_history'
+if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f "$history"; then
+  echo "sandbox user replaced gateway-owned history entry" >&2
+  exit 1
+fi
+test -f "$history" && test ! -L "$history"`,
+  );
+  await expectContainerSh(
+    probe,
+    container,
     "gateway.pid is not a regular runtime file",
     "test -f /sandbox/.hermes/runtime/gateway.pid && test ! -L /sandbox/.hermes/runtime/gateway.pid && test ! -e /sandbox/.hermes/gateway.pid && test ! -L /sandbox/.hermes/gateway.pid",
   );
@@ -455,91 +469,142 @@ done`,
   );
 }
 
-test("hermes root-entrypoint smoke preserves runtime layout and legacy state migration", {
-  meta: {
-    e2ePhases: [
-      "check Docker and Hermes image inputs",
-      "build Hermes root-entrypoint image",
-      "validate clean root-entrypoint startup",
-      "validate legacy state migration",
-    ],
-  },
-}, async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
-  const probe = new DockerProbe(
-    artifacts,
-    (text, extraValues) => secrets.redact(text, extraValues),
-    undefined,
-    progress,
-    signal,
+async function runLockedRootVariant(
+  probe: DockerProbe,
+  image: string,
+  runId: string,
+  containers: string[],
+): Promise<void> {
+  const container = `nemoclaw-hermes-root-locked-${runId}`;
+  const lockedBootstrap = `set -euo pipefail
+rm -f /sandbox/.hermes/.hermes_history
+chown root:sandbox /sandbox /sandbox/.hermes
+chmod 1775 /sandbox
+chmod 3770 /sandbox/.hermes
+chown root:root /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
+chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
+sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash >/tmp/nemoclaw-locked-config.sha256
+exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
+
+  await probe.expect(
+    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", lockedBootstrap],
+    { artifactName: "start-locked-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
   );
-  const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
-  const image =
-    process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-root-entrypoint-smoke:${runId}`;
-  const baseImage = `nemoclaw-hermes-sandbox-base-local:root-entrypoint-${runId}`;
-  const containers: string[] = [];
+  containers.push(container);
 
-  await artifacts.target.declare({
-    id: "hermes-root-entrypoint-smoke",
-    boundary: "docker-root-entrypoint",
-    image,
-    prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
-    contract: [
-      "clean root-entrypoint startup reaches Hermes health or bearer-auth readiness",
-      "gateway process runs as gateway user",
-      "gateway log has no PID race or config load failure",
-      "Hermes v0.14 writable runtime directories are present",
-      "build-only upstream tests and root caches are absent from the runtime image",
-      "gateway.pid is stored as a regular file below the writable runtime directory",
-      "gateway user cannot remove config.yaml from sticky config root",
-      "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
-      "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
-      "legacy gateway.pid symlink/state shape is repaired and booted",
-      "restored state directories permit gateway-user and sandbox-user writes",
-      "legacy dashboard profile state is moved into profiles/dashboard-home",
-    ],
-  });
+  await waitForHealth(probe, container);
+  await expectContainerSh(
+    probe,
+    container,
+    "locked Hermes config changed while history was recovered",
+    String.raw`set -eu
+test "$(stat -c '%U:%G %a' /sandbox)" = "root:sandbox 1775"
+test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "root:sandbox 3770"
+for file in config.yaml .env .config-hash; do
+  test "$(stat -c '%U:%G %a' "/sandbox/.hermes/$file")" = "root:root 444"
+done
+sha256sum -c /tmp/nemoclaw-locked-config.sha256`,
+  );
+  await assertGatewayProcess(probe, container);
+  await assertGatewayLogClean(probe, container);
+  await assertRuntimeLayout(probe, container);
+}
 
-  cleanup.add("remove Hermes root-entrypoint smoke containers", async () => {
-    await Promise.all(
-      containers.map((container) =>
-        probe.run(["rm", "-f", container], {
-          artifactName: `cleanup-${container}`,
-          timeoutMs: 30_000,
-        }),
-      ),
-    );
-  });
-
-  await requireDocker(probe, skip);
-
-  try {
-    progress.phase("build Hermes root-entrypoint image");
-    await buildImageIfNeeded(probe, image, baseImage);
-    progress.phase("validate clean root-entrypoint startup");
-    await runCleanVariant(probe, image, runId, containers);
-    progress.phase("validate legacy state migration");
-    await runLegacyVariant(probe, image, runId, containers);
-  } catch (error) {
-    for (const container of containers) {
-      await dumpContainerDiagnostics(probe, container);
-    }
-    throw error;
-  }
-
-  await artifacts.target.complete({
-    id: "hermes-root-entrypoint-smoke",
-    image,
-    assertions: {
-      cleanStartupHealthy: true,
-      legacyStartupHealthy: true,
-      runtimeLayoutVerified: true,
-      buildOnlyPathsAbsent: true,
-      gatewayPrivilegeSeparationVerified: true,
-      bearerAuthVerified: true,
-      dashboardHomeVerified: true,
-      legacyPidSymlinkMigrationVerified: true,
-      restoredStatePermissionsVerified: true,
-      legacyDashboardProfileMigrationVerified: true,
+test(
+  "hermes root-entrypoint smoke preserves runtime layout and restored state migration",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate clean root-entrypoint startup",
+        "validate legacy state migration",
+        "validate locked-root history recovery",
+      ],
     },
-  });
-});
+  },
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const probe = new DockerProbe(
+      artifacts,
+      (text, extraValues) => secrets.redact(text, extraValues),
+      undefined,
+      progress,
+      signal,
+    );
+    const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
+    const image =
+      process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-root-entrypoint-smoke:${runId}`;
+    const baseImage = `nemoclaw-hermes-sandbox-base-local:root-entrypoint-${runId}`;
+    const containers: string[] = [];
+
+    await artifacts.target.declare({
+      id: "hermes-root-entrypoint-smoke",
+      boundary: "docker-root-entrypoint",
+      image,
+      prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
+      contract: [
+        "clean root-entrypoint startup reaches Hermes health or bearer-auth readiness",
+        "gateway process runs as gateway user",
+        "gateway log has no PID race or config load failure",
+        "Hermes v0.14 writable runtime directories are present",
+        "build-only upstream tests and root caches are absent from the runtime image",
+        "gateway.pid is stored as a regular file below the writable runtime directory",
+        "gateway user cannot remove config.yaml from sticky config root",
+        "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
+        "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
+        "legacy gateway.pid symlink/state shape is repaired and booted",
+        "restored state directories permit gateway-user and sandbox-user writes",
+        "legacy dashboard profile state is moved into profiles/dashboard-home",
+        "locked-root startup recreates protected group-writable Hermes history without changing sealed config",
+      ],
+    });
+
+    cleanup.add("remove Hermes root-entrypoint smoke containers", async () => {
+      await Promise.all(
+        containers.map((container) =>
+          probe.run(["rm", "-f", container], {
+            artifactName: `cleanup-${container}`,
+            timeoutMs: 30_000,
+          }),
+        ),
+      );
+    });
+
+    await requireDocker(probe, skip);
+
+    try {
+      progress.phase("build Hermes root-entrypoint image");
+      await buildImageIfNeeded(probe, image, baseImage);
+      progress.phase("validate clean root-entrypoint startup");
+      await runCleanVariant(probe, image, runId, containers);
+      progress.phase("validate legacy state migration");
+      await runLegacyVariant(probe, image, runId, containers);
+      progress.phase("validate locked-root history recovery");
+      await runLockedRootVariant(probe, image, runId, containers);
+    } catch (error) {
+      for (const container of containers) {
+        await dumpContainerDiagnostics(probe, container);
+      }
+      throw error;
+    }
+
+    await artifacts.target.complete({
+      id: "hermes-root-entrypoint-smoke",
+      image,
+      assertions: {
+        cleanStartupHealthy: true,
+        legacyStartupHealthy: true,
+        lockedRootStartupHealthy: true,
+        runtimeLayoutVerified: true,
+        buildOnlyPathsAbsent: true,
+        gatewayPrivilegeSeparationVerified: true,
+        bearerAuthVerified: true,
+        dashboardHomeVerified: true,
+        legacyPidSymlinkMigrationVerified: true,
+        restoredStatePermissionsVerified: true,
+        legacyDashboardProfileMigrationVerified: true,
+        lockedRootHistoryRecoveryVerified: true,
+      },
+    });
+  },
+);
