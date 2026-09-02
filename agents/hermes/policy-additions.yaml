@@ -52,8 +52,10 @@ filesystem_policy:
     - /run/nemoclaw/runtime-state-mutation-startup
     # Agent config/state root. Shields-up locks config.yaml/.env and the
     # parent directory, but intentionally leaves /sandbox/.hermes/.hermes_history
-    # as sandbox:sandbox 0660 because prompt_toolkit FileHistory appends there
-    # on every Hermes TUI keypress. Remove that exception if upstream supports
+    # as gateway:sandbox 0660 because prompt_toolkit FileHistory appends there
+    # on every Hermes TUI keypress. The sandbox group retains append access,
+    # while sticky-directory protection prevents the sandbox user from replacing
+    # the gateway-owned entry. Remove that exception if upstream supports
     # redirecting or disabling file history.
     - /sandbox/.hermes
 

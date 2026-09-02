@@ -1265,12 +1265,22 @@ try:
             uid = pwd.getpwnam("gateway").pw_uid
             gid = grp.getgrnam("sandbox").gr_gid
         except KeyError as exc:
-            print(f"[SECURITY] Refusing Hermes layout repair because gateway account lookup failed: {exc}", file=sys.stderr)
+            print(f"[SECURITY] Refusing Hermes layout repair because gateway/sandbox account lookup failed: {exc}", file=sys.stderr)
             sys.exit(1)
         os.fchown(fd, uid, gid)
-    os.fchmod(fd, mode)
+        os.fchmod(fd, mode)
+    elif stat.S_IMODE(st.st_mode) != mode:
+        try:
+            os.fchmod(fd, mode)
+        except OSError as exc:
+            detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+            print(f"[SECURITY] Refusing Hermes layout repair because {path} has mode {stat.S_IMODE(st.st_mode):04o}, not {mode:04o}, and cannot be repaired: {detail}", file=sys.stderr)
+            sys.exit(1)
 
     st = os.fstat(fd)
+    if stat.S_IMODE(st.st_mode) != mode:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has mode {stat.S_IMODE(st.st_mode):04o}, not {mode:04o}, after repair", file=sys.stderr)
+        sys.exit(1)
     try:
         current = os.stat(path, follow_symlinks=False)
     except OSError as exc:
