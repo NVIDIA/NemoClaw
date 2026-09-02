@@ -7,7 +7,10 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
-import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+import {
+  openRegularFileNoFollow,
+  type OpenRegularFile,
+} from "../adapters/fs/regular-file";
 import { processIsAlive } from "../adapters/process/identity";
 import { resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import {
@@ -19,6 +22,7 @@ import {
 } from "./gateway-registry";
 import {
   classifyOnboardLockContents,
+  createOnboardLockRecord,
   listRetainedSandboxRecoveryRecords,
   MAX_ONBOARD_LOCK_BYTES,
   retainedSandboxRecoveryFile,
@@ -26,6 +30,16 @@ import {
   type OnboardLockRecord,
   type RetainedSandboxRecoveryRecord,
 } from "./onboard-session/index";
+import {
+  reclaimLockFileGenerationSync,
+  type LockFileGeneration,
+} from "./lock-generation/storage";
+import {
+  acquireProcessBoundLockAt,
+  ProcessBoundLockContentionError,
+  releaseProcessBoundLock,
+  type ProcessBoundLockHandle,
+} from "./registry/lock";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
 
 const MIGRATION_LOCK = ".gateway-state-migration.lock";
@@ -37,6 +51,7 @@ const MIGRATION_INTENT_SELECTED_RECOVERY = "selected-retained-sandbox-recovery.j
 const MIGRATION_INTENT_REMAINING_REGISTRY = "remaining-registry.json";
 const MIGRATION_INTENT_VERSION = 1;
 const MIGRATION_LOCK_STALE_MS = 10_000;
+const MAX_MIGRATION_LOCK_BYTES = 4 * 1024;
 const STALE_MIGRATION_INTENT_PATTERN =
   /^\.gateway-state-migration\.(?:preparing|completed)\.[1-9][0-9]*\.[1-9][0-9]*$/;
 const MAX_MIGRATABLE_JSON_BYTES = 16 * 1024 * 1024;
@@ -682,52 +697,175 @@ function applyMigrationIntent(
   return result;
 }
 
-function existingLockIsStale(home: string, lock: string): boolean {
-  const stat = lstatNoFollow(home, lock);
-  if (!stat) return true;
-  if (!stat.isDirectory()) throw migrationError(`${lock} is not a directory`);
-
-  let ownerPid: number | null = null;
-  try {
-    const ownerFile = path.join(lock, "owner");
-    const ownerStat = lstatNoFollow(home, ownerFile);
-    if (ownerStat?.isFile()) {
-      const parsed = Number.parseInt(fs.readFileSync(ownerFile, "utf8").trim(), 10);
-      ownerPid = Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-    }
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
-  }
-  if (ownerPid !== null) return !processIsAlive(ownerPid);
-  return Date.now() - stat.mtimeMs > MIGRATION_LOCK_STALE_MS;
+interface MigrationLockHandle {
+  readonly file: OpenRegularFile;
+  readonly generation: LockFileGeneration;
+  readonly path: string;
 }
 
-function acquireDirectoryLock(home: string, lock: string): string {
+function lockFileGeneration(file: OpenRegularFile): LockFileGeneration {
+  const stat = file.stat();
+  return { dev: stat.dev, ino: stat.ino, reclaimable: stat.isFile() };
+}
+
+function observeMigrationLockFile(
+  lock: string,
+): { disposition: OnboardLockDisposition; generation: LockFileGeneration } | null {
+  let file: OpenRegularFile;
+  try {
+    file = openRegularFileNoFollow(lock);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const contents = file.readBytes(MAX_MIGRATION_LOCK_BYTES).toString("utf8");
+    const stat = file.stat();
+    return {
+      disposition: classifyOnboardLockContents(contents, stat.mtimeMs),
+      generation: { dev: stat.dev, ino: stat.ino, reclaimable: stat.isFile() },
+    };
+  } finally {
+    file.close();
+  }
+}
+
+function removeEmptyLegacyMigrationLockDirectory(lock: string): boolean {
+  try {
+    fs.rmdirSync(lock);
+    fsyncDirectory(path.dirname(lock));
+    return true;
+  } catch (error) {
+    if (
+      isErrnoException(error) &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return error.code === "ENOENT";
+    }
+    if (isErrnoException(error) && (error.code === "ENOTEMPTY" || error.code === "EEXIST")) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function reclaimLegacyMigrationLockDirectory(lock: string, stat: fs.Stats): boolean {
+  // Retirement: https://github.com/NVIDIA/NemoClaw/issues/10893. Remove this
+  // directory compatibility path once the minimum supported direct-upgrade
+  // source release includes #10845 and therefore publishes regular-file locks.
+  const ownerPath = path.join(lock, "owner");
+  let ownerPid: number | null = null;
+  let ownerGeneration: LockFileGeneration | null = null;
+  let ownerFile: OpenRegularFile | null = null;
+  try {
+    ownerFile = openRegularFileNoFollow(ownerPath);
+    const owner = ownerFile.readBytes(32).toString("utf8");
+    const match = /^([1-9][0-9]{0,15})\n?$/u.exec(owner);
+    const parsed = match ? Number(match[1]) : Number.NaN;
+    if (Number.isSafeInteger(parsed)) {
+      ownerPid = parsed;
+      ownerGeneration = lockFileGeneration(ownerFile);
+    }
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") return false;
+  } finally {
+    ownerFile?.close();
+  }
+
+  if (ownerPid !== null) {
+    if (processIsAlive(ownerPid) || ownerGeneration === null) return false;
+    if (!reclaimLockFileGenerationSync(ownerPath, ownerGeneration)) return false;
+    return removeEmptyLegacyMigrationLockDirectory(lock);
+  }
+  if (Date.now() - stat.mtimeMs <= MIGRATION_LOCK_STALE_MS) return false;
+  return removeEmptyLegacyMigrationLockDirectory(lock);
+}
+
+function releaseMigrationLock(lock: MigrationLockHandle): void {
+  lock.file.close();
+  if (!reclaimLockFileGenerationSync(lock.path, lock.generation)) {
+    throw migrationError(`migration lock ${lock.path} changed ownership before release`);
+  }
+  fsyncDirectory(path.dirname(lock.path));
+}
+
+function acquireMigrationLock(home: string, lock: string): MigrationLockHandle {
   const parent = path.dirname(lock);
   ensureRealDirectory(home, parent);
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    let file: OpenRegularFile;
     try {
-      fs.mkdirSync(lock, { mode: 0o700 });
-      try {
-        fs.writeFileSync(path.join(lock, "owner"), String(process.pid), { mode: 0o600 });
-        fsyncDirectory(lock);
-        fsyncDirectory(parent);
-        return lock;
-      } catch (error) {
-        fs.rmSync(lock, { recursive: true, force: true });
-        throw error;
-      }
+      file = openRegularFileNoFollow(lock, { create: true, mode: 0o600, writable: true });
     } catch (error) {
       if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
-      if (attempt === 0 && existingLockIsStale(home, lock)) {
-        fs.rmSync(lock, { recursive: true, force: true });
-        fsyncDirectory(parent);
-        continue;
+      const stat = lstatNoFollow(home, lock);
+      if (stat === null) continue;
+      if (attempt === 0) {
+        if (stat.isDirectory() && reclaimLegacyMigrationLockDirectory(lock, stat)) continue;
+        if (stat.isFile()) {
+          const observed = observeMigrationLockFile(lock);
+          if (
+            observed?.disposition.state === "stale" &&
+            reclaimLockFileGenerationSync(lock, observed.generation)
+          ) {
+            fsyncDirectory(parent);
+            continue;
+          }
+        }
       }
       throw migrationError(`another state operation owns ${lock}; retry after it completes`);
     }
+
+    let generation: LockFileGeneration | null = null;
+    try {
+      generation = lockFileGeneration(file);
+      file.replaceUtf8(
+        `${JSON.stringify(
+          createOnboardLockRecord("nemoclaw gateway-state migration", new Date().toISOString()),
+        )}\n`,
+        0o600,
+      );
+      fsyncDirectory(parent);
+      return { file, generation, path: lock };
+    } catch (error) {
+      file.close();
+      if (generation !== null) reclaimLockFileGenerationSync(lock, generation);
+      throw error;
+    }
   }
   throw migrationError(`could not acquire ${lock}`);
+}
+
+function acquireRegistryLock(home: string, lock: string): ProcessBoundLockHandle {
+  ensureRealDirectory(home, path.dirname(lock));
+  try {
+    return acquireProcessBoundLockAt(lock, { maxRetries: 2, wait: () => undefined });
+  } catch (error) {
+    if (error instanceof ProcessBoundLockContentionError) {
+      throw migrationError(`another state operation owns ${lock}; retry after it completes`);
+    }
+    throw error;
+  }
+}
+
+function releaseMigrationStateLocks(
+  migrationLock: MigrationLockHandle,
+  registryLocks: readonly ProcessBoundLockHandle[],
+): void {
+  let releaseError: unknown;
+  for (const registryLock of [...registryLocks].reverse()) {
+    try {
+      releaseProcessBoundLock(registryLock);
+    } catch (error) {
+      releaseError ??= error;
+    }
+  }
+  try {
+    releaseMigrationLock(migrationLock);
+  } catch (error) {
+    releaseError ??= error;
+  }
+  if (releaseError !== undefined) throw releaseError;
 }
 
 type ObservedOnboardLockDisposition =
@@ -878,23 +1016,15 @@ export function migrateLegacyPortState(
         `a recoverable migration for gateway port ${String(pendingBeforeLock.metadata.gatewayPort)} is pending; rerun a stateful command with NEMOCLAW_GATEWAY_PORT=${String(pendingBeforeLock.metadata.gatewayPort)} before using the default gateway`,
       );
     }
-    if (lstatNoFollow(home, migrationLock)) {
-      if (existingLockIsStale(home, migrationLock)) {
-        fs.rmSync(migrationLock, { recursive: true, force: true });
-        fsyncDirectory(sharedRoot);
-      } else {
-        throw migrationError(
-          "another gateway-state migration is in progress; retry after it completes",
-        );
-      }
-    }
-    if (staleIntentDirectoriesExist) {
-      const lock = acquireDirectoryLock(home, migrationLock);
+    if (lstatNoFollow(home, migrationLock) || staleIntentDirectoriesExist) {
+      const lock = acquireMigrationLock(home, migrationLock);
       try {
-        assertOnboardStateUnlocked(home, [sharedRoot]);
-        removeStaleMigrationIntentDirectories(home, sharedRoot);
+        if (staleIntentDirectoriesExist) {
+          assertOnboardStateUnlocked(home, [sharedRoot]);
+          removeStaleMigrationIntentDirectories(home, sharedRoot);
+        }
       } finally {
-        fs.rmSync(lock, { recursive: true, force: true });
+        releaseMigrationLock(lock);
       }
     }
     return result;
@@ -917,15 +1047,15 @@ export function migrateLegacyPortState(
     return result;
   }
 
-  const lock = acquireDirectoryLock(home, migrationLock);
-  const registryLocks: string[] = [];
+  const lock = acquireMigrationLock(home, migrationLock);
+  const registryLocks: ProcessBoundLockHandle[] = [];
   try {
     // Onboard writers recheck the migration lock after claiming onboard.lock.
     // Checking both roots while this lock is held closes the opposite side of
     // the handshake and serializes session/recovery state with partitioning.
     assertOnboardStateUnlocked(home, [sharedRoot, selectedRoot]);
     removeStaleMigrationIntentDirectories(home, sharedRoot);
-    registryLocks.push(acquireDirectoryLock(home, `${legacyRegistryFile}.lock`));
+    registryLocks.push(acquireRegistryLock(home, `${legacyRegistryFile}.lock`));
     const pendingIntent = readMigrationIntent(home, sharedRoot);
     if (pendingIntent) {
       if (pendingIntent.metadata.gatewayPort !== gatewayPort) {
@@ -933,7 +1063,7 @@ export function migrateLegacyPortState(
           `a recoverable migration for gateway port ${String(pendingIntent.metadata.gatewayPort)} is pending; rerun with NEMOCLAW_GATEWAY_PORT=${String(pendingIntent.metadata.gatewayPort)}`,
         );
       }
-      registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));
+      registryLocks.push(acquireRegistryLock(home, `${selectedRegistryFile}.lock`));
       return applyMigrationIntent(
         home,
         sharedRoot,
@@ -1007,7 +1137,7 @@ export function migrateLegacyPortState(
       preflightMovePath(home, legacyRecoveryFile, retainedSandboxRecoveryFile(selectedRoot));
     }
 
-    registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));
+    registryLocks.push(acquireRegistryLock(home, `${selectedRegistryFile}.lock`));
     const existingSelected = readGatewayRegistryFile(home, selectedRegistryFile);
     const selectedRegistry = mergeSelectedRegistry(
       currentLegacy,
@@ -1047,9 +1177,6 @@ export function migrateLegacyPortState(
       intent,
     );
   } finally {
-    for (const registryLock of registryLocks.reverse()) {
-      fs.rmSync(registryLock, { recursive: true, force: true });
-    }
-    fs.rmSync(lock, { recursive: true, force: true });
+    releaseMigrationStateLocks(lock, registryLocks);
   }
 }

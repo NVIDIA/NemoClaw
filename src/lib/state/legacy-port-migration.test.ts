@@ -77,6 +77,15 @@ function readJson(filePath: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
 }
 
+function readFileSnapshot(filePath: string): string {
+  const descriptor = fs.openSync(filePath, "r");
+  try {
+    return fs.readFileSync(descriptor, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function recordRecovery(
   filePath: string,
   sandboxName: string,
@@ -398,7 +407,9 @@ describe("legacy non-default gateway state migration", () => {
         } as const
       )[scenario]!;
       fs.mkdirSync(staleLock, { recursive: true });
-      fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER));
+      fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER), {
+        mode: 0o600,
+      });
 
       expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
         migratedSandboxNames: ["port-box"],
@@ -803,6 +814,34 @@ describe("legacy non-default gateway state migration", () => {
       /another state operation owns/,
     );
     expect(fs.existsSync(stale)).toBe(true);
+  });
+
+  it("preserves a replacement migration lock raced into stale generation reclaim", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const staleIntent = path.join(shared, ".gateway-state-migration.preparing.999999.6");
+    const lock = path.join(shared, ".gateway-state-migration.lock");
+    fs.mkdirSync(staleIntent, { recursive: true });
+    fs.writeFileSync(lock, onboardLockBody(DEPARTED_PID), { mode: 0o600 });
+
+    const originalRename = fs.renameSync.bind(fs) as typeof fs.renameSync;
+    const replaceBeforeClaim = (source: fs.PathLike, destination: fs.PathLike): void => {
+        originalRename(source, `${lock}.displaced`);
+        fs.writeFileSync(source, "replacement", { mode: 0o600 });
+        originalRename(source, destination);
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === lock && String(destination).startsWith(`${lock}.reclaim-`)
+        ? replaceBeforeClaim(source, destination)
+        : originalRename(source, destination),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
+      /another state operation owns/,
+    );
+    expect(readFileSnapshot(lock)).toBe("replacement");
+    expect(fs.existsSync(staleIntent)).toBe(true);
+    expect(fs.readdirSync(shared).filter((entry) => entry.includes(".reclaim-"))).toEqual([]);
   });
 
   it("does not modify the byte-compatible default gateway root", () => {
