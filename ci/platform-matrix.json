@@ -57,7 +57,7 @@
       "ci_tested": false,
       "_prd_note": "PRD tracks x86 and ARM (WOA) separately; treating as one entry until ARM is validated independently.",
       "prerequisites_notes": "Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart.",
-      "notes": "Requires WSL2 with Docker Desktop backend."
+      "notes": "Requires WSL2 with Docker Desktop backend. Qualifying Windows WSL N1x hosts can use the explicit Experimental managed llama.cpp Qwen 3.6 recipe after local-default Docker authority, N1x product identity, ARM64, 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks pass. Other Windows WSL hosts retain Windows-host or WSL-local Ollama. Dedicated N1x WSL CI and physical end-to-end validation are pending."
     },
     {
       "name": "DGX OS (Station)",
@@ -284,9 +284,9 @@
       "notes": "Onboard assumes network reachability for package fetches, container pulls, and provider validation. See open issues #4872 and #2218 (production-deployment epic covering air-gapped support, China network guidance, multi-host topology)."
     },
     {
-      "name": "Windows-on-ARM GPU passthrough",
+      "name": "Other Windows-on-ARM GPU paths",
       "status": "unsupported",
-      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. On Docker Desktop-backed WSL ARM64, NemoClaw can admit exactly one reported NVIDIA GPU only after a bounded Docker CUDA workload proves GPU execution; the proof can apply to a placeholder or plausible non-placeholder GPU name. This technical detection check does not establish Windows-on-ARM GPU passthrough support or platform qualification. The surface remains Unsupported and has no dedicated CI validation. Other WSL runtimes, multiple reported GPU rows, an implausible GPU name, or a failed proof remain rejected. See closed issue #4565."
+      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. The qualifying Windows WSL N1x Experimental managed llama.cpp route is the only GPU exception and remains pending dedicated CI and physical end-to-end validation. Other Windows-on-ARM GPU routes remain Unsupported. Other WSL runtimes, multiple reported GPU rows, an implausible GPU name, or a failed bounded Docker CUDA proof remain rejected. See closed issue #4565."
     },
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",
