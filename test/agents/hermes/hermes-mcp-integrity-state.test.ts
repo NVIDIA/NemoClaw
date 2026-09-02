@@ -7,7 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { bashPrintfQ, extractShellFunction } from "../../support/hermes-shell-harness";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { extractShellFunction } from "../../support/hermes-shell-harness";
 
 const GUARD = path.join(
   import.meta.dirname,
@@ -64,11 +65,11 @@ function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatu
       'trace() { printf "%s\\n" "$*"; }',
       'id() { [ "${1:-}" = "-u" ] && printf "0\\n" || command id "$@"; }',
       extractShellFunction(source, "prepare_hermes_dashboard_home"),
-      `HERMES_DIR=${bashPrintfQ(hermesHome)}`,
-      `HERMES_DASHBOARD_HOME=${bashPrintfQ(dashboardHome)}`,
-      `_HERMES_PYTHON=${bashPrintfQ(fakePython)}`,
-      `_HERMES_DASHBOARD_CONFIG_SEEDER=${bashPrintfQ(path.join(tempDir, "seed-dashboard-config.py"))}`,
-      `_HERMES_MANAGED_POLICY=${bashPrintfQ(path.join(tempDir, "managed-policy.json"))}`,
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `HERMES_DASHBOARD_HOME=${shellQuote(dashboardHome)}`,
+      `_HERMES_PYTHON=${shellQuote(fakePython)}`,
+      `_HERMES_DASHBOARD_CONFIG_SEEDER=${shellQuote(path.join(tempDir, "seed-dashboard-config.py"))}`,
+      `_HERMES_MANAGED_POLICY=${shellQuote(path.join(tempDir, "managed-policy.json"))}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
       'launch_hermes_gateway() { GATEWAY_PID=4242; trace "launch:$GATEWAY_PID"; }',
       "start_gateway_log_stream() { trace log-stream; }",
@@ -485,11 +486,11 @@ print(json.dumps({
           [
             "set -euo pipefail",
             extractShellFunction(source, "inspect_hermes_mcp_integrity"),
-            `_HERMES_PYTHON=${bashPrintfQ(helper)}`,
+            `_HERMES_PYTHON=${shellQuote(helper)}`,
             "_HERMES_RUNTIME_CONFIG_GUARD=/test/runtime-config-guard.py",
             "HERMES_DIR=/test/.hermes",
             "HERMES_HASH_FILE=/test/hermes.config-hash",
-            `NEMOCLAW_TEST_GUARD_PARENT_FILE=${bashPrintfQ(parentFile)}`,
+            `NEMOCLAW_TEST_GUARD_PARENT_FILE=${shellQuote(parentFile)}`,
             "export NEMOCLAW_TEST_GUARD_PARENT_FILE",
             "HERMES_MCP_RECONCILE_PENDING=9",
             "caller_pid=$$",
@@ -536,7 +537,7 @@ print(json.dumps({
           [
             "set -uo pipefail",
             extractShellFunction(source, "inspect_hermes_mcp_integrity"),
-            `_HERMES_PYTHON=${bashPrintfQ(helper)}`,
+            `_HERMES_PYTHON=${shellQuote(helper)}`,
             "_HERMES_RUNTIME_CONFIG_GUARD=/test/runtime-config-guard.py",
             "HERMES_DIR=/test/.hermes",
             "HERMES_HASH_FILE=/test/hermes.config-hash",

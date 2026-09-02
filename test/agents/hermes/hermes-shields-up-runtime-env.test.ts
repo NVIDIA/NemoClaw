@@ -86,12 +86,12 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
     expect(run.result.stderr).toContain("embedded kanban dispatcher suspended");
   });
 
-  it("leaves the Hermes kanban dispatcher untouched when shields are down", () => {
-    const run = runShieldsUpRuntimeEnv({});
+  it("preserves a caller-supplied Hermes kanban dispatcher value when shields are down", () => {
+    const run = runShieldsUpRuntimeEnv({ presetValue: "1" });
 
     expect(run.result.status).toBe(0);
-    expect(run.kanbanValue).toBe("<unset>");
-    expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY");
+    expect(run.kanbanValue).toBe("1");
+    expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
   });
 
   it("preserves a caller-supplied HERMES_KANBAN_DISPATCH_IN_GATEWAY value under shields-up", () => {

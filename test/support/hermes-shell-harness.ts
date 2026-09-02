@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../src/lib/core/shell-quote";
 
+export { extractShellFunctionFromSource as extractShellFunction } from "./shell-function-extractor";
+
 export const LOCKED_HERMES_CONFIG_STAT_MOCK = [
   "stat() {",
   '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
@@ -24,35 +26,6 @@ export const LOCKED_HERMES_CONFIG_STAT_MOCK = [
   '  command stat "$@"',
   "}",
 ].join("\n");
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-export function bashPrintfQ(value: string): string {
-  const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
-    encoding: "utf-8",
-    timeout: 5000,
-    env: process.env,
-  });
-  if (result.status !== 0) throw new Error(`bash printf %q failed: ${result.stderr}`);
-  return result.stdout;
-}
-
-export function extractShellFunction(source: string, name: string): string {
-  const match = source.match(new RegExp(`${escapeRegExp(name)}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) throw new Error(`Expected shell function ${name}`);
-  return `${name}() {${match[1]}\n}`;
-}
-
-export function lstatIfPresent(entry: string): fs.Stats | null {
-  try {
-    return fs.lstatSync(entry);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-}
 
 export function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
   const pidDir = path.join(procRoot, String(pid));

@@ -9,10 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import {
-  bashPrintfQ,
   extractShellFunction as extractShellFunctionFromSource,
   LOCKED_HERMES_CONFIG_STAT_MOCK,
-  lstatIfPresent,
   runHermesSandboxInitPreludeWithFakePath,
   writeFakeProcCmdline,
 } from "../../support/hermes-shell-harness";
@@ -661,7 +659,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
         ? { ...process.env, PATH: `${historyRootSwapFixture.fakeBin}:${process.env.PATH ?? ""}` }
         : process.env,
     });
-    const legacyPidStat = lstatIfPresent(legacyPid);
+    const legacyPidStat = fs.lstatSync(legacyPid, { throwIfNoEntry: false });
     const modeEntry = (entry: string, mask: number): [string, string] => {
       const entryPath = path.join(hermesHome, entry);
       const entryMode = fs.existsSync(entryPath)
@@ -679,7 +677,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
         modeEntry(entry, 0o7777),
       ),
     );
-    const historyStat = lstatIfPresent(historyPath);
+    const historyStat = fs.lstatSync(historyPath, { throwIfNoEntry: false });
     let historyMode = "missing";
     let historyKind: "missing" | "regular" | "symlink" | "directory" | "other" = "missing";
     let historyContent = "";
@@ -717,7 +715,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
         : "missing",
       runtimePidExists: fs.existsSync(runtimePid),
       runtimeLockExists: fs.existsSync(runtimeLock),
-      legacyPidExists: legacyPidStat !== null,
+      legacyPidExists: legacyPidStat !== undefined,
       legacyPidIsSymlink: legacyPidStat?.isSymbolicLink() ?? false,
       historyMode,
       historyKind,
@@ -789,6 +787,15 @@ function runRuntimeShellEnvBootstrap() {
       timeout: 5000,
       env: { ...process.env, PATH: "/usr/bin:/bin" },
     });
+    const sourcedEnvResult = spawnSync(
+      "bash",
+      ["-c", `. ${shellQuote(envFile)}; printf '%s' "$SSL_CERT_FILE"`],
+      {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: { ...process.env, PATH: "/usr/bin:/bin" },
+      },
+    );
 
     return {
       src,
@@ -798,6 +805,7 @@ function runRuntimeShellEnvBootstrap() {
       guardResult,
       hermesHome,
       caFile,
+      sourcedEnvResult,
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -834,7 +842,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
 
   it("puts the Hermes configure guard in the sourced proxy env file", () => {
     const run = runRuntimeShellEnvBootstrap();
-    const escapedCaFile = bashPrintfQ(run.caFile);
 
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
@@ -845,7 +852,8 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
     expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
-    expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
+    expect(run.sourcedEnvResult.status, run.sourcedEnvResult.stderr).toBe(0);
+    expect(run.sourcedEnvResult.stdout).toBe(run.caFile);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
     expect(run.envFileContent).toContain("hermes() {");
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard end");
