@@ -162,6 +162,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     open();
 
     expect(mocks.resolveGatewayTeardownAuthority).toHaveBeenCalledWith({
+      sandboxName: "alpha",
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
     });

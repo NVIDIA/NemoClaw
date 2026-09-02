@@ -7,12 +7,14 @@ import path from "node:path";
 
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 
+import { resolveSandboxPrebuildEnabled } from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import { ArtifactSink, createArtifactSink } from "../fixtures/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import { test as e2eTest } from "../fixtures/e2e-test.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
+  resolveLiveE2eWorkloadSourceEnv,
   ShellProbe,
   type TrustedShellCommand,
   trustedShellCommand,
@@ -56,6 +58,46 @@ async function expectProcessToExit(pid: number, timeoutMs = 2_000): Promise<void
 }
 
 describe("E2E fixture primitives", () => {
+  it("forces the trusted local BuildKit handoff for candidate Dockerfiles under Vitest", () => {
+    const environment = resolveLiveE2eWorkloadSourceEnv({
+      E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
+      E2E_WORKLOAD_SOURCE: "local-dockerfile",
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_SANDBOX_PREBUILD: "0",
+      VITEST: "true",
+    });
+
+    expect(environment.NEMOCLAW_FROM_DOCKERFILE).toBe(path.resolve("Dockerfile"));
+    expect(environment.NEMOCLAW_SANDBOX_PREBUILD).toBe("1");
+    expect(resolveSandboxPrebuildEnabled(environment, true)).toBe(true);
+  });
+
+  it("forces local BuildKit when the candidate Dockerfile is already selected", () => {
+    const environment = resolveLiveE2eWorkloadSourceEnv({
+      E2E_TARGET_ID: "ubuntu-repo-cloud-hermes",
+      E2E_WORKLOAD_SOURCE: "local-dockerfile",
+      NEMOCLAW_FROM_DOCKERFILE: "/workspace/agents/hermes/Dockerfile",
+      NEMOCLAW_SANDBOX_PREBUILD: "false",
+      VITEST: "true",
+    });
+
+    expect(environment.NEMOCLAW_FROM_DOCKERFILE).toBe("/workspace/agents/hermes/Dockerfile");
+    expect(environment.NEMOCLAW_SANDBOX_PREBUILD).toBe("1");
+    expect(resolveSandboxPrebuildEnabled(environment, true)).toBe(true);
+  });
+
+  it("leaves managed-image E2E prebuild selection unchanged", () => {
+    const input = {
+      E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
+      E2E_WORKLOAD_SOURCE: "managed-image",
+      NEMOCLAW_SANDBOX_PREBUILD: "0",
+      VITEST: "true",
+    };
+
+    expect(resolveLiveE2eWorkloadSourceEnv(input)).toBe(input);
+    expect(resolveSandboxPrebuildEnabled(input, true)).toBe(false);
+  });
+
   it("artifact sink writes under its root and rejects traversal", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-artifacts-"));
     try {

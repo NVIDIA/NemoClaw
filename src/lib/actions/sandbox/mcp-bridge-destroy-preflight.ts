@@ -31,6 +31,8 @@ export interface McpDestroyPreparation {
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
+  /** True when `--force` continued without scrubbing the retained-volume adapter entry. */
+  adapterScrubSkipped?: true;
 }
 
 export function cloneMcpBridgeEntry(entry: McpBridgeEntry): McpBridgeEntry {

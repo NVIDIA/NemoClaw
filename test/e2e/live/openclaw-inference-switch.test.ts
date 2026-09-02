@@ -867,11 +867,13 @@ async function runOpenClawInferenceSetWithRetry(
   });
 }
 
-test("openclaw-inference-switch: switches route and preserves live OpenClaw behavior", {
+test(
+  "openclaw-inference-switch: switches route and preserves live OpenClaw behavior",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and choose the baseline provider",
+      "confirm the selected runtime and choose the baseline provider",
       "clear existing inference-switch state",
       "install and onboard baseline OpenClaw",
       "prepare the switched provider and endpoint",
@@ -881,7 +883,8 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
       "apply sandbox retention and record the result",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   await artifacts.target.declare({
     id: "openclaw-inference-switch",
     boundary: "install-sh-openclaw-inference-set-and-live-agent-turn",
@@ -890,7 +893,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     switchModel: SWITCH_MODEL,
     switchInferenceApi: SWITCH_INFERENCE_API,
     contracts: [
-      "Docker is running and an authenticated compatible baseline endpoint is staged",
+      "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
       "install.sh --non-interactive onboards an OpenClaw sandbox",
       "when selected, the mock baseline route completes one explicit authenticated fixture request",
       "nemoclaw inference set switches the running sandbox route",
@@ -908,19 +911,10 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-openclaw-inference-switch",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-openclaw-inference-switch",
+      scenarioLabel: "OpenClaw inference switch",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for OpenClaw inference switch E2E: ${resultText(docker)}`,
-      );
-    }
-    skip("Docker is required for OpenClaw inference switch E2E");
-  }
 
   const useMockBaseline =
     SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
@@ -950,9 +944,12 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
   let mockProvider: MockAnthropicProvider | undefined;
-  cleanup.trackDisposable(`remove OpenClaw inference switch test home for ${SANDBOX_NAME}`, () => {
+    cleanup.trackDisposable(
+      `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
+      () => {
     fs.rmSync(home, { recursive: true, force: true });
-  });
+      },
+    );
   cleanup.trackDisposable("close switched Anthropic provider", async () => {
     await mockProvider?.close();
   });
@@ -1102,7 +1099,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     id: "openclaw-inference-switch",
     status: "passed",
     assertions: {
-      dockerRunning: docker.exitCode === 0,
+        runtimeProviderAvailable: true,
       installCompleted: install.exitCode === 0,
       inferenceSetCompleted: switchResult.exitCode === 0,
       gatewayRestartExpected,
@@ -1115,4 +1112,5 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
       openClawAgentPong: true,
     },
   });
-});
+  },
+);

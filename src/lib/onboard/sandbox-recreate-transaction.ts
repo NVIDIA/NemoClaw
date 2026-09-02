@@ -1188,18 +1188,28 @@ export function beginSandboxRecreateDelete(input: BeginSandboxRecreateDeleteInpu
   readonly sourcePresence: SandboxRecreateSourcePresence;
   readonly transaction: CheckpointSandboxRecreateTransaction;
 } {
-  const expectedFingerprint = fingerprintSandboxRecreateValue(input.expectedTransaction);
   let observation: SandboxRecreateObservation | undefined;
   let nextTransaction: CheckpointSandboxRecreateTransaction | null = null;
   const result = input.sessionStore.compareAndSwapSession(
     (current) => {
       const transaction = activeTransaction(current);
-      if (
-        current.sessionId !== input.openingSessionId ||
-        !transaction ||
-        fingerprintSandboxRecreateValue(transaction) !== expectedFingerprint ||
-        transaction.targetIntentFingerprint !== input.targetIntentFingerprint
-      ) {
+      const firstDeleteEdge = input.expectedTransaction.phase !== "deleting";
+      const ownsDeleteEdge =
+        transaction?.id === input.expectedTransaction.id &&
+        transaction.sandboxName === input.expectedTransaction.sandboxName &&
+        transaction.gatewayName === input.expectedTransaction.gatewayName &&
+        transaction.gatewayPort === input.expectedTransaction.gatewayPort &&
+        transaction.targetGeneration === input.expectedTransaction.targetGeneration &&
+        transaction.targetIntentFingerprint === input.targetIntentFingerprint &&
+        (firstDeleteEdge
+          ? fingerprintSandboxRecreateValue(transaction) ===
+            fingerprintSandboxRecreateValue(input.expectedTransaction)
+          : transaction.phase === "deleting" &&
+            transaction.sourceRegistryFingerprint ===
+              input.expectedTransaction.sourceRegistryFingerprint &&
+            transaction.sourceLiveIdentityFingerprint ===
+              input.expectedTransaction.sourceLiveIdentityFingerprint);
+      if (current.sessionId !== input.openingSessionId || !transaction || !ownsDeleteEdge) {
         return false;
       }
       input.revalidateGatewayAuthority?.();
@@ -1242,11 +1252,11 @@ export function beginSandboxRecreateDelete(input: BeginSandboxRecreateDeleteInpu
       return true;
     },
     (current) => {
-      const phase = activeTransaction(current)?.phase;
+      const transaction = activeTransaction(current) as CheckpointSandboxRecreateTransaction;
       nextTransaction =
-        phase && sandboxRecreatePhaseReached(phase, "deleted")
-          ? (activeTransaction(current) as CheckpointSandboxRecreateTransaction)
-          : advanceSandboxRecreateTransaction(current, input.expectedTransaction.id, "deleting");
+        transaction.phase === "deleting"
+          ? transaction
+          : advanceSandboxRecreateTransaction(current, transaction.id, "deleting");
       return current;
     },
     `nemoclaw begin deleting sandbox '${input.expectedTransaction.sandboxName}'`,

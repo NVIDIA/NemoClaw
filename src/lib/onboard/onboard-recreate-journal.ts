@@ -72,16 +72,33 @@ export type OwnedSandboxRecreateRuntime = SandboxRecreateRuntime & {
   abandon(): void;
 };
 
+/** Capture gateway lifecycle authority and return its delete-edge revalidator. */
+export function createOnboardRecreateGatewayAuthorityRevalidator(target: SandboxRecreateTarget): {
+  authority: ReturnType<typeof resolveGatewayTeardownAuthority>;
+  revalidate: () => void;
+} {
+  const authority = resolveGatewayTeardownAuthority(target);
+  return {
+    authority,
+    revalidate: () => {
+      const currentAuthority = resolveGatewayTeardownAuthority(target);
+      if (!sameGatewayOwner(authority, currentAuthority)) {
+        throw new Error(
+          `Cannot delete sandbox '${target.sandboxName}': its gateway lifecycle authority changed.`,
+        );
+      }
+    },
+  };
+}
+
 export function openOnboardRecreateJournal(
   input: OpenOnboardRecreateJournalInput,
 ): OwnedSandboxRecreateRuntime {
   const { target, agentName, note } = input;
   const targetIntentFingerprint = fingerprintOnboardRecreateTargetIntent(input.intent);
   const observe = input.observe ?? observeSandboxOnGateway;
-  const authority = resolveGatewayTeardownAuthority({
-    gatewayName: target.gatewayName,
-    gatewayPort: target.gatewayPort,
-  });
+  const gatewayAuthority = createOnboardRecreateGatewayAuthorityRevalidator(target);
+  const { authority } = gatewayAuthority;
   const owned = ownSandboxRecreateTransaction({
     sessionStore: {
       loadSession: onboardSession.loadSession,
@@ -130,17 +147,7 @@ export function openOnboardRecreateJournal(
     (sandboxName, gatewayName) => observe({ ...target, sandboxName, gatewayName }),
     note,
     () => registry.getSandbox(target.sandboxName),
-    () => {
-      const currentAuthority = resolveGatewayTeardownAuthority({
-        gatewayName: target.gatewayName,
-        gatewayPort: target.gatewayPort,
-      });
-      if (!sameGatewayOwner(authority, currentAuthority)) {
-        throw new Error(
-          `Cannot delete sandbox '${target.sandboxName}': its gateway lifecycle authority changed.`,
-        );
-      }
-    },
+    gatewayAuthority.revalidate,
   );
 
   return {

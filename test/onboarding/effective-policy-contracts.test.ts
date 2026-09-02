@@ -498,12 +498,16 @@ describe("effective built-in policy contracts", () => {
     expect(telegram).not.toHaveProperty("tls");
 
     const wechat = requireNetworkPolicy(effective, "wechat_bridge");
+    expect(binaries(wechat)).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
     for (const host of ["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]) {
       const endpoint = requireEndpoint(wechat, host);
       expect(endpoint).toMatchObject({
         port: 443,
         protocol: "rest",
         enforcement: "enforce",
+      });
+      expect(endpoint.credential_binding).toEqual({
+        provider: "effective-policy-wechat-bridge",
       });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     }
@@ -522,15 +526,22 @@ describe("effective built-in policy contracts", () => {
   });
 
   it("composes Hermes-specific messaging mutation and runtime identity rules", () => {
-    const effective = composePresets(["discord", "slack", "wechat"], "hermes");
+    const effective = composePresets(["telegram", "discord", "slack", "wechat", "teams"], "hermes");
+    const telegram = requireNetworkPolicy(effective, "telegram");
     const discord = requireNetworkPolicy(effective, "discord");
     const slack = requireNetworkPolicy(effective, "slack");
     const wechat = requireNetworkPolicy(effective, "wechat_bridge");
+    const teams = requireNetworkPolicy(effective, "teams");
     expectDistinctSlackCredentialSelectors(slack);
 
-    for (const policy of [discord, slack, wechat]) {
+    for (const policy of [telegram, discord, slack, wechat, teams]) {
       expect(binaries(policy)).toEqual(
-        expect.arrayContaining(["/usr/bin/python3*", "/opt/hermes/.venv/bin/python"]),
+        expect.arrayContaining([
+          "/usr/bin/python3*",
+          "/usr/bin/python3.13",
+          "/opt/hermes/.venv/bin/python3",
+          "/opt/hermes/.venv/bin/python",
+        ]),
       );
     }
     for (const host of ["gateway.discord.gg", "*.discord.gg"]) {
