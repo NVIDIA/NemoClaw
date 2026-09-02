@@ -103,7 +103,15 @@ test(
     timeout: LIVE_TIMEOUT_MS,
     meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
   },
-  async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     await artifacts.target.declare({
       id: "issue-4462-scope-upgrade-approval",
@@ -119,15 +127,10 @@ test(
       ],
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "phase-0-docker-info",
-      env: env(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-0-runtime-info",
+      scenarioLabel: "scope-upgrade approval",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-      skip(`Docker is required: ${resultText(docker)}`);
-    }
 
     cleanupRegistry.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy",

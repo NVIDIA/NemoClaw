@@ -61,6 +61,9 @@ module._verify_dir = verify_dir_with_swap
 result = module.run_guard(
     action, config_dir, identity, module.parse_agent_state_lock_plan(plan_json),
     mutable_top_level_files=tuple(sys.argv[5:]),
+    mutable_service_uids=(os.getuid(),)
+    if os.environ.get("NEMOCLAW_TEST_MUTABLE_SERVICE_OWNER") == "1"
+    else (),
 )
 for issue in result.issues:
     print(json.dumps(issue.as_json()))
@@ -134,7 +137,7 @@ describe("read-only recursive mutable posture observation", () => {
       [configPath],
     );
 
-    expect(observed.status).toBe(0);
+    expect(observed.status, JSON.stringify(observed.lines)).toBe(0);
     expect(observed.lines).toContainEqual({
       type: "test-observation",
       inodeFlagMutationCalls: 0,
@@ -196,6 +199,84 @@ describe("read-only recursive mutable posture observation", () => {
       expect(fs.existsSync(path.join(root, ".openclaw-config-mutation.lock"))).toBe(false);
     },
   );
+
+  it("accepts Hermes service-owned mutable modes without changing them", () => {
+    const { root, configDir } = fixture();
+    const skillsDir = path.join(configDir, "skills");
+    const skillDir = path.join(skillsDir, "bundled-skill");
+    const skillFile = path.join(skillDir, "SKILL.md");
+    const pairingDir = path.join(configDir, "pairing");
+    const pairingFile = path.join(pairingDir, "state.json");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.mkdirSync(pairingDir);
+    fs.writeFileSync(skillFile, "skill\n", { mode: 0o644 });
+    fs.writeFileSync(pairingFile, "pairing\n", { mode: 0o600 });
+    fs.chmodSync(root, 0o755);
+    fs.chmodSync(configDir, 0o700);
+    fs.chmodSync(skillsDir, 0o775);
+    fs.chmodSync(skillDir, 0o755);
+    fs.chmodSync(pairingDir, 0o700);
+    const before = [skillsDir, skillDir, skillFile, pairingDir, pairingFile].map((entry) =>
+      fs.lstatSync(entry),
+    );
+
+    const observed = runGuard("verify-mutable", configDir, {
+      NEMOCLAW_TEST_MUTABLE_SERVICE_OWNER: "1",
+    });
+
+    expect(observed.status, JSON.stringify(observed.lines)).toBe(0);
+    expect(observed.lines.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "result",
+        action: "verify-mutable",
+        status: "ok",
+        issueCount: 0,
+      }),
+    );
+    expect(fs.lstatSync(skillsDir)).toMatchObject({ ino: before[0]?.ino, mode: before[0]?.mode });
+    expect(fs.lstatSync(skillDir)).toMatchObject({ ino: before[1]?.ino, mode: before[1]?.mode });
+    expect(fs.lstatSync(skillFile)).toMatchObject({ ino: before[2]?.ino, mode: before[2]?.mode });
+    expect(fs.lstatSync(pairingDir)).toMatchObject({ ino: before[3]?.ino, mode: before[3]?.mode });
+    expect(fs.lstatSync(pairingFile)).toMatchObject({ ino: before[4]?.ino, mode: before[4]?.mode });
+  });
+
+  it("rejects world-writable Hermes service state without changing it", () => {
+    const { configDir } = fixture();
+    const skillsDir = path.join(configDir, "skills");
+    const skillFile = path.join(skillsDir, "state.json");
+    fs.mkdirSync(skillsDir);
+    fs.writeFileSync(skillFile, "state\n", { mode: 0o666 });
+    fs.chmodSync(skillsDir, 0o777);
+    fs.chmodSync(skillFile, 0o666);
+    const dirBefore = fs.lstatSync(skillsDir);
+    const fileBefore = fs.lstatSync(skillFile);
+
+    const observed = runGuard("verify-mutable", configDir, {
+      NEMOCLAW_TEST_MUTABLE_SERVICE_OWNER: "1",
+    });
+
+    expect(observed.status).toBe(1);
+    expect(observed.lines).toEqual(
+      expect.arrayContaining(
+        [skillsDir, skillFile].map((entry) =>
+          expect.objectContaining({
+            type: "issue",
+            code: "verification-mode-mismatch",
+            path: entry,
+          }),
+        ),
+      ),
+    );
+    expect(fs.lstatSync(skillsDir)).toMatchObject({
+      ino: dirBefore.ino,
+      mode: dirBefore.mode,
+    });
+    expect(observeFixtureFile(skillFile)).toMatchObject({
+      ino: fileBefore.ino,
+      mode: fileBefore.mode,
+      content: "state\n",
+    });
+  });
 
   it("reports nested skills and pairing drift without changing either entry (#9485)", () => {
     const { root, configDir } = fixture();

@@ -1,16 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
-import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import { retryUntilAsync } from "../../core/retry";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
-import {
-  findLabeledSandboxContainers,
-  OPENSHELL_MANAGED_BY_LABEL,
-  OPENSHELL_MANAGED_BY_VALUE,
-  OPENSHELL_SANDBOX_NAME_LABEL,
-} from "../../onboard/docker-driver-sandbox-recovery";
+import type { RuntimeProviderCommandCapture } from "../../onboard/runtime-provider/contract";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as snapshotBackup from "./snapshot/backup-authority";
@@ -25,18 +19,94 @@ function readSandboxDriver(name: string): string | null | undefined {
   }
 }
 
-const DOCKER_ABSENCE_PROBE_TIMEOUT_MS = 5_000;
+interface SandboxLifecycleEngine {
+  readonly runtimeProviderId: string;
+  readonly mutationTimeoutMs: number;
+  capture(args: readonly string[], timeoutMs?: number): RuntimeProviderCommandCapture;
+}
+
+function resolveSandboxLifecycleEngine(
+  driverName: string | null | undefined,
+): SandboxLifecycleEngine | null {
+  const normalized = driverName?.trim().toLowerCase();
+  if (!normalized) return null;
+  const provider = resolveRegisteredRuntimeProvider(normalized);
+  if (
+    !provider ||
+    provider.identity.id !== normalized ||
+    provider.containerEngine.supported !== true
+  ) {
+    return null;
+  }
+  const containerEngine = provider.containerEngine;
+  if (!containerEngine.identities.some((identity) => identity.operation === "sandbox-lifecycle")) {
+    return null;
+  }
+  return {
+    runtimeProviderId: provider.identity.id,
+    mutationTimeoutMs:
+      provider.lifecycle.supported === true && provider.lifecycle.containerMutationTimeoutMs
+        ? provider.lifecycle.containerMutationTimeoutMs
+        : CONTAINER_ENGINE_MUTATION_TIMEOUT_MS,
+    capture: (args, timeoutMs) => containerEngine.capture("sandbox-lifecycle", args, timeoutMs),
+  };
+}
+
+const CONTAINER_ENGINE_PROBE_TIMEOUT_MS = 5_000;
+const CONTAINER_ENGINE_MUTATION_TIMEOUT_MS = 30_000;
+const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
+const OPENSHELL_MANAGED_BY_VALUE = "openshell";
+const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+
+function captureSucceeded(result: RuntimeProviderCommandCapture): boolean {
+  return result.status === 0 && result.error === undefined;
+}
+
+function listLabeledContainerNames(
+  engine: SandboxLifecycleEngine,
+  sandboxName: string,
+): string[] | null {
+  const result = engine.capture(
+    [
+      "ps",
+      "-a",
+      "--filter",
+      `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+      "--filter",
+      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+      "--format",
+      "{{.Names}}",
+    ],
+    CONTAINER_ENGINE_PROBE_TIMEOUT_MS,
+  );
+  if (!captureSucceeded(result)) return null;
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function inspectContainerStatus(
+  engine: SandboxLifecycleEngine,
+  containerName: string,
+): string | null {
+  const result = engine.capture(
+    ["inspect", "--format", "{{.State.Status}}", containerName],
+    CONTAINER_ENGINE_PROBE_TIMEOUT_MS,
+  );
+  return captureSucceeded(result) ? result.stdout.trim().toLowerCase() : null;
+}
 
 /**
- * Backup support for registered docker-driver sandboxes whose container is
+ * Backup support for registered container-backed sandboxes whose container is
  * stopped. `backup-all` skips sandboxes the gateway does not report Ready,
  * which under installer-strict mode (#6114) fails the whole run — but a
  * stopped container's state is backupable: the backup transport is SSH+tar
  * through the container's PID 1 and does not need the agent gateway, so
- * `docker start` alone is enough to capture it (#6500). These helpers start
- * such a container for the duration of the backup and return it to its
- * stopped state afterwards, so the strict gate can pass without weakening
- * what it protects.
+ * starting the provider-owned container is enough to capture it (#6500).
+ * These helpers start such a container for the duration of the backup and
+ * return it to its stopped state afterwards, so the strict gate can pass
+ * without weakening what it protects.
  *
  * Only containers whose `.State.Status` is `exited` or `created` qualify.
  * A running-but-not-Ready container (crash loop, gateway drift, paused) is
@@ -46,27 +116,33 @@ const DOCKER_ABSENCE_PROBE_TIMEOUT_MS = 5_000;
 
 export interface StartedForBackup {
   containerName: string;
+  runtimeProviderId: string;
 }
 
 interface StartDeps {
   getSandboxDriver: (name: string) => string | null | undefined;
   listSandboxNames: () => string[];
-  listLabeledContainerNames: (sandboxName: string) => string[];
-  dockerInspectStatus: (containerName: string) => string;
-  dockerStart: (containerName: string) => string;
+  resolveLifecycleEngine: (driverName: string | null | undefined) => SandboxLifecycleEngine | null;
+  listLabeledContainerNames: (
+    engine: SandboxLifecycleEngine,
+    sandboxName: string,
+  ) => string[] | null;
+  inspectStatus: (engine: SandboxLifecycleEngine, containerName: string) => string | null;
+  start: (engine: SandboxLifecycleEngine, containerName: string) => boolean;
 }
 
 const defaultStartDeps: StartDeps = {
   getSandboxDriver: readSandboxDriver,
   listSandboxNames: () =>
-    registry.listSandboxes().sandboxes.filter(registry.isPublishedSandboxRegistration).map((entry) => entry.name),
-  listLabeledContainerNames: (sandboxName) =>
-    findLabeledSandboxContainers(sandboxName).map((container) => container.name),
-  dockerInspectStatus: (containerName) =>
-    dockerContainerInspectFormat("{{.State.Status}}", containerName, { ignoreError: true }),
-  // `docker start` echoes the container name on success and prints nothing to
-  // stdout on failure, so a non-empty capture doubles as the success signal.
-  dockerStart: (containerName) => dockerCapture(["start", containerName], { ignoreError: true }),
+    registry
+      .listSandboxes()
+      .sandboxes.filter(registry.isPublishedSandboxRegistration)
+      .map((entry) => entry.name),
+  resolveLifecycleEngine: resolveSandboxLifecycleEngine,
+  listLabeledContainerNames,
+  inspectStatus: inspectContainerStatus,
+  start: (engine, containerName) =>
+    captureSucceeded(engine.capture(["start", containerName], engine.mutationTimeoutMs)),
 };
 
 export function startStoppedSandboxContainerForBackup(
@@ -74,12 +150,13 @@ export function startStoppedSandboxContainerForBackup(
   depsOverride: Partial<StartDeps> = {},
 ): StartedForBackup | null {
   const deps: StartDeps = { ...defaultStartDeps, ...depsOverride };
-  if (deps.getSandboxDriver(sandboxName) !== "docker") return null;
-  const labeledContainerNames = deps.listLabeledContainerNames(sandboxName);
+  const engine = deps.resolveLifecycleEngine(deps.getSandboxDriver(sandboxName));
+  if (!engine) return null;
+  const labeledContainerNames = deps.listLabeledContainerNames(engine, sandboxName);
   // Lifecycle mutation must fail closed on missing or ambiguous ownership.
   // Name matching alone is insufficient because starting a container executes
   // its entrypoint; label discovery establishes the OpenShell owner first.
-  if (labeledContainerNames.length !== 1) return null;
+  if (labeledContainerNames === null || labeledContainerNames.length !== 1) return null;
   const containerName = resolveSandboxContainerOwner(
     labeledContainerNames[0] ?? "",
     sandboxName,
@@ -89,92 +166,72 @@ export function startStoppedSandboxContainerForBackup(
   // GPU recovery siblings must be renamed through the dedicated recovery flow
   // before they are startable as the sandbox's active container.
   if (/-nemoclaw-gpu-backup-\d+$/.test(containerName)) return null;
-  const status = deps.dockerInspectStatus(containerName).trim().toLowerCase();
+  const status = deps.inspectStatus(engine, containerName);
   if (status !== "exited" && status !== "created") return null;
-  if (deps.dockerStart(containerName).trim() === "") return null;
-  return { containerName };
+  if (!deps.start(engine, containerName)) return null;
+  return { containerName, runtimeProviderId: engine.runtimeProviderId };
 }
 
 interface ContainerAbsenceDeps {
   getSandboxDriver: (name: string) => string | null | undefined;
+  resolveLifecycleEngine: (driverName: string | null | undefined) => SandboxLifecycleEngine | null;
   /** Labeled container names for the sandbox, or null when the listing itself
    * failed (dead daemon, timeout) and absence must not be concluded. */
-  listLabeledContainerNames: (name: string) => string[] | null;
+  listLabeledContainerNames: (
+    engine: SandboxLifecycleEngine,
+    sandboxName: string,
+  ) => string[] | null;
 }
 
 const defaultContainerAbsenceDeps: ContainerAbsenceDeps = {
   getSandboxDriver: readSandboxDriver,
-  // findLabeledSandboxContainers swallows docker errors (a dead daemon reads
-  // as "no containers"), which suits its recovery callers but not an absence
-  // proof. Run the same labeled listing status-checked instead: any spawn
-  // error, timeout, or non-zero exit yields null, never "absent". ignoreError
-  // prevents runner.run() from exiting the process when the listing fails.
-  listLabeledContainerNames: (name) => {
-    const result = dockerRun(
-      [
-        "ps",
-        "-a",
-        "--filter",
-        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
-        "--filter",
-        `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${name}`,
-        "--format",
-        "{{.Names}}",
-      ],
-      {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "pipe"],
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: DOCKER_ABSENCE_PROBE_TIMEOUT_MS,
-      },
-    );
-    if (result.error || result.status !== 0) return null;
-    return String(result.stdout || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  },
+  resolveLifecycleEngine: resolveSandboxLifecycleEngine,
+  listLabeledContainerNames,
 };
 
 /**
- * Returns true only when the registered sandbox uses Docker and a successful
- * labeled `docker ps -a` returns no matching container.
+ * Returns true only when the registered sandbox has a container lifecycle
+ * engine and a successful labeled listing returns no matching container.
  *
- * Returns false when the driver is not Docker, the registry read fails, or the
- * Docker listing fails or times out. Callers must separately confirm gateway
- * absence and same-gateway binding before classifying a sandbox as stranded.
+ * Returns false when the provider has no container lifecycle, the registry
+ * read fails, or the listing fails or times out. Callers must separately
+ * confirm gateway absence and same-gateway binding before classifying a
+ * sandbox as stranded.
  */
 export function isSandboxContainerDefinitivelyAbsent(
   sandboxName: string,
   depsOverride: Partial<ContainerAbsenceDeps> = {},
 ): boolean {
   const deps: ContainerAbsenceDeps = { ...defaultContainerAbsenceDeps, ...depsOverride };
-  if (deps.getSandboxDriver(sandboxName) !== "docker") return false;
-  const labeledContainerNames = deps.listLabeledContainerNames(sandboxName);
+  const engine = deps.resolveLifecycleEngine(deps.getSandboxDriver(sandboxName));
+  if (!engine) return false;
+  const labeledContainerNames = deps.listLabeledContainerNames(engine, sandboxName);
   return labeledContainerNames !== null && labeledContainerNames.length === 0;
 }
 
 interface StopDeps {
-  dockerStop: (containerName: string) => string;
-  dockerInspectStatus: (containerName: string) => string;
+  resolveLifecycleEngine: (driverName: string | null | undefined) => SandboxLifecycleEngine | null;
+  stop: (engine: SandboxLifecycleEngine, containerName: string) => boolean;
+  inspectStatus: (engine: SandboxLifecycleEngine, containerName: string) => string | null;
 }
 
 const defaultStopDeps: StopDeps = {
-  dockerStop: (containerName) => dockerCapture(["stop", containerName], { ignoreError: true }),
-  dockerInspectStatus: (containerName) =>
-    dockerContainerInspectFormat("{{.State.Status}}", containerName, { ignoreError: true }),
+  resolveLifecycleEngine: resolveSandboxLifecycleEngine,
+  stop: (engine, containerName) =>
+    captureSucceeded(engine.capture(["stop", containerName], engine.mutationTimeoutMs)),
+  inspectStatus: inspectContainerStatus,
 };
 
 /** Return a container started by {@link startStoppedSandboxContainerForBackup}
- * to its stopped state. Returns false when `docker stop` fails. */
+ * to its stopped state. Returns false when the provider operation fails. */
 export function returnSandboxContainerToStopped(
-  containerName: string,
+  started: StartedForBackup,
   depsOverride: Partial<StopDeps> = {},
 ): boolean {
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
-  if (deps.dockerStop(containerName).trim() === "") return false;
-  return deps.dockerInspectStatus(containerName).trim().toLowerCase() === "exited";
+  const engine = deps.resolveLifecycleEngine(started.runtimeProviderId);
+  if (!engine || !deps.stop(engine, started.containerName)) return false;
+  return deps.inspectStatus(engine, started.containerName) === "exited";
 }
 
 interface BackupRetryDeps {

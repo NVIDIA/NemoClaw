@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Manual PR runs bind the candidate SHA independently from reusable image publication.
 
 name: E2E / Main and Manual Suite
 run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
@@ -33,6 +34,19 @@ on:
           - mock
           - internal-nvidia
           - public-nvidia
+      gateway_runtime:
+        description: "Compatibility input for a single gateway runtime. Prefer gateway_runtimes for parallel runtime coverage."
+        required: false
+        default: "docker"
+        type: choice
+        options:
+          - docker
+          - podman
+      gateway_runtimes:
+        description: "Comma-separated managed gateway runtimes to execute in parallel, for example docker,podman."
+        required: false
+        default: ""
+        type: string
       allow_jetson_dispatch:
         description: "Set true for a manual jetson-nvmap-gpu run. Main pushes dispatch it automatically. The operator-owned dispatch backend must be available, and JETSON_DISPATCH_URL must contain its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
         required: false
@@ -93,6 +107,7 @@ env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
   NEMOCLAW_E2E_SHARD: default
+  NEMOCLAW_GATEWAY_RUNTIMES: ${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}
 
 jobs:
   package-openshell-sdk:
@@ -322,7 +337,7 @@ jobs:
       pull-requests: read
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
-      workload_source: ${{ needs.base-image-publication.outputs.workload_source }}
+      workload_source: managed-image
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
@@ -336,6 +351,8 @@ jobs:
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
       catalogue_github_read_matrix: ${{ steps.matrix.outputs.catalogue_github_read_matrix }}
       catalogue_brave_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_brave_nvidia_inference_matrix }}
+      gateway_runtimes: ${{ steps.matrix.outputs.gateway_runtimes }}
+      runtime_providers_by_job: ${{ steps.matrix.outputs.runtime_providers_by_job }}
       runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
     steps:
       - id: runner_routing
@@ -379,8 +396,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || {
-            echo "::error::Manual PR E2E must be dispatched from trusted main" >&2
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == refs/heads/* ]] || {
+            echo "::error::Manual PR E2E must be dispatched from this repository branch" >&2
             exit 1
           }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
@@ -395,7 +412,6 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must be open" >&2; exit 1; }
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
-          [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
@@ -637,6 +653,7 @@ jobs:
           CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
           CONTROLLER_TEST_MATRIX: ${{ steps.controller_matrix.outputs.test_matrix }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
+          NEMOCLAW_GATEWAY_RUNTIMES: ${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
           EVENT_NAME: ${{ github.event_name }}
@@ -656,6 +673,8 @@ jobs:
               echo 'catalogue_nvidia_inference_matrix=[]'
               echo 'catalogue_github_read_matrix=[]'
               echo 'catalogue_brave_nvidia_inference_matrix=[]'
+              echo 'gateway_runtimes=["docker"]'
+              echo 'runtime_providers_by_job={"native-runtime-qualification-producer":["docker"]}'
               echo 'selected_jobs=["native-runtime-qualification-producer"]'
               echo 'selected_workflow_jobs=["native-runtime-qualification-producer"]'
               echo 'hermes_selected=false'
@@ -688,6 +707,14 @@ jobs:
             fi
           fi
 
+      # Publish immutable source-run toolchains before candidate checkout or
+      # candidate-controlled workspace preparation can execute on this runner.
+      - name: Stage immutable native Podman E2E toolchains
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1a0f53d5d7e5420556be72b50d79ed5a333d637d
+        with:
+          enabled: ${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}
+          github-token: ${{ github.token }}
+
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
@@ -715,7 +742,6 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open" >&2; exit 1; }
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
@@ -746,7 +772,7 @@ jobs:
           if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
                 "$NVIDIA_OWNED" == "true" &&
                 "$EVENT_NAME" == "workflow_dispatch" &&
-                "$REF" == "refs/heads/main" &&
+                "$REF" == refs/heads/* &&
                 "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" &&
@@ -2514,7 +2540,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -2545,6 +2571,7 @@ jobs:
     env:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker
       INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
       E2E_AGENT_RUNTIME: "openclaw"
       E2E_OBSERVABLE_OUTCOME: "The staging image boots and completes the full E2E scenario"
@@ -2611,6 +2638,7 @@ jobs:
       CANDIDATE_SHA: ${{ github.sha }}
       E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: agnostic
       INSTANCE_NAME: nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}
       E2E_AGENT_RUNTIME: "none"
       E2E_OBSERVABLE_OUTCOME: "The staging image boots, passes the SSH access probe, and matches the baked runtime identity"
@@ -2694,6 +2722,7 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
+      E2E_EXECUTION_ID: ${{ matrix.execution_id }}
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
@@ -2702,6 +2731,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2788,9 +2818,14 @@ jobs:
             "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       # invalidState: a profile plugin installed with --no-deps can import even
       # when an incomplete base image omitted its required upstream packages.
@@ -2901,7 +2936,7 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-${{ matrix.id }}
+          name: e2e-${{ matrix.execution_id }}
           path: |
             e2e-artifacts/live/${{ matrix.id }}/run-plan.json
             e2e-artifacts/live/${{ matrix.id }}/target.json
@@ -2927,7 +2962,7 @@ jobs:
   # only a validated test ID, file, and Vitest project; this E2E workflow owns
   # the shared job's runner, setup, timeout, permissions, and artifact policy.
   shared-e2e:
-    name: Shared E2E (${{ matrix.id }})
+    name: Shared E2E (${{ matrix.execution_id }})
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.test_matrix != '[]' }}
     runs-on: ubuntu-latest
@@ -2938,12 +2973,14 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.test_matrix) }}
     env:
       CHECK_DOC_LINKS_REMOTE: "0"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ matrix.id }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ matrix.execution_id }}
+      E2E_EXECUTION_ID: ${{ matrix.execution_id }}
       E2E_TARGET_ID: ${{ matrix.id }}
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2958,9 +2995,14 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Run tagged credential-free test
         env:
@@ -2975,9 +3017,12 @@ jobs:
       - name: Upload test artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-${{ matrix.execution_id }}
+          path: e2e-artifacts/live/${{ matrix.execution_id }}/
 
   catalogue-standard:
-    name: ${{ matrix.display_name }}
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_standard_matrix != '[]' }}
     strategy:
@@ -2988,6 +3033,9 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3020,7 +3068,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
   catalogue-nvidia-api:
-    name: ${{ matrix.display_name }}
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_api_matrix != '[]' }}
     strategy:
@@ -3031,6 +3079,9 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3064,7 +3115,7 @@ jobs:
       NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
 
   catalogue-nvidia-inference:
-    name: ${{ matrix.display_name }}
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
     strategy:
@@ -3075,6 +3126,9 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3108,7 +3162,7 @@ jobs:
       NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
 
   catalogue-github-read:
-    name: ${{ matrix.display_name }}
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_github_read_matrix != '[]' }}
     strategy:
@@ -3119,6 +3173,9 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3151,7 +3208,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
   catalogue-brave-nvidia-inference:
-    name: ${{ matrix.display_name }}
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix != '[]' }}
     strategy:
@@ -3163,6 +3220,9 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3203,6 +3263,7 @@ jobs:
     timeout-minutes: 20
     env:
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker
       E2E_TARGET_ID: "openshell-gateway-auth-contract"
       E2E_AGENT_RUNTIME: "none"
       E2E_OBSERVABLE_OUTCOME: "Gateway mTLS and sandbox JWT authentication boundaries hold"
@@ -3229,7 +3290,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3305,7 +3366,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3341,6 +3402,7 @@ jobs:
           path: e2e-artifacts/live/external-gateway-health/
 
   mcp-bridge:
+    name: MCP bridge (${{ matrix.agent }}, ${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}
@@ -3353,6 +3415,7 @@ jobs:
       fail-fast: false
       matrix:
         agent: [openclaw, hermes, deepagents]
+        runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['mcp-bridge'] }}
         include:
           - agent: openclaw
             agent_runtime: openclaw
@@ -3369,16 +3432,18 @@ jobs:
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "mcp-bridge"
       E2E_OBSERVABLE_OUTCOME: "Stable OpenShell MCP bridge reaches tools and inference"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
-      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: ${{ matrix.runtime_provider == 'docker' && '1' || '0' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - id: trusted_hermes_swap
@@ -3592,7 +3657,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3601,6 +3666,11 @@ jobs:
         continue-on-error: true
         shell: bash
         run: npx tsx tools/e2e/runner-comparison.mts initialize
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: maintainers review upstream cloudflared releases and
@@ -3675,14 +3745,14 @@ jobs:
         name: Scan MCP artifacts for fixture credentials
         if: always()
         run: >-
-          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/${{ matrix.runtime_provider }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge-${{ matrix.agent }}
-          path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/
+          name: e2e-mcp-bridge-${{ matrix.agent }}-${{ matrix.runtime_provider }}
+          path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/${{ matrix.runtime_provider }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -3690,6 +3760,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-credential-generation-window:
+    name: OpenShell credential generation window (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
     runs-on: ubuntu-latest
@@ -3699,21 +3770,27 @@ jobs:
     # execute in parallel with, and fail independently from, the Deep Agents
     # MCP lifecycle without sharing destructive sandbox state.
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['openshell-credential-generation-window'] }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
       E2E_OBSERVABLE_OUTCOME: "Credential expiry rotation detach and rebuild preserve the intended access window"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3731,9 +3808,14 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Install and verify cloudflared prerequisite
         env:
@@ -3800,14 +3882,14 @@ jobs:
         name: Scan credential-window artifacts for fixture credentials
         if: always()
         run: >-
-          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/openshell-credential-generation-window
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}
 
       - name: Upload credential-window artifacts
         if: ${{ always() && steps.credential_window_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-openshell-credential-generation-window
-          path: e2e-artifacts/live/openshell-credential-generation-window/
+          name: e2e-openshell-credential-generation-window-${{ matrix.runtime_provider }}
+          path: e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -3855,6 +3937,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-dev-artifact/
 
   mcp-bridge-dev:
+    name: MCP bridge dev (${{ matrix.agent }}, ${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix, openshell-dev-artifact]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
@@ -3865,6 +3948,7 @@ jobs:
       fail-fast: false
       matrix:
         agent: [openclaw, hermes, deepagents]
+        runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['mcp-bridge-dev'] }}
         include:
           - agent: openclaw
             agent_runtime: openclaw
@@ -3881,15 +3965,17 @@ jobs:
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "mcp-bridge-dev"
       E2E_OBSERVABLE_OUTCOME: "Development OpenShell MCP bridge reaches tools and inference"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
     steps:
       # setup-node probes package managers in the workspace.
       # Run it before candidate checkout with automatic caching disabled.
@@ -3989,9 +4075,14 @@ jobs:
       # The restore action executes the candidate CLI for its final identity
       # check. Candidate-controlled state starts with dependency preparation.
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
@@ -4046,14 +4137,14 @@ jobs:
         name: Scan MCP artifacts for fixture credentials
         if: always()
         run: >-
-          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/${{ matrix.runtime_provider }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge-dev-${{ matrix.agent }}
-          path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/
+          name: e2e-mcp-bridge-dev-${{ matrix.agent }}-${{ matrix.runtime_provider }}
+          path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/${{ matrix.runtime_provider }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -4086,6 +4177,7 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker
       E2E_TARGET_ID: "managed-image-multiarch-startup"
       E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
       E2E_OBSERVABLE_OUTCOME: "Exact managed images start directly on the native architecture"
@@ -4566,6 +4658,7 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker
       E2E_TARGET_ID: "llama-cpp-dgx-spark-qualification"
       E2E_AGENT_RUNTIME: "unresolved"
       E2E_OBSERVABLE_OUTCOME: "Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence"
@@ -4756,6 +4849,7 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker
       E2E_TARGET_ID: "managed-image-protected-runtime"
       E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
       E2E_OBSERVABLE_OUTCOME: "Protected GPU runtime supports Ollama vLLM NIM rollback and cleanup"
@@ -5043,23 +5137,30 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-e2e:
+    name: Hermes E2E (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
     timeout-minutes: 85
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-e2e'] }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "hermes-e2e"
       E2E_AGENT_RUNTIME: "hermes"
       E2E_OBSERVABLE_OUTCOME: "Install onboarding health inference lifecycle dashboard and security succeed"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; mock or NVIDIA hosted inference"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
       NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -5104,7 +5205,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5113,6 +5214,11 @@ jobs:
         continue-on-error: true
         shell: bash
         run: npx tsx tools/e2e/runner-comparison.mts initialize
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Run Hermes live Vitest test
         env:
@@ -5130,6 +5236,9 @@ jobs:
       - name: Upload Hermes live Vitest artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-hermes-e2e-${{ matrix.runtime_provider }}
+          path: e2e-artifacts/live/hermes-e2e/${{ matrix.runtime_provider }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -5137,47 +5246,45 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-gpu-startup:
+    name: Hermes GPU startup (${{ matrix.scenario }}, ${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-gpu-startup') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 2
       matrix:
-        include:
-          - scenario: native
-            sandbox_name: e2e-hgpu-native
-            observable_outcome: "Native GPU startup reaches the stable Ready route"
-            coverage_variant: native
+        scenario: [native, fallback, compatibility-only]
+        runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-gpu-startup'] }}
+        exclude:
           - scenario: fallback
-            sandbox_name: e2e-hgpu-fallback
-            observable_outcome: "Fallback GPU startup reaches the stable Ready route"
-            coverage_variant: fallback
+            runtime_provider: podman
           - scenario: compatibility-only
-            sandbox_name: e2e-hgpu-compat
-            observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route"
-            coverage_variant: compatibility-only
+            runtime_provider: podman
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "hermes-gpu-startup"
       E2E_AGENT_RUNTIME: "hermes"
+      E2E_OBSERVABLE_OUTCOME: "Hermes GPU startup reaches the stable Ready route"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA GPU runner; local GPU inference"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}
       E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_GPU: "1"
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.scenario }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5265,7 +5372,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5278,6 +5385,11 @@ jobs:
           NODE_OPTIONS: ""
         with:
           node-version: "22"
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Run Hermes GPU startup live Vitest test
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -5414,8 +5526,8 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-hermes-gpu-startup-${{ matrix.scenario }}
-          path: e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/
+          name: e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}
+          path: e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -5462,23 +5574,30 @@ jobs:
           path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
 
   cloud-onboard:
+    name: Cloud onboard (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'cloud-onboard') }}
     runs-on: ubuntu-latest
     timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['cloud-onboard'] }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "cloud-onboard"
       E2E_AGENT_RUNTIME: "openclaw"
       E2E_OBSERVABLE_OUTCOME: "Public install onboarding hosted inference and security checks succeed"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/cloud-onboard
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/cloud-onboard/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -5523,9 +5642,14 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5587,6 +5711,9 @@ jobs:
       - name: Upload cloud-onboard artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-cloud-onboard-${{ matrix.runtime_provider }}
+          path: e2e-artifacts/live/cloud-onboard/${{ matrix.runtime_provider }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -5594,23 +5721,30 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   messaging-providers:
+    name: Messaging providers (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'messaging-providers') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['messaging-providers'] }}
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "messaging-providers"
       E2E_AGENT_RUNTIME: "openclaw"
       E2E_OBSERVABLE_OUTCOME: "Provider configuration redaction and optional real sends succeed"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference and messaging providers"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/messaging-providers
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/messaging-providers/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -5631,9 +5765,14 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        with:
+          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
       - name: Run messaging providers live Vitest test
         # The test keeps
@@ -5658,6 +5797,9 @@ jobs:
       - name: Upload messaging providers artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-messaging-providers-${{ matrix.runtime_provider }}
+          path: e2e-artifacts/live/messaging-providers/${{ matrix.runtime_provider }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -5677,6 +5819,7 @@ jobs:
     timeout-minutes: 85
     env:
       E2E_JOB: "1"
+      E2E_GATEWAY_RUNTIMES: docker
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
       E2E_AGENT_RUNTIME: "openclaw"
       E2E_OBSERVABLE_OUTCOME: "OpenClaw installs the custom plugin across devices; plugin behavior survives restart and recreation"
@@ -5714,7 +5857,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 

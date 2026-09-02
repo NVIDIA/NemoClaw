@@ -391,7 +391,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$WORKFLOW_REF" == refs/heads/*',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
@@ -399,7 +399,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
-    `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
@@ -419,6 +418,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
+  }
+  if (
+    authSource.includes("Authorization: Bearer") ||
+    Object.hasOwn(authentication.env ?? {}, "GITHUB_TOKEN")
+  ) {
+    errors.push("Manual PR authentication must use public PR metadata without a job token");
   }
 
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
@@ -459,7 +464,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "pull request must still be open",
     "pull request base repository changed before execution",
-    "pull request base branch changed before execution",
     "checkout_repository changed before execution",
     "checkout_sha changed before execution",
     "base_sha changed before execution",
@@ -469,6 +473,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
     }
+  }
+  if (
+    validationSource.includes("Authorization: Bearer") ||
+    Object.hasOwn(validation.env ?? {}, "GITHUB_TOKEN")
+  ) {
+    errors.push("Manual PR checkout validation must use public PR metadata without a job token");
   }
 
   const credentialAuthorization =
@@ -502,7 +512,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
-    '"$REF" == "refs/heads/main"',
+    '"$REF" == refs/heads/*',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
@@ -826,6 +836,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("cloud-onboard must use the exact PR managed-image catalog");
   }
   if (
+    (cloudOnboard.steps ?? []).some(
+      (step) => step.name === "Materialize cloud-onboard managed-image catalog",
+    )
+  ) {
+    errors.push("cloud-onboard must not duplicate the exact inline managed-image catalog");
+  }
+  if (
     live.env?.E2E_MANAGED_IMAGE_REVISION !==
     "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
@@ -867,7 +884,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     }
     if (
       catalogue.with?.managed_image_revision !==
-      "${{ needs.base-image-publication.outputs.managed_image_revision }}"
+        "${{ needs.base-image-publication.outputs.managed_image_revision }}" ||
+      catalogue.with?.managed_image_catalog !==
+        "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
     ) {
       errors.push(`${jobName} must use the selected managed-image revision`);
     }

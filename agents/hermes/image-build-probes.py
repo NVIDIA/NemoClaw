@@ -228,6 +228,7 @@ def verify_langfuse_credentials() -> None:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     validate = module._validate_langfuse_key
+    validate_base_url = module._validate_langfuse_base_url
     assert validate("HERMES_LANGFUSE_PUBLIC_KEY", "pk-lf-public") is None
     assert validate("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-secret") is None
     assert (
@@ -251,6 +252,13 @@ def verify_langfuse_credentials() -> None:
         )
         is not None
     )
+    assert validate_base_url("https://cloud.langfuse.com") is None
+    assert validate_base_url("https://langfuse.example.test:8443/base") is None
+    assert validate_base_url("http://cloud.langfuse.com") is not None
+    assert validate_base_url("https://user:pass@cloud.langfuse.com") is not None
+    assert validate_base_url("https://cloud.langfuse.com?project=other") is not None
+    assert validate_base_url("https://cloud.langfuse.com#fragment") is not None
+    assert validate_base_url("https://cloud.langfuse.com:invalid") is not None
     assert (
         validate(
             "HERMES_LANGFUSE_SECRET_KEY",

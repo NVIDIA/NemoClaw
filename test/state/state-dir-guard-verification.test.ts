@@ -150,7 +150,56 @@ print(json.dumps({
 }))
 `;
 
+const VERIFY_READ_ONLY_ACTIONS = String.raw`
+import importlib.util, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = module.Identity(root_uid=os.getuid(), root_gid=os.getgid(), sandbox_uid=os.getuid(), sandbox_gid=os.getgid())
+plan = module.parse_agent_state_lock_plan(json.dumps({"version":1,"readOnlyRoots":["skills"],"confidentialRoots":[],"readOnlyPrefixes":[],"confidentialPrefixes":[],"writableSubpaths":[]}))
+
+def verify(action, root_mode, file_mode):
+    with tempfile.TemporaryDirectory() as root:
+        root = os.path.realpath(root)
+        config = os.path.join(root, ".agent")
+        skills = os.path.join(config, "skills")
+        os.makedirs(skills, mode=root_mode)
+        os.chmod(skills, root_mode)
+        source = os.path.join(skills, "skill.py")
+        with open(source, "w", encoding="utf-8") as stream:
+            stream.write("pass\n")
+        os.chmod(source, file_mode)
+        before = (os.stat(skills).st_mode, os.stat(source).st_mode)
+        result = module.run_guard(action, config, identity, plan)
+        after = (os.stat(skills).st_mode, os.stat(source).st_mode)
+        return {"ok": result.ok, "unchanged": before == after, "codes": [issue.code for issue in result.issues]}
+
+print(json.dumps({
+    "locked": verify("verify-lock", 0o755, 0o640),
+    "locked_drift": verify("verify-lock", 0o2770, 0o660),
+}))
+`;
+
 describe("state directory guard verification", () => {
+  it("verifies the complete recursive locked posture without changing metadata", () => {
+    const result = spawnSync("python3", ["-I", "-c", VERIFY_READ_ONLY_ACTIONS, GUARD_PATH], {
+      encoding: "utf-8",
+    });
+
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const outcomes = JSON.parse(result.stdout) as Record<
+      string,
+      { ok: boolean; unchanged: boolean; codes: string[] }
+    >;
+    expect(outcomes.locked).toEqual({ ok: true, unchanged: true, codes: [] });
+    expect(outcomes.locked_drift).toMatchObject({
+      ok: false,
+      unchanged: true,
+      codes: expect.arrayContaining(["verification-mode-mismatch"]),
+    });
+  });
+
   it("rejects locked high-risk files that lost sandbox group access (#8304)", () => {
     const result = spawnSync("python3", ["-I", "-c", VERIFY_HIGH_RISK_MODES, GUARD_PATH], {
       encoding: "utf-8",

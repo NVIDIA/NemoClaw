@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   credentialFreeTestCoverage,
+  credentialFreeTestMatrix,
   discoverCredentialFreeTests,
 } from "../../../tools/e2e/credential-free-tests.mts";
 import { E2E_AGENT_RUNTIMES } from "../../../tools/e2e/execution-coverage.mts";
@@ -37,9 +38,10 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
+import { expectedWorkflowPlanCiOutput } from "./workflow-plan-test-assertions.ts";
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
-const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
+const PLANNER_CLI_PREFIX = ["--import", "tsx", PLANNER_CLI];
 
 function firstId<T extends { id: string }>(rows: readonly T[], label: string): string {
   expect(rows, `expected at least one ${label}`).not.toHaveLength(0);
@@ -51,24 +53,6 @@ function retiredControllerSelectorIds(): string[] {
   const retiredIds = RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
   expect(retiredIds).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS]);
   return retiredIds;
-}
-
-function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string {
-  return [
-    `matrix=${JSON.stringify(plan.matrix)}`,
-    `test_matrix=${JSON.stringify(plan.testMatrix)}`,
-    `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
-    `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
-    `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
-    `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
-    `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
-    `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
-    `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
-    `hermes_selected=${plan.hermesSelected}`,
-    `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-    `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-    "",
-  ].join("\n");
 }
 
 function prCandidatePlan(
@@ -87,9 +71,11 @@ function expectExplicitCatalogueCoverage(): void {
 describe("E2E workflow plan", () => {
   it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
-
+    expect(plan).toEqual(buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker"] }));
     expect(plan.matrix).toEqual(buildLiveTargetMatrix());
-    expect(plan.testMatrix).toEqual(discoverCredentialFreeTests());
+    expect(plan.testMatrix).toEqual(
+      credentialFreeTestMatrix(discoverCredentialFreeTests(), ["docker"]),
+    );
     expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
     expect(
       plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
@@ -110,6 +96,28 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
+    expect(plan.coverageMatrix).toHaveLength(92);
+    expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-brave-nvidia-inference",
+      "catalogue-github-read",
+      "catalogue-nvidia-api",
+      "catalogue-nvidia-inference",
+      "catalogue-standard",
+      "cloud-onboard",
+      "hermes-e2e",
+      "hermes-gpu-startup",
+      "live",
+      "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
+      "mcp-bridge",
+      "mcp-bridge-dev",
+      "messaging-providers",
+      "openclaw-plugin-runtime-exdev",
+      "openshell-credential-generation-window",
+      "openshell-gateway-auth-contract",
+      "shared-e2e",
+      "staging-brev-launchable",
+    ]);
     expect(plan.explicitOnlyJobs).toEqual([
       "staging-brev-launchable-identity",
       "external-gateway-health",
@@ -121,6 +129,42 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
+  it("selects only native Podman-eligible executions when explicitly requested", () => {
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["podman"] });
+    const catalogueIds = Object.values(plan.catalogueMatrices)
+      .flat()
+      .map((row) => row.id);
+    expect(plan.matrix.map((row) => row.id)).toEqual([
+      "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-openclaw",
+    ]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(catalogueIds).toHaveLength(52);
+    expect(catalogueIds).not.toEqual(
+      expect.arrayContaining([
+        "bootstrap-install-smoke",
+        "gateway-guard-recovery",
+        "rebuild-hermes",
+        "rebuild-openclaw",
+      ]),
+    );
+    expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
+    expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-brave-nvidia-inference",
+      "catalogue-github-read",
+      "catalogue-nvidia-api",
+      "catalogue-nvidia-inference",
+      "catalogue-standard",
+      "cloud-onboard",
+      "hermes-e2e",
+      "hermes-gpu-startup",
+      "live",
+      "mcp-bridge",
+      "mcp-bridge-dev",
+      "messaging-providers",
+      "openshell-credential-generation-window",
+    ]);
+  });
   it("omits only targets whose optional credential is unavailable", () => {
     const plan = withoutUnavailableOptionalCredentialTargets(buildE2eWorkflowPlan(), new Set());
     const braveRows = plan.catalogueMatrices["brave-nvidia-inference"].map((row) => row.id);
@@ -307,6 +351,12 @@ describe("E2E workflow plan", () => {
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, artifactLayout: "unreviewed" as never }]),
     ).toThrow("invalid artifact layout");
+    expect(() => validateE2eTargetCatalogue([{ ...target, gatewayRuntimes: [] }])).toThrow(
+      "invalid gateway runtime support",
+    );
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...target, gatewayRuntimes: ["docker", "docker"] as never }]),
+    ).toThrow("invalid gateway runtime support");
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, artifactLayout: "flat-shard", shard: "default" }]),
     ).toThrow("flat artifact layout requires a named shard");
@@ -332,7 +382,12 @@ describe("E2E workflow plan", () => {
     ],
     [
       "bootstrap-install-smoke",
-      { profile: "nvidia-inference", restoreCli: false, compatibleApiKey: true },
+      {
+        profile: "nvidia-inference",
+        restoreCli: false,
+        compatibleApiKey: true,
+        gatewayRuntimes: ["docker"],
+      },
     ],
     [
       "hermes-discord",
@@ -473,7 +528,32 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("uses the explicit Podman planner in the CI output path", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-podman-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["podman"] });
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+          NEMOCLAW_GATEWAY_RUNTIMES: "podman",
+        },
+      );
+
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -641,6 +721,10 @@ describe("E2E workflow plan", () => {
     expect(plan).toEqual({
       ...fullPlan,
       selectedJobs: [...fullPlan.selectedJobs, "jetson-nvmap-gpu"],
+      runtimeProvidersByJob: {
+        ...fullPlan.runtimeProvidersByJob,
+        "jetson-nvmap-gpu": ["none"],
+      },
     });
   });
 
@@ -775,7 +859,7 @@ describe("E2E workflow plan", () => {
     const summary = path.join(directory, "summary.md");
     const plan = buildE2eWorkflowPlan({ jobs: "bootstrap-install-smoke" });
     try {
-      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: {
@@ -792,7 +876,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -808,7 +892,7 @@ describe("E2E workflow plan", () => {
     const activeJobs = "cloud-onboard,security-posture";
     const plan = buildE2eWorkflowPlan({ jobs: activeJobs });
     try {
-      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: {
@@ -825,7 +909,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -841,6 +925,7 @@ describe("E2E workflow plan", () => {
       const output = path.join(directory, "github-output");
       const summary = path.join(directory, "summary.md");
       const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
+        gatewayRuntimes: ["docker"],
         matrix: [],
         testMatrix: [],
         catalogueMatrices: {
@@ -852,11 +937,12 @@ describe("E2E workflow plan", () => {
         },
         coverageMatrix: [],
         selectedJobs: [],
+        runtimeProvidersByJob: {},
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
       };
       try {
-        const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+        const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
           cwd: REPO_ROOT,
           encoding: "utf8",
           env: {
@@ -872,7 +958,7 @@ describe("E2E workflow plan", () => {
         });
 
         expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+        expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
         expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
       } finally {
         rmSync(directory, { force: true, recursive: true });
@@ -884,6 +970,7 @@ describe("E2E workflow plan", () => {
     "emits an empty shared plan for the Jetson dispatch %s selector (#8142)",
     (selector) => {
       expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toEqual({
+        gatewayRuntimes: ["docker"],
         matrix: [],
         testMatrix: [],
         catalogueMatrices: {
@@ -895,6 +982,7 @@ describe("E2E workflow plan", () => {
         },
         coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],
+        runtimeProvidersByJob: { "jetson-nvmap-gpu": ["none"] },
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
       });
@@ -906,6 +994,7 @@ describe("E2E workflow plan", () => {
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
     const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
+      gatewayRuntimes: ["docker"],
       matrix: [],
       testMatrix: [],
       catalogueMatrices: {
@@ -917,11 +1006,12 @@ describe("E2E workflow plan", () => {
       },
       coverageMatrix: [],
       selectedJobs: [],
+      runtimeProvidersByJob: {},
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     };
     try {
-      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: {
@@ -937,7 +1027,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -947,7 +1037,7 @@ describe("E2E workflow plan", () => {
   it("rejects the retired bootstrap job outside a PR controller checkout", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     try {
-      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: {
@@ -1073,7 +1163,7 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -1102,6 +1192,18 @@ describe("E2E workflow plan", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it("rejects an unsupported gateway runtime before writing CI output", () => {
+    expect(() =>
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_GATEWAY_RUNTIME: "containerd",
+        },
+      ),
+    ).toThrow("Invalid gateway runtimes: containerd");
   });
 
   it("requires changed-file evidence for push planning", () => {
@@ -1133,10 +1235,12 @@ describe("E2E workflow plan", () => {
     expect(output.trim().split("\n")).toHaveLength(1);
     const parsed = JSON.parse(output);
     expect(Object.keys(parsed)).toEqual([
+      "gatewayRuntimes",
       "matrix",
       "testMatrix",
       "catalogueMatrices",
       "selectedJobs",
+      "runtimeProvidersByJob",
       "hermesSelected",
       "explicitOnlyJobs",
       "coverageMatrix",
@@ -1145,21 +1249,25 @@ describe("E2E workflow plan", () => {
   });
 
   it("renders the selected targets and workflow jobs as a readable plan", () => {
-    const filtered = spawnSync(TSX, [PLANNER_CLI, "--summary", "--jobs", "hermes-e2e"], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      timeout: 30_000,
-    });
+    const filtered = spawnSync(
+      process.execPath,
+      [...PLANNER_CLI_PREFIX, "--summary", "--jobs", "hermes-e2e"],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
 
     expect(filtered.status, filtered.stderr).toBe(0);
     expect(filtered.stdout).toBe(`## E2E Execution Plan
 
 | Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Source | Unresolved reason |
 | --- | --- | --- | --- | --- | --- |
-| \`hermes-e2e\` | hermes | Install onboarding health inference lifecycle dashboard and security succeed | Ubuntu; mock or NVIDIA hosted inference | retained-workflow |  |
+| \`hermes-e2e / docker\` | hermes | Install onboarding health inference lifecycle dashboard and security succeed | Ubuntu; mock or NVIDIA hosted inference | retained-workflow |  |
 `);
 
-    const complete = spawnSync(TSX, [PLANNER_CLI, "--summary"], {
+    const complete = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--summary"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
       timeout: 30_000,
@@ -1167,26 +1275,26 @@ describe("E2E workflow plan", () => {
 
     expect(complete.status, complete.stderr).toBe(0);
     expect(complete.stdout).toContain(
-      "| `cloud-onboard` | openclaw | Public install onboarding hosted inference and security checks succeed | Ubuntu; NVIDIA hosted inference | retained-workflow |  |",
+      "| `cloud-onboard / docker` | openclaw | Public install onboarding hosted inference and security checks succeed | Ubuntu; NVIDIA hosted inference | retained-workflow |  |",
     );
     expect(complete.stdout).toContain(
-      "| `ubuntu-repo-cloud-openclaw` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu Docker host; NVIDIA hosted inference | typed-registry |  |",
+      "| `ubuntu-repo-cloud-openclaw / docker` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu managed-runtime host; NVIDIA hosted inference | typed-registry |  |",
     );
     expect(complete.stdout).toContain(
-      "| `vllm-docker-storage` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
+      "| `vllm-docker-storage / docker` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
     );
     expect(complete.stdout).toContain(
-      "| `channels-add-remove` | openclaw | Messaging: adds and removes Telegram configuration | Ubuntu; no inference endpoint | catalogue |  |",
+      "| `channels-add-remove / default-docker` | openclaw | Messaging: adds and removes Telegram configuration | Ubuntu; no inference endpoint | catalogue |  |",
     );
     expect(complete.stdout).toContain(
-      "| `model-router-provider-routed-inference` | openclaw | Inference: Model Router returns a provider-routed response | Ubuntu; NVIDIA API and Model Router | catalogue |  |",
+      "| `model-router-provider-routed-inference / default-docker` | openclaw | Inference: Model Router returns a provider-routed response | Ubuntu; NVIDIA API and Model Router | catalogue |  |",
     );
     expect(complete.stdout).toContain(
-      "| `spark-install` | unresolved | Install: leaves NemoClaw and OpenShell usable after standard installation | Ubuntu; NVIDIA hosted inference | catalogue | The test asserts CLI usability but does not assert an agent runtime |",
+      "| `spark-install / default-runtime-agnostic` | unresolved | Install: leaves NemoClaw and OpenShell usable after standard installation | Ubuntu; NVIDIA hosted inference | catalogue | The test asserts CLI usability but does not assert an agent runtime |",
     );
     expect(complete.stdout).toContain("### Repeated outcomes with distinct evidence");
     expect(complete.stdout).toContain(
-      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw` | agent runtime |",
+      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime and environment or inference endpoint |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
     expect(complete.stdout).toContain(
@@ -1214,8 +1322,8 @@ describe("E2E workflow plan", () => {
 
   it("reports CLI failures as workflow annotations", () => {
     const result = spawnSync(
-      TSX,
-      [PLANNER_CLI, "--jobs", "hermes-e2e", "--targets", "definitely-unknown-e2e-target"],
+      process.execPath,
+      [...PLANNER_CLI_PREFIX, "--jobs", "hermes-e2e", "--targets", "definitely-unknown-e2e-target"],
       { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
     );
 
@@ -1231,7 +1339,7 @@ describe("E2E workflow plan", () => {
     const summary = path.join(directory, "summary.md");
     const plan = buildE2eWorkflowPlan({ jobs: testId });
     try {
-      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: {
@@ -1246,7 +1354,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -1262,7 +1370,7 @@ describe("E2E workflow plan", () => {
     const target = "ubuntu-repo-cloud-langchain-deepagents-code";
     const plan = buildE2eWorkflowPlan({ jobs: "cloud-onboard", targets: target });
     try {
-      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+      const result = spawnSync(process.execPath, [...PLANNER_CLI_PREFIX, "--ci-output"], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: {
@@ -1277,7 +1385,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
