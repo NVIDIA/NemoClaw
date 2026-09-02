@@ -607,9 +607,20 @@ describe("source registry fingerprint across channel mutations", () => {
           },
         },
       } as unknown as SandboxEntry);
-      const journaled = fingerprintSandboxRegistryEntry(
-        registry.getSandbox("alpha") as SandboxEntry,
-      );
+      const initialRow = registry.getSandbox("alpha") as SandboxEntry;
+      const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+      beginSandboxRecreateTransaction(session, {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sourceEntry: initialRow,
+        observation: LIVE_SOURCE,
+        targetIntentFingerprint: TARGET_INTENT,
+        id: TX_ID,
+        targetGeneration: TARGET_GENERATION,
+        now: ISO,
+      });
+      const transaction = structuredClone(session.checkpoint!.sandboxRecreate!);
 
       expect(await persistManifestChannelDisabledPlan("alpha", "teams", true)).not.toBeNull();
       expect(registry.getDisabledChannels("alpha")).toEqual(["teams"]);
@@ -618,7 +629,12 @@ describe("source registry fingerprint across channel mutations", () => {
 
       const restarted = registry.getSandbox("alpha") as SandboxEntry;
       expect(restarted.messaging?.plan.workflow).toBe("start-channel");
-      expect(fingerprintSandboxRegistryEntry(restarted)).toBe(journaled);
+      expect(
+        planSandboxRecreateRecovery(transaction, LIVE_SOURCE, restarted, {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+        }),
+      ).toEqual({ action: "continue_delete" });
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
