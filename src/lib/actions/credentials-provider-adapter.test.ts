@@ -122,9 +122,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.exitCode).toBe(0);
     expect(adapter.importProviderProfile).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
-      profilePath: expect.stringMatching(
-        /provider-profiles\/langfuse-hermes-v1\.yaml$/u,
-      ),
+      profilePath: expect.stringMatching(/provider-profiles\/langfuse-hermes-v1\.yaml$/u),
       timeoutMs: 30_000,
     });
     expect(adapter.createProvider).toHaveBeenCalledWith({
@@ -139,6 +137,9 @@ describe("credential actions use typed OpenShell provider results", () => {
       fromExisting: false,
       timeoutMs: 30_000,
     });
+    expect(vi.mocked(adapter.importProviderProfile).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(adapter.createProvider).mock.invocationCallOrder[0],
+    );
     expect(JSON.stringify(result)).not.toContain("pk-lf-host-only");
     expect(JSON.stringify(result)).not.toContain("sk-lf-host-only");
   });
