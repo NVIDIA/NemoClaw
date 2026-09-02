@@ -104,6 +104,14 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
       (step) => step.name === "Check out exact OpenShell driver behavior source",
     )!;
     sourceCheckout.with!.ref = "main";
+    steps.splice(steps.indexOf(sourceCheckout) + 1, 0, {
+      name: "Authenticate to Docker Hub",
+      uses: "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f",
+      with: {
+        username: "${{ secrets.DOCKERHUB_USERNAME }}",
+        token: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+    });
 
     const prepare = steps.find((step) => step.name === "Prepare E2E workspace")!;
     prepare.uses = "./.github/actions/prepare-e2e";
@@ -152,6 +160,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract action 'actions/checkout@v6' must pin a full SHA",
         "openshell-gateway-auth-contract checkout must disable persisted credentials",
         "openshell-gateway-auth-contract must check out the exact credential-free OpenShell behavior source",
+        "openshell-gateway-auth-contract must not authenticate Docker or receive Docker credential inputs",
         "openshell-gateway-auth-contract must use the reviewed prepare-e2e action",
         "openshell-gateway-auth-contract must run only the canonical credential-free OpenShell install",
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must run: docker pull \"$DOCKER_GRPC_PROBE_IMAGE\"",

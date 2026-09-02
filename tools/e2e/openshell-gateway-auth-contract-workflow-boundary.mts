@@ -66,6 +66,18 @@ function requireStepOrder(
   }
 }
 
+function containsDockerAuthentication(step: WorkflowStep): boolean {
+  const uses = step.uses ?? "";
+  const run = step.run ?? "";
+  const credentialInputs = JSON.stringify({ env: step.env, with: step.with });
+  return (
+    /(?:^|\/)docker\/login-action@/u.test(uses) ||
+    /docker-auth-(?:setup|login)@/u.test(uses) ||
+    /(?:^|[;\n])\s*docker\s+login\b/u.test(run) ||
+    /DOCKER(?:HUB)?_(?:CONFIG|PASSWORD|TOKEN|USERNAME)/u.test(credentialInputs)
+  );
+}
+
 export function validateOpenShellGatewayAuthContractWorkflow(
   workflow: OpenShellGatewayAuthContractWorkflow,
 ): string[] {
@@ -114,6 +126,9 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
 
   const steps = job.steps ?? [];
+  if (steps.some(containsDockerAuthentication)) {
+    errors.push(`${JOB_NAME} must not authenticate Docker or receive Docker credential inputs`);
+  }
   for (const step of steps.filter((candidate) => candidate.uses)) {
     if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
       errors.push(`${JOB_NAME} action '${step.name ?? step.uses}' must pin a full SHA`);

@@ -156,11 +156,13 @@ async function expectSandboxInference42(
   expect(containsAnswer(response.stdout, "42"), resultText(response)).toBe(true);
 }
 
-test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboard", {
+test(
+  "gpu double onboard keeps Ollama auth proxy token consistent after re-onboard",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "validate GPU and Docker prerequisites",
+      "validate GPU and runtime prerequisites",
       "install Ollama runtime",
       "perform first Ollama onboard",
       "validate first proxy token and inference",
@@ -169,13 +171,22 @@ test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboa
       "remove GPU double-onboard sandbox",
     ],
   },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, skip }) => {
+  },
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    skip,
+  }) => {
   await artifacts.target.declare({
     id: "gpu-double-onboard",
     sandboxName: SANDBOX_NAME,
     proxyPort: PROXY_PORT,
     contracts: [
-      "GPU and Docker prerequisites are present",
+      "GPU and runtime prerequisites are present",
       "install.sh onboards with the Ollama provider",
       "the persisted Ollama auth-proxy token works after first onboard",
       "nemoclaw onboard --non-interactive --yes recreates the sandbox",
@@ -184,15 +195,10 @@ test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboa
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "GPU double-onboard",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
   const smi = await host.command("nvidia-smi", [], {
     artifactName: "phase-0-nvidia-smi",
     env: env(),
@@ -399,4 +405,5 @@ exit "$status"`,
     id: "gpu-double-onboard",
     status: "passed",
   });
-});
+  },
+);

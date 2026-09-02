@@ -64,8 +64,11 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, docker, host, progress }) => {
-    await docker.requireDocker();
+  async ({ artifacts, cleanup, host, progress, runtimeProvider }) => {
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-provider-info",
+      scenarioLabel: "onboard policy preset sequencing",
+    });
 
     progress.phase("start the local compatible-endpoint fake server");
     const apiKey = `e2e-6042-${randomBytes(16).toString("hex")}`;

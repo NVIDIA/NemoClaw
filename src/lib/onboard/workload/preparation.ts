@@ -176,10 +176,13 @@ export function liveE2eManagedImageCatalog(
       { cause: error },
     );
   }
-  const revision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  const revision =
+    environment.NEMOCLAW_E2E_MANAGED_IMAGE_REVISION?.trim() ??
+    environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ??
+    "";
   if (!/^[0-9a-f]{40}$/u.test(revision)) {
     throw new SandboxWorkloadPreparationError(
-      "the live E2E managed-image catalog requires an exact candidate revision",
+      "the live E2E managed-image catalog requires an exact publication revision",
     );
   }
   return { path: catalogPath, revision };

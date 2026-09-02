@@ -555,7 +555,19 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
-Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Install Managed llama.cpp on DGX Spark](../inference/local-inference/choose-local-inference-server#install-managed-llamacpp-on-dgx-spark).
+On a qualifying Windows WSL N1x host, Windows Express selects the explicit Experimental managed Qwen 3.6 recipe.
+Before selection, unset `DOCKER_HOST` and select Docker's `default` context.
+Onboarding also requires local Docker Desktop, Arm64, N1x product identity, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
+Select that recipe non-interactively with these values:
+
+```bash
+NEMOCLAW_PROVIDER=install-llama-cpp \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Set Up llama.cpp](../inference/local-inference/set-up-llama-cpp).
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference. The interactive review offers these actions:
 
@@ -724,7 +736,15 @@ For Hermes, the backed-up paths come from `agents/hermes/manifest.yaml`, includi
 
 </AgentOnly>
 
-Before creating the gateway, the wizard runs preflight checks. It verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing. Standard onboarding rejects unsupported runtimes such as Podman. The explicit portable experimental profile has one installer-preflight admission exception for the Podman unsupported-runtime finding. It does not waive any other readiness blocker or make Podman generally supported. The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`). If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases. For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range. If release metadata is unavailable, the installer uses its bundled fallback pin and the post-install version gate still enforces the range.
+Before creating the gateway, the wizard runs preflight checks.
+Docker is the default runtime provider. It verifies that the selected provider is reachable and prints host remediation guidance when prerequisites are missing.
+On Linux, set `NEMOCLAW_GATEWAY_RUNTIME=podman` to select the qualified native rootless Podman provider for standard onboarding.
+Native Podman must pass its provider-owned socket, rootless service, cgroups v2, bridge-container, DNS, architecture, and managed-image checks; an auto-detected Podman compatibility socket is not enough to opt in.
+The portable experimental profile remains a separate selection with its existing installer-preflight admission and lifecycle behavior. It does not read `NEMOCLAW_GATEWAY_RUNTIME` or become synonymous with native Podman.
+The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
+If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
+For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
+If release metadata is unavailable, the installer uses its bundled fallback pin and the post-install version gate still enforces the range.
 
 When NemoClaw finds an existing gateway to reuse, it probes the host gateway HTTP endpoint before declaring the gateway reusable. If the container is running but the upstream is still warming up (for example, immediately after a Docker daemon restart), NemoClaw rebuilds the gateway instead of trusting stale metadata. On the Docker-driver gateway path, preflight stays read-only when it detects a stale gateway (for example, a Docker-driver runtime env hash drift). It prints a `⚠ Gateway will be recreated when sandbox creation starts` notice and defers the actual teardown to step `[2/8] Starting OpenShell gateway`. This means pressing `Ctrl+C` between preflight and step `[2/8]` leaves the running gateway and existing sandbox containers untouched, so `$$nemoclaw onboard` is safe to run just to check preflight output. An interrupted run prints the resume command and exits with status `130` for `Ctrl+C` or `143` for `SIGTERM`. For Linux Docker-driver gateways, onboarding also checks that a helper container on the OpenShell Docker network can reach `host.openshell.internal:<gateway-port>`. If a host firewall blocks that sandbox path, onboarding exits with a `sudo ufw allow from <subnet> to <gateway-ip> port <gateway-port> proto tcp` command before it reports the gateway healthy. Set `NEMOCLAW_AUTO_FIX_FIREWALL=1` to opt in to automatic UFW remediation for this specific failure: NemoClaw uses `sudo -n` only, validates the Docker bridge subnet/gateway/port, applies the narrow UFW rule only after a proven TCP reachability failure, and re-probes before continuing. If passwordless sudo, UFW, or active UFW is unavailable, NemoClaw falls back to the manual guidance path without prompting for a password.
 
@@ -736,7 +756,11 @@ The Docker-driver gateway and the portable experimental profile's Podman-driver 
 
 #### `--from <Dockerfile>`
 
-Without `--from`, onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture. NemoClaw validates the complete three-agent publication cohort before selecting any member. If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile. Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent also fails closed before sandbox creation. The portable experimental profile and native Podman are not part of this activation.
+Without `--from`, onboarding through the default Docker provider or the explicitly selected native Podman provider for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
+NemoClaw validates the complete three-agent publication cohort before selecting any member.
+If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
+Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent also fails closed before sandbox creation.
+The portable experimental profile retains its separate workload path. Native Podman uses this managed-image activation and rejects legacy or custom Dockerfile builds, so `--from` remains a Docker-provider path.
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image. The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime. The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it. When the supplied path is the selected agent's own managed Dockerfile (for example, `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw applies one exception and stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths. This lets you edit the managed Dockerfile in place (for example to add Python packages) and rebuild from it with `--from`. For this managed exception, onboarding applies the `.dockerignore` from the repository root. For every other `--from` path, onboarding applies a `.dockerignore` from the Dockerfile's parent directory while calculating the context size and staging files for Docker. NemoClaw also applies additional secret-safety exclusions that override `.dockerignore` negation rules: credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key` are still skipped even if `.dockerignore` tries to include them. Without a `.dockerignore`, onboarding still skips common large or local-only directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context. Other build outputs such as `dist/`, `target/`, or `build/` are included unless your `.dockerignore` excludes them. If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts. Move the Dockerfile into a smaller dedicated directory or add `.dockerignore` entries for generated artifacts to shrink the context. If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
@@ -1076,7 +1100,7 @@ NUL bytes are still rejected in command arguments. Line breaks are accepted only
 | Flag | Description |
 | --- | --- |
 | `--workdir <dir>` | Working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
-| `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
+| `--tty` / `--no-tty` | Allocate a pseudo-terminal. The command runs without one unless you pass `--tty`, so stdout and stderr stay separate streams and width-formatted output keeps its non-terminal layout |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 | `--stdin` / `--no-stdin` | Force caller stdin forwarding or closure (default: inherit terminal stdin; close non-terminal or unavailable stdin). |
 
@@ -1697,7 +1721,7 @@ NUL bytes are still rejected in command arguments. Line breaks are accepted only
 | Flag | Description |
 | --- | --- |
 | `--workdir <dir>` | Set the working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
-| `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
+| `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal. The command runs without one unless you pass `--tty` |
 | `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
 | `--stdin`, `--no-stdin` | Force caller stdin forwarding or closure (default: inherit terminal stdin; close non-terminal or unavailable stdin). |
 
@@ -1885,23 +1909,24 @@ After OpenShell confirms deletion of a sandbox that owns managed llama.cpp, `des
 
 ### `$$nemoclaw <name> policy get`
 
-Export the sandbox's round-trippable OpenShell base policy as YAML. The command runs `openshell policy get --base`, validates the returned policy, and strips the OpenShell metadata header. The default output is suitable for review, editing, and later use with `openshell policy set`. The command exits non-zero when OpenShell fails, returns an empty response, or returns content that is not valid policy YAML.
+Export the sandbox's OpenShell base policy as parsed YAML. The command runs `openshell policy get --base`, strips the metadata header, and replaces literal credential values with `[STRIPPED_BY_MIGRATION]`. Before using the file with `openshell policy set`, replace every marker with a supported OpenShell credential binding or resolver placeholder. The command exits nonzero for an OpenShell failure, empty response, or invalid policy YAML.
 
 ```bash
 $$nemoclaw my-assistant policy get > current-policy.yaml
 ```
 
-Use `--raw` only to inspect the unparsed OpenShell response, including its metadata header:
+Use `--raw` to retain safe OpenShell metadata with the parsed, credential-redacted policy:
 
 ```bash
 $$nemoclaw my-assistant policy get --raw
 ```
 
-Do not pass `--raw` output to `openshell policy set` because the metadata header is not part of the policy document.
+The `--raw` output omits unknown metadata fields and literal credentials.
+Do not pass it to `openshell policy set` because the metadata header is not part of the policy document.
 
 | Flag | Description |
 | --- | --- |
-| `--raw` | Print the unparsed `openshell policy get --base` response, including its metadata header. |
+| `--raw` | Print allowlisted OpenShell metadata with the parsed, credential-redacted base policy. |
 
 ### `$$nemoclaw <name> policy add`
 
@@ -1919,7 +1944,7 @@ $$nemoclaw my-assistant policy add pypi --yes
 
 The positional form is required in scripted workflows. Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` for the same non-interactive behavior. If the preset is already present with identical content, the command reports no changes. If its content differs, NemoClaw previews the change and asks for confirmation before applying it again.
 
-Every mutation starts from the round-trippable base document returned by OpenShell, merges the requested built-in or custom content, submits the complete document, and verifies the live result. NemoClaw stores no applied-preset list or custom-policy copy in its registry. Custom preset names are encoded in namespaced keys in the live policy so later `policy list` and `policy remove` commands can derive them from OpenShell. If the live policy cannot be read or parsed, the command exits without writing a replacement.
+Every mutation starts from the parsed base document returned by OpenShell, merges the requested built-in or custom content, submits the complete document, and verifies the live result. NemoClaw stores no applied-preset list or custom-policy copy in its registry. Custom preset names are encoded in namespaced keys in the live policy so later `policy list` and `policy remove` commands can derive them from OpenShell. If the live policy cannot be read or parsed, the command exits without writing a replacement.
 
 With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit matching RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local endpoints. The option is invalid for built-in presets. You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options. NemoClaw resolves each matching exact host and adds generated `allowed_ips` pins to an in-memory copy of the preset. User-authored `allowed_ips` remains rejected. Dry-run output shows the generated pins. Applying the preset places those pins in the current OpenShell policy, which rebuild carries forward without re-resolving ambient DNS.
 
@@ -2319,7 +2344,7 @@ Refresh one MCP server registration, or every server on the sandbox when no serv
 
 **Address handling.** For a trusted-private entry, restart replays recorded address pins without resolving the endpoint again or widening the policy. For a public entry, restart resolves the hostname again and refreshes the policy with the current validated public addresses.
 
-**Credential handling.** If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision. Otherwise, restart reuses an existing provider whose current metadata match the registry. A missing provider requires the variable to be exported before retrying.
+**Credential handling.** If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision. Otherwise, restart reuses an existing provider only when its current metadata match the registry and the credential-resolution probe verifies the stored credential. Restart checks every selected server before it changes a policy, provider, or agent adapter. If credential verification fails or is inconclusive, restart exits without those changes. Export the recorded variable and retry to replace the stored credential. A missing provider requires the variable to be exported before retrying.
 
 **Legacy-provider recovery.** An existing provider with the profile-less legacy `generic` type must be removed and added again with its credential exported. OpenShell 0.0.116 cannot bind that provider to an MCP endpoint, so restart and rebuild fail closed instead of activating it. When that provider is already absent but its name still blocks sandbox exec, restart first detaches only the dangling sandbox-spec reference. It then runs the agent capability probe before changing a live provider or policy.
 
@@ -2692,13 +2717,14 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state. Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
 
 ```bash
-$$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability|--no-observability]
+$$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability|--no-observability]
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--yes`, `-y` | Skip the confirmation prompt. |
 | `--force` | Skip the confirmation prompt. If a sandbox with managed MCP servers cannot run the pre-mutation no-op, NemoClaw can use bounded host-side recovery to preserve registered MCP intent. The flag does not allow rebuild to continue when a manifest-declared state directory or state file cannot be fully backed up. |
+| `--retire-recovery <transaction-id>` | Retire the exact rebuild-recovery transaction after the recorded sandbox is confirmed deleted and required data recovery is complete. Requires `--yes`; it removes only the transaction-bound policy handoff and recovery marker, preserves the remaining backup, and does not start a rebuild. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
@@ -3215,9 +3241,9 @@ $$nemoclaw credentials list
 
 ### `$$nemoclaw credentials add <PROVIDER>`
 
-Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. `--from-existing` is available only when no managed MCP server reserves credential keys. The command fails before gateway work when a reservation exists because `--from-existing` does not expose credential keys before provider creation. Rerun with explicit `--credential <ENV_NAME>` input, or remove every managed MCP server that reserves credential keys before retrying. After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
+Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. With `--from-existing`, NemoClaw inspects the provider profile and rejects registration when one of its credential keys is reserved by a managed MCP server. After the gateway accepts the provider, rebuild each sandbox that should use it.
 
-Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes). If you want a provider available to only some sandboxes, scope it with `nemoclaw credentials reset <PROVIDER>` once those sandboxes finish using it.
+Registered providers are gateway-wide and attach to every sandbox you build or rebuild after the call. `nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes. To replace a credential, reset the provider, register the replacement, and rebuild each detached sandbox.
 
 ```bash
 $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY
@@ -3227,8 +3253,8 @@ $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_K
 | --- | --- |
 | `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
 | `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
-| `--config <K=V>` | Provider configuration pair. Repeatable |
-| `--from-existing` | Load credentials and config from existing local state when no managed MCP server reserves credential keys |
+| `--config <K=V>` | Typed non-secret provider configuration. Supported: `OPENAI_BASE_URL=<http(s)://public-IP/path>` with `--type openai`. DNS hostnames are rejected because this gateway-wide credential path cannot enforce admission-time address pins. URLs with credentials, query parameters, fragments, loopback, link-local, private, internal, or reserved IP destinations are also rejected. Configure hostname-based and trusted private inference endpoints through onboarding so NemoClaw can preserve their trust and address pins. Repeatable |
+| `--from-existing` | Load credentials and config from existing local state after checking the provider profile for credential keys reserved by managed MCP servers |
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
