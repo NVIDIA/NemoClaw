@@ -400,12 +400,26 @@ function normalizeBlueprintPolicyHost(raw: string): string {
   return wildcard ? `*.${normalized}` : normalized;
 }
 
-function assertBlueprintPolicyAdditionHostsSafe(additions: PolicyAdditions): void {
+async function resolveBlueprintPolicyAdditionHosts(
+  additions: PolicyAdditions,
+): Promise<PolicyAdditions> {
+  const resolved: PolicyAdditions = {};
   for (const [policyName, addition] of Object.entries(additions)) {
+    const endpoints: PolicyEndpoint[] = [];
     for (const [endpointIndex, endpoint] of addition.endpoints.entries()) {
       try {
         const host = normalizeBlueprintPolicyHost(endpoint.host);
         if (isPrivateHostname(host)) throw new Error("policy host is private or reserved");
+        if (host.startsWith("*.")) {
+          throw new Error("scoped wildcard policy hosts cannot be DNS-pinned safely");
+        }
+        const urlHost = isIP(host) === 6 ? `[${host}]` : host;
+        const validated = await validateEndpointUrl(`http://${urlHost}:${String(endpoint.port)}`);
+        const pinnedHost = normalizeBlueprintPolicyHost(new URL(validated.pinnedUrl).hostname);
+        if (isIP(pinnedHost) === 0 && validated.dnsResolved) {
+          throw new Error("policy hostname validation did not return a pinned IP address");
+        }
+        endpoints.push({ ...endpoint, host: pinnedHost });
       } catch (error) {
         const detail = error instanceof Error ? error.message : "policy host is unsafe";
         throw new Error(
@@ -414,7 +428,9 @@ function assertBlueprintPolicyAdditionHostsSafe(additions: PolicyAdditions): voi
         );
       }
     }
+    resolved[policyName] = { ...addition, endpoints };
   }
+  return resolved;
 }
 
 function isInferenceProfile(value: unknown): value is InferenceProfile {
@@ -1231,6 +1247,7 @@ async function resolveRunConfig(
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
   routerCfg: RouterConfig;
+  policyAdditions: PolicyAdditions;
 }> {
   const inferenceProfiles = blueprint.components?.inference?.profiles ?? {};
   if (!(profile in inferenceProfiles)) {
@@ -1238,7 +1255,9 @@ async function resolveRunConfig(
     throw new Error(`Profile '${profile}' not found. Available: ${available}`);
   }
 
-  assertBlueprintPolicyAdditionHostsSafe(blueprint.components?.policy?.additions ?? {});
+  const policyAdditions = await resolveBlueprintPolicyAdditionHosts(
+    blueprint.components?.policy?.additions ?? {},
+  );
 
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
@@ -1268,7 +1287,7 @@ async function resolveRunConfig(
     assertValidProviderName(inferenceCfg.provider_name);
   }
 
-  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg };
+  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg, policyAdditions };
 }
 
 // ── Actions ─────────────────────────────────────────────────────
@@ -1547,7 +1566,7 @@ export async function actionPlan(
   const rid = emitRunId();
   progress(10, "Validating blueprint");
 
-  const { inferenceCfg, sandboxCfg, routerCfg } = await resolveRunConfig(
+  const { inferenceCfg, sandboxCfg, routerCfg, policyAdditions } = await resolveRunConfig(
     profile,
     blueprint,
     options?.endpointUrl,
@@ -1567,7 +1586,7 @@ export async function actionPlan(
     sandboxCfg,
     routerCfg,
     runtimeIdentityConfig: blueprint.components?.identity,
-    policyAdditions: blueprint.components?.policy?.additions ?? {},
+    policyAdditions,
     dryRun: options?.dryRun ?? false,
   });
 
@@ -1679,18 +1698,16 @@ export async function actionApply(
 
   const rid = emitRunId();
 
-  const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
-    profile,
-    blueprint,
-    options?.endpointUrl,
-  );
+  const {
+    inferenceCfg,
+    sandboxCfg,
+    policyAdditions: resolvedPolicyAdditions,
+  } = await resolveRunConfig(profile, blueprint, options?.endpointUrl);
 
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
-  const policyAdditions = withoutProviderComposedPolicies(
-    blueprint.components?.policy?.additions ?? {},
-  );
+  const policyAdditions = withoutProviderComposedPolicies(resolvedPolicyAdditions);
   const runtimeIdentityConfig = blueprint.components?.identity;
   const providerName = inferenceCfg.provider_name ?? "default";
   const providerType = inferenceCfg.provider_type ?? "openai";

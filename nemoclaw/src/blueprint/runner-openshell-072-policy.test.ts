@@ -61,6 +61,8 @@ vi.mock("./private-networks.js", async (importOriginal) => ({
 }));
 
 const { actionApply, actionReconcile, actionStatus } = await import("./runner.js");
+const { validateEndpointUrl } = await import("./ssrf.js");
+const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
 const additions = {
   nim_service: {
@@ -128,6 +130,9 @@ describe("blueprint policy convenience", () => {
     mutateBeforePolicySet = null;
     policySetDiagnostic = null;
     policySetBehavior = "applied";
+    mockedValidateEndpoint
+      .mockReset()
+      .mockImplementation(async (url: string) => resolvedEndpointFor(url));
     mockExeca.mockReset().mockImplementation(async (_command: string, args: string[]) => {
       const joined = args.join(" ");
       const revisionRead = /^policy get -g test-gateway --rev (\d+) --base test-sandbox$/u.exec(
@@ -236,7 +241,27 @@ describe("blueprint policy convenience", () => {
     expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
   });
 
-  it.each(["*", "0.0.0.0", "169.254.169.254", "127.0.0.1", "10.0.0.1"])(
+  it("writes the DNS-pinned address returned by policy hostname validation", async () => {
+    mockedValidateEndpoint.mockResolvedValueOnce({
+      url: "http://integrate.api.nvidia.com:443",
+      pinnedUrl: "http://93.184.216.34:443/",
+      protocol: "http:",
+      hostname: "integrate.api.nvidia.com",
+      resolvedAddress: "93.184.216.34",
+      resolvedFamily: 4,
+      dnsResolved: true,
+    });
+
+    await actionApply("default", blueprint());
+
+    expect(livePolicy.network_policies).toMatchObject({
+      nim_service: {
+        endpoints: [{ host: "93.184.216.34", port: 443, access: "full" }],
+      },
+    });
+  });
+
+  it.each(["*", "*.example.com", "0.0.0.0", "169.254.169.254", "127.0.0.1", "10.0.0.1"])(
     "rejects unsafe policy host %s before any lifecycle mutation",
     async (host) => {
       const value = structuredClone(blueprint());
@@ -249,6 +274,21 @@ describe("blueprint policy convenience", () => {
       expect([...store.keys()].some((path) => path.includes("/.nemoclaw/state/runs/"))).toBe(false);
     },
   );
+
+  it("rejects a policy hostname that resolves to a private address before any lifecycle mutation", async () => {
+    const value = structuredClone(blueprint());
+    value.components!.policy!.additions!.nim_service.endpoints[0].host = "rebind.example.com";
+    mockedValidateEndpoint.mockRejectedValueOnce(
+      new Error("Endpoint URL resolves to private/internal address 127.0.0.1"),
+    );
+
+    await expect(actionApply("default", value)).rejects.toThrow(
+      /Blueprint policy addition 'nim_service' endpoint 1 is rejected:.*127\.0\.0\.1/iu,
+    );
+    expect(mockedValidateEndpoint).toHaveBeenCalledWith("http://rebind.example.com:443");
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect([...store.keys()].some((path) => path.includes("/.nemoclaw/state/runs/"))).toBe(false);
+  });
 
   it("verifies policy additions before creating the inference provider or route", async () => {
     await actionApply("default", blueprint());
