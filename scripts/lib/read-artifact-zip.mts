@@ -4,6 +4,7 @@
 import zlib from "node:zlib";
 
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 
@@ -128,7 +129,7 @@ function parseValidatedArtifactZip(
       totalUncompressedBytes > options.maxTotalUncompressedBytes ||
       seen.has(name) ||
       diskStart !== 0 ||
-      (flags & 0x9) !== 0 ||
+      (flags & 0x1) !== 0 ||
       (compressionMethod !== 0 && compressionMethod !== 8) ||
       (creatorSystem !== 0 && creatorSystem !== 3) ||
       (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
@@ -148,15 +149,29 @@ function parseValidatedArtifactZip(
     const localNameEnd = localHeaderOffset + 30 + localNameLength;
     const compressedDataOffset = localNameEnd + localExtraLength;
     const dataEnd = compressedDataOffset + compressedSize;
+    const usesDataDescriptor = (flags & 0x8) !== 0;
     if (
       localNameEnd > centralDirectoryOffset ||
       dataEnd > centralDirectoryOffset ||
       localFlags !== flags ||
       localCompressionMethod !== compressionMethod ||
-      localCrc !== expectedCrc ||
-      localCompressedSize !== compressedSize ||
-      localUncompressedSize !== uncompressedSize ||
+      (!usesDataDescriptor &&
+        (localCrc !== expectedCrc ||
+          localCompressedSize !== compressedSize ||
+          localUncompressedSize !== uncompressedSize)) ||
+      (usesDataDescriptor &&
+        (localCrc !== 0 || localCompressedSize !== 0 || localUncompressedSize !== 0)) ||
       !archive.subarray(localHeaderOffset + 30, localNameEnd).equals(nameBytes)
+    ) {
+      return null;
+    }
+    if (
+      usesDataDescriptor &&
+      (dataEnd + 16 > centralDirectoryOffset ||
+        archive.readUInt32LE(dataEnd) !== ZIP_DATA_DESCRIPTOR_SIGNATURE ||
+        archive.readUInt32LE(dataEnd + 4) !== expectedCrc ||
+        archive.readUInt32LE(dataEnd + 8) !== compressedSize ||
+        archive.readUInt32LE(dataEnd + 12) !== uncompressedSize)
     ) {
       return null;
     }
