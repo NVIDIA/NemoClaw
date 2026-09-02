@@ -50,7 +50,10 @@ Candidate image receipts bind each accepted platform to:
 - one release and publication cohort;
 - managed-image, startup-profile, and capability contract version 1.
 
-Final activation must publish both platform digests in the same complete cohort. A partial platform set cannot advertise Pi support.
+Final activation must publish both platform digests in the same complete cohort.
+A partial platform set cannot advertise Pi support.
+When protected Pi image inputs change, repository validation requires refreshed receipts for both platforms.
+The receipts must name one source revision, release, and cohort, match the protected image inputs, and have digests in the candidate authority.
 
 ## Managed Inference and Credentials
 
