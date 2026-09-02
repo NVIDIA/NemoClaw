@@ -128,19 +128,24 @@ coverage retains that assertion for environments with supervisor-authoritative D
 
 ### Exact-base managed runtime comparison
 
-The manual `E2E / Exact Base Managed Runtime` workflow compares one completed same-repository
-managed-image PR activation with the identical scenario at that PR's current base commit. Dispatch
-it from `main` with the open PR number, candidate SHA, base SHA, candidate workflow run ID, and run
-attempt. The controller authenticates those values against the current PR and exact managed-image
-workflow attempt. Historical run metadata about the PR base is not authority for the comparison.
+The base-controlled `E2E / Exact Base Managed Runtime` workflow starts automatically after every
+completed same-repository managed-image PR run. Its `workflow_run` controller authenticates the
+open PR number, current candidate and base SHAs, and exact source run ID and attempt before it uses
+any source-run artifacts. A manual dispatch from `main` accepts the same identities for recovery,
+but authenticates them through the same path. Historical run metadata about the PR base is not
+authority for the comparison.
 
-The candidate job records its candidate and base SHAs, workflow source and attempt, OpenShell
-version, complete immutable image identity, scenario path, evidence file digests, and cleanup
-result. The comparison workflow binds that receipt and its evidence artifacts by artifact ID and
-digest. It then starts a fresh runner, checks out the exact base SHA, selects the nearest successful
-managed-image cohort on that base's first-parent history, and runs
-`managed-image-activation-e2e.test.ts` with the same agent set and platform. The base run emits the
-same receipt shape before classification.
+The managed-image PR workflow only builds candidate inputs. A fresh trusted job downloads the
+exact image contracts from the authenticated source attempt, validates and assembles them with
+base-controlled code, builds the candidate CLI as a product input, and executes the checked-in
+trusted scenario controller. The PR-controlled workflow cannot author the qualification receipt.
+After activation, a separate fresh post-processing runner that never checks out or executes the
+candidate records the candidate and base SHAs, source and qualification attempts, trusted workflow
+revision, OpenShell version, complete immutable image identity, scenario path, evidence file
+digests, and cleanup result. Another fresh runner checks out the exact base SHA, selects the
+nearest successful managed-image cohort on that base's first-parent history, and runs the same
+scenario. Both receipts and evidence archives are bound by artifact ID and digest before
+classification.
 
 The comparison has four outcomes:
 
@@ -152,6 +157,16 @@ The comparison has four outcomes:
 
 An infrastructure failure does not produce a product verdict. This workflow covers the managed
 runtime activation scenario only; it does not qualify the Hermes dependency lane.
+
+The trusted workflow publishes `NemoClaw / Exact-base managed runtime` as a pending status on the
+candidate before either live scenario starts, then replaces it with success, failure, or error from
+the comparison receipt. A cancelled workflow leaves the status pending, which fails closed when
+the context is required. For recovery, rerun the exact failed qualification attempt or manually
+dispatch the workflow from `main` with the still-current PR identities. If the comparison reports
+`base evidence validation failed`, use the retained receipt and evidence artifact IDs plus the
+bounded cause (`metadata lookup`, `receipt download or validation`, or `evidence download or digest
+validation`) to repair or rerun the affected producer. Do not substitute artifacts from another
+attempt.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a

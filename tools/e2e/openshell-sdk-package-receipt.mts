@@ -29,8 +29,13 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const PACKAGE_PATTERN = /^[a-z0-9][a-z0-9._-]*[.]tgz$/u;
 const MAX_PACKAGE_BYTES = 16 * 1024 * 1024;
+const PACKAGE_OPEN_FLAGS =
+  fs.constants.O_RDONLY |
+  (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0) |
+  (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0);
 
 type JsonRecord = Record<string, unknown>;
+type FileSnapshot = fs.BigIntStats;
 
 export interface OpenShellSdkProducerReceipt {
   readonly kind: typeof PRODUCER_KIND;
@@ -158,6 +163,52 @@ function producerArtifactName(candidateSha: string, runId: number, runAttempt: n
   return `openshell-sdk-${candidateSha}-${runId}-${runAttempt}`;
 }
 
+function sameFileSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+function readPinnedPackage(archivePath: string): Buffer {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(archivePath, PACKAGE_OPEN_FLAGS);
+  } catch {
+    throw new Error("OpenShell SDK package must be a regular non-symlink file");
+  }
+  try {
+    const descriptorBefore = fs.fstatSync(descriptor, { bigint: true });
+    const pathBefore = fs.lstatSync(archivePath, { bigint: true });
+    if (
+      pathBefore.isSymbolicLink() ||
+      !descriptorBefore.isFile() ||
+      !sameFileSnapshot(pathBefore, descriptorBefore)
+    ) {
+      throw new Error("OpenShell SDK package must be a regular non-symlink file");
+    }
+    if (descriptorBefore.size < 1n || descriptorBefore.size > BigInt(MAX_PACKAGE_BYTES)) {
+      throw new Error("OpenShell SDK package size is invalid");
+    }
+    const bytes = fs.readFileSync(descriptor);
+    if (
+      BigInt(bytes.length) !== descriptorBefore.size ||
+      !sameFileSnapshot(descriptorBefore, fs.fstatSync(descriptor, { bigint: true })) ||
+      !sameFileSnapshot(pathBefore, fs.lstatSync(archivePath, { bigint: true }))
+    ) {
+      throw new Error("OpenShell SDK package changed while it was read");
+    }
+    return bytes;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export function createOpenShellSdkProducerReceipt(input: {
   readonly archivePath: string;
   readonly baseSha: string;
@@ -177,14 +228,7 @@ export function createOpenShellSdkProducerReceipt(input: {
   const runId = positiveInteger(input.runId, "run id");
   const runAttempt = positiveInteger(input.runAttempt, "run attempt");
   const archivePath = path.resolve(input.archivePath);
-  const metadata = fs.lstatSync(archivePath);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error("OpenShell SDK package must be a regular non-symlink file");
-  }
-  if (metadata.size < 1 || metadata.size > MAX_PACKAGE_BYTES) {
-    throw new Error("OpenShell SDK package size is invalid");
-  }
-  const bytes = fs.readFileSync(archivePath);
+  const bytes = readPinnedPackage(archivePath);
   return {
     kind: PRODUCER_KIND,
     pullRequest,

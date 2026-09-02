@@ -418,8 +418,11 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     if (argv.length < 4) {
       throw new Error("expected candidate SHA, output path, and managed-image contract paths");
     }
-    const runId = requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
-    const runAttempt = requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
+    const runId = requiredInteger(env.SOURCE_RUN_ID ?? env.GITHUB_RUN_ID, "source run id");
+    const runAttempt = requiredInteger(
+      env.SOURCE_RUN_ATTEMPT ?? env.GITHUB_RUN_ATTEMPT,
+      "source run attempt",
+    );
     writeManagedImageCatalog(
       argv.slice(3),
       argv[1],

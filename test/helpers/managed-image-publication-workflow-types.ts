@@ -91,6 +91,10 @@ export type Workflow = {
         }
       >;
     };
+    workflow_run?: {
+      workflows?: string[];
+      types?: string[];
+    };
   };
   permissions?: Record<string, string>;
 };

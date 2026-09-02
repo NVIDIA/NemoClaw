@@ -8,9 +8,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  classifyCurrentRun,
   classifyManagedRuntimeComparison,
+  commitStatusForClassification,
   createManagedRuntimeReceipt,
   parseManagedRuntimeReceipt,
+  selectManagedRuntimeSource,
   type ManagedRuntimeCandidateSelection,
   type ManagedRuntimeReceipt,
 } from "../../../tools/e2e/managed-runtime-comparison.mts";
@@ -55,7 +58,7 @@ function catalog(revision: string): string {
             repository: "NVIDIA/NemoClaw",
             revision,
             release: "v0.0.116",
-            cohort: "ghrun-100-1",
+            cohort: `ghrun-${CANDIDATE_RUN_ID}-${RUN_ATTEMPT}`,
           },
           startupProfileContractVersion: 1,
           capabilityContractVersion: 1,
@@ -92,23 +95,40 @@ function receipt(
     evidenceDirectory: evidence(cleanupFailures),
     imageRevision: candidate ? CANDIDATE_SHA : IMAGE_REVISION,
     job: candidate
-      ? "PR exact all-agent managed runtime activation"
+      ? "Trusted candidate all-agent managed runtime activation"
       : "Exact base all-agent managed runtime activation",
     openshellVersion: candidate ? "openshell 0.0.116" : "openshell 0.0.115",
     outcome,
     role,
+    candidateSourceRunAttempt: RUN_ATTEMPT,
+    candidateSourceRunId: CANDIDATE_RUN_ID,
     runAttempt: RUN_ATTEMPT,
-    runId: candidate ? CANDIDATE_RUN_ID : BASE_RUN_ID,
+    runId: BASE_RUN_ID,
     sourceSha: candidate ? CANDIDATE_SHA : BASE_SHA,
-    workflowPath: candidate
-      ? ".github/workflows/managed-images.yaml"
-      : ".github/workflows/managed-runtime-base-qualification.yaml",
+    workflowPath: ".github/workflows/managed-runtime-base-qualification.yaml",
     workflowSha: BASE_SHA,
   });
 }
 
 function artifact(name: string, id: number) {
   return { id, name, digest: `sha256:${"d".repeat(64)}`, size: 100 };
+}
+
+function artifactMetadata(name: string, id: number) {
+  return {
+    total_count: 1,
+    artifacts: [
+      {
+        id,
+        name,
+        size_in_bytes: 100,
+        expired: false,
+        digest: `sha256:${"d".repeat(64)}`,
+        archive_download_url: `https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/${id}/zip`,
+        workflow_run: { id: BASE_RUN_ID, head_sha: BASE_SHA },
+      },
+    ],
+  };
 }
 
 function selection(
@@ -120,9 +140,15 @@ function selection(
     pullRequest: 10_790,
     candidateSha: CANDIDATE_SHA,
     baseSha: BASE_SHA,
-    workflow: { id: 123, path: ".github/workflows/managed-images.yaml" },
-    run: { id: CANDIDATE_RUN_ID, attempt: RUN_ATTEMPT },
+    workflow: {
+      id: 123,
+      path: ".github/workflows/managed-runtime-base-qualification.yaml",
+      sha: BASE_SHA,
+    },
+    run: { id: BASE_RUN_ID, attempt: RUN_ATTEMPT },
+    source: { runId: CANDIDATE_RUN_ID, runAttempt: RUN_ATTEMPT },
     job: { id: 456, conclusion: outcome },
+    evidenceError: null,
     receipt: selectedReceipt,
     artifacts: {
       receipt: selectedReceipt ? artifact("candidate-receipt", 1) : null,
@@ -158,6 +184,63 @@ afterEach(() => {
 });
 
 describe("managed runtime comparison receipts", () => {
+  it("authenticates the automatic source attempt against the current same-repository PR", async () => {
+    const requested: string[] = [];
+    const run = {
+      workflow_id: 123,
+      run_attempt: RUN_ATTEMPT,
+      path: ".github/workflows/managed-images.yaml",
+      event: "pull_request",
+      head_sha: CANDIDATE_SHA,
+      status: "completed",
+      repository: { full_name: "NVIDIA/NemoClaw" },
+      head_repository: { full_name: "NVIDIA/NemoClaw" },
+      pull_requests: [{ number: 10_790, head: { sha: CANDIDATE_SHA } }],
+    };
+    const responses = new Map<string, unknown>([
+      [
+        "/repos/NVIDIA/NemoClaw/pulls/10790",
+        {
+          state: "open",
+          head: { sha: CANDIDATE_SHA },
+          base: { sha: BASE_SHA },
+        },
+      ],
+      [
+        "/repos/NVIDIA/NemoClaw/actions/workflows/managed-images.yaml",
+        {
+          id: 123,
+          name: "Images / Build, Test, and Publish Managed Images",
+          path: ".github/workflows/managed-images.yaml",
+          state: "active",
+        },
+      ],
+    ]);
+    const selected = await selectManagedRuntimeSource(
+      {
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        pullRequest: 10_790,
+        runAttempt: RUN_ATTEMPT,
+        runId: CANDIDATE_RUN_ID,
+        token: "token",
+      },
+      {
+        request: async (apiPath) => {
+          requested.push(apiPath);
+          return responses.get(apiPath) ?? run;
+        },
+      },
+    );
+
+    expect(selected).toMatchObject({
+      candidateSha: CANDIDATE_SHA,
+      baseSha: BASE_SHA,
+      run: { id: CANDIDATE_RUN_ID, attempt: RUN_ATTEMPT },
+    });
+    expect(requested).toHaveLength(3);
+  });
+
   it("attributes a candidate failure only after the identical base scenario passes", () => {
     expect(
       compare({ candidateJob: "failure", candidateReceipt: receipt("candidate", "failure") }),
@@ -183,9 +266,12 @@ describe("managed runtime comparison receipts", () => {
       parseManagedRuntimeReceipt(receipt("base"), {
         baseSha: "e".repeat(40),
         candidateSha: CANDIDATE_SHA,
+        candidateSourceRunAttempt: RUN_ATTEMPT,
+        candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "base",
         runAttempt: RUN_ATTEMPT,
         runId: BASE_RUN_ID,
+        workflowSha: BASE_SHA,
       }),
     ).toThrow("base SHA");
   });
@@ -195,9 +281,12 @@ describe("managed runtime comparison receipts", () => {
       parseManagedRuntimeReceipt(receipt("base"), {
         baseSha: BASE_SHA,
         candidateSha: CANDIDATE_SHA,
+        candidateSourceRunAttempt: RUN_ATTEMPT,
+        candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "base",
         runAttempt: RUN_ATTEMPT + 1,
         runId: BASE_RUN_ID,
+        workflowSha: BASE_SHA,
       }),
     ).toThrow("workflow attempt");
   });
@@ -211,11 +300,33 @@ describe("managed runtime comparison receipts", () => {
       parseManagedRuntimeReceipt(value, {
         baseSha: BASE_SHA,
         candidateSha: CANDIDATE_SHA,
+        candidateSourceRunAttempt: RUN_ATTEMPT,
+        candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "candidate",
         runAttempt: RUN_ATTEMPT,
-        runId: CANDIDATE_RUN_ID,
+        runId: BASE_RUN_ID,
+        workflowSha: BASE_SHA,
       }),
     ).toThrow("stale");
+  });
+
+  it("rejects a candidate receipt authored by the PR-controlled workflow", () => {
+    const value = structuredClone(receipt("candidate")) as unknown as {
+      workflow: { path: string };
+    };
+    value.workflow.path = ".github/workflows/managed-images.yaml";
+    expect(() =>
+      parseManagedRuntimeReceipt(value, {
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        candidateSourceRunAttempt: RUN_ATTEMPT,
+        candidateSourceRunId: CANDIDATE_RUN_ID,
+        role: "candidate",
+        runAttempt: RUN_ATTEMPT,
+        runId: BASE_RUN_ID,
+        workflowSha: BASE_SHA,
+      }),
+    ).toThrow("workflow path");
   });
 
   it("classifies a scenario mismatch as infrastructure evidence", () => {
@@ -230,6 +341,49 @@ describe("managed runtime comparison receipts", () => {
     ).toMatchObject({
       classification: "infrastructure-failure",
       reason: "candidate or base cleanup is not proven",
+    });
+  });
+
+  it("retains artifact identities and a bounded cause when base evidence download fails", async () => {
+    const comparison = await classifyCurrentRun(
+      selection("success", receipt("candidate")),
+      {
+        baseJobConclusion: "success",
+        headSha: BASE_SHA,
+        runAttempt: RUN_ATTEMPT,
+        runId: BASE_RUN_ID,
+        token: "credential-that-must-not-leak",
+        workflowSha: BASE_SHA,
+      },
+      {
+        request: async (apiPath) =>
+          apiPath.includes("base-receipt")
+            ? artifactMetadata(`managed-runtime-base-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}`, 91)
+            : artifactMetadata(`managed-runtime-base-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}`, 92),
+        downloadArtifact: async () => {
+          throw new Error("credential-that-must-not-leak upstream body");
+        },
+      },
+    );
+
+    expect(comparison).toMatchObject({
+      classification: "infrastructure-failure",
+      reason: "base evidence validation failed: receipt download or validation failed",
+      base: {
+        receiptArtifact: { id: 91 },
+        evidenceArtifact: { id: 92 },
+        evidenceError: "receipt download or validation failed",
+      },
+    });
+    expect(JSON.stringify(comparison)).not.toContain("credential-that-must-not-leak");
+  });
+
+  it("maps every comparison verdict to a blocking candidate status", () => {
+    expect(commitStatusForClassification("pass")).toMatchObject({ state: "success" });
+    expect(commitStatusForClassification("candidate-failure")).toMatchObject({ state: "failure" });
+    expect(commitStatusForClassification("base-failure")).toMatchObject({ state: "failure" });
+    expect(commitStatusForClassification("infrastructure-failure")).toMatchObject({
+      state: "error",
     });
   });
 });

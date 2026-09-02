@@ -625,13 +625,6 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
-    expect(
-      step(activation, "Checkout base-controlled activation receipt writer").with,
-    ).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
-      path: ".trusted-managed-runtime-comparison",
-      "persist-credentials": false,
-    });
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
@@ -641,103 +634,6 @@ describe("complete managed-image publication workflow", () => {
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
-    const receipt = step(activation, "Record managed runtime activation receipt");
-    expect(receipt.if).toContain("always()");
-    expect(receipt.if).toContain(
-      ".trusted-managed-runtime-comparison/tools/e2e/managed-runtime-comparison.mts",
-    );
-    expect(receipt.env).toMatchObject({
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-      CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
-      MANAGED_IMAGE_REVISION: "${{ github.event.pull_request.head.sha }}",
-      MANAGED_RUNTIME_OUTCOME: "${{ steps.activation.outcome }}",
-      MANAGED_RUNTIME_ROLE: "candidate",
-    });
-    expect(receipt.run).toContain("managed-runtime-comparison.mts record");
-    expect(step(activation, "Upload managed runtime activation receipt").with?.name).toBe(
-      "managed-runtime-activation-receipt-${{ github.run_id }}-${{ github.run_attempt }}",
-    );
-  });
-
-  it("runs and classifies the identical managed runtime scenario on the authenticated exact base", () => {
-    const workflow = readWorkflow("managed-runtime-base-qualification.yaml");
-    const authenticate = required(
-      workflow.jobs?.["authenticate-candidate"],
-      "missing candidate authentication job",
-    );
-    const base = required(
-      workflow.jobs?.["exact-base-activation"],
-      "missing exact-base activation job",
-    );
-    const classify = required(workflow.jobs?.classify, "missing managed runtime classifier");
-
-    expect(workflow.on).toEqual({
-      workflow_dispatch: {
-        inputs: {
-          pr_number: expect.objectContaining({ required: true, type: "string" }),
-          candidate_sha: expect.objectContaining({ required: true, type: "string" }),
-          base_sha: expect.objectContaining({ required: true, type: "string" }),
-          candidate_run_id: expect.objectContaining({ required: true, type: "string" }),
-          candidate_run_attempt: expect.objectContaining({ required: true, type: "string" }),
-        },
-      },
-    });
-    expect(workflow.permissions).toEqual({
-      actions: "read",
-      contents: "read",
-      "pull-requests": "read",
-    });
-    expect(workflow.concurrency?.["cancel-in-progress"]).toBe(false);
-    expect(authenticate.if).toContain("github.ref == 'refs/heads/main'");
-    expect(step(authenticate, "Bind the candidate run and artifacts").run).toContain(
-      "managed-runtime-comparison.mts select-candidate",
-    );
-
-    expect(base.needs).toBe("authenticate-candidate");
-    expect(base.if).toContain("candidate_ready == 'true'");
-    expect(base.if).toContain("candidate_outcome == 'success'");
-    expect(base.if).toContain("candidate_outcome == 'failure'");
-    expect(base["runs-on"]).toBe("ubuntu-24.04");
-    expect(base.permissions).toEqual({ actions: "read", contents: "read", packages: "read" });
-    expect(step(base, "Check out exact comparison base").with).toMatchObject({
-      ref: "${{ needs.authenticate-candidate.outputs.base_sha }}",
-      path: "base",
-      "fetch-depth": 0,
-      "persist-credentials": false,
-    });
-    expect(step(base, "Select the production managed-image cohort for the base").env).toMatchObject(
-      {
-        EXPECTED_SHA: "${{ needs.authenticate-candidate.outputs.base_sha }}",
-        REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
-        SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1",
-      },
-    );
-    expect(
-      step(base, "Validate the base cohort and materialize its runtime catalog").run,
-    ).toContain("managed-image-cohort-contract.mts");
-    const baseRun = step(base, "Run the identical exact-base managed runtime scenario").run ?? "";
-    expect(baseRun).toContain('test "$(git rev-parse --verify HEAD)" = "$BASE_SHA"');
-    expect(baseRun).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
-    expect(step(base, "Record the base activation receipt").env).toMatchObject({
-      MANAGED_RUNTIME_OUTCOME: "${{ steps.activation.outcome }}",
-      MANAGED_RUNTIME_ROLE: "base",
-      MANAGED_RUNTIME_SOURCE_SHA: "${{ needs.authenticate-candidate.outputs.base_sha }}",
-    });
-
-    expect(classify.if).toBe("always() && needs.authenticate-candidate.result == 'success'");
-    expect(step(classify, "Compare authenticated scenario receipts")).toMatchObject({
-      "continue-on-error": true,
-      env: {
-        BASE_JOB_CONCLUSION: "${{ needs.exact-base-activation.result }}",
-        GITHUB_TOKEN: "${{ github.token }}",
-      },
-    });
-    expect(step(classify, "Preserve managed runtime comparison receipt").with?.name).toBe(
-      "managed-runtime-comparison-${{ github.run_id }}-${{ github.run_attempt }}",
-    );
-    expect(step(classify, "Propagate the comparison classification").if).toBe(
-      "steps.classify.outcome != 'success'",
-    );
   });
 
   it("passes the reported OpenClaw managed-image MCP discovery twice on one exact PR cohort (#8746)", () => {

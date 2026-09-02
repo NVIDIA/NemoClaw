@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { downloadBoundArtifact } from "../../../tools/e2e/exact-artifact-download.mts";
 import {
@@ -143,12 +143,68 @@ function resolverFixture(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 
 describe("OpenShell SDK producer receipts", () => {
+  it("validates and reads the package through one non-following descriptor", () => {
+    const directory = temporaryDirectory();
+    const archivePath = path.join(directory, "reviewed-sdk.tgz");
+    fs.writeFileSync(archivePath, "reviewed SDK package");
+    const open = vi.spyOn(fs, "openSync");
+    const fstat = vi.spyOn(fs, "fstatSync");
+    const read = vi.spyOn(fs, "readFileSync");
+
+    createOpenShellSdkProducerReceipt({
+      archivePath,
+      baseSha: BASE_SHA,
+      candidateSha: CANDIDATE_SHA,
+      checkedOutSha: BASE_SHA,
+      pullRequest: PR_NUMBER,
+      runAttempt: RUN_ATTEMPT,
+      runId: RUN_ID,
+      workflowSha: BASE_SHA,
+    });
+
+    const descriptor = open.mock.results[0]?.value;
+    const flags = Number(open.mock.calls[0]?.[1] ?? 0);
+    const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+    expect(flags & noFollow).toBe(noFollow);
+    expect(fstat).toHaveBeenCalledWith(descriptor, { bigint: true });
+    expect(read).toHaveBeenCalledWith(descriptor);
+    expect(read).not.toHaveBeenCalledWith(archivePath);
+  });
+
+  it("rejects a package path replaced after its descriptor opens", () => {
+    const directory = temporaryDirectory();
+    const archivePath = path.join(directory, "reviewed-sdk.tgz");
+    const originalPath = path.join(directory, "original-sdk.tgz");
+    fs.writeFileSync(archivePath, "reviewed SDK package");
+    const realOpen: typeof fs.openSync = fs.openSync.bind(fs);
+    vi.spyOn(fs, "openSync").mockImplementation(((target, flags, mode) => {
+      const descriptor = realOpen(target, flags, mode);
+      fs.renameSync(archivePath, originalPath);
+      fs.writeFileSync(archivePath, "replacement package");
+      return descriptor;
+    }) as typeof fs.openSync);
+
+    expect(() =>
+      createOpenShellSdkProducerReceipt({
+        archivePath,
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        checkedOutSha: BASE_SHA,
+        pullRequest: PR_NUMBER,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+        workflowSha: BASE_SHA,
+      }),
+    ).toThrow("regular non-symlink file");
+  });
+
   it("bridges a base that predates producer receipts with a distinct authenticated selection", async () => {
     const packageBytes = Buffer.from("reviewed SDK package");
     const archive = artifactZip([
