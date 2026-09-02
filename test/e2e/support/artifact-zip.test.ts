@@ -40,9 +40,7 @@ describe("validated GitHub artifact ZIP reader", () => {
         maxTotalUncompressedBytes: 10,
       }),
     ).toBeNull();
-    expect(
-      readValidatedArtifactZipEntries(archive, { maxTotalUncompressedBytes: 5 }),
-    ).toBeNull();
+    expect(readValidatedArtifactZipEntries(archive, { maxTotalUncompressedBytes: 5 })).toBeNull();
   });
 
   it("rejects duplicate, linked, and invalid UTF-8 names", () => {
@@ -66,6 +64,27 @@ describe("validated GitHub artifact ZIP reader", () => {
     expect(
       readValidatedArtifactZipEntries(invalidUtf8, { maxTotalUncompressedBytes: 1_024 }),
     ).toBeNull();
+  });
+
+  it("preserves a leading BOM as part of the ZIP entry name", () => {
+    const archive = artifactZip([
+      { name: "summary.json", contents: "normal" },
+      { name: "\ufeffsummary.json", contents: "BOM-prefixed" },
+    ]);
+
+    expect(readValidatedArtifactZipEntries(archive, { maxTotalUncompressedBytes: 1_024 })).toEqual([
+      { name: "summary.json", bytes: Buffer.from("normal") },
+      { name: "\ufeffsummary.json", bytes: Buffer.from("BOM-prefixed") },
+    ]);
+    expect(readValidatedArtifactZipEntry(archive, "summary.json", { maxBytes: 1_024 })).toBe(
+      "normal",
+    );
+  });
+
+  it("does not select a BOM-prefixed entry for an exact plain-name lookup", () => {
+    const archive = artifactZip([{ name: "\ufeffsummary.json", contents: "BOM-only" }]);
+
+    expect(readValidatedArtifactZipEntry(archive, "summary.json", { maxBytes: 1_024 })).toBeNull();
   });
 
   it("reads only the exact safe relative entry from a multi-entry archive", () => {

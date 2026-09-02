@@ -155,6 +155,11 @@ function isTransientStatus(status: number): boolean {
   return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
+/** Cancel an unused response body without masking the owning failure or retry. */
+async function cancelResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
 /** Read one response stream without retaining bytes beyond the bound identity size. */
 async function readBoundedResponseBody(response: Response, expectedSize: number): Promise<Buffer> {
   if (!response.body) throw new TerminalArtifactContentError("artifact response body is missing");
@@ -233,6 +238,7 @@ export async function downloadBoundArtifact(
       log(
         `artifact-content-read attempt=${attempt} status=${response.status} outcome=${terminal ? (transient ? "exhausted" : "failed-no-retry") : "retry"}`,
       );
+      await cancelResponseBody(response);
       if (terminal) {
         throw new Error(`artifact content read failed with HTTP ${response.status}`);
       }
@@ -245,6 +251,7 @@ export async function downloadBoundArtifact(
       contentLength &&
       (!/^(0|[1-9][0-9]*)$/u.test(contentLength) || Number(contentLength) !== identity.size)
     ) {
+      await cancelResponseBody(response);
       throw new Error("artifact content length does not match the bound identity");
     }
     let archive: Buffer;

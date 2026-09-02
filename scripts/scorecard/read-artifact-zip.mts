@@ -125,7 +125,8 @@ function parseValidatedArtifactZip(
     const nameBytes = archive.subarray(offset + 46, offset + 46 + fileNameLength);
     let name: string;
     try {
-      name = new TextDecoder("utf-8", { fatal: true }).decode(nameBytes);
+      // TextDecoder handles and strips a leading BOM unless ignoreBOM is true. Preserve it so distinct ZIP entry names keep distinct identities.
+      name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(nameBytes);
     } catch {
       return null;
     }
