@@ -437,6 +437,9 @@ describe("pull request and main workflow contracts", () => {
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
   const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
+  const managedRuntimeWorkflow = readYaml<CiWorkflow>(
+    ".github/workflows/managed-runtime-base-qualification.yaml",
+  );
 
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
@@ -879,6 +882,48 @@ describe("pull request and main workflow contracts", () => {
       path: "${{ runner.temp }}/openshell-sdk/",
       "if-no-files-found": "error",
       "retention-days": 1,
+    });
+
+    const qualificationPackageJob = managedRuntimeWorkflow.jobs["package-openshell-sdk"];
+    const candidateActivation = managedRuntimeWorkflow.jobs["candidate-activation"];
+    expect(qualificationPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(candidateActivation.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(candidateActivation.needs).toEqual([
+      "authenticate-candidate",
+      "package-openshell-sdk",
+    ]);
+    const qualificationCheckout = requiredWorkflowStep(
+      qualificationPackageJob,
+      "Check out exact base-controlled package verifier",
+    );
+    expect(qualificationCheckout.with).toMatchObject({
+      ref: "${{ needs.authenticate-candidate.outputs.base_sha }}",
+      "persist-credentials": false,
+      "sparse-checkout-cone-mode": false,
+    });
+    expect(JSON.stringify(qualificationPackageJob)).not.toContain(
+      "needs.authenticate-candidate.outputs.candidate_sha",
+    );
+    const qualificationUpload = requiredWorkflowStep(
+      qualificationPackageJob,
+      "Upload reviewed OpenShell SDK archive",
+    );
+    expect(qualificationUpload.with).toMatchObject({
+      name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ steps.package.outputs.artifact_path }}",
+      "if-no-files-found": "error",
+      "retention-days": 1,
+    });
+    const candidateDownload = requiredWorkflowStep(
+      candidateActivation,
+      "Download reviewed OpenShell SDK archive",
+    );
+    expect(candidateDownload.uses).toBe(
+      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    );
+    expect(candidateDownload.with).toEqual({
+      name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ runner.temp }}/openshell-sdk",
     });
   });
 

@@ -141,16 +141,67 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-  candidate-activation:
-    name: Candidate all-agent managed runtime activation
+  package-openshell-sdk:
+    name: Package reviewed OpenShell SDK from the exact base
     needs: authenticate-candidate
     if: needs.authenticate-candidate.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out exact base-controlled package verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authenticate-candidate.outputs.base_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Node for reviewed package download
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          registry-url: https://npm.pkg.github.com
+          scope: "@nvidia"
+
+      - id: package
+        name: Download and verify exact OpenShell SDK package
+        env:
+          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          test -n "$artifact_path"
+          printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload reviewed OpenShell SDK archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.package.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 1
+
+  candidate-activation:
+    name: Candidate all-agent managed runtime activation
+    needs: [authenticate-candidate, package-openshell-sdk]
+    if: >-
+      needs.authenticate-candidate.result == 'success' &&
+      needs.package-openshell-sdk.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       actions: read
       contents: read
-      packages: read
     env:
       BASE_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
       CANDIDATE_SHA: ${{ needs.authenticate-candidate.outputs.candidate_sha }}
@@ -191,13 +242,11 @@ jobs:
           name: managed-runtime-candidate-catalog-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ github.workspace }}/managed-runtime-candidate
 
-      - name: Download reviewed OpenShell SDK without candidate code
-        env:
-          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
-          NODE_AUTH_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types --no-warnings
-          scripts/checks/package-openshell-sdk-for-pr.mts
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install trusted scenario and candidate dependencies without credentials
         shell: bash

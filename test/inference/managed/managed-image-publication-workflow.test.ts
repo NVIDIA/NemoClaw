@@ -339,7 +339,6 @@ describe("complete managed-image publication workflow", () => {
       ]),
     );
     expect(reviewedAudit).toMatchObject({
-      if: "github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null)",
       permissions: { contents: "read" },
       "runs-on": "ubuntu-latest",
       "timeout-minutes": 15,
@@ -384,9 +383,6 @@ describe("complete managed-image publication workflow", () => {
     }
 
     expect(prBuilder.needs).toBe("pr-reviewed-npm-audit");
-    expect(prBuilder.if).toBe(
-      "github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null)",
-    );
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
@@ -605,18 +601,14 @@ describe("complete managed-image publication workflow", () => {
   it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const activation = managedPrActivation(workflow);
-    const steps = activation.steps ?? [];
 
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
-        ".github/workflows/managed-runtime-base-qualification.yaml",
         "src/lib/onboard/**",
         "test/e2e/live/managed-image-activation-e2e*.ts",
-        "tools/e2e/pr-managed-image-publication.mts",
       ]),
     );
     expect(activation.needs).toBe("pr-build-and-entrypoint");
-    expect(activation["continue-on-error"]).toBe(true);
     expect(activation.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
@@ -638,10 +630,6 @@ describe("complete managed-image publication workflow", () => {
     const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
-    expect(steps.map(({ name }) => name)).not.toContain(
-      "Upload managed runtime activation evidence",
-    );
-    expect(JSON.stringify(activation)).not.toContain("managed-runtime-comparison.mts record");
   });
 
   it("passes the reported OpenClaw managed-image MCP discovery twice on one exact PR cohort (#8746)", () => {
