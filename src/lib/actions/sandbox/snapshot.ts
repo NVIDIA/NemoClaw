@@ -6,6 +6,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
 import {
+  namedOpenShellGateway,
+  syncCliOpenShellSandboxPolicyReader,
+} from "../../adapters/openshell/sandbox-policy-cli";
+import {
   captureOpenshell,
   getOpenshellBinary,
   runOpenshell,
@@ -41,9 +45,12 @@ import {
 } from "../../onboard/gateway-binding";
 import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import { cleanupTempDir, secureTempFile } from "../../onboard/temp-files";
+import {
+  cleanupTempDir,
+  createExactTempFileCleanup,
+  secureTempFile,
+} from "../../onboard/temp-files";
 import * as policies from "../../policy";
-import { buildPolicyGetArgs } from "../../policy/commands";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
@@ -88,6 +95,7 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
+  isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
   prepareHostLocalInferenceAuthority,
@@ -377,23 +385,42 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const raw = captureOpenshell(buildPolicyGetArgs(srcEntry.name, gatewayName)).output;
-  const policy = policies.parseCurrentPolicy(raw);
-  if (!policy) throw new Error(`Cannot read the live OpenShell policy for '${srcEntry.name}'.`);
+  const policyRead = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
+    sandboxName: srcEntry.name,
+    scope: "base",
+  });
+  if (!policyRead.ok) {
+    throw new SnapshotCommandError([
+      `Cannot read the live OpenShell policy for source sandbox '${srcEntry.name}'.`,
+      policyRead.error.message,
+      "Restore access to the source sandbox's OpenShell gateway, then retry the original snapshot restore command.",
+    ]);
+  }
+  const policy = policyRead.value.document;
+  if (!isSandboxPolicyCredentialFree(policy)) {
+    throw new SnapshotCommandError([
+      `Cannot prepare a snapshot clone policy for source sandbox '${srcEntry.name}' because its live OpenShell policy contains a literal credential value.`,
+      "Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the original snapshot restore command.",
+    ]);
+  }
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
-  fs.writeFileSync(policyPath, policy, { mode: 0o600 });
-  return {
-    policyPath,
-    cleanup: () => {
-      cleanupTempDir(policyPath, "nemoclaw-clone-policy");
-      return true;
-    },
-  };
+  try {
+    fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    return {
+      policyPath,
+      cleanup: createExactTempFileCleanup(policyPath, "nemoclaw-clone-policy"),
+    };
+  } catch (error) {
+    cleanupTempDir(policyPath, "nemoclaw-clone-policy");
+    throw error;
+  }
 }
 
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
 // the source's baked image so the user does not have to re-run onboarding.
-// Returns true on success; on failure, logs and throws SnapshotCommandError.
+// Leaves a verified pending registration on success. The caller publishes it
+// only after the clone-policy handoff file has been securely removed.
 async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
@@ -462,6 +489,8 @@ async function autoCreateSandboxFromSource(
   const commandArgs = [
     "sandbox",
     "create",
+    "-g",
+    sourceGatewayName,
     "--name",
     dstName,
     "--from",
@@ -621,13 +650,9 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-  if (!registry.finalizePendingSandboxRegistration(dstName)) {
-    registry.removeSandbox(dstName);
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
-  }
+  // The pending registry row now owns any host-local inference reservation.
+  // Keep it unpublished until the caller completes sensitive-file cleanup.
   cloneHostLocalReservation = null;
-  console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
@@ -1388,8 +1413,21 @@ async function runSnapshotRestoreUnlocked(
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
-      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
+      let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
+      let cloneCreatedPending = false;
       try {
+        const refreshedClonePolicy = await prepareSnapshotClonePolicy(
+          lockedSourceEntry,
+          targetSandbox,
+        );
+        if (clonePolicy.cleanup && !clonePolicy.cleanup()) {
+          refreshedClonePolicy.cleanup?.();
+          throw new SnapshotCommandError([
+            `Could not securely replace temporary clone policy '${clonePolicy.policyPath}'.`,
+            "Inspect the task-owned temporary directory before retrying the snapshot restore command.",
+          ]);
+        }
+        clonePolicy = refreshedClonePolicy;
         if (targetExists) {
           if (targetEntry) {
             verifyRestoreDestinationOnOwnGateway(targetSandbox);
@@ -1412,9 +1450,28 @@ async function runSnapshotRestoreUnlocked(
           dashboardEnvArgs,
           dstHermesApiPort,
         );
+        cloneCreatedPending = true;
       } finally {
-        clonePolicy.cleanup?.();
+        if (clonePolicy.cleanup && !clonePolicy.cleanup()) {
+          if (cloneCreatedPending) {
+            throw new SnapshotCommandError([
+              `Temporary clone policy '${clonePolicy.policyPath}' could not be securely removed after '${targetSandbox}' was created.`,
+              `Destination '${targetSandbox}' remains registered as a pending clone. Snapshot state was not restored.`,
+              "Inspect and remove the task-owned temporary policy file before continuing.",
+              `Then rerun the same restore without --force so NemoClaw can reconcile '${targetSandbox}' and continue without deleting or recreating it.`,
+            ]);
+          }
+          throw new SnapshotCommandError([
+            `Could not securely remove temporary clone policy '${clonePolicy.policyPath}'.`,
+            "Inspect the task-owned temporary directory before retrying the snapshot restore command.",
+          ]);
+        }
       }
+      if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
+        registry.removeSandbox(targetSandbox);
+        failUnregisteredSnapshotClone(targetSandbox, lockedGatewayName);
+      }
+      console.log(`  ${G}\u2713${R} Sandbox '${targetSandbox}' created`);
     };
     // Lock order is both sandbox names (sorted by the outer caller), host
     // dashboard, then gateway route. The host-wide lease stays held from port

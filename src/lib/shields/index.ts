@@ -20,6 +20,11 @@
 // timer-bound lock tests before this facade can shrink safely.
 
 import { run, runCapture, validateName } from "../runner";
+import type { OpenShellSandboxError } from "../adapters/openshell/sandbox-observer";
+import type {
+  OpenShellSandboxPolicySetSubmission,
+  SyncOpenShellSandboxPolicyWriter,
+} from "../adapters/openshell/sandbox-policy";
 
 const fs = require("fs");
 const path = require("path");
@@ -36,23 +41,24 @@ const {
   withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
-  buildPolicyGetCommand,
-  buildPolicySetCommand,
-  verifyAppliedPolicyDocument,
-  parseCurrentPolicy,
+  confirmAppliedPolicySetSubmission: confirmAppliedShieldsPolicySetSubmission,
   resolvePermissivePolicyPath,
   inspectPolicyMutationContext,
   isPolicyObservationError,
   recheckPolicyMutationContext,
-  rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
-const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
+const {
+  formatOpenShellPolicyRecoveryAction,
+}: typeof import("../gateway-start-guidance") = require("../gateway-start-guidance");
+const {
+  namedOpenShellGateway,
+  syncCliOpenShellSandboxPolicyReader,
+  syncCliOpenShellSandboxPolicyWriter,
+}: typeof import("../adapters/openshell/sandbox-policy-cli") = require("../adapters/openshell/sandbox-policy-cli");
 const {
   buildOpenshellCommand,
 }: typeof import("../adapters/openshell/command-argv") = require("../adapters/openshell/command-argv");
-const {
-  parseLiveSandboxEntries,
-}: typeof import("../runtime-recovery") = require("../runtime-recovery");
+const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
   timerMarkerPath,
   readTimerMarker,
@@ -136,9 +142,11 @@ const {
 }: typeof import("./mutable-config-repair") = require("./mutable-config-repair");
 const {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+  HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
   hermesRuntimeProviderPhaseBlocksMutation,
   hasActiveHermesRuntimeProviderStateMutation,
   hasHermesRuntimeProviderStateMutationAuthority,
+  parseHermesRuntimeProviderSandboxPhase,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
 }: typeof import("./hermes-runtime-state-mutation") = require("./hermes-runtime-state-mutation");
@@ -158,6 +166,35 @@ function assertShieldsPolicyMutationContext(
   return recorded
     ? recheckPolicyMutationContext(sandboxName, operation, recorded)
     : inspectPolicyMutationContext(sandboxName, operation);
+}
+
+function readShieldsBasePolicy(sandboxName: string, gatewayName: string) {
+  return syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
+    sandboxName,
+    scope: "base",
+  });
+}
+
+function captureShieldsBasePolicy(sandboxName: string, gatewayName: string): string | null {
+  const result = readShieldsBasePolicy(sandboxName, gatewayName);
+  return result.ok ? result.value.document : null;
+}
+
+function shieldsPolicyReadFailureMessage(
+  sandboxName: string,
+  gatewayName: string,
+  error: OpenShellSandboxError,
+): string {
+  return [
+    `Cannot read the current OpenShell policy for Shields restore for sandbox '${sandboxName}' through recorded gateway '${gatewayName}'.`,
+    error.message,
+    formatOpenShellPolicyRecoveryAction(
+      error,
+      `${CLI_NAME} ${sandboxName} shields up`,
+      gatewayName,
+    ),
+  ].join(" ");
 }
 
 const STATE_DIR = resolveShieldsStateDir();
@@ -199,7 +236,6 @@ const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
 // in-container broker never starts, so the docker-state-mutation round trip
 // stalls until DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS (15min). Probe
 // OpenShell's own Phase first with a short, fail-open bound.
-const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
 const HERMES_RUNTIME_PROVIDER_RELEASE_READY_TIMEOUT_MS = 60_000;
 const HERMES_RUNTIME_PROVIDER_RELEASE_READY_POLL_MS = 250;
 const HERMES_RUNTIME_PROVIDER_MCP_RESTART_TIMEOUT_MS = 12 * 60_000;
@@ -1359,9 +1395,7 @@ function probeHermesRuntimeProviderSandboxPhase(sandboxName: string): string | n
       ignoreError: true,
       timeout: HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
     });
-    return (
-      parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null
-    );
+    return parseHermesRuntimeProviderSandboxPhase(sandboxName, output);
   } catch {
     return null;
   }
@@ -4298,6 +4332,18 @@ type ShieldsDownRollbackResult = {
   timerAuthorityRevoked: boolean;
 };
 
+function revokeRollbackTimerAuthority(
+  sandboxName: string,
+  expectedTimerAuthority?: TimerMarker,
+): { authorityRevoked: boolean; warnings: string[] } {
+  if (!expectedTimerAuthority) return killTimer(sandboxName);
+  const retirement = clearTimerMarkerGeneration(sandboxName, expectedTimerAuthority);
+  return {
+    authorityRevoked: retirement.status === "removed" || retirement.status === "missing",
+    warnings: retirement.warning === undefined ? [] : [retirement.warning],
+  };
+}
+
 function describeRollbackTimerAuthority(
   hadScheduledTimer: boolean,
   timerAuthorityRevoked: boolean,
@@ -4311,11 +4357,12 @@ interface ShieldsPolicySnapshotRestoreOptions {
   transitionProcessToken?: string;
   deadlineAuthoritative?: boolean;
   expiredTimerRecovery?: boolean;
-  buildPolicySet?: typeof buildPolicySetCommand;
-  runPolicySet?: typeof run;
+  inspectPolicyContext?: typeof inspectPolicyMutationContext;
+  readBasePolicy?: typeof readShieldsBasePolicy;
+  setPolicy?: SyncOpenShellSandboxPolicyWriter["setSandboxPolicy"];
 }
 
-type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run>;
+type ShieldsPolicySnapshotRestoreResult = OpenShellSandboxPolicySetSubmission;
 
 function restoreShieldsDelta(
   snapshotPolicy: string,
@@ -4387,10 +4434,20 @@ function applyShieldsPolicySnapshot(
     }
   }
 
-  const context = inspectPolicyMutationContext(sandboxName, "restore the Shields policy snapshot");
-  const rawLive = runCapture(buildPolicyGetCommand(sandboxName, context.gatewayName));
-  const livePolicy = parseCurrentPolicy(rawLive);
-  if (!livePolicy) throw new Error("Cannot read the current OpenShell policy for Shields restore");
+  const context = (options.inspectPolicyContext ?? inspectPolicyMutationContext)(
+    sandboxName,
+    "restore the Shields policy snapshot",
+  );
+  const livePolicyRead = (options.readBasePolicy ?? readShieldsBasePolicy)(
+    sandboxName,
+    context.gatewayName,
+  );
+  if (!livePolicyRead.ok) {
+    throw new Error(
+      shieldsPolicyReadFailureMessage(sandboxName, context.gatewayName, livePolicyRead.error),
+    );
+  }
+  const livePolicy = livePolicyRead.value.document;
   const snapshotBinding = transition?.snapshotPolicy ?? state.shieldsPolicySnapshot;
   if (!snapshotBinding) {
     throw new Error("Shields recovery has no bound restrictive policy snapshot");
@@ -4414,17 +4471,19 @@ function applyShieldsPolicySnapshot(
   const stagedPath = secureTempFile("nemoclaw-shields-restore", ".yaml");
   try {
     fs.writeFileSync(stagedPath, restoredPolicy, { mode: 0o600 });
-    const result = (options.runPolicySet ?? run)(
-      (options.buildPolicySet ?? buildPolicySetCommand)(
-        stagedPath,
-        sandboxName,
-        context.gatewayName,
-      ),
-      { ignoreError: true },
+    const result = (options.setPolicy ?? syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy)({
+      target: namedOpenShellGateway(context.gatewayName),
+      sandboxName,
+      policyPath: stagedPath,
+    });
+    confirmAppliedShieldsPolicySetSubmission(
+      result,
+      sandboxName,
+      restoredPolicy,
+      context,
+      "restore the Shields policy snapshot",
     );
-    rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
-    if (result.status === 0) verifyAppliedPolicyDocument(sandboxName, restoredPolicy, context);
-    return result;
+    return { outcome: { kind: "applied" }, status: 0 };
   } finally {
     cleanupTempDir(stagedPath, "nemoclaw-shields-restore");
   }
@@ -4438,9 +4497,10 @@ function rollbackShieldsDown(
   initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  expectedTimerAuthority?: TimerMarker,
 ): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
-  let rollbackResult: ReturnType<typeof run> | null = null;
+  let rollbackResult: ShieldsPolicySnapshotRestoreResult | null = null;
   try {
     rollbackResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath);
   } catch (error) {
@@ -4460,7 +4520,7 @@ function rollbackShieldsDown(
     if (initialMode === "mutable_default" && target.agentName === "openclaw") {
       try {
         unlockAgentConfigUnderMutationLock(sandboxName, target, false, protocol);
-        const timerCancellation = killTimer(sandboxName);
+        const timerCancellation = revokeRollbackTimerAuthority(sandboxName, expectedTimerAuthority);
         timerAuthorityRevoked = timerCancellation.authorityRevoked;
         if (!timerCancellation.authorityRevoked) {
           throw new Error(
@@ -4498,7 +4558,7 @@ function rollbackShieldsDown(
   }
   if (rollbackChattrApplied !== null && rollbackFileHashes !== null) {
     if (!timerAuthorityRevoked) {
-      const timerCancellation = killTimer(sandboxName);
+      const timerCancellation = revokeRollbackTimerAuthority(sandboxName, expectedTimerAuthority);
       timerAuthorityRevoked = timerCancellation.authorityRevoked;
       if (!timerCancellation.authorityRevoked) {
         console.error(
@@ -4861,14 +4921,18 @@ function applyRecoveredShieldsDownForwardPolicy(
     "reapply the interrupted Shields down policy",
     policyContext,
   );
-  const result = run(buildPolicySetCommand(policyPath, sandboxName, policyContext.gatewayName), {
-    ignoreError: true,
+  const result = syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+    target: namedOpenShellGateway(policyContext.gatewayName),
+    sandboxName,
+    policyPath,
   });
-  rejectFinalShieldsPolicySetResult(result, "reapply the interrupted Shields down policy");
-  if (result.status !== 0) {
-    throw new Error("Interrupted Shields down forward policy could not be reapplied");
-  }
-  verifyAppliedPolicyDocument(sandboxName, fs.readFileSync(policyPath, "utf-8"), policyContext);
+  confirmAppliedShieldsPolicySetSubmission(
+    result,
+    sandboxName,
+    fs.readFileSync(policyPath, "utf-8"),
+    policyContext,
+    "reapply the interrupted Shields down policy",
+  );
   requireShieldsDownForwardPolicy(completion.authority);
   assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
 }
@@ -4964,6 +5028,7 @@ function failRecoveredHermesShieldsDown(
     state,
     allowLegacyHermesProtocol,
     "provider-state-mutation-v2",
+    completion.marker ?? undefined,
   );
   if (completion.transition && rollback.timerAuthorityRevoked) {
     clearShieldsDownTransition(sandboxName, completion.transition.processToken);
@@ -5272,7 +5337,13 @@ function shieldsDownWithoutHostLock(
     return failShieldsCommand(`Config is already unlocked for ${sandboxName}`, opts.throwOnError);
   }
 
-  const policyContext = assertShieldsPolicyMutationContext(sandboxName, "lower Shields");
+  let policyContext: PolicyMutationContext;
+  try {
+    policyContext = assertShieldsPolicyMutationContext(sandboxName, "lower Shields");
+  } catch {
+    console.error("  Cannot capture current policy. Is the sandbox running?");
+    return failShieldsCommand("Cannot capture current policy", opts.throwOnError);
+  }
 
   // Resolve the old-image compatibility contract before touching timers,
   // host state, policy, or sandbox files. A transport failure or an
@@ -5316,19 +5387,12 @@ function shieldsDownWithoutHostLock(
 
   // 1. Capture current policy snapshot
   console.log("  Capturing current policy snapshot...");
-  let rawPolicy: string;
-  try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName, policyContext.gatewayName));
-  } catch {
-    rawPolicy = "";
-  }
-  assertShieldsPolicyMutationContext(sandboxName, "continue lowering Shields", policyContext);
-
-  const policyYaml = parseCurrentPolicy(rawPolicy);
+  const policyYaml = captureShieldsBasePolicy(sandboxName, policyContext.gatewayName);
   if (!policyYaml) {
     console.error("  Cannot capture current policy. Is the sandbox running?");
     return failShieldsCommand("Cannot capture current policy", opts.throwOnError);
   }
+  assertShieldsPolicyMutationContext(sandboxName, "continue lowering Shields", policyContext);
 
   assertShieldsPolicyMutationContext(
     sandboxName,
@@ -5474,6 +5538,7 @@ function shieldsDownWithoutHostLock(
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        timerAuthority,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
@@ -5495,26 +5560,31 @@ function shieldsDownWithoutHostLock(
 
   console.log(`  Applying ${policyName} policy...`);
   const appliedPolicyDocument = fs.readFileSync(policyPathForApply, "utf-8");
-  let policySetResult: ReturnType<typeof run>;
+  let policySetResult: OpenShellSandboxPolicySetSubmission;
   try {
     assertShieldsPolicyMutationContext(sandboxName, "apply the Shields down policy", policyContext);
-    policySetResult = run(
-      buildPolicySetCommand(policyPathForApply, sandboxName, policyContext.gatewayName),
-      {
-        ignoreError: true,
-      },
-    );
+    policySetResult = syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+      target: namedOpenShellGateway(policyContext.gatewayName),
+      sandboxName,
+      policyPath: policyPathForApply,
+    });
   } finally {
     cleanupRuntimePolicyFile();
   }
   let policyObservationFailure: unknown = null;
   try {
-    rejectFinalShieldsPolicySetResult(policySetResult, "apply the Shields down policy");
+    confirmAppliedShieldsPolicySetSubmission(
+      policySetResult,
+      sandboxName,
+      appliedPolicyDocument,
+      policyContext,
+      "apply the Shields down policy",
+    );
   } catch (error) {
     if (!isPolicyObservationError(error)) throw error;
     policyObservationFailure = error;
   }
-  if (policySetResult.status !== 0) {
+  if (policySetResult.outcome.kind === "rejected") {
     // The permissive policy was rejected before it applied — for example,
     // OpenShell refuses a live Landlock change on a sandbox whose policy is
     // sealed at startup (Deep Agents). Nothing was weakened: configuration is
@@ -5571,7 +5641,12 @@ function shieldsDownWithoutHostLock(
     if (policyObservationFailure !== null) throw policyObservationFailure;
     return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
-  if (policyObservationFailure !== null) throw policyObservationFailure;
+  if (policyObservationFailure !== null) {
+    console.error(
+      `  ERROR: OpenShell did not confirm the ${policyName} policy; the scheduled auto-restore and Shields recovery transaction remain authoritative.`,
+    );
+    throw policyObservationFailure;
+  }
 
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
@@ -5579,7 +5654,6 @@ function shieldsDownWithoutHostLock(
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   let inferenceRouteConvergenceFailed = false;
   try {
-    verifyAppliedPolicyDocument(sandboxName, appliedPolicyDocument, policyContext);
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }
@@ -5621,6 +5695,7 @@ function shieldsDownWithoutHostLock(
       state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
+      timerAuthority,
     );
     transition = persistIncompleteShieldsDownPosture(
       sandboxName,
@@ -5680,21 +5755,27 @@ function shieldsDownWithoutHostLock(
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        timerAuthority,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
       }
       console.error(`  ERROR: ${message}`);
-      const timerAuthority = describeRollbackTimerAuthority(true, rollback.timerAuthorityRevoked);
+      const timerAuthorityDescription = describeRollbackTimerAuthority(
+        true,
+        rollback.timerAuthorityRevoked,
+      );
       if (rollback.outcome === "mutable_default_restored") {
         console.error(
-          `  Auto-restore handoff failed; the original mutable-default posture was restored.${timerAuthority}`,
+          `  Auto-restore handoff failed; the original mutable-default posture was restored.${timerAuthorityDescription}`,
         );
       } else if (rollback.outcome === "lockdown_restored") {
-        console.error(`  Auto-restore handoff failed; lockdown was restored.${timerAuthority}`);
+        console.error(
+          `  Auto-restore handoff failed; lockdown was restored.${timerAuthorityDescription}`,
+        );
       } else {
         console.error(
-          `  Auto-restore handoff failed; rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+          `  Auto-restore handoff failed; rollback is incomplete.${timerAuthorityDescription} Manual intervention is required.`,
         );
       }
       return failShieldsCommand(message, opts.throwOnError);

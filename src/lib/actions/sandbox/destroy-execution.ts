@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
