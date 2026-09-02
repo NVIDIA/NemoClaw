@@ -28,9 +28,9 @@ const MATRIX_RUNTIME_PROVIDER_EXPRESSION = "${{ matrix.runtime_provider }}";
 const DOCKER_EXACT_MAIN_PROOF_EXPRESSION =
   "${{ matrix.runtime_provider == 'docker' && '1' || '0' }}";
 const MANAGED_IMAGE_REVISION_EXPRESSION =
-  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}";
+  "${{ needs.base-image-publication.outputs.managed_image_revision }}";
 const MANAGED_IMAGE_RECEIPT_EXPRESSION =
-  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}";
+  "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
 const TERMINAL_JOBS = [
   "release-qualification",
   "relevant-e2e",
