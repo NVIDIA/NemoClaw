@@ -979,6 +979,16 @@ export function classifyManagedRuntimeComparison(input: {
   ) {
     return infrastructure("candidate and base evidence use different scenario identities");
   }
+  if (
+    candidate.receipt.workflow.sha !== input.baseReceipt.workflow.sha ||
+    candidate.receipt.workflow.runId !== input.baseReceipt.workflow.runId ||
+    candidate.receipt.workflow.runAttempt !== input.baseReceipt.workflow.runAttempt ||
+    candidate.receipt.runtime.openshellVersion !== input.baseReceipt.runtime.openshellVersion
+  ) {
+    return infrastructure(
+      "candidate and base evidence use different controller runtime identities",
+    );
+  }
   if (!candidate.receipt.evidence.cleanup.proven || !input.baseReceipt.evidence.cleanup.proven) {
     return infrastructure("candidate or base cleanup is not proven");
   }

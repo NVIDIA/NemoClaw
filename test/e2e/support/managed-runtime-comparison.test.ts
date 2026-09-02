@@ -97,7 +97,7 @@ function receipt(
     job: candidate
       ? "Trusted candidate all-agent managed runtime activation"
       : "Exact base all-agent managed runtime activation",
-    openshellVersion: candidate ? "openshell 0.0.116" : "openshell 0.0.115",
+    openshellVersion: "openshell 0.0.116",
     outcome,
     role,
     candidateSourceRunAttempt: RUN_ATTEMPT,
@@ -333,6 +333,15 @@ describe("managed runtime comparison receipts", () => {
     const baseReceipt = structuredClone(receipt("base")) as unknown as ManagedRuntimeReceipt;
     (baseReceipt.scenario as { testPath: string }).testPath = "test/e2e/live/another.test.ts";
     expect(compare({ baseReceipt })).toMatchObject({ classification: "infrastructure-failure" });
+  });
+
+  it("rejects different controller runtime identities", () => {
+    const baseReceipt = structuredClone(receipt("base")) as unknown as ManagedRuntimeReceipt;
+    (baseReceipt.runtime as { openshellVersion: string }).openshellVersion = "openshell 0.0.115";
+    expect(compare({ baseReceipt })).toMatchObject({
+      classification: "infrastructure-failure",
+      reason: "candidate and base evidence use different controller runtime identities",
+    });
   });
 
   it("does not issue a product verdict when cleanup is not proven", () => {

@@ -73,13 +73,6 @@ function managedPrReviewedAudit(workflow: Workflow): Job {
   );
 }
 
-function managedPrActivation(workflow: Workflow): Job {
-  return required(
-    workflow.jobs?.["pr-managed-activation"],
-    "managed-image workflow is missing its exact all-agent PR activation gate",
-  );
-}
-
 function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
   return required(workflow.jobs?.["pr-openclaw-mcp-discovery"], "missing exact PR MCP gate");
 }
@@ -600,10 +593,10 @@ describe("complete managed-image publication workflow", () => {
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
   });
 
-  it("runs the exact candidate CLI through real all-agent Docker and OpenShell activation (#7744)", () => {
+  it("publishes exact all-agent candidate contracts for trusted activation (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const activation = managedPrActivation(workflow);
-    const steps = activation.steps ?? [];
+    const prBuilder = managedPrBuilder(workflow);
+    const uploadContract = step(prBuilder, "Upload exact published PR managed-image contract");
 
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
@@ -611,29 +604,20 @@ describe("complete managed-image publication workflow", () => {
         "test/e2e/live/managed-image-activation-e2e*.ts",
       ]),
     );
-    expect(activation.needs).toBe("pr-build-and-entrypoint");
-    expect(activation.if).toContain(
+    expect(workflow.jobs?.["pr-managed-activation"]).toBeUndefined();
+    expect(prBuilder.strategy?.matrix?.include?.map(({ agent }) => agent)).toEqual([
+      "openclaw",
+      "hermes",
+      "langchain-deepagents-code",
+    ]);
+    expect(uploadContract.if).toBe(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
-    expect(activation.permissions).toEqual({ contents: "read" });
-    expect(activation.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
-      "${{ github.workspace }}/managed-pr-catalog.json",
-    );
-    expect(JSON.stringify(activation)).not.toContain("secrets.");
-    expect(JSON.stringify(activation)).not.toContain("github.token");
-    expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
-      "${{ github.event.pull_request.head.sha }}",
-    );
-    expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
-      /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
-    );
-    expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
-    expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
-    const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
-    expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
-    expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
-    expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
+    expect(uploadContract.with).toMatchObject({
+      name: "managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}",
+      path: "${{ runner.temp }}/managed-pr-contract/contract.json",
+      "if-no-files-found": "error",
+    });
   });
 
   it("passes the reported OpenClaw managed-image MCP discovery twice on one exact PR cohort (#8746)", () => {

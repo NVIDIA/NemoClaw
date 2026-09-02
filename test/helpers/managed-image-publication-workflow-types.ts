@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type Step = {
-  "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
   id?: string;
   if?: string;
@@ -80,20 +79,6 @@ export type Workflow = {
       >;
       outputs?: Record<string, { description?: string; value?: string }>;
       secrets?: Record<string, { description?: string; required?: boolean }>;
-    };
-    workflow_dispatch?: {
-      inputs?: Record<
-        string,
-        {
-          description?: string;
-          required?: boolean;
-          type?: string;
-        }
-      >;
-    };
-    workflow_run?: {
-      workflows?: string[];
-      types?: string[];
     };
   };
   permissions?: Record<string, string>;
