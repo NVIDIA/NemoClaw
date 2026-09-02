@@ -916,6 +916,7 @@ describe("pull request and main workflow contracts", () => {
     });
 
     const qualificationPackageJob = managedRuntimeWorkflow.jobs["package-openshell-sdk"];
+    const candidateBuild = managedRuntimeWorkflow.jobs["build-candidate-cli"];
     const candidateActivation = managedRuntimeWorkflow.jobs["trusted-candidate-activation"];
     const baseActivation = managedRuntimeWorkflow.jobs["exact-base-activation"];
     expect(qualificationPackageJob.permissions).toEqual({ actions: "read", contents: "read" });
@@ -924,8 +925,13 @@ describe("pull request and main workflow contracts", () => {
       required: "${{ steps.package.outputs.required }}",
     });
     expect(candidateActivation.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(candidateBuild.permissions).toEqual({ actions: "read", contents: "read" });
     expect(baseActivation.permissions).toEqual({ actions: "read", contents: "read" });
-    expect(candidateActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
+    expect(candidateActivation.needs).toEqual([
+      "authenticate-source",
+      "package-openshell-sdk",
+      "build-candidate-cli",
+    ]);
     expect(baseActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
 
     const qualificationCandidate = requiredWorkflowStep(

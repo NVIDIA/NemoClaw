@@ -588,7 +588,7 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContract.if).toBe(sameRepository);
     expect(uploadContract.if).toBe(sameRepository);
     expect(uploadContract.with).toMatchObject({
-      name: "managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}",
+      name: "managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.arch }}",
       path: "${{ runner.temp }}/managed-pr-contract/contract.json",
       "if-no-files-found": "error",
       "retention-days": 14,
