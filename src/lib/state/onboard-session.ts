@@ -67,6 +67,7 @@ import {
   type RecordRetainedSandboxRecoveryInput,
   type OnboardLockDisposition,
   type OnboardLockRecord,
+  type OnboardLockReclamationGuardContention,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
 } from "./onboard-session/index";
@@ -348,6 +349,48 @@ export interface LockResult {
   holderPid?: number;
   holderStartedAt?: string | null;
   holderCommand?: string | null;
+  reclamationGuard?: OnboardLockReclamationGuardContention;
+}
+
+export interface OnboardLockContentionDescription {
+  readonly reason: string;
+  readonly remediation: string;
+}
+
+function quotedIdentity(value: string): string {
+  return JSON.stringify(value);
+}
+
+export function describeOnboardLockContention(lock: LockResult): OnboardLockContentionDescription {
+  if (lock.reclamationGuard) {
+    const { guardFile, owner } = lock.reclamationGuard;
+    const ownerDetails = owner
+      ? [
+          `owner PID ${String(owner.pid)}`,
+          owner.hostIdentity ? `host ${quotedIdentity(owner.hostIdentity)}` : null,
+          owner.pidNamespaceIdentity
+            ? `PID namespace ${quotedIdentity(owner.pidNamespaceIdentity)}`
+            : null,
+          `acquired ${quotedIdentity(owner.acquiredAt)}`,
+        ]
+          .filter((detail): detail is string => detail !== null)
+          .join(", ")
+      : "owner identity unavailable";
+    return {
+      reason: `Onboarding lock reclamation guard '${guardFile}' is blocking this operation (${ownerDetails}).`,
+      remediation:
+        "Wait briefly and retry. If the guard remains, stop the identified owner, or prove it " +
+        `is obsolete before removing only '${guardFile}', then retry.`,
+    };
+  }
+
+  const pidDetail = lock.holderPid ? ` Lock holder PID: ${String(lock.holderPid)}.` : "";
+  return {
+    reason: "Another onboarding run owns the session lock.",
+    remediation: lock.stale
+      ? "Wait briefly, then retry so verified stale-lock cleanup can finish."
+      : `Wait for the other run to finish, then retry.${pidDetail}`,
+  };
 }
 
 export interface SessionUpdates {
@@ -1398,8 +1441,9 @@ function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) {
+      const contention = describeOnboardLockContention(lock);
       throw new Error(
-        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+        `Cannot update onboarding recovery. ${contention.reason} ${contention.remediation}`,
       );
     }
   }
@@ -1425,11 +1469,17 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
 
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
-  return (
-    withOnboardLockReclamationGuard(LOCK_RECLAMATION_GUARD_FILE, () =>
-      acquireOnboardLockWhileGuarded(command),
-    ) ?? { acquired: false, lockFile: LOCK_FILE, stale: false }
+  const guarded = withOnboardLockReclamationGuard(LOCK_RECLAMATION_GUARD_FILE, () =>
+    acquireOnboardLockWhileGuarded(command),
   );
+  return guarded.status === "completed"
+    ? guarded.value
+    : {
+        acquired: false,
+        lockFile: LOCK_FILE,
+        stale: false,
+        reclamationGuard: guarded.contention,
+      };
 }
 
 function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
@@ -2103,11 +2153,15 @@ export function compareAndSwapSession(
   matches: (session: Session) => boolean,
   mutator: (session: Session) => Session | void,
   command = "nemoclaw session compare-and-swap",
+  onBusy?: (lock: LockResult) => void,
 ): CompareAndSwapSessionResult {
   const managesOnboardLock = heldLockFd === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
-    if (!lock.acquired) return "busy";
+    if (!lock.acquired) {
+      onBusy?.(lock);
+      return "busy";
+    }
   }
   try {
     const current = loadSession();
@@ -2400,8 +2454,9 @@ export function reconcileStationExpressReceiptRetirement(expectedGeneration: str
   if (ownsOnboardLock) {
     const lock = acquireOnboardLock("nemoclaw onboard (Station receipt retirement recovery)");
     if (!lock.acquired) {
+      const contention = describeOnboardLockContention(lock);
       throw new Error(
-        "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+        `Cannot reconcile DGX Station Express receipt retirement. ${contention.reason} ${contention.remediation}`,
       );
     }
   }

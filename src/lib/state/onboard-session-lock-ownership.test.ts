@@ -141,4 +141,39 @@ describe("onboard lock ownership", () => {
     expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
     expect(fs.existsSync(guardFile)).toBe(false);
   });
+
+  it("reports a foreign reclamation guard without removing it (#10779)", () => {
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    const foreignOwner = {
+      ...createMcpLifecycleLockOwner("onboard-lock-reclamation", "foreign-guard"),
+      pid: 4242,
+      processIdentity: "foreign-process",
+      hostIdentity: "foreign-host",
+      pidNamespaceIdentity: "pid:[4242]",
+    };
+    fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+    fs.writeFileSync(guardFile, JSON.stringify(foreignOwner), { mode: 0o600 });
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      reclamationGuard: {
+        guardFile,
+        owner: {
+          pid: 4242,
+          processIdentity: "foreign-process",
+          hostIdentity: "foreign-host",
+          pidNamespaceIdentity: "pid:[4242]",
+        },
+      },
+    });
+    expect(fs.existsSync(guardFile)).toBe(true);
+    expect(session.describeOnboardLockContention(result)).toEqual({
+      reason: expect.stringContaining(`reclamation guard '${guardFile}'`),
+      remediation:
+        "Wait briefly and retry. If the guard remains, stop the identified owner, or prove it " +
+        `is obsolete before removing only '${guardFile}', then retry.`,
+    });
+  });
 });

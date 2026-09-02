@@ -357,12 +357,14 @@ export function acquireRebuildOnboardLock(
     `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
   );
   if (!lock.acquired) {
-    const pidDetail = lock.holderPid ? ` Lock holder PID: ${lock.holderPid}.` : "";
-    const remediation = lock.stale
-      ? "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish."
-      : `Wait for the other run to finish, then rerun rebuild.${pidDetail}`;
+    const contention = onboardSession.describeOnboardLockContention(lock);
+    const remediation = lock.reclamationGuard
+      ? contention.remediation
+      : contention.remediation.replace("then retry", "then rerun rebuild");
     printRebuildPreflightFailure(
-      `another ${CLI_NAME} onboarding run is already in progress.`,
+      lock.reclamationGuard
+        ? contention.reason
+        : `another ${CLI_NAME} onboarding run is already in progress.`,
       remediation,
       "Could not acquire onboard lock before rebuild",
       bail,

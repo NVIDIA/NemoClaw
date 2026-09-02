@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { GatewayRegistryEntry } from "../../state/gateway-registry";
-import type { Session } from "../../state/onboard-session";
+import { describeOnboardLockContention, type Session } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import {
   resolveDestroyedSandboxRouterPort,
@@ -35,6 +35,7 @@ function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> =
     compareAndSwapSession: vi.fn((matches, mutator) => {
       return matches(session) ? (mutator(session), "updated") : "mismatch";
     }),
+    describeOnboardLockContention,
     expectedSession: session,
     inspectProcessForPort: vi.fn(() => ({ status: "absent" as const })),
     isHealthy: vi.fn(async () => false),
@@ -252,6 +253,35 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(deps.stopProcess).not.toHaveBeenCalled();
     expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("owns the session lock"));
+  });
+
+  it("identifies reclamation-guard contention before preserving router recovery", async () => {
+    const guardFile = "/tmp/onboard.lock.reclamation-guard";
+    const { deps } = createDeps({
+      acquireOnboardLock: vi.fn(() => ({
+        acquired: false,
+        lockFile: "/tmp/onboard.lock",
+        stale: false,
+        reclamationGuard: {
+          guardFile,
+          owner: {
+            pid: 4242,
+            processIdentity: "foreign-process",
+            hostIdentity: "foreign-host",
+            pidNamespaceIdentity: "pid:[4242]",
+            acquiredAt: "2026-09-02T00:00:00.000Z",
+          },
+        },
+      })),
+    });
+
+    await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
+
+    expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining(guardFile));
+    expect(deps.warn).toHaveBeenCalledWith(
+      expect.stringContaining("prove it is obsolete before removing only"),
+    );
+    expect(deps.stopProcess).not.toHaveBeenCalled();
   });
 
   it("clears a stale recorded PID when no router process is found", async () => {

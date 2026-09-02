@@ -252,6 +252,39 @@ describe("cross-process onboard lock", () => {
     }
   });
 
+  it("prints the exact recovery path for reclamation-guard contention", async () => {
+    const authority = await import("../onboard/portable-retirement-authority");
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    const messages: string[] = [];
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation((message) => messages.push(String(message)));
+    try {
+      authority.printPortableOnboardLockContention("NemoClaw", {
+        acquired: false,
+        lockFile: session.LOCK_FILE,
+        stale: false,
+        reclamationGuard: {
+          guardFile,
+          owner: {
+            pid: 4242,
+            processIdentity: "foreign-process",
+            hostIdentity: "foreign-host",
+            pidNamespaceIdentity: "pid:[4242]",
+            acquiredAt: "2026-09-02T00:00:00.000Z",
+          },
+        },
+      });
+      const output = messages.join("\n");
+      expect(output).toContain(guardFile);
+      expect(output).toContain("owner PID 4242");
+      expect(output).toContain("prove it is obsolete before removing only");
+      expect(output).not.toContain("Another NemoClaw onboarding run");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("does not replace a session written by the process that owns the onboard lock", async () => {
     session.saveSession(
       session.createSession({

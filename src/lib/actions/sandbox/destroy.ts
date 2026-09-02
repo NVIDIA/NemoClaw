@@ -1133,8 +1133,9 @@ async function destroySandboxUnlocked(
       // when the competing sandbox belongs to another gateway.
       routedSessionCleanupHandled = await withGatewayRouteMutationLock(cleanupGatewayName, () =>
         stopModelRouterForDestroyedSandbox(sandbox, {
-          acquireOnboardLock: onboardSession.acquireOnboardLock,
-          compareAndSwapSession: onboardSession.compareAndSwapSession,
+            acquireOnboardLock: onboardSession.acquireOnboardLock,
+            compareAndSwapSession: onboardSession.compareAndSwapSession,
+            describeOnboardLockContention: onboardSession.describeOnboardLockContention,
           expectedSession: destroySession,
           loadSession: onboardSession.loadSession,
           releaseOnboardLock: onboardSession.releaseOnboardLock,
@@ -1161,6 +1162,7 @@ async function destroySandboxUnlocked(
     !routedSessionCleanupHandled &&
     destroySession?.sandboxName === sandboxName
   ) {
+    let lockContentionReported = false;
     const cleanupResult = onboardSession.compareAndSwapSession(
       (current) =>
         current.sessionId === destroySession.sessionId &&
@@ -1174,8 +1176,13 @@ async function destroySandboxUnlocked(
         return current;
       },
       "nemoclaw destroy sandbox session cleanup",
+      (lock) => {
+        lockContentionReported = true;
+        const contention = onboardSession.describeOnboardLockContention(lock);
+        defaultDestroyWarn(`${contention.reason} ${contention.remediation}`);
+      },
     );
-    if (cleanupResult === "busy") {
+    if (cleanupResult === "busy" && !lockContentionReported) {
       defaultDestroyWarn(
         "Another onboarding run owns the session lock. Keeping its replacement session unchanged.",
       );

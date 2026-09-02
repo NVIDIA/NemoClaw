@@ -16,6 +16,7 @@ import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
 import type {
   acquireOnboardLock,
   compareAndSwapSession,
+  describeOnboardLockContention,
   releaseOnboardLock,
   Session,
 } from "../../state/onboard-session";
@@ -65,6 +66,7 @@ export function stopSandboxInferenceResources(
 export type StopModelRouterForDestroyedSandboxDeps = {
   acquireOnboardLock: typeof acquireOnboardLock;
   compareAndSwapSession: typeof compareAndSwapSession;
+  describeOnboardLockContention: typeof describeOnboardLockContention;
   expectedSession: Session | null;
   loadSession: () => Session | null;
   releaseOnboardLock: typeof releaseOnboardLock;
@@ -134,9 +136,9 @@ export async function stopModelRouterForDestroyedSandbox(
     const warn = deps.warn ?? console.warn;
     const sessionLock = deps.acquireOnboardLock("nemoclaw destroy Model Router teardown");
     if (!sessionLock.acquired) {
-      warn(
-        "Another onboarding run owns the session lock. Keeping the Model Router process and recovery identity.",
-      );
+      const contention = deps.describeOnboardLockContention(sessionLock);
+      warn(`${contention.reason} ${contention.remediation}`);
+      warn("Keeping the Model Router process and recovery identity.");
       return;
     }
 

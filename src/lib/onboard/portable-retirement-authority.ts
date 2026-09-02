@@ -9,6 +9,7 @@ import { isDeepStrictEqual, TextDecoder } from "node:util";
 import {
   acquireOnboardLock,
   assertOnboardLockOwned,
+  describeOnboardLockContention,
   normalizeSession,
   releaseOnboardLock,
   type LockResult,
@@ -594,6 +595,12 @@ export function printPortableOnboardLockContention(
   displayName: string,
   lockResult: LockResult,
 ): void {
+  if (lockResult.reclamationGuard) {
+    const contention = describeOnboardLockContention(lockResult);
+    console.error(`  ${contention.reason}`);
+    console.error(`  ${contention.remediation}`);
+    return;
+  }
   console.error(`  Another ${displayName} onboarding run is already in progress.`);
   if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
   if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);

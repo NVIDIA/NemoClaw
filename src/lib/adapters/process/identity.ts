@@ -76,8 +76,8 @@ export function processIsAlive(pid: number): boolean {
 
 /**
  * Read the host process generation used by lifecycle locks. Linux combines
- * the kernel boot identity with process start ticks. Other POSIX hosts may use
- * a bounded `ps` fallback when the caller explicitly permits it.
+ * the kernel boot identity with process start ticks. Other POSIX hosts use a
+ * bounded `ps` fallback unless the caller disables it.
  */
 export function readProcessIdentity(
   pid: number,

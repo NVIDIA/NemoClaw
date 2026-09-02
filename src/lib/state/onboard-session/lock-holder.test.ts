@@ -70,7 +70,7 @@ describe("onboarding lock classification", () => {
     ["reused current PID", "proc:100", "proc:101", "stale", null],
     ["unverifiable", "proc:100", null, "held", false],
   ] as const)(
-    "classifies a live foreign PID from exact process identity evidence [%s]",
+    "classifies a live PID from exact process identity evidence [%s]",
     (_case, recordedIdentity, observedIdentity, expectedState, identityVerified) => {
       const probes: ProcessIdentityProbes = {
         currentPid: 101,
