@@ -725,24 +725,17 @@ cat /tmp/nemoclaw-history-owner-start.log`;
   expect(wait.stdout.trim(), resultText(wait)).toBe("0");
 }
 
-test(
-  "hermes root-entrypoint smoke preserves runtime layout and restored state migration",
-  {
-    meta: {
-      e2ePhases: [
-        "check Docker and Hermes image inputs",
-        "build Hermes root-entrypoint image",
-        "validate clean root-entrypoint startup",
-        "validate legacy state migration",
-        "validate locked-root history recovery",
-        "validate root history hard-link refusal",
-        "validate root log hard-link refusal",
-        "validate root mutable-layout swap refusal",
-        "validate non-root history ownership refusal",
-      ],
-    },
-  },
-  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+interface RootEntrypointScenario {
+  readonly build: () => Promise<void>;
+  readonly containers: string[];
+  readonly image: string;
+  readonly probe: DockerProbe;
+  readonly runId: string;
+  readonly targetId: string;
+}
+
+const rootEntrypointTest = test.extend<{ rootEntrypoint: RootEntrypointScenario }>({
+  rootEntrypoint: async ({ artifacts, cleanup, progress, secrets, signal, skip, task }, use) => {
     const probe = new DockerProbe(
       artifacts,
       (text, extraValues) => secrets.redact(text, extraValues),
@@ -750,41 +743,23 @@ test(
       progress,
       signal,
     );
-    const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
+    const targetId = safeTag(task.name);
+    const runId = safeTag(
+      `${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}-${targetId}`,
+    );
     const image =
       process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-root-entrypoint-smoke:${runId}`;
     const baseImage = `nemoclaw-hermes-sandbox-base-local:root-entrypoint-${runId}`;
     const containers: string[] = [];
 
     await artifacts.target.declare({
-      id: "hermes-root-entrypoint-smoke",
+      id: targetId,
       boundary: "docker-root-entrypoint",
       image,
       prebuiltImage: Boolean(process.env.NEMOCLAW_HERMES_TEST_IMAGE),
-      contract: [
-        "clean root-entrypoint startup reaches Hermes health or bearer-auth readiness",
-        "gateway process runs as gateway user",
-        "gateway log has no PID race or config load failure",
-        "Hermes v0.14 writable runtime directories are present",
-        "selected Hermes optional capabilities import from the shipped image",
-        "root retains sandbox supplementary-group membership in the shipped image",
-        "build-only upstream tests and root caches are absent from the runtime image",
-        "gateway.pid is stored as a regular file below the writable runtime directory",
-        "gateway user cannot remove config.yaml from sticky config root",
-        "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
-        "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
-        "legacy gateway.pid symlink/state shape is repaired and booted",
-        "restored state directories permit gateway-user and sandbox-user writes",
-        "legacy dashboard profile state is moved into profiles/dashboard-home",
-        "locked-root startup recreates protected group-writable Hermes history without changing sealed config",
-        "gateway process preserves the caller dispatcher value while unlocked and forces it off while locked",
-        "root startup rejects history and log hard links without changing the protected inode",
-        "root startup rejects a config-root swap after descriptor validation without changing the external target",
-        "non-root startup rejects a mode-correct history file with an unusable group",
-      ],
+      contract: [task.name],
     });
-
-    cleanup.add("remove Hermes root-entrypoint smoke containers", async () => {
+    cleanup.add(`remove Hermes root-entrypoint containers for ${targetId}`, async () => {
       await Promise.all(
         containers.map((container) =>
           probe.run(["rm", "-f", container], {
@@ -796,54 +771,193 @@ test(
     });
 
     await requireDocker(probe, skip);
-
     try {
-      progress.phase("build Hermes root-entrypoint image");
-      await buildImageIfNeeded(probe, image, baseImage);
-      progress.phase("validate clean root-entrypoint startup");
-      await runCleanVariant(probe, image, runId, containers);
-      progress.phase("validate legacy state migration");
-      await runLegacyVariant(probe, image, runId, containers);
-      progress.phase("validate locked-root history recovery");
-      await runLockedRootVariant(probe, image, runId, containers);
-      progress.phase("validate root history hard-link refusal");
-      await runHardLinkRefusalVariant(probe, image, runId, containers, "history");
-      progress.phase("validate root log hard-link refusal");
-      await runHardLinkRefusalVariant(probe, image, runId, containers, "logs");
-      progress.phase("validate root mutable-layout swap refusal");
-      await runMutableLayoutSwapRefusalVariant(probe, image, runId, containers);
-      progress.phase("validate non-root history ownership refusal");
-      await runNonRootHistoryOwnershipRefusalVariant(probe, image, runId, containers);
+      await use({
+        build: () => buildImageIfNeeded(probe, image, baseImage),
+        containers,
+        image,
+        probe,
+        runId,
+        targetId,
+      });
     } catch (error) {
-      for (const container of containers) {
-        await dumpContainerDiagnostics(probe, container);
-      }
+      for (const container of containers) await dumpContainerDiagnostics(probe, container);
       throw error;
     }
+  },
+});
 
+rootEntrypointTest(
+  "starts a clean root entrypoint with the required Hermes runtime layout",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate clean root-entrypoint startup",
+      ],
+    },
+  },
+  async ({ artifacts, progress, rootEntrypoint }) => {
+    const { build, containers, image, probe, runId, targetId } = rootEntrypoint;
+    progress.phase("build Hermes root-entrypoint image");
+    await build();
+    progress.phase("validate clean root-entrypoint startup");
+    await runCleanVariant(probe, image, runId, containers);
     await artifacts.target.complete({
-      id: "hermes-root-entrypoint-smoke",
+      id: targetId,
       image,
-      assertions: {
-        cleanStartupHealthy: true,
-        legacyStartupHealthy: true,
-        lockedRootStartupHealthy: true,
-        selectedHermesCapabilitiesVerified: true,
-        rootSandboxGroupMembershipVerified: true,
-        runtimeLayoutVerified: true,
-        buildOnlyPathsAbsent: true,
-        gatewayPrivilegeSeparationVerified: true,
-        gatewayKanbanDispatcherBoundaryVerified: true,
-        bearerAuthVerified: true,
-        dashboardHomeVerified: true,
-        legacyPidSymlinkMigrationVerified: true,
-        restoredStatePermissionsVerified: true,
-        legacyDashboardProfileMigrationVerified: true,
-        lockedRootHistoryRecoveryVerified: true,
-        rootHardLinkRefusalVerified: true,
-        rootMutableLayoutSwapRefusalVerified: true,
-        nonRootHistoryOwnershipRefusalVerified: true,
-      },
+      assertions: { cleanStartupAndRuntimeLayoutVerified: true },
+    });
+  },
+);
+
+rootEntrypointTest(
+  "repairs restored Hermes state during root startup",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate legacy state migration",
+      ],
+    },
+  },
+  async ({ artifacts, progress, rootEntrypoint }) => {
+    const { build, containers, image, probe, runId, targetId } = rootEntrypoint;
+    progress.phase("build Hermes root-entrypoint image");
+    await build();
+    progress.phase("validate legacy state migration");
+    await runLegacyVariant(probe, image, runId, containers);
+    await artifacts.target.complete({
+      id: targetId,
+      image,
+      assertions: { restoredStateMigrationVerified: true },
+    });
+  },
+);
+
+rootEntrypointTest(
+  "recreates locked-root history without changing sealed Hermes configuration",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate locked-root history recovery",
+      ],
+    },
+  },
+  async ({ artifacts, progress, rootEntrypoint }) => {
+    const { build, containers, image, probe, runId, targetId } = rootEntrypoint;
+    progress.phase("build Hermes root-entrypoint image");
+    await build();
+    progress.phase("validate locked-root history recovery");
+    await runLockedRootVariant(probe, image, runId, containers);
+    await artifacts.target.complete({
+      id: targetId,
+      image,
+      assertions: { lockedRootHistoryRecoveryVerified: true },
+    });
+  },
+);
+
+rootEntrypointTest(
+  "rejects a history hard link during root startup without changing its protected inode",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate root history hard-link refusal",
+      ],
+    },
+  },
+  async ({ artifacts, progress, rootEntrypoint }) => {
+    const { build, containers, image, probe, runId, targetId } = rootEntrypoint;
+    progress.phase("build Hermes root-entrypoint image");
+    await build();
+    progress.phase("validate root history hard-link refusal");
+    await runHardLinkRefusalVariant(probe, image, runId, containers, "history");
+    await artifacts.target.complete({
+      id: targetId,
+      image,
+      assertions: { rootHistoryHardLinkRefusalVerified: true },
+    });
+  },
+);
+
+rootEntrypointTest(
+  "rejects a log hard link during root startup without changing its protected inode",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate root log hard-link refusal",
+      ],
+    },
+  },
+  async ({ artifacts, progress, rootEntrypoint }) => {
+    const { build, containers, image, probe, runId, targetId } = rootEntrypoint;
+    progress.phase("build Hermes root-entrypoint image");
+    await build();
+    progress.phase("validate root log hard-link refusal");
+    await runHardLinkRefusalVariant(probe, image, runId, containers, "logs");
+    await artifacts.target.complete({
+      id: targetId,
+      image,
+      assertions: { rootLogHardLinkRefusalVerified: true },
+    });
+  },
+);
+
+rootEntrypointTest(
+  "rejects a config-root swap during repair without changing the external target",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate root mutable-layout swap refusal",
+      ],
+    },
+  },
+  async ({ artifacts, progress, rootEntrypoint }) => {
+    const { build, containers, image, probe, runId, targetId } = rootEntrypoint;
+    progress.phase("build Hermes root-entrypoint image");
+    await build();
+    progress.phase("validate root mutable-layout swap refusal");
+    await runMutableLayoutSwapRefusalVariant(probe, image, runId, containers);
+    await artifacts.target.complete({
+      id: targetId,
+      image,
+      assertions: { rootMutableLayoutSwapRefusalVerified: true },
+    });
+  },
+);
+
+rootEntrypointTest(
+  "rejects non-root startup when Hermes history has an unusable group",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and Hermes image inputs",
+        "build Hermes root-entrypoint image",
+        "validate non-root history ownership refusal",
+      ],
+    },
+  },
+  async ({ artifacts, progress, rootEntrypoint }) => {
+    const { build, containers, image, probe, runId, targetId } = rootEntrypoint;
+    progress.phase("build Hermes root-entrypoint image");
+    await build();
+    progress.phase("validate non-root history ownership refusal");
+    await runNonRootHistoryOwnershipRefusalVariant(probe, image, runId, containers);
+    await artifacts.target.complete({
+      id: targetId,
+      image,
+      assertions: { nonRootHistoryOwnershipRefusalVerified: true },
     });
   },
 );

@@ -125,10 +125,11 @@ state_dirs:
 # files are intentionally omitted because the backup produces a consistent DB.
 # .hermes_history is user runtime history: prompt_toolkit appends to it on
 # every TUI keypress, so NemoClaw keeps it sandbox-group-writable even when
-# shields-up locks the parent config dir. Root-separated images make the entry
-# gateway-owned so sticky-directory protection prevents sandbox replacement.
-# It can be removed from this contract if upstream Hermes supports redirecting
-# or disabling FileHistory.
+# shields-up locks the parent config dir. The image initializes it for non-root
+# OpenShell workloads; root-separated startup reparents it to the gateway so
+# sticky-directory protection prevents sandbox replacement. It can be removed
+# from this contract if upstream Hermes supports redirecting or disabling
+# FileHistory.
 state_files:
   - path: SOUL.md
   - path: .hermes_history
