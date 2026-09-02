@@ -382,6 +382,10 @@ function loadAgentPresetContent(
   }
 }
 
+/**
+ * Resolve a preset across messaging, central or agent, and live custom sources.
+ * Source misses stay silent so callers report only after the composite lookup fails.
+ */
 function loadPresetForSandbox(
   sandboxName: string,
   presetName: string,
