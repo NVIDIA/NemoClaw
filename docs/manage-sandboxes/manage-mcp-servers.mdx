@@ -43,7 +43,7 @@ Before it reads `/sandbox/.deepagents/.nemoclaw-mcp.json`, Deep Agents Code v2 `
 It does not follow a final symbolic link or read from a FIFO.
 If the path is a symbolic link, FIFO, or another non-regular file, the command names the path type, writes no status output, and exits with status `2`.
 The diagnostic starts with `Unsafe managed Deep Agents MCP projection path:` and names a type such as `symbolic link`, `FIFO`, or `non-regular file`.
-Exit status `2` is specific to this unsafe path-type result.
+For this unsafe path-type result, the command exits with status `2`.
 Deep Agents Code v1 reads the legacy `.deepagents/.mcp.json` path and does not expose these type-specific diagnostics.
 
 </AgentOnly>
