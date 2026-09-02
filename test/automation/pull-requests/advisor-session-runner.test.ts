@@ -360,16 +360,26 @@ afterEach(() => {
 });
 
 describe("advisor session runner", () => {
-  it("uses one bounded provider-aware retry layer for transient failures", () => {
-    expect(advisorRetrySettings("azure/openai/gpt-5.6-terra")).toEqual({
+  it("uses one bounded, specialist-spread retry layer for transient failures", () => {
+    const behavior = advisorRetrySettings(
+      "azure/openai/gpt-5.6-terra",
+      "pr-review-behavior",
+    );
+    const dependencyUse = advisorRetrySettings(
+      "openai/openai/gpt-5.6-terra",
+      "pr-review-dependency-use",
+    );
+
+    expect(behavior).toEqual({
       enabled: true,
-      maxRetries: 4,
-      baseDelayMs: 6_000,
+      maxRetries: 5,
+      baseDelayMs: 13_909,
       provider: {
         maxRetries: 0,
         maxRetryDelayMs: 60_000,
       },
     });
+    expect(dependencyUse.baseDelayMs).toBe(14_827);
   });
 
   it("configures Pi's proxy transport before an OpenShell SDK session", async () => {
