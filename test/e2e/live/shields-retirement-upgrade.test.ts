@@ -229,7 +229,7 @@ async function candidateNemoclaw(
   timeoutMs = COMMAND_TIMEOUT_MS,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
-  return bash(host, `nemoclaw ${args.map(shellQuote).join(" ")}`, {
+  return bash(host, `${shellQuote(CANDIDATE_CLI)} ${args.map(shellQuote).join(" ")}`, {
     artifactName,
     env: commandEnv(extraEnv),
     timeoutMs,
@@ -507,19 +507,12 @@ test.skipIf(process.platform !== "linux")(
     ) as { sourceRevision?: unknown };
     expect(EXPECTED_CANDIDATE_SHA).toMatch(/^[0-9a-f]{40}$/u);
     expect(candidateIdentity.sourceRevision).toBe(EXPECTED_CANDIDATE_SHA);
-    const activateCandidate = await bash(
-      host,
-      `cd ${shellQuote(REPO_ROOT)}\nnpm link --ignore-scripts\nhash -r`,
-      { artifactName: "activate-candidate-cli", timeoutMs: 5 * 60_000 },
-    );
-    expectExitZero(activateCandidate, "activate exact candidate CLI artifact");
-    const candidatePath = await bash(
-      host,
-      'candidate="$(command -v nemoclaw)"\nprintf "%s\\n" "$candidate"\nreadlink -f "$candidate"',
-      { artifactName: "candidate-cli-path", timeoutMs: 30_000 },
-    );
-    expectExitZero(candidatePath, "resolve activated candidate CLI");
-    expect(candidatePath.stdout.trim().split("\n").at(-1)).toBe(candidateRealPath);
+    const candidatePath = await bash(host, `readlink -f ${shellQuote(CANDIDATE_CLI)}`, {
+      artifactName: "candidate-cli-path",
+      timeoutMs: 30_000,
+    });
+    expectExitZero(candidatePath, "resolve exact candidate CLI");
+    expect(candidatePath.stdout.trim()).toBe(candidateRealPath);
     const candidateVersion = await candidateNemoclaw(host, ["--version"], "candidate-version");
     expectExitZero(candidateVersion, "candidate nemoclaw --version");
     expect(resultText(candidateVersion)).toContain(EXPECTED_CANDIDATE_SHA.slice(0, 10));

@@ -1,12 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "../../../tools/e2e/target-catalogue.mts";
 import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/workflow-plan.mts";
 
 describe("Shields retirement upgrade workflow plan", () => {
+  it("invokes the restored candidate CLI directly without a global npm link", () => {
+    const source = fs.readFileSync(
+      new URL("../live/shields-retirement-upgrade.test.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("shellQuote(CANDIDATE_CLI)");
+    expect(source).not.toContain("npm link --ignore-scripts");
+    expect(source).not.toContain("command -v nemoclaw");
+  });
+
   it(
     "includes exactly one pinned release-migration lane in targeted and empty plans",
     {
