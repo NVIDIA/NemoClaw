@@ -37,7 +37,10 @@ import {
   reconstructValidatedTree,
   waitForVerifiedCommit,
 } from "../../../tools/pr-review-advisor-repair/publish.mts";
-import { collectReconciliationSource } from "../../../tools/pr-review-advisor-repair/reconcile.mts";
+import {
+  collectReconciliationSource,
+  formatReconciliationBindingOutput,
+} from "../../../tools/pr-review-advisor-repair/reconcile.mts";
 import {
   collectRepairSelectionAuthority,
   expectedAdvisorArtifactNames,
@@ -147,7 +150,7 @@ function generatedHeadEvidenceRequest(
             run_attempt: 1,
             event: "workflow_dispatch",
             head_branch: "main",
-            head_sha: bundle.input.baseSha,
+            head_sha: "e".repeat(40),
             path: `.github/workflows/${validation.workflow}`,
             status: "completed",
             conclusion: "success",
@@ -447,6 +450,12 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       validationArtifactId,
       validationArtifactDigest: `sha256:${"a".repeat(64)}`,
     });
+
+    const bundle = selection();
+    const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
+    expect(formatReconciliationBindingOutput(receipt)).toBe(
+      `attempt_key=${receipt.attemptKey}\nbase_sha=${receipt.baseSha}\nhead_ref=${receipt.headRef}\n`,
+    );
   });
 
   it("rejects a validation receipt whose patch digest does not match (#10791)", () => {
@@ -507,6 +516,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
 
   it("binds generated-head validation to the live exact PR and checks DCO (#10791)", async () => {
     const bundle = selection();
+    const trustedWorkflowSha = "e".repeat(40);
     const request = vi.fn().mockResolvedValue({
       number: bundle.input.prNumber,
       state: "open",
@@ -530,9 +540,9 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         GITHUB_EVENT_NAME: "workflow_dispatch",
         GITHUB_REF: "refs/heads/main",
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-        GITHUB_SHA: bundle.input.baseSha,
+        GITHUB_SHA: trustedWorkflowSha,
         GITHUB_TOKEN: "token",
-        GITHUB_WORKFLOW_SHA: bundle.input.baseSha,
+        GITHUB_WORKFLOW_SHA: trustedWorkflowSha,
         PR_NUMBER: String(bundle.input.prNumber),
         SOURCE_HEAD_SHA: bundle.input.sourceHeadSha,
         BASE_SHA: bundle.input.baseSha,
@@ -551,7 +561,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           GITHUB_SHA: "f".repeat(40),
           GITHUB_TOKEN: "token",
-          GITHUB_WORKFLOW_SHA: bundle.input.baseSha,
+          GITHUB_WORKFLOW_SHA: trustedWorkflowSha,
           PR_NUMBER: String(bundle.input.prNumber),
           SOURCE_HEAD_SHA: bundle.input.sourceHeadSha,
           BASE_SHA: bundle.input.baseSha,
@@ -559,7 +569,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         },
         request,
       ),
-    ).rejects.toThrow("not executing the exact trusted base revision");
+    ).rejects.toThrow("not executing one exact trusted workflow revision");
   });
 
   it("uses an atomic non-force update and exact generated-head dispatch payloads (#10791)", async () => {
@@ -598,7 +608,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     const existingRun = {
       event: "workflow_dispatch",
       head_branch: "main",
-      head_sha: bundle.input.baseSha,
+      head_sha: "e".repeat(40),
       path: ".github/workflows/pr.yaml",
       display_title: generatedHeadRunTitle("Generated-head CI", bundle.attemptKey, commitSha),
     };

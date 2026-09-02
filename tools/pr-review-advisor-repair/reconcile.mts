@@ -156,6 +156,10 @@ export function bindReconciliationBundle(input: {
   return receipt;
 }
 
+export function formatReconciliationBindingOutput(receipt: ValidationReceipt): string {
+  return `attempt_key=${receipt.attemptKey}\nbase_sha=${receipt.baseSha}\nhead_ref=${receipt.headRef}\n`;
+}
+
 async function main(env: NodeJS.ProcessEnv): Promise<void> {
   const command = required(env, "RECONCILE_COMMAND");
   if (command === "collect") {
@@ -185,10 +189,7 @@ async function main(env: NodeJS.ProcessEnv): Promise<void> {
       patchFile: required(env, "VALIDATED_PATCH_FILE"),
       receiptFile: required(env, "VALIDATION_RECEIPT_FILE"),
     });
-    fs.appendFileSync(
-      required(env, "GITHUB_OUTPUT"),
-      `attempt_key=${receipt.attemptKey}\nhead_ref=${receipt.headRef}\n`,
-    );
+    fs.appendFileSync(required(env, "GITHUB_OUTPUT"), formatReconciliationBindingOutput(receipt));
     return;
   }
   throw new RepairContractError(`unsupported reconciliation command: ${command}`);

@@ -103,9 +103,9 @@ export async function collectGeneratedHeadContext(
   if (required(env, "GITHUB_REF") !== `refs/heads/${TRUSTED_GENERATED_HEAD_REF}`) {
     throw new RepairContractError("generated-head workflow was not dispatched from trusted main");
   }
-  if (workflowHeadSha !== workflowDefinitionSha || workflowDefinitionSha !== baseSha) {
+  if (workflowHeadSha !== workflowDefinitionSha) {
     throw new RepairContractError(
-      "generated-head workflow is not executing the exact trusted base revision",
+      "generated-head workflow is not executing one exact trusted workflow revision",
     );
   }
 

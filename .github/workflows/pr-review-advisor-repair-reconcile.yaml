@@ -40,6 +40,7 @@ jobs:
       contents: read
     outputs:
       attempt_key: ${{ steps.bind.outputs.attempt_key }}
+      base_sha: ${{ steps.bind.outputs.base_sha }}
       head_ref: ${{ steps.bind.outputs.head_ref }}
       validation_artifact_id: ${{ steps.source.outputs.validation_artifact_id }}
     env:

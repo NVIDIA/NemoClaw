@@ -81,6 +81,11 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
       ADVISOR_REPAIR_PHASE1_ENABLED: "${{ vars.ADVISOR_REPAIR_PHASE1_ENABLED }}",
     });
     expect(verify.permissions).toEqual({ actions: "read", checks: "write", contents: "read" });
+    expect(record(collect.outputs).base_sha).toBe("${{ steps.bind.outputs.base_sha }}");
+    expect(
+      record(namedStep(verify, "Wait for the exact required checks, CodeQL, and Advisor run").env)
+        .BASE_SHA,
+    ).toBe("${{ needs.collect.outputs.base_sha }}");
     expect(JSON.stringify(verify)).not.toContain("Checkout the exact original source head");
 
     const collectDownload = record(

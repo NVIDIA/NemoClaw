@@ -640,7 +640,8 @@ async function matchingGeneratedHeadRuns(
     (run) =>
       run.event === "workflow_dispatch" &&
       run.head_branch === TRUSTED_GENERATED_HEAD_REF &&
-      run.head_sha === receipt.baseSha &&
+      typeof run.head_sha === "string" &&
+      /^[0-9a-f]{40}$/u.test(run.head_sha) &&
       run.path === `.github/workflows/${workflow}` &&
       run.display_title ===
         generatedHeadRunTitle(validation.titlePrefix, receipt.attemptKey, commitSha),
