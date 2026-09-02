@@ -165,6 +165,9 @@ export function classifyOnboardLockContents(
     // is demonstrably absent, the interrupted legacy run is stale. Records
     // with any current identity field remain fail-closed when provenance is
     // incomplete, and explicitly foreign records never reach a local probe.
+    // Retirement: https://github.com/NVIDIA/NemoClaw/issues/10890. Remove this
+    // branch once the minimum supported direct-upgrade source release includes
+    // #10845, so every supported writer publishes provenance fields.
     if (
       provenance === "unknown" &&
       parsed.format === "legacy" &&
