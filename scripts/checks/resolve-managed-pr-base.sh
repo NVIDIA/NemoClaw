@@ -53,6 +53,10 @@ if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
   echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
   exit 1
 fi
+if [[ ! "$PLATFORM" =~ ^linux/(amd64|arm64)$ ]]; then
+  echo "ERROR: PR base resolution requires a supported native Linux platform." >&2
+  exit 1
+fi
 if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
   git fetch --no-tags --depth=1 origin "$BASE_SHA"
 fi
@@ -67,20 +71,23 @@ if [ "$diff_status" -eq 1 ]; then
   local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
   local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
   local_base_oci="$RUNNER_TEMP/pr-base.oci"
-  base_labels=()
+  base_build=(
+    docker buildx build
+    --platform "$PLATFORM"
+    --provenance=false
+    --sbom=false
+    --file "$BASE_DOCKERFILE"
+    --tag "$LOCAL_BASE_REFERENCE"
+  )
   if [ "$AGENT" = "langchain-deepagents-code" ]; then
-    base_labels+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
+    base_build+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
   fi
-  docker buildx build \
-    --platform linux/amd64 \
-    --provenance=false \
-    --sbom=false \
-    --file "$BASE_DOCKERFILE" \
-    --tag "$LOCAL_BASE_REFERENCE" \
-    "${base_labels[@]}" \
-    --output "type=docker,dest=${local_base_archive}" \
-    --output "type=oci,dest=${local_base_oci_archive}" \
+  base_build+=(
+    --output "type=docker,dest=${local_base_archive}"
+    --output "type=oci,dest=${local_base_oci_archive}"
     .
+  )
+  "${base_build[@]}"
   docker load --input "$local_base_archive"
   mkdir -p "$local_base_oci"
   tar -C "$local_base_oci" -xf "$local_base_oci_archive"
@@ -113,7 +120,7 @@ alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
 exact_raw="$RUNNER_TEMP/pr-base-exact.raw"
 docker buildx imagetools inspect "$BASE_ALIAS" --raw >"$alias_raw"
 if ! digest="$(
-  jq -er '
+  jq -er --arg platform "$PLATFORM" '
     if (
       .mediaType == "application/vnd.oci.image.index.v1+json" or
       .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
@@ -121,21 +128,20 @@ if ! digest="$(
       [
         .manifests[]
         | select(
-            .platform.os == "linux" and
-            .platform.architecture == "amd64"
+            (.platform.os + "/" + .platform.architecture) == $platform
           )
       ]
-      | if length == 1 then .[0].digest else error("not one linux/amd64 image") end
+      | if length == 1 then .[0].digest else error("not one requested platform image") end
     else
       error("base alias is not a platform index")
     end
   ' "$alias_raw"
 )"; then
-  echo "ERROR: PR base alias does not contain exactly one linux/amd64 image." >&2
+  echo "ERROR: PR base alias does not contain exactly one ${PLATFORM} image." >&2
   exit 1
 fi
 if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-  echo "ERROR: PR base alias returned an invalid linux/amd64 digest." >&2
+  echo "ERROR: PR base alias returned an invalid ${PLATFORM} digest." >&2
   exit 1
 fi
 reference="${BASE_REPOSITORY}@${digest}"
