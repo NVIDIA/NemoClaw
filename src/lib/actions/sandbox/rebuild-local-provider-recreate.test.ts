@@ -83,7 +83,6 @@ const localProviderScenarios = [
           validateLocalProvider: () => ({ ok: true }),
           getLocalProviderBaseUrl: () => "http://host.openshell.internal:11435/v1",
           applyLocalInferenceRoute,
-          getOllamaWarmupCommand: () => ["true"],
           run: () => ({ status: 0 }),
           shouldFrontOllamaWithProxy: () => false,
           ensureOllamaAuthProxy: vi.fn(),

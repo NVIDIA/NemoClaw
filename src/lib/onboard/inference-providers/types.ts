@@ -242,7 +242,6 @@ export type OllamaDeps = CommonDeps & {
   };
   getLocalProviderBaseUrl: (provider: string) => any;
   applyLocalInferenceRoute: (provider: string, model: string) => Promise<boolean>;
-  getOllamaWarmupCommand: (model: string) => any;
   run: RunFn;
   shouldFrontOllamaWithProxy: () => boolean;
   ensureOllamaAuthProxy: () => void;

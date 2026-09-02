@@ -185,7 +185,6 @@ type ProviderBranchDeps = Pick<
   > &
   Pick<
     OllamaDeps,
-    | "getOllamaWarmupCommand"
     | "shouldFrontOllamaWithProxy"
     | "ensureOllamaAuthProxy"
     | "isProxyHealthy"
@@ -1045,7 +1044,6 @@ export function createSetupInference(
                   runGatewayOpenshell,
                   revalidateSandboxIdentity,
                 ),
-                getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
                 run: deps.run,
                 shouldFrontOllamaWithProxy: hostLocalRoute
                   ? () => false

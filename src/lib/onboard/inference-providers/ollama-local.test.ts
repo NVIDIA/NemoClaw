@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CONTAINER_REACHABILITY_IMAGE,
-  getOllamaWarmupCommand,
   loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   persistResolvedOllamaHost,
@@ -48,7 +47,6 @@ function deps(overrides: OllamaDepsOverrides = {}): OllamaDeps {
     validateLocalProvider: () => ({ ok: true }),
     getLocalProviderBaseUrl: () => "http://host.openshell.internal:11434/v1",
     applyLocalInferenceRoute: async () => false,
-    getOllamaWarmupCommand: () => ["ollama", "run", "llama3.2:1b"],
     run: vi.fn(() => ({ status: 0 })),
     shouldFrontOllamaWithProxy: () => false,
     ensureOllamaAuthProxy: vi.fn(),
@@ -159,7 +157,6 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       setupOllamaLocalInference(
         { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
         deps({
-          getOllamaWarmupCommand,
           run,
           localInference: {
             validateOllamaModelWithToolsOverride: () => ({ ok: true }),
