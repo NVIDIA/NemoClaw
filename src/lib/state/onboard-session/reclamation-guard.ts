@@ -161,9 +161,23 @@ function reconcileGuardArtifacts(guardPath: string): OnboardLockReclamationGuard
       CORRUPT_GUARD_GRACE_MS,
     );
     if (disposition !== "stale") return describeContention(artifactPath, observation);
-    if (!reclaimStaleMcpLifecycleLockGenerationSync(artifactPath, observation)) {
-      const replacement = readMcpLifecycleLockObservationSync(artifactPath);
-      if (replacement !== null) return describeContention(artifactPath, replacement);
+    try {
+      reclaimStaleMcpLifecycleLockGenerationSync(
+        artifactPath,
+        observation,
+        undefined,
+        MAX_GUARD_ARTIFACT_BYTES,
+      );
+    } catch (error) {
+      if (error instanceof McpLifecycleLockObservationTooLargeError) {
+        return describeContention(artifactPath, null);
+      }
+      throw error;
+    }
+    const replacement = readGuardObservation(artifactPath);
+    if (replacement.status === "blocked") return replacement.contention;
+    if (replacement.observation !== null) {
+      return describeContention(artifactPath, replacement.observation);
     }
   }
   return null;
@@ -224,7 +238,19 @@ export function withOnboardLockReclamationGuard<T>(
         contention: describeContention(guardPath, observation),
       };
     }
-    reclaimStaleMcpLifecycleLockGenerationSync(guardPath, observation);
+    try {
+      reclaimStaleMcpLifecycleLockGenerationSync(
+        guardPath,
+        observation,
+        undefined,
+        MAX_GUARD_ARTIFACT_BYTES,
+      );
+    } catch (error) {
+      if (error instanceof McpLifecycleLockObservationTooLargeError) {
+        return { status: "blocked", contention: describeContention(guardPath, null) };
+      }
+      throw error;
+    }
   }
 
   const observed = readGuardObservation(guardPath);

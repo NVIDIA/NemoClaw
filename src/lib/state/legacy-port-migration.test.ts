@@ -466,7 +466,7 @@ describe("legacy non-default gateway state migration", () => {
     },
   );
 
-  it("reports cautious recovery for an unverifiable live onboarding PID", () => {
+  it("refuses migration when a live onboarding PID has no verified process identity", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");

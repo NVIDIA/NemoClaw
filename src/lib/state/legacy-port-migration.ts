@@ -8,6 +8,7 @@ import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+import { processIsAlive } from "../adapters/process/identity";
 import { resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import {
   assertGatewayStatePathSafe,
@@ -681,15 +682,6 @@ function applyMigrationIntent(
   return result;
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
-
 function existingLockIsStale(home: string, lock: string): boolean {
   const stat = lstatNoFollow(home, lock);
   if (!stat) return true;
@@ -706,7 +698,7 @@ function existingLockIsStale(home: string, lock: string): boolean {
   } catch (error) {
     if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
   }
-  if (ownerPid !== null) return !isProcessAlive(ownerPid);
+  if (ownerPid !== null) return !processIsAlive(ownerPid);
   return Date.now() - stat.mtimeMs > MIGRATION_LOCK_STALE_MS;
 }
 

@@ -284,6 +284,7 @@ export function reclaimStaleMcpLifecycleLockGenerationSync(
   targetPath: string,
   expected: LockObservation,
   assertAfterClaim?: () => void,
+  maxObservationBytes = Number.POSITIVE_INFINITY,
 ): boolean {
   const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
   try {
@@ -293,7 +294,13 @@ export function reclaimStaleMcpLifecycleLockGenerationSync(
     throw error;
   }
 
-  const claimed = readMcpLifecycleLockObservationSync(quarantinePath);
+  let claimed: LockObservation | null;
+  try {
+    claimed = readMcpLifecycleLockObservationSync(quarantinePath, maxObservationBytes);
+  } catch (error) {
+    restoreClaimedMcpLifecycleLockGenerationSync(targetPath, quarantinePath);
+    throw error;
+  }
   const expectedToken = expected.owner?.token ?? null;
   const claimedExpectedGeneration =
     expectedToken === null

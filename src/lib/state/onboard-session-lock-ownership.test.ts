@@ -172,16 +172,21 @@ describe("onboard lock ownership", () => {
     expect(session.describeOnboardLockContention(result)).toEqual({
       reason: expect.stringContaining(`reclamation guard '${guardFile}'`),
       remediation:
-        "Wait briefly and retry. If the guard remains, verify its owner and prove the guard is " +
-        `obsolete before removing only '${guardFile}'. Then retry.`,
+        "Wait briefly and retry. If the guard remains, confirm on its reported host and PID " +
+        "namespace that the owner no longer uses it. Do not remove the guard if you cannot " +
+        `confirm this; ask that host's administrator to resolve '${guardFile}', then retry.`,
     });
   });
 
   it("reports an oversized canonical reclamation guard without reading its body (#10779)", () => {
+    expect(session.acquireOnboardLock("prime reclamation owner identity cache").acquired).toBe(true);
+    session.releaseOnboardLock();
     const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
     fs.mkdirSync(path.dirname(guardFile), { recursive: true });
     fs.writeFileSync(guardFile, "x".repeat(65_537), { mode: 0o600 });
-    const readSpy = vi.spyOn(fs, "readFileSync");
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+      throw new Error("oversized guard body must not be read");
+    });
 
     const result = session.acquireOnboardLock("nemoclaw onboard --resume");
 
@@ -189,7 +194,7 @@ describe("onboard lock ownership", () => {
       acquired: false,
       reclamationGuard: { guardFile },
     });
-    expect(readSpy.mock.calls.some(([target]) => typeof target === "number")).toBe(false);
+    expect(readSpy).not.toHaveBeenCalled();
     expect(fs.existsSync(guardFile)).toBe(true);
   });
 
@@ -235,5 +240,63 @@ describe("onboard lock ownership", () => {
       reclamationGuard: { guardFile: artifactFile, owner: { hostIdentity: "foreign-host" } },
     });
     expect(fs.existsSync(artifactFile)).toBe(true);
+  });
+
+  it("blocks an oversized replacement that appears while reclaiming a stale guard artifact", () => {
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    const token = "44444444-4444-4444-8444-444444444444";
+    const departedOwner = {
+      ...createMcpLifecycleLockOwner("onboard-lock-reclamation", token),
+      pid: 2_147_483_647,
+      processIdentity: "departed-process",
+    };
+    const artifactFile = `${guardFile}.candidate-${String(departedOwner.pid)}-${token}`;
+    fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+    fs.writeFileSync(artifactFile, JSON.stringify(departedOwner), { mode: 0o600 });
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementationOnce(((from, to) => {
+      originalRenameSync(from, to);
+      fs.writeFileSync(from, "x".repeat(65_537), { mode: 0o600 });
+    }) as typeof fs.renameSync);
+    const readSpy = vi.spyOn(fs, "readFileSync");
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      reclamationGuard: { guardFile: artifactFile },
+    });
+    expect(readSpy.mock.calls.filter(([target]) => typeof target === "number")).toHaveLength(2);
+    expect(fs.statSync(artifactFile).size).toBe(65_537);
+    renameSpy.mockRestore();
+  });
+
+  it("restores and blocks a guard artifact that grows after its reclamation rename", () => {
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    const token = "55555555-5555-4555-8555-555555555555";
+    const departedOwner = {
+      ...createMcpLifecycleLockOwner("onboard-lock-reclamation", token),
+      pid: 2_147_483_647,
+      processIdentity: "departed-process",
+    };
+    const artifactFile = `${guardFile}.candidate-${String(departedOwner.pid)}-${token}`;
+    fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+    fs.writeFileSync(artifactFile, JSON.stringify(departedOwner), { mode: 0o600 });
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementationOnce(((from, to) => {
+      originalRenameSync(from, to);
+      fs.appendFileSync(to, "x".repeat(65_537));
+    }) as typeof fs.renameSync);
+    const readSpy = vi.spyOn(fs, "readFileSync");
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      reclamationGuard: { guardFile: artifactFile },
+    });
+    expect(readSpy.mock.calls.filter(([target]) => typeof target === "number")).toHaveLength(1);
+    expect(fs.statSync(artifactFile).size).toBeGreaterThan(65_536);
+    renameSpy.mockRestore();
   });
 });

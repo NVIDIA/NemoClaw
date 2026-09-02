@@ -249,7 +249,7 @@ describe("rebuild preflight guards", () => {
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain(guardFile);
     expect(output).toContain("owner PID 4242");
-    expect(output).toContain("prove the guard is obsolete before removing only");
+    expect(output).toContain("Do not remove the guard if you cannot confirm this");
     expect(output).not.toContain("another nemoclaw onboarding run");
     expect(release).not.toHaveBeenCalled();
   });
