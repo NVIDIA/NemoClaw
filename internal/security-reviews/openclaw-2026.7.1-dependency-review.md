@@ -7,11 +7,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-08-21
-
-Shields retirement addendum date: September 1, 2026.
-
-Shields was retired from NemoClaw after this review was written. Every Shields reference below is retained as historical evidence of the ownership and migration behavior evaluated for the original OpenClaw 2026.7.1 integration; none describes a current command, supported runtime posture, or merge gate. The current mutable runtime retains the descriptor-pinned legacy-cache validation and removal, pinned-version migration suppression, and symlink, hard-link, size, and stability checks recorded here without a Shields-protected parent.
+Last updated: 2026-09-02
 
 ## Decision
 
@@ -28,7 +24,7 @@ release in both committed production locks. Do not add an audit exception.
 
 The production OpenClaw install uses the authoritative committed lock at
 `agents/openclaw/openclaw-runtime/package-lock.json`, with SHA-256
-`400f5fb13eedd887c309c6a69f4e2d084addd2bf4220a165817106c6131c8a40`.
+`248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9`.
 NemoClaw derives that lock from the SRI-verified `openclaw@2026.7.1` archive
 after applying the reviewed dependency remediation.
 The committed `nemoclaw/package-lock.json` has SHA-256
@@ -131,25 +127,20 @@ whose amd64 config reports Node `22.23.1`.
 The reviewed audit materializes three production-compatible boundaries: the
 remediated reviewed-archive graph, the committed OpenClaw runtime lock, and the
 committed mcporter runtime lock.
-The September 2 registry-backed checks used Node `22.23.2`.
+The August 21 registry-backed checks used Node `22.23.2` and npm `10.9.4`.
 Their exact current results are:
 
-- NemoClaw CLI graph: `info=0`, `low=0`, `moderate=0`, `high=0`,
+- Reviewed archive graph: `info=0`, `low=0`, `moderate=1`, `high=0`,
   `critical=0`, `clean`.
-- Reviewed archive graph: `info=0`, `low=0`, `moderate=2`, `high=0`,
+- OpenClaw locked runtime: `info=0`, `low=0`, `moderate=2`, `high=0`,
   `critical=0`, `clean`.
-- OpenClaw locked runtime: `info=0`, `low=0`, `moderate=3`, `high=0`,
-  `critical=0`, `clean`.
-- mcporter runtime: `info=0`, `low=0`, `moderate=1`, `high=0`, `critical=0`,
+- mcporter runtime: `info=0`, `low=0`, `moderate=0`, `high=0`, `critical=0`,
   `clean`.
 
 Registry signature checks completed within the successful audit.
 The critical `tar` finding that blocked the previous pin, the new high
 `GHSA-r292-9mhp-454m` finding, and the high Jaeger,
-`brace-expansion`, `fast-uri`, `undici`, and `ip-address` findings are gone,
-including `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`,
-`GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp` against the former
-`fast-uri@3.1.5` pin.
+`brace-expansion`, `fast-uri`, `undici`, and `ip-address` findings are gone.
 All three post-remediation boundaries report `0` high and `0` critical
 findings.
 Lower-severity findings remain visible below the configured `high`
@@ -197,10 +188,7 @@ The reviewed upstream OpenClaw shrinkwrap resolves `3.1.2`, and
 `GHSA-v2hh-gcrm-f6hx` affects releases through `3.1.3`.
 The initial remediation selected `3.1.4` for that advisory.
 The high-severity `GHSA-7p8r-x3mc-p8w7` later affected that release.
-The high-severity `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`,
-`GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp` later affected `3.1.5`.
-Both committed runtime locks now select reviewed `3.1.6`, which retains the
-zero-dependency BSD-3-Clause package contract and Ajv's declared v3 range.
+All four audited production graphs now select reviewed `3.1.6`, the first release outside `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp`.
 
 The OpenClaw core package manifest and shrinkwrap directly pin `undici@8.5.0`.
 The published `@openclaw/discord@2026.7.1` archive also pins that version in
@@ -674,13 +662,12 @@ follows:
 - new images do not seed the legacy `update-check.json` placeholder.
   During an upgrade, the descriptor-pinned config helper removes this obsolete
   update polling and notification cache whether it is empty or populated when
-  the entrypoint can mutate the parent. Under the then-supported, now-retired
-  root-owned Shields-up topology, a non-root gateway retained the stable cache
-  because it could not unlink it. The patched OpenClaw migration continues to
-  ignore that non-authoritative pinned-version cache without producing a startup warning.
-  Without the compatibility patch, OpenClaw would historically have tried to
-  harden and archive the retained cache inside the then-supported, now-retired Shields-protected parent.
-  Symbolic links, hard links,
+  the entrypoint can mutate the parent. A non-root gateway under the exact
+  root-owned shields-up topology retains the stable cache because it cannot
+  unlink it; the patched OpenClaw migration ignores that non-authoritative
+  pinned-version cache without producing a startup warning.
+  Without the compatibility patch, OpenClaw would try to harden and archive the
+  retained cache inside a shields-protected parent. Symbolic links, hard links,
   directories, oversized files, or a file that changes during validation are
   rejected;
 - a root entrypoint starts the `gateway` user with `HOME=/sandbox`, so startup
