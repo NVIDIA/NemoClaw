@@ -116,16 +116,6 @@ The GitHub token remains available only to the trusted planner and is not includ
 The candidate catalog qualifies `linux/amd64` only, so a changed-input manual PR run does not dispatch the Jetson target.
 The trusted publication job reports this exclusion before the Jetson job is skipped.
 
-The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
-OpenClaw managed-image MCP discovery and lifecycle scope in two matrix executions. Each execution
-assembles one exact candidate catalog from the workflow's published contracts, uses a fresh runner
-and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
-credentials, and must pass. These are two required acceptance executions, not retries; either
-failure remains a failed check.
-The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
-`/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
-coverage retains that assertion for environments with supervisor-authoritative DNS.
-
 ### Exact-base managed runtime comparison
 
 The base-controlled `E2E / Exact Base Managed Runtime` workflow starts automatically after every
@@ -135,12 +125,21 @@ any source-run artifacts. A manual dispatch from `main` accepts the same identit
 but authenticates them through the same path. Historical run metadata about the PR base is not
 authority for the comparison.
 
-The managed-image PR workflow publishes exact candidate inputs for native `linux/amd64` and
-`linux/arm64`. An isolated untrusted build job produces only a bounded candidate CLI archive. The
-trusted activation jobs download the platform-specific contracts, validate and assemble them with
-base-controlled code, make the controller and evidence boundaries non-writable, and execute the
-candidate product as an unprivileged user. A regression probe attempts candidate-user writes to
-both protected paths before either native scenario can run.
+The managed-image PR workflow produces credential-free OCI candidate bundles for native
+`linux/amd64` and `linux/arm64`; no job that executes candidate build inputs can write packages.
+After source authentication, a separate base-controlled job validates each bundle's bounded OCI
+layout, source identity, platform, labels, blob digests, and absence of `ONBUILD` commands before it
+receives registry credentials and publishes the exact digest. An isolated untrusted build job
+produces only a bounded candidate CLI archive. The trusted activation jobs download the
+platform-specific contracts, validate and assemble them with base-controlled code, make the
+controller and evidence boundaries non-writable, and execute the candidate product as an
+unprivileged user. A regression probe attempts candidate-user writes to both protected paths before
+either native scenario can run.
+
+The same trusted workflow runs the OpenClaw managed-image MCP discovery twice against the
+authenticated amd64 candidate catalog. Each pass uses a fresh runner and sandbox, records the
+discovery diagnostics, scans the evidence for fixture credentials, and must pass. These are two
+required acceptance executions, not retries; either failure produces a candidate failure.
 
 Each protected controller records the candidate and base SHAs, source and qualification attempts,
 trusted workflow revision, platform, OpenShell version, complete immutable image identity,
@@ -178,12 +177,12 @@ bounded cause (`metadata lookup`, `receipt download or validation`, or `evidence
 validation`) to repair or rerun the affected producer. Do not substitute artifacts from another
 attempt.
 
-The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
-local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
-`managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
-`managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
-qualification receipts may consume these candidate contracts only when the recorded image-source
-paths are unchanged through the receipt commit.
+The Pi pull-request job validates its native candidate image and declared entrypoint locally without
+registry credentials. Trusted non-PR publication still emits the immutable
+`managed-candidate-contract-*` artifact. Pi remains outside the `managed-pr-contract-*` all-agent
+catalog pattern and every release alias. The checked-in Pi qualification receipts may consume these
+candidate contracts only when the recorded image-source paths are unchanged through the receipt
+commit.
 
 #### Timing Baseline
 

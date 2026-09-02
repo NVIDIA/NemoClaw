@@ -89,6 +89,149 @@ jobs:
         run: >-
           node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts publish-status pending
 
+  publish-candidate-images:
+    name: Publish authenticated candidate image (${{ matrix.agent }}, ${{ matrix.arch }})
+    needs: authenticate-source
+    if: needs.authenticate-source.result == 'success'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: openclaw
+            arch: amd64
+            platform: linux/amd64
+            repository: ghcr.io/nvidia/nemoclaw/openclaw-sandbox
+            runner: ubuntu-24.04
+          - agent: openclaw
+            arch: arm64
+            platform: linux/arm64
+            repository: ghcr.io/nvidia/nemoclaw/openclaw-sandbox
+            runner: ubuntu-24.04-arm
+          - agent: hermes
+            arch: amd64
+            platform: linux/amd64
+            repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox
+            runner: ubuntu-24.04
+          - agent: hermes
+            arch: arm64
+            platform: linux/arm64
+            repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox
+            runner: ubuntu-24.04-arm
+          - agent: langchain-deepagents-code
+            arch: amd64
+            platform: linux/amd64
+            repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox
+            runner: ubuntu-24.04
+          - agent: langchain-deepagents-code
+            arch: arm64
+            platform: linux/arm64
+            repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox
+            runner: ubuntu-24.04-arm
+    env:
+      AGENT: ${{ matrix.agent }}
+      CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
+      IMAGE: ${{ matrix.repository }}
+      PLATFORM: ${{ matrix.platform }}
+      SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
+      SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
+    steps:
+      - name: Check out the trusted image publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+
+      - name: Download the exact authenticated candidate image bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.authenticate-source.outputs.source_run_id }}
+          name: managed-pr-image-${{ needs.authenticate-source.outputs.source_run_id }}-${{ needs.authenticate-source.outputs.source_run_attempt }}-${{ matrix.agent }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/managed-pr-image
+
+      - id: bundle
+        name: Validate the authenticated OCI artifact without executing it
+        run: >-
+          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-pr-image-publisher.mts validate "${RUNNER_TEMP}/managed-pr-image"
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in only inside the trusted publisher
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: publish
+        name: Publish the validated OCI artifact by digest
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          context: trusted
+          file: trusted/tools/e2e/managed-pr-image-publisher.Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-contexts: candidate=oci-layout://${{ steps.bundle.outputs.oci_reference }}
+          outputs: type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+          sbom: false
+
+      - name: Remove trusted publisher credentials
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Validate the exact public digest and write its contract
+        env:
+          PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}
+          RELEASE: ${{ steps.bundle.outputs.release }}
+        run: |
+          set -euo pipefail
+          [[ "$PUBLISHED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          reference="${IMAGE}@${PUBLISHED_DIGEST}"
+          trusted/scripts/checks/pull-public-exact-digest.sh "$reference" "$PLATFORM"
+          image_json="$(docker image inspect "$reference")"
+          jq -e \
+            --arg agent "$AGENT" \
+            --arg cohort "ghrun-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}" \
+            --arg platform "$PLATFORM" \
+            --arg release "$RELEASE" \
+            --arg revision "$CANDIDATE_SHA" '
+              length == 1 and
+              .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
+              .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
+              .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
+              .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.cohort"] == $cohort and
+              .[0].Config.Labels["org.opencontainers.image.revision"] == $revision and
+              .[0].Config.Labels["org.opencontainers.image.version"] == $release
+            ' <<< "$image_json" >/dev/null
+          node --experimental-strip-types --no-warnings \
+            trusted/tools/e2e/managed-pr-image-publisher.mts contract \
+            "$RUNNER_TEMP/managed-pr-contract/contract.json"
+
+      - name: Upload the trusted exact candidate image contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-pr-contract-${{ needs.authenticate-source.outputs.source_run_id }}-${{ needs.authenticate-source.outputs.source_run_attempt }}-${{ matrix.agent }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/managed-pr-contract/contract.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   package-openshell-sdk:
     name: Resolve reviewed OpenShell SDK from the authenticated producer
     needs: authenticate-source
@@ -242,11 +385,196 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  trusted-candidate-mcp-discovery:
+    name: Trusted candidate OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
+    needs:
+      - authenticate-source
+      - publish-candidate-images
+      - package-openshell-sdk
+      - build-candidate-cli
+    if: >-
+      needs.authenticate-source.result == 'success' && needs.publish-candidate-images.result == 'success' && needs.package-openshell-sdk.result == 'success' && needs.build-candidate-cli.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [1, 2]
+    env:
+      CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.managed-runtime-candidate/mcp/pass-${{ matrix.pass }}
+      E2E_JOB: "1"
+      E2E_TARGET_ID: mcp-bridge
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/candidate/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: ${{ github.workspace }}/.managed-runtime-candidate/mcp/catalog.json
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
+      NEMOCLAW_E2E_SHARD: openclaw
+      NEMOCLAW_MCP_BRIDGE_AGENT: openclaw
+      NEMOCLAW_MCP_BRIDGE_E2E_SCOPE: managed-image-discovery
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-pr-exact-mcp-${{ matrix.pass }}
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
+      SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
+      SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
+    steps:
+      - name: Check out trusted MCP controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Check out candidate MCP behavior
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authenticate-source.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+
+      - name: Verify candidate and trusted MCP controller identities
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+          test "$(git -C trusted rev-parse --verify HEAD)" = "$WORKFLOW_SHA"
+
+      - name: Download trusted amd64 candidate image contracts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-pr-contract-${{ needs.authenticate-source.outputs.source_run_id }}-${{ needs.authenticate-source.outputs.source_run_attempt }}-*-amd64
+          path: ${{ runner.temp }}/managed-runtime-mcp/contracts
+          merge-multiple: false
+
+      - name: Download reviewed OpenShell SDK archive
+        if: needs.package-openshell-sdk.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Download isolated candidate CLI build product
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-runtime-candidate-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-cli-build
+
+      - name: Install trusted and candidate MCP dependencies without credentials
+        run: |
+          set -euo pipefail
+          (
+            cd trusted
+            env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN \
+              GITHUB_EVENT_NAME=pull_request \
+              bash .github/actions/ci-install-dependencies.sh
+          )
+          (
+            cd candidate
+            env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN \
+              GITHUB_EVENT_NAME=pull_request \
+              bash ../trusted/.github/actions/ci-install-dependencies.sh
+          )
+
+      - name: Materialize the candidate CLI and trusted image catalog
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/candidate-cli-build/candidate-cli.tar"
+          test -f "$archive" && test ! -L "$archive"
+          /usr/bin/tar --extract --file "$archive" --directory candidate \
+            --no-same-owner --no-same-permissions
+          mapfile -d '' contracts < <(
+            find "$RUNNER_TEMP/managed-runtime-mcp/contracts" \
+              -type f -name contract.json -print0
+          )
+          node --experimental-strip-types --no-warnings \
+            trusted/tools/e2e/pr-managed-image-publication.mts assemble \
+            "$CANDIDATE_SHA" \
+            "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" \
+            "${contracts[@]}"
+
+      - name: Bind MCP correlation identity
+        run: |
+          set -euo pipefail
+          correlation_id="$(node --input-type=module -e \
+            'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
+          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
+          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >> "$GITHUB_ENV"
+
+      - name: Install and verify cloudflared prerequisite
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "$package" != cloudflared || "$version" != "$CLOUDFLARED_VERSION" || "$architecture" != amd64 ]]; then
+            echo "ERROR: downloaded cloudflared package identity is invalid." >&2
+            exit 1
+          fi
+          sudo dpkg -i "$cloudflared_deb"
+
+      - name: Generate MCP test TLS
+        working-directory: candidate
+        run: bash test/e2e/setup-mcp-test-tls.sh
+
+      - name: Install trusted OpenShell CLI
+        working-directory: trusted
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+        run: env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run exact OpenClaw managed-image MCP discovery
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx --no-install tsx ../trusted/tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/mcp-bridge.test.ts
+
+      - id: mcp_artifact_secret_scan
+        name: Scan MCP artifacts for fixture credentials
+        if: always()
+        working-directory: trusted
+        run: npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
+
+      - name: Upload exact MCP discovery evidence
+        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-mcp-${{ github.run_id }}-${{ github.run_attempt }}-pass-${{ matrix.pass }}
+          path: ${{ env.E2E_ARTIFACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
+
   trusted-candidate-activation:
     name: Trusted candidate all-agent managed runtime activation (${{ matrix.arch }})
-    needs: [authenticate-source, package-openshell-sdk, build-candidate-cli]
+    needs:
+      - authenticate-source
+      - publish-candidate-images
+      - package-openshell-sdk
+      - build-candidate-cli
     if: >-
-      needs.authenticate-source.result == 'success' && needs.package-openshell-sdk.result == 'success' && needs.build-candidate-cli.result == 'success'
+      needs.authenticate-source.result == 'success' && needs.publish-candidate-images.result == 'success' && needs.package-openshell-sdk.result == 'success' && needs.build-candidate-cli.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -310,12 +638,9 @@ jobs:
           test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
           test "$(git -C trusted rev-parse --verify HEAD)" = "$WORKFLOW_SHA"
 
-      - name: Download exact candidate image contracts from the authenticated attempt
+      - name: Download trusted candidate image contracts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ needs.authenticate-source.outputs.source_run_id }}
           pattern: managed-pr-contract-${{ needs.authenticate-source.outputs.source_run_id }}-${{ needs.authenticate-source.outputs.source_run_attempt }}-*-${{ matrix.arch }}
           path: ${{ runner.temp }}/managed-runtime-candidate/contracts
           merge-multiple: false
@@ -752,6 +1077,7 @@ jobs:
     name: Classify candidate and exact-base evidence
     needs:
       - authenticate-source
+      - trusted-candidate-mcp-discovery
       - trusted-candidate-activation
       - authenticate-candidate-evidence
       - exact-base-activation
@@ -794,6 +1120,7 @@ jobs:
           BASE_JOB_CONCLUSION: ${{ needs.exact-base-activation.result }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MCP_JOB_CONCLUSION: ${{ needs.trusted-candidate-mcp-discovery.result }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/managed-runtime-comparison/platforms"
@@ -812,13 +1139,18 @@ jobs:
               esac
             fi
           done
+          if [ "$MCP_JOB_CONCLUSION" != success ] && [ "$overall" = pass ]; then
+            overall=candidate-failure
+          fi
           jq -n \
             --arg classification "$overall" \
+            --arg mcp_discovery_conclusion "$MCP_JOB_CONCLUSION" \
             --slurpfile amd64 "$RUNNER_TEMP/managed-runtime-comparison/platforms/amd64.json" \
             --slurpfile arm64 "$RUNNER_TEMP/managed-runtime-comparison/platforms/arm64.json" \
             '{
               kind: "nemoclaw-managed-runtime-multiarch-comparison-v1",
               classification: $classification,
+              mcpDiscoveryConclusion: $mcp_discovery_conclusion,
               platforms: {"linux/amd64": $amd64[0], "linux/arm64": $arm64[0]}
             }' > "$RUNNER_TEMP/managed-runtime-comparison/comparison.json"
           test "$overall" = pass
