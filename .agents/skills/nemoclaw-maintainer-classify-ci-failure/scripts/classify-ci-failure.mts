@@ -967,7 +967,6 @@ async function classifyCiFailureWithRuntime(
           sizeBytes,
           inventoryTruncated: false,
           filesRead,
-          filesTruncated: filesRead < resultEntries.length,
           malformedResultCount,
           malformedResultPaths,
           malformedResultPathsTruncated: malformedResultCount > malformedResultPaths.length,

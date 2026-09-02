@@ -837,7 +837,6 @@ describe("CI failure classifier process", () => {
     expect(result.status, result.stderr).toBe(0);
     const value = JSON.parse(result.stdout);
     expect(value.artifact.filesRead).toBe(27);
-    expect(value.artifact.filesTruncated).toBe(false);
     expect(value.artifact.malformedResultCount).toBe(26);
     expect(value.artifact.malformedResultPaths).toHaveLength(20);
     expect(value.artifact.malformedResultPaths.every((path: string) => path.length <= 1_000)).toBe(
