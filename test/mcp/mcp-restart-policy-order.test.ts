@@ -346,6 +346,36 @@ bridge.restartMcpBridge("alpha", "example").then(
         providerCalls: [],
       },
     },
+    {
+      title: "preflights every selected server before mutating a hostless restart",
+      statusResponse: {
+        kind: "byServer",
+        value: {
+          example: {
+            kind: "probe",
+            value: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+          },
+          later: {
+            kind: "probe",
+            value: {
+              ok: null,
+              httpStatus: 401,
+              controlHttpStatus: 401,
+              detail:
+                "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
+            },
+          },
+        },
+      },
+      expectedPayload: {
+        outcome: "rejected",
+        message:
+          "MCP server 'later' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'LATER_TOKEN' and run `nemoclaw alpha mcp restart later` to replace it.",
+        exitCode: 1,
+        policyApplyCalls: 0,
+        providerCalls: [],
+      },
+    },
   ])(
     "$title (#10750)",
     ({ statusResponse, expectedPayload }) => {
@@ -353,6 +383,7 @@ bridge.restartMcpBridge("alpha", "example").then(
       const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 delete process.env.MCP_TOKEN;
+delete process.env.LATER_TOKEN;
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
@@ -375,6 +406,14 @@ const entry = {
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-example",
   addedAt: "2026-06-01T00:00:00.000Z",
+};
+const laterEntry = {
+  ...entry,
+  server: "later",
+  env: ["LATER_TOKEN"],
+  providerName: "alpha-mcp-later",
+  providerId: "66666666-7777-4888-8999-000000000000",
+  policyName: "mcp-bridge-later",
 };
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -425,22 +464,29 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => ({
 const statusResponse = ${JSON.stringify(statusResponse)};
 bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
   statusCalls.push({ sandboxName, server, options });
-  if (statusResponse.kind === "error") throw new Error(statusResponse.value);
-  return [{ provider: { credentialResolution: statusResponse.value } }];
+  const selectedStatusResponse = statusResponse.kind === "byServer"
+    ? statusResponse.value[server]
+    : statusResponse;
+  if (selectedStatusResponse.kind === "error") throw new Error(selectedStatusResponse.value);
+  return [{ provider: { credentialResolution: selectedStatusResponse.value } }];
 };
 
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
   gatewayName: "nemoclaw",
-  mcp: { bridges: { example: entry } },
+  mcp: {
+    bridges: statusResponse.kind === "byServer"
+      ? { example: entry, later: laterEntry }
+      : { example: entry },
+  },
 });
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const report = (payload) => {
   process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 };
-bridge.restartMcpBridge("alpha", "example").then(
+bridge.restartMcpBridge("alpha", statusResponse.kind === "byServer" ? undefined : "example").then(
   () => {
     report({
       outcome: "refreshed",
@@ -473,13 +519,13 @@ bridge.restartMcpBridge("alpha", "example").then(
       const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as object;
       expect(payload).toEqual({
         ...expectedPayload,
-        statusCalls: [
-          {
+        statusCalls: (statusResponse.kind === "byServer" ? ["example", "later"] : ["example"]).map(
+          (server) => ({
             sandboxName: "alpha",
-            server: "example",
+            server,
             options: { probeCredentialResolution: true },
-          },
-        ],
+          }),
+        ),
       });
     },
     75_000,
