@@ -114,6 +114,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "nemoclaw-blueprint/private-networks.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/brave.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", mode: "100644" },
+  { path: "nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/openai.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml", mode: "100644" },

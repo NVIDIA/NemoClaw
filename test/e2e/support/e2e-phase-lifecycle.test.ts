@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -165,6 +164,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0, "gateway-id\topenshell-cluster-nemoclaw\n")); // discover
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(0)); // user service restart
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // openshell status
@@ -176,31 +176,32 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
 
     expect(result.profile).toBe("post-reboot-recovery");
     expect(result.steps.map((step) => step.id)).toEqual([
-      "docker-stop:openshell-cluster-e2e-cloud-oc",
+      "runtime-stop:openshell-cluster-e2e-cloud-oc",
       "gateway-restart:user-service",
       "gateway-connected:nemoclaw",
-      "docker-boot-start:openshell-cluster-e2e-cloud-oc",
+      "runtime-boot-start:openshell-cluster-e2e-cloud-oc",
       "sandbox-ready-after-boot:e2e-cloud-oc",
       "nemoclaw-status:e2e-cloud-oc",
     ]);
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
       expect.stringContaining('bash -lc command -v "$1"'),
       expect.stringContaining("bash -lc set -eu"),
-      "docker ps -a --filter label=openshell.ai/sandbox-name=e2e-cloud-oc --format {{.Names}}",
-      "docker stop openshell-cluster-e2e-cloud-oc",
+      "docker container ps --all --filter label=openshell.ai/sandbox-name=e2e-cloud-oc --format {{.Names}}",
+      "docker container stop openshell-cluster-e2e-cloud-oc",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
       expect.stringContaining("sh -lc pid_file="),
-      expect.stringContaining("sh -lc cid="),
+      "docker container ps --format {{.ID}}\t{{.Names}}",
+      "docker container stop gateway-id",
       expect.stringContaining('systemctl --user cat "$service"'),
       "openshell status",
-      "docker start openshell-cluster-e2e-cloud-oc",
+      "docker container start openshell-cluster-e2e-cloud-oc",
       "openshell sandbox list",
       "nemoclaw e2e-cloud-oc status",
     ]);
     expect(cleanup.calls.map((call) => call.name)).toEqual([
       "lifecycle.remove-staged-gateway-user-service",
-      "lifecycle.docker-start:openshell-cluster-e2e-cloud-oc",
+      "lifecycle.runtime-start:openshell-cluster-e2e-cloud-oc",
     ]);
   });
 
@@ -248,42 +249,42 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
         .map((call) => `${call.command} ${call.args.join(" ")}`)
         .filter(
           (call) =>
-            call === "docker start container-1" ||
+            call === "docker container start container-1" ||
             call === "openshell sandbox list" ||
             call === "nemoclaw e2e-cloud-oc status",
         ),
     ).toEqual([
-      "docker start container-1",
+      "docker container start container-1",
       "openshell sandbox list",
       "nemoclaw e2e-cloud-oc status",
     ]);
     expect(result.steps.slice(-3).map((step) => step.id)).toEqual([
-      "docker-boot-start:container-1",
+      "runtime-boot-start:container-1",
       "sandbox-ready-after-boot:e2e-cloud-oc",
       "nemoclaw-status:e2e-cloud-oc",
     ]);
     expect(result.steps.at(-1)?.results[0]?.exitCode).toBe(0);
   });
 
-  it("fails when no Docker container carries the OpenShell sandbox-name label", async () => {
+  it("fails when no managed runtime resource carries the OpenShell sandbox-name label", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const prepared = await preparedPostRebootFixture(runner, cleanup);
     runner.enqueue(shellResult(0, "\n")); // discover returns nothing
 
     await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
-      /expected at least one Docker container labeled/,
+      /expected at least one managed runtime resource labeled/,
     );
   });
 
-  it("fails when docker discover returns non-zero", async () => {
+  it("fails when selected-runtime discovery returns non-zero", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const prepared = await preparedPostRebootFixture(runner, cleanup);
     runner.enqueue(shellResult(1, "Cannot connect to the Docker daemon"));
 
     await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
-      /could not query Docker for label/,
+      /could not query the selected runtime provider for label/,
     );
   });
 
@@ -334,25 +335,25 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
     );
 
     expect(result.steps.map((step) => step.id.split("->")[0])).toContain(
-      "docker-rename:openshell-cluster-e2e-x",
+      "runtime-rename:openshell-cluster-e2e-x",
     );
     const renameCall = runner.calls.find(
-      (call) => call.command === "docker" && call.args[0] === "rename",
+      (call) => call.command === "docker" && call.args.slice(0, 2).join(" ") === "container rename",
     );
     expect(renameCall).toBeTruthy();
-    expect(renameCall!.args[1]).toBe("openshell-cluster-e2e-x");
-    expect(renameCall!.args[2]).toMatch(/^openshell-cluster-e2e-x-nemoclaw-gpu-backup-\d+$/);
+    expect(renameCall!.args[2]).toBe("openshell-cluster-e2e-x");
+    expect(renameCall!.args[3]).toMatch(/^openshell-cluster-e2e-x-nemoclaw-gpu-backup-\d+$/);
     expect(runner.calls).toContainEqual(
       expect.objectContaining({
         command: "docker",
-        args: ["start", renameCall!.args[2]],
+        args: ["container", "start", renameCall!.args[3]],
       }),
     );
 
     // Cleanup queue now has both docker-start and docker-rename-back.
     expect(cleanup.calls.map((call) => call.name.split(":")[0])).toEqual([
-      "lifecycle.docker-start",
-      "lifecycle.docker-rename-back",
+      "lifecycle.runtime-start",
+      "lifecycle.runtime-rename-back",
     ]);
   });
 });
@@ -436,11 +437,9 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
       expect.stringContaining("sh -lc pid_file="),
-      expect.stringContaining(
-        "docker ps --filter 'name=^/openshell-cluster-nemoclaw$' --format '{{.ID}}'",
-      ),
+      "docker container ps --format {{.ID}}\t{{.Names}}",
       expect.stringContaining("sh -lc pid_file="),
-      "docker ps -qf name=openshell-cluster-nemoclaw",
+      "docker container ps --format {{.ID}}\t{{.Names}}",
       "true ",
       expect.stringContaining("sh -lc set -eu"),
       "nemoclaw status",
@@ -473,10 +472,10 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
 
   it("stops only the exact gateway container when a sandbox has the gateway-name prefix", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0, "gateway-id\topenshell-cluster-nemoclaw\n")); // discover
     runner.enqueue(shellResult(0)); // container stop
 
     await fixture(runner, new FakeCleanup()).stopGatewayRuntime();
@@ -484,46 +483,16 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     const containerStop = runner.calls.find(
       (call) => call.options?.artifactName === "lifecycle-gateway-container-stop",
     );
-    expect(containerStop?.command).toBe("sh");
-    expect(containerStop?.args.slice(0, 1)).toEqual(["-lc"]);
-    const containerStopScript = containerStop?.args[1] ?? "";
-
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-docker-"));
-    const stopLog = path.join(fakeBin, "stopped.txt");
-    const docker = path.join(fakeBin, "docker");
-    fs.writeFileSync(
-      docker,
-      `#!/bin/sh
-if [ "$1" = "ps" ]; then
-  shift
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--filter" ]; then filter="$2"; shift 2; else shift; fi
-  done
-  [ "$filter" = 'name=^/openshell-cluster-nemoclaw$' ] && printf '%s\\n' gateway-id
-elif [ "$1" = "stop" ]; then
-  printf '%s\\n' "$2" >>"$DOCKER_STOP_LOG"
-fi
-`,
-      { mode: 0o755 },
+    expect(containerStop?.command).toBe("docker");
+    expect(containerStop?.args).toEqual(["container", "stop", "gateway-id"]);
+    const discovery = runner.calls.find(
+      (call) => call.options?.artifactName === "lifecycle-gateway-runtime-discover",
     );
-
-    try {
-      execFileSync("sh", ["-c", containerStopScript], {
-        env: {
-          ...process.env,
-          DOCKER_STOP_LOG: stopLog,
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-      });
-      expect(fs.readFileSync(stopLog, "utf8")).toBe("gateway-id\n");
-    } finally {
-      fs.rmSync(fakeBin, { force: true, recursive: true });
-    }
+    expect(discovery?.args).toEqual(["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]);
   });
 
   it("can recover a PID runtime through sandbox-specific status", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(75, "")); // no user service available
     runner.enqueue(shellResult(0, "status recovered\n"));
     const cleanup = new FakeCleanup();
 
@@ -537,7 +506,6 @@ fi
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
-      expect.stringContaining("sh -lc set -eu"),
       "nemoclaw e2e-survival status",
     ]);
   });

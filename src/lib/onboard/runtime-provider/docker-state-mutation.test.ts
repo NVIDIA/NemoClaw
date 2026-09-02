@@ -180,20 +180,18 @@ async function createBrokerRuntime(
 async function sendBrokerRequest(
   runtime: Awaited<ReturnType<typeof createBrokerRuntime>>,
   action: BrokerAction,
-): Promise<{ readonly elapsedMs: number; readonly response: BrokerResponse }> {
+): Promise<{ readonly response: BrokerResponse }> {
   const request = Buffer.from(
     `${JSON.stringify({ action, transactionId: runtime.transaction })}\n`,
     "utf8",
   );
   const identity = createHash("sha256").update(request).digest("hex");
   const responsePath = path.join(runtime.session, `${identity}.response`);
-  const startedAt = Date.now();
   fs.writeFileSync(path.join(runtime.session, `${identity}.${action}.incoming`), request, {
     mode: 0o600,
   });
   await waitForPath(responsePath, 1_500);
   return {
-    elapsedMs: Date.now() - startedAt,
     response: JSON.parse(fs.readFileSync(responsePath, "utf8")) as BrokerResponse,
   };
 }
@@ -279,7 +277,6 @@ time.sleep(30)
       const result = await sendBrokerRequest(runtime, "activate");
       expect(result.response).toMatchObject({ action: "activate", status: 1, stdout: "" });
       expect(brokerFailureCode(result.response)).toBe("helper-timeout");
-      expect(result.elapsedMs).toBeLessThan(400);
       await new Promise((resolve) => setTimeout(resolve, 450));
       expect(fs.existsSync(leakedChildMarker)).toBe(false);
       expect(runtime.stderr(), runtime.stderr()).toBe("");

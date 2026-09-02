@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../gateway-binding/identity";
 
 export { DEFAULT_GATEWAY_PORT, GATEWAY_PORT };
 

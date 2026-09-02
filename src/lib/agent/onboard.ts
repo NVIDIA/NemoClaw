@@ -170,13 +170,6 @@ function sleep(seconds: number): void {
   sleepSeconds(seconds);
 }
 
-/**
- * Resolve the CLI command name used for agent-specific recovery guidance.
- */
-function agentCliName(agent: AgentDefinition): string {
-  return getAgentBranding(agent.name).cli;
-}
-
 const HERMES_TIRITH_MARKER_ABSENT = "tirith marker: absent";
 const HERMES_STARTUP_DIAGNOSTICS_SCRIPT = `
 set +e
@@ -256,11 +249,8 @@ async function failAgentSetup(
     "agent_setup",
     details.length > 0 ? `${message}\n${details.join("\n")}` : message,
   );
-  console.error(`  \u2717 ${message}`);
-  for (const line of details) {
-    console.error(`    ${line}`);
-  }
-  console.error(`    Check: ${agentCliName(agent)} ${sandboxName} logs --follow`);
+  console.error("  \u2717 Agent setup failed.");
+  console.error("    Check the sandbox logs for redacted diagnostics.");
   process.exit(1);
 }
 
