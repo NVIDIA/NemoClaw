@@ -290,6 +290,23 @@ describe("blueprint policy convenience", () => {
     expect([...store.keys()].some((path) => path.includes("/.nemoclaw/state/runs/"))).toBe(false);
   });
 
+  it("rejects a DNS validation result that does not pin the policy hostname", async () => {
+    mockedValidateEndpoint.mockResolvedValueOnce({
+      url: "http://integrate.api.nvidia.com:443",
+      pinnedUrl: "http://integrate.api.nvidia.com:443/",
+      protocol: "http:",
+      hostname: "integrate.api.nvidia.com",
+      resolvedAddress: "93.184.216.34",
+      resolvedFamily: 4,
+      dnsResolved: true,
+    });
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /policy hostname validation did not return a pinned IP address/iu,
+    );
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
   it("verifies policy additions before creating the inference provider or route", async () => {
     await actionApply("default", blueprint());
 
