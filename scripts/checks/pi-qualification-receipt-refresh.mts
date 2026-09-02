@@ -239,6 +239,7 @@ export function checkPiQualificationReceiptRefresh(
       [
         "Pi image inputs changed without refreshing both qualification receipts.",
         "Publish the Linux AMD64 and ARM64 Pi candidate images from the same commit and workflow run.",
+        "Update both receipts and replace the Pi candidate authority with the SHA-256 digests of those exact receipt contents.",
         "Update:",
         ...missingReceipts.map((receipt) => `- ${receipt}`),
       ].join("\n"),
