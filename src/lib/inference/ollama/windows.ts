@@ -21,6 +21,11 @@ function psSingleQuote(value: string): string {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+type WindowsOllamaInstallerProcess = {
+  completion: Promise<void>;
+  cancel: () => void;
+};
+
 // Pre-set OLLAMA_HOST in both User scope (persists across logins) and the
 // current PowerShell session (inherited by the installer's auto-spawned
 // ollama_app + daemon) so the new daemon binds 0.0.0.0 from the start.
@@ -29,18 +34,16 @@ function psSingleQuote(value: string): string {
 // holds output in an internal buffer and the user sees long silent gaps.
 // Reading the pipe from Node and re-writing to our own TTY shows progress
 // as soon as PowerShell flushes a chunk.
-async function installOllamaOnWindowsHost(): Promise<{ ok: boolean; path: string }> {
-  console.log("  Installing Ollama on Windows host...");
-  console.log("  This can take several minutes. Output may pause silently");
-  await new Promise<void>((resolve) => {
-    const child = spawn(
-      "powershell.exe",
-      [
-        "-Command",
-        "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User'); $env:OLLAMA_HOST='0.0.0.0:11434'; irm https://ollama.com/install.ps1 | iex",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
+function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
+  const child = spawn(
+    "powershell.exe",
+    [
+      "-Command",
+      "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User'); $env:OLLAMA_HOST='0.0.0.0:11434'; irm https://ollama.com/install.ps1 | iex",
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const completion = new Promise<void>((resolve) => {
     child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
     child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
     child.on("close", () => resolve());
@@ -49,7 +52,20 @@ async function installOllamaOnWindowsHost(): Promise<{ ok: boolean; path: string
       resolve();
     });
   });
-  const installedPath = runCapture(
+  return {
+    completion,
+    cancel: () => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Rollback below still stops any installer-created Ollama processes.
+      }
+    },
+  };
+}
+
+function resolveWindowsOllamaInstalledPath(): string {
+  return runCapture(
     [
       "powershell.exe",
       "-Command",
@@ -57,11 +73,6 @@ async function installOllamaOnWindowsHost(): Promise<{ ok: boolean; path: string
     ],
     { ignoreError: true },
   ).trim();
-  if (!installedPath) {
-    return { ok: false, path: "" };
-  }
-  console.log(`  ✓ Installed: ${installedPath}`);
-  return { ok: true, path: installedPath };
 }
 
 type WindowsOllamaHostSnapshot = {
@@ -311,6 +322,16 @@ type WindowsOllamaSetupOperations = {
   preserveInterrupt: (signal: WindowsOllamaInterruptSignal) => void;
 };
 
+type WindowsOllamaInstallOperations = WindowsOllamaSetupOperations & {
+  startInstaller: () => WindowsOllamaInstallerProcess;
+  resolveInstalledPath: () => string;
+  awaitReady: () => boolean;
+};
+
+type WindowsOllamaInstallResult =
+  | { ok: false; path: string; reason: "install" | "readiness" }
+  | { ok: true; path: string; commit: () => void; rollback: () => void };
+
 function registerWindowsOllamaInterruptHandler(
   handler: (signal: WindowsOllamaInterruptSignal) => void,
 ): () => void {
@@ -337,11 +358,129 @@ const WINDOWS_OLLAMA_SETUP_OPERATIONS: WindowsOllamaSetupOperations = {
   },
 };
 
+const WINDOWS_OLLAMA_INSTALL_OPERATIONS: WindowsOllamaInstallOperations = {
+  ...WINDOWS_OLLAMA_SETUP_OPERATIONS,
+  startInstaller: startWindowsOllamaInstaller,
+  resolveInstalledPath: resolveWindowsOllamaInstalledPath,
+  awaitReady: awaitWindowsOllamaReady,
+};
+
 function rollbackWindowsOllamaSetup(
   snapshot: WindowsOllamaHostSnapshot,
   operations: WindowsOllamaSetupOperations,
 ): void {
   if (!operations.rollbackSnapshot(snapshot)) reportWindowsOllamaRollbackFailure();
+}
+
+function beginWindowsOllamaMutation(
+  snapshot: WindowsOllamaHostSnapshot,
+  operations: WindowsOllamaSetupOperations,
+) {
+  let active = true;
+  let mutated = false;
+  let cancelActiveOperation = () => {};
+  let removeInterruptHandler = () => {};
+  const commit = () => {
+    if (!active) return;
+    active = false;
+    cancelActiveOperation = () => {};
+    removeInterruptHandler();
+  };
+  const rollback = () => {
+    if (!active) return;
+    active = false;
+    removeInterruptHandler();
+    const cancel = cancelActiveOperation;
+    cancelActiveOperation = () => {};
+    try {
+      cancel();
+    } finally {
+      if (mutated) rollbackWindowsOllamaSetup(snapshot, operations);
+    }
+  };
+  removeInterruptHandler = operations.registerInterruptHandler((signal) => {
+    try {
+      rollback();
+    } finally {
+      operations.preserveInterrupt(signal);
+    }
+  });
+  return {
+    commit,
+    markMutated: () => {
+      mutated = true;
+    },
+    rollback,
+    setInterruptCancellation: (cancel: () => void) => {
+      if (active) cancelActiveOperation = cancel;
+    },
+  };
+}
+
+function applyWindowsOllamaBinding(
+  opts: { announceStop?: boolean; installedPath?: string } = {},
+  snapshot: WindowsOllamaHostSnapshot,
+  operations: WindowsOllamaSetupOperations,
+  markMutated: () => void,
+): boolean {
+  if (!operations.persistBinding()) {
+    console.error("  Could not persist the Windows Ollama host binding.");
+    return false;
+  }
+  markMutated();
+  if (opts.announceStop) {
+    console.log("  Stopping existing Ollama on Windows host...");
+  }
+  operations.stopProcesses();
+  operations.wait(1);
+  return launchAndAwaitWindowsOllama(
+    {
+      watcherPath: snapshot.watcherPath || undefined,
+      installedPath: opts.installedPath,
+    },
+    operations.launchOperations,
+  );
+}
+
+async function installOllamaOnWindowsHost(
+  opts: { beforeRestart?: () => void } = {},
+  operations: WindowsOllamaInstallOperations = WINDOWS_OLLAMA_INSTALL_OPERATIONS,
+): Promise<WindowsOllamaInstallResult> {
+  const snapshot = operations.captureSnapshot();
+  if (!snapshot) {
+    console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
+    return { ok: false, path: "", reason: "install" };
+  }
+  const mutation = beginWindowsOllamaMutation(snapshot, operations);
+  mutation.markMutated();
+  console.log("  Installing Ollama on Windows host...");
+  console.log("  This can take several minutes. Output may pause silently");
+  try {
+    const installer = operations.startInstaller();
+    mutation.setInterruptCancellation(installer.cancel);
+    await installer.completion;
+    mutation.setInterruptCancellation(() => {});
+    const installedPath = operations.resolveInstalledPath();
+    if (!installedPath) {
+      mutation.rollback();
+      return { ok: false, path: "", reason: "install" };
+    }
+    console.log(`  ✓ Installed: ${installedPath}`);
+    if (!operations.awaitReady()) {
+      console.log("  Installer did not leave a reachable Ollama daemon; restarting it...");
+      opts.beforeRestart?.();
+      if (
+        !applyWindowsOllamaBinding({ installedPath }, snapshot, operations, mutation.markMutated)
+      ) {
+        mutation.rollback();
+        return { ok: false, path: installedPath, reason: "readiness" };
+      }
+    }
+    return { ok: true, path: installedPath, commit: mutation.commit, rollback: mutation.rollback };
+  } catch (error) {
+    mutation.rollback();
+    throw error;
+  }
 }
 
 // Used by start and restart paths to force a 0.0.0.0 binding on an already
@@ -356,53 +495,17 @@ function setupWindowsOllamaWith0000Binding(
     console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
     return false;
   }
-  let rollbackRequired = false;
-  let removeInterruptHandler = () => {};
-  const handleInterrupt = (signal: WindowsOllamaInterruptSignal) => {
-    const shouldRollback = rollbackRequired;
-    rollbackRequired = false;
-    try {
-      if (shouldRollback) rollbackWindowsOllamaSetup(snapshot, operations);
-    } finally {
-      removeInterruptHandler();
-      operations.preserveInterrupt(signal);
-    }
-  };
-  removeInterruptHandler = operations.registerInterruptHandler(handleInterrupt);
+  const mutation = beginWindowsOllamaMutation(snapshot, operations);
   try {
-    if (!operations.persistBinding()) {
-      console.error(
-        "  Could not persist the Windows Ollama host binding; leaving processes running.",
-      );
+    if (!applyWindowsOllamaBinding(opts, snapshot, operations, mutation.markMutated)) {
+      mutation.rollback();
       return false;
     }
-    rollbackRequired = true;
-    if (opts.announceStop) {
-      console.log("  Stopping existing Ollama on Windows host...");
-    }
-    operations.stopProcesses();
-    operations.wait(1);
-    const launched = launchAndAwaitWindowsOllama(
-      {
-        watcherPath: snapshot.watcherPath || undefined,
-        installedPath: opts.installedPath,
-      },
-      operations.launchOperations,
-    );
-    if (launched) {
-      rollbackRequired = false;
-      return true;
-    }
-    rollbackRequired = false;
-    rollbackWindowsOllamaSetup(snapshot, operations);
-    return false;
+    mutation.commit();
+    return true;
   } catch (error) {
-    const shouldRollback = rollbackRequired;
-    rollbackRequired = false;
-    if (shouldRollback) rollbackWindowsOllamaSetup(snapshot, operations);
+    mutation.rollback();
     throw error;
-  } finally {
-    removeInterruptHandler();
   }
 }
 

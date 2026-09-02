@@ -252,7 +252,12 @@ local.getOllamaModelOptions = () => {
 };
 windows.installOllamaOnWindowsHost = async () => {
   console.error("WINDOWS_INSTALL_CALLED");
-  return { ok: true, path: "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe" };
+  return {
+    ok: true,
+    path: "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+    commit: () => {},
+    rollback: () => {},
+  };
 };
 windows.setupWindowsOllamaWith0000Binding = () => {
   console.error("WINDOWS_SETUP_CALLED");

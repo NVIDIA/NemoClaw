@@ -148,7 +148,11 @@ function createWindowsSetupBoundary(options: {
       throw new PreservedWindowsInterrupt(signal);
     }),
   };
-  return { operations, state };
+  return {
+    operations,
+    state,
+    triggerInterrupt: (signal: "SIGINT" | "SIGTERM") => interruptHandler(signal),
+  };
 }
 
 function loadWindowsOllamaWithMocks(
@@ -208,6 +212,43 @@ function captureDefaultWindowsRollbackInvocation(userHost: string | null) {
   }
 
   return { daemonPath, run, watcherPath };
+}
+
+function createWindowsInstallBoundary(options: {
+  userHost: string | null;
+  watcherPath: string | null;
+  daemonPath: string | null;
+  installedPath?: string;
+  initialReady?: boolean;
+  launchStatuses?: number[];
+  readinessResults?: boolean[];
+  rollbackStatus?: number;
+  installerInterrupt?: "SIGINT" | "SIGTERM";
+}) {
+  const boundary = createWindowsSetupBoundary(options);
+  const cancelInstaller = vi.fn(() => boundary.state.events.push("cancel-installer"));
+  const completion = options.installerInterrupt
+    ? Promise.resolve().then(() => boundary.triggerInterrupt(options.installerInterrupt!))
+    : Promise.resolve();
+  const operations = {
+    ...boundary.operations,
+    startInstaller: vi.fn(() => {
+      boundary.state.events.push("install");
+      boundary.state.userHost = "0.0.0.0:11434";
+      boundary.state.watcherRunning = true;
+      boundary.state.daemonRunning = true;
+      return { completion, cancel: cancelInstaller };
+    }),
+    resolveInstalledPath: vi.fn(() => {
+      boundary.state.events.push("resolve-path");
+      return options.installedPath ?? "C:\\Users\\tester\\Ollama\\ollama.exe";
+    }),
+    awaitReady: vi.fn(() => {
+      boundary.state.events.push("installer-readiness");
+      return options.initialReady ?? false;
+    }),
+  };
+  return { ...boundary, cancelInstaller, operations };
 }
 
 describe("Windows Ollama helper", () => {
@@ -388,6 +429,136 @@ describe("Windows Ollama helper", () => {
       NEMOCLAW_OLLAMA_RESTORE_HOST: "",
       NEMOCLAW_OLLAMA_RESTORE_HOST_PRESENT: "0",
     });
+  });
+
+  it("restores the prior Windows state when install cannot resolve ollama.exe", async () => {
+    const priorHost = "127.0.0.1:11434";
+    const watcherPath = "C:\\Users\\tester\\Ollama\\ollama app.exe";
+    const boundary = createWindowsInstallBoundary({
+      userHost: priorHost,
+      watcherPath,
+      daemonPath: null,
+      installedPath: "",
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      await expect(windows.installOllamaOnWindowsHost({}, boundary.operations)).resolves.toEqual({
+        ok: false,
+        path: "",
+        reason: "install",
+      });
+    } finally {
+      restore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(boundary.state.userHost).toBe(priorHost);
+    expect(boundary.state.watcherRunning).toBe(true);
+    expect(boundary.state.daemonRunning).toBe(false);
+    expect(boundary.state.events).toEqual([
+      "snapshot",
+      "install",
+      "resolve-path",
+      "stop-replacement",
+      "restore",
+    ]);
+  });
+
+  it("restores the prior Windows state when installed Ollama remains unreachable", async () => {
+    const priorHost = "127.0.0.1:11434";
+    const daemonPath = "C:\\Users\\tester\\Ollama\\ollama.exe";
+    const boundary = createWindowsInstallBoundary({
+      userHost: priorHost,
+      watcherPath: null,
+      daemonPath,
+      launchStatuses: [1, 1],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      await expect(windows.installOllamaOnWindowsHost({}, boundary.operations)).resolves.toEqual({
+        ok: false,
+        path: daemonPath,
+        reason: "readiness",
+      });
+    } finally {
+      restore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(boundary.state.userHost).toBe(priorHost);
+    expect(boundary.state.watcherRunning).toBe(false);
+    expect(boundary.state.daemonRunning).toBe(true);
+    expect(boundary.state.events.at(-2)).toBe("stop-replacement");
+    expect(boundary.state.events.at(-1)).toBe("restore");
+  });
+
+  it("cancels install and restores prior Windows state before preserving SIGTERM", async () => {
+    const priorHost = "127.0.0.1:11434";
+    const watcherPath = "C:\\Users\\tester\\Ollama\\ollama app.exe";
+    const boundary = createWindowsInstallBoundary({
+      userHost: priorHost,
+      watcherPath,
+      daemonPath: null,
+      installerInterrupt: "SIGTERM",
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      await expect(windows.installOllamaOnWindowsHost({}, boundary.operations)).rejects.toThrow(
+        PreservedWindowsInterrupt,
+      );
+    } finally {
+      restore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(boundary.state.events).toEqual([
+      "snapshot",
+      "install",
+      "cancel-installer",
+      "stop-replacement",
+      "restore",
+      "signal:SIGTERM",
+    ]);
+    expect(boundary.state.userHost).toBe(priorHost);
+    expect(boundary.state.watcherRunning).toBe(true);
+    expect(boundary.cancelInstaller).toHaveBeenCalledOnce();
+  });
+
+  it("reports manual recovery when install rollback fails", async () => {
+    const boundary = createWindowsInstallBoundary({
+      userHost: "127.0.0.1:11434",
+      watcherPath: null,
+      daemonPath: null,
+      installedPath: "",
+      rollbackStatus: 1,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      await windows.installOllamaOnWindowsHost({}, boundary.operations);
+    } finally {
+      restore();
+      logSpy.mockRestore();
+    }
+
+    const diagnostic = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+    errorSpy.mockRestore();
+    expect(diagnostic).toContain("Failed to restore the previous Windows Ollama state");
+    expect(diagnostic).toContain("restore your previous User-scope OLLAMA_HOST value");
   });
 
   it("stops a final unready replacement before restoring the prior Windows state", () => {
