@@ -72,9 +72,15 @@ function combineFailures(first: unknown, next: unknown): unknown {
   });
 }
 
-function removeOwnedTemporaryRoot(root: string): void {
-  for (const entry of fs.readdirSync(root, { recursive: true, withFileTypes: true }))
-    if (entry.isDirectory()) fs.chmodSync(path.join(entry.parentPath, entry.name), 0o700);
+export function removeOwnedTemporaryRoot(root: string): void {
+  function makeDirectoriesWritable(directory: string): void {
+    fs.chmodSync(directory, 0o700);
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) makeDirectoriesWritable(path.join(directory, entry.name));
+    }
+  }
+
+  makeDirectoriesWritable(root);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 }
 

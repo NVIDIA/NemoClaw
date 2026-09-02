@@ -905,7 +905,7 @@ describe("PR Review Advisor repair Phase 1", () => {
           return { argv: [command, ...args], exitCode: 0 };
         },
       }),
-    ).toThrow();
+    ).toThrow("trusted dependency preparation mutated the candidate");
   });
 
   it("rejects ignored output created after dependency preparation (#10791)", () => {
@@ -1266,7 +1266,7 @@ describe("PR Review Advisor repair Phase 1", () => {
             return "/trusted/openshell-sandbox";
           case "openshell gateway info -o json":
             return JSON.stringify({
-              gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+              gateway: "phase1-validation",
               server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
               status: "healthy",
             });
@@ -1320,7 +1320,11 @@ describe("PR Review Advisor repair Phase 1", () => {
           case "which openshell-sandbox":
             return "/trusted/openshell-sandbox";
           case "openshell gateway info -o json":
-            return JSON.stringify({ gateway: endpoint, server: endpoint, status: "healthy" });
+            return JSON.stringify({
+              gateway: "phase1-validation",
+              server: endpoint,
+              status: "healthy",
+            });
           default:
             return "";
         }

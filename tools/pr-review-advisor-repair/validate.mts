@@ -1147,7 +1147,9 @@ async function runValidation(env: NodeJS.ProcessEnv): Promise<void> {
       reason,
       error instanceof ValidationSequenceError ? error.commands : [],
     );
-    writeValidationArtifacts(artifactDirectory, receipt, null);
+    if (!fs.existsSync(artifactDirectory)) {
+      writeValidationArtifacts(artifactDirectory, receipt, null);
+    }
     appendValidationJobSummary(env.GITHUB_STEP_SUMMARY, receipt);
     throw failure;
   }

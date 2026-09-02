@@ -61,6 +61,16 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
     });
   });
 
+  it.each([
+    ["collect", collect],
+    ["publish", publish],
+  ])("binds runner-local paths in %s after the job starts (#10791)", (_name, job) => {
+    expect(JSON.stringify(record(job.env))).not.toContain("runner.temp");
+    expect(
+      String(namedStep(job as Record<string, unknown>, "Bind runner-local directories").run),
+    ).toContain("$RUNNER_TEMP");
+  });
+
   it("binds one original validation artifact and resumes only inside the protected publisher (#10791)", () => {
     expect(collect.permissions).toEqual({ actions: "read", contents: "read" });
     expect(publish.permissions).toEqual({

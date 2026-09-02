@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   allocateLocalReviewGatewayEndpoint,
   createLocalReviewSnapshot,
+  removeOwnedTemporaryRoot,
   runLocalReview,
   type LocalReviewLifecycle,
   type LocalReviewPublication,
@@ -161,6 +162,19 @@ afterEach(() => {
 });
 
 describe("local PR review advisor", () => {
+  it("removes owned temporary trees even when a nested directory is unreadable (#10791)", () => {
+    const root = temporaryDirectory();
+    const nested = path.join(root, "prepared", "nested");
+    fs.mkdirSync(nested, { recursive: true });
+    fs.writeFileSync(path.join(nested, "artifact.txt"), "temporary\n");
+    fs.chmodSync(path.join(root, "prepared"), 0o000);
+
+    removeOwnedTemporaryRoot(root);
+
+    expect(fs.existsSync(root)).toBe(false);
+    temporaryDirectories.splice(temporaryDirectories.indexOf(root), 1);
+  });
+
   it("allocates a released per-run gateway port instead of assuming port 8080 (#10791)", async () => {
     const blocker = createServer();
     const ownsBlockedPort = await new Promise<boolean>((resolve, reject) => {

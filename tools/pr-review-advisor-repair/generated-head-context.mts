@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { githubApi } from "../advisors/github.mts";
 import {
   CANONICAL_REPOSITORY,
+  githubLogin,
   readBoundedJson,
   RepairContractError,
   sanitizeDiagnostic,
@@ -126,10 +127,7 @@ export async function collectGeneratedHeadContext(
   ) {
     throw new RepairContractError("live pull request no longer matches generated-head dispatch");
   }
-  const author = boundedText(pull.user?.login, "pull request author", 256);
-  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u.test(author)) {
-    throw new RepairContractError("pull request author must be a canonical GitHub login");
-  }
+  const author = githubLogin(pull.user?.login, "pull request author");
   return {
     version: 1,
     repository: CANONICAL_REPOSITORY,

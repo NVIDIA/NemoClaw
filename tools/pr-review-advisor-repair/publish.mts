@@ -26,6 +26,7 @@ import {
 import {
   GENERATED_HEAD_VALIDATIONS,
   generatedHeadRunTitle,
+  listGeneratedHeadWorkflowRuns,
   TRUSTED_GENERATED_HEAD_REF,
 } from "./generated-head-validation.mts";
 import { appendPublicationJobSummary } from "./summary.mts";
@@ -629,14 +630,8 @@ async function matchingGeneratedHeadRuns(
   if (!validation) {
     throw new RepairContractError(`unsupported generated-head workflow: ${workflow}`);
   }
-  const runs = await request<{ total_count?: unknown; workflow_runs?: unknown }>(
-    `repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/runs?event=workflow_dispatch&branch=${TRUSTED_GENERATED_HEAD_REF}&per_page=100`,
-    token,
-  );
-  if (!Array.isArray(runs.workflow_runs) || runs.total_count !== runs.workflow_runs.length) {
-    throw new RepairContractError(`${workflow} generated-head run listing is incomplete`);
-  }
-  return (runs.workflow_runs as Array<Record<string, unknown>>).filter(
+  const runs = await listGeneratedHeadWorkflowRuns(workflow, token, request);
+  return runs.filter(
     (run) =>
       run.event === "workflow_dispatch" &&
       run.head_branch === TRUSTED_GENERATED_HEAD_REF &&

@@ -26,6 +26,7 @@ import {
 import {
   GENERATED_HEAD_VALIDATIONS,
   generatedHeadRunTitle,
+  listGeneratedHeadWorkflowRuns,
 } from "../../../tools/pr-review-advisor-repair/generated-head-validation.mts";
 import {
   assertPublicationPullRequest,
@@ -289,70 +290,126 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     expect(duplicateRequest).toHaveBeenCalledTimes(1);
   });
 
+  it("searches every claim page before accepting an exact attempt (#10791)", async () => {
+    const bundle = selection();
+    const firstPage = Array.from({ length: 100 }, (_value, index) => ({
+      id: index + 1,
+      name: "Advisor repair attempt",
+      external_id: `different-attempt-${index}`,
+    }));
+    const request = vi.fn(
+      async (apiPath: string, _token: string, options?: { method?: string }) => {
+        expect(options?.method).toBeUndefined();
+        return apiPath.endsWith("&page=2")
+          ? {
+              total_count: 101,
+              check_runs: [
+                { id: 101, name: "Advisor repair attempt", external_id: bundle.attemptKey },
+              ],
+            }
+          : { total_count: 101, check_runs: firstPage };
+      },
+    );
+
+    await expect(
+      claimRepairAttempt(
+        bundle,
+        "token",
+        "https://example.test/run",
+        request as unknown as NonNullable<Parameters<typeof claimRepairAttempt>[3]>,
+      ),
+    ).rejects.toThrow("already claimed");
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[1]?.[0]).toContain("&page=2");
+  });
+
+  it("aggregates every generated-head workflow run page (#10791)", async () => {
+    const firstPage = Array.from({ length: 100 }, (_value, index) => ({ id: index + 1 }));
+    const request = vi.fn(async (apiPath: string) =>
+      apiPath.endsWith("&page=2")
+        ? { total_count: 101, workflow_runs: [{ id: 101 }] }
+        : { total_count: 101, workflow_runs: firstPage },
+    );
+
+    await expect(
+      listGeneratedHeadWorkflowRuns(
+        "pr.yaml",
+        "token",
+        request as unknown as Parameters<typeof listGeneratedHeadWorkflowRuns>[2],
+      ),
+    ).resolves.toHaveLength(101);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("requires both dispatch identities to have maintain permission (#10791)", async () => {
     const sourceHeadSha = "a".repeat(40);
     const baseSha = "b".repeat(40);
     const workflowSha = "c".repeat(40);
     const names = expectedAdvisorArtifactNames(700, 2);
+    const pull = {
+      number: 42,
+      state: "open",
+      draft: false,
+      maintainer_can_modify: true,
+      user: { login: "contributor" },
+      head: {
+        sha: sourceHeadSha,
+        ref: "fix/demo",
+        repo: { full_name: "NVIDIA/NemoClaw" },
+      },
+      base: {
+        sha: baseSha,
+        ref: "main",
+        repo: { full_name: "NVIDIA/NemoClaw" },
+      },
+    };
+    const advisorRun = {
+      id: 700,
+      run_attempt: 2,
+      event: "pull_request_target",
+      status: "completed",
+      conclusion: "success",
+      name: "Automation / PR Review Advisor",
+      path: ".github/workflows/pr-review-advisor.yaml",
+      head_sha: workflowSha,
+      repository: { full_name: "NVIDIA/NemoClaw" },
+      head_repository: { full_name: "NVIDIA/NemoClaw" },
+      pull_requests: [{ number: 42 }],
+    };
+    const artifacts = {
+      total_count: names.length,
+      artifacts: names.map((name, index) => ({
+        id: 100 + index,
+        name,
+        expired: false,
+        size_in_bytes: 1024,
+        digest: `sha256:${String(index).padStart(64, "0")}`,
+        workflow_run: { id: 700, head_sha: workflowSha },
+      })),
+    };
+    const maintainerOne = {
+      permission: "write",
+      role_name: "maintain",
+      user: {
+        login: "maintainer-one",
+        permissions: { admin: false, maintain: true },
+      },
+    };
+    const maintainerTwo = {
+      permission: "write",
+      role_name: "maintain",
+      user: {
+        login: "maintainer-two",
+        permissions: { admin: false, maintain: true },
+      },
+    };
     const requestMock = vi
       .fn()
-      .mockResolvedValueOnce({
-        number: 42,
-        state: "open",
-        draft: false,
-        maintainer_can_modify: true,
-        user: { login: "contributor" },
-        head: {
-          sha: sourceHeadSha,
-          ref: "fix/demo",
-          repo: { full_name: "NVIDIA/NemoClaw" },
-        },
-        base: {
-          sha: baseSha,
-          ref: "main",
-          repo: { full_name: "NVIDIA/NemoClaw" },
-        },
-      })
-      .mockResolvedValueOnce({
-        id: 700,
-        run_attempt: 2,
-        event: "pull_request_target",
-        status: "completed",
-        conclusion: "success",
-        name: "Automation / PR Review Advisor",
-        path: ".github/workflows/pr-review-advisor.yaml",
-        head_sha: workflowSha,
-        repository: { full_name: "NVIDIA/NemoClaw" },
-        head_repository: { full_name: "NVIDIA/NemoClaw" },
-        pull_requests: [{ number: 42 }],
-      })
-      .mockResolvedValueOnce({
-        total_count: names.length,
-        artifacts: names.map((name, index) => ({
-          id: 100 + index,
-          name,
-          expired: false,
-          size_in_bytes: 1024,
-          digest: `sha256:${String(index).padStart(64, "0")}`,
-          workflow_run: { id: 700, head_sha: workflowSha },
-        })),
-      })
-      .mockResolvedValueOnce({
-        permission: "write",
-        role_name: "maintain",
-        user: {
-          login: "maintainer-one",
-          permissions: { admin: false, maintain: true },
-        },
-      })
-      .mockResolvedValueOnce({
-        permission: "write",
-        role_name: "maintain",
-        user: {
-          login: "maintainer-two",
-          permissions: { admin: false, maintain: true },
-        },
-      });
+      .mockResolvedValueOnce(pull)
+      .mockResolvedValueOnce(advisorRun)
+      .mockResolvedValueOnce(artifacts)
+      .mockResolvedValueOnce(maintainerOne)
+      .mockResolvedValueOnce(maintainerTwo);
     const request = requestMock as unknown as SelectionGitHubRequest;
 
     const collected = await collectRepairSelectionAuthority(
@@ -378,6 +435,37 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     expect(
       requestMock.mock.calls.filter(([apiPath]) => String(apiPath).includes("/collaborators/")),
     ).toHaveLength(2);
+
+    const deniedRequest = vi
+      .fn()
+      .mockResolvedValueOnce(pull)
+      .mockResolvedValueOnce(advisorRun)
+      .mockResolvedValueOnce(artifacts)
+      .mockResolvedValueOnce(maintainerOne)
+      .mockResolvedValueOnce({
+        permission: "write",
+        role_name: "write",
+        user: {
+          login: "maintainer-two",
+          permissions: { admin: false, maintain: false },
+        },
+      });
+    await expect(
+      collectRepairSelectionAuthority(
+        {
+          token: "token",
+          prNumber: 42,
+          advisorRunId: 700,
+          sourceHeadSha,
+          actor: "maintainer-one",
+          triggeringActor: "maintainer-two",
+          productScopeKind: "maintainer-decision",
+          productScopeIdentity: "#10791-maintainer-comment",
+          findingIdsJson: JSON.stringify([finding().id]),
+        },
+        deniedRequest as unknown as SelectionGitHubRequest,
+      ),
+    ).rejects.toThrow("admin or maintain permission");
   });
 
   it("rejects a changed PR author at the publication boundary (#10791)", () => {
@@ -571,6 +659,49 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
       ),
     ).rejects.toThrow("not executing one exact trusted workflow revision");
   });
+
+  it.each(["dependabot[bot]", "app/dependabot"])(
+    "applies the intended DCO exemption to %s (#10791)",
+    async (author) => {
+      const bundle = selection();
+      const trustedWorkflowSha = "e".repeat(40);
+      const request = vi.fn().mockResolvedValue({
+        number: bundle.input.prNumber,
+        state: "open",
+        draft: false,
+        maintainer_can_modify: true,
+        title: "chore(deps): update dependency",
+        body: "Automated dependency update.",
+        user: { login: author },
+        head: {
+          sha: bundle.input.sourceHeadSha,
+          repo: { full_name: "NVIDIA/NemoClaw" },
+        },
+        base: {
+          sha: bundle.input.baseSha,
+          ref: "main",
+          repo: { full_name: "NVIDIA/NemoClaw" },
+        },
+      });
+      const context = await collectGeneratedHeadContext(
+        {
+          GITHUB_EVENT_NAME: "workflow_dispatch",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_SHA: trustedWorkflowSha,
+          GITHUB_TOKEN: "token",
+          GITHUB_WORKFLOW_SHA: trustedWorkflowSha,
+          PR_NUMBER: String(bundle.input.prNumber),
+          SOURCE_HEAD_SHA: bundle.input.sourceHeadSha,
+          BASE_SHA: bundle.input.baseSha,
+          REPAIR_ATTEMPT_KEY: bundle.attemptKey,
+        },
+        request,
+      );
+
+      expect(() => assertDcoDeclaration(context)).not.toThrow();
+    },
+  );
 
   it("uses an atomic non-force update and exact generated-head dispatch payloads (#10791)", async () => {
     const bundle = selection();

@@ -137,6 +137,19 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     expect(JSON.stringify(verify)).not.toContain("Checkout the exact selected PR head");
   });
 
+  it.each([
+    ["collect", collect],
+    ["claim", claim],
+    ["repair", repair],
+    ["validate", validate],
+    ["publish", publish],
+  ])("binds runner-local paths in %s after the job starts (#10791)", (_name, job) => {
+    expect(JSON.stringify(record(job.env))).not.toContain("runner.temp");
+    expect(
+      String(namedStep(job as Record<string, unknown>, "Bind runner-local directories").run),
+    ).toContain("$RUNNER_TEMP");
+  });
+
   it("pins trusted code and binds every handoff to artifact IDs from the same run (#10791)", () => {
     const actionReferences = Object.values(jobs)
       .map(record)
@@ -383,12 +396,24 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
       "${{ github.event_name == 'workflow_dispatch' && inputs.source_head_sha || github.sha }}",
     );
     const prJobs = record(prWorkflow.jobs);
+    const prGeneratedHead = record(prJobs["generated-head-context"]);
+    expect(record(namedStep(prGeneratedHead, "Checkout generated-head verifier").with).ref).toBe(
+      "${{ github.workflow_sha }}",
+    );
+    expect(namedStep(prGeneratedHead, "Setup Node for generated-head verification")).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      with: { "node-version": "22.19.0" },
+    });
+
+    const dcoJobs = record(generatedHeadWorkflows["dco-check.yaml"].jobs);
     expect(
-      record(
-        namedStep(record(prJobs["generated-head-context"]), "Checkout generated-head verifier")
-          .with,
-      ).ref,
-    ).toBe("${{ github.workflow_sha }}");
+      namedStep(record(dcoJobs["dco-check"]), "Setup Node for generated-head verification"),
+    ).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      with: { "node-version": "22.19.0" },
+    });
     expect([
       record(namedStep(record(prJobs.changes), "Checkout").with).ref,
       record(namedStep(record(prJobs["docs-only-checks"]), "Checkout").with).ref,

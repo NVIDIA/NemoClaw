@@ -355,6 +355,16 @@ function normalizeThreadComment(value: unknown): ReviewStateComment {
   const body = normalizedBody(value, "thread-comment");
   const commit = value.commit;
   const replyTo = value.replyTo;
+  const commitSha = Object.hasOwn(value, "commitSha")
+    ? value.commitSha
+    : isRecord(commit)
+      ? commit.oid
+      : null;
+  const replyToId = Object.hasOwn(value, "replyToId")
+    ? value.replyToId
+    : isRecord(replyTo)
+      ? replyTo.id
+      : null;
   return Object.freeze({
     id: nonemptyString(value.id, "thread-comment id", 256),
     databaseId:
@@ -365,10 +375,9 @@ function normalizeThreadComment(value: unknown): ReviewStateComment {
     ...body,
     createdAt: timestamp(value.createdAt, "thread-comment createdAt"),
     updatedAt: timestamp(value.updatedAt, "thread-comment updatedAt"),
-    commitSha: isRecord(commit) ? fullSha(commit.oid, "thread-comment commit SHA") : null,
-    replyToId: isRecord(replyTo)
-      ? nonemptyString(replyTo.id, "thread-comment replyTo id", 256)
-      : null,
+    commitSha: commitSha === null ? null : fullSha(commitSha, "thread-comment commit SHA"),
+    replyToId:
+      replyToId === null ? null : nonemptyString(replyToId, "thread-comment replyTo id", 256),
   });
 }
 

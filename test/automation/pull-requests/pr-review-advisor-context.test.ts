@@ -138,6 +138,15 @@ describe("PR review advisor", () => {
       reviews: [{ id: 20, author: "reviewer", commitSha: headSha }],
       threads: [{ id: "PRRT_thread", isResolved: false, path: "src/demo.ts" }],
     });
+    const canonicalState = JSON.parse(JSON.stringify(state));
+    canonicalState.threads[0].comments[0].replyToId = "PRRC_parent";
+    expect(
+      parsePullRequestReviewState(canonicalState, {
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        headSha,
+      }),
+    ).toEqual(canonicalState);
     expect(pullRequestReviewStateDigest(state)).toMatch(/^sha256:[0-9a-f]{64}$/u);
   });
 

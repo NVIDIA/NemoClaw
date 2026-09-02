@@ -58,6 +58,12 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
+      - name: Setup Node for generated-head verification
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
       - name: Verify generated-head dispatch
         if: github.event_name == 'workflow_dispatch'
         env:

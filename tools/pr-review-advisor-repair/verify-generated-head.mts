@@ -10,6 +10,7 @@ import { CANONICAL_REPOSITORY, RepairContractError, sanitizeDiagnostic } from ".
 import {
   GENERATED_HEAD_VALIDATIONS,
   generatedHeadRunTitle,
+  listGeneratedHeadWorkflowRuns,
   TRUSTED_GENERATED_HEAD_REF,
 } from "./generated-head-validation.mts";
 import { appendGeneratedHeadJobSummary } from "./summary.mts";
@@ -117,16 +118,12 @@ async function collectSuccessfulWorkflowEvidence(input: {
 }): Promise<RequiredCheckEvidence[] | undefined> {
   const requiredChecks: RequiredCheckEvidence[] = [];
   for (const validation of GENERATED_HEAD_VALIDATIONS) {
-    const runs = await input.request<{ total_count?: unknown; workflow_runs?: unknown }>(
-      `repos/${CANONICAL_REPOSITORY}/actions/workflows/${validation.workflow}/runs?event=workflow_dispatch&branch=${TRUSTED_GENERATED_HEAD_REF}&per_page=100`,
+    const runs = await listGeneratedHeadWorkflowRuns(
+      validation.workflow,
       input.token,
+      input.request,
     );
-    if (!Array.isArray(runs.workflow_runs) || runs.total_count !== runs.workflow_runs.length) {
-      throw new RepairContractError(
-        `${validation.workflow} generated-head run listing is incomplete`,
-      );
-    }
-    const matches = (runs.workflow_runs as WorkflowRun[]).filter(
+    const matches = (runs as WorkflowRun[]).filter(
       (run) =>
         run.event === "workflow_dispatch" &&
         run.head_branch === TRUSTED_GENERATED_HEAD_REF &&

@@ -419,7 +419,6 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
     "./.github/actions/ci-installer-hash-check",
   ]);
   const latestActionConditions = new Set([
-    "github.event_name != 'pull_request'",
     "github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')",
   ]);
 

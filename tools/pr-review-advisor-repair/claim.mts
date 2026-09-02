@@ -18,6 +18,8 @@ import {
 import { appendClaimJobSummary } from "./summary.mts";
 
 const CLAIM_NAME = "Advisor repair attempt";
+const CHECK_RUN_PAGE_SIZE = 100;
+const MAX_CLAIM_CHECK_RUNS = 10_000;
 
 type CheckRun = {
   id?: unknown;
@@ -42,20 +44,47 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
+async function listRepairClaims(
+  sourceHeadSha: string,
+  token: string,
+  request: GitHubRequest,
+): Promise<CheckRun[]> {
+  const checkRuns: CheckRun[] = [];
+  let expectedTotal: number | undefined;
+  for (let page = 1; checkRuns.length < MAX_CLAIM_CHECK_RUNS; page += 1) {
+    const suffix = page === 1 ? "" : `&page=${page}`;
+    const listing = await request<CheckRunList>(
+      `repos/${CANONICAL_REPOSITORY}/commits/${sourceHeadSha}/check-runs?check_name=${encodeURIComponent(CLAIM_NAME)}&filter=all&per_page=${CHECK_RUN_PAGE_SIZE}${suffix}`,
+      token,
+    );
+    if (
+      !Number.isSafeInteger(listing.total_count) ||
+      Number(listing.total_count) < 0 ||
+      Number(listing.total_count) > MAX_CLAIM_CHECK_RUNS ||
+      !Array.isArray(listing.check_runs) ||
+      listing.check_runs.length > CHECK_RUN_PAGE_SIZE
+    ) {
+      throw new RepairContractError("repair attempt check listing is incomplete");
+    }
+    expectedTotal ??= Number(listing.total_count);
+    if (Number(listing.total_count) !== expectedTotal) {
+      throw new RepairContractError("repair attempt check listing changed during pagination");
+    }
+    checkRuns.push(...(listing.check_runs as CheckRun[]));
+    if (checkRuns.length === expectedTotal) return checkRuns;
+    if (checkRuns.length > expectedTotal || listing.check_runs.length === 0) break;
+  }
+  throw new RepairContractError("repair attempt check listing is incomplete");
+}
+
 export async function claimRepairAttempt(
   selection: SelectionBundle,
   token: string,
   detailsUrl: string,
   request: GitHubRequest = githubApi,
 ): Promise<number> {
-  const listing = await request<CheckRunList>(
-    `repos/${CANONICAL_REPOSITORY}/commits/${selection.input.sourceHeadSha}/check-runs?per_page=100`,
-    token,
-  );
-  if (!Array.isArray(listing.check_runs) || listing.total_count !== listing.check_runs.length) {
-    throw new RepairContractError("repair attempt check listing is incomplete");
-  }
-  const duplicate = (listing.check_runs as CheckRun[]).find(
+  const checkRuns = await listRepairClaims(selection.input.sourceHeadSha, token, request);
+  const duplicate = checkRuns.find(
     (check) => check.name === CLAIM_NAME && check.external_id === selection.attemptKey,
   );
   if (duplicate) {

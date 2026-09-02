@@ -530,9 +530,10 @@ export function exportTrustedRepairPatch(input: {
       fs.unlinkSync(destination);
     }
   }
+  runGit(stagedRepository, ["add", "--all", "--", ...changedPaths], env);
   const patch = runGit(
     stagedRepository,
-    ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "HEAD", "--"],
+    ["diff", "--cached", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "HEAD", "--"],
     env,
     "buffer",
   ) as Buffer;

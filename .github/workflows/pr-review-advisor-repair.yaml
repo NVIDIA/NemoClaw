@@ -64,8 +64,6 @@ jobs:
       selection_artifact_id: ${{ steps.upload-selection.outputs.artifact-id }}
       source_head_sha: ${{ steps.select.outputs.source_head_sha }}
     env:
-      AUDIT_OUTPUT_DIR: ${{ runner.temp }}/phase1-audit
-      SELECTION_OUTPUT_DIR: ${{ runner.temp }}/phase1-selection
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
       - name: Checkout trusted workflow code
@@ -89,6 +87,13 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+
+      - name: Bind runner-local directories
+        run: |
+          {
+            printf '%s\n' "AUDIT_OUTPUT_DIR=$RUNNER_TEMP/phase1-audit"
+            printf '%s\n' "SELECTION_OUTPUT_DIR=$RUNNER_TEMP/phase1-selection"
+          } >> "$GITHUB_ENV"
 
       - id: gate
         name: Record the emergency-switch decision
@@ -173,7 +178,6 @@ jobs:
       checks: write
       contents: read
     env:
-      SELECTION_DIR: ${{ runner.temp }}/selection
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
       - name: Checkout trusted workflow code
@@ -197,6 +201,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+
+      - name: Bind runner-local directories
+        run: printf '%s\n' "SELECTION_DIR=$RUNNER_TEMP/selection" >> "$GITHUB_ENV"
 
       - name: Download the exact selection artifact ID
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -226,17 +233,9 @@ jobs:
     outputs:
       repair_artifact_id: ${{ steps.upload-repair.outputs.artifact-id }}
     env:
-      CANDIDATE_DOWNLOAD_DIR: ${{ runner.temp }}/candidate-download
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
       PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      PROPOSAL_DOWNLOAD_DIR: ${{ runner.temp }}/proposal-download
-      REPAIR_ARTIFACT_DIR: ${{ runner.temp }}/repair-artifact
-      REPAIR_CONFIG_DIR: ${{ runner.temp }}/repair-config
-      REPAIR_EXPORT_DIR: ${{ runner.temp }}/repair-export
-      REPAIR_OUTPUT_DIR: ${{ runner.temp }}/repair-output
-      REPAIR_STAGING_DIR: ${{ runner.temp }}/repair-staging
       SANDBOX_NAME: pr-repair-${{ github.run_id }}-${{ github.run_attempt }}
-      SELECTION_DIR: ${{ runner.temp }}/selection
       SOURCE_CHECKOUT: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
@@ -272,6 +271,19 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+
+      - name: Bind runner-local directories
+        run: |
+          {
+            printf '%s\n' "CANDIDATE_DOWNLOAD_DIR=$RUNNER_TEMP/candidate-download"
+            printf '%s\n' "PROPOSAL_DOWNLOAD_DIR=$RUNNER_TEMP/proposal-download"
+            printf '%s\n' "REPAIR_ARTIFACT_DIR=$RUNNER_TEMP/repair-artifact"
+            printf '%s\n' "REPAIR_CONFIG_DIR=$RUNNER_TEMP/repair-config"
+            printf '%s\n' "REPAIR_EXPORT_DIR=$RUNNER_TEMP/repair-export"
+            printf '%s\n' "REPAIR_OUTPUT_DIR=$RUNNER_TEMP/repair-output"
+            printf '%s\n' "REPAIR_STAGING_DIR=$RUNNER_TEMP/repair-staging"
+            printf '%s\n' "SELECTION_DIR=$RUNNER_TEMP/selection"
+          } >> "$GITHUB_ENV"
 
       - name: Download the exact selection artifact ID
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -352,17 +364,11 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      HOME: ${{ runner.temp }}/validation-host-home
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      REPAIR_DIR: ${{ runner.temp }}/repair
-      SELECTION_DIR: ${{ runner.temp }}/selection
       SOURCE_CHECKOUT: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
-      VALIDATION_ARTIFACT_DIR: ${{ runner.temp }}/validation-artifact
       VALIDATION_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
       VALIDATION_SANDBOX_NAME: pr-repair-validation-${{ github.run_id }}-${{ github.run_attempt }}
-      VALIDATION_STAGING_DIR: ${{ runner.temp }}/validation-staging
-      XDG_BIN_HOME: ${{ runner.temp }}/validation-host-home/.local/bin
     steps:
       - name: Checkout trusted workflow code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -396,6 +402,17 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+
+      - name: Bind runner-local directories
+        run: |
+          {
+            printf '%s\n' "HOME=$RUNNER_TEMP/validation-host-home"
+            printf '%s\n' "REPAIR_DIR=$RUNNER_TEMP/repair"
+            printf '%s\n' "SELECTION_DIR=$RUNNER_TEMP/selection"
+            printf '%s\n' "VALIDATION_ARTIFACT_DIR=$RUNNER_TEMP/validation-artifact"
+            printf '%s\n' "VALIDATION_STAGING_DIR=$RUNNER_TEMP/validation-staging"
+            printf '%s\n' "XDG_BIN_HOME=$RUNNER_TEMP/validation-host-home/.local/bin"
+          } >> "$GITHUB_ENV"
 
       - name: Download the exact selection artifact ID
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -465,11 +482,8 @@ jobs:
       head_ref: ${{ steps.publish.outputs.head_ref }}
       publication_artifact_id: ${{ steps.upload-publication.outputs.artifact-id }}
     env:
-      PUBLICATION_OUTPUT_DIR: ${{ runner.temp }}/publication
-      PUBLISH_STAGING_ROOT: ${{ runner.temp }}/publisher
       SOURCE_CHECKOUT: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
-      VALIDATION_DIR: ${{ runner.temp }}/validation
     steps:
       - name: Checkout trusted workflow code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -503,6 +517,14 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+
+      - name: Bind runner-local directories
+        run: |
+          {
+            printf '%s\n' "PUBLICATION_OUTPUT_DIR=$RUNNER_TEMP/publication"
+            printf '%s\n' "PUBLISH_STAGING_ROOT=$RUNNER_TEMP/publisher"
+            printf '%s\n' "VALIDATION_DIR=$RUNNER_TEMP/validation"
+          } >> "$GITHUB_ENV"
 
       - name: Download the exact validation artifact ID
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

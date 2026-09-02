@@ -223,12 +223,19 @@ function findingId(value: unknown, label: string): string {
   return result;
 }
 
-function githubLogin(value: unknown, label: string): string {
+export function githubLogin(value: unknown, label: string): string {
   const result = boundedString(value, label, 44);
-  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?$/u.test(result)) {
+  if (
+    result !== "app/dependabot" &&
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?$/u.test(result)
+  ) {
     throw new RepairContractError(`${label} is not a supported GitHub login`);
   }
   return result;
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function branchRef(value: unknown, label: string): string {
@@ -542,7 +549,7 @@ function skipReason(finding: FindingInput, optInFindingIds: readonly string[]): 
 
 export function selectRepairAttempt(input: SelectionInput): SelectionBundle {
   const decisions = [...input.findings]
-    .sort((left, right) => left.id.localeCompare(right.id))
+    .sort((left, right) => compareCodeUnits(left.id, right.id))
     .map((finding): SelectionDecision => {
       const reason = skipReason(finding, input.optIn.findingIds);
       return {
@@ -555,9 +562,9 @@ export function selectRepairAttempt(input: SelectionInput): SelectionBundle {
     });
   const selected = decisions.filter(({ state }) => state === "selected");
   const selectedFindingIds = selected.map(({ id }) => id);
-  const selectedPaths = [
-    ...new Set(selected.map(({ path: selectedPath }) => selectedPath!)),
-  ].sort();
+  const selectedPaths = [...new Set(selected.map(({ path: selectedPath }) => selectedPath!))].sort(
+    compareCodeUnits,
+  );
   const identity = {
     repository: input.repository,
     prNumber: input.prNumber,

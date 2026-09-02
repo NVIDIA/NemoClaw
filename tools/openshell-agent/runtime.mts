@@ -302,7 +302,7 @@ function gatewayExitError(exit: OpenShellProcessExit): OpenShellAgentError {
   );
 }
 
-function assertExpectedGatewayInfo(output: string, endpoint: URL): void {
+function assertExpectedGatewayInfo(output: string, endpoint: URL, gatewayId: string): void {
   let value: unknown;
   try {
     value = JSON.parse(output);
@@ -312,8 +312,13 @@ function assertExpectedGatewayInfo(output: string, endpoint: URL): void {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new OpenShellAgentError("OpenShell gateway health response was not an object");
   const info = value as Record<string, unknown>;
-  const expected = endpoint.origin;
-  if (info.gateway !== expected || info.server !== expected || info.status !== "healthy")
+  let serverOrigin: string | undefined;
+  try {
+    serverOrigin = typeof info.server === "string" ? new URL(info.server).origin : undefined;
+  } catch {
+    serverOrigin = undefined;
+  }
+  if (info.gateway !== gatewayId || serverOrigin !== endpoint.origin || info.status !== "healthy")
     throw new OpenShellAgentError("OpenShell gateway health response did not match the owned endpoint");
 }
 
@@ -372,7 +377,7 @@ function startOpenShellGateway(
             env: commandEnv,
             timeout: 10_000,
           });
-          assertExpectedGatewayInfo(info, gatewayEndpoint);
+          assertExpectedGatewayInfo(info, gatewayEndpoint, input.gatewayId);
           await tools.wait(50);
           if (exited) throw gatewayExitError(exited);
           if (stopGateway.isRunning && !stopGateway.isRunning())
