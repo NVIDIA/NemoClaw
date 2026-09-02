@@ -93,10 +93,7 @@ describe("validated GitHub artifact ZIP reader", () => {
     ["trailing slash", "diagnostics/"],
     ["NUL byte", "diagnostics/\0log.txt"],
   ])("rejects unsafe requested path with %s", (_case, requestedPath) => {
-    const archive = artifactZip([
-      { name: requestedPath, contents: "unsafe" },
-      { name: "summary.json", contents: '{"safe":true}' },
-    ]);
+    const archive = artifactZip([{ name: "summary.json", contents: '{"safe":true}' }]);
 
     expect(
       readValidatedArtifactZipEntryBytes(archive, requestedPath, {

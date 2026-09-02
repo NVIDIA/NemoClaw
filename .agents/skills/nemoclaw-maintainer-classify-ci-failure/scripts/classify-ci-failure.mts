@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { basename } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -217,10 +218,16 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     }
     return result;
   };
-  const redactPath = (value: string): string => value.split("/").map(redact).join("/");
-  const cleanupTemporaryDirectory = async (dir: string, kind: string): Promise<string> => {
-    const safeDir = redactPath(dir);
-    const remediation = `Remove it directly with: rm -rf -- ${q(safeDir)}`;
+  const cleanupTemporaryDirectory = async (
+    dir: string,
+    kind: "CI log" | "artifact",
+  ): Promise<string> => {
+    const generatedName = basename(dir);
+    const expectedPrefix = kind === "CI log" ? "nemoclaw-ci-log" : "nemoclaw-ci-classify";
+    if (!new RegExp(`^${expectedPrefix}\\.[A-Za-z0-9]{6}$`, "u").test(generatedName))
+      return `Cleanup failure: temporary ${kind} directory had an invalid generated name`;
+    const remediationPath = `"\${TMPDIR:-/tmp}/${generatedName}"`;
+    const remediation = `Remove it directly with: rm -rf -- ${remediationPath}`;
     try {
       const cleanup = await run(`rm -rf -- ${q(dir)}`, `Remove temporary ${kind} directory`);
       if (cleanup.exitCode === 0) return "";
@@ -229,10 +236,10 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
           cleanup.stdout.text ||
           `Could not remove temporary ${kind} directory`,
       ).slice(-1000);
-      return `Cleanup failure for ${q(safeDir)}: ${detail}. ${remediation}`;
+      return `Cleanup failure for ${q(generatedName)}: ${detail}. ${remediation}`;
     } catch (error) {
       const detail = redact(error instanceof Error ? error.message : String(error)).slice(-1000);
-      return `Cleanup failure for ${q(safeDir)}: ${detail}. ${remediation}`;
+      return `Cleanup failure for ${q(generatedName)}: ${detail}. ${remediation}`;
     }
   };
   const appendCleanupFailure = (error: unknown, cleanupFailure: string): Error => {
@@ -241,13 +248,17 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
   };
   const jobResult = await github(["api", `repos/${repo}/actions/jobs/${jobId}`]);
   const rawJob = JSON.parse(jobResult.stdout);
+  const [jobName, jobUrl] = await Promise.all([
+    project(rawJob.name ?? "", 500, 500),
+    project(rawJob.html_url ?? "", 2000, 2000),
+  ]);
   const job = {
     id: Number(rawJob.id ?? jobId),
     runId: Number(rawJob.run_id ?? 0),
-    name: String(rawJob.name ?? "").slice(0, 500),
+    name: jobName.text,
     status: String(rawJob.status ?? "").slice(0, 100),
     conclusion: rawJob.conclusion == null ? null : String(rawJob.conclusion).slice(0, 100),
-    url: String(rawJob.html_url ?? "").slice(0, 2000),
+    url: jobUrl.text,
   };
   const logTemp = await run(
     'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-log.XXXXXX"',
@@ -461,15 +472,11 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
         const resultEntries = entries.filter(({ name }) => name.endsWith(".result.json"));
         const fileResults = [];
         let filesRead = 0;
-        let measuredOutput = 0;
         for (const { name: relativePath, bytes: contents } of resultEntries) {
           if (contents.length > 1_000_000)
             throw new Error(
               `Artifact result entry ${redact(relativePath).slice(0, 1000)} is invalid or exceeds the 1,000,000-byte limit`,
             );
-          measuredOutput += contents.length;
-          if (measuredOutput > 100_000_000)
-            throw new Error("Artifact result output exceeds the 100,000,000-byte limit");
           const text = contents.toString("utf8");
           const lineCount = text === "" ? 0 : text.split(/\r?\n/u).length;
           if (lineCount > 2_000)
@@ -509,7 +516,6 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
             command,
           });
         }
-        const failures = fileResults;
         artifact = {
           name: artifactName,
           artifactId,
@@ -517,8 +523,8 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
           inventoryTruncated: false,
           filesRead,
           filesTruncated: filesRead < resultEntries.length,
-          failures: failures.slice(0, 20),
-          failuresTruncated: failures.length > 20,
+          failures: fileResults.slice(0, 20),
+          failuresTruncated: fileResults.length > 20,
         };
       } catch (error) {
         artifactFailure = error;

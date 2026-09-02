@@ -86,7 +86,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
     "const fs=require('fs');",
     "const a=process.argv.slice(2).join(' ');",
     "fs.appendFileSync(process.env.GH_CALLS,a+'\\n');",
-    "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') console.log(JSON.stringify({id:123,run_id:456,name:'CLI tests',status:'completed',conclusion:'failure',html_url:'https://example.test/job'}));",
+    "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') console.log(JSON.stringify({id:123,run_id:456,name:process.env.JOB_NAME||'CLI tests',status:'completed',conclusion:'failure',html_url:process.env.JOB_URL||'https://example.test/job'}));",
     "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
     "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') { const artifacts=process.env.DUPLICATE_ARTIFACTS ? [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)},{id:790,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}] : [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]; process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:artifacts.length,artifacts})); }",
     "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') process.stdout.write(fs.readFileSync(process.env.ZIP_PATH));",
@@ -205,6 +205,22 @@ describe("CI failure classifier process", () => {
       /error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
     );
   });
+  test("redacts and bounds dynamic GitHub job metadata", () => {
+    const item = fixture("ordinary output");
+    const nameSecret = "metadata-name-secret";
+    const urlSecret = "metadata-url-secret";
+    item.env.JOB_NAME = `${"n".repeat(600)} BUILD_TOKEN=${nameSecret}`;
+    item.env.JOB_URL = `https://example.test/job/${"u".repeat(2100)}?keep=visible&token=${urlSecret}`;
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.job.name).toContain("[REDACTED]");
+    expect(value.job.name.length).toBeLessThanOrEqual(500);
+    expect(value.job.url).toContain("token=[REDACTED]");
+    expect(value.job.url.length).toBeLessThanOrEqual(2000);
+    expect(result.stdout).not.toContain(nameSecret);
+    expect(result.stdout).not.toContain(urlSecret);
+  });
   test("rejects invalid input before invoking GitHub", () => {
     const item = fixture("unused");
     const r = run(item.env, ["--repo", "bad/repo/extra"]);
@@ -256,14 +272,22 @@ describe("CI failure classifier process", () => {
     item.env.FAIL_LOG = "primary log download failure";
     const result = run(item.env);
     const observation = JSON.parse(readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8").trim());
-    const safePath = join(item.root, "BUILD_TOKEN=[REDACTED]", observation.name);
+    const leakedDirectory = join(tempRoot, observation.name);
+    const recoveryCommand = result.stderr.match(/Remove it directly with: (rm -rf -- .*)/u)?.[1];
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("primary log download failure");
-    expect(result.stderr).toContain(`Cleanup failure for '${safePath}'`);
-    expect(result.stderr).toContain(`rm -rf -- '${safePath}'`);
+    expect(result.stderr).toContain(`Cleanup failure for '${observation.name}'`);
+    expect(recoveryCommand).toBe(`rm -rf -- "\${TMPDIR:-/tmp}/${observation.name}"`);
     expect(result.stderr).not.toContain(credential);
     expect(result.stderr).not.toContain("cleanup-secret");
     expect(result.stderr.length).toBeLessThanOrEqual(2100);
+    expect(statSync(leakedDirectory).isDirectory()).toBe(true);
+    const recovered = spawnSync("bash", ["-c", recoveryCommand!], {
+      env: { ...process.env, TMPDIR: tempRoot },
+      encoding: "utf8",
+    });
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(readdirSync(tempRoot)).not.toContain(observation.name);
   });
   test.each([
     ["malformed", Buffer.from("not a zip")],
@@ -333,6 +357,10 @@ describe("CI failure classifier process", () => {
   });
   test("preserves an artifact validation failure when cleanup also fails", () => {
     const item = fixture("SIGKILL", undefined, Buffer.from("not a zip"));
+    const credential = "artifact-cleanup-path-secret";
+    const tempRoot = join(item.root, `BUILD_TOKEN=${credential}`);
+    mkdirSync(tempRoot, { recursive: true });
+    item.env.TMPDIR = tempRoot;
     item.env.FAIL_CLEANUP = "nemoclaw-ci-classify";
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status).toBe(1);
@@ -343,10 +371,19 @@ describe("CI failure classifier process", () => {
         .split("\n")
         .find((line) => JSON.parse(line).name.startsWith("nemoclaw-ci-classify"))!,
     );
-    const cleanupPath = join(item.root, observation.name);
-    expect(result.stderr).toContain(`Cleanup failure for '${cleanupPath}'`);
-    expect(result.stderr).toContain(`rm -rf -- '${cleanupPath}'`);
+    const leakedDirectory = join(tempRoot, observation.name);
+    const recoveryCommand = result.stderr.match(/Remove it directly with: (rm -rf -- .*)/u)?.[1];
+    expect(result.stderr).toContain(`Cleanup failure for '${observation.name}'`);
+    expect(recoveryCommand).toBe(`rm -rf -- "\${TMPDIR:-/tmp}/${observation.name}"`);
     expect(result.stderr).not.toContain("cleanup-secret");
+    expect(result.stderr).not.toContain(credential);
+    expect(statSync(leakedDirectory).isDirectory()).toBe(true);
+    const recovered = spawnSync("bash", ["-c", recoveryCommand!], {
+      env: { ...process.env, TMPDIR: tempRoot, BUILD_TOKEN: undefined },
+      encoding: "utf8",
+    });
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(readdirSync(tempRoot)).not.toContain(observation.name);
   });
   test("reads a real ZIP artifact and removes private temporary directories", () => {
     const item = fixture("SIGKILL", {
