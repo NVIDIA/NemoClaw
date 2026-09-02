@@ -805,6 +805,23 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
+  target("legacy-forward-migration", {
+    displayName: "Forwarding: migrates tracked legacy dashboard forwards",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
+    profile: "nvidia-inference",
+    timeoutMinutes: 45,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: true,
+    environment: {
+      ...hostedInference,
+      ...nonInteractive,
+      NEMOCLAW_DASHBOARD_PORT: "18789",
+      NEMOCLAW_SANDBOX_NAME: "e2e-legacy-forward-migration",
+      OPENSHELL_GATEWAY: "nemoclaw",
+    },
+  }),
   target("hermes-discord", {
     displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
     agentRuntime: "hermes",

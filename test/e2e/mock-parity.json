@@ -267,6 +267,10 @@
       "fast": ["test/e2e/support/dashboard-connect-handoff.test.ts"]
     },
     {
+      "live": "test/e2e/live/legacy-forward-migration.test.ts",
+      "fast": ["src/lib/adapters/openshell/forward-service-migration.test.ts"]
+    },
+    {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
       "fast": ["test/e2e/support/workflow-plan.test.ts"]
     },
