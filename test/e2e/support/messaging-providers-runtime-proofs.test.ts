@@ -710,11 +710,12 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("publishes through a dedicated bridge and connects the proxy to the private API", async () => {
+  it("keeps the API private while the credential-free proxy carries bridge traffic", async () => {
     const calls: string[][] = [];
     const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
     const cleanup: Array<() => Promise<void>> = [];
     const cleanupNames: string[] = [];
+    const sentinel = "test-fake-docker-state-token";
 
     try {
       const api = await startFakeDockerApi(
@@ -730,8 +731,8 @@ describe("messaging provider installed-runtime proofs", () => {
           portEnv: "FAKE_API_PORT",
           portFileEnv: "FAKE_API_PORT_FILE",
           captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          credentialEnv: {},
-          redactionValues: [],
+          credentialEnv: { FAKE_API_EXPECTED_TOKEN: sentinel },
+          redactionValues: [sentinel],
           env: {},
         },
       );
@@ -742,36 +743,32 @@ describe("messaging provider installed-runtime proofs", () => {
           invocation[1] === "run" &&
           invocation.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
       );
-      expect(proxyRun).toBeDefined();
-      const networkCreates = calls.filter(
-        (invocation) =>
-          invocation[0] === "docker" && invocation[1] === "network" && invocation[2] === "create",
+      const proxyContainer = proxyRun?.[proxyRun.indexOf("--name") + 1] ?? "";
+      expect(proxyContainer).not.toBe("");
+      const inspect = async (container: string, template: string) => {
+        const result = await host.command("docker", ["inspect", "--format", template, container]);
+        expect(result.exitCode).toBe(0);
+        return JSON.parse(result.stdout) as unknown;
+      };
+      const apiNetworks = Object.keys(
+        (await inspect(api.container, "{{json .NetworkSettings.Networks}}")) as object,
       );
-      expect(networkCreates).toHaveLength(2);
-      const privateNetwork = networkCreates
-        .find((invocation) => invocation.includes("--internal"))
-        ?.at(-1);
-      const publicationCreate = networkCreates.find(
-        (invocation) => !invocation.includes("--internal"),
+      const proxyNetworks = Object.keys(
+        (await inspect(proxyContainer, "{{json .NetworkSettings.Networks}}")) as object,
       );
-      const publicationNetwork = publicationCreate?.at(-1);
-      expect(publicationCreate?.slice(0, -1)).toEqual([
-        "docker",
-        "network",
-        "create",
-        "--driver",
-        "bridge",
-      ]);
-      expect(proxyRun?.[proxyRun.indexOf("--network") + 1]).toBe(publicationNetwork);
-      expect(proxyRun).not.toContain("openshell-docker");
-      const proxyContainer = proxyRun?.[proxyRun.indexOf("--name") + 1];
-      expect(calls).toContainEqual([
-        "docker",
-        "network",
-        "connect",
-        privateNetwork,
-        proxyContainer,
-      ]);
+      expect(apiNetworks).toHaveLength(1);
+      expect(proxyNetworks).toHaveLength(2);
+      expect(proxyNetworks).toContain(apiNetworks[0]);
+      expect(proxyNetworks).not.toContain("bridge");
+      expect((await host.command("docker", ["port", api.container])).stdout.trim()).toBe("");
+      expect(
+        (await host.command("docker", ["port", proxyContainer, "8080/tcp"])).stdout.trim(),
+      ).toBe(`${OPENSHELL_BRIDGE_ADDRESS}:32100`);
+      const proxyEnvironment = (await inspect(proxyContainer, "{{json .Config.Env}}")) as string[];
+      expect(proxyEnvironment.some((entry) => entry.includes("FAKE_API_EXPECTED_TOKEN"))).toBe(
+        false,
+      );
+      expect(proxyEnvironment.some((entry) => entry.includes(sentinel))).toBe(false);
       expect(cleanupNames).toEqual([
         expect.stringMatching(/^remove nemoclaw-fake-api-network-/u),
         expect.stringMatching(/^remove nemoclaw-fake-api-publication-/u),
@@ -783,12 +780,6 @@ describe("messaging provider installed-runtime proofs", () => {
         .reverse()
         .reduce((previous, action) => previous.then(action), Promise.resolve());
     }
-    expect(
-      calls.filter(
-        (invocation) =>
-          invocation[0] === "docker" && invocation[1] === "network" && invocation[2] === "rm",
-      ),
-    ).toHaveLength(2);
   });
 
   it("mounts fake API credentials without placing their values in Docker arguments", async () => {

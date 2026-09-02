@@ -9,6 +9,24 @@ import { closeServer, listenServer, writeJsonResponse } from "../fixtures/http-p
 import { proveFakeApiPortTraffic } from "../lib/fake-api-port-readiness.mts";
 
 describe("fake API port readiness", () => {
+  it("retries an invalid REST reply until the expected traffic reply arrives", async () => {
+    let requests = 0;
+    const server = http.createServer((_request, response) => {
+      requests += 1;
+      writeJsonResponse(response, 200, {
+        type: requests < 3 ? "not-ready" : "nemoclaw_port_traffic_reply",
+      });
+    });
+    const port = await listenServer(server, 0, "127.0.0.1");
+
+    try {
+      await proveFakeApiPortTraffic({ host: "127.0.0.1", restPort: port });
+      expect(requests).toBe(3);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("rejects a REST redirect without contacting its target", async () => {
     let targetRequests = 0;
     const target = http.createServer((_request, response) => {

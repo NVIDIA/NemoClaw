@@ -23,12 +23,17 @@ export interface PollOptions<T> {
 export type PollingFailureReason = "aborted" | "terminal" | "exhausted";
 
 export class PollingError<T> extends Error {
+  readonly lastAttempt?: PollAttempt<T>;
+  readonly reason: PollingFailureReason;
+
   constructor(
     message: string,
-    readonly lastAttempt?: PollAttempt<T>,
-    readonly reason: PollingFailureReason = "exhausted",
+    lastAttempt?: PollAttempt<T>,
+    reason: PollingFailureReason = "exhausted",
   ) {
     super(message);
+    this.lastAttempt = lastAttempt;
+    this.reason = reason;
   }
 }
 

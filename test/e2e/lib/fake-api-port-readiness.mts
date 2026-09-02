@@ -4,6 +4,8 @@
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 
+import { PollingError, pollUntil } from "../fixtures/polling.ts";
+
 const ATTEMPT_TIMEOUT_MS = 1_000;
 const PORT_TRAFFIC_TIMEOUT_MS = 10_000;
 const RETRY_DELAY_MS = 100;
@@ -108,10 +110,6 @@ function probeWebsocket(host: string, port: number): Promise<void> {
   });
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export async function proveFakeApiPortTraffic(options: {
   host: string;
   restPort: number;
@@ -129,21 +127,31 @@ export async function proveFakeApiPortTraffic(options: {
   ) {
     throw new Error("WebSocket port must be an integer between 1 and 65535");
   }
-  const deadline = Date.now() + PORT_TRAFFIC_TIMEOUT_MS;
-  let lastError: string | undefined;
-  do {
-    try {
-      await probeHttp(options.host, options.restPort);
-      if (options.websocketPort !== undefined) {
-        await probeWebsocket(options.host, options.websocketPort);
-      }
-      return;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
-    await sleep(RETRY_DELAY_MS);
-  } while (Date.now() < deadline);
-  throw new Error(`fake API port traffic check failed: ${lastError ?? "no reply"}`);
+  type ProbeResult = { ok: true } | { error: string; ok: false };
+  try {
+    await pollUntil<ProbeResult>({
+      artifactPrefix: "fake-api-port-traffic",
+      deadlineMs: PORT_TRAFFIC_TIMEOUT_MS,
+      delayMs: RETRY_DELAY_MS,
+      probe: async () => {
+        try {
+          await probeHttp(options.host, options.restPort);
+          if (options.websocketPort !== undefined) {
+            await probeWebsocket(options.host, options.websocketPort);
+          }
+          return { ok: true };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error), ok: false };
+        }
+      },
+      accept: (result) => result.ok,
+    });
+  } catch (error) {
+    if (!(error instanceof PollingError)) throw error;
+    const lastResult = error.lastAttempt?.value;
+    const lastError = lastResult?.ok === false ? lastResult.error : "no reply";
+    throw new Error(`fake API port traffic check failed: ${lastError}`);
+  }
 }
 
 async function main(): Promise<void> {
