@@ -7,11 +7,15 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { LockObservation } from "./mcp-lifecycle-lock-identity";
+import { createMcpLifecycleLockOwner, type LockObservation } from "./mcp-lifecycle-lock-identity";
 import {
   MAX_MCP_LIFECYCLE_LOCK_BYTES,
   readMcpLifecycleLockObservation,
   reclaimStaleMcpLifecycleLockGeneration,
+  safelyReleaseMcpLifecycleLock,
+  safelyReleaseMcpLifecycleLockSync,
+  writeMcpLifecycleLockCandidateAndLink,
+  writeMcpLifecycleLockCandidateAndLinkSync,
 } from "./mcp-lifecycle-lock-storage";
 
 afterEach(() => {
@@ -65,6 +69,66 @@ describe("MCP lifecycle lock storage", () => {
         size: MAX_MCP_LIFECYCLE_LOCK_BYTES + 1,
       });
       expect(fs.readdirSync(stateDir)).toEqual(["main.lock"]);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports and later recovers an async candidate without deleting a replacement lock", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    const owner = createMcpLifecycleLockOwner("alpha", "async-retained-candidate");
+    const candidatePath = `${lockPath}.candidate-${String(process.pid)}-${owner.token}`;
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    vi.spyOn(fs.promises, "rm").mockRejectedValueOnce(new Error("candidate cleanup failed"));
+    try {
+      await expect(writeMcpLifecycleLockCandidateAndLink(lockPath, owner)).resolves.toBe(true);
+
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(candidatePath), {
+        code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED",
+      });
+      expect(fs.existsSync(candidatePath)).toBe(true);
+      fs.rmSync(lockPath);
+      const replacement = createMcpLifecycleLockOwner("alpha", "async-replacement");
+      fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
+
+      await safelyReleaseMcpLifecycleLock(lockPath, owner.token);
+
+      expect(fs.existsSync(candidatePath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+        token: replacement.token,
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports and later recovers a sync candidate without deleting a replacement lock", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    const owner = createMcpLifecycleLockOwner("alpha", "sync-retained-candidate");
+    const candidatePath = `${lockPath}.candidate-${String(process.pid)}-${owner.token}`;
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    vi.spyOn(fs, "rmSync").mockImplementationOnce(() => {
+      throw new Error("candidate cleanup failed");
+    });
+    try {
+      expect(writeMcpLifecycleLockCandidateAndLinkSync(lockPath, owner)).toBe(true);
+
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(candidatePath), {
+        code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED",
+      });
+      expect(fs.existsSync(candidatePath)).toBe(true);
+      fs.rmSync(lockPath);
+      const replacement = createMcpLifecycleLockOwner("alpha", "sync-replacement");
+      fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
+
+      safelyReleaseMcpLifecycleLockSync(lockPath, owner.token);
+
+      expect(fs.existsSync(candidatePath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+        token: replacement.token,
+      });
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

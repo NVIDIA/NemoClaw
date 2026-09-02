@@ -45,6 +45,18 @@ function ownerFileContent(owner: McpLifecycleLockOwner): string {
   return `${JSON.stringify(owner)}\n`;
 }
 
+function lifecycleLockCandidatePath(lockPath: string, pid: number, token: string): string {
+  return `${lockPath}.candidate-${String(pid)}-${token}`;
+}
+
+function reportRetainedLifecycleLockCandidate(candidatePath: string, error: unknown): void {
+  const detail = error instanceof Error ? error.message : String(error);
+  process.emitWarning(
+    `Lifecycle lock candidate '${candidatePath}' could not be removed and was retained for generation-verified recovery: ${detail}`,
+    { code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED" },
+  );
+}
+
 export async function readMcpLifecycleLockObservation(
   lockPath: string,
   maxBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
@@ -199,12 +211,55 @@ export function mcpLifecycleLockPathExistsSync(targetPath: string): boolean {
   }
 }
 
+async function recoverOrphanedMcpLifecycleLockCandidate(
+  lockPath: string,
+  ownerPid: number,
+  token: string,
+): Promise<boolean> {
+  const candidatePath = lifecycleLockCandidatePath(lockPath, ownerPid, token);
+  const candidate = await readMcpLifecycleLockObservation(candidatePath);
+  if (!candidate) return true;
+  if (candidate.owner?.pid !== ownerPid || candidate.owner.token !== token) return false;
+  const canonical = await readMcpLifecycleLockObservation(lockPath);
+  if (canonical && canonical.dev === candidate.dev && canonical.ino === candidate.ino) return false;
+  return await reclaimStaleMcpLifecycleLockGenerationInternal(
+    candidatePath,
+    candidate,
+    undefined,
+    MAX_MCP_LIFECYCLE_LOCK_BYTES,
+    false,
+  );
+}
+
+function recoverOrphanedMcpLifecycleLockCandidateSync(
+  lockPath: string,
+  ownerPid: number,
+  token: string,
+): boolean {
+  const candidatePath = lifecycleLockCandidatePath(lockPath, ownerPid, token);
+  const candidate = readMcpLifecycleLockObservationSync(candidatePath);
+  if (!candidate) return true;
+  if (candidate.owner?.pid !== ownerPid || candidate.owner.token !== token) return false;
+  const canonical = readMcpLifecycleLockObservationSync(lockPath);
+  if (canonical && canonical.dev === candidate.dev && canonical.ino === candidate.ino) return false;
+  return reclaimStaleMcpLifecycleLockGenerationSyncInternal(
+    candidatePath,
+    candidate,
+    undefined,
+    MAX_MCP_LIFECYCLE_LOCK_BYTES,
+    false,
+  );
+}
+
 export async function safelyReleaseMcpLifecycleLock(
   lockPath: string,
   token: string,
 ): Promise<void> {
   const observation = await readMcpLifecycleLockObservation(lockPath);
-  if (!observation || observation.owner?.token !== token) return;
+  if (!observation || observation.owner?.token !== token) {
+    await recoverOrphanedMcpLifecycleLockCandidate(lockPath, process.pid, token);
+    return;
+  }
   // Claim and verify the generation before deletion. A replacement appearing
   // after the token read is restored rather than unlinked.
   await reclaimStaleMcpLifecycleLockGeneration(lockPath, observation);
@@ -212,7 +267,10 @@ export async function safelyReleaseMcpLifecycleLock(
 
 export function safelyReleaseMcpLifecycleLockSync(lockPath: string, token: string): void {
   const observation = readMcpLifecycleLockObservationSync(lockPath);
-  if (!observation || observation.owner?.token !== token) return;
+  if (!observation || observation.owner?.token !== token) {
+    recoverOrphanedMcpLifecycleLockCandidateSync(lockPath, process.pid, token);
+    return;
+  }
   reclaimStaleMcpLifecycleLockGenerationSync(lockPath, observation);
 }
 
@@ -240,11 +298,12 @@ function restoreClaimedMcpLifecycleLockGenerationSync(
   }
 }
 
-export async function reclaimStaleMcpLifecycleLockGeneration(
+async function reclaimStaleMcpLifecycleLockGenerationInternal(
   targetPath: string,
   expected: LockObservation,
   assertAfterClaim?: () => void,
   maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
+  recoverCandidate = true,
 ): Promise<boolean> {
   const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
   try {
@@ -283,6 +342,19 @@ export async function reclaimStaleMcpLifecycleLockGeneration(
       throw error;
     }
     await fs.promises.rm(quarantinePath, { force: true, recursive: true });
+    if (recoverCandidate && claimed?.owner) {
+      const recovered = await recoverOrphanedMcpLifecycleLockCandidate(
+        targetPath,
+        claimed.owner.pid,
+        claimed.owner.token,
+      );
+      if (!recovered) {
+        reportRetainedLifecycleLockCandidate(
+          lifecycleLockCandidatePath(targetPath, claimed.owner.pid, claimed.owner.token),
+          new Error("the candidate is still linked to a canonical or changed generation"),
+        );
+      }
+    }
     return true;
   }
 
@@ -295,11 +367,26 @@ export async function reclaimStaleMcpLifecycleLockGeneration(
   return false;
 }
 
-export function reclaimStaleMcpLifecycleLockGenerationSync(
+export async function reclaimStaleMcpLifecycleLockGeneration(
   targetPath: string,
   expected: LockObservation,
   assertAfterClaim?: () => void,
   maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
+): Promise<boolean> {
+  return await reclaimStaleMcpLifecycleLockGenerationInternal(
+    targetPath,
+    expected,
+    assertAfterClaim,
+    maxObservationBytes,
+  );
+}
+
+function reclaimStaleMcpLifecycleLockGenerationSyncInternal(
+  targetPath: string,
+  expected: LockObservation,
+  assertAfterClaim?: () => void,
+  maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
+  recoverCandidate = true,
 ): boolean {
   const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
   try {
@@ -335,6 +422,19 @@ export function reclaimStaleMcpLifecycleLockGenerationSync(
       throw error;
     }
     fs.rmSync(quarantinePath, { force: true, recursive: true });
+    if (recoverCandidate && claimed?.owner) {
+      const recovered = recoverOrphanedMcpLifecycleLockCandidateSync(
+        targetPath,
+        claimed.owner.pid,
+        claimed.owner.token,
+      );
+      if (!recovered) {
+        reportRetainedLifecycleLockCandidate(
+          lifecycleLockCandidatePath(targetPath, claimed.owner.pid, claimed.owner.token),
+          new Error("the candidate is still linked to a canonical or changed generation"),
+        );
+      }
+    }
     return true;
   }
 
@@ -342,11 +442,25 @@ export function reclaimStaleMcpLifecycleLockGenerationSync(
   return false;
 }
 
+export function reclaimStaleMcpLifecycleLockGenerationSync(
+  targetPath: string,
+  expected: LockObservation,
+  assertAfterClaim?: () => void,
+  maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
+): boolean {
+  return reclaimStaleMcpLifecycleLockGenerationSyncInternal(
+    targetPath,
+    expected,
+    assertAfterClaim,
+    maxObservationBytes,
+  );
+}
+
 export async function writeMcpLifecycleLockCandidateAndLink(
   lockPath: string,
   owner: McpLifecycleLockOwner,
 ): Promise<boolean> {
-  const candidatePath = `${lockPath}.candidate-${process.pid}-${owner.token}`;
+  const candidatePath = lifecycleLockCandidatePath(lockPath, process.pid, owner.token);
   try {
     const handle = await fs.promises.open(candidatePath, "wx", 0o600);
     try {
@@ -375,10 +489,19 @@ export async function writeMcpLifecycleLockCandidateAndLink(
   } finally {
     try {
       await fs.promises.rm(candidatePath, { force: true });
-    } catch {
-      // Publication is decided only by LINK plus owner-token reconciliation.
-      // A unique candidate cleanup failure must not strand a live canonical
-      // self-lock before the caller enters its protected operation.
+    } catch (error) {
+      let cleanupError = error;
+      let recovered = false;
+      try {
+        recovered = await recoverOrphanedMcpLifecycleLockCandidate(
+          lockPath,
+          process.pid,
+          owner.token,
+        );
+      } catch (recoveryError) {
+        cleanupError = recoveryError;
+      }
+      if (!recovered) reportRetainedLifecycleLockCandidate(candidatePath, cleanupError);
     }
   }
 }
@@ -387,7 +510,7 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
   lockPath: string,
   owner: McpLifecycleLockOwner,
 ): boolean {
-  const candidatePath = `${lockPath}.candidate-${process.pid}-${owner.token}`;
+  const candidatePath = lifecycleLockCandidatePath(lockPath, process.pid, owner.token);
   try {
     const fd = fs.openSync(candidatePath, "wx", 0o600);
     try {
@@ -411,8 +534,19 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
   } finally {
     try {
       fs.rmSync(candidatePath, { force: true });
-    } catch {
-      // Publication is decided only by LINK plus owner-token reconciliation.
+    } catch (error) {
+      let cleanupError = error;
+      let recovered = false;
+      try {
+        recovered = recoverOrphanedMcpLifecycleLockCandidateSync(
+          lockPath,
+          process.pid,
+          owner.token,
+        );
+      } catch (recoveryError) {
+        cleanupError = recoveryError;
+      }
+      if (!recovered) reportRetainedLifecycleLockCandidate(candidatePath, cleanupError);
     }
   }
 }
