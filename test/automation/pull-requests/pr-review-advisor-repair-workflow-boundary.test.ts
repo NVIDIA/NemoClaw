@@ -441,8 +441,13 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
       "${{ inputs.source_head_sha }}",
     );
     expect(
-      record(namedStep(installer, "Checkout base-trusted installer hash action").with).ref,
-    ).toContain("inputs.base_sha");
+      record(
+        namedStep(installer, "Checkout base-trusted generated-head installer hash action").with,
+      ).ref,
+    ).toBe("${{ inputs.base_sha }}");
+    expect(
+      namedStep(installer, "Verify generated-head installer hashes from base-trusted code").uses,
+    ).toBe("./.trusted-installer-hash/.github/actions/ci-installer-hash-check");
   });
 
   it("dispatches Advisor through an exact generated-head context (#10791)", () => {

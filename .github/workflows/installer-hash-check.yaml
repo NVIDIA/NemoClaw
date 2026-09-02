@@ -99,10 +99,10 @@ jobs:
           persist-credentials: false
 
       - name: Checkout base-trusted installer hash action
-        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.base_sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           path: .trusted-installer-hash
           persist-credentials: false
           sparse-checkout: |
@@ -112,7 +112,26 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Verify pull request installer hashes from base-trusted code
-        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')
+        if: github.event_name == 'pull_request'
+        uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}
+
+      - name: Checkout base-trusted generated-head installer hash action
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.base_sha }}
+          path: .trusted-installer-hash
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-hash-check
+            scripts/check-installer-hash.sh
+            scripts/checks/extract-installer-pins.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Verify generated-head installer hashes from base-trusted code
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
         uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
         with:
           repo-root: ${{ github.workspace }}

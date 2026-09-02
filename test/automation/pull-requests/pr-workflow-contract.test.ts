@@ -418,6 +418,10 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
     "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
     "./.github/actions/ci-installer-hash-check",
   ]);
+  const latestActionConditions = new Set([
+    "github.event_name != 'pull_request'",
+    "github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '')",
+  ]);
 
   return [
     ...(baseCheckout ? [] : ["missing base-trusted installer hash checkout"]),
@@ -436,7 +440,7 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
       : ["pull request installer hashes must use only the base-trusted action"]),
     ...steps.flatMap((step) => [
       ...(step.uses === "./.github/actions/ci-installer-hash-check" &&
-      step.if !== "github.event_name != 'pull_request'"
+      !latestActionConditions.has(String(step.if))
         ? ["installer hash action from the latest PR commit must not execute for pull requests"]
         : []),
       ...(step.uses?.includes("ci-installer-hash-check") && !allowedExecutors.has(step.uses)
