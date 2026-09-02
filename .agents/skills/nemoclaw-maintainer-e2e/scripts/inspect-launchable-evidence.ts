@@ -24,7 +24,6 @@ export interface WorkflowRun {
   event: string;
   path: string;
   status: string;
-  conclusion: string | null;
   html_url: string;
   created_at: string;
 }
@@ -107,41 +106,37 @@ export function parseOptions(args: string[]): Options {
   return { candidate };
 }
 function candidateRuns(candidate: string, runs: WorkflowRun[]): WorkflowRun[] {
-  return runs
-    .filter(
-      (run) =>
-        run.head_sha === candidate &&
-        run.path === WORKFLOW &&
-        run.head_branch === "main" &&
-        run.event === "workflow_dispatch" &&
-        run.status === "completed",
-    )
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
+  const eligible = runs.filter(
+    (run) =>
+      run.head_sha === candidate &&
+      run.path === WORKFLOW &&
+      run.head_branch === "main" &&
+      run.event === "workflow_dispatch" &&
+      run.status === "completed",
+  );
+  for (const run of eligible) {
+    if (!UTC.test(run.created_at) || Number.isNaN(Date.parse(run.created_at)))
+      fail("workflow run created_at must be an ISO 8601 UTC timestamp");
+  }
+  return eligible.sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id,
+  );
 }
-function selectJob(
+function selectNewestJob(
   candidate: string,
   runs: WorkflowRun[],
   jobs: (run: WorkflowRun) => WorkflowJob[],
-  conclusion: "success" | "failure",
 ): Selection | undefined {
   for (const run of candidateRuns(candidate, runs)) {
     const job = jobs(run).find(
       (value) =>
-        value.name === JOB && value.status === "completed" && value.conclusion === conclusion,
+        value.name === JOB &&
+        value.status === "completed" &&
+        (value.conclusion === "success" || value.conclusion === "failure"),
     );
     if (job) return { run, job };
   }
   return undefined;
-}
-export function selectNewestSuccessfulJob(
-  candidate: string,
-  runs: WorkflowRun[],
-  jobs: (run: WorkflowRun) => WorkflowJob[],
-): Selection {
-  return (
-    selectJob(candidate, runs, jobs, "success") ??
-    fail("no successful staging Brev Launchable job is bound to the candidate")
-  );
 }
 function json(value: string | undefined, name: string): JsonRecord {
   if (value === undefined) fail(`artifact is missing ${name}`);
@@ -214,7 +209,7 @@ export function validateLaunchableEvidence(
     return recovery("verifiedAt is missing", cleanupStatus, checkedAt);
   }
   if (!UTC.test(verifiedAt) || Number.isNaN(Date.parse(verifiedAt)))
-    fail("cleanup.verifiedAt must be an ISO 8601 UTC timestamp");
+    return recovery("verifiedAt is invalid", cleanupStatus, checkedAt);
   return {
     version: 1,
     candidate: { sha: candidate },
@@ -245,8 +240,7 @@ export function validateLaunchableEvidence(
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
   const runs = reader.listRuns(options.candidate),
     jobs = (run: WorkflowRun): WorkflowJob[] => reader.listJobs(run.id, run.run_attempt),
-    successful = selectJob(options.candidate, runs, jobs, "success"),
-    selection = successful ?? selectJob(options.candidate, runs, jobs, "failure");
+    selection = selectNewestJob(options.candidate, runs, jobs);
   if (!selection) fail("no successful staging Brev Launchable job is bound to the candidate");
   const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
     receipt = validateLaunchableEvidence(
@@ -255,7 +249,8 @@ export function inspectLaunchableEvidence(options: Options, reader: EvidenceRead
       artifactName,
       reader.readArtifact(selection.run.id, artifactName),
     );
-  if (!successful) fail("failed staging Brev Launchable job cannot provide release evidence");
+  if (selection.job.conclusion !== "success")
+    fail("failed staging Brev Launchable job cannot provide release evidence");
   return receipt;
 }
 function gh(args: string[]): unknown {

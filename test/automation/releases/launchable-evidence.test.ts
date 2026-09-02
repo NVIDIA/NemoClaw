@@ -28,7 +28,6 @@ const run = (
   event: "workflow_dispatch",
   path: ".github/workflows/e2e.yaml",
   status: "completed",
-  conclusion: "success",
   html_url: `https://example.test/runs/${id}`,
   created_at,
   ...overrides,
@@ -109,11 +108,7 @@ describe("Launchable evidence inspection", () => {
     expect(() =>
       inspectLaunchableEvidence(
         { candidate: SHA },
-        reader(
-          [run(10, "2026-06-01T00:00:00Z", { conclusion: "failure" })],
-          { "10:2": [job(20, { conclusion: "failure" })] },
-          artifact,
-        ),
+        reader([run()], { "10:2": [job(20, { conclusion: "failure" })] }, artifact),
       ),
     ).toThrow(
       `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=PRESENT checkedAt=2026-06-01T01:00:00Z`,
@@ -163,6 +158,30 @@ describe("Launchable evidence inspection", () => {
       ).run.id,
     ).toBe(11);
   });
+  it("rejects the newest failed job instead of accepting older success (#10798)", () => {
+    const artifact = files({
+      "cleanup.json": JSON.stringify({
+        workspaceName: "workspace",
+        workspaceId: "ws-1",
+        status: "PRESENT",
+        checkedAt: "2026-07-01T01:00:00Z",
+      }),
+    });
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        reader(
+          [run(10, "2026-06-01T00:00:00Z"), run(11, "2026-07-01T00:00:00Z")],
+          { "10:2": [job()], "11:2": [job(21, { conclusion: "failure" })] },
+          artifact,
+        ),
+      ),
+    ).toThrow("run=11 attempt=2 job=21");
+  });
+  it("rejects malformed eligible workflow timestamps (#10798)", () =>
+    expect(() =>
+      inspectLaunchableEvidence({ candidate: SHA }, reader([run(10, "not-a-time")])),
+    ).toThrow("workflow run created_at must be an ISO 8601 UTC timestamp"));
   it("merges workflow-run pages before selecting evidence (#10798)", () => {
     const runs = workflowRunsFromPages([
       { workflow_runs: [run(9, "2026-07-01T00:00:00Z", { head_sha: IMAGE_SHA })] },
@@ -254,6 +273,20 @@ describe("Launchable evidence inspection", () => {
       expect(message).not.toContain(`checkedAt=${verifiedAt ?? "undefined"}`);
     },
   );
+  it("preserves recovery identity for invalid verifiedAt (#10798)", () => {
+    const artifact = files({
+      "cleanup.json": JSON.stringify({
+        workspaceName: "workspace",
+        workspaceId: "ws-1",
+        status: "ABSENT",
+        checkedAt: "2026-06-01T01:00:00Z",
+        verifiedAt: "not-a-time",
+      }),
+    });
+    expect(() =>
+      inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact)),
+    ).toThrow("cleanup verifiedAt is invalid: run=10 attempt=2 job=20");
+  });
   it("preserves recovery identity when ABSENT lacks verifiedAt (#10798)", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const artifact = files({
