@@ -99,7 +99,7 @@ do_backup() {
 
   local count=0
   for f in "${FILES[@]}"; do
-    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
+    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${f}" "${dest}/"; then
       count=$((count + 1))
     else
       warn "Skipped ${f} (not found or download failed)"
@@ -107,7 +107,7 @@ do_backup() {
   done
 
   for d in "${DIRS[@]}"; do
-    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 2>/dev/null; then
+    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/"; then
       count=$((count + 1))
     else
       warn "Skipped ${d}/ (not found or download failed)"

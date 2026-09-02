@@ -31,7 +31,7 @@ describe("backup-workspace.sh", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("uses the NemoClaw wrapper for a rejected symbolic-link directory backup (#10636)", () => {
+  it("preserves a rejected directory diagnostic while backing up regular files (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
     const openshellCalls = path.join(root, "openshell-calls.txt");
     const workspace = path.join(root, "workspace");
@@ -48,6 +48,7 @@ set -euo pipefail
 printf '%s\\t%s\\t%s\\t%s\\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
 if [[ "$3" == */memory/ ]]; then
   test -L "$NEMOCLAW_TEST_LINKED_MEMBER"
+  printf 'NEMOCLAW_TEST_REJECTED_UNSAFE_DIRECTORY\n' >&2
   exit 1
 fi
 mkdir -p "$4"
@@ -77,8 +78,7 @@ exit 99
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Skipped memory/ (not found or download failed)");
-    expect(result.stdout).toContain("(5 items)");
+    expect(result.stderr).toContain("NEMOCLAW_TEST_REJECTED_UNSAFE_DIRECTORY");
     expect(fs.existsSync(openshellCalls)).toBe(false);
 
     const invocations = fs.readFileSync(calls, "utf8").trim().split("\n");
@@ -90,6 +90,12 @@ exit 99
     const backupRoot = path.join(home, ".nemoclaw", "backups");
     const [backupName] = fs.readdirSync(backupRoot);
     expect(backupName).toBeTruthy();
-    expect(fs.existsSync(path.join(backupRoot, backupName!, "memory"))).toBe(false);
+    const backupDir = path.join(backupRoot, backupName!);
+    expect(fs.readFileSync(path.join(backupDir, "SOUL.md"), "utf8")).toBe("saved\n");
+    expect(fs.readFileSync(path.join(backupDir, "USER.md"), "utf8")).toBe("saved\n");
+    expect(fs.readFileSync(path.join(backupDir, "IDENTITY.md"), "utf8")).toBe("saved\n");
+    expect(fs.readFileSync(path.join(backupDir, "AGENTS.md"), "utf8")).toBe("saved\n");
+    expect(fs.readFileSync(path.join(backupDir, "MEMORY.md"), "utf8")).toBe("saved\n");
+    expect(fs.existsSync(path.join(backupDir, "memory"))).toBe(false);
   });
 });
