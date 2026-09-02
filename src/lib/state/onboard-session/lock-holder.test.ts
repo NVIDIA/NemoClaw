@@ -80,6 +80,62 @@ describe("onboarding lock classification", () => {
     ).toEqual({ state: "stale" });
   });
 
+  it("classifies a departed pre-provenance owner as stale", () => {
+    const isAlive = vi.fn(() => false);
+
+    expect(
+      classifyOnboardLockContents(
+        JSON.stringify({
+          pid: 424_242,
+          startedAt: "2026-09-01T00:00:00.000Z",
+          command: "nemoclaw onboard",
+        }),
+        90_000,
+        100_000,
+        { ...liveProbes, isAlive },
+      ),
+    ).toEqual({ state: "stale" });
+    expect(isAlive).toHaveBeenCalledWith(424_242);
+  });
+
+  it("does not probe a pre-provenance owner without stable local environment identity", () => {
+    const isAlive = vi.fn(() => false);
+
+    expect(
+      classifyOnboardLockContents(JSON.stringify({ pid: 424_242 }), 90_000, 100_000, {
+        ...liveProbes,
+        localHostIdentity: null,
+        isAlive,
+      }),
+    ).toMatchObject({
+      state: "held",
+      identityVerified: false,
+      provenance: "unknown",
+    });
+    expect(isAlive).not.toHaveBeenCalled();
+  });
+
+  it("does not probe a pre-provenance Linux owner without PID-namespace identity", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const isAlive = vi.fn(() => false);
+    try {
+      expect(
+        classifyOnboardLockContents(JSON.stringify({ pid: 424_242 }), 90_000, 100_000, {
+          ...liveProbes,
+          localPidNamespaceIdentity: null,
+          isAlive,
+        }),
+      ).toMatchObject({
+        state: "held",
+        identityVerified: false,
+        provenance: "unknown",
+      });
+      expect(isAlive).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("holds a live PID whose strong process identity matches", () => {
     const probes: OnboardLockIdentityProbes = {
       currentPid: 101,
@@ -252,7 +308,16 @@ describe("onboarding lock classification", () => {
       },
       "foreign",
     ],
-    ["legacy owner without provenance", { pid: 202 }, "unknown"],
+    [
+      "current owner without available provenance",
+      {
+        pid: 202,
+        processStartIdentity: null,
+        hostIdentity: null,
+        pidNamespaceIdentity: null,
+      },
+      "unknown",
+    ],
   ] as const)("holds a %s without consulting the local PID table", (_case, owner, provenance) => {
     const isAlive = vi.fn(() => false);
     const probes = { ...liveProbes, isAlive };

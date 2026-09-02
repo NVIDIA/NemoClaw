@@ -42,9 +42,9 @@ function onboardLockBody(
 ): string {
   return JSON.stringify({
     pid,
-    processStartIdentity,
     ...(provenance === "local"
       ? {
+          processStartIdentity,
           hostIdentity: readMcpLockHostIdentity(),
           pidNamespaceIdentity: readMcpLockPidNamespaceIdentity(),
         }
@@ -490,21 +490,56 @@ describe("legacy non-default gateway state migration", () => {
     expect(migrate).not.toThrow(/stop that process/u);
   });
 
-  it("fails closed for a legacy onboarding owner without provenance even after its PID exits", () => {
+  it.each([
+    [
+      "live pre-provenance",
+      onboardLockBody(process.pid, "2026-09-01T00:00:00.000Z", null, "legacy"),
+      /has no verifiable host and PID-namespace provenance/u,
+    ],
+    [
+      "foreign",
+      JSON.stringify({
+        pid: DEPARTED_PID,
+        processStartIdentity: "foreign-process",
+        hostIdentity: "host:foreign",
+        pidNamespaceIdentity: "pid:[foreign]",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        command: "onboard",
+      }),
+      /belongs to a different environment/u,
+    ],
+  ] as const)("preserves recovery state for a %s onboarding owner", (_case, lock, message) => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
     recordRecovery(recoveryFile, "port-box", 9123, "d");
     const before = fs.readFileSync(recoveryFile, "utf8");
+    writeOnboardLock(shared, lock);
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(message);
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+  });
+
+  it("migrates recovery state after a pre-provenance onboarding owner exits", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    recordRecovery(recoveryFile, "port-box", 9123, "d");
     writeOnboardLock(
       shared,
       onboardLockBody(DEPARTED_PID, "2026-09-01T00:00:00.000Z", null, "legacy"),
     );
 
-    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      /has no verifiable host and PID-namespace provenance/u,
-    );
-    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(result.warnings).toEqual([]);
+    expect(fs.existsSync(recoveryFile)).toBe(false);
+    expect(
+      listRetainedSandboxRecoveryRecords(path.join(selected, "retained-sandbox-recovery.json")).map(
+        (record) => record.sandboxName,
+      ),
+    ).toEqual(["port-box"]);
   });
 
   it("names a live onboarding process only after its strong identity matches", () => {

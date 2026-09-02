@@ -38,6 +38,11 @@ export type OnboardLockDisposition =
 export const ONBOARD_LOCK_SETTLING_MS = 30_000;
 export const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
 
+interface ParsedOnboardLockRecord {
+  readonly record: OnboardLockRecord;
+  readonly format: "current" | "legacy";
+}
+
 const hostOnboardLockIdentityProbes: OnboardLockIdentityProbes = {
   ...hostProcessIdentityProbes,
   localHostIdentity: readHostIdentity(),
@@ -73,25 +78,42 @@ function onboardLockHolderIdentity(
   return currentIdentity === lock.processStartIdentity ? "verified" : "departed";
 }
 
-function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
+function parseOnboardLockRecord(value: unknown): ParsedOnboardLockRecord | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const { pid, startedAt, command, processStartIdentity, hostIdentity, pidNamespaceIdentity } =
     value as Record<string, unknown>;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+  const fields = value as Record<string, unknown>;
+  const format = ["processStartIdentity", "hostIdentity", "pidNamespaceIdentity"].some((field) =>
+    Object.hasOwn(fields, field),
+  )
+    ? "current"
+    : "legacy";
   return {
-    pid,
-    processStartIdentity:
-      typeof processStartIdentity === "string" && processStartIdentity.length > 0
-        ? processStartIdentity
-        : null,
-    hostIdentity: typeof hostIdentity === "string" && hostIdentity.length > 0 ? hostIdentity : null,
-    pidNamespaceIdentity:
-      typeof pidNamespaceIdentity === "string" && pidNamespaceIdentity.length > 0
-        ? pidNamespaceIdentity
-        : null,
-    startedAt: typeof startedAt === "string" ? startedAt : null,
-    command: typeof command === "string" ? command : null,
+    format,
+    record: {
+      pid,
+      processStartIdentity:
+        typeof processStartIdentity === "string" && processStartIdentity.length > 0
+          ? processStartIdentity
+          : null,
+      hostIdentity:
+        typeof hostIdentity === "string" && hostIdentity.length > 0 ? hostIdentity : null,
+      pidNamespaceIdentity:
+        typeof pidNamespaceIdentity === "string" && pidNamespaceIdentity.length > 0
+          ? pidNamespaceIdentity
+          : null,
+      startedAt: typeof startedAt === "string" ? startedAt : null,
+      command: typeof command === "string" ? command : null,
+    },
   };
+}
+
+function canProbeLegacyOwner(probes: OnboardLockIdentityProbes): boolean {
+  return (
+    probes.localHostIdentity !== null &&
+    (process.platform !== "linux" || probes.localPidNamespaceIdentity !== null)
+  );
 }
 
 /** Build the persisted owner record with process-start identity evidence when available. */
@@ -128,14 +150,29 @@ export function classifyOnboardLockContents(
     value = null;
   }
 
-  const record = parseOnboardLockRecord(value);
-  if (record === null) {
+  const parsed = parseOnboardLockRecord(value);
+  if (parsed === null) {
     return nowMs - modifiedAtMs > ONBOARD_LOCK_SETTLING_MS
       ? { state: "stale" }
       : { state: "settling" };
   }
+  const { record } = parsed;
   const provenance = onboardLockHolderProvenance(record, probes);
   if (provenance !== "local") {
+    // Pre-provenance NemoClaw versions emitted only pid, startedAt, and
+    // command from the host CLI. Preserve that exact compatibility format:
+    // when this environment has stable local identity and the recorded PID
+    // is demonstrably absent, the interrupted legacy run is stale. Records
+    // with any current identity field remain fail-closed when provenance is
+    // incomplete, and explicitly foreign records never reach a local probe.
+    if (
+      provenance === "unknown" &&
+      parsed.format === "legacy" &&
+      canProbeLegacyOwner(probes) &&
+      !probes.isAlive(record.pid)
+    ) {
+      return { state: "stale" };
+    }
     return { state: "held", record, identityVerified: false, provenance };
   }
   const holderIdentity = onboardLockHolderIdentity(record, probes);

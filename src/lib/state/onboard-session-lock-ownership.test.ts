@@ -151,7 +151,6 @@ describe("onboard lock ownership", () => {
       (record: OnboardLockRecord) => ({
         record: {
           pid: record.pid,
-          processStartIdentity: record.processStartIdentity,
           startedAt: record.startedAt,
           command: record.command,
         },
@@ -182,6 +181,24 @@ describe("onboard lock ownership", () => {
     const contention = session.describeOnboardLockContention(result);
     expect(contention.reason).toContain(session.LOCK_FILE);
     expect(contention.reason).toContain(owner.reason);
+  });
+
+  it("reclaims a departed pre-provenance onboard lock", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.LOCK_FILE,
+      JSON.stringify({
+        pid: 2_147_483_647,
+        startedAt: "2026-09-01T00:00:00.000Z",
+        command: "interrupted legacy onboard",
+      }),
+      { mode: 0o600 },
+    );
+
+    expect(session.acquireOnboardLock("nemoclaw onboard --resume")).toMatchObject({
+      acquired: true,
+    });
+    expect(session.isOnboardLockHeldByCurrentProcess()).toBe(true);
   });
 
   it("preserves a foreign fallback lock that uses the current PID", () => {
@@ -312,11 +329,7 @@ describe("onboard lock ownership", () => {
   });
 
   it.each([
-    [
-      "verified replacement",
-      (record: OnboardLockRecord) => record,
-      "local",
-    ],
+    ["verified replacement", (record: OnboardLockRecord) => record, "local"],
     [
       "unverified replacement",
       (record: OnboardLockRecord) => ({
@@ -327,56 +340,59 @@ describe("onboard lock ownership", () => {
       }),
       "unknown",
     ],
-  ] as const)("restores a %s raced into an atomic stale-generation claim", (_case, replace, provenance) => {
-    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
-    const staleRecord = {
-      ...lockHolder.createOnboardLockRecord(
-        "departed onboarding owner",
-        "2026-03-25T00:00:00.000Z",
-      ),
-      pid: 2_147_483_647,
-      processStartIdentity: "departed-process",
-    };
-    fs.writeFileSync(session.LOCK_FILE, JSON.stringify(staleRecord), { mode: 0o600 });
-    const replacement = replace(
-      lockHolder.createOnboardLockRecord(
-        "replacement onboarding owner",
-        "2026-09-02T00:00:00.000Z",
-      ),
-    );
-    const replacementContents = JSON.stringify(replacement);
-    let replacementInode: number | null = null;
-    const displacedStale = `${session.LOCK_FILE}.observed-stale`;
-    const originalRenameSync = fs.renameSync.bind(fs);
-    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementationOnce(((from, to) => {
-      originalRenameSync(from, displacedStale);
-      fs.writeFileSync(from, replacementContents, { mode: 0o600 });
-      replacementInode = fs.statSync(from).ino;
-      originalRenameSync(from, to);
-    }) as typeof fs.renameSync);
+  ] as const)(
+    "restores a %s raced into an atomic stale-generation claim",
+    (_case, replace, provenance) => {
+      fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+      const staleRecord = {
+        ...lockHolder.createOnboardLockRecord(
+          "departed onboarding owner",
+          "2026-03-25T00:00:00.000Z",
+        ),
+        pid: 2_147_483_647,
+        processStartIdentity: "departed-process",
+      };
+      fs.writeFileSync(session.LOCK_FILE, JSON.stringify(staleRecord), { mode: 0o600 });
+      const replacement = replace(
+        lockHolder.createOnboardLockRecord(
+          "replacement onboarding owner",
+          "2026-09-02T00:00:00.000Z",
+        ),
+      );
+      const replacementContents = JSON.stringify(replacement);
+      let replacementInode: number | null = null;
+      const displacedStale = `${session.LOCK_FILE}.observed-stale`;
+      const originalRenameSync = fs.renameSync.bind(fs);
+      const renameSpy = vi.spyOn(fs, "renameSync").mockImplementationOnce(((from, to) => {
+        originalRenameSync(from, displacedStale);
+        fs.writeFileSync(from, replacementContents, { mode: 0o600 });
+        replacementInode = fs.statSync(from).ino;
+        originalRenameSync(from, to);
+      }) as typeof fs.renameSync);
 
-    try {
-      const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+      try {
+        const result = session.acquireOnboardLock("nemoclaw onboard --resume");
 
-      expect(result).toMatchObject({
-        acquired: false,
-        holderPid: process.pid,
-        holderProvenance: provenance,
-      });
-      expect(renameSpy).toHaveBeenCalledOnce();
-      expect(readFileSnapshot(session.LOCK_FILE)).toEqual({
-        ino: replacementInode,
-        contents: replacementContents,
-      });
-      expect(
-        fs
-          .readdirSync(path.dirname(session.LOCK_FILE))
-          .filter((name) => name.startsWith(`${path.basename(session.LOCK_FILE)}.reclaim-`)),
-      ).toEqual([]);
-    } finally {
-      renameSpy.mockRestore();
-    }
-  });
+        expect(result).toMatchObject({
+          acquired: false,
+          holderPid: process.pid,
+          holderProvenance: provenance,
+        });
+        expect(renameSpy).toHaveBeenCalledOnce();
+        expect(readFileSnapshot(session.LOCK_FILE)).toEqual({
+          ino: replacementInode,
+          contents: replacementContents,
+        });
+        expect(
+          fs
+            .readdirSync(path.dirname(session.LOCK_FILE))
+            .filter((name) => name.startsWith(`${path.basename(session.LOCK_FILE)}.reclaim-`)),
+        ).toEqual([]);
+      } finally {
+        renameSpy.mockRestore();
+      }
+    },
+  );
 
   it("restores then rejects an oversized replacement raced into stale reclamation", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
