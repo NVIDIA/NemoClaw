@@ -547,7 +547,7 @@ describe("deferred provider effect authority", () => {
       "Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure.",
     );
     expect((error as Error).message).toContain(
-      "After OpenShell confirms the retained sandbox is absent, run 'nemoclaw alpha destroy --yes' to reconcile residual local resources and its recovery record.",
+      "After OpenShell confirms the retained sandbox is absent, run 'nemoclaw alpha destroy --yes' to reconcile its verified Docker containers and recovery record.",
     );
 
     expect(runOpenshell).not.toHaveBeenCalledWith(
