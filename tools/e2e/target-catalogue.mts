@@ -818,7 +818,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_DASHBOARD_PORT: "18789",
-      NEMOCLAW_SANDBOX_NAME: "e2e-legacy-forward-migration",
+      NEMOCLAW_SANDBOX_NAME: "e2e-legacy-forward",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
