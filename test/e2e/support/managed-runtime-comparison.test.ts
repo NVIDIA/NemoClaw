@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   classifyCurrentRun,
@@ -13,10 +14,12 @@ import {
   commitStatusForClassification,
   createManagedRuntimeReceipt,
   parseManagedRuntimeReceipt,
+  publishManagedRuntimeCommitStatus,
   selectManagedRuntimeSource,
   type ManagedRuntimeCandidateSelection,
   type ManagedRuntimeReceipt,
 } from "../../../tools/e2e/managed-runtime-comparison.mts";
+import { validateManagedRuntimeBaseQualificationWorkflow } from "../../../tools/e2e/managed-runtime-base-qualification-workflow-boundary.mts";
 
 const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
@@ -78,7 +81,10 @@ function evidence(cleanupFailures = 0): string {
   fs.writeFileSync(path.join(scenario, "target.json"), '{"id":"managed-image-activation"}\n');
   fs.writeFileSync(
     path.join(scenario, "cleanup.json"),
-    JSON.stringify({ passed: ["remove sandbox"], failures: Array(cleanupFailures).fill({}) }),
+    JSON.stringify({
+      passed: ["remove sandbox"],
+      failures: Array(cleanupFailures).fill({}),
+    }),
   );
   return root;
 }
@@ -97,10 +103,11 @@ function receipt(
     evidenceDirectory: evidence(cleanupFailures),
     imageRevision,
     job: candidate
-      ? "Trusted candidate all-agent managed runtime activation"
-      : "Exact base all-agent managed runtime activation",
+      ? "Trusted candidate all-agent managed runtime activation (amd64)"
+      : "Exact base all-agent managed runtime activation (amd64)",
     openshellVersion: "openshell 0.0.116",
     outcome,
+    platform: "linux/amd64",
     role,
     candidateSourceRunAttempt: RUN_ATTEMPT,
     candidateSourceRunId: CANDIDATE_RUN_ID,
@@ -208,6 +215,7 @@ function selection(
     pullRequest: 10_790,
     candidateSha: CANDIDATE_SHA,
     baseSha: BASE_SHA,
+    platform: "linux/amd64",
     workflow: {
       id: 123,
       path: ".github/workflows/managed-runtime-base-qualification.yaml",
@@ -252,6 +260,51 @@ afterEach(() => {
 });
 
 describe("managed runtime comparison receipts", () => {
+  it("accepts the checked-in native and candidate-write qualification boundaries", () => {
+    const workflow = YAML.parse(
+      fs.readFileSync(
+        path.resolve(
+          import.meta.dirname,
+          "../../../.github/workflows/managed-runtime-base-qualification.yaml",
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(validateManagedRuntimeBaseQualificationWorkflow(workflow)).toEqual([]);
+  });
+
+  it("publishes the fixed status request through the shared GitHub client", async () => {
+    const requests: Array<{ path: string; token: string; options: unknown }> = [];
+    await publishManagedRuntimeCommitStatus(
+      {
+        description: "Exact-base qualification is running",
+        runId: BASE_RUN_ID,
+        sha: CANDIDATE_SHA,
+        state: "pending",
+        token: "status-token",
+      },
+      async (requestPath, token, options) => {
+        requests.push({ path: requestPath, token, options });
+        return { id: 1 };
+      },
+    );
+    expect(requests).toEqual([
+      {
+        path: `/repos/NVIDIA/NemoClaw/statuses/${CANDIDATE_SHA}`,
+        token: "status-token",
+        options: {
+          method: "POST",
+          body: {
+            state: "pending",
+            context: "NemoClaw / Exact-base managed runtime",
+            description: "Exact-base qualification is running",
+            target_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${BASE_RUN_ID}`,
+          },
+        },
+      },
+    ]);
+  });
+
   it("selects a completed exact-candidate run for the current same-repository PR", async () => {
     const fixture = sourceFixture();
     const selected = await selectSource(fixture.request);
@@ -277,12 +330,16 @@ describe("managed runtime comparison receipts", () => {
     },
     {
       name: "another attached PR",
-      run: { pull_requests: [{ number: PR_NUMBER + 1, head: { sha: CANDIDATE_SHA } }] },
+      run: {
+        pull_requests: [{ number: PR_NUMBER + 1, head: { sha: CANDIDATE_SHA } }],
+      },
       message: "source workflow run does not match the pull request",
     },
     {
       name: "another attached PR head",
-      run: { pull_requests: [{ number: PR_NUMBER, head: { sha: IMAGE_REVISION } }] },
+      run: {
+        pull_requests: [{ number: PR_NUMBER, head: { sha: IMAGE_REVISION } }],
+      },
       message: "source workflow pull request source SHA",
     },
     {
@@ -305,7 +362,10 @@ describe("managed runtime comparison receipts", () => {
 
   it("attributes a candidate failure only after the identical base scenario passes", () => {
     expect(
-      compare({ candidateJob: "failure", candidateReceipt: receipt("candidate", "failure") }),
+      compare({
+        candidateJob: "failure",
+        candidateReceipt: receipt("candidate", "failure"),
+      }),
     ).toMatchObject({ classification: "candidate-failure" });
   });
 
@@ -320,7 +380,9 @@ describe("managed runtime comparison receipts", () => {
     ["base cancellation", { baseJob: "cancelled" as const, baseReceipt: null }],
     ["coordination skip", { baseJob: "skipped" as const, baseReceipt: null }],
   ])("classifies %s as infrastructure evidence", (_name, options) => {
-    expect(compare(options)).toMatchObject({ classification: "infrastructure-failure" });
+    expect(compare(options)).toMatchObject({
+      classification: "infrastructure-failure",
+    });
   });
 
   it("rejects an exact-base substitution", () => {
@@ -331,6 +393,7 @@ describe("managed runtime comparison receipts", () => {
         candidateSourceRunAttempt: RUN_ATTEMPT,
         candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "base",
+        platform: "linux/amd64",
         runAttempt: RUN_ATTEMPT,
         runId: BASE_RUN_ID,
         workflowSha: BASE_SHA,
@@ -357,6 +420,7 @@ describe("managed runtime comparison receipts", () => {
         candidateSourceRunAttempt: RUN_ATTEMPT,
         candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "base",
+        platform: "linux/amd64",
         runAttempt: RUN_ATTEMPT,
         runId: BASE_RUN_ID,
         workflowSha: BASE_SHA,
@@ -372,6 +436,7 @@ describe("managed runtime comparison receipts", () => {
         candidateSourceRunAttempt: RUN_ATTEMPT,
         candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "base",
+        platform: "linux/amd64",
         runAttempt: RUN_ATTEMPT + 1,
         runId: BASE_RUN_ID,
         workflowSha: BASE_SHA,
@@ -391,6 +456,7 @@ describe("managed runtime comparison receipts", () => {
         candidateSourceRunAttempt: RUN_ATTEMPT,
         candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "candidate",
+        platform: "linux/amd64",
         runAttempt: RUN_ATTEMPT,
         runId: BASE_RUN_ID,
         workflowSha: BASE_SHA,
@@ -410,6 +476,7 @@ describe("managed runtime comparison receipts", () => {
         candidateSourceRunAttempt: RUN_ATTEMPT,
         candidateSourceRunId: CANDIDATE_RUN_ID,
         role: "candidate",
+        platform: "linux/amd64",
         runAttempt: RUN_ATTEMPT,
         runId: BASE_RUN_ID,
         workflowSha: BASE_SHA,
@@ -420,7 +487,9 @@ describe("managed runtime comparison receipts", () => {
   it("classifies a scenario mismatch as infrastructure evidence", () => {
     const baseReceipt = structuredClone(receipt("base")) as unknown as ManagedRuntimeReceipt;
     (baseReceipt.scenario as { testPath: string }).testPath = "test/e2e/live/another.test.ts";
-    expect(compare({ baseReceipt })).toMatchObject({ classification: "infrastructure-failure" });
+    expect(compare({ baseReceipt })).toMatchObject({
+      classification: "infrastructure-failure",
+    });
   });
 
   it("rejects different controller runtime identities", () => {
@@ -434,7 +503,10 @@ describe("managed runtime comparison receipts", () => {
 
   it("does not issue a product verdict when cleanup is not proven", () => {
     expect(
-      compare({ candidateJob: "failure", candidateReceipt: receipt("candidate", "failure", 1) }),
+      compare({
+        candidateJob: "failure",
+        candidateReceipt: receipt("candidate", "failure", 1),
+      }),
     ).toMatchObject({
       classification: "infrastructure-failure",
       reason: "candidate or base cleanup is not proven",
@@ -455,8 +527,14 @@ describe("managed runtime comparison receipts", () => {
       {
         request: async (apiPath) =>
           apiPath.includes("base-receipt")
-            ? artifactMetadata(`managed-runtime-base-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}`, 91)
-            : artifactMetadata(`managed-runtime-base-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}`, 92),
+            ? artifactMetadata(
+                `managed-runtime-base-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`,
+                91,
+              )
+            : artifactMetadata(
+                `managed-runtime-base-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`,
+                92,
+              ),
         downloadArtifact: async () => {
           throw new Error("credential-that-must-not-leak upstream body");
         },
@@ -476,9 +554,15 @@ describe("managed runtime comparison receipts", () => {
   });
 
   it("maps every comparison verdict to a blocking candidate status", () => {
-    expect(commitStatusForClassification("pass")).toMatchObject({ state: "success" });
-    expect(commitStatusForClassification("candidate-failure")).toMatchObject({ state: "failure" });
-    expect(commitStatusForClassification("base-failure")).toMatchObject({ state: "failure" });
+    expect(commitStatusForClassification("pass")).toMatchObject({
+      state: "success",
+    });
+    expect(commitStatusForClassification("candidate-failure")).toMatchObject({
+      state: "failure",
+    });
+    expect(commitStatusForClassification("base-failure")).toMatchObject({
+      state: "failure",
+    });
     expect(commitStatusForClassification("infrastructure-failure")).toMatchObject({
       state: "error",
     });

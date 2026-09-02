@@ -208,8 +208,14 @@ function validatePlatformEvidence(
 /** Validate one complete published cohort against its selected workflow attempt. */
 export function validateManagedImageCohort(
   value: unknown,
-  expected: { readonly revision: string; readonly runAttempt: number; readonly runId: number },
+  expected: {
+    readonly revision: string;
+    readonly runAttempt: number;
+    readonly runId: number;
+  },
+  catalogPlatform: ManagedImagePlatform = "linux/amd64",
 ): ManagedImageCohortIdentity {
+  if (!PLATFORMS.includes(catalogPlatform)) throw new Error("catalog platform is invalid");
   if (!SHA_PATTERN.test(expected.revision)) throw new Error("expected cohort revision is invalid");
   positiveInteger(expected.runId, "expected cohort run id");
   positiveInteger(expected.runAttempt, "expected cohort run attempt");
@@ -301,13 +307,13 @@ export function validateManagedImageCohort(
   };
   const catalog = Object.fromEntries(
     SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => {
-      const reference = receipt.images[agent]["linux/amd64"];
+      const reference = receipt.images[agent][catalogPlatform];
       return [
         agent,
         {
           contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
           agent,
-          platform: "linux/amd64",
+          platform: catalogPlatform,
           image: MANAGED_IMAGE_REPOSITORIES[agent],
           digest: reference.slice(reference.indexOf("@") + 1),
           reference,
@@ -339,6 +345,12 @@ function requiredInteger(value: string | undefined, label: string): number {
   return positiveInteger(Number(value), label);
 }
 
+function requestedCatalogPlatform(value: string | undefined): ManagedImagePlatform {
+  if (value === undefined) return "linux/amd64";
+  if (PLATFORMS.includes(value as ManagedImagePlatform)) return value as ManagedImagePlatform;
+  throw new Error("MANAGED_RUNTIME_PLATFORM is invalid");
+}
+
 export function main(argv = process.argv.slice(2), env = process.env): void {
   if (argv.length < 1 || argv.length > 2) {
     throw new Error("expected a managed-image cohort contract and optional catalog path");
@@ -350,6 +362,7 @@ export function main(argv = process.argv.slice(2), env = process.env): void {
       runAttempt: requiredInteger(env.PUBLICATION_RUN_ATTEMPT, "PUBLICATION_RUN_ATTEMPT"),
       runId: requiredInteger(env.PUBLICATION_RUN_ID, "PUBLICATION_RUN_ID"),
     },
+    requestedCatalogPlatform(env.MANAGED_RUNTIME_PLATFORM),
   );
   if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
   appendFileSync(

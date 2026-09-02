@@ -72,6 +72,7 @@ export function assembleManagedImageCatalog(
   values: readonly unknown[],
   candidateSha: string,
   expectedCohort: ManagedImageCohort,
+  platform: "linux/amd64" | "linux/arm64" = "linux/amd64",
 ): ManagedImageContractCatalog {
   if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
   if (values.length !== SHIPPED_MANAGED_IMAGE_AGENTS.length) {
@@ -79,9 +80,7 @@ export function assembleManagedImageCatalog(
       `exact PR managed-image publication requires ${SHIPPED_MANAGED_IMAGE_AGENTS.length} contracts`,
     );
   }
-  const contracts = values.map((value) =>
-    parseManagedImageContractV1(value, undefined, "linux/amd64"),
-  );
+  const contracts = values.map((value) => parseManagedImageContractV1(value, undefined, platform));
   const byAgent = new Map(contracts.map((contract) => [contract.agent, contract]));
   if (
     byAgent.size !== SHIPPED_MANAGED_IMAGE_AGENTS.length ||
@@ -113,11 +112,12 @@ export function writeManagedImageCatalog(
   candidateSha: string,
   outputPath: string,
   expectedCohort: ManagedImageCohort,
+  platform: "linux/amd64" | "linux/arm64" = "linux/amd64",
 ): void {
   const contracts = contractPaths.map(
     (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
   );
-  const catalog = assembleManagedImageCatalog(contracts, candidateSha, expectedCohort);
+  const catalog = assembleManagedImageCatalog(contracts, candidateSha, expectedCohort, platform);
   writeValidatedManagedImageCatalog(catalog, outputPath);
 }
 
@@ -125,7 +125,10 @@ function writeValidatedManagedImageCatalog(
   catalog: ManagedImageContractCatalog,
   outputPath: string,
 ): void {
-  fs.mkdirSync(path.dirname(path.resolve(outputPath)), { mode: 0o700, recursive: true });
+  fs.mkdirSync(path.dirname(path.resolve(outputPath)), {
+    mode: 0o700,
+    recursive: true,
+  });
   fs.writeFileSync(outputPath, `${JSON.stringify(catalog)}\n`, {
     encoding: "utf8",
     flag: "wx",
@@ -264,7 +267,11 @@ function validateWorkflow(payload: unknown): number {
 /** Select one successful exact-candidate managed-image workflow run. */
 export function selectManagedImagePublicationRun(
   payload: unknown,
-  expected: { readonly headSha: string; readonly prNumber: number; readonly workflowId: number },
+  expected: {
+    readonly headSha: string;
+    readonly prNumber: number;
+    readonly workflowId: number;
+  },
 ): ManagedImagePublicationRun {
   if (!SHA_PATTERN.test(expected.headSha)) throw new Error("candidate SHA is invalid");
   positiveInteger(expected.prNumber, "PR number");
@@ -378,7 +385,7 @@ export async function resolvePrManagedImageCatalog(
   try {
     const contracts: ManagedImageContractV1[] = [];
     for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-      const name = `managed-pr-contract-${run.id}-${run.attempt}-${agent}`;
+      const name = `managed-pr-contract-${run.id}-${run.attempt}-${agent}-amd64`;
       const metadata = await request(
         `/repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
       );
@@ -413,6 +420,12 @@ function requiredInteger(value: string | undefined, label: string): number {
   return positiveInteger(Number(value), label);
 }
 
+function requestedCatalogPlatform(value: string | undefined): "linux/amd64" | "linux/arm64" {
+  if (value === undefined) return "linux/amd64";
+  if (value === "linux/amd64" || value === "linux/arm64") return value;
+  throw new Error("MANAGED_RUNTIME_PLATFORM is invalid");
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   if (argv[0] === "assemble") {
     if (argv.length < 4) {
@@ -428,6 +441,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       argv[1],
       argv[2],
       `ghrun-${runId}-${runAttempt}` as const,
+      requestedCatalogPlatform(env.MANAGED_RUNTIME_PLATFORM),
     );
     console.log("pr-managed-image-catalog outcome=assembled");
     return;

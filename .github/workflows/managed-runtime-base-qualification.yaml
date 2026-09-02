@@ -147,29 +147,108 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  trusted-candidate-activation:
-    name: Trusted candidate all-agent managed runtime activation
+  build-candidate-cli:
+    name: Build untrusted candidate CLI in an isolated job
     needs: [authenticate-source, package-openshell-sdk]
     if: >-
       needs.authenticate-source.result == 'success' &&
       needs.package-openshell-sdk.result == 'success'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out candidate product source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authenticate-source.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out trusted dependency installer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: controller
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-install-dependencies.sh
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib
+          sparse-checkout-cone-mode: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Install dependencies and build only candidate outputs
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN \
+            GITHUB_EVENT_NAME=pull_request \
+            bash ../controller/.github/actions/ci-install-dependencies.sh
+          npm run build:cli
+          test -s dist/nemoclaw.js
+          if find -P dist -type l -print -quit | grep -q .; then
+            echo "ERROR: candidate build outputs must not contain symbolic links." >&2
+            exit 1
+          fi
+          output_bytes="$(du -sb dist | awk '{ print $1 }')"
+          test "$output_bytes" -le 134217728
+          /usr/bin/tar --create --file "$RUNNER_TEMP/candidate-cli.tar" \
+            dist
+
+      - name: Upload bounded candidate build product
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-candidate-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-cli.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  trusted-candidate-activation:
+    name: Trusted candidate all-agent managed runtime activation (${{ matrix.arch }})
+    needs: [authenticate-source, package-openshell-sdk, build-candidate-cli]
+    if: >-
+      needs.authenticate-source.result == 'success' &&
+      needs.package-openshell-sdk.result == 'success' &&
+      needs.build-candidate-cli.result == 'success'
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
-    outputs:
-      openshell_version: ${{ steps.runtime.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     permissions:
       actions: read
       contents: read
     env:
       BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
       CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/trusted/e2e-artifacts/live/managed-image-activation
+      E2E_ARTIFACT_DIR: ${{ runner.temp }}/managed-runtime-candidate/evidence
       E2E_JOB: "1"
       E2E_TARGET_ID: managed-image-activation
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/candidate/bin/nemoclaw.js
+      NEMOCLAW_CLI_BIN: ${{ runner.temp }}/candidate-cli
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
       NEMOCLAW_E2E_SHARD: default
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-runtime-candidate/catalog.json
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ runner.temp }}/managed-runtime-candidate/catalog.json
+      MANAGED_RUNTIME_PLATFORM: ${{ matrix.platform }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
@@ -213,7 +292,7 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.authenticate-source.outputs.source_run_id }}
-          pattern: managed-pr-contract-${{ needs.authenticate-source.outputs.source_run_id }}-${{ needs.authenticate-source.outputs.source_run_attempt }}-*
+          pattern: managed-pr-contract-${{ needs.authenticate-source.outputs.source_run_id }}-${{ needs.authenticate-source.outputs.source_run_attempt }}-*-${{ matrix.arch }}
           path: ${{ runner.temp }}/managed-runtime-candidate/contracts
           merge-multiple: false
 
@@ -222,6 +301,12 @@ jobs:
         with:
           name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Download isolated candidate CLI build product
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-runtime-candidate-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-cli-build
 
       - name: Assemble candidate catalog with the trusted controller
         run: |
@@ -252,13 +337,61 @@ jobs:
               bash ../trusted/.github/actions/ci-install-dependencies.sh
           )
 
-      - name: Build exact candidate CLI
-        working-directory: candidate
-        run: npm run build:cli
-
       - name: Install trusted OpenShell CLI
         working-directory: trusted
         run: env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN bash scripts/install-openshell.sh
+
+      - name: Materialize and isolate the candidate product
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/candidate-cli-build/candidate-cli.tar"
+          test -f "$archive" && test ! -L "$archive"
+          /usr/bin/tar --extract --file "$archive" --directory candidate \
+            --no-same-owner --no-same-permissions
+          test -s candidate/dist/nemoclaw.js
+          sudo groupadd --system nemoclaw-runtime
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --gid nemoclaw-runtime nemoclaw-candidate
+          sudo usermod --append --groups nemoclaw-runtime "$USER"
+          mkdir -p "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell"
+          sudo chown -R root:nemoclaw-runtime \
+            "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell"
+          sudo chmod -R u+rwX,g+rwX,o-rwx \
+            "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell"
+          sudo find "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell" \
+            -type d -exec chmod 2770 {} +
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          chmod 0700 "$E2E_ARTIFACT_DIR"
+          chmod 0444 "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+          chmod 0555 "$(dirname "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG")"
+          sudo chown -R root:root trusted candidate
+          sudo chmod -R a-w trusted candidate
+          trusted_digest="$(sudo find trusted -xdev -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          printf 'TRUSTED_CONTROLLER_DIGEST=%s\n' "$trusted_digest" >> "$GITHUB_ENV"
+          wrapper="$RUNNER_TEMP/candidate-cli"
+          sudo tee "$wrapper" >/dev/null <<EOF
+          #!/usr/bin/env bash
+          umask 0007
+          exec sudo --preserve-env -u nemoclaw-candidate -- \
+            /usr/bin/env HOME="$HOME" PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin" \
+            /usr/bin/node "$GITHUB_WORKSPACE/candidate/bin/nemoclaw.js" "\$@"
+          EOF
+          sudo chown root:root "$wrapper"
+          sudo chmod 0555 "$wrapper"
+
+      - name: Reject candidate writes to controller and evidence boundaries
+        run: |
+          set -euo pipefail
+          if sudo -u nemoclaw-candidate -- touch "$GITHUB_WORKSPACE/trusted/.candidate-tamper"; then
+            echo "ERROR: candidate user can mutate the trusted controller." >&2
+            exit 1
+          fi
+          if sudo -u nemoclaw-candidate -- touch "$E2E_ARTIFACT_DIR/.candidate-tamper"; then
+            echo "ERROR: candidate user can mutate trusted evidence." >&2
+            exit 1
+          fi
+          test ! -e "$GITHUB_WORKSPACE/trusted/.candidate-tamper"
+          test ! -e "$E2E_ARTIFACT_DIR/.candidate-tamper"
 
       - id: runtime
         name: Record OpenShell runtime identity
@@ -286,14 +419,44 @@ jobs:
           test "$(git -C ../candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
-          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
-            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
+          sg nemoclaw-runtime -c \
+            'npx --no-install tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-activation-e2e.test.ts'
+
+      - name: Prove candidate execution could not mutate trusted state
+        if: always()
+        run: |
+          set -euo pipefail
+          test ! -w trusted
+          test ! -w candidate
+          test "$(sudo find trusted -xdev -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')" = \
+            "$TRUSTED_CONTROLLER_DIGEST"
+          test "$(stat -c '%U:%a' "$E2E_ARTIFACT_DIR")" = "runner:700"
+
+      - name: Record the protected candidate activation receipt
+        if: always()
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MANAGED_IMAGE_REVISION: ${{ needs.authenticate-source.outputs.candidate_sha }}
+          MANAGED_RUNTIME_CATALOG: ${{ env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG }}
+          MANAGED_RUNTIME_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
+          MANAGED_RUNTIME_JOB: Trusted candidate all-agent managed runtime activation (${{ matrix.arch }})
+          MANAGED_RUNTIME_OUTCOME: ${{ steps.activation.outcome }}
+          MANAGED_RUNTIME_PLATFORM: ${{ matrix.platform }}
+          MANAGED_RUNTIME_ROLE: candidate
+          MANAGED_RUNTIME_SOURCE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
+          MANAGED_RUNTIME_WORKFLOW_PATH: .github/workflows/managed-runtime-base-qualification.yaml
+          OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          trusted/tools/e2e/managed-runtime-comparison.mts
+          record
+          "${RUNNER_TEMP}/managed-runtime-candidate-receipt-${{ matrix.arch }}/receipt.json"
 
       - name: Upload trusted candidate activation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-runtime-candidate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          name: managed-runtime-candidate-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ env.E2E_ARTIFACT_DIR }}/
           if-no-files-found: error
           retention-days: 14
@@ -302,18 +465,36 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-runtime-candidate-catalog-${{ github.run_id }}-${{ github.run_attempt }}
+          name: managed-runtime-candidate-catalog-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG }}
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
 
+      - name: Upload protected candidate activation receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-candidate-receipt-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/managed-runtime-candidate-receipt-${{ matrix.arch }}/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   authenticate-candidate-evidence:
-    name: Authenticate trusted candidate evidence
+    name: Authenticate trusted candidate evidence (${{ matrix.arch }})
     needs: [authenticate-source, trusted-candidate-activation]
     if: always() && needs.authenticate-source.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
     steps:
       - name: Check out trusted qualification controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -326,49 +507,6 @@ jobs:
         with:
           node-version: 22.23.1
 
-      - name: Download candidate evidence for trusted receipt generation
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: managed-runtime-candidate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-candidate/evidence
-
-      - name: Download candidate catalog for trusted receipt generation
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: managed-runtime-candidate-catalog-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-candidate/catalog
-
-      - name: Record trusted candidate activation receipt on a fresh runner
-        env:
-          BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
-          CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          MANAGED_IMAGE_REVISION: ${{ needs.authenticate-source.outputs.candidate_sha }}
-          MANAGED_RUNTIME_CATALOG: ${{ runner.temp }}/managed-runtime-candidate/catalog/catalog.json
-          MANAGED_RUNTIME_EVIDENCE_DIRECTORY: ${{ runner.temp }}/managed-runtime-candidate/evidence
-          MANAGED_RUNTIME_JOB: Trusted candidate all-agent managed runtime activation
-          MANAGED_RUNTIME_OUTCOME: ${{ needs.trusted-candidate-activation.result }}
-          MANAGED_RUNTIME_ROLE: candidate
-          MANAGED_RUNTIME_SOURCE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-          MANAGED_RUNTIME_WORKFLOW_PATH: .github/workflows/managed-runtime-base-qualification.yaml
-          OPENSHELL_VERSION: ${{ needs.trusted-candidate-activation.outputs.openshell_version }}
-          SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
-          SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
-        run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/managed-runtime-comparison.mts
-          record
-          "${RUNNER_TEMP}/managed-runtime-candidate-receipt/receipt.json"
-
-      - name: Upload trusted candidate activation receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-runtime-candidate-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-candidate-receipt/receipt.json
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0
-
       - id: select
         name: Bind trusted candidate receipt and evidence
         env:
@@ -377,13 +515,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           PR_NUMBER: ${{ needs.authenticate-source.outputs.pr_number }}
+          MANAGED_RUNTIME_PLATFORM: ${{ matrix.platform }}
           SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
           SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
         run: >-
           node --experimental-strip-types --no-warnings
           tools/e2e/managed-runtime-comparison.mts
           select-candidate
-          "${RUNNER_TEMP}/managed-runtime-candidate/selection.json"
+          "${RUNNER_TEMP}/managed-runtime-candidate/selection-${{ matrix.arch }}.json"
 
       - name: Fail closed when candidate evidence cannot be authenticated
         if: failure()
@@ -398,33 +537,44 @@ jobs:
       - name: Preserve authenticated candidate selection
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-runtime-candidate-selection-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-candidate/selection.json
+          name: managed-runtime-candidate-selection-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/managed-runtime-candidate/selection-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
 
   exact-base-activation:
-    name: Exact base all-agent managed runtime activation
+    name: Exact base all-agent managed runtime activation (${{ matrix.arch }})
     needs: [authenticate-source, package-openshell-sdk]
     if: >-
       needs.authenticate-source.result == 'success' &&
       needs.package-openshell-sdk.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     permissions:
       actions: read
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     env:
       BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
       CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/trusted/e2e-artifacts/live/managed-image-activation
+      E2E_ARTIFACT_DIR: ${{ runner.temp }}/managed-runtime-base/evidence
       E2E_JOB: "1"
       E2E_TARGET_ID: managed-image-activation
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/base/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
       NEMOCLAW_E2E_SHARD: default
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-runtime-base/catalog.json
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ runner.temp }}/managed-runtime-base/catalog.json
+      MANAGED_RUNTIME_PLATFORM: ${{ matrix.platform }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
@@ -567,9 +717,10 @@ jobs:
           MANAGED_IMAGE_REVISION: ${{ steps.publication.outputs.head_sha }}
           MANAGED_RUNTIME_CATALOG: ${{ env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG }}
           MANAGED_RUNTIME_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
-          MANAGED_RUNTIME_JOB: Exact base all-agent managed runtime activation
+          MANAGED_RUNTIME_JOB: Exact base all-agent managed runtime activation (${{ matrix.arch }})
           MANAGED_RUNTIME_OUTCOME: ${{ steps.activation.outcome }}
           MANAGED_RUNTIME_ROLE: base
+          MANAGED_RUNTIME_PLATFORM: ${{ matrix.platform }}
           MANAGED_RUNTIME_SOURCE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
           MANAGED_RUNTIME_WORKFLOW_PATH: .github/workflows/managed-runtime-base-qualification.yaml
           OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
@@ -577,13 +728,13 @@ jobs:
           node --experimental-strip-types --no-warnings
           trusted/tools/e2e/managed-runtime-comparison.mts
           record
-          "${RUNNER_TEMP}/managed-runtime-base-receipt/receipt.json"
+          "${RUNNER_TEMP}/managed-runtime-base-receipt-${{ matrix.arch }}/receipt.json"
 
       - name: Upload exact-base activation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-runtime-base-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          name: managed-runtime-base-evidence-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ env.E2E_ARTIFACT_DIR }}/
           if-no-files-found: error
           retention-days: 14
@@ -592,8 +743,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-runtime-base-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-base-receipt/receipt.json
+          name: managed-runtime-base-receipt-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/managed-runtime-base-receipt-${{ matrix.arch }}/receipt.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -626,11 +777,17 @@ jobs:
         with:
           node-version: 22.23.1
 
-      - name: Download authenticated candidate selection
+      - name: Download authenticated amd64 candidate selection
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: managed-runtime-candidate-selection-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-candidate
+          name: managed-runtime-candidate-selection-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+          path: ${{ runner.temp }}/managed-runtime-candidate/amd64
+
+      - name: Download authenticated arm64 candidate selection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-runtime-candidate-selection-${{ github.run_id }}-${{ github.run_attempt }}-arm64
+          path: ${{ runner.temp }}/managed-runtime-candidate/arm64
 
       - id: classify
         name: Compare authenticated scenario receipts
@@ -639,12 +796,34 @@ jobs:
           BASE_JOB_CONCLUSION: ${{ needs.exact-base-activation.result }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/managed-runtime-comparison.mts
-          classify
-          "${RUNNER_TEMP}/managed-runtime-candidate/selection.json"
-          "${RUNNER_TEMP}/managed-runtime-comparison/comparison.json"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/managed-runtime-comparison/platforms"
+          overall=pass
+          for arch in amd64 arm64; do
+            selection="$RUNNER_TEMP/managed-runtime-candidate/$arch/selection-$arch.json"
+            comparison="$RUNNER_TEMP/managed-runtime-comparison/platforms/$arch.json"
+            if ! node --experimental-strip-types --no-warnings \
+              tools/e2e/managed-runtime-comparison.mts classify "$selection" "$comparison"; then
+              classification="$(jq -er .classification "$comparison")"
+              case "$classification" in
+                infrastructure-failure) overall=infrastructure-failure ;;
+                base-failure) [ "$overall" = infrastructure-failure ] || overall=base-failure ;;
+                candidate-failure) [ "$overall" = pass ] && overall=candidate-failure ;;
+                *) echo "ERROR: invalid platform classification" >&2; exit 1 ;;
+              esac
+            fi
+          done
+          jq -n \
+            --arg classification "$overall" \
+            --slurpfile amd64 "$RUNNER_TEMP/managed-runtime-comparison/platforms/amd64.json" \
+            --slurpfile arm64 "$RUNNER_TEMP/managed-runtime-comparison/platforms/arm64.json" \
+            '{
+              kind: "nemoclaw-managed-runtime-multiarch-comparison-v1",
+              classification: $classification,
+              platforms: {"linux/amd64": $amd64[0], "linux/arm64": $arm64[0]}
+            }' > "$RUNNER_TEMP/managed-runtime-comparison/comparison.json"
+          test "$overall" = pass
 
       - name: Publish qualification result on the candidate commit
         if: always()

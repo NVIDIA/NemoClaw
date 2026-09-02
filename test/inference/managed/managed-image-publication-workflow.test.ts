@@ -378,7 +378,9 @@ describe("complete managed-image publication workflow", () => {
 
     expect(prBuilder.needs).toBe("pr-reviewed-npm-audit");
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
-    expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
+    expect(prBuilder["runs-on"]).toBe(
+      "${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}",
+    );
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
@@ -387,6 +389,13 @@ describe("complete managed-image publication workflow", () => {
     expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
+    expect(prBuilder.strategy?.matrix?.agent).toEqual([
+      "openclaw",
+      "hermes",
+      "langchain-deepagents-code",
+    ]);
+    expect(prBuilder.strategy?.matrix?.arch).toEqual(["amd64", "arm64"]);
+    expect(prBuilder.env?.PLATFORM).toBe("linux/${{ matrix.arch }}");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
@@ -409,20 +418,20 @@ describe("complete managed-image publication workflow", () => {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
-    expect(step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run).toBe(
+    expect(step(prBuilder, "Resolve digest-pinned PR base for the native platform").run).toBe(
       "scripts/checks/resolve-managed-pr-base.sh",
     );
     expect(registryBaseBuild.if).toBe("steps.base.outputs.local != 'true'");
     const localBuild = required(localBaseBuild.run, "PR managed image local build is missing");
     expect(localBuild).toContain("docker build");
-    expect(localBuild).toContain("--platform linux/amd64");
+    expect(localBuild).toContain('--platform "$PLATFORM"');
     expect(localBuild).toContain('--build-arg "BASE_IMAGE=${BASE_IMAGE}"');
     expect(localBuild).toContain('--tag "$IMAGE_REFERENCE"');
     expect(localBuild).toContain('--label "org.opencontainers.image.version=${RELEASE}"');
     expect(localBaseBuild.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     expect(localBuild).not.toContain("docker buildx build");
     expect(registryBaseBuild.with).toMatchObject({
-      platforms: "linux/amd64",
+      platforms: "${{ env.PLATFORM }}",
       load: true,
       push: false,
     });
@@ -560,7 +569,7 @@ describe("complete managed-image publication workflow", () => {
     expect(publish.if).toBe(sameRepository);
     expect(publish.with).toMatchObject({
       builder: "${{ steps.buildx.outputs.name }}",
-      platforms: "linux/amd64",
+      platforms: "${{ env.PLATFORM }}",
       "build-contexts":
         "${{ steps.base.outputs.local == 'true' && format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) || '' }}",
       outputs:
@@ -646,10 +655,10 @@ describe("complete managed-image publication workflow", () => {
     expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
   });
 
-  it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
+  it("pins a single native-platform PR base descriptor and fails closed on torn index evidence", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const resolver = required(
-      step(managedPrBuilder(workflow), "Resolve digest-pinned linux/amd64 PR base").run,
+      step(managedPrBuilder(workflow), "Resolve digest-pinned PR base for the native platform").run,
       "PR base resolver script is missing",
     );
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-base-"));
@@ -718,6 +727,7 @@ fi
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
+          PLATFORM: "linux/amd64",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           RUNNER_TEMP: temporaryRoot,
         },
