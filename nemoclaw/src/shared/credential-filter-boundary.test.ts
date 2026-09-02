@@ -99,6 +99,7 @@ describe("shared credential filter", () => {
 
   it("preserves a value that has no secret shape (#8291)", () => {
     expect(valueLooksLikeSecret("keep-me")).toBe(false);
+    expect(stripCredentials({ model: "unused" })).toEqual({ model: "unused" });
   });
 
   it("strips URL userinfo from non-credential fields", () => {
@@ -120,6 +121,14 @@ describe("shared credential filter", () => {
     expect(redacted).not.toContain(urlCredential);
     expect(redacted).not.toContain(assignmentCredential);
     expect(redacted).toContain("<REDACTED>");
+
+    const queryAndHash = redactCredentialText(
+      "failed at https://api.example/path?apiKey=opaque-query-credential#token=opaque-hash-credential",
+    );
+    expect(queryAndHash).toContain("apiKey=<REDACTED>");
+    expect(queryAndHash).not.toContain("opaque-query-credential");
+    expect(queryAndHash).not.toContain("opaque-hash-credential");
+    expect(redactCredentialText("failed at https://%")).toBe("failed at <REDACTED>");
   });
 
   it.each([
