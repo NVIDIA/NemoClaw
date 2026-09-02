@@ -357,7 +357,7 @@ function createAgentBaseImageResolutionOptions(
     forceRefresh: options.forceBaseImageRefresh,
     rootDir: ROOT,
     pinnedRemoteRef,
-    preferPinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    requirePinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
     ...validationOptions,
   };
 }
