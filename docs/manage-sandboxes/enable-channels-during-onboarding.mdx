@@ -101,7 +101,8 @@ $$nemoclaw my-assistant channels remove discord
 
 The command removes the durable channel selection, stored credentials, gateway provider, and matching network policy preset.
 Interactive use then prompts you to rebuild the sandbox.
-Noninteractive use queues the rebuild; run `$$nemoclaw my-assistant rebuild` to apply it.
+When `NEMOCLAW_NON_INTERACTIVE=1` selects non-interactive mode, the command queues the rebuild.
+Run `$$nemoclaw my-assistant rebuild` to apply it.
 For an in-sandbox QR-paired channel, the command also clears its session state before teardown.
 Refer to [Manage Messaging Channels](manage-messaging-channels) for channel-specific teardown effects and recovery guidance.
 
