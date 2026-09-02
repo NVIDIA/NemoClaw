@@ -47,6 +47,27 @@ describe("host toolchain advisories (#3213)", () => {
     ]);
   });
 
+  it("keeps the headless remote hint platform-neutral on macOS (#10734)", () => {
+    const result = runAdvisories(
+      TOOLCHAIN_HOST_ADVISORY_CHECKS,
+      {
+        ...BASE_HOST,
+        platform: "darwin",
+        runtime: "docker-desktop",
+        isHeadlessLikely: true,
+      },
+      { phase: "preflight.host" },
+    );
+
+    const hint = result.advisories.find(({ id }) => id === "headless_remote_hint");
+    expect(hint).toMatchObject({
+      reason: "Headless hosts often need explicit remote UI handling if you want browser access.",
+      commands: [
+        "Prefer SSH port forwarding for remote browser access. If the dashboard needs an external origin, set `CHAT_UI_URL` to its HTTPS URL before onboarding.",
+      ],
+    });
+  });
+
   it("preserves the WSL Docker short-circuit", () => {
     const result = runAdvisories(
       TOOLCHAIN_HOST_ADVISORY_CHECKS,

@@ -111,7 +111,9 @@ function publicInstallRef(): string {
   return process.env.NEMOCLAW_PUBLIC_INSTALL_REF || process.env.GITHUB_SHA || "main";
 }
 
-test("cloud onboard: public installer creates healthy sandbox with security checks", {
+test(
+  "cloud onboard: public installer creates healthy sandbox with security checks",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -126,7 +128,16 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "remove cloud sandbox",
     ],
   },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({
+    artifacts,
+    cleanup: cleanupRegistry,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
   const hosted = requireHostedInferenceConfig(secrets);
   const ref = publicInstallRef();
   const installUrl =
@@ -172,15 +183,10 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
+    await runtimeProvider.requireAvailable({
     artifactName: "phase-0-docker-info",
-    env: testEnv(),
-    timeoutMs: 30_000,
+      scenarioLabel: "cloud onboarding",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   cleanupRegistry.trackDisposable("remove cloud-onboard sandbox", () =>
     cleanup(host, sandbox, { home: testHome, label: "cleanup", verify: true }),
@@ -235,9 +241,10 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
 
   progress.phase("verify migrated gateway credential");
-  expect(fs.existsSync(legacyFile), "successful onboard must remove legacy credentials.json").toBe(
-    false,
-  );
+    expect(
+      fs.existsSync(legacyFile),
+      "successful onboard must remove legacy credentials.json",
+    ).toBe(false);
   const providers = await host.command(
     "openshell",
     ["-g", "nemoclaw", "provider", "list", "--names"],
@@ -361,4 +368,5 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
         !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
     },
   });
-});
+  },
+);

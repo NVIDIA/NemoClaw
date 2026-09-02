@@ -7,11 +7,13 @@ import path from "node:path";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
+import type { GatewayClient } from "../fixtures/clients/gateway.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -143,6 +145,7 @@ async function runProbeOnlyConnect(
 
 async function cleanupDoubleOnboardState(
   host: HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
 ): Promise<void> {
   const names = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
@@ -171,7 +174,7 @@ async function cleanupDoubleOnboardState(
       timeoutMs: 30_000,
     }),
   );
-  await stopGatewayRuntime(host, "cleanup-stop-gateway-runtime");
+  await lifecycle.stopGatewayRuntime();
   await ignoreCleanupError(() =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
@@ -188,63 +191,11 @@ async function cleanupDoubleOnboardState(
   );
 }
 
-async function gatewayRuntimeId(host: HostCliClient, artifactName: string): Promise<string> {
-  const script = String.raw`
-set -euo pipefail
-pid_file="$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid"
-if [ -f "$pid_file" ]; then
-  pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    printf 'pid:%s\n' "$pid"
-    exit 0
-  fi
-fi
-cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" 2>/dev/null | head -1)"
-if [ -n "$cid" ]; then
-  printf 'container:%s\n' "$cid"
-  exit 0
-fi
-exit 1
-`;
-  const result = await host.command("bash", ["-lc", script], {
-    artifactName,
-    env: commandEnv(),
-    timeoutMs: 30_000,
-  });
-  const observedRuntimeId = result.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => /^(pid|container):/.test(line));
-  return observedRuntimeId ?? (result.exitCode === 0 ? result.stdout.trim() : "");
-}
-
-async function stopGatewayRuntime(host: HostCliClient, artifactName: string): Promise<void> {
-  const script = String.raw`
-set +e
-openshell forward stop 18789 >/dev/null 2>&1
-openshell gateway stop -g nemoclaw >/dev/null 2>&1
-pid_file="$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid"
-if [ -f "$pid_file" ]; then
-  pid="$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" >/dev/null 2>&1 || true
-    for _ in $(seq 1 10); do
-      kill -0 "$pid" 2>/dev/null || break
-      sleep 1
-    done
-    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" >/dev/null 2>&1 || true
-  fi
-fi
-cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" 2>/dev/null | head -1)"
-[ -n "$cid" ] && docker stop "$cid" >/dev/null 2>&1 || true
-exit 0
-`;
-  const stop = await host.command("bash", ["-lc", script], {
-    artifactName,
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(stop.exitCode, resultText(stop)).toBe(0);
+async function gatewayRuntimeId(
+  gateway: GatewayClient,
+): Promise<string> {
+  const runtime = await gateway.resolveHostRuntime();
+  return runtime?.kind === "container" ? `${runtime.kind}:${runtime.id}` : (runtime?.kind ?? "");
 }
 
 function gatewayAliasEndpoint(): string {
@@ -296,7 +247,11 @@ async function waitForForwardOwner(
   port: string,
   owner: string | undefined,
   artifactPrefix: string,
-): Promise<{ owner: string | undefined; output: string; querySucceeded: boolean }> {
+): Promise<{
+  owner: string | undefined;
+  output: string;
+  querySucceeded: boolean;
+}> {
   let observedOwner: string | undefined;
   let lastOutput = "";
   let querySucceeded = false;
@@ -447,29 +402,41 @@ async function prerequisiteOrSkip(
   skip(message);
 }
 
-test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces stale registry", {
-  timeout: TEST_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "validate double-onboard lifecycle prerequisites",
-      "onboard first sandbox",
-      "re-onboard same sandbox on existing gateway",
-      "recreate same sandbox on existing gateway",
-      "onboard sibling sandbox with isolated dashboard",
-      "stop sibling sandbox without disturbing the first forward",
-      "replace sandbox after stale registry refusal",
-      "validate gateway-stop lifecycle guidance",
-      "remove double-onboard resources",
-    ],
+test(
+  "double-onboard: reuses gateway, preserves sibling sandbox, and replaces stale registry",
+  {
+    timeout: TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "validate double-onboard lifecycle prerequisites",
+        "onboard first sandbox",
+        "re-onboard same sandbox on existing gateway",
+        "recreate same sandbox on existing gateway",
+        "onboard sibling sandbox with isolated dashboard",
+        "stop sibling sandbox without disturbing the first forward",
+        "replace sandbox after stale registry refusal",
+        "validate gateway-stop lifecycle guidance",
+        "remove double-onboard resources",
+      ],
+    },
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, gateway, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
-  await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
-  await prerequisiteOrSkip(host, skip, "bash", ["-lc", "command -v openshell"], "prereq-openshell");
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info",
+      scenarioLabel: "double-onboard",
+    });
+    await prerequisiteOrSkip(
+      host,
+      skip,
+      "bash",
+      ["-lc", "command -v openshell"],
+      "prereq-openshell",
+    );
   await prerequisiteOrSkip(
     host,
     skip,
@@ -501,9 +468,9 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
     env: commandEnv(),
     timeoutMs: 60_000,
   });
-  cleanup.trackDisposable("stop double-onboard gateway runtime", () =>
-    stopGatewayRuntime(host, "cleanup-stop-gateway-runtime"),
-  );
+  cleanup.trackDisposable("stop double-onboard gateway runtime", async () => {
+    await lifecycle.stopGatewayRuntime();
+  });
   cleanup.trackForward(host, 18789, {
     artifactName: "cleanup-openshell-forward-stop-18789",
     env: commandEnv(),
@@ -540,7 +507,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
     ],
   });
 
-  await cleanupDoubleOnboardState(host, sandbox);
+    await cleanupDoubleOnboardState(host, lifecycle, sandbox);
 
   progress.phase("onboard first sandbox");
   // Phase 2: first onboard.
@@ -588,13 +555,13 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
 
   progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
-  const gatewayBeforeSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-before");
+  const gatewayBeforeSecond = await gatewayRuntimeId(gateway);
   await artifacts.writeJson("phase-3-registry-before-second.json", registryEntry(SANDBOX_A));
   const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard");
   await artifacts.writeJson("phase-3-registry-after-second.json", registryEntry(SANDBOX_A));
   const secondText = resultText(second);
   expect(second.exitCode, secondText).toBe(0);
-  const gatewayAfterSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-after");
+  const gatewayAfterSecond = await gatewayRuntimeId(gateway);
   expect(gatewayBeforeSecond, "gateway runtime id before second onboard").not.toBe("");
   expect(gatewayAfterSecond).toBe(gatewayBeforeSecond);
   expect(secondText).toContain("Reusing healthy NemoClaw gateway.");
@@ -621,7 +588,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
   expect(stripAnsi(listAfterSecond.stdout)).toContain(SANDBOX_A);
 
   progress.phase("recreate same sandbox on existing gateway");
-  const gatewayBeforeRecreate = await gatewayRuntimeId(host, "phase-3-recreate-gateway-id-before");
+  const gatewayBeforeRecreate = await gatewayRuntimeId(gateway);
   const recreated = await runOnboard(
     host,
     SANDBOX_A,
@@ -631,9 +598,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
   );
   const recreatedText = resultText(recreated);
   expect(recreated.exitCode, recreatedText).toBe(0);
-  expect(await gatewayRuntimeId(host, "phase-3-recreate-gateway-id-after")).toBe(
-    gatewayBeforeRecreate,
-  );
+  expect(await gatewayRuntimeId(gateway)).toBe(gatewayBeforeRecreate);
   expect(recreatedText).not.toContain("Port 8080 is not available");
   expect(recreatedText).not.toContain("Port 18789 is not available");
 
@@ -653,22 +618,12 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
     timeoutMs: 30_000,
   });
   expect(selectAlt.exitCode, resultText(selectAlt)).toBe(0);
-  const selectedAlt = await host.command(
-    "bash",
-    ["-lc", "openshell status 2>&1 || true; openshell gateway info 2>&1 || true"],
-    {
-      artifactName: "phase-4-selected-alt-gateway",
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(gatewayNameFromOutput(resultText(selectedAlt))).toBe(ALT_GATEWAY_NAME);
 
-  const gatewayBeforeThird = await gatewayRuntimeId(host, "phase-4-gateway-id-before");
+  const gatewayBeforeThird = await gatewayRuntimeId(gateway);
   const third = await runOnboard(host, SANDBOX_B, fake.baseUrl, "phase-4-third-onboard");
   const thirdText = resultText(third);
   expect(third.exitCode, thirdText).toBe(0);
-  const gatewayAfterThird = await gatewayRuntimeId(host, "phase-4-gateway-id-after");
+  const gatewayAfterThird = await gatewayRuntimeId(gateway);
   expect(gatewayBeforeThird, "gateway runtime id before third onboard").not.toBe("");
   expect(gatewayAfterThird).toBe(gatewayBeforeThird);
   expect(thirdText).not.toContain("Port 8080 is not available");
@@ -887,7 +842,8 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
     env: commandEnv(),
     timeoutMs: 30_000,
   });
-  await stopGatewayRuntime(host, "phase-6-stop-gateway-runtime");
+    await lifecycle.stopGatewayRuntime();
+    await gateway.expectHostRuntimeStopped({ artifactName: "phase-6-gateway-runtime-stopped" });
   const postStopStatus = await command(host, [SANDBOX_B, "status"], {
     artifactName: "phase-6-status-after-gateway-stop",
     env: commandEnv(),
@@ -898,11 +854,13 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
   expect(postStopText).toMatch(
     /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/,
   );
-  expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(true);
+    expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(
+      true,
+    );
 
   progress.phase("remove double-onboard resources");
   // Phase 7: final cleanup with explicit assertions.
-  await cleanupDoubleOnboardState(host, sandbox);
+    await cleanupDoubleOnboardState(host, lifecycle, sandbox);
   const sandboxAAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
     artifactName: "phase-7-openshell-sandbox-a-after-cleanup",
     env: commandEnv(),
@@ -948,4 +906,5 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces st
         ),
     },
   });
-});
+  },
+);

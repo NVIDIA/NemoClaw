@@ -1,0 +1,78 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use the Headless Lifecycle Package"
+sidebar-title: "Headless Lifecycle Package"
+description: "Plan and observe a Hermes sandbox through the supported NemoClaw TypeScript package boundary."
+description-agent: "Documents the supported TypeScript lifecycle package for deterministic Hermes planning and read-only OpenShell observation. Use when integrating a headless service without CLI, transport, authentication, persistence, or mutation ownership."
+keywords: "NemoClaw lifecycle package, Hermes lifecycle, OpenShell observation"
+agent-variants: ["hermes"]
+content:
+  type: "reference"
+---
+
+Use `nemoclaw/lifecycle` when a service needs deterministic Hermes planning and read-only observation without invoking the NemoClaw command-line interface (CLI).
+The first API version supports Hermes `0.19.0` with OpenShell `0.0.106`.
+
+## Understand the Boundary
+
+Your service supplies an `OpenShellHermesAgentObserver` implementation that owns its OpenShell authentication and transport.
+The observer is a trusted boundary that must independently authenticate the requested target and inspect the live OpenShell resource, image, Hermes version, configuration fingerprint, sandbox phase, and Hermes health endpoint.
+It must not return request values without verifying them against live evidence.
+NemoClaw validates the request, calls that capability once, derives readiness, verifies the observed identities, and returns a redacted result.
+
+The public package does not read an ambient OpenShell profile, start a local Gateway, open a terminal, run a subprocess, or persist lifecycle state.
+It does not expose OpenShell software development kit (SDK), gRPC, protobuf, or CLI types.
+
+## Plan and Observe Hermes
+
+Provide SHA-256 identities for the target Gateway, OpenShell resource, sandbox image, and Hermes configuration.
+Keep credentials and private endpoint values inside your injected capability.
+
+```typescript
+import {
+  HERMES_LIFECYCLE_DEFINITION,
+  NEMOCLAW_LIFECYCLE_API_VERSION,
+  observeHermesLifecycle,
+  planHermesLifecycle,
+  type HermesLifecyclePlanRequest,
+  type LifecycleDigest,
+  type OpenShellHermesAgentObserver,
+} from "nemoclaw/lifecycle";
+
+declare const observer: OpenShellHermesAgentObserver;
+
+const digest = (value: string) => value as LifecycleDigest;
+const request: HermesLifecyclePlanRequest = {
+  apiVersion: NEMOCLAW_LIFECYCLE_API_VERSION,
+  target: {
+    gatewayIdentity: digest(process.env.GATEWAY_IDENTITY!),
+    workspace: "hermes-workspace",
+    openshellVersion: HERMES_LIFECYCLE_DEFINITION.openshellVersion,
+  },
+  sandbox: {
+    name: "hermes-agent",
+    resourceIdentity: digest(process.env.RESOURCE_IDENTITY!),
+    imageDigest: digest(process.env.IMAGE_DIGEST!),
+    configurationFingerprint: digest(process.env.CONFIGURATION_FINGERPRINT!),
+  },
+};
+
+const plan = planHermesLifecycle(request);
+if (!plan.ok) throw new Error(plan.error.message);
+
+const observation = await observeHermesLifecycle({ plan: request, timeoutMs: 5_000 }, observer);
+if (!observation.ok) throw new Error(observation.error.message);
+```
+
+The plan rejects unknown fields, unsupported versions, invalid names, and malformed digests.
+The observation fails closed when the target, resource, image, agent, or configuration identity differs from the plan.
+NemoClaw derives sandbox readiness from the closed OpenShell phase set and derives Hermes readiness from the health status code.
+The combined readiness is `ready` only when the sandbox phase is `Ready` or `Running` and the Hermes health endpoint returns status `200`.
+When the capability reports that the resource is missing, the result has `state: "missing"` and `readiness: "not_ready"`.
+
+## Respect the First API Limits
+
+This API does not define an image reference, entrypoint, provider, network policy, checkpoint, ownership record, or mutation authority.
+It does not create, stop, start, replace, delete, or clean up a sandbox.
+OpenShell `0.0.115` requires separate compatibility evidence before a later API definition can support it.

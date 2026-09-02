@@ -575,7 +575,8 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true, allowResidual: 
 `;
     const result = runNodeScript(home, script);
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("adapter cleanup failed (injected)");
+    expect(result.stderr).toContain("MCP force cleanup reported");
+    expect(result.stderr).not.toContain("adapter cleanup failed (injected)");
     const jsonMarker = "<<REPRO_JSON>>";
     const parsed = JSON.parse(
       result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),

@@ -139,6 +139,84 @@ export function decideMcpLifecycleTakeover(
   return observedToken === expectedToken ? { kind: "proceed" } : { kind: "refuse" };
 }
 
+export type McpLifecycleDeadlineRecoveryInput =
+  | { phase: "committed-containment"; present: boolean }
+  | { phase: "deadline-owner"; lock: McpLifecycleLockDecision }
+  | {
+      phase: "protected-owner";
+      lock: McpLifecycleLockDecision;
+      exactLocalOwner: boolean;
+      exactCurrentOwner: boolean;
+      syncProcessIdentity: "not-current" | "match" | "mismatch" | "unverifiable";
+    }
+  | {
+      phase: "publication";
+      authorityCurrent: boolean;
+      existingSelfToken: string | null;
+    };
+
+export type McpLifecycleDeadlineRecoveryDecision =
+  | { kind: "proceed" }
+  | { kind: "publish" }
+  | { kind: "resume"; token: string }
+  | { kind: "wait"; ownerPid: number; verifiedLive: true }
+  | { kind: "wait"; ownerPid: number | null; verifiedLive: false }
+  | { kind: "contain"; observation: LockObservation }
+  | {
+      kind: "refuse";
+      reason: "committed-containment" | "authority-changed" | "sync-reentrant-owner";
+    };
+
+/** Decide Shields deadline recovery while sync and async executors retain their own I/O. */
+export function decideMcpLifecycleDeadlineRecovery(
+  input: McpLifecycleDeadlineRecoveryInput,
+): McpLifecycleDeadlineRecoveryDecision {
+  if (input.phase === "committed-containment") {
+    return input.present
+      ? { kind: "refuse", reason: "committed-containment" }
+      : { kind: "proceed" };
+  }
+
+  if (input.phase === "publication") {
+    if (!input.authorityCurrent) {
+      return { kind: "refuse", reason: "authority-changed" };
+    }
+    return input.existingSelfToken
+      ? { kind: "resume", token: input.existingSelfToken }
+      : { kind: "publish" };
+  }
+
+  if (input.phase === "deadline-owner") {
+    return input.lock.kind === "contain"
+      ? { kind: "contain", observation: input.lock.observation }
+      : {
+          kind: "wait",
+          ownerPid: input.lock.kind === "wait" ? input.lock.ownerPid : null,
+          verifiedLive: false,
+        };
+  }
+
+  if (input.syncProcessIdentity === "match") {
+    return { kind: "refuse", reason: "sync-reentrant-owner" };
+  }
+  if ((input.lock.kind === "reap" || input.lock.kind === "contain") && input.exactLocalOwner) {
+    return { kind: "contain", observation: input.lock.observation };
+  }
+  if (input.syncProcessIdentity === "unverifiable") {
+    return { kind: "refuse", reason: "sync-reentrant-owner" };
+  }
+  const ownerPid = input.lock.kind === "wait" ? input.lock.ownerPid : null;
+  if (
+    input.lock.kind === "wait" &&
+    input.lock.disposition === "active" &&
+    input.exactCurrentOwner &&
+    ownerPid !== null
+  ) {
+    return { kind: "wait", ownerPid, verifiedLive: true };
+  }
+  return { kind: "wait", ownerPid, verifiedLive: false };
+}
+
 export type McpLifecycleAcquisitionInput =
   | { phase: "containment"; observation: LockObservation | null }
   | { phase: "deadline" | "reaper" | "main-owner"; lock: McpLifecycleLockDecision }

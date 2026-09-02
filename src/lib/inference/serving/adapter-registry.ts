@@ -884,10 +884,12 @@ const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] =
       "host.os.architecture",
       { kind: "observation", valueType: "string", role: "architecture" },
     ],
+    ["host.os.wsl", { kind: "observation", valueType: "boolean" }],
     [
       "host.docker.runtime",
       { kind: "observation", valueType: "string", role: "container-runtime" },
     ],
+    ["host.docker.memory_bytes", { kind: "observation", valueType: "number" }],
     [
       "host.gpu.count",
       { kind: "observation", valueType: "number", role: "gpu-count" },
@@ -923,6 +925,9 @@ const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] =
     ],
     ["host.platform.n1x", new Set(["qualification", "capability"] as const)],
     ["host.platform.supported", "capability"],
+    ["host.platform.wsl_docker_desktop", "capability"],
+    ["host.platform.wsl_gpu_passthrough", "capability"],
+    ["host.platform.n1x_wsl", new Set(["qualification", "capability"] as const)],
     ["host.docker.available", "capability"],
     ["host.docker.daemon_reachable", "capability"],
     ["host.docker.runtime_supported", "capability"],

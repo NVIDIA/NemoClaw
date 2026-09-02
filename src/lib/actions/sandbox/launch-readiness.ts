@@ -4,9 +4,18 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
+import {
+  createSyncCliOpenShellSandboxPolicyReader,
+  namedOpenShellGateway,
+  type OpenShellSandboxError,
+} from "../../adapters/openshell/sandbox-policy-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import { parseGatewayInference, planInferenceRouteReconcile } from "../../inference/config";
+import {
+  buildGatewayInferenceGetArgs,
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+} from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -20,6 +29,10 @@ import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
 } from "../../onboard/sandbox-recreate-probe";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  resolveRuntimeProviderBundle,
+} from "../../onboard/runtime-provider/access";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import {
@@ -35,13 +48,12 @@ import {
 } from "../../state/launch-readiness-lease";
 import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry";
+import { normalizeSandboxMcpState } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { normalizeSandboxMcpState } from "../../state/registry-mcp";
 import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
 } from "../../state/registry-messaging";
-import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
 import {
   runPortableOpenClawPairingApproval,
   runPortableOpenClawPairingRequestProducer,
@@ -77,7 +89,6 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
-const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
 
 export type LaunchReadinessPerformanceStage =
   | "storage-read"
@@ -123,6 +134,7 @@ export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   readLease?: typeof readLaunchReadinessLease;
   fenceLease?: typeof fenceLaunchReadinessLease;
   publishLease?: typeof publishLaunchReadinessLease;
+  assertPublicationCurrent?: () => void;
   observeOpenClawPairingQualification?: typeof observeOpenClawPairingQualification;
   observeOpenClawPairingRepairSettlement?: typeof observeOpenClawPairingRepairSettlement;
   observeOpenClawPairingSettlement?: typeof observeOpenClawPairingSettlement;
@@ -150,6 +162,7 @@ export type LaunchReadinessPublicationResult =
       category: "identity" | "config" | "health" | "session";
       failedCheck?: LaunchReadinessFailedCheck;
     }
+  | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
   | { kind: "evidence-failed" };
 
 export type LaunchReadinessMutationGateResult<T> =
@@ -176,6 +189,10 @@ export interface OpenClawPairingSettlementTarget {
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly stateDirectory: string;
   readonly version: string;
+}
+
+export interface OrdinaryOpenClawPairingSettlementTarget extends OpenClawPairingSettlementTarget {
+  readonly openshellDriver: string;
 }
 
 type LaunchReadinessPublicationValidationCategory = Extract<
@@ -516,7 +533,9 @@ export function buildLaunchReadinessRegistryProjection(
   portableRuntimeAuthoritySha256: string | null = null,
 ): unknown {
   const driver = normalizedString(entry.openshellDriver)?.toLowerCase() ?? null;
-  if (!driver || !ALLOWED_OPENSHELL_DRIVERS.has(driver)) throw new ObservationError("config");
+  if (!driver || !resolveRuntimeProviderBundle(driver, CURRENT_RUNTIME_PROVIDER_BUNDLES)) {
+    throw new ObservationError("config");
+  }
   const openshellVersion = normalizedString(entry.openshellVersion);
   const gatewayPort = entry.gatewayPort;
   if (!openshellVersion || openshellVersion.length > 128) throw new ObservationError("config");
@@ -648,14 +667,32 @@ function validateLivePolicy(
   gatewayName: string,
   deps: LaunchReadinessDeps,
 ): void {
-  const result = (
-    deps.capture ?? ((args) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
-  )(["policy", "get", "-g", gatewayName, "--full", sandboxName]);
-  if (result.status !== 0 || !result.output?.trim()) throw new LaunchReadinessEvidenceError();
+  const capture = deps.capture ?? captureLaunchReadiness;
+  const result = createSyncCliOpenShellSandboxPolicyReader({
+    capture: (args, options) =>
+      capture(args, {
+        ...options,
+        maxBuffer: LIVE_POLICY_MAX_BYTES,
+      }),
+  }).readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
+    sandboxName,
+    scope: "effective",
+  });
+  if (!result.ok) throw new LaunchReadinessPolicyObservationError(result.error);
   try {
-    parseAndValidateSandboxPolicy(result.output);
+    parseAndValidateSandboxPolicy(result.value.document);
   } catch {
-    throw new LaunchReadinessEvidenceError();
+    throw new LaunchReadinessPolicyObservationError({
+      kind: "schema",
+      message: "OpenShell returned an invalid sandbox policy document.",
+    });
+  }
+}
+
+class LaunchReadinessPolicyObservationError extends Error {
+  constructor(readonly policyError: OpenShellSandboxError) {
+    super(policyError.message);
   }
 }
 
@@ -1000,16 +1037,19 @@ function resolveOpenClawPairingSettlementTarget(
 export function resolveOrdinaryOpenClawPairingTarget(
   sandboxName: string,
   deps: LaunchReadinessDeps = {},
-): OpenClawPairingSettlementTarget | null {
+): OrdinaryOpenClawPairingSettlementTarget | null {
   try {
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
-    return resolveOpenClawPairingSettlementTarget(
+    const entry = getSandbox(sandboxName);
+    const target = resolveOpenClawPairingSettlementTarget(
       sandboxName,
-      getSandbox(sandboxName),
+      entry,
       deps,
       undefined,
       true,
     );
+    const openshellDriver = normalizedString(entry?.openshellDriver);
+    return target && openshellDriver ? { ...target, openshellDriver } : null;
   } catch {
     return null;
   }
@@ -1183,9 +1223,7 @@ export async function settlePortableOpenClawPairing(
         );
         runProducer(sandboxName, target.gatewayName);
       }
-      revalidateSandboxIdentity?.(
-        `approve Portable OpenClaw pairing for sandbox '${sandboxName}'`,
-      );
+      revalidateSandboxIdentity?.(`approve Portable OpenClaw pairing for sandbox '${sandboxName}'`);
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
 
       const finalDeadline = Math.min(
@@ -1382,10 +1420,28 @@ export async function publishLaunchReadiness(
       }
       return withGatewayLock(gatewayName, async () => {
         const validationStartedAt = performance.now();
-        let captured: Awaited<ReturnType<typeof captureLaunchIdentity>>;
+        let captured: Awaited<ReturnType<typeof captureLaunchIdentity>> | undefined;
+        let captureFailure: unknown;
         try {
-          captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
+          deps.assertPublicationCurrent?.();
+          try {
+            captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
+          } catch (error) {
+            captureFailure = error;
+          }
+          try {
+            deps.assertPublicationCurrent?.();
+          } catch (error) {
+            captureFailure = error;
+          }
+          if (captureFailure !== undefined) throw captureFailure;
         } catch (error) {
+          if (error instanceof LaunchReadinessPolicyObservationError) {
+            return {
+              kind: "policy-observation-failed",
+              error: error.policyError,
+            } as const;
+          }
           const validation = publicationValidationCategory(error);
           return validation
             ? ({ kind: "validation-failed", ...validation } as const)
@@ -1394,20 +1450,24 @@ export async function publishLaunchReadiness(
           recordPerformanceStage("publication-validation", validationStartedAt);
         }
         const publicationStartedAt = performance.now();
+        let publicationFailed = false;
         try {
+          deps.assertPublicationCurrent?.();
           (deps.publishLease ?? publishLaunchReadinessLease)(
             sandboxName,
             gatewayName,
             gatewayPort,
             epochId,
-            captured.identity,
+            captured!.identity,
             deps.storeOptions,
+            deps.assertPublicationCurrent,
           );
         } catch {
-          return { kind: "evidence-failed" } as const;
+          publicationFailed = true;
         } finally {
           recordPerformanceStage("publication-store", publicationStartedAt);
         }
+        if (publicationFailed) return { kind: "evidence-failed" } as const;
         return { kind: "published" } as const;
       });
     });

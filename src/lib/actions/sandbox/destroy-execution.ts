@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
@@ -16,7 +16,9 @@ import {
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
+import type { RuntimeProviderDestroyIdentityReceipt } from "../../onboard/runtime-provider/contract";
 import {
   type HostLocalInferenceLifecycleOptions,
   type PreparedHostLocalInferenceAuthority,
@@ -75,6 +77,7 @@ type SandboxDestroyExecutionInput = {
   // Docker IDs qualified before destroy preparation.
   expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
   expectedContainerIdentityFingerprint?: string;
+  expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -140,7 +143,7 @@ async function prepareMcpDestroy(
   }
   const preparation = sandboxConfirmedAbsent
     ? await prepareMcpBridgesForAbsentSandboxDestroy(sandboxName, { force })
-    : await prepareMcpBridgesForDestroy(sandboxName);
+    : await prepareMcpBridgesForDestroy(sandboxName, { force });
   if (sandboxConfirmedAbsent && preparation.entries.length > 0) {
     console.warn(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
@@ -233,7 +236,11 @@ async function restoreMcpAfterDeleteAbort(
   let recoveryFailure: string | undefined;
   let openedRollbackWindow = false;
   try {
-    if (hardened.hardenedForDelete && preparation.entries.length > 0) {
+    if (
+      hardened.hardenedForDelete &&
+      preparation.entries.length > 0 &&
+      !preparation.adapterScrubSkipped
+    ) {
       if (!hardened.timerProcessToken) {
         throw new Error(
           "Cannot open a bounded MCP rollback window because the active shields timer had no valid process token.",
@@ -303,6 +310,7 @@ export async function executeSandboxDestroy({
   sandboxName,
   expectedContainerIdentities,
   expectedContainerIdentityFingerprint,
+  expectedRuntimeProviderIdentity,
   portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -314,9 +322,16 @@ export async function executeSandboxDestroy({
       | { status: "changed"; subject?: string }
       | { status: "ambiguous"; detail: string; subject?: string }
       | { status: "probe-failed"; detail: string; subject?: string };
+    const identityProvider = resolveRuntimeProviderBundle(
+      sandbox?.openshellDriver ?? expectedRuntimeProviderIdentity?.providerId,
+      runtimeProviders,
+    );
     const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
-    const expectedContainerProof: DestroyContainerIdentityProof =
-      expectedContainerIdentities === undefined ? {} : { identities: expectedContainerIdentities };
+    const expectedContainerProof: DestroyContainerIdentityProof = expectedRuntimeProviderIdentity
+      ? { identities: undefined, providerIdentity: expectedRuntimeProviderIdentity }
+      : expectedContainerIdentities === undefined
+        ? { identities: undefined }
+        : { identities: expectedContainerIdentities };
     const proofFromVerdict = (
       verdict: ReturnType<typeof classifyDestroyContainerIdentity>,
     ): DestroyContainerIdentityProof | null => {
@@ -343,8 +358,7 @@ export async function executeSandboxDestroy({
         if (
           sandboxConfirmedAbsent &&
           expectedContainerIdentities !== undefined &&
-          expectedContainerIdentityFingerprint ===
-            pendingCreateIdentity.sandboxIdentityFingerprint
+          expectedContainerIdentityFingerprint === pendingCreateIdentity.sandboxIdentityFingerprint
         ) {
           return isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
             ? { status: "match" }
@@ -382,6 +396,33 @@ export async function executeSandboxDestroy({
         try {
           portableContainerAuthority.revalidate();
           return { status: "match" };
+        } catch (error) {
+          return { status: "probe-failed", detail: redactDestroyError(error) };
+        }
+      }
+      if (expectedRuntimeProviderIdentity) {
+        if (identityProvider?.cleanup.supported !== true) {
+          return {
+            status: "probe-failed",
+            detail: "the selected runtime provider has no destroy identity observer",
+          };
+        }
+        try {
+          const actual = sandbox
+            ? identityProvider.cleanup.captureDestroyIdentity?.({ sandbox, sandboxName })
+            : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
+          if (!actual) {
+            return {
+              status: "probe-failed",
+              detail: "the selected runtime provider has no destroy identity observer",
+            };
+          }
+          return actual.schemaVersion === expectedRuntimeProviderIdentity.schemaVersion &&
+            actual.providerId === expectedRuntimeProviderIdentity.providerId &&
+            actual.resourceHandle === expectedRuntimeProviderIdentity.resourceHandle &&
+            actual.ownershipSha256 === expectedRuntimeProviderIdentity.ownershipSha256
+            ? { status: "match" }
+            : { status: "changed" };
         } catch (error) {
           return { status: "probe-failed", detail: redactDestroyError(error) };
         }
