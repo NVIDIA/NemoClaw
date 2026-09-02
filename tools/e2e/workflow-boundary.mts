@@ -2597,6 +2597,8 @@ function validateTrustedE2eDispatchReceipt(
   const checkoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
   const trustedPrefix = [
     "Build trusted larger-runner routing",
+    "Check out trusted E2E planner",
+    "Stage trusted manual PR dispatch boundary",
     "Authenticate manual PR dispatch",
     "Build trusted controller target matrix",
     "Record trusted E2E dispatch receipt",
@@ -2826,78 +2828,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("trusted controller matrix step must bind targets through TARGETS env");
   }
-  requireRunContains(errors, controllerMatrix, 'case "${JOBS}:${TARGETS}" in');
-  const controllerMatrixScript = stringValue(controllerMatrix?.run);
-  const policyTarget = "ubuntu-policy-custom-missing-presets-negative";
-  const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
-  const openClawTarget = "ubuntu-repo-cloud-openclaw";
-  const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
-  const defaultMappings = [policyTarget, deepAgentsTarget, openClawTarget, postRebootTarget]
-    .map((target) => `{"id":"${target}","runner":"ubuntu-latest"}`)
-    .join(",");
-  const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
-  const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
-  const defaultTestMappings = [
-    {
-      file: "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
-      id: "onboard-managed-image-buildless-e2e",
-      project: "integration",
-    },
-    {
-      file: "test/platform/images/vllm-docker-storage.test.ts",
-      id: "vllm-docker-storage",
-      project: "integration",
-    },
-  ]
-    .map(({ file, id, project }) => `{"id":"${id}","file":"${file}","project":"${project}"}`)
-    .join(",");
-  requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
-  requireRunContains(errors, controllerMatrix, `test_matrix='[${defaultTestMappings}]'`);
-  const trustedControllerMatrixScript = [
-    "set -euo pipefail",
-    "test_matrix='[]'",
-    'case "${JOBS}:${TARGETS}" in',
-    ":)",
-    `matrix='[${defaultMappings}]'`,
-    `test_matrix='[${defaultTestMappings}]'`,
-    ";;",
-    "inference-routing: | managed-image-protected-runtime: | native-runtime-qualification-producer: | :jetson-nvmap-gpu)",
-    "matrix='[]'",
-    ";;",
-    `:${deepAgentsTarget})`,
-    `matrix='[${deepAgentsMapping}]'`,
-    ";;",
-    `:${postRebootTarget})`,
-    `matrix='[${postRebootMapping}]'`,
-    ";;",
-    `:${deepAgentsTarget},${postRebootTarget})`,
-    `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
-    ";;",
-    "*)",
-    'echo "::error::PR E2E target is not approved by the trusted controller" >&2',
-    "exit 1",
-    ";;",
-    "esac",
-    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
-    `printf 'test_matrix=%s\\n' "\${test_matrix}" >> "\${GITHUB_OUTPUT}"`,
-  ];
-  const controllerMatrixLines = controllerMatrixScript
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!isDeepStrictEqual(controllerMatrixLines, trustedControllerMatrixScript)) {
-    errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
+  if (
+    controllerMatrix?.run !== 'bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" controller-matrix'
+  ) {
+    errors.push("trusted controller matrix must execute the staged controller boundary");
   }
-  requireRunContains(
-    errors,
-    controllerMatrix,
-    "PR E2E target is not approved by the trusted controller",
-  );
-  requireRunContains(
-    errors,
-    controllerMatrix,
-    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
-  );
   const generateCheckout = requireStep(errors, generateSteps, "Check out E2E candidate");
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
   const candidateAuthorization = generateSteps.find(

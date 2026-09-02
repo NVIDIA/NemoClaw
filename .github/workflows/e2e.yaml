@@ -1153,6 +1153,7 @@ jobs:
           sparse-checkout: |
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             scripts/checks/run-native-runtime-installer-qualification.sh
+            scripts/e2e/native-runtime-cleanup-receipt.sh
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-producer-plan.mts
             tools/e2e/native-runtime-qualification-producer-evidence.mts
@@ -2083,12 +2084,52 @@ jobs:
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
           ACCOUNT_CREATED: ${{ steps.boundary.outputs.account_created }}
+          ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
+          ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
+          CLEANUP_RECEIPT_PATH: ${{ runner.temp }}/native-runtime-cleanup/receipt.json
         shell: bash
         run: |
           set -euo pipefail
           reported_account="${ACCOUNT:-}"
           reported_created="${ACCOUNT_CREATED:-}"
+          receipt_account="${ACCOUNT:-}"
+          receipt_gid="${ACCOUNT_GID:-}"
+          receipt_uid="${ACCOUNT_UID:-}"
           ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_stage="validate-ownership"
+          completed_stages=""
+          write_cleanup_receipt() {
+            local status="$1"
+            local failed_stage="${2:-}"
+            CLEANUP_STATUS="$status" \
+              CLEANUP_STAGE="$cleanup_stage" \
+              COMPLETED_STAGES="$completed_stages" \
+              FIRST_FAILED_STAGE="$failed_stage" \
+              ACCOUNT="$receipt_account" \
+              ACCOUNT_GID="$receipt_gid" \
+              ACCOUNT_UID="$receipt_uid" \
+              bash .qualification-workflow/scripts/e2e/native-runtime-cleanup-receipt.sh
+          }
+          complete_cleanup_stage() {
+            if [[ -n "$completed_stages" ]]; then
+              completed_stages+=","
+            fi
+            completed_stages+="$cleanup_stage"
+            write_cleanup_receipt in-progress
+          }
+          finalize_cleanup_receipt() {
+            local result="$?"
+            trap - EXIT
+            if (( result == 0 )); then
+              cleanup_stage="complete"
+              write_cleanup_receipt success
+            else
+              write_cleanup_receipt failed "$cleanup_stage" || true
+            fi
+            exit "$result"
+          }
+          write_cleanup_receipt in-progress
+          trap finalize_cleanup_receipt EXIT
           account=""
           uid=""
           gid=""
@@ -2105,6 +2146,9 @@ jobs:
             account="nemoclawq"
             uid="${BASH_REMATCH[1]}"
             gid="${BASH_REMATCH[2]}"
+            receipt_account="$account"
+            receipt_gid="$gid"
+            receipt_uid="$uid"
             [[ -z "$reported_account" || "$reported_account" == "$account" ]] || {
               echo "::error::Qualification account output does not match its ownership marker" >&2
               exit 1
@@ -2145,6 +2189,8 @@ jobs:
             runner_contract="${storage_config_directory}/runner-contract.json"
             resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             model_directory="${resource_directory}/model"
+            complete_cleanup_stage
+            cleanup_stage="stop-processes"
             sudo systemctl stop "$user_manager_unit" "$runtime_directory_unit" 2>/dev/null || true
             ! systemctl is-active --quiet "$user_manager_unit" && ! systemctl is-active --quiet "$runtime_directory_unit" || {
               echo "::error::Qualification systemd user lifecycle remained active during cleanup" >&2
@@ -2153,6 +2199,8 @@ jobs:
             if getent passwd "$account" >/dev/null; then
               sudo pkill -KILL -u "$uid" 2>/dev/null || true
             fi
+            complete_cleanup_stage
+            cleanup_stage="remove-systemd"
             if [[ -e "$user_manager_dropin_directory" || -L "$user_manager_dropin_directory" ]]; then
               [[ -d "$user_manager_dropin_directory" && ! -L "$user_manager_dropin_directory" && "$(stat -c '%u:%g:%a' "$user_manager_dropin_directory")" == "0:0:755" ]] || {
                 echo "::error::Qualification systemd user-manager drop-in directory cleanup target is invalid" >&2
@@ -2171,6 +2219,8 @@ jobs:
               sudo rmdir "$user_manager_dropin_directory"
               sudo systemctl daemon-reload
             fi
+            complete_cleanup_stage
+            cleanup_stage="remove-storage"
             if [[ -e "$storage_config_directory" || -L "$storage_config_directory" ]]; then
               [[ -d "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
                 echo "::error::Qualification storage configuration cleanup target is invalid" >&2
@@ -2225,6 +2275,8 @@ jobs:
               sudo rm -f -- "$storage_config_directory/storage.conf"
               sudo rmdir "$storage_config_directory"
             fi
+            complete_cleanup_stage
+            cleanup_stage="remove-model-resources"
             if [[ -e "$resource_directory" || -L "$resource_directory" ]]; then
               [[ -d "$resource_directory" && ! -L "$resource_directory" && ("$(stat -c '%u:%g:%a' "$resource_directory")" == "0:0:711" || "$(stat -c '%u:%g:%a' "$resource_directory")" == "0:0:555") ]] || {
                 echo "::error::Qualification GPU resource directory cleanup target is invalid" >&2
@@ -2261,6 +2313,8 @@ jobs:
                 exit 1
               }
             fi
+            complete_cleanup_stage
+            cleanup_stage="remove-runtime-tools"
             if [[ -e "$podman_executable" || -L "$podman_executable" ]]; then
               [[ -f "$podman_executable" && ! -L "$podman_executable" && "$(stat -c '%u:%g:%a' "$podman_executable")" == "0:0:555" ]] || {
                 echo "::error::Qualification Podman executable cleanup target is invalid" >&2
@@ -2284,6 +2338,8 @@ jobs:
               echo "::error::Qualification runtime directory remains after its systemd cleanup" >&2
               exit 1
             fi
+            complete_cleanup_stage
+            cleanup_stage="remove-account"
             if getent passwd "$account" >/dev/null; then
               sudo userdel --remove "$account"
             fi
@@ -2302,6 +2358,8 @@ jobs:
               echo "::error::Qualification subordinate-ID authorization remains after cleanup" >&2
               exit 1
             fi
+            complete_cleanup_stage
+            cleanup_stage="verify-removal"
             [[ ! -e "/run/user/${uid}" && ! -L "/run/user/${uid}" ]] || {
               echo "::error::Qualification runtime directory remains after cleanup" >&2
               exit 1
@@ -2323,15 +2381,31 @@ jobs:
               echo "::error::Qualification GPU resource directory remains after cleanup" >&2
               exit 1
             }
+            complete_cleanup_stage
+            cleanup_stage="remove-ownership-marker"
             sudo rm -f -- "$ownership_marker"
+            complete_cleanup_stage
           elif [[ -n "$reported_account" || "$reported_created" == "true" ]]; then
             echo "::error::Qualification account output exists without its ownership marker" >&2
             exit 1
+          else
+            complete_cleanup_stage
           fi
+          cleanup_stage="verify-ownership-marker"
           [[ ! -e "$ownership_marker" && ! -L "$ownership_marker" ]] || {
             echo "::error::Qualification account ownership marker remains after cleanup" >&2
             exit 1
           }
+          complete_cleanup_stage
+
+      - name: Upload the qualification cleanup recovery receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cleanup-${{ matrix.artifactName }}
+          path: ${{ runner.temp }}/native-runtime-cleanup/receipt.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload the qualification case evidence
         if: success()

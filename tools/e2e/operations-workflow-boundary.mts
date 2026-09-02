@@ -1536,6 +1536,51 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   }
 }
 
+export function validateNativeQualificationCleanupRecovery(
+  workflow: OperationsWorkflow,
+): string[] {
+  const errors: string[] = [];
+  const job = workflow.jobs["native-runtime-qualification-producer"] ?? {};
+  const checkout = findStep(job, "Check out the trusted qualification harness");
+  const sparseCheckout = String(checkout.with?.["sparse-checkout"] ?? "");
+  if (!sparseCheckout.split("\n").includes("scripts/e2e/native-runtime-cleanup-receipt.sh")) {
+    errors.push("Native qualification must check out its trusted cleanup receipt writer");
+  }
+
+  const cleanup = findStep(job, "Remove qualification resources");
+  const cleanupSource = String(cleanup.run ?? "");
+  if (
+    cleanup.if !== "always()" ||
+    cleanup.env?.ACCOUNT_GID !== "${{ steps.boundary.outputs.gid }}" ||
+    cleanup.env?.ACCOUNT_UID !== "${{ steps.boundary.outputs.uid }}" ||
+    cleanup.env?.CLEANUP_RECEIPT_PATH !==
+      "${{ runner.temp }}/native-runtime-cleanup/receipt.json" ||
+    !cleanupSource.includes("write_cleanup_receipt in-progress") ||
+    !cleanupSource.includes('write_cleanup_receipt failed "$cleanup_stage"') ||
+    !cleanupSource.includes("write_cleanup_receipt success") ||
+    !cleanupSource.includes("complete_cleanup_stage")
+  ) {
+    errors.push(
+      "Native qualification cleanup must retain staged progress and the first failed cleanup stage",
+    );
+  }
+
+  const upload = findStep(job, "Upload the qualification cleanup recovery receipt");
+  if (
+    upload.if !== "always()" ||
+    upload.uses !== "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" ||
+    !isDeepStrictEqual(upload.with, {
+      name: "cleanup-${{ matrix.artifactName }}",
+      path: "${{ runner.temp }}/native-runtime-cleanup/receipt.json",
+      "if-no-files-found": "error",
+      "retention-days": 14,
+    })
+  ) {
+    errors.push("Native qualification must always upload its cleanup recovery receipt");
+  }
+  return errors;
+}
+
 export function validateE2eOperationsWorkflow(
   workflow: OperationsWorkflow,
   advisorPath = DEFAULT_ADVISOR_PATH,
@@ -1545,6 +1590,7 @@ export function validateE2eOperationsWorkflow(
   );
   errors.push(...validateBaseImagePublicationGate(workflow));
   errors.push(...validateStockOnboardingPublicationBoundary(workflow));
+  errors.push(...validateNativeQualificationCleanupRecovery(workflow));
   validateManualPrDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);

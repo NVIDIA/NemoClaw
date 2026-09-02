@@ -150,6 +150,19 @@ describe("E2E artifact uploads", () => {
     );
   });
 
+  it("allows only the exact always-retained native runtime cleanup receipt upload", () => {
+    const workflow = mutableWorkflow();
+    const upload = workflow.jobs["native-runtime-qualification-producer"].steps?.find(
+      (step) => step.name === "Upload the qualification cleanup recovery receipt",
+    );
+    expect(upload).toBeDefined();
+    upload!.with!["retention-days"] = 30;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "native-runtime-qualification-producer must not invoke actions/upload-artifact directly",
+    );
+  });
+
   it.each([
     ["name", "another-cache-artifact"],
     ["path", "another-cache-path/"],

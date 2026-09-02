@@ -13,6 +13,7 @@ import {
   readE2eOperationsWorkflow,
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
+  validateNativeQualificationCleanupRecovery,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
@@ -58,6 +59,53 @@ function authenticationConditionWorkflow(condition: string): OperationsWorkflow 
             id: "candidate_authorization",
             name: "Authenticate manual PR dispatch",
             if: condition,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function nativeQualificationCleanupWorkflow(): OperationsWorkflow {
+  return {
+    jobs: {
+      "native-runtime-qualification-producer": {
+        steps: [
+          {
+            name: "Check out the trusted qualification harness",
+            with: {
+              "sparse-checkout": [
+                "scripts/checks/run-native-runtime-installer-qualification.sh",
+                "scripts/e2e/native-runtime-cleanup-receipt.sh",
+              ].join("\n"),
+            },
+          },
+          {
+            name: "Remove qualification resources",
+            if: "always()",
+            env: {
+              ACCOUNT_GID: "${{ steps.boundary.outputs.gid }}",
+              ACCOUNT_UID: "${{ steps.boundary.outputs.uid }}",
+              CLEANUP_RECEIPT_PATH:
+                "${{ runner.temp }}/native-runtime-cleanup/receipt.json",
+            },
+            run: [
+              "write_cleanup_receipt in-progress",
+              "complete_cleanup_stage",
+              'write_cleanup_receipt failed "$cleanup_stage"',
+              "write_cleanup_receipt success",
+            ].join("\n"),
+          },
+          {
+            name: "Upload the qualification cleanup recovery receipt",
+            if: "always()",
+            uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            with: {
+              name: "cleanup-${{ matrix.artifactName }}",
+              path: "${{ runner.temp }}/native-runtime-cleanup/receipt.json",
+              "if-no-files-found": "error",
+              "retention-days": 14,
+            },
           },
         ],
       },
@@ -658,6 +706,23 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
       "Native runtime qualification producer plan must execute only from trusted main",
+    );
+  });
+
+  it("accepts an always-retained native qualification cleanup recovery receipt", () => {
+    expect(validateNativeQualificationCleanupRecovery(nativeQualificationCleanupWorkflow())).toEqual(
+      [],
+    );
+  });
+
+  it("rejects success-only native qualification cleanup recovery evidence", () => {
+    const workflow = nativeQualificationCleanupWorkflow();
+    workflow.jobs["native-runtime-qualification-producer"].steps!.find(
+      (step) => step.name === "Upload the qualification cleanup recovery receipt",
+    )!.if = "success()";
+
+    expect(validateNativeQualificationCleanupRecovery(workflow)).toContain(
+      "Native qualification must always upload its cleanup recovery receipt",
     );
   });
 

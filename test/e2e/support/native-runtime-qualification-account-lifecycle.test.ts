@@ -9,7 +9,12 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
+import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
+const CLEANUP_RECEIPT_SCRIPT = path.join(
+  process.cwd(),
+  "scripts/e2e/native-runtime-cleanup-receipt.sh",
+);
 const roots: string[] = [];
 
 afterEach(() => {
@@ -71,6 +76,10 @@ const fixtureRewrites = {
     'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
   ],
+  receiptWriter: [
+    "bash .qualification-workflow/scripts/e2e/native-runtime-cleanup-receipt.sh",
+    'bash "$NATIVE_RUNTIME_CLEANUP_RECEIPT_SCRIPT"',
+  ],
   userRuntimePath: ['"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"'],
 } as const;
 
@@ -101,6 +110,7 @@ const fixtureRewriteProfiles: Record<FixtureRewriteProfile, FixtureRewriteContra
       "podmanExecutable",
       "helperDirectory",
       "resourceDirectory",
+      "receiptWriter",
       "userRuntimePath",
     ],
     optional: [],
@@ -295,15 +305,19 @@ function runFixture(
 ) {
   return spawnSync("bash", ["-c", fixtureSource(source, profile)], {
     encoding: "utf8",
-    timeout: 15_000,
+    timeout: execTimeout(30_000),
     env: {
       ...process.env,
       ACCOUNT: "nemoclawq",
       ACCOUNT_CREATED: "true",
+      ACCOUNT_GID: "1007",
+      ACCOUNT_UID: "1002",
+      CLEANUP_RECEIPT_PATH: path.join(fixture.root, "cleanup-receipt.json"),
       FIXTURE_CALLS: fixture.calls,
       FIXTURE_BIN: fixture.bin,
       FIXTURE_HOME: fixture.home,
       FIXTURE_ROOT: fixture.root,
+      NATIVE_RUNTIME_CLEANUP_RECEIPT_SCRIPT: CLEANUP_RECEIPT_SCRIPT,
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_RUN_ID: "42",
       PATH: `${fixture.bin}:${process.env.PATH ?? ""}`,
@@ -354,7 +368,7 @@ function writeModelFixtureFiles(model: string): void {
   }
 }
 
-describe("native runtime qualification account lifecycle", () => {
+describe("native runtime qualification account lifecycle", testTimeoutOptions(30_000), () => {
   it("fails closed when a mandatory fixture rewrite no longer matches", () => {
     expect(() => fixtureSource("set -euo pipefail", "bus")).toThrow(
       "Missing mandatory fixture rewrite 'testExecutable'",
@@ -569,7 +583,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     expect(fs.existsSync(helpers)).toBe(false);
     expect(fs.existsSync(resources)).toBe(false);
     expect(fs.existsSync(userManagerDropinDirectory)).toBe(false);
-  }, 15_000);
+  });
 
   it("does not run destructive cleanup when the run-owned marker is absent", () => {
     const fixture = createFixture();
