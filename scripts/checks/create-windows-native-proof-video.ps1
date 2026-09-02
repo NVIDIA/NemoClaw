@@ -187,8 +187,14 @@ function Save-ActualWindowFrame {
 
     $consoleBitmap = [NemoClawNativeWindowCapture]::Capture($ConsoleWindow)
     $installerBitmap = $null
+    $installerCaptured = $false
     if ($InstallerWindow -ne [IntPtr]::Zero) {
-        $installerBitmap = [NemoClawNativeWindowCapture]::Capture($InstallerWindow)
+        try {
+            $installerBitmap = [NemoClawNativeWindowCapture]::Capture($InstallerWindow)
+            $installerCaptured = $true
+        } catch {
+            # Burn can close its progress window between enumeration and capture.
+        }
     }
     $frame = [Drawing.Bitmap]::new(1280, 720, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
     $graphics = [Drawing.Graphics]::FromImage($frame)
@@ -219,6 +225,7 @@ function Save-ActualWindowFrame {
         }
         $consoleBitmap.Dispose()
     }
+    return $installerCaptured
 }
 
 if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
@@ -361,14 +368,29 @@ try {
             'NemoClaw Native Windows Candidate Setup',
             $consoleWindow
         )
-        if ($installerWindow -ne [IntPtr]::Zero) {
+        $framePath = Join-Path $frameRoot ('frame-{0:D5}.png' -f ($framePaths.Count + 1))
+        try {
+            $installerCaptured = Save-ActualWindowFrame `
+                -Path $framePath `
+                -ConsoleWindow $consoleWindow `
+                -InstallerWindow $installerWindow
+        } catch {
+            $proofProcess.Refresh()
+            if ($proofProcess.HasExited) {
+                break
+            }
+            $consoleWindow = [NemoClawNativeWindowCapture]::FindWindowContaining(
+                $consoleWindowTitle,
+                [IntPtr]::Zero
+            )
+            if ($consoleWindow -eq [IntPtr]::Zero) {
+                Fail-ProofVideo "The real console window disappeared during qualification: $($_.Exception.Message)"
+            }
+            continue
+        }
+        if ($installerCaptured) {
             $installerWindowFrameCount++
         }
-        $framePath = Join-Path $frameRoot ('frame-{0:D5}.png' -f ($framePaths.Count + 1))
-        Save-ActualWindowFrame `
-            -Path $framePath `
-            -ConsoleWindow $consoleWindow `
-            -InstallerWindow $installerWindow
         $framePaths += $framePath
         Start-Sleep -Milliseconds $script:FrameDurationMilliseconds
         $proofProcess.Refresh()
