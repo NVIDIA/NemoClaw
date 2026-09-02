@@ -1104,54 +1104,6 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).not.toContain(rawToken);
   });
 
-  it("reconciles mutable hashes after the env boundary and before MCP integrity (#9203)", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        [
-          "set -euo pipefail",
-          "hash_state=stale",
-          'trace() { printf "%s\\n" "$1"; }',
-          "verify_config_integrity_if_locked() { trace integrity; }",
-          "validate_hermes_env_secret_boundary() { trace env-boundary; }",
-          'inspect_hermes_mcp_integrity() { [ "$hash_state" = current ] || return 1; trace mcp-integrity; }',
-          "prepare_hermes_lazy_dependencies() { trace lazy-dependencies; }",
-          "ensure_hermes_runtime_api_server_key() { trace api-key; }",
-          "apply_shields_up_runtime_env() { trace shields-env; }",
-          "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
-          "refresh_hermes_provider_placeholders() { trace placeholders; }",
-          "refresh_hermes_runtime_config_hashes() { trace hashes; hash_state=current; }",
-          "configure_messaging_channels() { trace channels; }",
-          "retry_tirith_marker_if_needed() { trace tirith; }",
-          extractShellFunctionFromSource(source, "prepare_tirith_marker_retry"),
-          extractShellFunctionFromSource(source, "prepare_hermes_nonroot_runtime"),
-          "HERMES_DIR=/sandbox/.hermes; prepare_hermes_nonroot_runtime",
-        ].join("\n"),
-      ],
-      { encoding: "utf-8" },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "integrity",
-      "env-boundary",
-      "hashes",
-      "mcp-integrity",
-      "lazy-dependencies",
-      "api-key",
-      "shields-env",
-      "env-boundary",
-      "runtime-boundary",
-      "placeholders",
-      "hashes",
-      "mcp-integrity",
-      "channels",
-      "tirith",
-    ]);
-  });
-
   it("rejects bare API-named raw values without printing the value", () => {
     const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({

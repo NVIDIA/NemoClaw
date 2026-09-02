@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { createRestartFixture, hashInputs } from "../../helpers/hermes-restart-config-seal-fixture";
 import { extractShellFunction } from "../../support/hermes-shell-harness";
 
 const GUARD = path.join(
@@ -32,6 +33,13 @@ const TRANSACTION = path.join(
   "mcp-config-transaction.py",
 );
 const START = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
+const SECRET_BOUNDARY_VALIDATOR = path.join(
+  import.meta.dirname,
+  "../../..",
+  "agents",
+  "hermes",
+  "validate-env-secret-boundary.py",
+);
 
 function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatus?: 0 | 23 }) {
   const source = fs.readFileSync(START, "utf-8");
@@ -96,6 +104,102 @@ function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatu
     };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function inspectMcpIntegrity(hermesDir: string, hashFile: string) {
+  return spawnSync(
+    "python3",
+    [
+      "-I",
+      GUARD,
+      "inspect-mcp-integrity",
+      "--hermes-dir",
+      hermesDir,
+      "--hash-file",
+      hashFile,
+      "--startup-owner",
+      "--mcp-state-exit-code",
+    ],
+    { encoding: "utf-8", timeout: 10_000 },
+  );
+}
+
+function runHermesNonrootMcpPreparation(opts: { blockHashRefresh?: boolean; rawSecret?: string }) {
+  const fixture = createRestartFixture();
+  const scriptPath = path.join(fixture.root, "prepare-nonroot.sh");
+  const gatewayState = path.join(fixture.root, "gateway-launched");
+  const blockedHashLink = path.join(fixture.root, "blocked-config-hash");
+  const source = fs.readFileSync(START, "utf-8");
+
+  fs.writeFileSync(fixture.configPath, "model:\n  default: updated-model\n", { mode: 0o640 });
+  fs.writeFileSync(
+    fixture.envPath,
+    opts.rawSecret
+      ? `API_SERVER_PORT=18642\nDEVTEST_API_TOKEN=${opts.rawSecret}\n`
+      : "API_SERVER_PORT=18642\nSAFE_SETTING=updated\n",
+    { mode: 0o600 },
+  );
+  const staleHash = fs.readFileSync(fixture.compatHashPath, "utf-8");
+  const expectedCurrentHash = hashInputs(fixture.configPath, fixture.envPath);
+  const beforeInspection = inspectMcpIntegrity(fixture.hermesDir, fixture.compatHashPath);
+  const prepareHashRefresh = {
+    blocked: () => fs.linkSync(fixture.compatHashPath, blockedHashLink),
+    writable: () => undefined,
+  } satisfies Record<"blocked" | "writable", () => void>;
+  prepareHashRefresh[opts.blockHashRefresh ? "blocked" : "writable"]();
+
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunction(source, "hermes_config_path_is_locked"),
+      extractShellFunction(source, "hermes_config_root_is_locked"),
+      extractShellFunction(source, "validate_hermes_env_secret_boundary"),
+      extractShellFunction(source, "validate_hermes_runtime_env_secret_boundary"),
+      extractShellFunction(source, "refresh_hermes_runtime_config_hashes"),
+      extractShellFunction(source, "inspect_hermes_mcp_integrity"),
+      extractShellFunction(source, "prepare_hermes_nonroot_runtime"),
+      "verify_config_integrity_if_locked() { :; }",
+      "prepare_hermes_lazy_dependencies() { :; }",
+      "ensure_hermes_runtime_api_server_key() { :; }",
+      "apply_shields_up_runtime_env() { :; }",
+      "refresh_hermes_provider_placeholders() { :; }",
+      "configure_messaging_channels() { :; }",
+      "prepare_tirith_marker_retry() { :; }",
+      `launch_hermes_gateway() { printf "launched\\n" >${shellQuote(gatewayState)}; }`,
+      `HERMES_DIR=${shellQuote(fixture.hermesDir)}`,
+      `HERMES_HASH_FILE=${shellQuote(fixture.hashPath)}`,
+      `_HERMES_RUNTIME_CONFIG_GUARD=${shellQuote(GUARD)}`,
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR)}`,
+      "_HERMES_BOUNDARY_TIMEOUT=(command)",
+      "_HERMES_PYTHON=python3",
+      "export HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages",
+      "prepare_hermes_nonroot_runtime && launch_hermes_gateway",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    });
+    const refreshedHash = fs.readFileSync(fixture.compatHashPath, "utf-8");
+    const afterInspection = inspectMcpIntegrity(fixture.hermesDir, fixture.compatHashPath);
+    return {
+      result,
+      beforeInspection,
+      afterInspection,
+      staleHash,
+      expectedCurrentHash,
+      refreshedHash,
+      gatewayLaunched: fs.existsSync(gatewayState),
+    };
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 }
 
@@ -323,6 +427,40 @@ print(json.dumps(proof))
       mcp_drift_error: "Hermes MCP config differs from persisted intended state",
       anchor_unchanged_after_mcp_drift: true,
     });
+  });
+
+  it("reconciles safe mutable drift through non-root startup before gateway launch (#9203)", () => {
+    const run = runHermesNonrootMcpPreparation({});
+
+    expect(run.beforeInspection.status).not.toBe(0);
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.gatewayLaunched).toBe(true);
+    expect(run.refreshedHash).not.toBe(run.staleHash);
+    expect(run.refreshedHash).toBe(run.expectedCurrentHash);
+    expect(run.afterInspection.status, run.afterInspection.stderr).toBe(0);
+  });
+
+  it("stops non-root startup when the compatibility anchor cannot be refreshed", () => {
+    const run = runHermesNonrootMcpPreparation({ blockHashRefresh: true });
+
+    expect(run.beforeInspection.status).not.toBe(0);
+    expect(run.result.status).not.toBe(0);
+    expect(run.gatewayLaunched).toBe(false);
+    expect(run.refreshedHash).toBe(run.staleHash);
+    expect(run.result.stderr).toContain("refusing hardlinked runtime config path");
+    expect(run.afterInspection.status).not.toBe(0);
+  });
+
+  it("rejects raw secrets before non-root startup reconciles the compatibility anchor", () => {
+    const rawSecret = "SENTINEL_RAW_SECRET_VALUE";
+    const run = runHermesNonrootMcpPreparation({ rawSecret });
+
+    expect(run.beforeInspection.status).not.toBe(0);
+    expect(run.result.status).not.toBe(0);
+    expect(run.gatewayLaunched).toBe(false);
+    expect(run.refreshedHash).toBe(run.staleHash);
+    expect(run.result.stderr).toContain("raw secret-shaped values");
+    expect(run.result.stderr).not.toContain(rawSecret);
   });
 
   it("uses the atomic write outcome for compat applied-state commits", () => {
