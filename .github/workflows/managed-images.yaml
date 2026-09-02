@@ -32,6 +32,7 @@ on:
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/workflows/base-image.yaml"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
       - ".dockerignore"

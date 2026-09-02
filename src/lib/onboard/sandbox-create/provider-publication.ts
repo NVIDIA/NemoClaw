@@ -9,6 +9,7 @@ import {
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
 import { inspectGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
+import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
 type ProviderPreparationInput = {
@@ -56,13 +57,8 @@ function inspectExpectedMessagingBinding(
 ): boolean {
   const expected = expectedBindings.get(providerName);
   if (!expected) return true;
-  const inspection = inspectGatewayCredentialFamilyProviderBinding(
-    expected,
-    (args, options) =>
-      deps.runOpenshell(
-        [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
-        options,
-      ),
+  const inspection = inspectGatewayCredentialFamilyProviderBinding(expected, (args, options) =>
+    deps.runOpenshell([...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)], options),
   );
   return inspection.kind === "exact";
 }
@@ -108,7 +104,13 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
 ): void {
-  if (input.openshellDriver !== "docker") return;
+  const runtimeProvider = resolveRegisteredRuntimeProvider(input.openshellDriver);
+  if (
+    !runtimeProvider ||
+    runtimeProvider.gateway.launcher !== "nemoclaw" ||
+    runtimeProvider.bootstrap.supported !== true
+  )
+    return;
 
   const expectedBindings = expectedMessagingBindings(input);
   const providersRequiringExistenceProbe = new Set(
@@ -138,7 +140,7 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
     if (refreshed.status !== 0) {
       deps.cleanupCreateSources();
       throw new Error(
-        `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
+        `OpenShell did not publish attached provider '${attachedProvider}' before managed sandbox creation.`,
       );
     }
     if (inspectExpectedMessagingBinding(input, deps, attachedProvider, expectedBindings)) continue;

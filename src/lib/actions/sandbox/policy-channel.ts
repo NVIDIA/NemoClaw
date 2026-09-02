@@ -26,7 +26,6 @@ import {
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
   createMessagingPreEnableHookInputs,
-  formatSupportedMessagingAgentIds,
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
@@ -564,9 +563,8 @@ async function applyExternalPreset(
       refreshSandboxPolicyContextFile(sandboxName);
     }
     return result !== false;
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`  Failed to apply preset '${loaded.presetName}': ${message}`);
+  } catch {
+    console.error(`  Failed to apply preset '${loaded.presetName}': validation failed.`);
     return false;
   }
 }
@@ -648,20 +646,12 @@ export function listSandboxChannels(sandboxName: string) {
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   if (availableChannels.length === 0) {
-    console.log(`    (none supported by agent '${agent.name}')`);
+    console.log("    (none supported by this agent)");
   }
   for (const manifest of availableChannels) {
     console.log(`    ${manifest.id} — ${manifest.description ?? manifest.displayName}`);
   }
   console.log("");
-}
-
-function formatAvailableChannelsForAgent(agent: AgentDefinition): string {
-  return (
-    availableManifestChannelsForAgent(agent)
-      .map((manifest) => manifest.id)
-      .join(", ") || "(none)"
-  );
 }
 
 // Map a channel + token-env-key to the OpenShell provider name onboarding
@@ -933,11 +923,7 @@ async function applyChannelAddToGatewayAndRegistry(
       return null;
     }
   } catch (err) {
-    console.error(
-      `  ✗ Failed to register '${channelName}' providers with the gateway: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    console.error("  ✗ Failed to register channel providers with the gateway.");
     if (
       policyChannelDependencies.isMessagingProviderBindingConflict(err) ||
       policyChannelDependencies.isMessagingProviderMutationFailure(err)
@@ -957,14 +943,10 @@ async function applyChannelAddToGatewayAndRegistry(
         (providerName) => !createdProviders.has(providerName),
       );
       if (updatedProviderNames.length > 0) {
-        console.error(
-          `  ${YW}⚠${R} Updated provider state remains for ${updatedProviderNames.join(", ")}; resolve the conflicting provider, then rerun '${CLI_NAME} ${sandboxName} channels add ${channelName}'.`,
-        );
+        console.error(`  ${YW}⚠${R} Updated provider state remains; resolve it and retry.`);
       }
       if (cleanupFailures.length > 0) {
-        console.error(
-          `  ${YW}⚠${R} Could not remove newly created providers ${cleanupFailures.join(", ")}; rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}'.`,
-        );
+        console.error(`  ${YW}⚠${R} Could not remove newly created providers; retry cleanup.`);
       }
       cleanupCredentialFreePolicy?.();
       process.exit(1);
@@ -1241,9 +1223,9 @@ async function planSandboxChannelAdd(
     });
     MessagingSetupApplier.writePlanToEnv(plan);
     return plan;
-  } catch (error) {
+  } catch {
     console.error(`  Failed to plan messaging channel '${channelId}'.`);
-    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    console.error("  Inspect the redacted channel diagnostics for details.");
     process.exit(1);
   }
 }
@@ -1342,11 +1324,7 @@ function assertAddChannelPlanActive(
   const missing =
     channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
   if (missing.length > 0) {
-    console.error(
-      `  Missing required input(s) for channel '${manifest.id}': ${missing
-        .map(formatMissingInput)
-        .join(", ")}.`,
-    );
+    console.error("  Missing required inputs for this channel.");
     if (
       manifest.auth.mode === "host-qr" &&
       getMessagingToken(manifest.credentials[0]?.providerEnvKey)
@@ -1369,10 +1347,6 @@ function inputAvailable(input: SandboxMessagingChannelPlan["inputs"][number]): b
   if (input.kind === "secret") return input.credentialAvailable === true;
   if (input.value === undefined) return false;
   return typeof input.value === "string" ? input.value.trim().length > 0 : true;
-}
-
-function formatMissingInput(input: SandboxMessagingChannelPlan["inputs"][number]): string {
-  return input.sourceEnv ? `${input.inputId} (${input.sourceEnv})` : input.inputId;
 }
 
 function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
@@ -1459,15 +1433,7 @@ async function addSandboxChannelUnlocked(
 
   const agent = resolveAgentForSandbox(sandboxName);
   if (!channelSupportedByAgent(manifest, agent)) {
-    console.error(
-      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
-    );
-    console.error(
-      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
-    );
-    console.error(
-      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
-    );
+    console.error("  This channel does not support the configured agent.");
     process.exit(1);
   }
 
@@ -1738,9 +1704,8 @@ export function applyChannelPresetIfAvailable(
     }
     refreshSandboxPolicyContextFile(sandboxName);
     return true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
+  } catch {
+    console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset.`);
     console.error(
       `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
     );
@@ -1792,27 +1757,27 @@ function isSafeChannelStatePath(p: string): boolean {
 const CHANNEL_CLEAR_SENTINEL = "NEMOCLAW_CHANNEL_CLEAR_OK";
 const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
   "sandbox-registry-unavailable": "Restore the NemoClaw sandbox registry entry.",
-  "driver-not-docker": "Restore normal OpenShell lifecycle access for this non-Docker sandbox.",
+  "provider-cleanup-unavailable": "Restore the selected runtime provider's cleanup capability.",
   "state-paths-invalid": "Restore the channel's declared state-path contract.",
-  "docker-discovery-failed": "Start Docker or restore access to its daemon.",
-  "no-eligible-stopped-container": "Restore the registered stopped OpenShell container.",
-  "container-ownership-invalid": "Reconcile the sandbox registry and Docker container identity.",
-  "container-inspection-failed": "Restore Docker inspection access for the stopped container.",
-  "container-not-stopped": "Stop the registered sandbox container before retrying removal.",
-  "sandbox-volume-unavailable": "Restore a single writable Docker volume at /sandbox.",
+  "runtime-discovery-failed": "Restore access to the selected runtime provider.",
+  "no-eligible-stopped-runtime": "Restore the registered stopped OpenShell container.",
+  "runtime-ownership-invalid": "Reconcile the sandbox registry and runtime resource identity.",
+  "runtime-inspection-failed": "Restore inspection access for the stopped runtime resource.",
+  "runtime-not-stopped": "Stop the registered sandbox container before retrying removal.",
+  "state-resource-unavailable": "Restore the single writable runtime state resource at /sandbox.",
   "cleanup-helper-image-unavailable": "Restore the pinned NemoClaw cleanup image locally.",
   "cleanup-helper-ownership-invalid": "Remove the conflicting cleanup helper container.",
   "cleanup-helper-reconciliation-failed": "Reconcile the named cleanup helper container.",
   "cleanup-state-tree-unsafe":
     "Inspect the stopped sandbox volume; recreate the sandbox if its state tree is untrusted.",
   "cleanup-deletion-unconfirmed": "Restore writable access to the stopped sandbox volume.",
-  "cleanup-helper-failed": "Inspect the stopped sandbox and Docker daemon.",
-  "container-revalidation-failed": "Reconcile the stopped container identity and state.",
+  "cleanup-helper-failed": "Inspect the stopped sandbox and selected runtime provider.",
+  "runtime-revalidation-failed": "Reconcile the stopped container identity and state.",
   "lifecycle-authority-unavailable": "Finish the active lifecycle transition or repair its lock.",
 } as const;
 
 type StoppedWechatCleanupFailure = Exclude<
-  ReturnType<(typeof policyChannelDependencies)["clearStoppedDockerSandboxChannelState"]>,
+  ReturnType<(typeof policyChannelDependencies)["clearStoppedSandboxStateRoots"]>,
   { readonly cleared: true }
 >;
 
@@ -1835,7 +1800,7 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first, followed by SSH and the stopped WeChat Docker fallback.
+ * OpenShell exec runs first, followed by SSH and the selected provider's stopped-state fallback.
  * Fixes #3998.
  */
 function clearSandboxChannelDurableState(
@@ -1861,7 +1826,7 @@ function clearSandboxChannelDurableState(
     result = executeSandboxCommand(sandboxName, cmd);
   }
   if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
-    const stoppedCleanup = policyChannelDependencies.clearStoppedDockerSandboxChannelState(
+    const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
       sandboxName,
       paths,
     );
@@ -1873,14 +1838,14 @@ function clearSandboxChannelDurableState(
       options.allowAbsentStoppedState &&
       [
         "sandbox-registry-unavailable",
-        "driver-not-docker",
-        "no-eligible-stopped-container",
+        "provider-cleanup-unavailable",
+        "no-eligible-stopped-runtime",
       ].includes(stoppedCleanup.failure)
     ) {
       return true;
     }
     console.error(
-      `  ${YW}⚠${R} Stopped-Docker cleanup failed (${stoppedCleanup.failure}). ` +
+      `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
         `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
     );
   }
@@ -1918,9 +1883,8 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
     }
     refreshSandboxPolicyContextFile(sandboxName);
     return true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset: ${msg}`);
+  } catch {
+    console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset.`);
     console.error(
       `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
     );
@@ -1994,12 +1958,12 @@ async function removeSandboxChannelUnlocked(
   // Channels with durable account or session state store auth blobs inside
   // the sandbox that survive a rebuild via the state_dirs backup. Tear those
   // down FIRST so a cleanup failure leaves the registry/policy untouched.
-  // OpenClaw WeChat can additionally recover through a stopped Docker volume
+  // OpenClaw WeChat can additionally recover through a provider-owned stopped-state
   // helper because the same missing account file may block its entrypoint.
   // Bailing here is the only way to keep #3998 from recurring on cleanup
   // error. OpenClaw WeChat also checks for physical residue after an earlier
   // interrupted removal erased its logical plan or policy record. A missing
-  // registry, non-Docker driver, or absent stopped container remains a quiet
+  // registry, unavailable provider cleanup, or absent stopped runtime remains a quiet
   // no-op only when no logical residue exists (#4001 review).
   if (
     requiresStateCleanupBeforeTeardown &&
@@ -2125,15 +2089,7 @@ async function sandboxChannelsSetEnabled(
   const agent = resolveAgentForSandbox(sandboxName);
   const availableChannels = availableManifestChannelsForAgent(agent);
   if (!availableChannels.some((candidate) => candidate.id === canonical)) {
-    console.error(
-      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
-    );
-    console.error(
-      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
-    );
-    console.error(
-      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
-    );
+    console.error("  This channel does not support the configured agent.");
     process.exit(1);
   }
 

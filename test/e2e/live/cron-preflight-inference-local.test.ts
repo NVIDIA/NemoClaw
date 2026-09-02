@@ -193,7 +193,9 @@ async function preCleanCronSandbox(sandbox: SandboxClient): Promise<void> {
   );
 }
 
-test("cron preflight reaches managed inference.local provider without EAI_AGAIN", {
+test(
+  "cron preflight reaches managed inference.local provider without EAI_AGAIN",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -203,7 +205,8 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
       "validate managed route availability",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
   const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
   const apiKey = hosted.apiKey;
 
@@ -221,17 +224,10 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
     ],
   });
 
-  const dockerInfo = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "cron preflight",
   });
-  if (dockerInfo.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
-    }
-    skip(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
-  }
 
   const cleanupEnv = commandEnv();
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
@@ -302,4 +298,5 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
   expect(probe.exitCode, output).toBe(0);
   expect(parsed?.result?.status, output).toBe("available");
   expect(parsed?.baseUrl, output).toBe("https://inference.local/v1");
-});
+  },
+);
