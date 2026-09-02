@@ -41,7 +41,7 @@ export interface ArtifactFiles {
   "cleanup.json"?: string;
 }
 export interface EvidenceReader {
-  listRuns(): WorkflowRun[];
+  listRuns(candidate: string): WorkflowRun[];
   listJobs(runId: number, attempt: number): WorkflowJob[];
   readArtifact(runId: number, name: string): ArtifactFiles;
 }
@@ -230,8 +230,10 @@ export function validateLaunchableEvidence(
   };
 }
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
-  const selection = selectNewestSuccessfulJob(options.candidate, reader.listRuns(), (run) =>
-    reader.listJobs(run.id, run.run_attempt),
+  const selection = selectNewestSuccessfulJob(
+    options.candidate,
+    reader.listRuns(options.candidate),
+    (run) => reader.listJobs(run.id, run.run_attempt),
   );
   const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`;
   return validateLaunchableEvidence(
@@ -274,15 +276,20 @@ export const workflowRunsFromPages = (value: unknown): WorkflowRun[] =>
 export const workflowJobsFromPages = (value: unknown): WorkflowJob[] =>
   pageItems<WorkflowJob>(value, "jobs");
 
+export function workflowRunsApiArgs(candidate: string): string[] {
+  if (!SHA.test(candidate)) fail("candidate must be a lowercase 40-character SHA");
+  return [
+    "api",
+    "--paginate",
+    "--slurp",
+    `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${candidate}`,
+  ];
+}
+
 export function createGitHubReader(): EvidenceReader {
   return {
-    listRuns() {
-      const pages = gh([
-        "api",
-        "--paginate",
-        "--slurp",
-        `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100`,
-      ]);
+    listRuns(candidate) {
+      const pages = gh(workflowRunsApiArgs(candidate));
       return workflowRunsFromPages(pages);
     },
     listJobs(runId, attempt) {
