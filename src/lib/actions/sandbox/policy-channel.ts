@@ -966,9 +966,13 @@ async function applyChannelAddToGatewayAndRegistry(
       }
       if (cleanupFailures.length > 0) {
         for (const { providerName, diagnostic } of cleanupFailures) {
+          // lgtm[js/clear-text-logging] Provider names are validated identifiers;
+          // the gateway diagnostic is fully redacted above before display.
           console.error(
             `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`,
           );
+          // lgtm[js/clear-text-logging] Gateway and provider names are validated
+          // identifiers needed to render the exact scoped recovery command.
           console.error(
             `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`,
           );
