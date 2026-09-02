@@ -107,7 +107,11 @@ function startManagedFixtureProcess(
 }
 
 function stopManagedFixtureProcess(process: ManagedFixtureProcess): number {
-  if (!fs.existsSync(process.stopPath)) fs.writeFileSync(process.stopPath, "", { flag: "wx" });
+  try {
+    fs.writeFileSync(process.stopPath, "", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
   if (!waitForPath(process.finishedPath, 2000)) {
     process.child.kill("SIGTERM");
     throw new Error("managed fixture process did not stop");
