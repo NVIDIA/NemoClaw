@@ -799,6 +799,14 @@ export async function selectManagedRuntimeSource(
     candidateSha,
     "source workflow pull request source SHA",
   );
+  exactString(
+    record(
+      record(run.pull_requests[0], "source workflow pull request").base,
+      "source workflow pull request base",
+    ).sha,
+    baseSha,
+    "source workflow pull request base SHA",
+  );
   return {
     kind: SOURCE_SELECTION_KIND,
     pullRequest,

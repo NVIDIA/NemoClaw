@@ -184,7 +184,9 @@ function sourceFixture(
         conclusion: "success",
         repository: { full_name: "NVIDIA/NemoClaw" },
         head_repository: { full_name: "NVIDIA/NemoClaw" },
-        pull_requests: [{ number: PR_NUMBER, head: { sha: CANDIDATE_SHA } }],
+        pull_requests: [
+          { number: PR_NUMBER, head: { sha: CANDIDATE_SHA }, base: { sha: BASE_SHA } },
+        ],
         ...options.run,
       },
     ],
@@ -471,16 +473,29 @@ describe("managed runtime comparison receipts", () => {
     {
       name: "another attached PR",
       run: {
-        pull_requests: [{ number: PR_NUMBER + 1, head: { sha: CANDIDATE_SHA } }],
+        pull_requests: [
+          { number: PR_NUMBER + 1, head: { sha: CANDIDATE_SHA }, base: { sha: BASE_SHA } },
+        ],
       },
       message: "source workflow run does not match the pull request",
     },
     {
       name: "another attached PR head",
       run: {
-        pull_requests: [{ number: PR_NUMBER, head: { sha: IMAGE_REVISION } }],
+        pull_requests: [
+          { number: PR_NUMBER, head: { sha: IMAGE_REVISION }, base: { sha: BASE_SHA } },
+        ],
       },
       message: "source workflow pull request source SHA",
+    },
+    {
+      name: "a stale attached PR base",
+      run: {
+        pull_requests: [
+          { number: PR_NUMBER, head: { sha: CANDIDATE_SHA }, base: { sha: IMAGE_REVISION } },
+        ],
+      },
+      message: "source workflow pull request base SHA",
     },
     {
       name: "a closed current PR",

@@ -170,8 +170,9 @@ cancelled, rerun that producer; its successful completion starts a new qualifica
 inside qualification, rerun the exact failed qualification attempt. To dispatch the workflow
 manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
 the latest PR commit SHA, `base_sha` to the PR base SHA, and `candidate_run_id` plus
-`candidate_run_attempt` to the failed managed-image workflow run ID and attempt. That source run
-must belong to the same open PR and current candidate SHA. If the comparison reports
+`candidate_run_attempt` to the successful managed-image workflow run ID and attempt that started
+the failed qualification. That source run must belong to the same open PR and current candidate
+SHA. If the comparison reports
 `base evidence validation failed`, use the retained receipt and evidence artifact IDs plus the
 bounded cause (`metadata lookup`, `receipt download or validation`, or `evidence download or digest
 validation`) to repair or rerun the affected producer. Do not substitute artifacts from another
