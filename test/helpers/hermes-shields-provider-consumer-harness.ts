@@ -306,6 +306,7 @@ export function createHermesShieldsProviderConsumerHarness(
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
+    vi.spyOn(policy, "confirmAppliedPolicySetSubmission").mockImplementation(() => undefined),
     registrySpy,
     vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")
