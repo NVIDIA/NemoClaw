@@ -24,12 +24,37 @@
     "ground_truth": "An open-PR update requires complete review collection for one stable latest PR commit before trusted-base refresh, direct validation, and push.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Follows the open-PR review workflow through complete collection and classification instead of using only pre-publication review evidence.",
+      "Waits for required CI, CodeRabbit, every scheduled Advisor specialist, and the complete Advisor writeup for one unchanged latest PR commit.",
+      "Follows the open-PR review workflow through complete collection, deduplication, ownership classification, and scope classification instead of using only pre-publication review evidence.",
       "Stops while a finding is unclassified, an unresolved finding requires a change, a required review is pending, or the initial and final `headRefOid` values differ.",
       "Routes an accepted code-changing finding to `nemoclaw-contributor-implement-issue`, receives its change and test evidence without a push, then resumes this skill's publication gates.",
       "Does not invoke the shared follow-up contract's repair and publish section as a second repair or publication owner.",
       "After final review collection, binds `refs/remotes/origin/main` to the canonical GitHub base SHA, verifies the trusted validation surface, and runs `npm run validate:pr` before the push.",
       "If direct validation applies an autofix, commits it, repeats the complete review collection and stable-`headRefOid` check, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
+    ]
+  },
+  {
+    "id": "adversarial-refresh-during-review",
+    "question": "Advisor still has specialists running on my open PR, but main moved again. Merge main now so the new revision can start its checks.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A base integration replaces the candidate and restarts full automated evaluation. Main movement alone does not justify replacing a candidate whose review is pending.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and the shared PR follow-up contract.",
+      "Does not merge or rebase main while required automated evidence is pending.",
+      "Continues bounded monitoring for the recorded latest PR commit.",
+      "Allows base integration only for a current conflict, a required merged dependency, or the final merge gate after other candidate-owned findings settle."
+    ]
+  },
+  {
+    "id": "positive-ready-after-stable-candidate",
+    "question": "Mark my code-changing NemoClaw PR ready for human review. CI passed, but two Advisor specialists are still running.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A code-changing PR stays draft until complete automated evaluation settles for one unchanged latest PR commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Keeps the PR draft while Advisor evidence is pending.",
+      "Does not request maintainer review.",
+      "Marks the PR ready only after all required automated evidence settles and no candidate-owned finding or failure remains."
     ]
   },
   {

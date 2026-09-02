@@ -8,7 +8,11 @@ description: Create a GitHub pull request with the NemoClaw template. Then, moni
 
 # Create GitHub Pull Request
 
-Publish one complete candidate from a feature branch based on the refreshed canonical comparison ref. Stop unless branch state, implementation-owned validation, DCO declaration, and GitHub commit verification are complete. For access errors, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md).
+Publish one complete candidate from a feature branch based on the current canonical comparison ref.
+Treat each pushed commit as one candidate and finish its automated evaluation before another push.
+Stop unless branch state, implementation-owned validation, DCO declaration, and GitHub commit
+verification are complete. For access errors, follow
+[Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md).
 
 ## Satisfy publication requirements
 
@@ -29,6 +33,10 @@ git status --short
 
 Every command must succeed. The `origin/main` name is a local comparison ref; it does not prove remote identity. Do not replace the canonical API endpoint or fetch URL with a checkout remote. Stop if the sources differ. Do not validate against a stale ref. Do not publish from `main` or with uncommitted changes.
 
+This fetch refreshes read-only comparison evidence. It does not authorize merging or rebasing
+`main` into the candidate. Follow [Integrate the base branch](../_shared/pr-follow-up.md#integrate-the-base-branch)
+before changing candidate history.
+
 ### Validation
 
 Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, but a successful commit or push does not prove that they ran; hooks can be missing, stale, or redirected through `core.hooksPath`.
@@ -36,7 +44,7 @@ Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, 
 Select review evidence for the publication state before every agent-managed push:
 
 - For an initial publication, use the implementation handoff's self-review and any other available pre-publication review evidence. Do not query PR state or follow the open-PR workflow because the PR does not exist.
-- Before updating an open PR, follow [Collect](../_shared/pr-follow-up.md#collect) and [Decide](../_shared/pr-follow-up.md#decide). Set the repair scope, group valid code-changing findings by root cause, and route only in-scope groups to `nemoclaw-contributor-implement-issue`. Do not push while a finding is unclassified or an unresolved finding requires a change. Preserve excluded or deferred dispositions. Repeat collection as the final review step before the canonical base refresh. The initial and final `headRefOid` values must match.
+- Before updating an open PR, follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide). Set the repair scope, group valid code-changing findings by root cause, and route only in-scope groups to `nemoclaw-contributor-implement-issue`. Do not push while automated evaluation is pending, a finding is unclassified, or an unresolved finding requires a change. Preserve excluded or deferred dispositions. Repeat collection as the final review step before the canonical base fetch. The initial and final `headRefOid` values must match.
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 
@@ -64,7 +72,11 @@ git config user.name
 git config user.email
 ```
 
-Publish and verify the candidate with `create_nemoclaw_pr`. For an open PR, use `commit_push_refresh_pr` or `prepare_pr_for_human_review`. These DSH tools bind publication to the declared repository and commit, reconcile the remote branch, and confirm that GitHub marks every published commit as `Verified`.
+Publish and verify the candidate with `create_nemoclaw_pr`. For an open PR, use
+`commit_push_refresh_pr` or `prepare_pr_for_human_review`. These DSH tools bind publication to the
+declared repository and commit, reconcile the remote branch, and confirm that GitHub marks every
+published commit as `Verified`. The recorded `headRefOid` and non-force push are the optimistic
+publication guard. Stop when another workflow changes the remote branch.
 
 Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed.
 
@@ -112,7 +124,10 @@ gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
 
 Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omit it and report that a maintainer must assign the PR.
 
-Add `--draft` when the work is not ready for review. A draft requires the same DCO and verification evidence.
+Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
+Keep it draft while automated evaluation or a candidate-owned repair is pending. Use
+`prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
+with no unresolved candidate-owned finding or failure.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
@@ -120,7 +135,10 @@ If a triage write is rejected, do not repeat that write through another endpoint
 
 ## Follow up and report
 
-Follow [Collect](../_shared/pr-follow-up.md#collect) and [Decide](../_shared/pr-follow-up.md#decide). Route accepted repair groups to `nemoclaw-contributor-implement-issue`. Then apply this skill's validation and publication gates. Repeat until required CI and automated reviews settle, then report:
+Follow the complete [PR follow-up contract](../_shared/pr-follow-up.md). Route accepted repair groups
+to `nemoclaw-contributor-implement-issue`. Then apply this skill's validation and publication gates.
+Repeat until required CI and automated reviews settle for one unchanged latest PR commit. Do not
+report pending evaluation as completed work. Then report:
 
 ```text
 Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
