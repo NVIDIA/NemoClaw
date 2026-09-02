@@ -207,6 +207,39 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   const resolve = requireSource("../../adapters/openshell/resolve.js");
   const runtime = requireSource("../../adapters/openshell/runtime.js");
+  const sanitizedCapture = requireSource("../../adapters/openshell/sanitized-capture.js");
+  // Backs the delete-boundary retained-sandbox identity re-check
+  // (`inspectOpenShellSandboxIdentityFingerprint`, #10863). Mirrors the same
+  // `sandbox-${name}` id convention `sandboxListJson` uses for `sandbox list`.
+  // `sandbox-identity-cli.js` binds this by value at its own module load time
+  // (not a live namespace lookup), so it — and everything that transitively
+  // requires it — must be re-required fresh after the spy is installed.
+  vi.spyOn(sanitizedCapture, "captureSanitizedResolvedOpenshell").mockImplementation(
+    (args: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      if (argv[0] === "sandbox" && argv[1] === "get") {
+        if (!sandboxPresent) {
+          return {
+            status: 1,
+            output: "",
+            stdout: "",
+            stderr: "sandbox not found",
+            error: new Error("sandbox not found"),
+          };
+        }
+        const name = argv.at(-1) ?? "";
+        return {
+          status: 0,
+          output: `Id: sandbox-${name}\n`,
+          stdout: `Id: sandbox-${name}\n`,
+          stderr: "",
+        };
+      }
+      return { status: 0, output: "", stdout: "", stderr: "" };
+    },
+  );
+  delete require.cache[requireSource.resolve("../../adapters/openshell/sandbox-identity-cli.js")];
+  delete require.cache[requireSource.resolve("./destroy-execution.js")];
   const destroyGateway = requireSource("./destroy-gateway.js");
   const credentialStore = requireSource("../../credentials/store.js");
   const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
@@ -472,20 +505,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const captureOpenshellSpy = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
     status: 0,
     output: options.liveListOutput ?? "",
-  });
-  // Backs the delete-boundary retained-sandbox identity re-check
-  // (`inspectOpenShellSandboxIdentityFingerprint`, #10863). Mirrors the same
-  // `sandbox-${name}` id convention `sandboxListJson` uses for `sandbox list`.
-  vi.spyOn(runtime, "captureResolvedOpenshell").mockImplementation((args: unknown) => {
-    const argv = Array.isArray(args) ? args.map(String) : [];
-    if (argv[0] === "sandbox" && argv[1] === "get") {
-      if (!sandboxPresent) {
-        return { status: 1, stdout: "", stderr: "sandbox not found" };
-      }
-      const name = argv.at(-1) ?? "";
-      return { status: 0, stdout: `Id: sandbox-${name}\n`, stderr: "" };
-    }
-    return { status: 0, stdout: "", stderr: "" };
   });
   const dockerCaptureSpy = vi
     .spyOn(dockerRun, "dockerCapture")
