@@ -156,6 +156,23 @@ The hosted installer reports how a run stopped through its exit status. When you
 
 The CLI handles host-side operations that run outside the selected agent runtime.
 
+### Use Sandbox-First Commands
+
+Sandbox commands require a sandbox name before the action.
+For example, run `$$nemoclaw <name> doctor`, not `$$nemoclaw doctor`.
+
+If you omit the name, NemoClaw identifies the action, prints the required command form, and exits without registry recovery.
+It lists registered sandboxes when available.
+If setup is pending, wait for onboarding to finish or run `$$nemoclaw onboard --resume` after an interrupted run.
+
+```bash
+$$nemoclaw <name> doctor
+$$nemoclaw <name> policy list
+```
+
+A registered sandbox can have the same name as an action.
+Use the sandbox-first form to address it, for example `$$nemoclaw doctor status`.
+
 ### `$$nemoclaw help`, `$$nemoclaw --help`, `$$nemoclaw -h`
 
 Show the top-level usage summary and command groups. Running `$$nemoclaw` with no arguments shows the same help output.
