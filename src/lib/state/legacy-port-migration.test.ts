@@ -30,10 +30,10 @@ const ONBOARD_LOCK_ROOTS: readonly [string, (shared: string, selected: string) =
   ["selected", (_shared: string, selected: string) => selected],
 ];
 
-function onboardLockBody(pid: number): string {
+function onboardLockBody(pid: number, startedAt = "2026-09-01T00:00:00.000Z"): string {
   return JSON.stringify({
     pid,
-    startedAt: "2026-09-01T00:00:00.000Z",
+    startedAt,
     command: "onboard",
   });
 }
@@ -466,7 +466,7 @@ describe("legacy non-default gateway state migration", () => {
   });
 
   it.each(ONBOARD_LOCK_ROOTS)(
-    "reclaims the %s onboarding lock left behind by a run that is gone",
+    "migrates recovery state when the %s onboarding lock owner is gone",
     (_scope, root) => {
       const home = makeHome();
       const shared = path.join(home, ".nemoclaw");
@@ -485,6 +485,38 @@ describe("legacy non-default gateway state migration", () => {
       ).toEqual(["port-box"]);
     },
   );
+
+  it("migrates recovery state when the onboarding lock PID was reused", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    const reusedPid = 424_242;
+    writeOnboardLock(shared, onboardLockBody(reusedPid, "1970-01-01T00:20:00.000Z"));
+    const procFields = Array.from({ length: 50 }, () => "0");
+    procFields[0] = "S";
+    procFields[19] = "23000";
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const readSpy = vi
+      .spyOn(fs, "readFileSync")
+      .mockImplementationOnce(() => `${String(reusedPid)} (node) ${procFields.join(" ")}`)
+      .mockImplementationOnce(() => "cpu  1 2 3 4\nbtime 1000\n");
+
+    try {
+      const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+      expect(result.warnings).toEqual([]);
+      expect(fs.existsSync(path.join(shared, "retained-sandbox-recovery.json"))).toBe(false);
+      expect(
+        listRetainedSandboxRecoveryRecords(
+          path.join(selected, "retained-sandbox-recovery.json"),
+        ).map((record) => record.sandboxName),
+      ).toEqual(["port-box"]);
+    } finally {
+      readSpy.mockRestore();
+      killSpy.mockRestore();
+    }
+  });
 
   it.each(ONBOARD_LOCK_ROOTS)(
     "refuses recovery-only migration while the %s onboarding lock is still being written",
@@ -532,21 +564,21 @@ describe("legacy non-default gateway state migration", () => {
     const settled = new Date("2026-08-01T00:00:00.000Z");
     const lockFile = writeOnboardLock(shared, "active writer");
     fs.utimesSync(lockFile, settled, settled);
-    const fstatSync = fs.fstatSync.bind(fs);
-    const fstatSpy = vi.spyOn(fs, "fstatSync").mockImplementationOnce(((...args: unknown[]) => {
-      const observed = Reflect.apply(fstatSync, fs, args) as fs.Stats;
+    const readSync = fs.readSync.bind(fs);
+    const readSpy = vi.spyOn(fs, "readSync").mockImplementationOnce(((...args: unknown[]) => {
+      const observed = Reflect.apply(readSync, fs, args) as number;
       const fresh = new Date();
       fs.utimesSync(lockFile, fresh, fresh);
       return observed;
-    }) as typeof fs.fstatSync);
+    }) as typeof fs.readSync);
 
     try {
       expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
         /onboarding lock .* is still changing/u,
       );
-      expect(fstatSpy).toHaveBeenCalled();
+      expect(readSpy).toHaveBeenCalled();
     } finally {
-      fstatSpy.mockRestore();
+      readSpy.mockRestore();
     }
     expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
   });

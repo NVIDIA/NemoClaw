@@ -54,13 +54,7 @@ import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
-  assignSafeToolDisclosureUpdate,
-  normalizeSessionToolDisclosure,
-  preserveInvalidSessionToolDisclosure,
-  type ToolDisclosure,
-} from "./onboard-session-tool-disclosure";
-import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
-import {
+  onboardLockHolderStillMatches,
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
@@ -69,13 +63,20 @@ import {
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
-} from "./onboard-session/retained-sandbox-recovery";
+} from "./onboard-session/index";
+import {
+  assignSafeToolDisclosureUpdate,
+  normalizeSessionToolDisclosure,
+  preserveInvalidSessionToolDisclosure,
+  type ToolDisclosure,
+} from "./onboard-session-tool-disclosure";
+import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import type { SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
-export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
+export type { RetainedSandboxRecoveryRecord } from "./onboard-session/index";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -1371,59 +1372,6 @@ function readLockFileSnapshot(): LockFileSnapshot {
 
 const MALFORMED_STALE_SECONDS = 30;
 
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
-
-function readProcProcessStartMs(pid: number): number | null {
-  try {
-    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const btimeLine = fs
-      .readFileSync("/proc/stat", "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("btime "));
-    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
-    const closeParen = statText.lastIndexOf(")");
-    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
-
-    const fieldsAfterComm = statText
-      .slice(closeParen + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = Number(fieldsAfterComm[19]);
-    if (!Number.isFinite(startTicks)) return null;
-
-    // Linux exposes /proc/<pid>/stat starttime in USER_HZ ticks. 100 is the
-    // stable value on supported NemoClaw Linux hosts.
-    const clockTicksPerSecond = 100;
-    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
-  } catch {
-    return null;
-  }
-}
-
-function lockHolderStillMatches(lock: LockInfo): boolean {
-  if (!isProcessAlive(lock.pid)) return false;
-  if (lock.pid === process.pid) return true;
-
-  const lockStartedMs = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
-  if (!Number.isFinite(lockStartedMs)) return true;
-
-  const processStartMs = readProcProcessStartMs(lock.pid);
-  if (processStartMs === null) return true;
-
-  // The original lock holder must have started before it wrote the lock. If
-  // the currently-live PID started after the lock timestamp, the PID was reused
-  // and the lock is stale even though kill(pid, 0) succeeds.
-  return processStartMs <= lockStartedMs + 1000;
-}
-
 // File descriptor we hold across the lifetime of an acquired lock. On
 // release, fstat(fd).ino vs stat(path).ino confirms the on-disk path
 // still resolves to the file we created — closing the residual TOCTOU
@@ -1547,7 +1495,7 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         }
         continue;
       }
-      if (lockHolderStillMatches(existing)) {
+      if (onboardLockHolderStillMatches(existing)) {
         return {
           acquired: false,
           lockFile: LOCK_FILE,

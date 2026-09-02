@@ -7,6 +7,7 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import { resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import {
   assertGatewayStatePathSafe,
@@ -17,9 +18,10 @@ import {
 } from "./gateway-registry";
 import {
   listRetainedSandboxRecoveryRecords,
+  onboardLockHolderStillMatches,
   retainedSandboxRecoveryFile,
   type RetainedSandboxRecoveryRecord,
-} from "./onboard-session/retained-sandbox-recovery";
+} from "./onboard-session/index";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
 
 const MIGRATION_LOCK = ".gateway-state-migration.lock";
@@ -786,9 +788,9 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
   if (!stat) return { state: "clear" };
   if (!stat.isFile()) throw migrationError(`${activeLock} is not a regular file`);
 
-  let fd: number;
+  let lockFile;
   try {
-    fd = fs.openSync(activeLock, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    lockFile = openRegularFileNoFollow(activeLock);
   } catch (error) {
     // The writer released the lock between the stat above and this open.
     if (isErrnoException(error) && error.code === "ENOENT") return { state: "clear" };
@@ -797,32 +799,37 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
   let record: OnboardLockRecord | null = null;
   let writtenAtMs: number | null = null;
   try {
-    const beforeRead = fs.fstatSync(fd);
-    if (!beforeRead.isFile()) throw migrationError(`${activeLock} is not a regular file`);
-    const bytes = Buffer.alloc(MAX_ONBOARD_LOCK_BYTES + 1);
-    let total = 0;
-    while (total < bytes.length) {
-      const count = fs.readSync(fd, bytes, total, bytes.length - total, total);
-      if (count === 0) break;
-      total += count;
-    }
-    const afterRead = fs.fstatSync(fd);
-    if (!afterRead.isFile()) throw migrationError(`${activeLock} is not a regular file`);
-    if (beforeRead.size !== afterRead.size || beforeRead.mtimeMs !== afterRead.mtimeMs) {
+    const beforeRead = lockFile.stat();
+    const bytes = lockFile.readBytes(MAX_ONBOARD_LOCK_BYTES);
+    const afterRead = lockFile.stat();
+    if (
+      beforeRead.size !== afterRead.size ||
+      beforeRead.mtimeMs !== afterRead.mtimeMs ||
+      beforeRead.ctimeMs !== afterRead.ctimeMs
+    ) {
       return { state: "settling" };
     }
-    if (beforeRead.size > MAX_ONBOARD_LOCK_BYTES || total > MAX_ONBOARD_LOCK_BYTES) {
+    writtenAtMs = afterRead.mtimeMs;
+    record = parseOnboardLockRecord(JSON.parse(bytes.toString("utf8")));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      // A stable owner-less body ages out on the writer's cleanup schedule.
+    } else if (error instanceof RangeError) {
       throw migrationError(
         `${activeLock} exceeds the ${String(MAX_ONBOARD_LOCK_BYTES)} byte onboarding lock limit`,
       );
+    } else if (
+      (isErrnoException(error) && error.code === "ENOENT") ||
+      (error instanceof Error &&
+        (error.message.startsWith("regular file changed") ||
+          error.message.startsWith("short read from regular file")))
+    ) {
+      return { state: "settling" };
+    } else {
+      throw error;
     }
-    if (total !== afterRead.size) return { state: "settling" };
-    writtenAtMs = afterRead.mtimeMs;
-    record = parseOnboardLockRecord(JSON.parse(bytes.subarray(0, total).toString("utf8")));
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
   } finally {
-    fs.closeSync(fd);
+    lockFile.close();
   }
 
   if (writtenAtMs === null) return { state: "settling" };
@@ -831,7 +838,7 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
       ? { state: "clear" }
       : { state: "settling" };
   }
-  return isProcessAlive(record.pid) ? { state: "held", record } : { state: "clear" };
+  return onboardLockHolderStillMatches(record) ? { state: "held", record } : { state: "clear" };
 }
 
 function describeOnboardLockHolder(record: OnboardLockRecord): string {
