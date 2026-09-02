@@ -177,14 +177,28 @@ export function createOpenShellSdkProducerReceipt(input: {
   const runId = positiveInteger(input.runId, "run id");
   const runAttempt = positiveInteger(input.runAttempt, "run attempt");
   const archivePath = path.resolve(input.archivePath);
-  const metadata = fs.lstatSync(archivePath);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error("OpenShell SDK package must be a regular non-symlink file");
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(archivePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    throw new Error("OpenShell SDK package must be a readable regular non-symlink file");
   }
-  if (metadata.size < 1 || metadata.size > MAX_PACKAGE_BYTES) {
-    throw new Error("OpenShell SDK package size is invalid");
+  let bytes: Buffer;
+  try {
+    const metadata = fs.fstatSync(descriptor);
+    if (!metadata.isFile()) {
+      throw new Error("OpenShell SDK package must be a readable regular non-symlink file");
+    }
+    if (metadata.size < 1 || metadata.size > MAX_PACKAGE_BYTES) {
+      throw new Error("OpenShell SDK package size is invalid");
+    }
+    bytes = fs.readFileSync(descriptor);
+    if (bytes.length !== metadata.size) {
+      throw new Error("OpenShell SDK package changed while its receipt was recorded");
+    }
+  } finally {
+    fs.closeSync(descriptor);
   }
-  const bytes = fs.readFileSync(archivePath);
   return {
     kind: PRODUCER_KIND,
     pullRequest,

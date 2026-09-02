@@ -149,6 +149,27 @@ afterEach(() => {
 });
 
 describe("OpenShell SDK producer receipts", () => {
+  it("rejects a symlinked package without following the target", () => {
+    const directory = temporaryDirectory();
+    const target = path.join(directory, "reviewed-sdk-target.tgz");
+    const archivePath = path.join(directory, "reviewed-sdk.tgz");
+    fs.writeFileSync(target, "reviewed SDK package");
+    fs.symlinkSync(target, archivePath);
+
+    expect(() =>
+      createOpenShellSdkProducerReceipt({
+        archivePath,
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        checkedOutSha: BASE_SHA,
+        pullRequest: PR_NUMBER,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+        workflowSha: BASE_SHA,
+      }),
+    ).toThrow("readable regular non-symlink file");
+  });
+
   it("bridges a base that predates producer receipts with a distinct authenticated selection", async () => {
     const packageBytes = Buffer.from("reviewed SDK package");
     const archive = artifactZip([
