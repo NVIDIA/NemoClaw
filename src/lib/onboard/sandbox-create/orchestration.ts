@@ -1215,6 +1215,35 @@ function readHermesPortableLifecycleGeneration(input: {
     : undefined;
 }
 
+function selectRecreateGatewayAuthority(
+  requested: boolean,
+  target: { sandboxName: string; gatewayName: string; gatewayPort: number },
+) {
+  return requested ? createOnboardRecreateGatewayAuthorityRevalidator(target) : undefined;
+}
+
+function deleteJournaledRecreateSource(input: {
+  readonly runtime: Pick<
+    import("../sandbox-recreate-transaction").SandboxRecreateRuntime,
+    "beginDelete" | "journaledGatewayName"
+  >;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+}): void {
+  if (input.runtime.beginDelete() !== "source") return;
+  input.runOpenshell(
+    [
+      "sandbox",
+      "delete",
+      "-g",
+      input.runtime.journaledGatewayName ?? input.gatewayName,
+      input.sandboxName,
+    ],
+    { ignoreError: true },
+  );
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
@@ -1614,13 +1643,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       existingEntry,
       readRegistry: registry.getSandbox,
     });
-    const recreateGatewayAuthority = createIntent?.recreateTransaction
-      ? createOnboardRecreateGatewayAuthorityRevalidator({
-          sandboxName,
-          gatewayName: GATEWAY_NAME,
-          gatewayPort: GATEWAY_PORT,
-        })
-      : null;
+    const recreateGatewayAuthority = selectRecreateGatewayAuthority(
+      Boolean(createIntent?.recreateTransaction),
+      { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+    );
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
       | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
@@ -2005,18 +2031,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           redact,
         });
         revalidateSandboxIdentity(true, `deleting sandbox '${sandboxName}'`);
-        if (recreateRuntime.beginDelete() === "source") {
-          runOpenshell(
-            [
-              "sandbox",
-              "delete",
-              "-g",
-              recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
-              sandboxName,
-            ],
-            { ignoreError: true },
-          );
-        }
+        deleteJournaledRecreateSource({
+          runtime: recreateRuntime,
+          sandboxName,
+          gatewayName: GATEWAY_NAME,
+          runOpenshell,
+        });
         if (
           !waitForSandboxRecreateDeleteAbsence(
             sandboxName,
