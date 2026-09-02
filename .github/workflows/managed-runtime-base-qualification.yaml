@@ -127,7 +127,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/candidate/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
       NEMOCLAW_E2E_SHARD: default
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ runner.temp }}/managed-runtime-candidate/catalog.json
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-runtime-candidate/catalog.json
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
@@ -373,7 +373,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/base/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
       NEMOCLAW_E2E_SHARD: default
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ runner.temp }}/managed-runtime-base/catalog.json
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-runtime-base/catalog.json
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: nemoclaw
