@@ -66,7 +66,8 @@ function isPathPreflight(cmd: string[]): boolean {
     cmd[1] === "-I" &&
     cmd[2] === "-c" &&
     cmd[4] === hermesTarget.configDir &&
-    cmd[5] === hermesTarget.configPath;
+    cmd[5] === "" &&
+    cmd[6] === hermesTarget.configPath;
   if (!matchesCommand) return false;
   if (typeof cmd[3] !== "string" || !cmd[3].includes(PATH_PREFLIGHT_MARKER)) {
     throw new Error(`Expected ${PATH_PREFLIGHT_MARKER} in the Shields path preflight command`);
@@ -105,7 +106,8 @@ function defaultDockerExec(cmd: string[]): string {
 function runPathPreflight(cmd: string[], configFixtureDir: string): string {
   const fixtureArgs = cmd.slice(1, 4).concat(
     configFixtureDir,
-    cmd.slice(5).map((file) => path.join(configFixtureDir, path.basename(file))),
+    "",
+    cmd.slice(6).map((file) => path.join(configFixtureDir, path.basename(file))),
   );
   return execFileSync(cmd[0], fixtureArgs, {
     encoding: "utf8",

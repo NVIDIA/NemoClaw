@@ -172,7 +172,10 @@ describe("shields down policy rejection", () => {
     const configDir = "/sandbox/.deepagents";
     const configPath = `${configDir}/config.toml`;
     const hashPath = `${configDir}/.config-hash`;
-    const events: string[] = [];
+    const { CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT } = requireSource(
+      "./seal.js",
+    ) as typeof import("./seal.js");
+    let hashRecord: { content: string; mode: string } | undefined;
     const agent = "langchain-deepagents-code";
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       sandboxName: "dcode-safety",
@@ -197,6 +200,7 @@ describe("shields down policy rejection", () => {
       dockerExecFileSync: (argv) => {
         const args = Array.isArray(argv) ? argv.map(String) : [];
         const command = args.slice(4);
+        const script = String(command[3] ?? "");
         return new Map<boolean, () => string>([
           [true, () => ""],
           [
@@ -213,19 +217,18 @@ describe("shields down policy rejection", () => {
               ]).get(String(command.at(-1))) ?? "660 sandbox:sandbox",
           ],
           [
-            command[0] === "python3" && command[4] === "660",
+            command[0] === "python3" &&
+              script !== CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT &&
+              !script.includes("nemoclaw-shields-down-path-preflight"),
             () => {
-              events.push("unlock-config");
+              expect(hashRecord).toEqual({ content: `${"a".repeat(64)}\n`, mode: "444" });
               return "";
             },
           ],
           [
-            command.length === 6 &&
-              command[0] === "python3" &&
-              command.at(-2) === configDir &&
-              command.at(-1) === configPath,
+            command[0] === "python3" && script === CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT,
             () => {
-              events.push("repair-config-hash");
+              hashRecord = { content: `${"a".repeat(64)}\n`, mode: "444" };
               return "";
             },
           ],
@@ -235,7 +238,7 @@ describe("shields down policy rejection", () => {
 
     harness.shieldsDown("dcode-safety", { throwOnError: true });
 
-    expect(events).toEqual(["repair-config-hash", "unlock-config"]);
+    expect(hashRecord).toEqual({ content: `${"a".repeat(64)}\n`, mode: "444" });
     expect(harness.isShieldsDown("dcode-safety")).toBe(true);
   });
 

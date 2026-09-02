@@ -5609,9 +5609,9 @@ function shieldsDownWithoutHostLock(
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }
     if (isCanonicalDeepAgentsTarget(target)) {
-      // Reuse the existing no-follow repair only after the policy and recovery
-      // authority are committed. A later unlock failure uses the ordinary
-      // Shields rollback path to restore lockdown.
+      // Create the missing hash only after the policy is applied and the
+      // Shields-down auto-restore authority is recorded. If unlock fails,
+      // the Shields rollback restores lockdown.
       writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
     }
     if (
