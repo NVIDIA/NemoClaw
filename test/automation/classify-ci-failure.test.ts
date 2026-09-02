@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,13 +14,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { execute } from "../../.agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts";
 import { artifactZip, artifactZipEntryDataOffset } from "../helpers/artifact-zip";
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
 );
 const roots: string[] = [];
+const uid = process.getuid?.() ?? "unknown";
 const REDACTION_CASES = [
   [
     "Slack bot token",
@@ -84,12 +87,14 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
   const fake = [
     "#!/usr/bin/env node",
     "const fs=require('fs');",
+    "const {spawn}=require('node:child_process');",
+    "const block=()=>{ if(process.env.BLOCK_DESCENDANT_MARKER) { process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); } if(process.env.BLOCK_GROUP_MARKER) fs.writeFileSync(process.env.BLOCK_GROUP_MARKER,String(process.pid)); if(process.env.BLOCK_DESCENDANT_MARKER) { const child=spawn(process.execPath,['-e',\"process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:process.env.EXIT_GROUP_LEADER ? ['ignore',process.stdout,process.stderr] : 'ignore'}); fs.writeFileSync(process.env.BLOCK_DESCENDANT_MARKER,String(child.pid)); if(process.env.EXIT_GROUP_LEADER) { fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); process.exit(0); } } fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); setInterval(()=>{},1000); };",
     "const a=process.argv.slice(2).join(' ');",
     "fs.appendFileSync(process.env.GH_CALLS,a+'\\n');",
-    "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') console.log(JSON.stringify({id:123,run_id:456,name:process.env.JOB_NAME||'CLI tests',status:'completed',conclusion:'failure',html_url:process.env.JOB_URL||'https://example.test/job'}));",
-    "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
+    "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') { if(process.env.BLOCK_METADATA) { block(); } else console.log(JSON.stringify({id:123,run_id:456,name:process.env.JOB_NAME||'CLI tests',status:'completed',conclusion:'failure',html_url:process.env.JOB_URL||'https://example.test/job'})); }",
+    "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.BLOCK_LOG) { block(); } else if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } else process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
     "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') { const artifacts=process.env.DUPLICATE_ARTIFACTS ? [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)},{id:790,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}] : [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]; process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:artifacts.length,artifacts})); }",
-    "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') process.stdout.write(fs.readFileSync(process.env.ZIP_PATH));",
+    "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') { if(process.env.BLOCK_ARTIFACT) { block(); } else process.stdout.write(fs.readFileSync(process.env.ZIP_PATH)); }",
     "else { console.error('unexpected '+a); process.exit(9); }",
   ].join("\n");
   writeFileSync(gh, fake);
@@ -124,17 +129,27 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
   };
   return { root, env };
 }
+const classifierArgs = (extra: string[] = []) => [
+  "--experimental-strip-types",
+  "--no-warnings",
+  script,
+  "--job-id",
+  "123",
+  ...extra,
+];
 function run(env: NodeJS.ProcessEnv, extra: string[] = []) {
-  return spawnSync(
-    process.execPath,
-    ["--experimental-strip-types", "--no-warnings", script, "--job-id", "123", ...extra],
-    { encoding: "utf8", env },
-  );
+  return spawnSync(process.execPath, classifierArgs(extra), { encoding: "utf8", env });
+}
+async function waitForFile(path: string): Promise<void> {
+  await vi.waitFor(() => expect(existsSync(path)).toBe(true), { timeout: 2_000, interval: 10 });
 }
 describe("CI failure classifier process", () => {
   test("classifies known failures, redacts secrets, and leaves unknown output unclassified", () => {
     const secrets = [
       "Authorization: Bearer full authorization value with spaces",
+      "> X-API-Key: x-header-secret",
+      "request: Api-Key: api-header-secret",
+      "unrelated diagnostic text",
       "https://user:password@example.test/path",
       "AWS_ACCESS_KEY_ID=AKIAEXAMPLEVALUE",
       "BUILD_TOKEN=token-value",
@@ -150,9 +165,12 @@ describe("CI failure classifier process", () => {
     expect(v.result).toBe("classified");
     expect(v.categories).toContain("test-failure");
     expect(r.stdout).not.toMatch(
-      /full authorization|user:password|AKIAEXAMPLE|token-value|secret-value|password-value|api-key-value|ghp_alpha|gho_beta|ghu_gamma|ghs_delta|ghr_epsilon|github_pat_zeta/,
+      /full authorization|x-header-secret|api-header-secret|user:password|AKIAEXAMPLE|token-value|secret-value|password-value|api-key-value|ghp_alpha|gho_beta|ghu_gamma|ghs_delta|ghr_epsilon|github_pat_zeta/,
     );
-    expect(r.stdout.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(8);
+    expect(r.stdout).toContain("> X-API-Key: [REDACTED]");
+    expect(r.stdout).toContain("request: Api-Key: [REDACTED]");
+    expect(r.stdout).toContain("unrelated diagnostic text");
+    expect(r.stdout.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(10);
     const unknown = fixture("ordinary unrelated output");
     expect(JSON.parse(run(unknown.env).stdout).result).toBe("unclassified");
   });
@@ -188,13 +206,17 @@ describe("CI failure classifier process", () => {
     const item = fixture("ordinary output", {
       exitCode: 1,
       error:
-        "download failed https://storage.test/object?X-Amz-Credential=error-credential&X-Amz-Signature=error-signature&X-Amz-Security-Token=error-session&keep=error-visible",
+        "> X-API-Key: artifact-error-key\nunrelated artifact error\ndownload failed https://storage.test/object?X-Amz-Credential=error-credential&X-Amz-Signature=error-signature&X-Amz-Security-Token=error-session&keep=error-visible",
       command:
-        "curl 'https://storage.test/object?X-Goog-Credential=command-credential&X-Goog-Signature=command-google-signature&sig=command-signature&access_token=command-access&token=command-token&keep=command-visible'",
+        "request: Api-Key: artifact-command-key\nunrelated artifact command\ncurl 'https://storage.test/object?X-Goog-Credential=command-credential&X-Goog-Signature=command-google-signature&sig=command-signature&access_token=command-access&token=command-token&keep=command-visible'",
     });
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status, result.stderr).toBe(0);
     const failure = JSON.parse(result.stdout).artifact.failures[0];
+    expect(failure.error).toContain("> X-API-Key: [REDACTED]");
+    expect(failure.error).toContain("unrelated artifact error");
+    expect(failure.command).toContain("request: Api-Key: [REDACTED]");
+    expect(failure.command).toContain("unrelated artifact command");
     expect(failure.error).toContain(
       "?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]&X-Amz-Security-Token=[REDACTED]&keep=error-visible",
     );
@@ -202,7 +224,7 @@ describe("CI failure classifier process", () => {
       "?X-Goog-Credential=[REDACTED]&X-Goog-Signature=[REDACTED]&sig=[REDACTED]&access_token=[REDACTED]&token=[REDACTED]&keep=command-visible",
     );
     expect(result.stdout).not.toMatch(
-      /error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
+      /artifact-error-key|artifact-command-key|error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
     );
   });
   test("redacts and bounds dynamic GitHub job metadata", () => {
@@ -238,16 +260,12 @@ describe("CI failure classifier process", () => {
     expect(value.log.truncationReasons).toContain("source-log-bounded-before-filtering");
     expect(value.log.stdout).toContain("retained tail");
     expect(value.log.stdout.length).toBeLessThan(40000);
-    const observations = readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(observations).toContainEqual(
-      expect.objectContaining({ name: expect.stringMatching(/^nemoclaw-ci-log\./), mode: 0o700 }),
-    );
+    const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
     expect(
-      observations.find((entry) => entry.logBytes !== undefined)?.logBytes,
-    ).toBeLessThanOrEqual(4_000_000);
+      existsSync(temporaryRoot)
+        ? readdirSync(temporaryRoot).filter((name) => name.startsWith("nemoclaw-ci-log."))
+        : [],
+    ).toEqual([]);
   });
   test.each([
     [["--unknown", "value"], "Unknown option --unknown"],
@@ -262,7 +280,7 @@ describe("CI failure classifier process", () => {
     expect(r.stderr).toContain(message);
     expect(readdirSync(item.root)).not.toContain("calls");
   });
-  test("preserves the primary log failure and an actionable redacted cleanup path", () => {
+  test("preserves the primary log failure while direct cleanup ignores a fake rm", () => {
     const item = fixture("AssertionError: retained tail");
     const credential = "cleanup-path-secret";
     const tempRoot = join(item.root, `BUILD_TOKEN=${credential}`);
@@ -271,23 +289,11 @@ describe("CI failure classifier process", () => {
     item.env.FAIL_CLEANUP = "nemoclaw-ci-log";
     item.env.FAIL_LOG = "primary log download failure";
     const result = run(item.env);
-    const observation = JSON.parse(readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8").trim());
-    const leakedDirectory = join(tempRoot, observation.name);
-    const recoveryCommand = result.stderr.match(/Remove it directly with: (rm -rf -- .*)/u)?.[1];
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("primary log download failure");
-    expect(result.stderr).toContain(`Cleanup failure for '${observation.name}'`);
-    expect(recoveryCommand).toBe(`rm -rf -- "\${TMPDIR:-/tmp}/${observation.name}"`);
-    expect(result.stderr).not.toContain(credential);
-    expect(result.stderr).not.toContain("cleanup-secret");
-    expect(result.stderr.length).toBeLessThanOrEqual(2100);
-    expect(statSync(leakedDirectory).isDirectory()).toBe(true);
-    const recovered = spawnSync("bash", ["-c", recoveryCommand!], {
-      env: { ...process.env, TMPDIR: tempRoot },
-      encoding: "utf8",
-    });
-    expect(recovered.status, recovered.stderr).toBe(0);
-    expect(readdirSync(tempRoot)).not.toContain(observation.name);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).log.stderr).toContain("primary log download failure");
+    expect(result.stdout).not.toContain(credential);
+    expect(result.stdout).not.toContain("cleanup-secret");
+    expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
   });
   test.each([
     ["malformed", Buffer.from("not a zip")],
@@ -355,7 +361,7 @@ describe("CI failure classifier process", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("exceeds the 1,000,000-byte limit");
   });
-  test("preserves an artifact validation failure when cleanup also fails", () => {
+  test("preserves an artifact validation failure while direct cleanup ignores a fake rm", () => {
     const item = fixture("SIGKILL", undefined, Buffer.from("not a zip"));
     const credential = "artifact-cleanup-path-secret";
     const tempRoot = join(item.root, `BUILD_TOKEN=${credential}`);
@@ -365,25 +371,9 @@ describe("CI failure classifier process", () => {
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Artifact ZIP is malformed or unsafe");
-    const observation = JSON.parse(
-      readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8")
-        .trim()
-        .split("\n")
-        .find((line) => JSON.parse(line).name.startsWith("nemoclaw-ci-classify"))!,
-    );
-    const leakedDirectory = join(tempRoot, observation.name);
-    const recoveryCommand = result.stderr.match(/Remove it directly with: (rm -rf -- .*)/u)?.[1];
-    expect(result.stderr).toContain(`Cleanup failure for '${observation.name}'`);
-    expect(recoveryCommand).toBe(`rm -rf -- "\${TMPDIR:-/tmp}/${observation.name}"`);
     expect(result.stderr).not.toContain("cleanup-secret");
     expect(result.stderr).not.toContain(credential);
-    expect(statSync(leakedDirectory).isDirectory()).toBe(true);
-    const recovered = spawnSync("bash", ["-c", recoveryCommand!], {
-      env: { ...process.env, TMPDIR: tempRoot, BUILD_TOKEN: undefined },
-      encoding: "utf8",
-    });
-    expect(recovered.status, recovered.stderr).toBe(0);
-    expect(readdirSync(tempRoot)).not.toContain(observation.name);
+    expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
   });
   test("reads a real ZIP artifact and removes private temporary directories", () => {
     const item = fixture("SIGKILL", {
@@ -398,15 +388,13 @@ describe("CI failure classifier process", () => {
     expect(value.artifact.filesRead).toBe(1);
     expect(value.artifact.failures[0].signal).toBe("SIGKILL");
     expect(result.stdout).not.toContain("artifact-secret");
-    const observations = readFileSync(item.env.CLEANUP_OBSERVATIONS!, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(observations.map(({ name, mode }) => ({ name: name.split(".")[0], mode }))).toEqual([
-      { name: "nemoclaw-ci-log", mode: 0o700 },
-      { name: "nemoclaw-ci-classify", mode: 0o700 },
-    ]);
-    expect(readdirSync(item.root).filter((name) => name.startsWith("nemoclaw-ci-"))).toEqual([]);
+    expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
+    const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
+    expect(
+      existsSync(temporaryRoot)
+        ? readdirSync(temporaryRoot).filter((name) => name.startsWith("nemoclaw-ci-"))
+        : [],
+    ).toEqual([]);
   });
   test("skips malformed result JSON while retaining valid artifact failures", () => {
     const archive = artifactZip([
@@ -448,6 +436,106 @@ describe("CI failure classifier process", () => {
     expect(value.findings).not.toContainEqual(expect.objectContaining({ type: "process-signal" }));
     expect(result.stdout).not.toContain(secret);
   });
+
+  test("terminates a no-stdio descendant after its command leader exits and times out", async () => {
+    const root = mkdtempSync(join(tmpdir(), "classify-ci-timeout-"));
+    roots.push(root);
+    const marker = join(root, "descendant-pid");
+    const program = [
+      "const {spawn}=require('node:child_process');",
+      "const child=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:'ignore'});",
+      "require('node:fs').writeFileSync(process.argv[1],String(child.pid));",
+    ].join("");
+    const result = await execute(process.execPath, ["-e", program, marker], root, 200);
+    const descendantPid = Number(readFileSync(marker, "utf8"));
+    expect(result.exitCode).not.toBe(0);
+    expect(() => process.kill(descendantPid, 0)).toThrow();
+  });
+
+  test("does not escalate after a child exits promptly on SIGTERM", async () => {
+    const item = fixture("AssertionError: retained tail");
+    const marker = join(item.root, "blocked");
+    const signals = join(item.root, "process-group-signals");
+    const instrument = join(item.root, "instrument-process-kill.mjs");
+    writeFileSync(
+      instrument,
+      [
+        'import { appendFileSync } from "node:fs";',
+        "const realKill = process.kill.bind(process);",
+        "process.kill = (pid, signal) => {",
+        "  if (pid < 0 && signal) appendFileSync(process.env.KILL_SIGNAL_LOG, String(signal) + '\\n');",
+        "  return realKill(pid, signal);",
+        "};",
+      ].join("\n"),
+    );
+    item.env.BLOCK_LOG = "1";
+    item.env.BLOCK_MARKER = marker;
+    item.env.KILL_SIGNAL_LOG = signals;
+    item.env.NODE_OPTIONS = `--import=${instrument}`;
+    const child = spawn(process.execPath, classifierArgs(), {
+      env: item.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForFile(marker);
+    child.kill("SIGTERM");
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) =>
+        child.once("close", (code, closeSignal) => resolve({ code, signal: closeSignal })),
+    );
+    expect(result).toEqual({ code: 143, signal: null });
+    expect(readFileSync(signals, "utf8").trim().split("\n")).toEqual(["SIGTERM"]);
+  });
+  test.each([
+    ["metadata", "BLOCK_METADATA", [], "SIGTERM", 143, false],
+    ["log", "BLOCK_LOG", [], "SIGINT", 130, true],
+    ["log", "BLOCK_LOG", [], "SIGHUP", 129, true],
+    ["artifact", "BLOCK_ARTIFACT", ["--artifact-name", "results"], "SIGTERM", 143, true],
+  ] as const)(
+    "kills the detached group and its ignoring descendant during %s cancellation",
+    async (_kind, block, extra, signal, exitCode, exitGroupLeader) => {
+      const item = fixture("AssertionError: retained tail");
+      const marker = join(item.root, "blocked");
+      const groupMarker = join(item.root, "group-pid");
+      const descendantMarker = join(item.root, "descendant-pid");
+      item.env[block] = "1";
+      item.env.BLOCK_MARKER = marker;
+      item.env.BLOCK_GROUP_MARKER = groupMarker;
+      item.env.BLOCK_DESCENDANT_MARKER = descendantMarker;
+      Object.assign(item.env, exitGroupLeader ? { EXIT_GROUP_LEADER: "1" } : {});
+      const child = spawn(process.execPath, classifierArgs([...extra]), {
+        env: item.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+      await Promise.all([
+        waitForFile(marker),
+        waitForFile(groupMarker),
+        waitForFile(descendantMarker),
+      ]);
+      const groupPid = Number(readFileSync(groupMarker, "utf8"));
+      const descendantPid = Number(readFileSync(descendantMarker, "utf8"));
+      child.kill(signal);
+      child.kill(signal);
+      const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve) =>
+          child.once("close", (code, closeSignal) => resolve({ code, signal: closeSignal })),
+      );
+      expect(result).toEqual({ code: exitCode, signal: null });
+      expect(() => process.kill(groupPid, 0)).toThrow();
+      expect(() => process.kill(descendantPid, 0)).toThrow();
+      expect(stderr.length).toBeLessThanOrEqual(2000);
+      const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
+      const remaining = existsSync(temporaryRoot)
+        ? readdirSync(temporaryRoot).filter((name) => name.startsWith("nemoclaw-ci-"))
+        : [];
+      expect(remaining).toEqual([]);
+      expect(existsSync(item.env.CLEANUP_OBSERVATIONS!)).toBe(false);
+    },
+  );
 
   test("redacts credential assignments in returned artifact paths", () => {
     const secret = "artifact-path-secret";

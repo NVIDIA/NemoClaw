@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -33,9 +33,12 @@ const STANDALONE_SECRET =
   /\b(?:(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|nv(?:api|cf)-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{20,})\b/gu;
 const SECRET_QUERY_FIELD =
   /([?&](?:X-Amz-(?:Credential|Signature|Security-Token)|X-Goog-(?:Credential|Signature)|sig|access_token|token)=)(?!\[REDACTED\])[^&#\s"']*/giu;
+const SECRET_HEADER =
+  /(^|[\r\n])((?:(?:>\s*|request:\s*))?(?:x-)?api-key\s*:\s*)(?!\[REDACTED\])[^\r\n]*/giu;
 const redact = (value: string): string =>
   value
     .replace(JSON_SECRET_FIELD, '$1"[REDACTED]"')
+    .replace(SECRET_HEADER, "$1$2[REDACTED]")
     .replace(/(\bauthorization\s*:\s*)[^\r\n]*/giu, "$1[REDACTED]")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/giu, "$1[REDACTED]@")
     .replace(SECRET_QUERY_FIELD, "$1[REDACTED]")
@@ -82,25 +85,223 @@ const projectText = (input: {
     textClipped,
   };
 };
-const execute = (
+type ProcessGroup = {
+  pid: number;
+  state: "running" | "terminating";
+  drained: Promise<void>;
+  markDrained: () => void;
+};
+const processGroups = new Map<number, ProcessGroup>();
+const PROCESS_GROUP_WRAPPER = String.raw`
+const { spawn } = require("node:child_process");
+const { readdirSync, readFileSync } = require("node:fs");
+const leader = process.pid;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => {});
+const child = spawn(process.argv[1], process.argv.slice(2), {
+  stdio: ["ignore", "inherit", "inherit"],
+});
+let exitCode = 1;
+let childExited = false;
+const groupHasDescendants = () => {
+  for (const name of readdirSync("/proc")) {
+    if (!/^\d+$/.test(name) || Number(name) === leader) continue;
+    try {
+      const stat = readFileSync("/proc/" + name + "/stat", "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      if (Number(fields[2]) === leader) return true;
+    } catch {}
+  }
+  return false;
+};
+const drain = () => {
+  if (!childExited || groupHasDescendants()) return;
+  clearInterval(poll);
+  process.exit(exitCode);
+};
+const poll = setInterval(drain, 10);
+child.once("error", () => {
+  childExited = true;
+  drain();
+});
+child.once("exit", (code) => {
+  exitCode = code ?? 1;
+  childExited = true;
+  drain();
+});
+`;
+const ownsProcessGroup = (group: ProcessGroup | undefined): group is ProcessGroup =>
+  group !== undefined && processGroups.get(group.pid) === group;
+const markProcessGroupDrained = (group: ProcessGroup | undefined): void => {
+  if (!group || !ownsProcessGroup(group)) return;
+  processGroups.delete(group.pid);
+  group.markDrained();
+};
+const beginTermination = (group: ProcessGroup | undefined): void => {
+  if (!group || !ownsProcessGroup(group) || group.state === "terminating") return;
+  group.state = "terminating";
+  try {
+    process.kill(-group.pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") markProcessGroupDrained(group);
+  }
+};
+const forceTerminatingGroup = (group: ProcessGroup | undefined): void => {
+  if (!group || !ownsProcessGroup(group) || group.state !== "terminating") return;
+  try {
+    process.kill(-group.pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") markProcessGroupDrained(group);
+  }
+};
+export const execute = async (
   command: string,
   args: string[],
   workdir: string,
   timeoutMs: number,
-): ProcessResult => {
-  const result = spawnSync(command, args, {
-    cwd: workdir,
-    encoding: "utf8",
-    timeout: timeoutMs,
-    maxBuffer: 8_000_000,
+): Promise<ProcessResult> => {
+  temporaryDirectories.installHandlers();
+  if (temporaryDirectories.shutdownStarted)
+    throw new Error("Cannot execute a new process after shutdown has started");
+  return await new Promise((resolve) => {
+    const child = spawn(process.execPath, ["-e", PROCESS_GROUP_WRAPPER, command, ...args], {
+      cwd: workdir,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let group: ProcessGroup | undefined;
+    if (child.pid !== undefined && Number.isSafeInteger(child.pid) && child.pid > 0) {
+      let markDrained = (): void => {};
+      const drained = new Promise<void>((resolveDrained) => {
+        markDrained = resolveDrained;
+      });
+      group = { pid: child.pid, state: "running", drained, markDrained };
+      processGroups.set(group.pid, group);
+    }
+    let stdout = "";
+    let stderr = "";
+    let overflow = false;
+    const append = (current: string, chunk: Buffer): string => {
+      const combined = current + chunk.toString("utf8");
+      if (combined.length <= 8_000_000) return combined;
+      overflow = true;
+      return combined.slice(-8_000_000);
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout = append(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = append(stderr, chunk);
+    });
+    let escalation: NodeJS.Timeout | undefined;
+    let settled = false;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      if (!ownsProcessGroup(group)) return;
+      timedOut = true;
+      beginTermination(group);
+      escalation = setTimeout(() => forceTerminatingGroup(group), 1000);
+    }, timeoutMs);
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (escalation) clearTimeout(escalation);
+      markProcessGroupDrained(group);
+      resolve({
+        kind: "foreground",
+        exitCode: 1,
+        stdout: { text: stdout },
+        stderr: { text: stderr || error.message },
+      });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (escalation) clearTimeout(escalation);
+      markProcessGroupDrained(group);
+      resolve({
+        kind: "foreground",
+        exitCode: overflow || timedOut ? 1 : (code ?? 1),
+        stdout: { text: stdout },
+        stderr: {
+          text: overflow
+            ? `${stderr}\nProcess output exceeded the 8,000,000-character limit`
+            : stderr,
+        },
+      });
+    });
   });
-  return {
-    kind: "foreground",
-    exitCode: result.status ?? 1,
-    stdout: { text: String(result.stdout ?? "") },
-    stderr: { text: String(result.stderr ?? result.error?.message ?? "") },
-  };
 };
+
+const TEMPORARY_ROOT = `/tmp/nemoclaw-ci-classifier-${process.getuid?.() ?? "unknown"}`;
+type TemporaryKind = "CI log" | "artifact";
+class TemporaryDirectoryManager {
+  readonly #tracked = new Set<string>();
+  #handlersInstalled = false;
+  #shutdownStarted = false;
+
+  create(kind: TemporaryKind): string {
+    mkdirSync(TEMPORARY_ROOT, { recursive: true, mode: 0o700 });
+    const rootStat = lstatSync(TEMPORARY_ROOT);
+    if (
+      rootStat.isSymbolicLink() ||
+      !rootStat.isDirectory() ||
+      (rootStat.mode & 0o077) !== 0 ||
+      rootStat.uid !== process.getuid?.()
+    )
+      throw new Error("Temporary classifier root is not a private owned directory");
+    const prefix = kind === "CI log" ? "nemoclaw-ci-log." : "nemoclaw-ci-classify.";
+    const dir = mkdtempSync(join(TEMPORARY_ROOT, prefix));
+    this.#tracked.add(dir);
+    return dir;
+  }
+
+  owns(dir: string): boolean {
+    return this.#tracked.has(dir);
+  }
+
+  untrack(dir: string): void {
+    this.#tracked.delete(dir);
+  }
+
+  get shutdownStarted(): boolean {
+    return this.#shutdownStarted;
+  }
+
+  installHandlers(): void {
+    if (this.#handlersInstalled) return;
+    this.#handlersInstalled = true;
+    for (const [signal, code] of [
+      ["SIGHUP", 129],
+      ["SIGINT", 130],
+      ["SIGTERM", 143],
+    ] as const)
+      process.on(signal, () => {
+        if (this.#shutdownStarted) return;
+        this.#shutdownStarted = true;
+        void this.#shutdown(signal, code);
+      });
+  }
+
+  async #shutdown(_signal: NodeJS.Signals, code: number): Promise<void> {
+    const groups = [...processGroups.values()];
+    for (const group of groups) beginTermination(group);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    for (const group of groups) forceTerminatingGroup(group);
+    await Promise.all(groups.map((group) => group.drained));
+    for (const dir of this.#tracked) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+        this.#tracked.delete(dir);
+      } catch {
+        // Cancellation cleanup is best effort; the fixed root keeps manual recovery actionable.
+      }
+    }
+    process.exit(code);
+  }
+}
+const temporaryDirectories = new TemporaryDirectoryManager();
 const normalizeArtifactName = (value: string | undefined): string => {
   const artifactName = value?.trim() ?? "";
   if (
@@ -111,10 +312,13 @@ const normalizeArtifactName = (value: string | undefined): string => {
   return artifactName;
 };
 
+// Internal trust boundary: callers select only these fixed gh, Bash, and coreutils
+// operations. Artifact contents are parsed as data and are never executed. Process-group
+// management therefore contains these trusted children; it is not an untrusted workload sandbox.
 const runtime = {
   project_diagnostic_text: async (input: Parameters<typeof projectText>[0]) => projectText(input),
   run_github_cli: async (input: { workdir: string; args: string[]; timeoutMs: number }) => {
-    const result = execute("gh", input.args, input.workdir, input.timeoutMs);
+    const result = await execute("gh", input.args, input.workdir, input.timeoutMs);
     if (result.exitCode !== 0) throw new Error(result.stderr.text || result.stdout.text);
     return { stdout: result.stdout.text, stderr: result.stderr.text };
   },
@@ -223,20 +427,17 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     kind: "CI log" | "artifact",
   ): Promise<string> => {
     const generatedName = basename(dir);
+    if (!temporaryDirectories.owns(dir))
+      return `Cleanup failure: temporary ${kind} directory was not owned by this process`;
     const expectedPrefix = kind === "CI log" ? "nemoclaw-ci-log" : "nemoclaw-ci-classify";
     if (!new RegExp(`^${expectedPrefix}\\.[A-Za-z0-9]{6}$`, "u").test(generatedName))
       return `Cleanup failure: temporary ${kind} directory had an invalid generated name`;
-    const remediationPath = `"\${TMPDIR:-/tmp}/${generatedName}"`;
+    const remediationPath = q(join(TEMPORARY_ROOT, generatedName));
     const remediation = `Remove it directly with: rm -rf -- ${remediationPath}`;
     try {
-      const cleanup = await run(`rm -rf -- ${q(dir)}`, `Remove temporary ${kind} directory`);
-      if (cleanup.exitCode === 0) return "";
-      const detail = redact(
-        cleanup.stderr.text ||
-          cleanup.stdout.text ||
-          `Could not remove temporary ${kind} directory`,
-      ).slice(-1000);
-      return `Cleanup failure for ${q(generatedName)}: ${detail}. ${remediation}`;
+      rmSync(dir, { recursive: true, force: true });
+      temporaryDirectories.untrack(dir);
+      return "";
     } catch (error) {
       const detail = redact(error instanceof Error ? error.message : String(error)).slice(-1000);
       return `Cleanup failure for ${q(generatedName)}: ${detail}. ${remediation}`;
@@ -260,13 +461,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     conclusion: rawJob.conclusion == null ? null : String(rawJob.conclusion).slice(0, 100),
     url: jobUrl.text,
   };
-  const logTemp = await run(
-    'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-log.XXXXXX"',
-    "Create temporary CI log directory",
-  );
-  if (logTemp.exitCode !== 0) throw new Error("Could not create temporary CI log directory");
-  const logDir = logTemp.stdout.text.trim();
-  if (!logDir) throw new Error("Could not create temporary CI log directory");
+  const logDir = temporaryDirectories.create("CI log");
   let logCode = -1;
   let logStderr = "";
   let sourceTruncated = false;
@@ -432,13 +627,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
         throw new Error(
           `Artifact ${artifactName} has an invalid size or is too large for bounded inspection`,
         );
-      const temp = await run(
-        'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-classify.XXXXXX"',
-        "Create temporary artifact directory",
-      );
-      if (temp.exitCode !== 0) throw new Error("Could not create temporary artifact directory");
-      const dir = temp.stdout.text.trim();
-      if (!dir) throw new Error("Could not create temporary artifact directory");
+      const dir = temporaryDirectories.create("artifact");
       let artifactFailure: unknown;
       try {
         const archive = dir + "/artifact.zip";
