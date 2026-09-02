@@ -310,6 +310,9 @@ describe("CI failure classifier process", () => {
       "Authorization: Bearer full authorization value with spaces",
       "> X-API-Key: x-header-secret",
       "request: Api-Key: api-header-secret",
+      "cOoKiE: log-cookie-secret=plain",
+      "> sEt-CoOkIe: log-set-cookie-secret=prefixed; Secure",
+      "request: COOKIE: log-request-cookie-secret=prefixed",
       "unrelated diagnostic text",
       "https://user:password@example.test/path",
       "AWS_ACCESS_KEY_ID=AKIAEXAMPLEVALUE",
@@ -323,12 +326,15 @@ describe("CI failure classifier process", () => {
     const r = run(known.env);
     expect(r.status).toBe(0);
     expect(r.stdout).not.toMatch(
-      /full authorization|x-header-secret|api-header-secret|user:password|AKIAEXAMPLE|token-value|secret-value|password-value|api-key-value|ghp_alpha|gho_beta|ghu_gamma|ghs_delta|ghr_epsilon|github_pat_zeta/,
+      /full authorization|x-header-secret|api-header-secret|log-cookie-secret|log-set-cookie-secret|log-request-cookie-secret|user:password|AKIAEXAMPLE|token-value|secret-value|password-value|api-key-value|ghp_alpha|gho_beta|ghu_gamma|ghs_delta|ghr_epsilon|github_pat_zeta/,
     );
     expect(r.stdout).toContain("> X-API-Key: [REDACTED]");
     expect(r.stdout).toContain("request: Api-Key: [REDACTED]");
+    expect(r.stdout).toContain("cOoKiE: [REDACTED]");
+    expect(r.stdout).toContain("> sEt-CoOkIe: [REDACTED]");
+    expect(r.stdout).toContain("request: COOKIE: [REDACTED]");
     expect(r.stdout).toContain("unrelated diagnostic text");
-    expect(r.stdout.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(10);
+    expect(r.stdout.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(13);
   });
   test("does not pass executable lookup or startup injection to classifier subprocesses", () => {
     const item = fixture("AssertionError: expected true");
@@ -414,16 +420,18 @@ describe("CI failure classifier process", () => {
     const item = fixture("ordinary output", {
       exitCode: 1,
       error:
-        "> X-API-Key: artifact-error-key\nunrelated artifact error\ndownload failed https://storage.test/object?X-Amz-Credential=error-credential&X-Amz-Signature=error-signature&X-Amz-Security-Token=error-session&keep=error-visible",
+        "> X-API-Key: artifact-error-key\nrequest: Set-Cookie: artifact-error-cookie=opaque; HttpOnly\nunrelated artifact error\ndownload failed https://storage.test/object?X-Amz-Credential=error-credential&X-Amz-Signature=error-signature&X-Amz-Security-Token=error-session&keep=error-visible",
       command:
-        "request: Api-Key: artifact-command-key\nunrelated artifact command\ncurl 'https://storage.test/object?X-Goog-Credential=command-credential&X-Goog-Signature=command-google-signature&sig=command-signature&access_token=command-access&token=command-token&keep=command-visible'",
+        "request: Api-Key: artifact-command-key\n> COOKIE: artifact-command-cookie=opaque\nunrelated artifact command\ncurl 'https://storage.test/object?X-Goog-Credential=command-credential&X-Goog-Signature=command-google-signature&sig=command-signature&access_token=command-access&token=command-token&keep=command-visible'",
     });
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status, result.stderr).toBe(0);
     const failure = JSON.parse(result.stdout).artifact.failures[0];
     expect(failure.error).toContain("> X-API-Key: [REDACTED]");
+    expect(failure.error).toContain("request: Set-Cookie: [REDACTED]");
     expect(failure.error).toContain("unrelated artifact error");
     expect(failure.command).toContain("request: Api-Key: [REDACTED]");
+    expect(failure.command).toContain("> COOKIE: [REDACTED]");
     expect(failure.command).toContain("unrelated artifact command");
     expect(failure.error).toContain(
       "?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]&X-Amz-Security-Token=[REDACTED]&keep=error-visible",
@@ -432,7 +440,7 @@ describe("CI failure classifier process", () => {
       "?X-Goog-Credential=[REDACTED]&X-Goog-Signature=[REDACTED]&sig=[REDACTED]&access_token=[REDACTED]&token=[REDACTED]&keep=command-visible",
     );
     expect(result.stdout).not.toMatch(
-      /artifact-error-key|artifact-command-key|error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
+      /artifact-error-key|artifact-error-cookie|artifact-command-key|artifact-command-cookie|error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
     );
   });
   test("redacts and bounds dynamic GitHub job metadata", () => {

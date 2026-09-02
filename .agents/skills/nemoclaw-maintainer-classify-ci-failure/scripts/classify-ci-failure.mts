@@ -210,7 +210,7 @@ const STANDALONE_SECRET =
 const SECRET_QUERY_FIELD =
   /([?&](?:X-Amz-(?:Credential|Signature|Security-Token)|X-Goog-(?:Credential|Signature)|sig|access_token|token)=)(?!\[REDACTED\])[^&#\s"']*/giu;
 const SECRET_HEADER =
-  /(^|[\r\n])((?:(?:>\s*|request:\s*))?(?:x-)?api-key\s*:\s*)(?!\[REDACTED\])[^\r\n]*/giu;
+  /(^|[\r\n])((?:(?:>\s*|request:\s*))?(?:(?:x-)?api-key|cookie|set-cookie)\s*:\s*)(?!\[REDACTED\])[^\r\n]*/giu;
 const redact = (value: string): string =>
   value
     .replace(JSON_SECRET_FIELD, '$1"[REDACTED]"')
