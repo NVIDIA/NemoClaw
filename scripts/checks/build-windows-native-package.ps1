@@ -109,6 +109,7 @@ if ($authoringText -match '<\s*CustomAction\b' -or
 [IO.Directory]::CreateDirectory($output) | Out-Null
 $intermediate = Join-Path $outputParent ('.windows-package-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($intermediate) | Out-Null
+$restorePackages = Join-Path $intermediate 'nuget'
 $wixRoot = Join-Path $sourceRoot 'packaging\windows'
 Push-Location $wixRoot
 try {
@@ -128,6 +129,7 @@ try {
         "-p:SourceRoot=$sourceRoot",
         "-p:PackageOutputRoot=$output",
         "-p:PackageIntermediateRoot=$intermediate",
+        "-p:RestorePackagesPath=$restorePackages",
         '-p:ContinuousIntegrationBuild=true',
         '-p:RestoreIgnoreFailedSources=false'
     )

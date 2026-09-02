@@ -11,7 +11,7 @@
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <DebugType>none</DebugType>
-    <BootstrapperApplicationsExtensionPath>$(NuGetPackageRoot)wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll</BootstrapperApplicationsExtensionPath>
+    <BootstrapperApplicationsExtensionPath>$(RestorePackagesPath)\wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll</BootstrapperApplicationsExtensionPath>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Bundle.wxs" />
@@ -24,7 +24,7 @@
       PrivateAssets="all" />
     <WixExtension Include="$(BootstrapperApplicationsExtensionPath)" />
   </ItemGroup>
-  <Target Name="ValidateNemoClawBundleInputs" BeforeTargets="Build">
+  <Target Name="ValidateNemoClawBundleInputs" BeforeTargets="ResolveWixExtensionReferences">
     <Error
       Condition="!Exists('$(BootstrapperApplicationsExtensionPath)')"
       Text="The pinned WiX BootstrapperApplications extension is missing." />
