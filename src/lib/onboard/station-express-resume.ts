@@ -149,7 +149,12 @@ function sparkModel(value: unknown): VllmModelDef | null {
 
 function canonicalStationModelValue(value: string): string | null {
   if (value.trim() !== value) return null;
-  return stationModel(value)?.envValue ?? null;
+  const model = stationModel(value);
+  if (!model) return null;
+  const normalized = value.toLowerCase();
+  return normalized === model.envValue.toLowerCase() || normalized === model.id.toLowerCase()
+    ? model.envValue
+    : null;
 }
 
 function servedModel(model: VllmModelDef): string {

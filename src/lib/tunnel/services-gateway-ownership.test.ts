@@ -14,6 +14,8 @@ import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
 import { stopAll } from "./services";
 
+const neutralOllamaCleanup = () => undefined;
+
 vi.mock("../adapters/docker", () => ({
   dockerCapture: vi.fn(),
   dockerForceRm: vi.fn(),
@@ -248,7 +250,12 @@ describe("stopAll gateway-stop wiring", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, sandboxName: "alpha", releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        sandboxName: "alpha",
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -302,7 +309,7 @@ describe("stopAll gateway-stop wiring", () => {
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, sandboxName: "alpha" });
+      stopAll({ pidDir, sandboxName: "alpha", unloadOllamaModels: neutralOllamaCleanup });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -324,7 +331,11 @@ describe("stopAll gateway-stop wiring", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -348,7 +359,11 @@ describe("stopAll gateway-stop wiring", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -369,7 +384,11 @@ describe("stopAll gateway-stop wiring", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }

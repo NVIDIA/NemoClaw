@@ -27,15 +27,22 @@ vi.mock("../lib/actions/global", () => ({
   forgetExtraProvider: mocks.forgetExtraProvider,
   listManagedMcpCredentialReservations: mocks.listManagedMcpCredentialReservations,
 }));
-vi.mock("../lib/adapters/openshell/provider-command", () => ({
-  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
-  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
-}));
+vi.mock("../lib/adapters/openshell/provider-command", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../lib/adapters/openshell/provider-command")>();
+  return {
+    ...actual,
+    OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
+    runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+  };
+});
 vi.mock("../lib/onboard/gateway-teardown-authority", () => ({
   resolveGatewayCredentialMutationAuthority: mocks.resolveGatewayCredentialMutationAuthority,
 }));
 
 import { runCredentialsAddAction } from "../lib/actions/credentials-add";
+import { runCredentialsListAction } from "../lib/actions/credentials/list";
+import { runCredentialsResetAction } from "../lib/actions/credentials/reset";
 import CredentialsCommand from "./credentials";
 import CredentialsListCommand from "./credentials/list";
 import CredentialsResetCommand from "./credentials/reset";
@@ -77,9 +84,12 @@ describe("credentials oclif adapter source coverage", () => {
     await CredentialsListCommand.run([], rootDir);
 
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith();
-    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
+    expect(mocks.resolveGatewayCredentialMutationAuthority).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "list", "--names"],
+      ["provider", "list", "-g", "nemoclaw", "--names"],
       {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -101,7 +111,7 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(mocks.prompt).not.toHaveBeenCalled();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "delete", "nvidia-prod"],
+      ["provider", "delete", "-g", "nemoclaw", "nvidia-prod"],
       {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -141,6 +151,33 @@ describe("credentials oclif adapter source coverage", () => {
     );
   });
 
+  it("rejects an ambient gateway endpoint before credential provider operations (#9806)", async () => {
+    const credentialValue = "host-only-secret";
+    vi.stubEnv("CUSTOM_TOKEN", credentialValue);
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://untrusted.example.test");
+
+    const add = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: ["CUSTOM_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    });
+    const list = await runCredentialsListAction("nemoclaw");
+    const reset = await runCredentialsResetAction({
+      provider: "custom-provider",
+      confirmed: true,
+    });
+
+    expect(add.exitCode).toBe(1);
+    expect(list.exitCode).toBe(1);
+    expect(reset.exitCode).toBe(1);
+    const diagnostics = JSON.stringify([add, list, reset]);
+    expect(diagnostics.match(/OPENSHELL_GATEWAY_ENDPOINT is set/gu)).toHaveLength(3);
+    expect(diagnostics).not.toContain(credentialValue);
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+  });
+
   it("rejects a provider credential reserved by managed MCP before gateway mutation (#9388)", async () => {
     vi.stubEnv("MAAS_GLEAN_TOKEN", "qa-secret-value");
     mocks.listManagedMcpCredentialReservations.mockReturnValue([
@@ -169,7 +206,7 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 
-  it("rejects --from-existing before gateway work when managed MCP reserves credentials (#9388)", async () => {
+  it("allows --from-existing after inspecting disjoint managed MCP credential keys (#9388)", async () => {
     mocks.listManagedMcpCredentialReservations.mockReturnValue([
       {
         sandboxName: "hermes",
@@ -177,23 +214,36 @@ describe("credentials oclif adapter source coverage", () => {
         credentialKeys: ["MAAS_GLEAN_TOKEN"],
       },
     ]);
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({
+          id: "generic",
+          credentials: [{ env_vars: ["CUSTOM_TOKEN"] }],
+        }),
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
     const result = await runCredentialsAddAction({
-      provider: "maas-glean",
+      provider: "custom-provider",
       type: "generic",
       credentials: [],
       configPairs: [],
       fromExisting: true,
     });
 
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain(
-      "Cannot compare imported provider credentials with keys reserved by managed MCP servers.",
+    expect(result.exitCode).toBe(0);
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "profile", "-g", "nemoclaw", "export", "generic", "--output", "json"],
+      expect.any(Object),
     );
-    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
-    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
-    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining(["provider", "create", "custom-provider", "--from-existing"]),
+      expect.any(Object),
+    );
+    expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
   });
 
   it("releases a provider reservation when credential registration fails (#9388)", async () => {
@@ -223,17 +273,19 @@ describe("credentials oclif adapter source coverage", () => {
 
   it("rejects an incompatible OpenAI profile before provider creation", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
-    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
-      status: 0,
-      stdout: JSON.stringify({
-        id: "openai",
-        credentials: [],
-        endpoints: [{ name: "untrusted", url: "https://example.invalid" }],
-        binaries: [],
-        inference_capable: true,
-      }),
-      stderr: "",
-    });
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({
+          id: "openai",
+          credentials: [],
+          endpoints: [{ name: "untrusted", url: "https://example.invalid" }],
+          binaries: [],
+          inference_capable: true,
+        }),
+        stderr: "",
+      });
 
     const result = await runCredentialsAddAction({
       provider: "openai-prod",
@@ -245,25 +297,27 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines.join("\n")).toContain(
-      "does not match NemoClaw's endpointless inference contract",
+      "does not match NemoClaw's checked-in credential boundary",
     );
     expect(result.failureLines.join("\n")).toContain("then retry this command");
     expect(result.failureLines.join("\n")).not.toContain("onboarding");
     expect(result.failureLines.join("\n")).not.toContain("host-only-secret");
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(1);
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "profile", "export", "openai", "--output", "json"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30_000,
-      },
-    );
+    expect(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)).toEqual([
+      [
+        "provider",
+        "profile",
+        "-g",
+        "nemoclaw",
+        "import",
+        "--file",
+        expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
+      ],
+      ["provider", "profile", "-g", "nemoclaw", "export", "openai", "--output", "json"],
+    ]);
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 
-  it("stops before provider creation when OpenAI profile inspection times out", async () => {
+  it("stops before provider creation when OpenAI profile import times out (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
     mocks.runOpenshellProviderCommand.mockReturnValueOnce({
       status: null,
@@ -280,15 +334,24 @@ describe("credentials oclif adapter source coverage", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain("could not be read for validation");
-    expect(result.failureLines.join("\n")).toContain("then retry this command");
+    expect(result.failureLines.join("\n")).toContain(
+      "Could not import bundled provider profile 'openai'",
+    );
+    expect(result.failureLines.join("\n")).toContain("operation timed out");
     expect(result.failureLines.join("\n")).not.toContain("onboarding");
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "profile", "export", "openai", "--output", "json"],
+      [
+        "provider",
+        "profile",
+        "-g",
+        "nemoclaw",
+        "import",
+        "--file",
+        expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
+      ],
       {
         ignoreError: true,
-        suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
       },
@@ -296,11 +359,21 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 
-  it("imports a missing OpenAI profile before provider creation", async () => {
+  it("imports and verifies the OpenAI profile before provider creation (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
     mocks.runOpenshellProviderCommand
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({
+          id: "openai",
+          credentials: [],
+          endpoints: [],
+          binaries: [],
+          inference_capable: true,
+        }),
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
     const result = await runCredentialsAddAction({
@@ -313,17 +386,21 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(result.exitCode).toBe(0);
     expect(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "profile", "export", "openai", "--output", "json"],
       [
         "provider",
         "profile",
+        "-g",
+        "nemoclaw",
         "import",
         "--file",
         expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
       ],
+      ["provider", "profile", "-g", "nemoclaw", "export", "openai", "--output", "json"],
       [
         "provider",
         "create",
+        "-g",
+        "nemoclaw",
         "--name",
         "openai-prod",
         "--type",
@@ -337,7 +414,6 @@ describe("credentials oclif adapter source coverage", () => {
     ).toEqual([
       {
         ignoreError: true,
-        suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
       },
@@ -350,11 +426,13 @@ describe("credentials oclif adapter source coverage", () => {
     ]);
   });
 
-  it("reports caller-neutral guidance when OpenAI profile import fails", async () => {
+  it("reports profile recovery guidance when OpenAI profile import fails (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
-    mocks.runOpenshellProviderCommand
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "import failed" });
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: "import failed",
+    });
 
     const result = await runCredentialsAddAction({
       provider: "openai-prod",
@@ -365,10 +443,14 @@ describe("credentials oclif adapter source coverage", () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain("could not import the checked-in");
-    expect(result.failureLines.join("\n")).toContain("then retry this command");
+    expect(result.failureLines.join("\n")).toContain(
+      "Could not import bundled provider profile 'openai'",
+    );
+    expect(result.failureLines.join("\n")).toContain(
+      "Fix the reported OpenShell provider-profile error, then retry",
+    );
     expect(result.failureLines.join("\n")).not.toContain("onboarding");
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 });

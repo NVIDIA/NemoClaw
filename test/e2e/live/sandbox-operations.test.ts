@@ -8,6 +8,7 @@
  * and gateway recovery — without introducing another target framework.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,7 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import {
   RESOURCE_LIMIT_CONNECT_BEGIN_MARKER,
   RESOURCE_LIMIT_CONNECT_END_MARKER,
@@ -39,6 +41,9 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
+const CREDENTIAL_PROVIDER = "e2e-sandbox-tavily";
+const CREDENTIAL_ENV_NAME = "TAVILY_API_KEY";
+const CREDENTIAL_VALUE = "e2e-sandbox-operations-provider-secret";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
@@ -149,6 +154,21 @@ async function onboardSandbox(
   return result;
 }
 
+async function resetCredentialProvider(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const reset = await host.nemoclaw(["credentials", "reset", CREDENTIAL_PROVIDER, "--yes"], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [CREDENTIAL_VALUE],
+    timeoutMs: 3 * 60_000,
+  });
+  expectExitZero(reset, `nemoclaw credentials reset ${CREDENTIAL_PROVIDER} --yes`);
+  expect(resultText(reset)).not.toContain(CREDENTIAL_VALUE);
+  return reset;
+}
+
 async function expectListed(host: HostCliClient, sandboxName: string, artifactName: string) {
   const list = await host.nemoclaw(["list"], {
     artifactName,
@@ -174,6 +194,97 @@ async function execInSandbox(
   });
 }
 
+function credentialBoundaryProbeScript(): string {
+  const fixtureDigest = createHash("sha256").update(CREDENTIAL_VALUE, "utf8").digest("hex");
+  return `python3 - ${shellQuote(fixtureDigest)} ${CREDENTIAL_VALUE.length} <<'PY'
+from pathlib import Path
+import hashlib
+import os
+import sys
+
+secret_digest = bytes.fromhex(sys.argv[1])
+secret_length = int(sys.argv[2])
+
+def contains_secret(path):
+    try:
+        content = Path(path).read_bytes()
+    except OSError:
+        return False
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
+
+def contains_secret_bytes(content):
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
+
+environment = b"\\0".join(
+    f"{key}={value}".encode("utf-8", errors="surrogateescape")
+    for key, value in os.environ.items()
+)
+if contains_secret_bytes(environment):
+    raise SystemExit(98)
+
+managed_config_files = 0
+for root_text in ("/sandbox/.openclaw", "/etc/nemoclaw", "/tmp"):
+    root = Path(root_text)
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                continue
+        except OSError:
+            continue
+        if root_text != "/tmp":
+            managed_config_files += 1
+        if contains_secret(path):
+            raise SystemExit(98)
+
+agent_environment_inspected = False
+for process in Path("/proc").iterdir():
+    if not process.name.isdigit():
+        continue
+    try:
+        command = (process / "cmdline").read_bytes()
+    except OSError:
+        continue
+    if b"openclaw" not in command.lower():
+        continue
+    try:
+        agent_environment = (process / "environ").read_bytes()
+    except OSError:
+        continue
+    agent_environment_inspected = True
+    if contains_secret_bytes(command) or contains_secret_bytes(agent_environment):
+        raise SystemExit(98)
+
+if managed_config_files == 0 or not agent_environment_inspected:
+    raise SystemExit(97)
+PY`;
+}
+
+async function assertCredentialRemainsOutsideSandbox(sandbox: SandboxClient): Promise<void> {
+  const probe = await execInSandbox(
+    sandbox,
+    SANDBOX_A,
+    credentialBoundaryProbeScript(),
+    "tc-sbx-14-sandbox-credential-boundary",
+  );
+  expect(
+    probe.exitCode,
+    "credential fixture must remain absent from sandbox environment and managed runtime configuration",
+  ).toBe(0);
+}
 
 async function assertAgentCanAnswer(
   host: HostCliClient,
@@ -595,6 +706,113 @@ async function assertGatewayRecovery(
   expect(afterStatus.stdout.trim(), resultText(afterStatus)).toBe("true");
   return recoveryOutcome;
 }
+
+test(
+  "credentials reset removes a provider attached during sandbox rebuild (#9806)",
+  {
+    timeout: 45 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and clear the credential provider fixture",
+        "onboard the credential lifecycle sandbox",
+        "add, attach, reset, and remove the credential provider",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+    const hosted = requireHostedInferenceConfig(secrets);
+
+    await artifacts.target.declare({
+      id: "sandbox-operations",
+      boundary: "repo-cli-openshell-provider-sandbox-attachment",
+      contracts: [
+        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, keeps the credential outside the rebuilt sandbox, and removes the attachment and provider",
+      ],
+    });
+
+    artifacts.addRedactionValues([CREDENTIAL_VALUE]);
+    await docker.requireDocker();
+    await environment.assertReady(ENVIRONMENT);
+    cleanup.trackGateway(host, "nemoclaw", {
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 5 * 60_000,
+    });
+    await host.cleanupSandbox(SANDBOX_A);
+    await resetCredentialProvider(host, "tc-sbx-14-clear-stale-credential-provider");
+    cleanup.add(`remove credential provider ${CREDENTIAL_PROVIDER}`, async () => {
+      await resetCredentialProvider(host, "cleanup-tc-sbx-14-credential-provider");
+    });
+
+    progress.phase("onboard the credential lifecycle sandbox");
+    await onboardSandbox(host, cleanup, SANDBOX_A, "tc-sbx-14-onboard-sandbox", hosted);
+
+    progress.phase("add, attach, reset, and remove the credential provider");
+    const add = await host.nemoclaw(
+      [
+        "credentials",
+        "add",
+        CREDENTIAL_PROVIDER,
+        "--type",
+        "tavily",
+        "--credential",
+        CREDENTIAL_ENV_NAME,
+      ],
+      {
+        artifactName: "tc-sbx-14-credentials-add",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          [CREDENTIAL_ENV_NAME]: CREDENTIAL_VALUE,
+        },
+        redactionValues: [CREDENTIAL_VALUE],
+        timeoutMs: 3 * 60_000,
+      },
+    );
+    expectExitZero(add, `nemoclaw credentials add ${CREDENTIAL_PROVIDER}`);
+    expect(resultText(add)).toContain(`Registered provider '${CREDENTIAL_PROVIDER}'`);
+    expect(resultText(add)).not.toContain(CREDENTIAL_VALUE);
+
+    const beforeRebuild = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-before-rebuild",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(beforeRebuild, "nemoclaw credentials list before rebuild");
+    expect(resultText(beforeRebuild)).toContain(CREDENTIAL_PROVIDER);
+
+    const rebuild = await host.nemoclaw([SANDBOX_A, "rebuild", "--yes"], {
+      artifactName: "tc-sbx-14-rebuild-with-credential-provider",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        ...hosted.env,
+      },
+      redactionValues: [hosted.apiKey, CREDENTIAL_VALUE],
+      timeoutMs: 20 * 60_000,
+    });
+    expectExitZero(rebuild, `nemoclaw ${SANDBOX_A} rebuild --yes`);
+    expect(resultText(rebuild)).not.toContain(CREDENTIAL_VALUE);
+
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "present", {
+      artifactName: "tc-sbx-14-provider-attached-after-rebuild",
+      env: buildAvailabilityProbeEnv(),
+    });
+    await assertCredentialRemainsOutsideSandbox(sandbox);
+
+    const reset = await resetCredentialProvider(host, "tc-sbx-14-credentials-reset-attached");
+    expect(resultText(reset)).toContain(`Removed provider '${CREDENTIAL_PROVIDER}'`);
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "absent", {
+      artifactName: "tc-sbx-14-provider-detached-after-reset",
+      env: buildAvailabilityProbeEnv(),
+    });
+
+    const afterReset = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-after-reset",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(afterReset, "nemoclaw credentials list after reset");
+    expect(resultText(afterReset)).not.toContain(CREDENTIAL_PROVIDER);
+  },
+);
 
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",

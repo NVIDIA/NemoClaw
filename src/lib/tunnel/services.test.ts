@@ -596,7 +596,7 @@ describe("stopAll", () => {
 
   it("logs stop messages", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
+    stopAll({ pidDir, unloadOllamaModels: () => undefined });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("All services stopped");
     logSpy.mockRestore();
@@ -604,8 +604,14 @@ describe("stopAll", () => {
 
   it("runs injected Ollama cleanup before reporting services stopped", () => {
     const cleanup = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir, unloadOllamaModels: cleanup });
+    stopAll({
+      pidDir,
+      sandboxName: "test-box",
+      unloadOllamaModels: cleanup,
+      clearPendingOllamaModelCleanup,
+    });
     const stoppedCallIndex = logSpy.mock.calls.findIndex(([message]) =>
       String(message).includes("All services stopped"),
     );
@@ -613,7 +619,74 @@ describe("stopAll", () => {
     logSpy.mockRestore();
 
     expect(cleanup).toHaveBeenCalledOnce();
+    expect(clearPendingOllamaModelCleanup).toHaveBeenCalledWith("test-box");
     expect(cleanup.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
+  });
+
+  it("skips Ollama cleanup when the scoped caller proves no model ownership", () => {
+    const cleanup = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    stopAll({
+      pidDir,
+      sandboxName: "test-box",
+      cleanupOllamaModels: false,
+      unloadOllamaModels: cleanup,
+      clearPendingOllamaModelCleanup,
+    });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+    expect(output).toContain("All services stopped");
+  });
+
+  it("reports Ollama cleanup failure and retains its recovery route", () => {
+    const failure = {
+      ok: false as const,
+      outcome: "discovery-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: [],
+      discoveries: [],
+      requests: [],
+      message: "could not connect",
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    stopAll({ pidDir, unloadOllamaModels: () => failure });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(output).toContain("Ollama model cleanup failed at http://host.docker.internal:11434");
+    expect(output).toContain("saved local route was retained");
+    expect(output).toContain("restore access to http://host.docker.internal:11434");
+    expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
+    expect(output).not.toContain("All services stopped");
+  });
+
+  it("propagates an unexpected Ollama cleanup failure after stopping services (#10553)", () => {
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(() =>
+      stopAll({
+        pidDir,
+        sandboxName: "test-box",
+        unloadOllamaModels: () => {
+          throw new Error("transport failed\nwith unbounded detail");
+        },
+        clearPendingOllamaModelCleanup,
+      }),
+    ).toThrow("Ollama model cleanup failed unexpectedly: transport failed with unbounded detail");
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(output).toContain("restore access to the saved local Ollama endpoint");
+    expect(output).toContain("Host services stopped; Ollama model cleanup remains incomplete");
+    expect(output).not.toContain("All services stopped");
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
   });
 });
 

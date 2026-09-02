@@ -6,7 +6,11 @@ import fs from "node:fs";
 
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import { parseGatewayInference, planInferenceRouteReconcile } from "../../inference/config";
+import {
+  buildGatewayInferenceGetArgs,
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+} from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
@@ -41,7 +45,6 @@ import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
 } from "../../state/registry-messaging";
-import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
 import {
   runPortableOpenClawPairingApproval,
   runPortableOpenClawPairingRequestProducer,
@@ -123,6 +126,7 @@ export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   readLease?: typeof readLaunchReadinessLease;
   fenceLease?: typeof fenceLaunchReadinessLease;
   publishLease?: typeof publishLaunchReadinessLease;
+  assertPublicationCurrent?: () => void;
   observeOpenClawPairingQualification?: typeof observeOpenClawPairingQualification;
   observeOpenClawPairingRepairSettlement?: typeof observeOpenClawPairingRepairSettlement;
   observeOpenClawPairingSettlement?: typeof observeOpenClawPairingSettlement;
@@ -1388,9 +1392,21 @@ export async function publishLaunchReadiness(
       }
       return withGatewayLock(gatewayName, async () => {
         const validationStartedAt = performance.now();
-        let captured: Awaited<ReturnType<typeof captureLaunchIdentity>>;
+        let captured: Awaited<ReturnType<typeof captureLaunchIdentity>> | undefined;
+        let captureFailure: unknown;
         try {
-          captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
+          deps.assertPublicationCurrent?.();
+          try {
+            captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
+          } catch (error) {
+            captureFailure = error;
+          }
+          try {
+            deps.assertPublicationCurrent?.();
+          } catch (error) {
+            captureFailure = error;
+          }
+          if (captureFailure !== undefined) throw captureFailure;
         } catch (error) {
           const validation = publicationValidationCategory(error);
           return validation
@@ -1400,20 +1416,24 @@ export async function publishLaunchReadiness(
           recordPerformanceStage("publication-validation", validationStartedAt);
         }
         const publicationStartedAt = performance.now();
+        let publicationFailed = false;
         try {
+          deps.assertPublicationCurrent?.();
           (deps.publishLease ?? publishLaunchReadinessLease)(
             sandboxName,
             gatewayName,
             gatewayPort,
             epochId,
-            captured.identity,
+            captured!.identity,
             deps.storeOptions,
+            deps.assertPublicationCurrent,
           );
         } catch {
-          return { kind: "evidence-failed" } as const;
+          publicationFailed = true;
         } finally {
           recordPerformanceStage("publication-store", publicationStartedAt);
         }
+        if (publicationFailed) return { kind: "evidence-failed" } as const;
         return { kind: "published" } as const;
       });
     });
