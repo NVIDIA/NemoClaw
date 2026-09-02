@@ -495,10 +495,9 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
   }
   if (
     selectedRecovery === null &&
-    readRetainedRecoveryDocument(
-      home,
-      retainedSandboxRecoveryFile(sharedRoot),
-    )?.unresolved.some((record) => record.gatewayPort === gatewayPort)
+    readRetainedRecoveryDocument(home, retainedSandboxRecoveryFile(sharedRoot))?.unresolved.some(
+      (record) => record.gatewayPort === gatewayPort,
+    )
   ) {
     throw migrationError(
       "published migration intent predates retained recovery partitioning; retained recovery remains safely in the shared root",
@@ -642,17 +641,9 @@ function applyMigrationIntent(
   }
 
   if (intent.selectedRecovery && intent.remainingRecovery) {
-    writeJsonAtomic(
-      home,
-      retainedSandboxRecoveryFile(selectedRoot),
-      intent.selectedRecovery,
-    );
+    writeJsonAtomic(home, retainedSandboxRecoveryFile(selectedRoot), intent.selectedRecovery);
     if (intent.remainingRecovery.unresolved.length > 0) {
-      writeJsonAtomic(
-        home,
-        retainedSandboxRecoveryFile(sharedRoot),
-        intent.remainingRecovery,
-      );
+      writeJsonAtomic(home, retainedSandboxRecoveryFile(sharedRoot), intent.remainingRecovery);
     } else {
       removeRetainedRecoveryFile(home, retainedSandboxRecoveryFile(sharedRoot));
     }
@@ -804,26 +795,37 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
     throw error;
   }
   let record: OnboardLockRecord | null = null;
-  // Aging the owner-less case has to read the inode that was opened, not the
-  // one the stat above saw. A writer that replaces a settled lock between the
-  // two calls leaves a fresh body behind a stale timestamp.
-  let writtenAtMs = stat.mtimeMs;
+  let writtenAtMs: number | null = null;
   try {
-    const opened = fs.fstatSync(fd);
-    if (!opened.isFile()) throw migrationError(`${activeLock} is not a regular file`);
-    if (opened.size > MAX_ONBOARD_LOCK_BYTES) {
+    const beforeRead = fs.fstatSync(fd);
+    if (!beforeRead.isFile()) throw migrationError(`${activeLock} is not a regular file`);
+    const bytes = Buffer.alloc(MAX_ONBOARD_LOCK_BYTES + 1);
+    let total = 0;
+    while (total < bytes.length) {
+      const count = fs.readSync(fd, bytes, total, bytes.length - total, total);
+      if (count === 0) break;
+      total += count;
+    }
+    const afterRead = fs.fstatSync(fd);
+    if (!afterRead.isFile()) throw migrationError(`${activeLock} is not a regular file`);
+    if (beforeRead.size !== afterRead.size || beforeRead.mtimeMs !== afterRead.mtimeMs) {
+      return { state: "settling" };
+    }
+    if (beforeRead.size > MAX_ONBOARD_LOCK_BYTES || total > MAX_ONBOARD_LOCK_BYTES) {
       throw migrationError(
         `${activeLock} exceeds the ${String(MAX_ONBOARD_LOCK_BYTES)} byte onboarding lock limit`,
       );
     }
-    writtenAtMs = opened.mtimeMs;
-    record = parseOnboardLockRecord(JSON.parse(fs.readFileSync(fd, "utf8")));
+    if (total !== afterRead.size) return { state: "settling" };
+    writtenAtMs = afterRead.mtimeMs;
+    record = parseOnboardLockRecord(JSON.parse(bytes.subarray(0, total).toString("utf8")));
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
   } finally {
     fs.closeSync(fd);
   }
 
+  if (writtenAtMs === null) return { state: "settling" };
   if (record === null) {
     return Date.now() - writtenAtMs > ONBOARD_LOCK_SETTLING_MS
       ? { state: "clear" }
@@ -973,9 +975,7 @@ export function migrateLegacyPortState(
     const remainingRecoveryRecords =
       recovery?.unresolved.filter((record) => record.gatewayPort !== gatewayPort) ?? [];
     const selectedRecovery =
-      selectedRecoveryRecords.length > 0
-        ? retainedRecoveryDocument(selectedRecoveryRecords)
-        : null;
+      selectedRecoveryRecords.length > 0 ? retainedRecoveryDocument(selectedRecoveryRecords) : null;
     const remainingRecovery = selectedRecovery
       ? retainedRecoveryDocument(remainingRecoveryRecords)
       : null;
@@ -1016,11 +1016,7 @@ export function migrateLegacyPortState(
       }
     }
     if (selectedRecovery) {
-      preflightMovePath(
-        home,
-        legacyRecoveryFile,
-        retainedSandboxRecoveryFile(selectedRoot),
-      );
+      preflightMovePath(home, legacyRecoveryFile, retainedSandboxRecoveryFile(selectedRoot));
     }
 
     registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));
