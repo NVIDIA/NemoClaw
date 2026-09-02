@@ -798,7 +798,8 @@ describe("pull request and main workflow contracts", () => {
     const qualificationPackageJob = managedRuntimeWorkflow.jobs["package-openshell-sdk"];
     const candidateActivation = managedRuntimeWorkflow.jobs["trusted-candidate-activation"];
     const baseActivation = managedRuntimeWorkflow.jobs["exact-base-activation"];
-    expect(qualificationPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(qualificationPackageJob.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(qualificationPackageJob["timeout-minutes"]).toBe(10);
     expect(candidateActivation.permissions).toEqual({ actions: "read", contents: "read" });
     expect(baseActivation.permissions).toEqual({ actions: "read", contents: "read" });
     expect(candidateActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
@@ -806,16 +807,28 @@ describe("pull request and main workflow contracts", () => {
 
     const qualificationCheckout = requiredWorkflowStep(
       qualificationPackageJob,
-      "Check out exact base-controlled package verifier",
+      "Check out trusted SDK receipt resolver",
     );
     expect(qualificationCheckout.with).toMatchObject({
-      ref: "${{ needs.authenticate-source.outputs.base_sha }}",
+      ref: "${{ github.workflow_sha }}",
       "persist-credentials": false,
       "sparse-checkout-cone-mode": false,
     });
-    expect(JSON.stringify(qualificationPackageJob)).not.toContain(
-      "needs.authenticate-source.outputs.candidate_sha",
+    const qualificationResolve = requiredWorkflowStep(
+      qualificationPackageJob,
+      "Resolve and verify the authenticated OpenShell SDK producer",
     );
+    expect(qualificationResolve.env).toEqual({
+      BASE_SHA: "${{ needs.authenticate-source.outputs.base_sha }}",
+      CANDIDATE_SHA: "${{ needs.authenticate-source.outputs.candidate_sha }}",
+      GITHUB_TOKEN: "${{ github.token }}",
+      PR_NUMBER: "${{ needs.authenticate-source.outputs.pr_number }}",
+    });
+    expect(qualificationResolve.run).toContain(
+      "tools/e2e/openshell-sdk-package-receipt.mts resolve",
+    );
+    expect(JSON.stringify(qualificationPackageJob)).not.toContain("NODE_AUTH_TOKEN");
+    expect(JSON.stringify(qualificationPackageJob)).not.toContain("package-openshell-sdk-for-pr");
 
     const qualificationUpload = requiredWorkflowStep(
       qualificationPackageJob,
@@ -823,7 +836,7 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(qualificationUpload.with).toMatchObject({
       name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
-      path: "${{ steps.package.outputs.artifact_path }}",
+      path: "${{ runner.temp }}/openshell-sdk/${{ steps.package.outputs.artifact_name }}",
       "if-no-files-found": "error",
       "retention-days": 1,
     });
@@ -853,6 +866,17 @@ describe("pull request and main workflow contracts", () => {
     expect(candidateInstall.run).toContain("env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN");
     expect(candidateInstall.run).toContain("ci-install-dependencies.sh");
     expect(candidateInstall.run).not.toContain("github.token");
+
+    const evidenceAuthentication = managedRuntimeWorkflow.jobs["authenticate-candidate-evidence"];
+    expect(evidenceAuthentication.if).toBe(
+      "always() && needs.authenticate-source.result == 'success'",
+    );
+    const evidenceFailure = requiredWorkflowStep(
+      evidenceAuthentication,
+      "Fail closed when candidate evidence cannot be authenticated",
+    );
+    expect(evidenceFailure.if).toBe("failure()");
+    expect(evidenceFailure.run).toContain("publish-status error");
   });
 
   // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates

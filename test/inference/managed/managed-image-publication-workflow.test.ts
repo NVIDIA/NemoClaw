@@ -578,6 +578,12 @@ describe("complete managed-image publication workflow", () => {
     expect(logout.if).toContain(sameRepository);
     expect(exportContract.if).toBe(sameRepository);
     expect(uploadContract.if).toBe(sameRepository);
+    expect(uploadContract.with).toMatchObject({
+      name: "managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}",
+      path: "${{ runner.temp }}/managed-pr-contract/contract.json",
+      "if-no-files-found": "error",
+      "retention-days": 14,
+    });
     expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
     const exportContractRun = exportContract.run ?? "";
     expect(exportContractRun).toContain("scripts/checks/pull-public-exact-digest.sh");

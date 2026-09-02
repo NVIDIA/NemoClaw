@@ -107,52 +107,55 @@ jobs:
           compression-level: 0
 
   package-openshell-sdk:
-    name: Package reviewed OpenShell SDK from the exact base
+    name: Resolve reviewed OpenShell SDK from the authenticated producer
     needs: authenticate-source
     if: needs.authenticate-source.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
+      actions: read
       contents: read
-      packages: read
     steps:
-      - name: Check out exact base-controlled package verifier
+      - name: Check out trusted SDK receipt resolver
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.authenticate-source.outputs.base_sha }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
-            ci/reviewed-npm-audit.json
-            scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/package-openshell-sdk-for-pr.mts
-            scripts/lib/openclaw-npm-remediation.mts
-            scripts/lib/reviewed-npm-archive.mts
-            scripts/lib/reviewed-npm-audit.mts
+            scripts/scorecard/read-artifact-zip.mts
+            tools/e2e/base-image-publication.mts
+            tools/e2e/exact-artifact-download.mts
+            tools/e2e/openshell-sdk-package-receipt.mts
           sparse-checkout-cone-mode: false
 
-      - name: Set up Node for reviewed package download
+      - name: Set up Node for authenticated package resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.23.1
-          registry-url: https://npm.pkg.github.com
-          scope: "@nvidia"
 
       - id: package
-        name: Download and verify exact OpenShell SDK package
+        name: Resolve and verify the authenticated OpenShell SDK producer
         env:
-          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
-          NODE_AUTH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.authenticate-source.outputs.pr_number }}
         run: |
           set -euo pipefail
-          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
-          test -n "$artifact_path"
-          printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
+          artifact_name="$(
+            node --experimental-strip-types --no-warnings \
+              tools/e2e/openshell-sdk-package-receipt.mts resolve \
+              "$RUNNER_TEMP/openshell-sdk" \
+              "$RUNNER_TEMP/openshell-sdk-selection/selection.json"
+          )"
+          [[ "$artifact_name" =~ ^[a-z0-9][a-z0-9._-]*\.tgz$ ]]
+          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload reviewed OpenShell SDK archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.package.outputs.artifact_path }}
+          path: ${{ runner.temp }}/openshell-sdk/${{ steps.package.outputs.artifact_name }}
           if-no-files-found: error
           retention-days: 1
 
