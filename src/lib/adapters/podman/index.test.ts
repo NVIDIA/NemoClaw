@@ -704,6 +704,42 @@ describe("Podman container engine command adapter", () => {
     expect(firstCapture.mock.calls.length + secondCapture.mock.calls.length).toBe(63);
   });
 
+  it("does not consume the shared rehash checkpoint after a socket precheck failure", () => {
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const socketFailure = new Error("socket precheck failed");
+    const firstSocket = vi.fn().mockImplementationOnce(() => {
+      throw socketFailure;
+    });
+    const firstCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const secondCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const first = createPodmanContainerEngine({
+      operation: "host-local-inference",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: firstSocket,
+      capture: firstCapture,
+    });
+    const second = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: secondCapture,
+    });
+    readFile.mockClear();
+
+    expect(() => first.capture(["info"])).toThrow(socketFailure);
+    for (let index = 0; index < 63; index += 1) second.capture(["info"]);
+    expect(readFile).not.toHaveBeenCalled();
+    second.capture(["info"]);
+    expect(readFile).toHaveBeenCalledOnce();
+    expect(firstCapture).not.toHaveBeenCalled();
+    expect(secondCapture).toHaveBeenCalledTimes(64);
+  });
+
   it("counts a thrown capture after its after-guard toward the shared rehash boundary", () => {
     const readFile = vi.fn(() => PODMAN_BYTES);
     const deps = executableAuthorityDeps(PODMAN_BYTES, { readFile });
