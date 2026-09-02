@@ -7,6 +7,7 @@ import {
   formatReliabilityReport,
   githubArchive,
   githubJson,
+  normalizeMatchingReliabilityRun,
   normalizeReliabilityRun,
   type ReliabilitySample,
   summarizeReliability,
@@ -448,6 +449,68 @@ describe("same-commit E2E reliability", () => {
       failureClassEvidence: "complete",
     });
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("lists artifacts once when matching and normalizing a workflow dispatch run", async () => {
+    const dispatch = artifactZip([
+      {
+        name: "dispatch.json",
+        contents: JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: REPOSITORY,
+          eventName: "workflow_dispatch",
+          workflowRunId: "101",
+          workflowRunAttempt: 1,
+          candidateSha: SHA_A,
+        }),
+      },
+    ]);
+    const evidence = artifactZip([
+      terminalEvidence(SHA_A, "failure"),
+      {
+        name: "e2e-artifacts/live/example/runner-pressure-classification.jsonl",
+        contents:
+          'E2E_TERMINAL_CLASSIFICATION {"v":1,"classification":"timeout","reason":"phase timed out"}\n',
+      },
+    ]);
+    const artifacts = {
+      total_count: 2,
+      artifacts: [
+        {
+          id: 1,
+          name: "e2e-dispatch-101-1",
+          size_in_bytes: dispatch.length,
+          expired: false,
+        },
+        { id: 2, name: "e2e-example", size_in_bytes: evidence.length, expired: false },
+      ],
+    };
+    const archives = new Map([
+      [1, dispatch],
+      [2, evidence],
+    ]);
+    const requestArchive = async (artifactId: number) => archives.get(artifactId)!;
+    const baseline = await normalizeReliabilityRun(workflowRun(), {
+      requestJson: async () => artifacts,
+      requestArchive,
+    });
+    const artifactPath = `repos/${REPOSITORY}/actions/runs/101/artifacts?per_page=100`;
+    const requestJson = vi.fn(async (path: string) => {
+      expect(path).toBe(artifactPath);
+      return artifacts;
+    });
+
+    const result = await normalizeMatchingReliabilityRun(workflowRun(), SHA_A, {
+      requestJson,
+      requestArchive,
+    });
+
+    expect(requestJson).toHaveBeenCalledOnce();
+    expect(requestJson).toHaveBeenCalledWith(artifactPath);
+    expect(result).toEqual(baseline);
+    expect(formatReliabilityReport(summarizeReliability([result!]))).toBe(
+      formatReliabilityReport(summarizeReliability([baseline!])),
+    );
   });
 
   it.each(RETRY_FAILURE_CLASSES)(

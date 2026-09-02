@@ -121,6 +121,7 @@ type ReliabilityServices = {
   readArtifactEntries?: ArtifactEntriesReader;
 };
 type ArtifactCollection = {
+  artifactsByRun: Map<number, Artifact[] | null>;
   entriesByArtifact: Map<string, ArtifactEntries>;
   readEntries: ArtifactEntriesReader;
 };
@@ -345,9 +346,23 @@ function decodeEntry(bytes: Buffer | undefined, maxBytes: number): string | null
 
 function createArtifactCollection(services: ReliabilityServices): ArtifactCollection {
   return {
+    artifactsByRun: new Map(),
     entriesByArtifact: new Map(),
     readEntries: services.readArtifactEntries ?? readValidatedArtifactZipEntries,
   };
+}
+
+async function collectArtifacts(
+  runId: number,
+  requestJson: JsonRequest,
+  collection: ArtifactCollection,
+): Promise<Artifact[] | null> {
+  if (collection.artifactsByRun.has(runId)) return collection.artifactsByRun.get(runId) ?? null;
+  const artifacts = validateArtifacts(
+    await requestJson(`repos/${REPOSITORY}/actions/runs/${runId}/artifacts?per_page=100`),
+  );
+  collection.artifactsByRun.set(runId, artifacts);
+  return artifacts;
 }
 
 async function collectArtifactEntries(
@@ -391,9 +406,7 @@ async function identifyCandidateSha(
   const run = validateRun(value);
   if (run === null) return null;
   if (run.event === "push") return run.head_sha;
-  const artifacts = validateArtifacts(
-    await services.requestJson(`repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`),
-  );
+  const artifacts = await collectArtifacts(run.id, services.requestJson, collection);
   const receipt = artifacts?.find(
     (artifact) => artifact.name === `e2e-dispatch-${run.id}-${run.run_attempt}`,
   );
@@ -545,9 +558,7 @@ export async function normalizeReliabilityRun(
 ): Promise<ReliabilitySample | null> {
   const run = validateRun(value);
   if (run === null) return null;
-  const artifacts = validateArtifacts(
-    await services.requestJson(`repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?per_page=100`),
-  );
+  const artifacts = await collectArtifacts(run.id, services.requestJson, collection);
   if (artifacts === null) {
     return {
       runId: run.id,
@@ -641,6 +652,17 @@ export async function normalizeReliabilityRun(
     failureClassEvidence: collected.failureClassEvidence,
     url: run.html_url,
   };
+}
+
+export async function normalizeMatchingReliabilityRun(
+  value: unknown,
+  candidateSha: string,
+  services: ReliabilityServices,
+  collection = createArtifactCollection(services),
+): Promise<ReliabilitySample | null> {
+  if ((await identifyCandidateSha(value, services, collection)) !== candidateSha) return null;
+  const sample = await normalizeReliabilityRun(value, services, collection);
+  return sample?.candidateSha === candidateSha ? sample : null;
 }
 
 function passState(outcome: ReliabilityOutcome): boolean | null {
@@ -987,12 +1009,13 @@ async function main(): Promise<void> {
     if (!currentSample?.candidateSha) break;
     const collection =
       record(run)?.id === currentRunId ? currentCollection : createArtifactCollection(services);
-    const candidateSha = await identifyCandidateSha(run, services, collection);
-    if (candidateSha !== currentSample.candidateSha) continue;
-    const sample = await normalizeReliabilityRun(run, services, collection);
-    if (sample && sample.candidateSha === currentSample.candidateSha) {
-      samples.push(sample);
-    }
+    const sample = await normalizeMatchingReliabilityRun(
+      run,
+      currentSample.candidateSha,
+      services,
+      collection,
+    );
+    if (sample) samples.push(sample);
   }
   if (currentSample && !samples.some((sample) => sample.runId === currentSample.runId)) {
     samples.push(currentSample);
