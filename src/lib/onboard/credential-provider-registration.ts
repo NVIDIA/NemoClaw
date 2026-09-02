@@ -277,18 +277,26 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): boolean {
+    const inspection = inspectGatewayCredentialBinding(binding, runOpenshell);
+    if (inspection.kind === "indeterminate") {
+      throw new Error(
+        `Could not inspect credential provider '${binding.name}' on OpenShell gateway '${deps.getGatewayName()}'. Verify the gateway is reachable, then retry the command.`,
+      );
+    }
+    return inspection.kind === "exact";
+  }
+
+  function inspectGatewayCredentialBinding(
+    binding: CheckpointProviderBinding,
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
     const staticProfile = messagingBridgeProvider.inspectRegisteredStaticMessagingProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (staticProfile.kind === "indeterminate") {
-      throw new Error(
-        `Could not inspect static provider profile '${binding.type}' on OpenShell gateway '${deps.getGatewayName()}'. Verify the gateway is reachable, then retry the command.`,
-      );
-    }
-    if (staticProfile.kind === "collision") return false;
-
-    const provider = gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
+    if (staticProfile.kind === "indeterminate") return { kind: "indeterminate" };
+    if (staticProfile.kind === "collision") return { kind: "collision" };
+    return gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
       {
         name: binding.name,
         type: binding.type,
@@ -296,12 +304,14 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       },
       runOpenshell,
     );
-    if (provider.kind === "indeterminate") {
-      throw new Error(
-        `Could not inspect credential provider '${binding.name}' on OpenShell gateway '${deps.getGatewayName()}'. Verify the gateway is reachable, then retry the command.`,
-      );
-    }
-    return provider.kind === "exact";
+  }
+
+  function inspectGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+    return inspectGatewayCredentialBinding({ name, type, credentialEnv }, gatewayRunner());
   }
 
   function providerMatchesGatewayCredential(
@@ -382,6 +392,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
+    inspectGatewayCredential,
     providerMatchesGatewayCredential,
     stageSandboxCredentialProviders,
     upsertProvider,

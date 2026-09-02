@@ -102,6 +102,7 @@ import * as dcodeResume from "./sandbox-dcode-resume";
 import {
   hasMessagingCredentialDrift,
   type RegistryMessagingAuthority,
+  reconcileReusedSandboxMessaging,
   reconcileSandboxMessaging,
   resolveMessagingPlanAuthority,
   sameRegistryMessagingAuthority,
@@ -301,6 +302,11 @@ export interface SandboxStateOptions<
     getRegistrySandboxMessagingAuthority(
       sandboxName: string,
     ): import("../../../messaging/plan-authority").RegistryMessagingAuthority;
+    inspectGatewayCredential(
+      name: string,
+      type: string,
+      credentialEnv: string,
+    ): import("../../gateway-provider-metadata").GatewayCredentialOnlyProviderInspection;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
@@ -1193,22 +1199,13 @@ class SandboxStateFlow<
         state.sandboxName,
         state.session,
       );
-      const messaging = await reconcileSandboxMessaging({
-        resume: true,
-        session: state.session,
-        sandboxName: state.sandboxName,
-        agent: this.options.agent,
-        env: this.options.env,
-        registryAuthoritySnapshot:
-          messagingAuthority.source === "registry"
-            ? { authoritative: true, plan: messagingAuthority.plan }
-            : { authoritative: false, plan: null },
-        deps: this.deps,
-      });
-      const messagingChanged =
-        fingerprintSandboxRecreateValue(messaging.plan) !==
-        fingerprintSandboxRecreateValue(state.session?.messagingPlan ?? null);
-      if (messagingChanged) {
+      const messaging = reconcileReusedSandboxMessaging(
+        messagingAuthority.plan,
+        this.options.agent,
+        this.deps,
+        state.session?.messagingPlan ?? null,
+      );
+      if (messaging.changed) {
         this.deps.updateSession((current) => {
           current.messagingPlan = messaging.plan;
           recordCheckpointMessaging(current, messaging.plan);
