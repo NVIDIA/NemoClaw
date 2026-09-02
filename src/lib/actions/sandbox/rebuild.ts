@@ -7,3 +7,4 @@ export {
   rebuildSandbox,
   stageMessagingManifestPlanForRebuild,
 } from "./rebuild-pipeline";
+export { retireRebuildRecoveryBackup } from "./rebuild-recreate-journal";

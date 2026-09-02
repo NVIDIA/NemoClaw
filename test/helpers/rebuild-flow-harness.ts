@@ -48,6 +48,7 @@ export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 export const policies = requireDist("../../policy/index.js");
+export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
@@ -86,6 +87,39 @@ export function sourceSandboxGateway(argv: string[], verb: string): string | nul
   return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
     ? (argv[gatewayFlag + 1] ?? null)
     : null;
+}
+
+export function captureResolvedRebuildFixture(
+  argv: string[],
+  deletedSourceGateways: ReadonlySet<string>,
+) {
+  const livePolicy = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+  if (argv[0] === "policy" && argv.includes("--output")) {
+    const output = JSON.stringify({
+      scope: "sandbox",
+      sandbox: "alpha",
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "sha256:rebuild-policy",
+      active_version: 1,
+      policy: { version: 1, network_policies: { host_preserved: {} } },
+    });
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  if (argv[0] === "policy") {
+    const output = `Version: 1\nActive: 1\n---\n${livePolicy}`;
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  const probedGateway = sourceSandboxGateway(argv, "get");
+  const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+  return probedGateway && !deletedSourceGateways.has(probedGateway)
+    ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
+    : {
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "Error: sandbox alpha not found",
+      };
 }
 
 const harnessTempDirs: string[] = [];

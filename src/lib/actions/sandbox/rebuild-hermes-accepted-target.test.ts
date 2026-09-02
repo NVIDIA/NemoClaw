@@ -8,6 +8,8 @@ const phaseMocks = vi.hoisted(() => ({
   clearRecoveryBackup: vi.fn(),
   cleanupPolicySource: vi.fn(),
   findRecoveryBackup: vi.fn(),
+  isRecoveryCleanupOnly: vi.fn(),
+  markRecoveryCleanupOnly: vi.fn(),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   runBackup: vi.fn(),
@@ -44,6 +46,8 @@ vi.mock("./rebuild-recreate-journal", () => ({
   clearRebuildRecoveryBackup: phaseMocks.clearRecoveryBackup,
   findRebuildRecoveryBackup: phaseMocks.findRecoveryBackup,
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
+  isRebuildRecoveryCleanupOnly: phaseMocks.isRecoveryCleanupOnly,
+  markRebuildRecoveryCleanupOnly: phaseMocks.markRecoveryCleanupOnly,
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
   recordRebuildRecoveryBackup: vi.fn(),
 }));
@@ -65,6 +69,16 @@ vi.mock("./rebuild-destroy-phase", () => ({
 
 vi.mock("./rebuild-shields-phase", () => ({
   runRebuildShieldsPhase: phaseMocks.runShields,
+}));
+
+vi.mock("./rebuild-prepared-recovery", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-prepared-recovery")>()),
+  revalidatePreparedRecoveryBeforeDelete: (
+    _sandboxName: unknown,
+    _sandboxEntry: unknown,
+    manifest: unknown,
+    registrySnapshot: unknown,
+  ) => ({ manifest, registrySnapshot }),
 }));
 
 vi.mock("./rebuild-restore-phase", () => ({
@@ -95,16 +109,19 @@ describe("Hermes accepted replacement recovery", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
-    phaseMocks.clearPolicyHandoff.mockImplementation((manifest) => {
-      delete manifest.rebuildPolicyHandoff;
-      return true;
-    });
+    phaseMocks.clearPolicyHandoff.mockImplementation((manifest, options) =>
+      options?.retainRetirement === true && manifest.rebuildPolicyHandoff
+        ? Boolean(Object.assign(manifest.rebuildPolicyHandoff, { retired: true }))
+        : Reflect.deleteProperty(manifest, "rebuildPolicyHandoff"),
+    );
     phaseMocks.clearRecoveryBackup.mockImplementation(() => undefined);
     phaseMocks.recoverCronRestore.mockReturnValue("dispatch-reactivated");
     phaseMocks.findRecoveryBackup.mockReturnValue({
       backupPath: recoveryBackupPath,
       timestamp: "2026-08-28T00-00-00-000Z",
     });
+    phaseMocks.isRecoveryCleanupOnly.mockReturnValue(false);
+    phaseMocks.markRecoveryCleanupOnly.mockImplementation(() => undefined);
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
     phaseMocks.runPostRestore.mockResolvedValue(undefined);
     phaseMocks.runPreflight.mockResolvedValue({
@@ -210,12 +227,10 @@ describe("Hermes accepted replacement recovery", () => {
         recoveryRecreate: true,
       }),
     );
-    expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledOnce();
+    expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledTimes(2);
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
-    expect(console.log).toHaveBeenCalledWith(
-      `  Backup is preserved at: ${recoveryBackupPath}`,
-    );
+    expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
   });
 
   it("retires both the unused current policy handoff and the recovered transaction handoff", async () => {
@@ -243,7 +258,106 @@ describe("Hermes accepted replacement recovery", () => {
     expect(phaseMocks.clearPolicyHandoff.mock.calls.map(([manifest]) => manifest)).toEqual([
       currentManifest,
       recoveryManifest,
+      recoveryManifest,
     ]);
+  });
+
+  it("resumes cleanup without restoring the accepted replacement twice", async () => {
+    const recoveryManifest = {
+      backupPath: recoveryBackupPath,
+      timestamp: "2026-08-28T00-00-00-000Z",
+      rebuildPolicyHandoff: { file: "recovery.yaml", sha256: "b".repeat(64) },
+    };
+    phaseMocks.findRecoveryBackup.mockReturnValue(recoveryManifest);
+    phaseMocks.clearRecoveryBackup.mockImplementationOnce(() => {
+      throw new Error("marker cleanup denied");
+    });
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(recoveryManifest).not.toHaveProperty("rebuildPolicyHandoff");
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+    expect(bail).toHaveBeenCalledWith(
+      "Recovered replacement cleanup is incomplete; the replacement journal was retained.",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  Retry `nemoclaw alpha rebuild --yes`; the accepted replacement will not be restored again.",
+    );
+
+    const firstPreflight = await phaseMocks.runPreflight.mock.results[0]!.value;
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...firstPreflight,
+      recoveryManifest,
+    });
+    phaseMocks.clearRecoveryBackup.mockImplementation(() => undefined);
+    phaseMocks.isRecoveryCleanupOnly.mockReturnValue(true);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
+    expect(phaseMocks.runPostRestore).toHaveBeenCalledOnce();
+    expect(phaseMocks.clearRecoveryBackup).toHaveBeenCalledTimes(2);
+    expect(recoveryManifest).not.toHaveProperty("rebuildPolicyHandoff");
+    expect(completeAcceptedTarget).toHaveBeenCalledOnce();
+    expect(console.log).toHaveBeenCalledWith("  Completed retained recovery cleanup for 'alpha'.");
+  });
+
+  it("retains cleanup authority when final policy-handoff cleanup fails", async () => {
+    const recoveryManifest = {
+      backupPath: recoveryBackupPath,
+      timestamp: "2026-08-28T00-00-00-000Z",
+      rebuildPolicyHandoff: { file: "recovery.yaml", sha256: "b".repeat(64) },
+    };
+    phaseMocks.findRecoveryBackup.mockReturnValue(recoveryManifest);
+    phaseMocks.clearPolicyHandoff
+      .mockImplementationOnce((manifest) =>
+        Reflect.deleteProperty(manifest, "rebuildPolicyHandoff"),
+      )
+      .mockImplementationOnce((manifest) => {
+        Object.assign(manifest.rebuildPolicyHandoff, { retired: true });
+        return true;
+      })
+      .mockReturnValueOnce(false);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(recoveryManifest.rebuildPolicyHandoff).toMatchObject({ retired: true });
+    expect(phaseMocks.clearRecoveryBackup).not.toHaveBeenCalled();
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+    expect(bail).toHaveBeenCalledWith(
+      "Recovered replacement cleanup is incomplete; the recovery marker was retained.",
+    );
+    expect(console.error).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
+    expect(console.error).toHaveBeenCalledWith(
+      "  Retry `nemoclaw alpha rebuild --yes`; the accepted replacement will not be restored again.",
+    );
+
+    const firstPreflight = await phaseMocks.runPreflight.mock.results[0]!.value;
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...firstPreflight,
+      recoveryManifest,
+    });
+    phaseMocks.clearPolicyHandoff.mockImplementation((manifest) =>
+      Reflect.deleteProperty(manifest, "rebuildPolicyHandoff"),
+    );
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.runBackup).toHaveBeenCalledOnce();
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
+    expect(phaseMocks.runPostRestore).toHaveBeenCalledOnce();
+    expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+    expect(phaseMocks.clearRecoveryBackup).toHaveBeenCalledOnce();
+    expect(recoveryManifest).not.toHaveProperty("rebuildPolicyHandoff");
+    expect(completeAcceptedTarget).toHaveBeenCalledOnce();
   });
 
   it("reports an operator drain that remains after accepted replacement recovery (#7806)", async () => {

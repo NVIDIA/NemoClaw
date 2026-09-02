@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
   restartHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestore,
@@ -157,7 +157,6 @@ describe("binding the Hermes gateway to restored state", () => {
   });
 });
 
-
 describe("Hermes rebuild post-restore verification", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
@@ -287,30 +286,30 @@ describe("Hermes rebuild post-restore verification", () => {
     );
   });
 
-  it.each([
-    "forwardRecoveryFailed",
-    "secretBoundaryRefused",
-  ] as const)("fails when the final gateway check reports %s (#7084)", async (failureFlag) => {
-    const harness = createRebuildFlowHarness({
-      agentName: "hermes",
-      checkAndRecoverSandboxProcesses: () => ({
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        [failureFlag]: true,
-      }),
-      sandboxEntry: { agent: "hermes" },
-    });
+  it.each(["forwardRecoveryFailed", "secretBoundaryRefused"] as const)(
+    "fails when the final gateway check reports %s (#7084)",
+    async (failureFlag) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "hermes",
+        checkAndRecoverSandboxProcesses: () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          forwardRecovered: false,
+          [failureFlag]: true,
+        }),
+        sandboxEntry: { agent: "hermes" },
+      });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Hermes post-restore verification failed");
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Hermes post-restore verification failed");
 
-    expect(harness.logSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("rebuilt successfully"),
-    );
-  });
+      expect(harness.logSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("rebuilt successfully"),
+      );
+    },
+  );
 
   it("fails when the final gateway health probe is unavailable (#7084)", async () => {
     const harness = createRebuildFlowHarness({
