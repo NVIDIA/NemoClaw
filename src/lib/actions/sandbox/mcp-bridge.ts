@@ -326,7 +326,7 @@ export async function dispatchMcpBridgeCommand(
         const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName);
         if (json)
-          // lgtm[js/clear-text-logging] The JSON summary contains validated MCP metadata and environment names, never values.
+          // codeql[js/clear-text-logging]: The JSON summary contains validated MCP metadata and environment names, never values.
           console.log(JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2));
         else renderMcpBridgeList(sandboxName, statuses, agent);
         return;
@@ -349,7 +349,7 @@ export async function dispatchMcpBridgeCommand(
           discoverTools: tools,
         });
         if (json) {
-          // lgtm[js/clear-text-logging] Status serialization is schema-bounded and excludes credential values.
+          // codeql[js/clear-text-logging]: Status serialization is schema-bounded and excludes credential values.
           console.log(
             JSON.stringify(
               server ? statuses[0] : buildJsonSummary(sandboxName, agent, statuses),

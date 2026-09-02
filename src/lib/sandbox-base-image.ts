@@ -282,7 +282,7 @@ function validatePulledCandidate(
     glibcVersion = check.version;
     if (!check.ok) {
       if (warn) {
-        // lgtm[js/clear-text-logging] Image refs and labels are validated OCI identifiers, not credential-bearing URLs.
+        // codeql[js/clear-text-logging]: Image refs and labels are validated OCI identifiers, not credential-bearing URLs.
         console.warn(
           `  Warning: ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
             `${glibcVersion || "unknown"}; OpenShell sandbox supervisor requires ` +
@@ -295,7 +295,7 @@ function validatePulledCandidate(
 
   if (options.validateImage && !options.validateImage(imageRef)) {
     if (warn) {
-      // lgtm[js/clear-text-logging] Image refs and capability labels are validated non-secret identifiers.
+      // codeql[js/clear-text-logging]: Image refs and capability labels are validated non-secret identifiers.
       console.warn(
         `  Warning: ${options.label || "sandbox base image"} ${imageRef} lacks ` +
           `${options.validationDescription || "a required runtime capability"}.`,
@@ -436,7 +436,7 @@ function resolveLocalCandidate(
     ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
     : { ok: true, version: null };
   if (!check.ok) {
-    // lgtm[js/clear-text-logging] The local image ref and ABI label are validated non-secret build identifiers.
+    // codeql[js/clear-text-logging]: The local image ref and ABI label are validated non-secret build identifiers.
     console.error(
       `  Local ${label} ${imageRef} has glibc ` +
         `${check.version || "unknown"}; expected >= ` +
@@ -446,7 +446,7 @@ function resolveLocalCandidate(
   }
 
   if (options.validateImage && !options.validateImage(imageRef)) {
-    // lgtm[js/clear-text-logging] The local image ref and capability label cannot contain credential material.
+    // codeql[js/clear-text-logging]: The local image ref and capability label cannot contain credential material.
     console.error(
       `  Local ${label} ${imageRef} lacks ` +
         `${options.validationDescription || "a required runtime capability"}.`,

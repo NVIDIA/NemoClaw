@@ -45,7 +45,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       ...payloads,
     ]);
 
-    // lgtm[js/indirect-command-line-injection] The command is produced by the wrapper under test from fixed test argv.
+    // codeql[js/indirect-command-line-injection]: The command is produced by the wrapper under test from fixed test argv.
     const result = spawnSync(wrapped[0], wrapped.slice(1), {
       encoding: "utf-8",
       env: { ...process.env },
@@ -61,7 +61,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       "-c",
       'printf "TOKEN=[%s]" "${OPENCLAW_GATEWAY_TOKEN:-}"',
     ]);
-    // lgtm[js/indirect-command-line-injection] Fixed test argv verifies that the wrapper removes the credential.
+    // codeql[js/indirect-command-line-injection]: Fixed test argv verifies that the wrapper removes the credential.
     const result = spawnSync(wrapped[0], wrapped.slice(1), {
       encoding: "utf-8",
       env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token" },
@@ -78,7 +78,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       "-c",
       'printf "%s|%s|%s" "$HTTP_PROXY" "$NEMOCLAW_OPENCLAW_GATEWAY_URL" "$NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"',
     ]);
-    // lgtm[js/indirect-command-line-injection] Fixed test argv verifies only reviewed non-secret routing metadata.
+    // codeql[js/indirect-command-line-injection]: Fixed test argv verifies only reviewed non-secret routing metadata.
     const result = spawnSync(wrapped[0], wrapped.slice(1), {
       encoding: "utf-8",
       env: {
@@ -102,7 +102,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     const wrapped = wrapExecCommandWithRuntimeEnv(["/usr/bin/printf", "%s", "COMMAND_RAN"]);
 
     try {
-      // lgtm[js/indirect-command-line-injection] Fixed test argv proves ambient BASH_ENV cannot change execution.
+      // codeql[js/indirect-command-line-injection]: Fixed test argv proves ambient BASH_ENV cannot change execution.
       const result = spawnSync(wrapped[0], wrapped.slice(1), {
         encoding: "utf-8",
         env: { ...process.env, BASH_ENV: bashEnv },
@@ -121,7 +121,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       "/usr/bin/printf",
       "SHOULD_NOT_RUN",
     ]);
-    // lgtm[js/indirect-command-line-injection] Fixed invalid argv proves command-leading options are not reinterpreted.
+    // codeql[js/indirect-command-line-injection]: Fixed invalid argv proves command-leading options are not reinterpreted.
     const result = spawnSync(wrapped[0], wrapped.slice(1), { encoding: "utf-8" });
 
     expect(result.status).toBe(127);
@@ -138,7 +138,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
         'process.emitWarning("other warning", { code: "NEMOCLAW-TEST" });',
       ].join(""),
     ]);
-    // lgtm[js/indirect-command-line-injection] Fixed test argv proves credential removal and warning filtering.
+    // codeql[js/indirect-command-line-injection]: Fixed test argv proves credential removal and warning filtering.
     const result = spawnSync(wrapped[0], wrapped.slice(1), {
       encoding: "utf-8",
       env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "test-gateway-token" },

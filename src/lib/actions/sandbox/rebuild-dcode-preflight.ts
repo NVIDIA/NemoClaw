@@ -450,7 +450,7 @@ function resolvePinnedDcodeBaseImage(
     }
     if (!warned) {
       warned = true;
-      // lgtm[js/clear-text-logging] imageRef is an already-validated immutable OCI reference without userinfo.
+      // codeql[js/clear-text-logging]: imageRef is an already-validated immutable OCI reference without userinfo.
       console.warn(`  Warning: failed to remove temporary DCode base image '${imageRef}'.`);
     }
     return false;

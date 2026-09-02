@@ -45,7 +45,7 @@ export function renderMcpBridgeStatus(
   if (statuses.length === 0) {
     console.log("");
     console.log(`  MCP servers for sandbox '${sandboxName}': none`);
-    // lgtm[js/clear-text-logging] Agent identity is validated manifest metadata; no environment values are rendered.
+    // codeql[js/clear-text-logging]: Agent identity is validated manifest metadata; no environment values are rendered.
     console.log(`    agent: ${agent.name}`);
     console.log(`    support: ${agent.mcpCapability.support}`);
     if (agent.mcpCapability.reason) console.log(`    reason: ${agent.mcpCapability.reason}`);

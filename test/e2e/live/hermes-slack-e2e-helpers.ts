@@ -801,7 +801,7 @@ PY`,
       "bash",
       [
         "-lc",
-        // lgtm[js/template-syntax-in-string-literal] The remote shell must expand SANDBOX_NAME inside this fixed command.
+        // codeql[js/template-syntax-in-string-literal]: The remote shell must expand SANDBOX_NAME inside this fixed command.
         'test ! -f "$HOME/.nemoclaw/sandboxes.json" || ! grep -Fq "\\\"${SANDBOX_NAME}\\\"" "$HOME/.nemoclaw/sandboxes.json"',
       ],
       {

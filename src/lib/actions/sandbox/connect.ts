@@ -2808,7 +2808,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
     // that `nemoclaw launch <name>` actually runs (#6006).
     const agentCmd = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
-    // lgtm[js/clear-text-logging] The interactive command is a checked-in manifest value and never includes credentials.
+    // codeql[js/clear-text-logging]: The interactive command is a checked-in manifest value and never includes credentials.
     console.log(
       `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
     );
