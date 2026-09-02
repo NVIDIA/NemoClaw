@@ -50,12 +50,10 @@ function runInstallerHostAdmissionTest(
   const onboardDir = path.join(sourceRoot, "dist", "lib", "onboard");
   const experimentalDir = path.join(onboardDir, "experimental");
   const readinessDir = path.join(sourceRoot, "dist", "lib", "readiness");
-  const runtimeProviderDir = path.join(onboardDir, "runtime-provider");
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(onboardDir, { recursive: true });
   fs.mkdirSync(experimentalDir, { recursive: true });
   fs.mkdirSync(readinessDir, { recursive: true });
-  fs.mkdirSync(runtimeProviderDir, { recursive: true });
 
   fs.writeFileSync(
     path.join(onboardDir, "preflight.js"),
@@ -92,20 +90,13 @@ exports.loadGatewayManagementDeclaration = () => ({
     fs.writeFileSync(artifactPath, contents);
   }
   fs.writeFileSync(
-    path.join(runtimeProviderDir, "selection.js"),
+    path.join(onboardDir, "docker-driver-gateway-env.js"),
     `const preparationFailure = ${JSON.stringify(options.providerPreparationFailure ?? null)};
-exports.resolveConfiguredRuntimeProvider = () => ({
-  gateway: {
-    supported: true,
-    prepareHostRuntime: () => {
-      if (preparationFailure) throw new Error(preparationFailure);
-      return {
-        sandboxHostAddress:
-          process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
-      };
-    },
-  },
-});\n`,
+exports.configuredRuntimeProviderOwnsHostReadiness = ({ environment = process.env } = {}) => {
+  if (preparationFailure) throw new Error(preparationFailure);
+  return environment.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" &&
+    environment.NEMOCLAW_GATEWAY_RUNTIME === "podman";
+};\n`,
   );
   fs.writeFileSync(
     path.join(readinessDir, "host.js"),

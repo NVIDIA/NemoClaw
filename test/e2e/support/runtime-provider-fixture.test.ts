@@ -85,10 +85,10 @@ describe("configured E2E runtime provider fixture", () => {
   });
 
   it("requires the Docker client to be absent for opted-in native Podman E2E", async () => {
-    const command = vi
-      .fn<HostCliClient["command"]>()
-      .mockResolvedValueOnce({ ...successfulProbe(), exitCode: 1 })
-      .mockResolvedValueOnce(successfulProbe());
+    const command = vi.fn<HostCliClient["command"]>().mockResolvedValue(successfulProbe());
+    const isCommandAvailable = vi
+      .fn<HostCliClient["isCommandAvailable"]>()
+      .mockResolvedValue(false);
     const environment = {
       HOME: "/home/runner",
       PATH: "/reviewed/bin:/usr/bin",
@@ -100,25 +100,22 @@ describe("configured E2E runtime provider fixture", () => {
     await ensureConfiguredRuntimeProviderAvailable({
       artifactName: "provider-info",
       environment,
-      host: { command } as unknown as HostCliClient,
+      host: { command, isCommandAvailable } as unknown as HostCliClient,
       scenarioLabel: "Docker-less public install",
       skip: (reason) => {
         throw new Error(reason);
       },
     });
 
-    expect(command).toHaveBeenNthCalledWith(
-      1,
-      "bash",
-      ["-lc", 'command -v "$1" >/dev/null 2>&1', "command-availability-probe", "docker"],
+    expect(isCommandAvailable).toHaveBeenCalledWith(
+      "docker",
       expect.objectContaining({
         artifactName: "provider-info-docker-client-absence",
         env: expect.objectContaining({ PATH: expect.stringContaining(environment.PATH) }),
         timeoutMs: 30_000,
       }),
     );
-    expect(command).toHaveBeenNthCalledWith(
-      2,
+    expect(command).toHaveBeenCalledWith(
       "podman",
       ["--url", "unix:///run/user/1001/podman/podman.sock", "info"],
       expect.objectContaining({ artifactName: "provider-info" }),
@@ -127,6 +124,7 @@ describe("configured E2E runtime provider fixture", () => {
 
   it("rejects opted-in native Podman E2E when the Docker client resolves", async () => {
     const command = vi.fn<HostCliClient["command"]>().mockResolvedValue(successfulProbe());
+    const isCommandAvailable = vi.fn<HostCliClient["isCommandAvailable"]>().mockResolvedValue(true);
 
     await expect(
       ensureConfiguredRuntimeProviderAvailable({
@@ -138,14 +136,15 @@ describe("configured E2E runtime provider fixture", () => {
           NEMOCLAW_GATEWAY_RUNTIME: "podman",
           OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
         },
-        host: { command } as unknown as HostCliClient,
+        host: { command, isCommandAvailable } as unknown as HostCliClient,
         scenarioLabel: "Docker-less public install",
         skip: (reason) => {
           throw new Error(reason);
         },
       }),
     ).rejects.toThrow("Native Podman public install requires the Docker client to be absent.");
-    expect(command).toHaveBeenCalledTimes(1);
+    expect(isCommandAvailable).toHaveBeenCalledOnce();
+    expect(command).not.toHaveBeenCalled();
   });
 
   it("does not apply the Docker-client absence gate to Docker E2E", async () => {

@@ -177,13 +177,15 @@ function preparePortableGatewayHostRuntime(
   };
 }
 
+export interface PrepareConfiguredGatewayHostRuntimeOptions {
+  architecture?: NodeJS.Architecture;
+  environment?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  socketPath?: string;
+}
+
 export function prepareConfiguredGatewayHostRuntime(
-  options: {
-    architecture?: NodeJS.Architecture;
-    environment?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    socketPath?: string;
-  } = {},
+  options: PrepareConfiguredGatewayHostRuntimeOptions = {},
 ): RuntimeProviderGatewayHostRuntime {
   const environment = options.environment ?? process.env;
   const platform = options.platform ?? process.platform;
@@ -200,6 +202,16 @@ export function prepareConfiguredGatewayHostRuntime(
     platform,
     socketPath: options.socketPath,
   });
+}
+
+export function configuredRuntimeProviderOwnsHostReadiness(
+  options: PrepareConfiguredGatewayHostRuntimeOptions = {},
+): boolean {
+  const environment = options.environment ?? process.env;
+  if (isPortableExperimentalProfile(environment)) return false;
+  return (
+    prepareConfiguredGatewayHostRuntime({ ...options, environment }).sandboxHostAddress !== null
+  );
 }
 
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<

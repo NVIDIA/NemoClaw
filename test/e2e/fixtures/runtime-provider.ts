@@ -118,21 +118,13 @@ export class RuntimeProviderPrerequisite {
       this.id === "podman" &&
       this.environment[REQUIRE_DOCKER_CLIENT_ABSENT_ENV]?.trim() === "1"
     ) {
-      const dockerClient = await this.host.command(
-        "bash",
-        ["-lc", 'command -v "$1" >/dev/null 2>&1', "command-availability-probe", "docker"],
-        {
-          artifactName: `${options.artifactName}-docker-client-absence`,
-          env: buildAvailabilityProbeEnv(this.environment),
-          timeoutMs: 30_000,
-        },
-      );
-      if (dockerClient.exitCode === 0) {
+      const dockerClientAvailable = await this.host.isCommandAvailable("docker", {
+        artifactName: `${options.artifactName}-docker-client-absence`,
+        env: buildAvailabilityProbeEnv(this.environment),
+        timeoutMs: 30_000,
+      });
+      if (dockerClientAvailable) {
         throw new Error("Native Podman public install requires the Docker client to be absent.");
-      }
-      if (dockerClient.exitCode !== 1) {
-        const detail = [dockerClient.stdout, dockerClient.stderr].filter(Boolean).join("\n");
-        throw new Error(`Docker client absence probe failed${detail ? `: ${detail}` : "."}`);
       }
     }
     const result = await this.command(["info"], {
