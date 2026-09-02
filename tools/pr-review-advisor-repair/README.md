@@ -48,6 +48,8 @@ Local contract tests exercise real Git patch application and tree reconstruction
 
 The accepted maintainer decision on #10791 defines the manual opt-in, eligible finding and path classes, limits, one-shot identity, publisher boundary, and exact-SHA validation. #9774 closed without a stable cross-head repair-root contract, so a new PR head always requires a new manual decision and Phase 2 remains blocked.
 
+The current Advisor artifacts contain nine independent Markdown reviews and native session traces; they intentionally do not contain a combined machine-readable finding ledger or canonical finding IDs. The Phase 1 `findings_json` input is therefore a maintainer-authored exact-head selection, not proof of a canonical open-finding state. Keep the production kill switch disabled until the Advisor emits a deterministic ledger and trusted selection can bind every supplied finding to that ledger and current review-thread state. Do not parse free-form model prose to create that authority.
+
 ## Artifacts
 
 Each workflow dispatch can emit:
@@ -59,3 +61,5 @@ Each workflow dispatch can emit:
 - `publication-receipt.json`, including the source head, validated tree, verified commit, branch, and dispatched exact-head workflows.
 
 Downstream jobs consume the exact `artifact-id` outputs from their producers. Artifact names are labels for humans, not trust anchors.
+
+After a stage produces its trusted result, it attempts to append a bounded job summary made only from trusted outcomes, hashes, numeric identities, and counts. The summary never renders finding prose, PR text, branch names, paths, or failure diagnostics supplied by untrusted content. If the summary file cannot be written, the stage logs a fixed warning and continues. Receipts, bound artifacts, and live GitHub state remain the authority.

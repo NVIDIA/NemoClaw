@@ -12,6 +12,7 @@ import {
   sanitizeDiagnostic,
   sha256,
 } from "./contract.mts";
+import { appendAttemptJobSummary } from "./summary.mts";
 
 export type AttemptReceipt = {
   version: 1;
@@ -123,6 +124,7 @@ function main(env: NodeJS.ProcessEnv): void {
     required(env, "GITHUB_OUTPUT"),
     `enabled=${receipt.outcome === "gate-enabled"}\n`,
   );
+  appendAttemptJobSummary(env.GITHUB_STEP_SUMMARY, receipt);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

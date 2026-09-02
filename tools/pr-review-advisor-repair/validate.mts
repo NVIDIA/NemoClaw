@@ -35,6 +35,7 @@ import {
   type ValidationCommand,
   type ValidationReceipt,
 } from "./contract.mts";
+import { appendValidationJobSummary } from "./summary.mts";
 
 type GitHubRequest = <T>(apiPath: string, token: string) => Promise<T>;
 
@@ -1081,6 +1082,7 @@ async function runValidation(env: NodeJS.ProcessEnv): Promise<void> {
     gateway = undefined;
     await assertLivePullRequestIdentity(selection, token);
     writeValidationArtifacts(artifactDirectory, result.receipt, result.patch);
+    appendValidationJobSummary(env.GITHUB_STEP_SUMMARY, result.receipt);
   } catch (error) {
     let failure: unknown = error;
     if (runner) {
@@ -1106,16 +1108,14 @@ async function runValidation(env: NodeJS.ProcessEnv): Promise<void> {
       }
     }
     const reason = sanitizeDiagnostic(failure);
-    writeValidationArtifacts(
-      artifactDirectory,
-      rejectedReceipt(
-        selection,
-        patchFile,
-        reason,
-        error instanceof ValidationSequenceError ? error.commands : [],
-      ),
-      null,
+    const receipt = rejectedReceipt(
+      selection,
+      patchFile,
+      reason,
+      error instanceof ValidationSequenceError ? error.commands : [],
     );
+    writeValidationArtifacts(artifactDirectory, receipt, null);
+    appendValidationJobSummary(env.GITHUB_STEP_SUMMARY, receipt);
     throw failure;
   }
 }

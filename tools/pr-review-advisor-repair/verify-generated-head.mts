@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { githubApi } from "../advisors/github.mts";
 import { CANONICAL_REPOSITORY, RepairContractError, sanitizeDiagnostic } from "./contract.mts";
+import { appendGeneratedHeadJobSummary } from "./summary.mts";
 
 const REQUIRED_CHECKS = ["changes", "checks", "commit-lint", "dco-check", "check-hash"] as const;
 const REQUIRED_WORKFLOWS = ["code-scanning.yaml", "pr-review-advisor.yaml"] as const;
@@ -136,6 +137,7 @@ async function main(env: NodeJS.ProcessEnv): Promise<void> {
     attemptKey,
     token: required(env, "GITHUB_TOKEN"),
   });
+  appendGeneratedHeadJobSummary(env.GITHUB_STEP_SUMMARY, attemptKey, commitSha);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

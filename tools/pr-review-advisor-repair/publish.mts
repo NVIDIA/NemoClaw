@@ -20,6 +20,7 @@ import {
   type SelectionBundle,
   type ValidationReceipt,
 } from "./contract.mts";
+import { appendPublicationJobSummary } from "./summary.mts";
 
 const VERIFIED_RETRY_ATTEMPTS = 12;
 const VERIFIED_RETRY_DELAY_MS = 5_000;
@@ -497,6 +498,7 @@ async function main(env: NodeJS.ProcessEnv): Promise<void> {
       required(env, "GITHUB_OUTPUT"),
       `commit_sha=${publication.commitSha}\nhead_ref=${publication.headRef}\n`,
     );
+    appendPublicationJobSummary(env.GITHUB_STEP_SUMMARY, publication);
   } finally {
     fs.rmSync(stagingDirectory, { force: true, recursive: true });
   }

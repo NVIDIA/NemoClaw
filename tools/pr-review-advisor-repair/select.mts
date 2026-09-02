@@ -20,6 +20,7 @@ import {
   type FindingInput,
   type SelectionBundle,
 } from "./contract.mts";
+import { appendSelectionJobSummary } from "./summary.mts";
 
 const ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
@@ -592,6 +593,7 @@ function verifyArtifacts(env: NodeJS.ProcessEnv): void {
     selection,
     manifest,
   });
+  appendSelectionJobSummary(env.GITHUB_STEP_SUMMARY, selection);
 }
 
 async function main(): Promise<void> {

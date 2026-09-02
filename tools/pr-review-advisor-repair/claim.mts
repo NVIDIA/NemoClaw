@@ -15,6 +15,7 @@ import {
   sanitizeDiagnostic,
   type SelectionBundle,
 } from "./contract.mts";
+import { appendClaimJobSummary } from "./summary.mts";
 
 const CLAIM_NAME = "Advisor repair attempt";
 
@@ -101,6 +102,7 @@ async function main(env: NodeJS.ProcessEnv): Promise<void> {
   );
   const output = required(env, "GITHUB_OUTPUT");
   fs.appendFileSync(output, `check_id=${checkId}\n`);
+  appendClaimJobSummary(env.GITHUB_STEP_SUMMARY, selection.attemptKey, checkId);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

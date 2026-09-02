@@ -31,6 +31,7 @@ import {
   type ProposalReceipt,
   type SelectionBundle,
 } from "./contract.mts";
+import { appendProposalJobSummary } from "./summary.mts";
 
 export const REPAIR_MODEL_ID = "azure/openai/gpt-5.6-terra";
 const MAX_EXPORT_FILES = 50_000;
@@ -538,7 +539,7 @@ function prepare(env: NodeJS.ProcessEnv): void {
 }
 
 function exportPatch(env: NodeJS.ProcessEnv): void {
-  exportTrustedRepairPatch({
+  const result = exportTrustedRepairPatch({
     sourceCheckout: required(env.SOURCE_CHECKOUT, "SOURCE_CHECKOUT"),
     baselineExport: path.join(required(env.REPAIR_EXPORT_DIR, "REPAIR_EXPORT_DIR"), "repo"),
     candidateRepository: path.join(
@@ -554,6 +555,7 @@ function exportPatch(env: NodeJS.ProcessEnv): void {
     stagingDirectory: required(env.REPAIR_STAGING_DIR, "REPAIR_STAGING_DIR"),
     env,
   });
+  appendProposalJobSummary(env.GITHUB_STEP_SUMMARY, result.proposal);
 }
 
 async function main(): Promise<void> {
