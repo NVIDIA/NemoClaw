@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
+import {
+  assertNoOpenShellGatewayEndpointOverride,
+  type OpenShellGatewayEndpointEnvironment,
+} from "../../adapters/openshell/gateway-scope";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
@@ -26,6 +30,7 @@ type ProviderPreparationInput = {
 
 type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
   readonly cleanupCreateSources: () => void;
+  readonly environment?: OpenShellGatewayEndpointEnvironment;
   readonly providerAdapter?: OpenShellProviderAdapter;
 };
 
@@ -54,6 +59,7 @@ function providerAdapter(deps: ProviderPreparationDeps): OpenShellProviderAdapte
   return (
     deps.providerAdapter ??
     createCliOpenShellProviderAdapter({
+      environment: deps.environment,
       run: (args, options) => deps.runOpenshell(args, options),
     })
   );
@@ -89,6 +95,7 @@ export async function validateAttachedMessagingProvidersBeforeSandboxCreation(
   if (attachedMessagingProviders.length === 0) return;
 
   try {
+    assertNoOpenShellGatewayEndpointOverride(deps.environment ?? process.env);
     ensureMessagingCredentialProviderProfile({
       root: REPOSITORY_ROOT,
       runOpenshell: (args, options) =>
@@ -168,7 +175,7 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
   }
 }
 
-/** Attach the planned providers only after the created sandbox passed its exact identity gate. */
+/** Reject post-create attachment because a sandbox name cannot bind an immutable identity. */
 export function attachProvidersAfterSandboxCreation(input: DeferredProviderAttachmentInput): void {
   if (input.providerNames.length === 0) return;
   throw new Error(

@@ -183,6 +183,29 @@ describe("sandbox provider preparation", () => {
     expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
   });
 
+  it("rejects an ambient endpoint before messaging profile or provider operations (#9806)", async () => {
+    const adapter = typedProviderAdapter();
+    const cleanupCreateSources = vi.fn();
+    const runOpenshell = vi.fn();
+
+    await expect(
+      validateAttachedMessagingProvidersBeforeSandboxCreation(publicationInput(), {
+        cleanupCreateSources,
+        environment: { OPENSHELL_GATEWAY_ENDPOINT: "https://untrusted.example.test" },
+        providerAdapter: adapter,
+        runOpenshell: runOpenshell as never,
+      }),
+    ).rejects.toThrowError(
+      "OPENSHELL_GATEWAY_ENDPOINT is set, so OpenShell may bypass the gateway recorded for this sandbox.",
+    );
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(cleanupCreateSources).toHaveBeenCalledOnce();
+  });
+
   it.each<{ case: string; state: ProviderState | null }>([
     {
       case: "generic provider type",
