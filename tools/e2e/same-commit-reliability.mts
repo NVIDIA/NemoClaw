@@ -5,10 +5,7 @@
 
 import { pathToFileURL } from "node:url";
 
-import {
-  readValidatedArtifactZipEntries,
-  readValidatedArtifactZipEntry,
-} from "../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/scorecard/read-artifact-zip.mts";
 import type { RetryEvidence, RetryFailureClass } from "../../test/e2e/fixtures/retry-policy.ts";
 import {
   parseClassificationLine,
@@ -119,6 +116,20 @@ type ControllerRun = {
 
 type JsonRequest = (path: string) => Promise<unknown>;
 type ArchiveRequest = (artifactId: number, maxBytes: number) => Promise<Buffer>;
+type ArtifactEntries = Map<string, Buffer> | null;
+type ArtifactEntriesReader = (
+  archive: Buffer,
+  options: { maxEntries?: number; maxTotalUncompressedBytes: number },
+) => { name: string; bytes: Buffer }[] | null;
+type ReliabilityServices = {
+  requestJson: JsonRequest;
+  requestArchive: ArchiveRequest;
+  readArtifactEntries?: ArtifactEntriesReader;
+};
+type ArtifactCollection = {
+  entriesByArtifact: Map<string, ArtifactEntries>;
+  readEntries: ArtifactEntriesReader;
+};
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -333,19 +344,55 @@ function parseMainRetryEvidence(
   return { valid: true, outcome: "unclassified" };
 }
 
+function decodeEntry(bytes: Buffer | undefined, maxBytes: number): string | null {
+  if (bytes === undefined || bytes.length > maxBytes) return null;
+  return bytes.toString("utf8");
+}
+
+function createArtifactCollection(services: ReliabilityServices): ArtifactCollection {
+  return {
+    entriesByArtifact: new Map(),
+    readEntries: services.readArtifactEntries ?? readValidatedArtifactZipEntries,
+  };
+}
+
+async function collectArtifactEntries(
+  artifact: Artifact,
+  requestArchive: ArchiveRequest,
+  collection: ArtifactCollection,
+): Promise<ArtifactEntries> {
+  const key = `${artifact.id}:${artifact.name}`;
+  const cached = collection.entriesByArtifact.get(key);
+  if (cached !== undefined || collection.entriesByArtifact.has(key)) return cached ?? null;
+  if (artifact.expired || artifact.size_in_bytes > MAX_ARTIFACT_BYTES) {
+    collection.entriesByArtifact.set(key, null);
+    return null;
+  }
+  const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
+  const validated = collection.readEntries(archive, {
+    maxEntries: 1000,
+    maxTotalUncompressedBytes: MAX_ARTIFACT_BYTES,
+  });
+  const entries = validated && new Map(validated.map((entry) => [entry.name, entry.bytes]));
+  collection.entriesByArtifact.set(key, entries);
+  return entries;
+}
+
 async function readArtifactEntry(
   artifact: Artifact,
   entry: string,
+  maxBytes: number,
   requestArchive: ArchiveRequest,
+  collection: ArtifactCollection,
 ): Promise<string | null> {
-  if (artifact.expired || artifact.size_in_bytes > MAX_ARTIFACT_BYTES) return null;
-  const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
-  return readValidatedArtifactZipEntry(archive, entry, { maxBytes: 64 * 1024 });
+  const entries = await collectArtifactEntries(artifact, requestArchive, collection);
+  return decodeEntry(entries?.get(entry), maxBytes);
 }
 
 async function identifyCandidateSha(
   value: unknown,
-  services: { requestJson: JsonRequest; requestArchive: ArchiveRequest },
+  services: ReliabilityServices,
+  collection: ArtifactCollection,
 ): Promise<string | null> {
   const run = validateRun(value);
   if (run === null) return null;
@@ -358,7 +405,13 @@ async function identifyCandidateSha(
   );
   return receipt
     ? parseDispatchReceipt(
-        await readArtifactEntry(receipt, "dispatch.json", services.requestArchive),
+        await readArtifactEntry(
+          receipt,
+          "dispatch.json",
+          16_384,
+          services.requestArchive,
+          collection,
+        ),
         run,
       )
     : null;
@@ -369,6 +422,7 @@ async function collectRunEvidence(
   run: WorkflowRun,
   candidateSha: string | null,
   requestArchive: ArchiveRequest,
+  collection: ArtifactCollection,
 ): Promise<{
   classes: ReliabilityFailureClass[];
   failureClassEvidence: EvidenceState;
@@ -388,23 +442,17 @@ async function collectRunEvidence(
       failureClassMalformed = true;
       break;
     }
-    const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
-    const validatedEntries = readValidatedArtifactZipEntries(archive, {
-      maxEntries: 1000,
-      maxTotalUncompressedBytes: MAX_ARTIFACT_BYTES,
-    });
-    const entries = validatedEntries?.map(({ name }) => name);
-    if (entries === undefined) {
+    const entries = await collectArtifactEntries(artifact, requestArchive, collection);
+    if (entries === null) {
       terminalMalformed = true;
       failureClassMalformed = true;
       continue;
     }
-    for (const entry of entries.filter(
-      (name) => name.endsWith("/evidence-manifest.json") || name === "evidence-manifest.json",
-    )) {
-      const text = readValidatedArtifactZipEntry(archive, entry, {
-        maxBytes: 16_384,
-      });
+    for (const [entry, entryBytes] of entries) {
+      if (!entry.endsWith("/evidence-manifest.json") && entry !== "evidence-manifest.json") {
+        continue;
+      }
+      const text = decodeEntry(entryBytes, 16_384);
       const jobStatus =
         candidateSha === null ? null : parseTerminalEvidenceManifest(text, run, candidateSha);
       if (jobStatus === null) {
@@ -413,14 +461,14 @@ async function collectRunEvidence(
         terminalRecords += 1;
       }
     }
-    for (const entry of entries.filter(
-      (name) =>
-        name.endsWith("/runner-pressure-classification.jsonl") ||
-        (name.includes("/retry/") && name.endsWith(".json")),
-    )) {
-      const text = readValidatedArtifactZipEntry(archive, entry, {
-        maxBytes: 64 * 1024,
-      });
+    for (const [entry, entryBytes] of entries) {
+      if (
+        !entry.endsWith("/runner-pressure-classification.jsonl") &&
+        !(entry.includes("/retry/") && entry.endsWith(".json"))
+      ) {
+        continue;
+      }
+      const text = decodeEntry(entryBytes, 64 * 1024);
       if (text === null) {
         failureClassMalformed = true;
         continue;
@@ -498,7 +546,8 @@ function deriveOutcome(run: WorkflowRun): ReliabilityOutcome {
 
 export async function normalizeReliabilityRun(
   value: unknown,
-  services: { requestJson: JsonRequest; requestArchive: ArchiveRequest },
+  services: ReliabilityServices,
+  collection = createArtifactCollection(services),
 ): Promise<ReliabilitySample | null> {
   const run = validateRun(value);
   if (run === null) return null;
@@ -526,7 +575,13 @@ export async function normalizeReliabilityRun(
     );
     candidateSha = receiptArtifact
       ? parseDispatchReceipt(
-          await readArtifactEntry(receiptArtifact, "dispatch.json", services.requestArchive),
+          await readArtifactEntry(
+            receiptArtifact,
+            "dispatch.json",
+            16_384,
+            services.requestArchive,
+            collection,
+          ),
           run,
         )
       : null;
@@ -552,7 +607,9 @@ export async function normalizeReliabilityRun(
       const text = await readArtifactEntry(
         selected.artifact,
         "e2e-main-retry-evidence.json",
+        64 * 1024,
         services.requestArchive,
+        collection,
       );
       try {
         const parsed =
@@ -567,7 +624,13 @@ export async function normalizeReliabilityRun(
       }
     }
   }
-  const collected = await collectRunEvidence(artifacts, run, candidateSha, services.requestArchive);
+  const collected = await collectRunEvidence(
+    artifacts,
+    run,
+    candidateSha,
+    services.requestArchive,
+    collection,
+  );
   if (run.event === "workflow_dispatch" && candidateSha !== null) {
     evidence = collected.terminalEvidence;
     if (evidence !== "complete") outcome = "unclassified";
@@ -736,23 +799,18 @@ async function main(): Promise<void> {
   if (!response || !Array.isArray(response.workflow_runs)) {
     throw new Error("GitHub returned no E2E workflow run history");
   }
+  const services = { requestJson, requestArchive };
   const current = response.workflow_runs.find((run) => record(run)?.id === currentRunId);
-  const currentSample = await normalizeReliabilityRun(current, {
-    requestJson,
-    requestArchive,
-  });
+  const currentCollection = createArtifactCollection(services);
+  const currentSample = await normalizeReliabilityRun(current, services, currentCollection);
   const samples: ReliabilitySample[] = [];
   for (const run of response.workflow_runs) {
     if (!currentSample?.candidateSha) break;
-    const candidateSha = await identifyCandidateSha(run, {
-      requestJson,
-      requestArchive,
-    });
+    const collection =
+      record(run)?.id === currentRunId ? currentCollection : createArtifactCollection(services);
+    const candidateSha = await identifyCandidateSha(run, services, collection);
     if (candidateSha !== currentSample.candidateSha) continue;
-    const sample = await normalizeReliabilityRun(run, {
-      requestJson,
-      requestArchive,
-    });
+    const sample = await normalizeReliabilityRun(run, services, collection);
     if (sample && sample.candidateSha === currentSample.candidateSha) {
       samples.push(sample);
     }

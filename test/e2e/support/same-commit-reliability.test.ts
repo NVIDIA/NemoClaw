@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   formatReliabilityReport,
@@ -9,6 +9,7 @@ import {
   type ReliabilitySample,
   summarizeReliability,
 } from "../../../tools/e2e/same-commit-reliability.mts";
+import { readValidatedArtifactZipEntries } from "../../../scripts/scorecard/read-artifact-zip.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
 import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract";
 
@@ -222,6 +223,8 @@ describe("same-commit E2E reliability", () => {
       [1, dispatch],
       [2, evidence],
     ]);
+    const requestArchive = vi.fn(async (artifactId: number) => archives.get(artifactId)!);
+    const readArtifactEntries = vi.fn(readValidatedArtifactZipEntries);
     const result = await normalizeReliabilityRun(workflowRun(), {
       requestJson: async () => ({
         total_count: 2,
@@ -240,9 +243,13 @@ describe("same-commit E2E reliability", () => {
           },
         ],
       }),
-      requestArchive: async (artifactId) => archives.get(artifactId)!,
+      requestArchive,
+      readArtifactEntries,
     });
 
+    expect(requestArchive).toHaveBeenCalledTimes(2);
+    expect(requestArchive.mock.calls.filter(([artifactId]) => artifactId === 1)).toHaveLength(1);
+    expect(readArtifactEntries).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       candidateSha: SHA_A,
       source: "manual-qualification",
@@ -437,6 +444,84 @@ describe("same-commit E2E reliability", () => {
       failureClassEvidence: { complete: 0, malformed: 1, missing: 0 },
     });
     expect(formatReliabilityReport(groups)).toContain("complete: 0, malformed: 1, missing: 0");
+  });
+
+  it("marks selected entries malformed when they exceed their decoding limits", async () => {
+    const dispatch = artifactZip([
+      {
+        name: "dispatch.json",
+        contents: JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: REPOSITORY,
+          eventName: "workflow_dispatch",
+          workflowRunId: "101",
+          workflowRunAttempt: 1,
+          candidateSha: SHA_A,
+        }),
+      },
+    ]);
+    const manifest = terminalEvidence(SHA_A, "failure");
+    const retry = JSON.stringify({
+      schemaVersion: 1,
+      operation: "provider.readiness",
+      owner: "provider",
+      idempotence: "read-only",
+      maxAttempts: 1,
+      outcome: "failed-no-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "transient-external",
+          retryScheduled: false,
+        },
+      ],
+    });
+    const evidence = artifactZip([
+      { ...manifest, contents: manifest.contents.padEnd(16_385) },
+      {
+        name: "e2e-artifacts/live/example/runner-pressure-classification.jsonl",
+        contents:
+          'E2E_TERMINAL_CLASSIFICATION {"v":1,"classification":"timeout","reason":"phase timed out"}\n',
+      },
+      {
+        name: "e2e-artifacts/live/example/retry/provider.json",
+        contents: retry.padEnd(64 * 1024 + 1),
+      },
+    ]);
+    const archives = new Map([
+      [1, dispatch],
+      [2, evidence],
+    ]);
+
+    const result = await normalizeReliabilityRun(workflowRun(), {
+      requestJson: async () => ({
+        total_count: 2,
+        artifacts: [
+          {
+            id: 1,
+            name: "e2e-dispatch-101-1",
+            size_in_bytes: dispatch.length,
+            expired: false,
+          },
+          {
+            id: 2,
+            name: "e2e-example",
+            size_in_bytes: evidence.length,
+            expired: false,
+          },
+        ],
+      }),
+      requestArchive: async (artifactId) => archives.get(artifactId)!,
+    });
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_A,
+      outcome: "unclassified",
+      failureClasses: ["timeout"],
+      evidence: "malformed",
+      failureClassEvidence: "malformed",
+    });
   });
 
   it("accepts trusted-main evidence only from the canonical retry controller", async () => {
