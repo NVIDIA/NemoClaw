@@ -811,13 +811,18 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
   try {
     const opened = fs.fstatSync(fd);
     if (!opened.isFile()) throw migrationError(`${activeLock} is not a regular file`);
-    if (opened.size > MAX_ONBOARD_LOCK_BYTES) {
+    writtenAtMs = opened.mtimeMs;
+    // Bound the read itself rather than trusting the size this fstat reported.
+    // acquireOnboardLock creates the lock with openSync(..., "wx") and fills it
+    // afterwards, so the body can still grow between the two calls.
+    const body = Buffer.alloc(MAX_ONBOARD_LOCK_BYTES + 1);
+    const size = fs.readSync(fd, body, 0, body.length, 0);
+    if (size > MAX_ONBOARD_LOCK_BYTES) {
       throw migrationError(
         `${activeLock} exceeds the ${String(MAX_ONBOARD_LOCK_BYTES)} byte onboarding lock limit`,
       );
     }
-    writtenAtMs = opened.mtimeMs;
-    record = parseOnboardLockRecord(JSON.parse(fs.readFileSync(fd, "utf8")));
+    record = parseOnboardLockRecord(JSON.parse(body.toString("utf8", 0, size)));
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
   } finally {

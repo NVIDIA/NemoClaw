@@ -526,6 +526,17 @@ describe("legacy non-default gateway state migration", () => {
     ).toEqual(["port-box"]);
   });
 
+  it("reports an onboarding lock whose body exceeds the read limit", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    writeOnboardLock(shared, JSON.stringify({ pid: process.pid, command: "x".repeat(70_000) }));
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /onboard\.lock exceeds the 65536 byte onboarding lock limit/u,
+    );
+  });
+
   it("reports an onboarding lock that is not a regular file", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
