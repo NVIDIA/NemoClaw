@@ -808,6 +808,13 @@ jobs:
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
           scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
+          if [ "$AGENT" = "hermes" ]; then
+            published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
+            if [ "$published_layer_count" -gt 125 ]; then
+              echo "ERROR: Hermes managed image has ${published_layer_count} filesystem layers; the publication runner compatibility ceiling is 125." >&2
+              exit 1
+            fi
+          fi
           docker buildx imagetools inspect "$reference" --raw > "$raw"
           [[ "sha256:$(sha256sum "$raw" | awk '{print $1}')" == "$DIGEST" ]] || {
             echo "ERROR: published PR manifest bytes do not match the build digest" >&2

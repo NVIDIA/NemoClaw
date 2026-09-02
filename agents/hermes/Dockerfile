@@ -96,6 +96,7 @@ COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/pat
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
 COPY agents/hermes/hindsight-lazy-integrity.patch /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
 COPY agents/hermes/hindsight-client-probe-requirements.txt /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt
+ADD --checksum=sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6be6dc54 https://files.pythonhosted.org/packages/1a/99/84ba7273339d0f3dfa57901b846489d2e5c2cd731470167757f1935fffbd/aiohttp_retry-2.9.1-py3-none-any.whl /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
@@ -1305,16 +1306,18 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
             exit 0' \
     && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
     && install -d -o root -g root -m 0755 /tmp/nemoclaw-hindsight-probe \
+    && cp /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl \
+        /tmp/nemoclaw-hindsight-probe/aiohttp_retry-2.9.1-py3-none-any.whl \
     && /opt/hermes/.venv/bin/python -I -c \
         "import zipfile; entries = {'hindsight_client/__init__.py': 'NEMOCLAW_BUILD_PROBE_FIXTURE = True\n', 'hindsight_client-0.6.1.dist-info/METADATA': 'Metadata-Version: 2.4\nName: hindsight-client\nVersion: 0.6.1\nSummary: NemoClaw offline lazy-installer build probe\n\n', 'hindsight_client-0.6.1.dist-info/WHEEL': 'Wheel-Version: 1.0\nGenerator: NemoClaw build probe\nRoot-Is-Purelib: true\nTag: py3-none-any\n', 'hindsight_client-0.6.1.dist-info/RECORD': 'hindsight_client/__init__.py,,\nhindsight_client-0.6.1.dist-info/METADATA,,\nhindsight_client-0.6.1.dist-info/WHEEL,,\nhindsight_client-0.6.1.dist-info/RECORD,,\n'}; wheel = zipfile.ZipFile('/tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl', 'w', compression=zipfile.ZIP_DEFLATED); [wheel.writestr(name, data) for name, data in entries.items()]; wheel.close()" \
-    && chown root:root /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
-    && chmod 0444 /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
+    && chown root:root /tmp/nemoclaw-hindsight-probe/*.whl \
+    && chmod 0444 /tmp/nemoclaw-hindsight-probe/*.whl \
     && rm -rf /sandbox/.hermes/lazy-packages \
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
     && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
-    && if HOME=/sandbox \
+    && if hindsight_probe_output="$(HOME=/sandbox \
         PIP_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
         PIP_NO_INDEX=1 \
         UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
@@ -1325,11 +1328,16 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
         HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)"; then \
+        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" 2>&1)"; then \
         echo "ERROR: Hermes accepted a Hindsight wheel that did not match the reviewed hash" >&2; exit 1; \
     fi \
+    && { case "$hindsight_probe_output" in \
+        *9fdda176ab50f7cec8d7339c6608c148f0cd9ad7e65d9d76192f2db730bc330a*) ;; \
+        *) printf '%s\n' "$hindsight_probe_output" >&2; echo "ERROR: Hermes Hindsight probe did not reach the reviewed hash rejection" >&2; exit 1 ;; \
+    esac; } \
     && test ! -e /sandbox/.hermes/lazy-packages/hindsight_client \
     && rm -rf /tmp/nemoclaw-hindsight-probe \
+    && rm /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl \
     && rm -rf /sandbox/.hermes/lazy-packages \
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
     && HOME=/sandbox \
@@ -1506,6 +1514,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
     && check_absent /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
+    && check_absent /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl \
     && check_absent /opt/nemoclaw-hermes-config/managed_policy.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
