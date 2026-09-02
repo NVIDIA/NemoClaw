@@ -421,7 +421,8 @@ foreach ($requiredPayload in @(
     'mxc\wxc-exec.exe',
     'mxc\wxc-host-prep.exe',
     'config\mxc-gateway.toml',
-    'qualification\run-installed-native-turn.mts'
+    'qualification\run-installed-native-turn.mts',
+    'OPENSHELL-NODE-UI-COMPATIBILITY.patch'
 )) {
     if (-not $payloadHashes.ContainsKey($requiredPayload) -or
         $payloadHashes[$requiredPayload] -cnotmatch '^[a-f0-9]{64}$') {

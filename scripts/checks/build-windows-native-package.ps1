@@ -104,6 +104,7 @@ foreach ($requiredPayload in @(
     'mxc\wxc-host-prep.exe',
     'config\mxc-gateway.toml',
     'qualification\run-installed-native-turn.mts',
+    'OPENSHELL-NODE-UI-COMPATIBILITY.patch',
     'LICENSE.txt',
     'NATIVE-PREVIEW.txt'
 )) {

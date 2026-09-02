@@ -244,6 +244,7 @@ debug = false
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'LICENSE') -Destination (Join-Path $output 'LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\NATIVE-PREVIEW.txt') -Destination (Join-Path $output 'NATIVE-PREVIEW.txt')
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\openshell-2721-node-ui.patch') -Destination (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch')
 
     foreach ($portableExecutable in @(
         'bin\node.exe',
@@ -272,6 +273,7 @@ debug = false
         node = [pscustomobject]@{ version = $script:NodeVersion; archiveSha256 = $script:NodeArchiveSha256 }
         openClaw = [pscustomobject]@{ version = '2026.7.1' }
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }
+        openShellCompatibilityPatchSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch') -Algorithm SHA256).Hash.ToLowerInvariant()
         mxc = [pscustomobject]@{ npmPackage = '@microsoft/mxc-sdk'; version = $script:MxcSdkVersion; archiveSha256 = $script:MxcSdkArchiveSha256 }
     }
     [IO.File]::WriteAllText(

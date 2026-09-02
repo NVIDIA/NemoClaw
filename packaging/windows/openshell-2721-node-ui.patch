@@ -1,0 +1,12 @@
+diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mxc/src/mxc.rs
+index 32d7006d..5bf24476 100644
+--- a/crates/openshell-driver-mxc/src/mxc.rs
++++ b/crates/openshell-driver-mxc/src/mxc.rs
+@@ -177,6 +177,7 @@ fn oneshot_config_json(
+             "timeout": process.timeout,
+         },
+         "processContainer": serde_json::Value::Object(pc_json),
++        "ui": { "disable": false },
+         "filesystem": serde_json::Value::Object(filesystem_json),
+     });
+     if let Some(network) = network {

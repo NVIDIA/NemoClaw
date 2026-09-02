@@ -5,6 +5,11 @@ native Windows ARM64 builds of openshell.exe and openshell-gateway.exe from
 NVIDIA/OpenShell#2721 merge commit bcd517bbe08cc80860c9be57699390cd32e8445f,
 and the pinned Microsoft MXC 0.8.0 ARM64 runtime tools.
 
+The packaged OpenShell gateway is a source-built NVIDIA/OpenShell#2721
+derivative with the checked-in OPENSHELL-NODE-UI-COMPATIBILITY.patch applied.
+That single compatibility change emits ui.disable=false for the one-shot
+ProcessContainer request so the packaged Node.js runtime can initialize.
+
 The setup executable applies Microsoft MXC's elevated prepare-system-drive and
 prepare-null-device host prerequisites before installing the MSI. Windows
 resets the null-device prerequisite at reboot; persistent production lifecycle

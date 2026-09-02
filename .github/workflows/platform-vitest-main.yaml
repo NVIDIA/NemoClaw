@@ -309,6 +309,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Build the pinned Node compatibility derivative
+        working-directory: openshell
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $patch = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate\packaging\windows\openshell-2721-node-ui.patch")
+          & git apply --check -- $patch
+          if ($LASTEXITCODE -ne 0) { throw 'The NVIDIA/OpenShell#2721 Node UI compatibility patch no longer applies exactly.' }
+          & git apply -- $patch
+          if ($LASTEXITCODE -ne 0) { throw 'The NVIDIA/OpenShell#2721 Node UI compatibility patch failed.' }
+          & .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
+          & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
+
       - name: Restore the assembled native NemoClaw runtime payload
         id: windows-runtime-payload-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -335,6 +349,22 @@ jobs:
           Copy-Item `
             -LiteralPath "$candidate\packaging\windows\runtime\run-installed-native-turn.mts" `
             -Destination "$payloadRoot\qualification\run-installed-native-turn.mts" `
+            -Force
+          Copy-Item `
+            -LiteralPath "$openshell\target\aarch64-pc-windows-msvc\release\openshell.exe" `
+            -Destination "$payloadRoot\bin\openshell.exe" `
+            -Force
+          Copy-Item `
+            -LiteralPath "$openshell\target\aarch64-pc-windows-msvc\release\openshell-gateway.exe" `
+            -Destination "$payloadRoot\bin\openshell-gateway.exe" `
+            -Force
+          Copy-Item `
+            -LiteralPath "$candidate\packaging\windows\openshell-2721-node-ui.patch" `
+            -Destination "$payloadRoot\OPENSHELL-NODE-UI-COMPATIBILITY.patch" `
+            -Force
+          Copy-Item `
+            -LiteralPath "$candidate\packaging\windows\NATIVE-PREVIEW.txt" `
+            -Destination "$payloadRoot\NATIVE-PREVIEW.txt" `
             -Force
 
       - name: Cache the assembled native NemoClaw runtime payload
