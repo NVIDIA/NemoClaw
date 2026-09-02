@@ -7,12 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  baseEntry,
-  runDeepAgentsConfigCommand,
-} from "../../../../test/helpers/mcp-bridge-adapter-deepagents-fixture";
-
-import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
@@ -43,6 +37,7 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
   attempted: false,
@@ -93,6 +88,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 let activePolicyState = "match";
 policies.getPresetContentGatewayState = () => activePolicyState;
 const executedSandboxCommands = [];
+let deepAgentsManagedOptions = null;
+let lastDeepAgentsFixtureResult = null;
 let providerCredentialObservation = "v11";
 let credentialObservationCount = 0;
 processRecovery.executeSandboxExecCommand = () => {
@@ -107,6 +104,17 @@ processRecovery.executeSandboxExecCommand = () => {
 };
 processRecovery.executeSandboxCommand = (sandboxName, command) => {
   executedSandboxCommands.push(command);
+  if (deepAgentsManagedOptions !== null) {
+    lastDeepAgentsFixtureResult = deepAgentsFixture.runDeepAgentsConfigCommand(
+      command,
+      { mcpServers: {} },
+      "v2",
+      undefined,
+      0o600,
+      deepAgentsManagedOptions,
+    );
+    return lastDeepAgentsFixtureResult;
+  }
   if (command.includes("NEMOCLAW_MCP_PROBE")) {
     const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
     if (!resultMarker) throw new Error("credential probe result marker missing");
@@ -204,30 +212,41 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
-  it(
-    "preserves an unsafe Deep Agents projection failure across credential observations (#10754)",
+  it.each([
+    {
+      caseName: "a symlink appearing after a missing-path open",
+      credentialObservation: null,
+      diagnostic: "symbolic link",
+      expectedConfigIsFifo: false,
+      expectedConfigIsSymlink: true,
+      managedOptions: { swapAfterMissingManagedOpen: "symlink", timeoutMs: 30_000 },
+    },
+    {
+      caseName: "a FIFO appearing after a missing-path open",
+      credentialObservation: "absent",
+      diagnostic: "FIFO",
+      expectedConfigIsFifo: true,
+      expectedConfigIsSymlink: false,
+      managedOptions: { swapAfterMissingManagedOpen: "fifo", timeoutMs: 30_000 },
+    },
+    {
+      caseName: "a symlink restored after ELOOP",
+      credentialObservation: "canonical",
+      diagnostic: "symbolic link",
+      expectedConfigIsFifo: false,
+      expectedConfigIsSymlink: true,
+      managedOptions: { swapAfterManagedEloop: true, symlink: true, timeoutMs: 30_000 },
+    },
+  ])(
+    "propagates $caseName through status with credential observation $credentialObservation (#10754)",
     { timeout: 120_000 },
-    () => {
-      const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
-      const projection = { mcpServers: {} };
-      const unsafeResult = runDeepAgentsConfigCommand(
-        statusCommand,
-        projection,
-        "v2",
-        undefined,
-        0o600,
-        {
-          swapAfterMissingManagedOpen: "symlink",
-          timeoutMs: 30_000,
-        },
-      );
-      expect(unsafeResult.status).toBe(2);
-      expect(unsafeResult.stdout.trim()).toBe("");
-      expect(unsafeResult.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
-      );
-      expect(unsafeResult.configIsSymlink).toBe(true);
-      const unsafeDetail = unsafeResult.stderr.trim();
+    ({
+      credentialObservation,
+      diagnostic,
+      expectedConfigIsFifo,
+      expectedConfigIsSymlink,
+      managedOptions,
+    }) => {
       const home = createTempHome("nemoclaw-mcp-status-projection-");
       const { stdout } = runHarness(
         home,
@@ -246,45 +265,38 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       managedServerNames: ["github"],
     },
   });
-  const outcomes = [];
-  const detail = ${JSON.stringify(unsafeDetail)};
-  for (const observation of [null, "absent", "canonical"]) {
-    providerCredentialObservation = observation;
-    processRecovery.executeSandboxCommand = () => ({
-      status: 2,
-      stdout: "",
-      stderr: detail + "\n",
-    });
-    logLines.length = 0;
-    errorLines.length = 0;
-    await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
-    outcomes.push({
-      detail,
-      observation: observation ?? "unavailable",
-      exitCode: process.exitCode ?? 0,
-      stdout: logLines.join("\n"),
-      stderr: errorLines.join("\n"),
-    });
-    process.exitCode = 0;
-  }
-  writeHarnessResult(JSON.stringify(outcomes));
+  providerCredentialObservation = ${JSON.stringify(credentialObservation)};
+  deepAgentsManagedOptions = ${JSON.stringify(managedOptions)};
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
+  const exitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify({
+    exitCode,
+    stdout: logLines.join("\n"),
+    stderr: errorLines.join("\n"),
+    fixtureStatus: lastDeepAgentsFixtureResult?.status ?? null,
+    configIsFifo: lastDeepAgentsFixtureResult?.configIsFifo ?? false,
+    configIsSymlink: lastDeepAgentsFixtureResult?.configIsSymlink ?? false,
+  }));
 `,
       );
-      const outcomes = JSON.parse(stdout) as Array<{
-        detail: string;
-        observation: string;
+      const outcome = JSON.parse(stdout) as {
         exitCode: number;
         stdout: string;
         stderr: string;
-      }>;
+        fixtureStatus: number | null;
+        configIsFifo: boolean;
+        configIsSymlink: boolean;
+      };
 
-      expect(outcomes).toHaveLength(3);
-      outcomes.forEach((outcome) => {
-        expect(["unavailable", "absent", "canonical"]).toContain(outcome.observation);
-        expect(outcome.exitCode).toBe(2);
-        expect(outcome.stdout).toBe("");
-        expect(outcome.stderr).toContain(outcome.detail);
-      });
+      expect(outcome.fixtureStatus).toBe(2);
+      expect(outcome.exitCode).toBe(2);
+      expect(outcome.stdout).toBe("");
+      expect(outcome.stderr).toContain(
+        `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
+      );
+      expect(outcome.configIsFifo).toBe(expectedConfigIsFifo);
+      expect(outcome.configIsSymlink).toBe(expectedConfigIsSymlink);
     },
   );
 
