@@ -319,6 +319,53 @@ async function readOpenClawTelegramState(
   return JSON.parse(output) as OpenClawTelegramState;
 }
 
+async function expectRevisionScopedTelegramCredential(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "node",
+      "-e",
+      [
+        'const value = process.env.TELEGRAM_BOT_TOKEN || ""',
+        'const ready = /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(value)',
+        'console.log(ready ? "revision-scoped" : value ? "unexpected" : "missing")',
+        "process.exit(ready ? 0 : 1)",
+      ].join("; "),
+    ],
+    {
+      artifactName,
+      env: sandboxAccessEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(result, "Telegram revision-scoped runtime credential");
+  expect(result.stdout.trim(), resultText(result)).toBe("revision-scoped");
+}
+
+async function expectTelegramGatewayCredentialReady(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    ["sh", "-c", "tail -n 400 /tmp/gateway.log 2>/dev/null || true"],
+    {
+      artifactName,
+      env: sandboxAccessEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(result, "Telegram gateway credential diagnostic");
+  const output = resultText(result);
+  expect(output).toContain("runtime credential placeholder ready (revision-scoped)");
+  expect(output).not.toMatch(
+    /TELEGRAM_BOT_TOKEN is missing|identityless canonical placeholder|placeholder is malformed/u,
+  );
+}
+
 /** Detect an active policy preset in the human-readable policy listing. */
 function policyListHasActivePreset(output: string, preset: string): boolean {
   const activePreset = new RegExp(`^\\s*\\u25cf\\s+${escapeRegex(preset)}\\b`, "im");
@@ -560,6 +607,14 @@ test(
       pluginPresent: true,
     });
     await expectProvider(host, "present", "phase-4-provider-get-after-add");
+    await expectRevisionScopedTelegramCredential(
+      sandbox,
+      "phase-4-telegram-runtime-credential-after-add",
+    );
+    await expectTelegramGatewayCredentialReady(
+      sandbox,
+      "phase-4-telegram-gateway-credential-after-add",
+    );
     expectHostTelegramConfig("after add+rebuild");
     expectHostTelegramPlan("active", "after add+rebuild");
 

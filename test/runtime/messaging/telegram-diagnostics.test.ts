@@ -81,6 +81,55 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     expect(result.stderr).toMatch(/bridge did not start within \d+s/);
   });
 
+  it("reports a missing runtime credential when config relies on the process environment (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      delete process.env.TELEGRAM_BOT_TOKEN;
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("TELEGRAM_BOT_TOKEN is missing from runtime env");
+  });
+
+  it("reports a revision-scoped runtime credential without exposing its revision (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      process.env.TELEGRAM_BOT_TOKEN = "openshell:resolve:env:v4242_TELEGRAM_BOT_TOKEN";
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("runtime credential placeholder ready (revision-scoped)");
+    expect(result.stderr).not.toContain("v4242");
+  });
+
+  it("rejects the identityless canonical runtime placeholder (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      process.env.TELEGRAM_BOT_TOKEN = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("identityless canonical placeholder");
+  });
+
   it("does NOT emit the startup-grace breadcrumb after the bridge logs 'starting provider'", () => {
     const driver = `
       ${GATEWAY_TITLE_SETUP}

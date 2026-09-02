@@ -280,26 +280,42 @@ type TelegramHttpRequestLike = (
 
   function maybeLogCredentialPlaceholderDiagnostics(): void {
     if (credentialLogged) return;
-    credentialLogged = true;
     var prefix = "openshell:resolve:env:";
     var envToken = process.env.TELEGRAM_BOT_TOKEN || "";
     var configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
+    var account: TelegramJsonObject | null = null;
     var configToken = "";
     try {
       var fs = require("fs");
-      configToken = readTelegramBotToken(JSON.parse(fs.readFileSync(configPath, "utf8")));
+      var config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      account = readTelegramAccount(config);
+      configToken = readTelegramBotToken(config);
     } catch (_e) {
       return;
     }
-    if (!configToken || configToken.indexOf(prefix) !== 0) return;
+    if (!account || account.enabled === false) return;
+    credentialLogged = true;
     if (!envToken) {
       emit(
         "[telegram] [default] credential placeholder configured but TELEGRAM_BOT_TOKEN is missing from runtime env",
       );
       return;
     }
-    if (envToken.indexOf(prefix) !== 0) return;
-    if (configToken !== envToken) {
+    if (envToken === prefix + "TELEGRAM_BOT_TOKEN") {
+      emit(
+        "[telegram] [default] runtime TELEGRAM_BOT_TOKEN is an identityless canonical placeholder; a revision-scoped OpenShell credential is required",
+      );
+      return;
+    }
+    if (/^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(envToken)) {
+      emit("[telegram] [default] runtime credential placeholder ready (revision-scoped)");
+    } else if (envToken.indexOf(prefix) === 0) {
+      emit("[telegram] [default] runtime TELEGRAM_BOT_TOKEN placeholder is malformed");
+      return;
+    } else {
+      emit("[telegram] [default] runtime credential available from a non-placeholder source");
+    }
+    if (configToken.indexOf(prefix) === 0 && configToken !== envToken) {
       emit(
         "[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder",
       );
