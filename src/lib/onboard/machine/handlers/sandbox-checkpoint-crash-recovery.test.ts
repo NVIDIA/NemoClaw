@@ -139,8 +139,23 @@ function fakeGatewayRunOpenshell() {
     return OK_RESULT;
   };
 
+  const exactProfileExports = new Map([
+    [
+      "provider profile -g nemoclaw export brave --output json",
+      EXACT_BRAVE_PROFILE,
+    ],
+    [
+      "provider profile -g nemoclaw export nemoclaw-mcp-v1 --output json",
+      EXACT_MESSAGING_PROFILE,
+    ],
+  ]);
+  const rejectUnexpectedProfileCommand = (args: string[]): never => {
+    throw new Error(`Unexpected provider profile command: ${args.join(" ")}`);
+  };
+
   const handlersByAction: Record<string, (args: string[]) => StubbedRunOpenshellResult> = {
-    profile: (args) => (args.includes("brave") ? EXACT_BRAVE_PROFILE : EXACT_MESSAGING_PROFILE),
+    profile: (args) =>
+      exactProfileExports.get(args.join(" ")) ?? rejectUnexpectedProfileCommand(args),
     get: handleGet,
     create: handleCreate,
     update: () => OK_RESULT,
