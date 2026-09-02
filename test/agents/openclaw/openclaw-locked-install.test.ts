@@ -178,6 +178,8 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verified).toContain(PACKAGE_SPEC);
     expect(verified).toContain("brace-expansion@5.0.9");
     expect(verified).toContain("fast-uri@3.1.6");
+
+    expect(verified).not.toContain("fast-uri@3.1.5");
     expect(verified).toContain("hono@4.12.34");
     expect(verified).toContain("ip-address@10.3.1");
     expect(verified).toContain("tar@7.5.21");
