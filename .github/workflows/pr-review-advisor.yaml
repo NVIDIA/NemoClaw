@@ -80,6 +80,56 @@ jobs:
           overwrite: true
           retention-days: 1
 
+  build-advisor-runtime:
+    name: Build trusted advisor runtime
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      payload-sha: ${{ steps.package.outputs.payload-sha }}
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+      FD_FIND_VERSION: "9.0.0-1"
+      RIPGREP_VERSION: "14.1.0-1"
+    steps:
+      - name: Checkout trusted advisor code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: advisor/package-lock.json
+      - name: Install locked runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "fd-find=${FD_FIND_VERSION}" "ripgrep=${RIPGREP_VERSION}"
+          test "$(dpkg-query -W -f='${Version}' fd-find)" = "$FD_FIND_VERSION"
+          test "$(dpkg-query -W -f='${Version}' ripgrep)" = "$RIPGREP_VERSION"
+          (cd "$ADVISOR_DIR" && npm ci --ignore-scripts --no-audit --no-fund)
+      - name: Package trusted runtime
+        id: package
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: bash "$ADVISOR_DIR/scripts/package-pr-review-advisor-runtime.sh" "$RUNNER_TEMP/advisor-runtime"
+      - name: Upload trusted runtime
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-runtime-${{ github.run_id }}
+          path: ${{ runner.temp }}/advisor-runtime/
+          overwrite: true
+          retention-days: 1
+
   review-specialists:
     name: Specialist / ${{ matrix.advisor.label }}
     if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
@@ -89,7 +139,7 @@ jobs:
       actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    needs: discover-specialists
+    needs: [discover-specialists, build-advisor-runtime]
     strategy:
       fail-fast: false
       matrix:
@@ -185,7 +235,6 @@ jobs:
           node --experimental-strip-types \
             "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
 
-      # The advisor reads repository files inside OpenShell. Remove worktree
       # symlinks first so an untrusted link cannot redirect a read outside the
       # uploaded repository. Git still retains the committed link target.
       - name: Remove symlinks from analysis workspace
@@ -195,61 +244,23 @@ jobs:
             rm -- "$link"
           done < <(find "$ADVISOR_WORKDIR" -type l -print0)
 
-      - name: Install Pi SDK
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            "fd-find=${FD_FIND_VERSION}" \
-            "ripgrep=${RIPGREP_VERSION}"
+      - name: Download trusted advisor runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-review-advisor-runtime-${{ github.run_id }}
+          path: ${{ runner.temp }}/shared-pr-review-advisor-runtime
 
-          INSTALLED_FD_FIND_VERSION="$(dpkg-query -W -f='${Version}' fd-find)"
-          INSTALLED_RIPGREP_VERSION="$(dpkg-query -W -f='${Version}' ripgrep)"
-          if [ "$INSTALLED_FD_FIND_VERSION" != "$FD_FIND_VERSION" ]; then
-            echo "::error::fd-find package version $INSTALLED_FD_FIND_VERSION does not match $FD_FIND_VERSION"
-            exit 1
-          fi
-          if [ "$INSTALLED_RIPGREP_VERSION" != "$RIPGREP_VERSION" ]; then
-            echo "::error::ripgrep package version $INSTALLED_RIPGREP_VERSION does not match $RIPGREP_VERSION"
-            exit 1
-          fi
-
-          command -v fdfind >/dev/null
-          command -v rg >/dev/null
-          EXPECTED_FD_BINARY_VERSION="${FD_FIND_VERSION%%-*}"
-          EXPECTED_RG_BINARY_VERSION="${RIPGREP_VERSION%%-*}"
-          FD_BINARY_VERSION="$(fdfind --version)"
-          RG_BINARY_VERSION="$(rg --version)"
-          RG_BINARY_VERSION="${RG_BINARY_VERSION%%$'\n'*}"
-          if [ "$FD_BINARY_VERSION" != "fdfind $EXPECTED_FD_BINARY_VERSION" ]; then
-            echo "::error::fdfind binary version $FD_BINARY_VERSION does not match fdfind $EXPECTED_FD_BINARY_VERSION"
-            exit 1
-          fi
-          if [ "$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION" ]; then
-            echo "::error::rg binary version $RG_BINARY_VERSION does not match ripgrep $EXPECTED_RG_BINARY_VERSION"
-            exit 1
-          fi
-
-          # Install only from the trusted workflow checkout's committed lockfile.
-          # --ignore-scripts keeps package lifecycle code out of this secret-bearing job.
-          (
-            cd "$ADVISOR_DIR"
-            npm ci --ignore-scripts --no-audit --no-fund
-          )
+      - name: Restore trusted advisor runtime
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_RUNTIME_SHA: ${{ needs.build-advisor-runtime.outputs.payload-sha }}
+        run: bash "$ADVISOR_DIR/scripts/restore-pr-review-advisor-runtime.sh" "$RUNNER_TEMP/shared-pr-review-advisor-runtime"
 
       - name: Download GitHub review context
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pr-review-advisor-context-${{ github.run_id }}
           path: ${{ runner.temp }}/shared-pr-review-advisor-context
-
-      # Preparation reads the checked-out PR only before the model credential enters the environment.
-      - name: Prepare advisor sandbox inputs
-        env:
-          BASE_REF: ${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
-          HEAD_REF: ${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
-          PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: ${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
 
       # Shared lifecycle phases preserve the configure-only credential boundary.
       - name: Install OpenShell
