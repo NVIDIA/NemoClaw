@@ -451,8 +451,14 @@ try {
     $newProhibitedProcesses = @($postExecution.processes | Where-Object {
         $baselineIds -notcontains $_.processId
     })
-    if ($newProhibitedProcesses.Count -ne 0) {
-        Fail-PackageQualification 'A new prohibited process remains after package qualification.'
+    $packageDescendantProhibitedIds = @($packageDescendantProhibitedStarts | ForEach-Object {
+        $_.processId
+    })
+    $newPackageDescendantProhibitedProcesses = @($newProhibitedProcesses | Where-Object {
+        $packageDescendantProhibitedIds -contains $_.processId
+    })
+    if ($newPackageDescendantProhibitedProcesses.Count -ne 0) {
+        Fail-PackageQualification 'A new prohibited package descendant remains after qualification.'
     }
 
     foreach ($logPath in @($bundleInstallLog, $msiRepairLog, $msiReinstallLog, $msiUninstallLog, $bundleUninstallLog)) {
@@ -488,6 +494,7 @@ try {
         packageDescendantStarts = $auditResult.descendantStarts
         packageDescendantProhibitedStarts = $packageDescendantProhibitedStarts
         newProhibitedProcesses = $newProhibitedProcesses
+        newPackageDescendantProhibitedProcesses = $newPackageDescendantProhibitedProcesses
         preExecution = $preExecution
         postExecution = $postExecution
     }

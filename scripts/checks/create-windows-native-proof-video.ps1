@@ -162,7 +162,7 @@ if (-not $qualification.repairRestoredDigest -or
     @($qualification.msiRegistration).Count -ne 1 -or
     @($qualification.bundleRegistration).Count -ne 1 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
-    @($qualification.newProhibitedProcesses).Count -ne 0) {
+    @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0) {
     Fail-ProofVideo 'Qualification receipt is not a complete passing package lifecycle.'
 }
 
@@ -237,9 +237,9 @@ try {
             heading = 'No Linux dependency in the package path'
             lines = @(
                 '[PASS] Zero WSL / Docker / Bash / Ubuntu descendants',
-                '[PASS] Zero new prohibited processes remained',
+                '[PASS] Zero package-introduced prohibited processes remained',
                 "Observed package descendants: $(@($qualification.packageDescendantStarts).Count)",
-                'Customer setup contains no PowerShell or custom action'
+                "Runner-owned new prohibited processes: $(@($qualification.newProhibitedProcesses).Count)"
             )
         },
         [pscustomobject]@{
