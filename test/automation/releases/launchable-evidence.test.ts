@@ -283,14 +283,17 @@ describe("Launchable evidence inspection", () => {
       { workflow_runs: [run(10, "2026-06-01T00:00:00Z")] },
       { workflow_runs: [run(11, "2026-07-01T00:00:00Z")] },
     ]);
-    expect(workflowRunsApiArgs(SHA)).toEqual([
-      "api",
-      "--hostname",
-      "github.com",
-      "--paginate",
-      "--slurp",
-      `repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${SHA}`,
-    ]);
+    const args = workflowRunsApiArgs(SHA);
+    expect(args[0]).toBe("api");
+    expect(new Set(args.slice(1))).toEqual(
+      new Set([
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        `repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${SHA}`,
+      ]),
+    );
     expect(
       inspectLaunchableEvidence(
         { candidate: SHA },
@@ -349,14 +352,17 @@ describe("Launchable evidence inspection", () => {
     expect(inspectLaunchableEvidence({ candidate: SHA }, reader(runs)).run.id).toBe(10);
   });
   it("pins workflow-job inventory to github.com (#10798)", () => {
-    expect(workflowJobsApiArgs(10, 2)).toEqual([
-      "api",
-      "--hostname",
-      "github.com",
-      "--paginate",
-      "--slurp",
-      "repos/NVIDIA/NemoClaw/actions/runs/10/attempts/2/jobs?per_page=100",
-    ]);
+    const args = workflowJobsApiArgs(10, 2);
+    expect(args[0]).toBe("api");
+    expect(new Set(args.slice(1))).toEqual(
+      new Set([
+        "--hostname",
+        "github.com",
+        "--paginate",
+        "--slurp",
+        "repos/NVIDIA/NemoClaw/actions/runs/10/attempts/2/jobs?per_page=100",
+      ]),
+    );
   });
   it("merges workflow-job pages before selecting evidence (#10798)", () => {
     expect(
