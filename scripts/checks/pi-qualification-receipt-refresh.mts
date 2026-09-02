@@ -33,6 +33,7 @@ type GitRunner = (args: readonly string[]) => GitResult;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PI_DOCKERFILES = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"] as const;
+const PI_CANDIDATE_AUTHORITY = "src/lib/agent/candidate-authority.ts";
 export const PI_QUALIFICATION_RECEIPTS: readonly {
   path: string;
   platform: ManagedImagePlatform;
@@ -116,11 +117,16 @@ function piImageSourcePaths(rootDir: string): string[] {
   return [...new Set([".dockerignore", ...PI_DOCKERFILES, ...copiedSources])].sort();
 }
 
+type ValidatedReceipt = {
+  contract: ManagedImageContractV1;
+  digest: string;
+};
+
 function parseReceipt(
   rootDir: string,
   receipt: { path: string; platform: ManagedImagePlatform },
   acceptedDigests: ReadonlySet<string>,
-): ManagedImageContractV1 {
+): ValidatedReceipt {
   const receiptPath = path.join(rootDir, receipt.path);
   if (!fs.existsSync(receiptPath)) {
     throw new Error(
@@ -137,7 +143,15 @@ function parseReceipt(
     contractModule.parseManagedImageContractV1 ??
     contractModule.default?.parseManagedImageContractV1;
   if (!parseContract) throw new Error("Could not load the managed image contract parser");
-  return parseContract(JSON.parse(contents.toString("utf8")) as unknown, "pi", receipt.platform);
+  try {
+    const parsed = JSON.parse(contents.toString("utf8")) as unknown;
+    return { contract: parseContract(parsed, "pi", receipt.platform), digest };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid Pi qualification receipt ${receipt.path}: ${detail}`, {
+      cause: error,
+    });
+  }
 }
 
 function requireReceiptSourceParity(
@@ -166,12 +180,20 @@ function validateReceiptPair(
   receipts: readonly { path: string; platform: ManagedImagePlatform }[],
   acceptedDigests: ReadonlySet<string>,
 ): void {
-  const contracts = receipts.map((receipt) => parseReceipt(rootDir, receipt, acceptedDigests));
+  const validated = receipts.map((receipt) => parseReceipt(rootDir, receipt, acceptedDigests));
+  const contracts = validated.map(({ contract }) => contract);
   const revisions = new Set(contracts.map(({ source }) => source.revision));
   const cohorts = new Set(contracts.map(({ source }) => source.cohort));
   const releases = new Set(contracts.map(({ source }) => source.release));
   if (revisions.size !== 1 || cohorts.size !== 1 || releases.size !== 1) {
     throw new Error("Pi qualification receipts must identify one source, release, and cohort");
+  }
+  const receiptDigests = new Set(validated.map(({ digest }) => digest));
+  if (
+    receiptDigests.size !== acceptedDigests.size ||
+    [...acceptedDigests].some((digest) => !receiptDigests.has(digest))
+  ) {
+    throw new Error("Pi candidate receipt authority must exactly match both published receipts");
   }
   requireReceiptSourceParity(git, contracts[0]!.source.revision, imageSourcePaths);
 }
@@ -205,12 +227,14 @@ export function checkPiQualificationReceiptRefresh(
   const imageInputsChanged = changedPaths.some((changedPath) =>
     imageSourcePaths.some((source) => ownsPath(source, changedPath)),
   );
-  if (!imageInputsChanged) return;
+  const receiptPaths = receipts.map(({ path: receipt }) => receipt);
+  const receiptAuthorityChanged = changedPaths.some(
+    (changedPath) => changedPath === PI_CANDIDATE_AUTHORITY || receiptPaths.includes(changedPath),
+  );
+  if (!imageInputsChanged && !receiptAuthorityChanged) return;
 
-  const missingReceipts = receipts
-    .map(({ path: receipt }) => receipt)
-    .filter((receipt) => !changedPaths.includes(receipt));
-  if (missingReceipts.length > 0) {
+  const missingReceipts = receiptPaths.filter((receipt) => !changedPaths.includes(receipt));
+  if (imageInputsChanged && missingReceipts.length > 0) {
     throw new Error(
       [
         "Pi image inputs changed without refreshing both qualification receipts.",

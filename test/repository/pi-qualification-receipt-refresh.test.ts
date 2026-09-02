@@ -158,6 +158,34 @@ describe("Pi qualification receipt refresh", () => {
     ).toThrow("is not present in the Pi candidate receipt authority");
   });
 
+  it("rejects an authority-only change that grants an extra receipt", () => {
+    acceptedDigests.add("d".repeat(64));
+
+    expect(() => run(["src/lib/agent/candidate-authority.ts"])).toThrow(
+      "Pi candidate receipt authority must exactly match both published receipts",
+    );
+  });
+
+  it("rejects a receipt-only change whose published receipts do not match authority", () => {
+    const changedContents = receipt("linux/amd64", "ghrun-789-1");
+    fs.writeFileSync(path.join(rootDir, RECEIPTS[0].path), changedContents);
+
+    expect(() => run([RECEIPTS[0].path])).toThrow(
+      `${RECEIPTS[0].path} is not present in the Pi candidate receipt authority`,
+    );
+  });
+
+  it("names a malformed qualification receipt", () => {
+    const malformed = "{not-json\n";
+    fs.writeFileSync(path.join(rootDir, RECEIPTS[1].path), malformed);
+    acceptedDigests.add(receiptDigest(malformed));
+    acceptedDigests.delete(receiptDigest(receipt(RECEIPTS[1].platform)));
+
+    expect(() => run([RECEIPTS[1].path])).toThrow(
+      `Invalid Pi qualification receipt ${RECEIPTS[1].path}`,
+    );
+  });
+
   it("explains how to recover a missing comparison base", () => {
     expect(() =>
       checkPiQualificationReceiptRefresh({

@@ -57,18 +57,12 @@ describe("checks runner", () => {
     });
   });
 
-  it("runs the Pi qualification receipt refresh check", () => {
-    const spawn = vi.fn((_command: string, _args: string[], _options: SpawnSyncOptions) =>
-      successfulSpawn(),
-    );
-
-    runChecks({ platform: "linux", spawn });
-
-    expect(spawn).toHaveBeenCalledWith(
-      "tsx",
-      ["scripts/checks/pi-qualification-receipt-refresh.mts"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
+  it("registers the Pi qualification receipt refresh check", () => {
+    expect(CHECKS).toContainEqual({
+      name: "pi-qualification-receipt-refresh",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
+    });
   });
 
   it("runs Windows command shims through cmd.exe", () => {
