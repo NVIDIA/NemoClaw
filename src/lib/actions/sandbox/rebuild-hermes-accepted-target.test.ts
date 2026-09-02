@@ -95,6 +95,7 @@ describe("Hermes accepted replacement recovery", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     phaseMocks.clearPolicyHandoff.mockImplementation((manifest) => {
       delete manifest.rebuildPolicyHandoff;
       return true;
@@ -213,9 +214,7 @@ describe("Hermes accepted replacement recovery", () => {
     expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledOnce();
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
-    expect(console.log).toHaveBeenCalledWith(
-      `  Backup is preserved at: ${recoveryBackupPath}`,
-    );
+    expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
   });
 
   it("retires both the unused current policy handoff and the recovered transaction handoff", async () => {
@@ -244,6 +243,37 @@ describe("Hermes accepted replacement recovery", () => {
       currentManifest,
       recoveryManifest,
     ]);
+  });
+
+  it("retains marker cleanup after replacement and completes it on an identical retry", async () => {
+    phaseMocks.clearRecoveryBackup
+      .mockImplementationOnce(() => {
+        throw new Error("injected marker cleanup failure");
+      })
+      .mockImplementationOnce(() => undefined);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(
+      "  Replacement sandbox 'alpha' completed, but its recovery marker could not be removed: injected marker cleanup failure",
+    );
+    expect(console.warn).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
+    expect(console.warn).toHaveBeenCalledWith("  Rebuild transaction: journal-1");
+    expect(console.warn).toHaveBeenCalledWith(
+      "  Rerun the original rebuild command with identical options to verify the replacement and finish cleanup.",
+    );
+    expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.clearRecoveryBackup).toHaveBeenCalledTimes(2);
+    expect(completeAcceptedTarget).toHaveBeenCalledOnce();
+    expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
   });
 
   it("reports an operator drain that remains after accepted replacement recovery (#7806)", async () => {

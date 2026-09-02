@@ -52,6 +52,7 @@ import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import {
   SnapshotSanitizerPrerequisiteError,
+  isYamlDocumentCredentialFree,
   sanitizeSnapshotDirectory,
 } from "../security/snapshot-sanitizer.js";
 import {
@@ -2563,6 +2564,9 @@ export function writeRebuildPolicyHandoff(
   policyDocument: string,
 ): RebuildManifest {
   if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
+  if (!isYamlDocumentCredentialFree(policyDocument)) {
+    throw new Error("Cannot persist a credential-bearing rebuild policy handoff");
+  }
   const sha256 = createHash("sha256").update(policyDocument).digest("hex");
   const file = `rebuild-policy-handoff.${sha256}.yaml`;
   const filePath = path.join(manifest.backupPath, file);

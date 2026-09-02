@@ -86,6 +86,43 @@ function rebuildFailureDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function reportRetainedRebuildCleanup(input: {
+  sandboxName: string;
+  backupPath: string;
+  transactionId: string;
+  error: unknown;
+}): void {
+  console.warn("");
+  console.warn(
+    `  Replacement sandbox '${input.sandboxName}' completed, but its recovery marker could not be removed: ${rebuildFailureDetail(input.error)}`,
+  );
+  console.warn(`  Backup is preserved at: ${input.backupPath}`);
+  console.warn(`  Rebuild transaction: ${input.transactionId}`);
+  console.warn(
+    "  Rerun the original rebuild command with identical options to verify the replacement and finish cleanup.",
+  );
+}
+
+function tryClearRebuildRecoveryBackup(input: {
+  sandboxName: string;
+  agentName: string | null;
+  transactionId: string;
+  backupManifest: NonNullable<RebuildBackupManifest>;
+}): boolean {
+  try {
+    clearRebuildRecoveryBackup(input);
+    return true;
+  } catch (error) {
+    reportRetainedRebuildCleanup({
+      sandboxName: input.sandboxName,
+      backupPath: input.backupManifest.backupPath,
+      transactionId: input.transactionId,
+      error,
+    });
+    return false;
+  }
+}
+
 /**
  * Rebuild a live sandbox while preserving registered agent state and policies.
  *
@@ -481,12 +518,16 @@ async function rebuildSandboxUnlocked(
         if (recoveryBackup.rebuildPolicyHandoff && !clearRebuildPolicyHandoff(recoveryBackup)) {
           return bail("The bounded rebuild policy handoff could not be retired after recovery.");
         }
-        clearRebuildRecoveryBackup({
-          ...rebuildRecoveryIdentity,
-          backupManifest: recoveryBackup,
-        });
-        recreateJournal.completeAcceptedTarget();
         retainPolicyHandoffForRecovery = false;
+        if (
+          !tryClearRebuildRecoveryBackup({
+            ...rebuildRecoveryIdentity,
+            backupManifest: recoveryBackup,
+          })
+        ) {
+          return;
+        }
+        recreateJournal.completeAcceptedTarget();
         console.log(`  Recovered the accepted replacement for '${sandboxName}'.`);
         console.log(`  Backup is preserved at: ${recoveryBackup.backupPath}`);
         log(
@@ -517,7 +558,7 @@ async function rebuildSandboxUnlocked(
               return {
                 ok: false,
                 message:
-                  "The complete live OpenShell policy could not be retained after MCP teardown.",
+                  "The round-trippable OpenShell base policy could not be retained after MCP teardown.",
               };
             }
           }
@@ -697,10 +738,15 @@ async function rebuildSandboxUnlocked(
         ) {
           return bail("The bounded rebuild policy handoff could not be retired after rebuild.");
         }
-        clearRebuildRecoveryBackup({
-          ...rebuildRecoveryIdentity,
-          backupManifest: backup.backupManifest,
-        });
+        retainPolicyHandoffForRecovery = false;
+        if (
+          !tryClearRebuildRecoveryBackup({
+            ...rebuildRecoveryIdentity,
+            backupManifest: backup.backupManifest,
+          })
+        ) {
+          return;
+        }
       }
       retainPolicyHandoffForRecovery = false;
     } finally {

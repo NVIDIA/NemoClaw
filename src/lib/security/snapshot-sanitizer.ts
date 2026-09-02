@@ -15,11 +15,13 @@ import {
 
 import {
   CREDENTIAL_SENSITIVE_BASENAMES,
+  isConfigObject,
   isCredentialField,
   isDependencyLockfile,
   isSensitiveFile,
   sanitizeConfigFileContent,
   sanitizeEnvFileContent,
+  stripCredentials,
   valueLooksLikeSecret,
 } from "./credential-filter";
 
@@ -38,6 +40,20 @@ const DEPENDENCY_NAME_MAP_FIELDS = new Set([
   "peerDependenciesMeta",
   "packages",
 ]);
+
+/** Prove a YAML mapping contains no credential values before durable publication. */
+export function isYamlDocumentCredentialFree(content: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(content);
+  } catch {
+    return false;
+  }
+  return (
+    isConfigObject(parsed) &&
+    JSON.stringify(stripCredentials(parsed)) === JSON.stringify(parsed)
+  );
+}
 
 function isDependencyCredentialField(key: string): boolean {
   const normalized = key.replace(/^_+/, "");

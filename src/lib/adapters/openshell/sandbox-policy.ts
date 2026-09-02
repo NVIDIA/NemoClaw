@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellGatewayTarget, OpenShellSandboxResult } from "./sandbox-observer";
-import type { OpenShellPolicyInspection } from "../../policy/merge";
+import type {
+  OpenShellPolicyInspection,
+  OpenShellSandboxPolicySetOutcome,
+} from "../../policy/merge";
+
+export type { OpenShellSandboxPolicySetOutcome } from "../../policy/merge";
 
 export type OpenShellSandboxPolicyScope = "base" | "effective";
 
@@ -19,11 +24,6 @@ type OpenShellSandboxPolicyRequest = Readonly<{
 
 export type SetOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
   Readonly<{ policyPath: string }>;
-
-export type OpenShellSandboxPolicySetOutcome =
-  | Readonly<{ kind: "applied" }>
-  | Readonly<{ kind: "rejected"; status: number; message: string }>
-  | Readonly<{ kind: "ambiguous"; detail: string }>;
 
 export type OpenShellSandboxPolicySetSubmission = Readonly<{
   outcome: OpenShellSandboxPolicySetOutcome;

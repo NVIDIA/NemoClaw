@@ -86,6 +86,24 @@ describe("rebuild manifest publication", () => {
 });
 
 describe("bounded rebuild policy handoff", () => {
+  it("rejects credential-bearing policy before publishing state", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-secret-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    expect(() =>
+      writeRebuildPolicyHandoff(
+        published,
+        "version: 1\nnetwork_policies: {}\nprocess:\n  environment:\n    SERVICE_API_KEY: opaque-retained-credential\n",
+      ),
+    ).toThrow("Cannot persist a credential-bearing rebuild policy handoff");
+    expect(fs.readdirSync(backupPath)).toEqual(["rebuild-manifest.json"]);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).not.toHaveProperty("rebuildPolicyHandoff");
+  });
+
   it("binds exact content, rejects tampering, and retires manifest authority before cleanup", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-handoff-"));
     tempDirs.push(backupPath);
@@ -122,10 +140,7 @@ describe("bounded rebuild policy handoff", () => {
     tempDirs.push(backupPath);
     const published = manifest(backupPath);
     __test.writeManifest(backupPath, published);
-    const withHandoff = writeRebuildPolicyHandoff(
-      published,
-      "version: 1\nnetwork_policies: {}\n",
-    );
+    const withHandoff = writeRebuildPolicyHandoff(published, "version: 1\nnetwork_policies: {}\n");
     const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
 
     expect(
@@ -150,23 +165,20 @@ describe("bounded rebuild policy handoff", () => {
   it.each([
     ["permissive mode", (filePath: string) => fs.chmodSync(filePath, 0o640)],
     ["extra hard link", (filePath: string) => fs.linkSync(filePath, `${filePath}.linked`)],
-  ] as const)(
-    "rejects a digest-matching handoff with %s",
-    (_unsafeMetadata, makeUnsafe) => {
-      const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-authority-"));
-      tempDirs.push(backupPath);
-      const published = manifest(backupPath);
-      __test.writeManifest(backupPath, published);
-      const policy = "version: 1\nnetwork_policies: {}\n";
-      const withHandoff = writeRebuildPolicyHandoff(published, policy);
-      const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+  ] as const)("rejects a digest-matching handoff with %s", (_unsafeMetadata, makeUnsafe) => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-authority-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const policy = "version: 1\nnetwork_policies: {}\n";
+    const withHandoff = writeRebuildPolicyHandoff(published, policy);
+    const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
 
-      makeUnsafe(handoffPath);
+    makeUnsafe(handoffPath);
 
-      expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
-      expect(() => writeRebuildPolicyHandoff(withHandoff, policy)).toThrow(
-        "Existing rebuild policy handoff does not match its content identity",
-      );
-    },
-  );
+    expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
+    expect(() => writeRebuildPolicyHandoff(withHandoff, policy)).toThrow(
+      "Existing rebuild policy handoff does not match its content identity",
+    );
+  });
 });

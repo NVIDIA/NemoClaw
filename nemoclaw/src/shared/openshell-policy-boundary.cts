@@ -25,9 +25,11 @@ function sandboxPolicyGetArgs(input: SandboxPolicyTarget, flags: readonly string
 }
 
 /** Build one sandbox policy read without selecting an OpenShell executable. */
-export function buildOpenShellSandboxPolicyReadArgs(input: SandboxPolicyTarget & {
-  readonly scope: OpenShellSandboxPolicyReadScope;
-}): string[] {
+export function buildOpenShellSandboxPolicyReadArgs(
+  input: SandboxPolicyTarget & {
+    readonly scope: OpenShellSandboxPolicyReadScope;
+  },
+): string[] {
   return sandboxPolicyGetArgs(input, [input.scope === "base" ? "--base" : "--full"]);
 }
 
@@ -37,10 +39,75 @@ export function buildOpenShellSandboxPolicyInspectionArgs(input: SandboxPolicyTa
 }
 
 /** Build one immutable sandbox base-policy revision read. */
-export function buildOpenShellSandboxPolicyRevisionReadArgs(input: SandboxPolicyTarget & {
-  readonly revision: number;
-}): string[] {
+export function buildOpenShellSandboxPolicyRevisionReadArgs(
+  input: SandboxPolicyTarget & {
+    readonly revision: number;
+  },
+): string[] {
   return sandboxPolicyGetArgs(input, ["--rev", String(input.revision), "--base"]);
+}
+
+/** Build one sandbox base-policy replacement without selecting an OpenShell executable. */
+export function buildOpenShellSandboxPolicySetArgs(
+  input: SandboxPolicyTarget & { readonly policyPath: string },
+): string[] {
+  return [
+    "policy",
+    "set",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    "--policy",
+    input.policyPath,
+    "--wait",
+    input.sandboxName,
+  ];
+}
+
+export type OpenShellSandboxPolicySetOutcome =
+  | Readonly<{ kind: "applied" }>
+  | Readonly<{ kind: "rejected"; status: number; message: string }>
+  | Readonly<{ kind: "ambiguous"; detail: string }>;
+
+export type CapturedOpenShellSandboxPolicySet = Readonly<{
+  status: number | null;
+  stderr?: string | null;
+  error?: { readonly message?: string } | null;
+}>;
+
+// OpenShell renders transport and semantic failures with the same status
+// shape. Transport evidence must win before any diagnostic can be final.
+const POLICY_SET_TRANSPORT_FAILURE_MARKERS: readonly string[] = [
+  "h2 protocol error",
+  "http2 error",
+  "tonic::transport::error",
+];
+const AUTHORITATIVE_POLICY_SET_REFUSAL =
+  /^Error:\s+code:\s*'failed[ _]precondition',\s*message:\s*'([^'\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/iu;
+
+function policySetDetail(captured: CapturedOpenShellSandboxPolicySet): string {
+  return [captured.error?.message, captured.stderr]
+    .map((part) => part?.trim() ?? "")
+    .filter((part) => part.length > 0)
+    .join("\n");
+}
+
+/** Classify a policy-set transport result without assuming a nonzero exit is final. */
+export function classifyOpenShellSandboxPolicySetResult(
+  captured: CapturedOpenShellSandboxPolicySet,
+): OpenShellSandboxPolicySetOutcome {
+  const detail = policySetDetail(captured);
+  const ambiguous = (): OpenShellSandboxPolicySetOutcome => ({
+    kind: "ambiguous",
+    detail: detail || `openshell policy set exited with status ${String(captured.status)}`,
+  });
+  const normalizedDetail = detail.toLowerCase();
+  if (POLICY_SET_TRANSPORT_FAILURE_MARKERS.some((marker) => normalizedDetail.includes(marker))) {
+    return ambiguous();
+  }
+  if (captured.status === 0) return captured.error ? ambiguous() : { kind: "applied" };
+  if (captured.status === null) return ambiguous();
+  const firstLine = captured.stderr?.split("\n", 1)[0] ?? "";
+  const message = firstLine.match(AUTHORITATIVE_POLICY_SET_REFUSAL)?.[1]?.trim();
+  return message ? { kind: "rejected", status: captured.status, message } : ambiguous();
 }
 
 export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {
@@ -51,6 +118,11 @@ export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {
 export interface ParsedOpenShellPolicy {
   readonly yamlBody: string;
   readonly policy: ValidatedOpenShellPolicyMapping;
+}
+
+export interface OpenShellSandboxPolicyRead {
+  readonly document: string;
+  readonly appliedRevision: number | null;
 }
 
 export interface OpenShellPolicyIdentity {
@@ -345,6 +417,85 @@ export function parseOpenShellPolicy(raw: string): ParsedOpenShellPolicy {
   }
 
   return { yamlBody, policy: parsed };
+}
+
+/** Parse one base-policy document and its optional active revision metadata. */
+export function parseOpenShellSandboxPolicyRead(raw: string): OpenShellSandboxPolicyRead {
+  const parsed = parseOpenShellPolicy(raw);
+  const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(raw);
+  const metadata = separator ? raw.slice(0, separator.index) : "";
+  const rawRevision = metadata.match(/^Active:\s*(\d+)\s*$/imu)?.[1];
+  const revision = rawRevision ? Number.parseInt(rawRevision, 10) : null;
+  return {
+    document: parsed.yamlBody,
+    appliedRevision: revision !== null && Number.isSafeInteger(revision) ? revision : null,
+  };
+}
+
+const MISSING_POLICY_VALUE = Symbol("missing-policy-value");
+type MergePolicyValue = unknown | typeof MISSING_POLICY_VALUE;
+
+function clonePolicyMergeValue(value: MergePolicyValue): MergePolicyValue {
+  return value === MISSING_POLICY_VALUE ? value : structuredClone(value);
+}
+
+function mergeConcurrentPolicyValue(
+  original: MergePolicyValue,
+  requested: MergePolicyValue,
+  external: MergePolicyValue,
+  pathSegments: readonly string[],
+  conflicts: string[],
+): MergePolicyValue {
+  if (isDeepStrictEqual(requested, original)) return clonePolicyMergeValue(external);
+  if (isDeepStrictEqual(external, original)) return clonePolicyMergeValue(requested);
+  if (isDeepStrictEqual(requested, external)) return clonePolicyMergeValue(requested);
+
+  if (
+    original !== MISSING_POLICY_VALUE &&
+    requested !== MISSING_POLICY_VALUE &&
+    external !== MISSING_POLICY_VALUE &&
+    isMapping(original) &&
+    isMapping(requested) &&
+    isMapping(external)
+  ) {
+    const merged: OpenShellPolicyMapping = {};
+    const keys = new Set([
+      ...Object.keys(original),
+      ...Object.keys(requested),
+      ...Object.keys(external),
+    ]);
+    for (const key of keys) {
+      const value = mergeConcurrentPolicyValue(
+        Object.hasOwn(original, key) ? original[key] : MISSING_POLICY_VALUE,
+        Object.hasOwn(requested, key) ? requested[key] : MISSING_POLICY_VALUE,
+        Object.hasOwn(external, key) ? external[key] : MISSING_POLICY_VALUE,
+        [...pathSegments, key],
+        conflicts,
+      );
+      if (value !== MISSING_POLICY_VALUE) merged[key] = value;
+    }
+    return merged;
+  }
+
+  conflicts.push(pathSegments.join(".") || "<policy>");
+  return clonePolicyMergeValue(external);
+}
+
+/** Rebase a requested policy onto one externally committed concurrent revision. */
+export function rebaseOpenShellPolicyDocument(
+  originalDocument: string,
+  requestedDocument: string,
+  externalDocument: string,
+): { readonly document: string; readonly conflicts: readonly string[] } {
+  const original = parseOpenShellPolicy(originalDocument).policy;
+  const requested = parseOpenShellPolicy(requestedDocument).policy;
+  const external = parseOpenShellPolicy(externalDocument).policy;
+  const conflicts: string[] = [];
+  const merged = mergeConcurrentPolicyValue(original, requested, external, [], conflicts);
+  if (merged === MISSING_POLICY_VALUE || !isMapping(merged)) {
+    throw new Error("OpenShell returned an invalid policy revision during concurrent rebase");
+  }
+  return { document: YAML.stringify(merged), conflicts };
 }
 
 // invalidState: OpenShell `policy get --base` unexpectedly includes a
