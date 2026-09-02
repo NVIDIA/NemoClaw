@@ -148,10 +148,7 @@ export function probeOllamaRuntimeModelStatus(
     Number.isFinite(timeoutMilliseconds) && timeoutMilliseconds > 0
       ? Math.floor(timeoutMilliseconds)
       : 5_000;
-  const boundedTimeoutMilliseconds = Math.max(
-    1,
-    Math.min(5_000, normalizedTimeoutMilliseconds),
-  );
+  const boundedTimeoutMilliseconds = Math.max(1, Math.min(5_000, normalizedTimeoutMilliseconds));
   const output = capture(
     [
       "curl",
@@ -169,8 +166,11 @@ export function probeOllamaRuntimeModelStatus(
   if (!output) return { probed: false, loaded: false, cpuOnly: false };
 
   try {
-    const parsed = JSON.parse(String(output || ""));
-    const models = Array.isArray(parsed?.models) ? parsed.models : [];
+    const parsed = JSON.parse(String(output || "")) as { models?: unknown } | null;
+    if (!parsed || !Array.isArray(parsed.models)) {
+      return { probed: false, loaded: false, cpuOnly: false };
+    }
+    const models = parsed.models;
     const target = normalizeOllamaModelName(model);
     const loaded = models.find((entry: { name?: unknown; model?: unknown }) => {
       return (
