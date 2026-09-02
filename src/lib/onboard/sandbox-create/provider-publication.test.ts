@@ -364,6 +364,64 @@ describe("sandbox provider preparation", () => {
     expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
   });
 
+  it("reruns publication from desired state after a partial failure (#9806)", async () => {
+    const updateProvider: OpenShellProviderAdapter["updateProvider"] = vi
+      .fn<OpenShellProviderAdapter["updateProvider"]>()
+      .mockResolvedValueOnce({ ok: true as const })
+      .mockResolvedValueOnce({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "failed" as const,
+          message: "provider update rejected request 24",
+        },
+      })
+      .mockResolvedValue({ ok: true as const });
+    const harness = createHarness(typedProviderAdapter({ updateProvider }));
+    const input = publicationInput({
+      messagingProviders: [],
+      messagingProviderRequests: [],
+      extraProviders: ["first-provider", "second-provider"],
+    });
+
+    await expect(
+      publishAttachedProvidersBeforeDockerSandboxCreation(input, harness.deps),
+    ).rejects.toThrowError(
+      "Could not publish attached provider 'second-provider' before managed sandbox creation: provider update rejected request 24",
+    );
+    await expect(
+      publishAttachedProvidersBeforeDockerSandboxCreation(input, harness.deps),
+    ).resolves.toBeUndefined();
+
+    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(1, {
+      target,
+      providerName: "first-provider",
+      credentials: [],
+      config: [],
+    });
+    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(2, {
+      target,
+      providerName: "second-provider",
+      credentials: [],
+      config: [],
+    });
+    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(3, {
+      target,
+      providerName: "first-provider",
+      credentials: [],
+      config: [],
+    });
+    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(4, {
+      target,
+      providerName: "second-provider",
+      credentials: [],
+      config: [],
+    });
+    expect(harness.adapter.getProvider).not.toHaveBeenCalled();
+    expect(harness.runOpenshell).not.toHaveBeenCalled();
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+  });
+
   it("rejects a messaging binding that changes during publication (#9875)", async () => {
     const getProvider: OpenShellProviderAdapter["getProvider"] = vi
       .fn()
