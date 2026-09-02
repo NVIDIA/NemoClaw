@@ -773,6 +773,7 @@ export async function selectManagedRuntimeSource(
   exactString(run.event, "pull_request", "source workflow run event");
   exactString(run.head_sha, candidateSha, "source workflow run commit");
   exactString(run.status, "completed", "source workflow run status");
+  exactString(run.conclusion, "success", "source workflow run conclusion");
   exactString(
     record(run.repository, "source workflow repository").full_name,
     REPOSITORY,

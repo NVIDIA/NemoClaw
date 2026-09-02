@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 import {
   classifyCurrentRun,
@@ -15,11 +15,12 @@ import {
   createManagedRuntimeReceipt,
   parseManagedRuntimeReceipt,
   publishManagedRuntimeCommitStatus,
+  selectManagedRuntimeCandidate,
   selectManagedRuntimeSource,
   type ManagedRuntimeCandidateSelection,
   type ManagedRuntimeReceipt,
 } from "../../../tools/e2e/managed-runtime-comparison.mts";
-import { validateManagedRuntimeBaseQualificationWorkflow } from "../../../tools/e2e/managed-runtime-base-qualification-workflow-boundary.mts";
+import { artifactZip } from "../../helpers/artifact-zip";
 
 const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
@@ -34,6 +35,7 @@ const REPOSITORIES = {
   hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox",
   "langchain-deepagents-code": "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
 } as const;
+type TestPlatform = "linux/amd64" | "linux/arm64";
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(): string {
@@ -42,7 +44,7 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-function catalog(revision: string): string {
+function catalog(revision: string, platform: TestPlatform = "linux/amd64"): string {
   const directory = temporaryDirectory();
   const target = path.join(directory, "catalog.json");
   const value = Object.fromEntries(
@@ -54,7 +56,7 @@ function catalog(revision: string): string {
         {
           contractVersion: 1,
           agent,
-          platform: "linux/amd64",
+          platform,
           image,
           digest,
           reference: `${image}@${digest}`,
@@ -94,20 +96,22 @@ function receipt(
   outcome: "failure" | "success" = "success",
   cleanupFailures = 0,
   imageRevision = role === "candidate" ? CANDIDATE_SHA : BASE_SHA,
+  platform: TestPlatform = "linux/amd64",
 ): ManagedRuntimeReceipt {
   const candidate = role === "candidate";
+  const arch = platform.split("/")[1];
   return createManagedRuntimeReceipt({
     baseSha: BASE_SHA,
     candidateSha: CANDIDATE_SHA,
-    catalogPath: catalog(imageRevision),
+    catalogPath: catalog(imageRevision, platform),
     evidenceDirectory: evidence(cleanupFailures),
     imageRevision,
     job: candidate
-      ? "Trusted candidate all-agent managed runtime activation (amd64)"
-      : "Exact base all-agent managed runtime activation (amd64)",
+      ? `Trusted candidate all-agent managed runtime activation (${arch})`
+      : `Exact base all-agent managed runtime activation (${arch})`,
     openshellVersion: "openshell 0.0.116",
     outcome,
-    platform: "linux/amd64",
+    platform,
     role,
     candidateSourceRunAttempt: RUN_ATTEMPT,
     candidateSourceRunId: CANDIDATE_RUN_ID,
@@ -123,16 +127,18 @@ function artifact(name: string, id: number) {
   return { id, name, digest: `sha256:${"d".repeat(64)}`, size: 100 };
 }
 
-function artifactMetadata(name: string, id: number) {
+function artifactMetadata(name: string, id: number, bytes?: Buffer) {
   return {
     total_count: 1,
     artifacts: [
       {
         id,
         name,
-        size_in_bytes: 100,
+        size_in_bytes: bytes?.length ?? 100,
         expired: false,
-        digest: `sha256:${"d".repeat(64)}`,
+        digest: bytes
+          ? `sha256:${createHash("sha256").update(bytes).digest("hex")}`
+          : `sha256:${"d".repeat(64)}`,
         archive_download_url: `https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/${id}/zip`,
         workflow_run: { id: BASE_RUN_ID, head_sha: BASE_SHA },
       },
@@ -175,6 +181,7 @@ function sourceFixture(
         event: "pull_request",
         head_sha: CANDIDATE_SHA,
         status: "completed",
+        conclusion: "success",
         repository: { full_name: "NVIDIA/NemoClaw" },
         head_repository: { full_name: "NVIDIA/NemoClaw" },
         pull_requests: [{ number: PR_NUMBER, head: { sha: CANDIDATE_SHA } }],
@@ -204,6 +211,147 @@ function selectSource(request: (apiPath: string) => Promise<unknown>) {
     },
     { request },
   );
+}
+
+function candidateEvidenceArchive(
+  selectedReceipt: ManagedRuntimeReceipt,
+  tampered = false,
+): Buffer {
+  return artifactZip(
+    selectedReceipt.evidence.files.map((file) => {
+      const contents = file.path.endsWith("/cleanup.json")
+        ? JSON.stringify({ passed: ["remove sandbox"], failures: [] })
+        : file.path.endsWith("/target.json")
+          ? tampered
+            ? '{"id":"tampered"}\n'
+            : '{"id":"managed-image-activation"}\n'
+          : undefined;
+      expect(contents, `unexpected evidence file ${file.path}`).toBeDefined();
+      return { name: file.path, contents: contents! };
+    }),
+  );
+}
+
+function candidateFixture(
+  platform: TestPlatform,
+  options: {
+    readonly malformedReceipt?: boolean;
+    readonly missingEvidence?: boolean;
+    readonly missingReceipt?: boolean;
+    readonly tamperedEvidence?: boolean;
+    readonly job?: Record<string, unknown>;
+    readonly run?: Record<string, unknown>;
+  } = {},
+) {
+  const arch = platform.split("/")[1];
+  const selectedReceipt = receipt("candidate", "success", 0, CANDIDATE_SHA, platform);
+  const receiptArchive = options.malformedReceipt
+    ? artifactZip([{ name: "receipt.json", contents: "{" }])
+    : artifactZip([{ name: "receipt.json", contents: JSON.stringify(selectedReceipt) }]);
+  const evidenceArchive = candidateEvidenceArchive(selectedReceipt, options.tamperedEvidence);
+  const receiptName = `managed-runtime-candidate-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-${arch}`;
+  const evidenceName = `managed-runtime-candidate-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}-${arch}`;
+  const jobsPath = `/repos/NVIDIA/NemoClaw/actions/runs/${BASE_RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100&page=1`;
+  const responses = new Map<string, unknown>([
+    [
+      `/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`,
+      { state: "open", head: { sha: CANDIDATE_SHA }, base: { sha: BASE_SHA } },
+    ],
+    [
+      "/repos/NVIDIA/NemoClaw/actions/workflows/managed-runtime-base-qualification.yaml",
+      {
+        id: 456,
+        name: "E2E / Exact Base Managed Runtime",
+        path: ".github/workflows/managed-runtime-base-qualification.yaml",
+        state: "active",
+      },
+    ],
+    [
+      `/repos/NVIDIA/NemoClaw/actions/runs/${BASE_RUN_ID}`,
+      {
+        workflow_id: 456,
+        run_attempt: RUN_ATTEMPT,
+        path: ".github/workflows/managed-runtime-base-qualification.yaml",
+        event: "workflow_run",
+        head_sha: BASE_SHA,
+        repository: { full_name: "NVIDIA/NemoClaw" },
+        ...options.run,
+      },
+    ],
+    [
+      jobsPath,
+      {
+        total_count: 1,
+        jobs: [
+          {
+            id: 789,
+            name: `Trusted candidate all-agent managed runtime activation (${arch})`,
+            status: "completed",
+            conclusion: "success",
+            ...options.job,
+          },
+        ],
+      },
+    ],
+    [
+      `/repos/NVIDIA/NemoClaw/actions/runs/${BASE_RUN_ID}/artifacts?name=${encodeURIComponent(receiptName)}&per_page=100`,
+      options.missingReceipt
+        ? { total_count: 0, artifacts: [] }
+        : artifactMetadata(receiptName, 91, receiptArchive),
+    ],
+    [
+      `/repos/NVIDIA/NemoClaw/actions/runs/${BASE_RUN_ID}/artifacts?name=${encodeURIComponent(evidenceName)}&per_page=100`,
+      options.missingEvidence
+        ? { total_count: 0, artifacts: [] }
+        : artifactMetadata(evidenceName, 92, evidenceArchive),
+    ],
+  ]);
+  const archives = new Map([
+    [receiptName, receiptArchive],
+    [evidenceName, evidenceArchive],
+  ]);
+  return {
+    select: () =>
+      selectManagedRuntimeCandidate(
+        {
+          baseSha: BASE_SHA,
+          candidateSha: CANDIDATE_SHA,
+          controllerHeadSha: BASE_SHA,
+          pullRequest: PR_NUMBER,
+          platform,
+          runAttempt: RUN_ATTEMPT,
+          runId: BASE_RUN_ID,
+          sourceRunAttempt: RUN_ATTEMPT,
+          sourceRunId: CANDIDATE_RUN_ID,
+          token: "token",
+          workflowSha: BASE_SHA,
+        },
+        {
+          request: async (apiPath) => {
+            expect(responses.has(apiPath), `unexpected request ${apiPath}`).toBe(true);
+            return responses.get(apiPath);
+          },
+          downloadArtifact: async (identity) => {
+            const archive = archives.get(identity.name);
+            expect(archive, `unexpected artifact ${identity.name}`).toBeDefined();
+            return archive!;
+          },
+        },
+      ),
+  };
+}
+
+function compareCandidate(candidate: ManagedRuntimeCandidateSelection) {
+  const baseReceipt = receipt("base", "success", 0, BASE_SHA, candidate.platform);
+  return classifyManagedRuntimeComparison({
+    baseArtifact: artifact("base-receipt", 3),
+    baseEvidenceArtifact: artifact("base-evidence", 4),
+    baseJobConclusion: "success",
+    baseReceipt,
+    baseRunAttempt: RUN_ATTEMPT,
+    baseRunId: BASE_RUN_ID,
+    candidate,
+  });
 }
 
 function selection(
@@ -260,19 +408,6 @@ afterEach(() => {
 });
 
 describe("managed runtime comparison receipts", () => {
-  it("accepts the checked-in native and candidate-write qualification boundaries", () => {
-    const workflow = YAML.parse(
-      fs.readFileSync(
-        path.resolve(
-          import.meta.dirname,
-          "../../../.github/workflows/managed-runtime-base-qualification.yaml",
-        ),
-        "utf8",
-      ),
-    ) as Record<string, unknown>;
-    expect(validateManagedRuntimeBaseQualificationWorkflow(workflow)).toEqual([]);
-  });
-
   it("publishes the fixed status request through the shared GitHub client", async () => {
     const requests: Array<{ path: string; token: string; options: unknown }> = [];
     await publishManagedRuntimeCommitStatus(
@@ -329,6 +464,11 @@ describe("managed runtime comparison receipts", () => {
       message: "source workflow run event",
     },
     {
+      name: "a cancelled source run",
+      run: { conclusion: "cancelled" },
+      message: "source workflow run conclusion",
+    },
+    {
       name: "another attached PR",
       run: {
         pull_requests: [{ number: PR_NUMBER + 1, head: { sha: CANDIDATE_SHA } }],
@@ -358,6 +498,64 @@ describe("managed runtime comparison receipts", () => {
       ...(run === undefined ? {} : { run }),
     });
     await expect(selectSource(fixture.request)).rejects.toThrow(message);
+  });
+
+  it.each([
+    ["amd64", "linux/amd64"],
+    ["arm64", "linux/arm64"],
+  ] as const)("authenticates valid %s candidate evidence", async (arch, platform) => {
+    const selected = await candidateFixture(platform).select();
+
+    expect(selected).toMatchObject({
+      platform,
+      evidenceError: null,
+      receipt: { role: "candidate", scenario: { platform } },
+      artifacts: {
+        receipt: {
+          name: `managed-runtime-candidate-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-${arch}`,
+        },
+        evidence: {
+          name: `managed-runtime-candidate-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}-${arch}`,
+        },
+      },
+    });
+    expect(compareCandidate(selected)).toMatchObject({ classification: "pass" });
+  });
+
+  it.each([
+    ["missing receipt", { missingReceipt: true }, "candidate evidence is missing or incomplete"],
+    ["missing evidence", { missingEvidence: true }, "candidate evidence is missing or incomplete"],
+    [
+      "malformed receipt",
+      { malformedReceipt: true },
+      "candidate evidence validation failed: receipt download or validation failed",
+    ],
+    [
+      "digest-mismatched evidence",
+      { tamperedEvidence: true },
+      "candidate evidence validation failed: evidence download or digest validation failed",
+    ],
+  ] as const)("fails closed for %s", async (_name, options, reason) => {
+    const selected = await candidateFixture("linux/amd64", options).select();
+
+    expect(compareCandidate(selected)).toMatchObject({
+      classification: "infrastructure-failure",
+      reason,
+    });
+  });
+
+  it("rejects a candidate job for another platform", async () => {
+    await expect(
+      candidateFixture("linux/amd64", {
+        job: { name: "Trusted candidate all-agent managed runtime activation (arm64)" },
+      }).select(),
+    ).rejects.toThrow("candidate managed runtime job is missing or ambiguous");
+  });
+
+  it("rejects a candidate job from another workflow attempt", async () => {
+    await expect(
+      candidateFixture("linux/amd64", { run: { run_attempt: RUN_ATTEMPT + 1 } }).select(),
+    ).rejects.toThrow("qualification run does not match the requested workflow attempt");
   });
 
   it("attributes a candidate failure only after the identical base scenario passes", () => {

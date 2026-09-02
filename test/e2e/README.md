@@ -117,11 +117,11 @@ The candidate catalog qualifies `linux/amd64` only, so a changed-input manual PR
 The trusted publication job reports this exclusion before the Jetson job is skipped.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
-OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
+OpenClaw managed-image MCP discovery and lifecycle scope in two matrix executions. Each execution
 assembles one exact candidate catalog from the workflow's published contracts, uses a fresh runner
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
-credentials, and must pass.
-These are two required acceptance executions, not retries; either failure remains a failed check.
+credentials, and must pass. These are two required acceptance executions, not retries; either
+failure remains a failed check.
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
@@ -165,9 +165,10 @@ runtime activation scenario only; it does not qualify the Hermes dependency lane
 The trusted workflow publishes `NemoClaw / Exact-base managed runtime` as a pending status on the
 candidate after source authentication, then replaces it with success, failure, or error from the
 comparison receipt. Cancellation after that pending update leaves the status pending; cancellation
-before source authentication publishes no status. For recovery, rerun the exact failed
-qualification attempt. To dispatch
-the workflow manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
+before source authentication publishes no status. If the managed-image producer fails or is
+cancelled, rerun that producer; its successful completion starts a new qualification. For a failure
+inside qualification, rerun the exact failed qualification attempt. To dispatch the workflow
+manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
 the latest PR commit SHA, `base_sha` to the PR base SHA, and `candidate_run_id` plus
 `candidate_run_attempt` to the failed managed-image workflow run ID and attempt. That source run
 must belong to the same open PR and current candidate SHA. If the comparison reports

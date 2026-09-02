@@ -1030,6 +1030,10 @@ describe("pull request and main workflow contracts", () => {
     expect(candidateInstall.run).toContain("env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN");
     expect(candidateInstall.run).toContain("ci-install-dependencies.sh");
     expect(candidateInstall.run).not.toContain("github.token");
+    const candidateActivationDefinition = JSON.stringify(candidateActivation);
+    expect(candidateActivationDefinition).not.toContain("managed-runtime-candidate-catalog-");
+    expect(candidateActivationDefinition).toContain("managed-runtime-candidate-evidence-");
+    expect(candidateActivationDefinition).toContain("managed-runtime-candidate-receipt-");
 
     const evidenceAuthentication = managedRuntimeWorkflow.jobs["authenticate-candidate-evidence"];
     expect(evidenceAuthentication.if).toBe(
