@@ -188,9 +188,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     writeBridgeEntry(sandboxName, {
       ...entry,
       adapter: (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
-      allowedIps: entry.trustedPrivateHost
-        ? [...(entry.allowedIps ?? [])]
-        : [...target.addresses],
+      allowedIps: entry.trustedPrivateHost ? [...(entry.allowedIps ?? [])] : [...target.addresses],
       updatedAt: nowIso(),
     });
     console.log(`  Refreshed MCP server '${name}'.`);
@@ -203,7 +201,6 @@ export async function restoreExistingMcpBridgeRuntime(
   entries: readonly McpBridgeEntry[],
   options: {
     lifecyclePhase?: "active-mutation" | "teardown-rollback";
-    applyPolicy?: boolean;
   } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
@@ -240,17 +237,12 @@ export async function restoreExistingMcpBridgeRuntime(
   // restore mutation edge.
   assertNoProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
+    const target = resolvedTargetPins(resolvedByServer, entry);
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
     ensureMcpBridgeProviderProfile();
-    if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-        bindCredential: false,
-      });
-    }
+    applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
     attachProvider(sandboxName, entry);
-    if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
-    }
+    applyGeneratedPolicy(sandboxName, entry, target);
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     refreshMcpProviderEnvironment(entry);
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
@@ -265,7 +257,12 @@ export async function restoreExistingMcpBridgeRuntime(
         teardownRollback: options.lifecyclePhase === "teardown-rollback",
       },
     );
-    writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
+    writeBridgeEntry(sandboxName, {
+      ...entry,
+      adapter,
+      allowedIps: entry.trustedPrivateHost ? [...(entry.allowedIps ?? [])] : [...target.addresses],
+      updatedAt: nowIso(),
+    });
   }
   if (
     defaultAdapter === "hermes-config" ||

@@ -305,7 +305,7 @@ export async function restoreMcpBridgesAfterRebuild(
   // fails, `mcp restart` remains retryable after the operator fixes the cause.
   setBridgeState(sandboxName, bridges);
   // Sandbox creation already received the complete pre-rebuild OpenShell
-  // policy. Restore providers and adapters without regenerating or overwriting
-  // policy entries that an operator may have edited independently.
-  await restoreExistingMcpBridgeRuntime(sandboxName, entries, { applyPolicy: false });
+  // policy. Reconcile each NemoClaw-owned MCP entry against current public DNS
+  // while preserving every unrelated operator-owned policy entry.
+  await restoreExistingMcpBridgeRuntime(sandboxName, entries);
 }
