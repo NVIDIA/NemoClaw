@@ -36,40 +36,35 @@ function sandboxCommandFailure(
 }
 const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
-function mockLivePolicy(sandboxName: string): void {
+function mockLivePolicy(sandboxName: string): MockInstance {
   const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
-  const policyState = requireSource(
-    "../adapters/openshell/policy-state.js",
-  ) as typeof import("../adapters/openshell/policy-state.js");
   const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: sandboxName,
     openshellDriver: "docker",
   });
   vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-  vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue({
-    policySource: "sandbox",
-    effectivePolicy: { version: 1, network_policies: {} },
-    policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
-  });
   const receipt = {
     gatewayName: "nemoclaw",
+    basePolicyDocument: "version: 1\nnetwork_policies: {}\n",
     inspection: {
       policySource: "sandbox" as const,
       effectivePolicy: { version: 1, network_policies: {} },
       policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
     },
   };
-  vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(receipt);
-  vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(receipt);
+  const policyContextSpy = vi
+    .spyOn(policy, "inspectPolicyMutationContext")
+    .mockReturnValue(receipt);
   vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(receipt);
   vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
+  return policyContextSpy;
 }
 
 describe("shields policy transition", () => {
   let homeDir: string;
+  let policyContextSpy: MockInstance;
   let runSpy: MockInstance;
-  let runCaptureSpy: MockInstance;
   let shields: typeof import("./index.js");
 
   beforeEach(() => {
@@ -84,9 +79,6 @@ describe("shields policy transition", () => {
     const dockerExec = requireSource("../adapters/docker/exec.js");
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
-    runCaptureSpy = vi.spyOn(runner, "runCapture").mockImplementation(() => {
-      throw new Error("policy get failed with status 42");
-    });
     vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
       agentName: "langchain-deepagents-code",
       configDir: "/sandbox/.deepagents",
@@ -105,7 +97,7 @@ describe("shields policy transition", () => {
     });
     vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockReturnValue(Buffer.alloc(0));
     vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
-    mockLivePolicy("openclaw");
+    policyContextSpy = mockLivePolicy("openclaw");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -120,24 +112,9 @@ describe("shields policy transition", () => {
   });
 
   it("never relaxes policy or persists mutable state when the base-policy read fails", () => {
-    expect(() => shields.shieldsDown("openclaw", { throwOnError: true })).toThrow(
-      "Cannot capture current policy",
-    );
-    expect(runSpy).not.toHaveBeenCalled();
-
-    const stateFiles = fs.readdirSync(path.join(homeDir, ".nemoclaw", "state"));
-    expect(stateFiles.filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name))).toEqual(
-      [],
-    );
-  });
-
-  it.each([
-    ["message", "message: gateway unavailable"],
-    ["details", "details: grpc unavailable"],
-    ["arbitrary diagnostic", "reason: gateway unavailable\nretryable: true"],
-  ])("never relaxes policy or persists mutable state for exit-zero %s output", (_name, output) => {
-    runCaptureSpy.mockReturnValue(output);
-
+    policyContextSpy.mockImplementation(() => {
+      throw new Error("policy get failed with status 42");
+    });
     expect(() => shields.shieldsDown("openclaw", { throwOnError: true })).toThrow(
       "Cannot capture current policy",
     );
@@ -246,9 +223,14 @@ describe("shields down policy rejection", () => {
 
   function createRejectedPolicyHarness() {
     return createShieldsFlowHarness(requireSource, tmpDir, {
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
   }
 
@@ -273,9 +255,11 @@ describe("shields down policy rejection", () => {
     expect(policyCommands.length).toBeGreaterThan(0);
     expect(policyCommands.every((command) => command.includes(gatewayName))).toBe(true);
     expect(harness.policyVerificationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: expect.objectContaining({ kind: "applied" }) }),
       "openclaw",
       expect.stringContaining("network_policies"),
       expect.objectContaining({ gatewayName }),
+      "apply the Shields down policy",
     );
   });
 
@@ -287,7 +271,7 @@ describe("shields down policy rejection", () => {
         reason: "verify",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
     expect(harness.isShieldsDown("openclaw")).toBe(false);
 
     const state = JSON.parse(
@@ -320,16 +304,21 @@ describe("shields down policy rejection", () => {
         send: vi.fn(() => true),
         kill: timerKill,
       }),
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
     expect(() =>
       harness.shieldsDown("openclaw", {
         reason: "verify recovery authority",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
 
     expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
       shieldsDown: true,
@@ -394,9 +383,14 @@ describe("shields down policy rejection", () => {
         send: vi.fn(() => true),
         kill: vi.fn(() => true),
       }),
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
 
     expect(() =>
@@ -404,7 +398,7 @@ describe("shields down policy rejection", () => {
         reason: "verify incomplete rejection",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
 
     const transitionName = fs
       .readdirSync(stateDir)
@@ -949,7 +943,23 @@ describe("shields-down rollback flow", () => {
     ).toThrow("Cannot revoke stale auto-restore timer authority for openclaw");
 
     expect(harness.getOpenClawPosture()).toBe("locked");
-    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runCaptureSpy).toHaveBeenCalledTimes(2);
+    expect(harness.runCaptureSpy).toHaveBeenNthCalledWith(1, [
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--base",
+      "openclaw",
+    ]);
+    expect(harness.runCaptureSpy).toHaveBeenNthCalledWith(2, [
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--base",
+      "openclaw",
+    ]);
     expect(harness.runSpy).not.toHaveBeenCalled();
     expect(harness.auditSpy).not.toHaveBeenCalled();
     expect(fork).not.toHaveBeenCalled();
