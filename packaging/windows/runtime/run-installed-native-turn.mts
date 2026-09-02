@@ -154,40 +154,58 @@ function sanitizedDiagnostic(text, replacements) {
 }
 
 function probeSource() {
-  return String.raw`import { execFile, spawn } from "node:child_process";
+  return String.raw`import { Worker } from "node:worker_threads";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { join } from "node:path";
-import { promisify } from "node:util";
+import { dirname, join } from "node:path";
 
-const execFileAsync = promisify(execFile);
 const required = (name) => {
   const value = process.env[name];
   if (!value) throw new Error(name + " is required");
   return value;
 };
-const node = required("NEMOCLAW_MXC_NODE");
-const entry = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
+const launcher = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
+const entry = join(dirname(launcher), "dist", "entry.js");
 const home = required("NEMOCLAW_MXC_HOME");
-const token = required("NEMOCLAW_MXC_TOKEN");
 const resultPath = required("NEMOCLAW_MXC_RESULT");
 const mockPort = Number(required("NEMOCLAW_MXC_MOCK_PORT"));
-const gatewayPort = Number(required("NEMOCLAW_MXC_OPENCLAW_PORT"));
 const env = {
   ...process.env,
   HOME: home,
-  OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:" + gatewayPort,
-  OPENCLAW_GATEWAY_TOKEN: token,
+  NODE_DISABLE_COMPILE_CACHE: "1",
+  OPENCLAW_HOME: home,
+  OPENCLAW_NO_RESPAWN: "1",
   USERPROFILE: home,
 };
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const workerSource = [
+  'const { workerData } = require("node:worker_threads");',
+  'const { pathToFileURL } = require("node:url");',
+  'process.argv = [process.execPath, workerData.entry, ...workerData.args];',
+  'import(pathToFileURL(workerData.entry).href).catch((error) => {',
+  '  console.error(error instanceof Error ? error.stack ?? error.message : String(error));',
+  '  process.exit(1);',
+  '});',
+].join("\n");
 const run = async (args, timeout = 210000) => {
-  try {
-    const output = await execFileAsync(node, args, { env, timeout, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
-    return { exitCode: 0, stdout: output.stdout, stderr: output.stderr };
-  } catch (error) {
-    return { exitCode: Number.isInteger(error.code) ? error.code : 1, stdout: error.stdout || "", stderr: error.stderr || "" };
-  }
+  const worker = new Worker(workerSource, { eval: true, env, execArgv: [], resourceLimits: { stackSizeMb: 64 }, stderr: true, stdout: true, workerData: { args, entry } });
+  let stdout = "";
+  let stderr = "";
+  worker.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+  worker.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+  return await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      resolve({ exitCode: 1, stdout, stderr: stderr + "OpenClaw worker timed out" });
+    }, timeout);
+    worker.once("error", (error) => {
+      clearTimeout(timer);
+      resolve({ exitCode: 1, stdout, stderr: stderr + (error instanceof Error ? error.message : String(error)) });
+    });
+    worker.once("exit", (code) => {
+      clearTimeout(timer);
+      resolve({ exitCode: code, stdout, stderr });
+    });
+  });
 };
 const readBody = async (request) => {
   const chunks = [];
@@ -247,33 +265,20 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
     models: [{ id: "mock-chat", name: "mock/mock-chat", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 131072, maxTokens: 4096 }],
   } } },
   agents: { defaults: { model: { primary: "mock/mock-chat" }, timeoutSeconds: 180, skipBootstrap: true, thinkingDefault: "off" }, list: [{ id: "main", default: true }] },
-  gateway: { mode: "local", port: gatewayPort, controlUi: { allowInsecureAuth: true, dangerouslyDisableDeviceAuth: false, allowedOrigins: ["http://127.0.0.1:" + gatewayPort] }, trustedProxies: ["127.0.0.1", "::1"], auth: { token: "" }, reload: { mode: "hot" } },
 }), "utf8");
-const version = await run([entry, "--version"], 30000);
+const version = await run(["--version"], 30000);
 const normalizedVersion = /\b2026\.7\.1\b/u.test(version.stdout) ? "2026.7.1" : version.stdout.trim();
-const gateway = spawn(node, [entry, "gateway", "run", "--dev", "--allow-unconfigured", "--auth", "token", "--bind", "loopback", "--port", String(gatewayPort)], { env, stdio: "ignore", windowsHide: true });
-let healthy = false;
-for (let attempt = 0; attempt < 120 && gateway.exitCode === null; attempt += 1) {
-  const health = await run([entry, "gateway", "health", "--json", "--timeout", "5000"], 15000);
-  if (health.exitCode === 0) { healthy = true; break; }
-  await sleep(1000);
-}
-let chat = { exitCode: 1, stdout: "", stderr: "" };
-if (healthy) {
-  chat = await run([entry, "agent", "--agent", "main", "--message", "Reply exactly: CHAT_OK", "--thinking", "off", "--timeout", "180", "--json"]);
-}
+const chat = await run(["agent", "--local", "--agent", "main", "--message", "Reply exactly: CHAT_OK", "--thinking", "off", "--timeout", "180", "--json"]);
 let exactReply = false;
 try {
   const document = JSON.parse(chat.stdout.trim());
   const payloads = document?.result?.payloads ?? document?.payloads;
   exactReply = document?.status !== "error" && Array.isArray(payloads) && payloads.length === 1 && payloads[0]?.text === "CHAT_OK";
 } catch {}
-const result = { version: normalizedVersion, versionExitCode: version.exitCode, healthy, chatExitCode: chat.exitCode, exactReply, reply: exactReply ? "CHAT_OK" : null };
+const result = { executionMode: "embedded-worker", version: normalizedVersion, versionExitCode: version.exitCode, versionError: version.stderr.slice(-2000), chatExitCode: chat.exitCode, chatError: chat.stderr.slice(-2000), exactReply, reply: exactReply ? "CHAT_OK" : null };
 writeFileSync(resultPath, JSON.stringify(result), "utf8");
-if (gateway.exitCode === null) gateway.kill();
-await Promise.race([new Promise((resolve) => gateway.once("exit", resolve)), sleep(5000)]);
 await new Promise((resolve) => mock.close(resolve));
-process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && healthy && exactReply ? 0 : 1);
+process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && chat.exitCode === 0 && exactReply ? 0 : 1);
 `;
 }
 
@@ -340,7 +345,6 @@ async function main() {
   const receiptPath = path.join(evidenceRoot, `native-windows-turn-${runId}.json`);
   const gatewayPort = await freePort();
   const mockPort = await freePort();
-  const openClawPort = await freePort();
   const sandboxName = `nc-${runId}`;
   const gatewayName = `nemoclaw-gateway-${runId}`;
   const stateRoot = path.join(runRoot, "state");
@@ -395,7 +399,6 @@ async function main() {
   let passed = false;
   let result = null;
   let cliEnvironment = gatewayEnvironment;
-  const gatewayToken = randomBytes(32).toString("base64url");
   try {
     console.log("NEMOCLAW> Starting installed OpenShell MXC gateway");
     await waitForPort(gatewayPort, gateway);
@@ -419,13 +422,10 @@ async function main() {
       COMSPEC: comSpec,
       LOCALAPPDATA: home,
       NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
-      NEMOCLAW_MXC_NODE: node,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
       NEMOCLAW_MXC_HOME: home,
-      NEMOCLAW_MXC_TOKEN: gatewayToken,
       NEMOCLAW_MXC_RESULT: resultPath,
       NEMOCLAW_MXC_MOCK_PORT: String(mockPort),
-      NEMOCLAW_MXC_OPENCLAW_PORT: String(openClawPort),
       OS: "Windows_NT",
       PATH: `${path.join(systemRoot, "System32")};${systemRoot}`,
       PATHEXT: ".COM;.EXE;.BAT;.CMD",
@@ -466,9 +466,9 @@ async function main() {
     if (!fs.existsSync(resultPath)) fail("installed OpenClaw turn did not publish a result");
     result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
     passed =
+      result.executionMode === "embedded-worker" &&
       result.version === "2026.7.1" &&
       result.versionExitCode === 0 &&
-      result.healthy === true &&
       result.chatExitCode === 0 &&
       result.exactReply === true &&
       result.reply === "CHAT_OK";
@@ -482,7 +482,7 @@ async function main() {
     );
     fs.writeFileSync(
       receiptPath,
-      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, verdict: "pass" }, null, 2)}\n`,
+      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawExecutionMode: result.executionMode, artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, verdict: "pass" }, null, 2)}\n`,
       "utf8",
     );
     console.log(`NEMOCLAW> PASS receipt=${receiptPath}`);
@@ -506,7 +506,6 @@ async function main() {
       const diagnostic = sanitizedDiagnostic(
         `${fs.readFileSync(gatewayLogPath, "utf8")}\n${fs.readFileSync(gatewayErrorPath, "utf8")}`,
         [
-          [gatewayToken, "<gateway-token>"],
           [installRoot, "<install-root>"],
           [runtimeRoot, "<runtime-root>"],
           [shareRoot, "<share-root>"],

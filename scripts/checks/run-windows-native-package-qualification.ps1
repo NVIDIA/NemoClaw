@@ -498,6 +498,7 @@ try {
     }
     $nativeTurnReceipt = Get-Content -LiteralPath $nativeTurnReceipts[0].FullName -Raw | ConvertFrom-Json
     if ($nativeTurnReceipt.verdict -cne 'pass' -or $nativeTurnReceipt.exactReply -cne 'CHAT_OK' -or
+        $nativeTurnReceipt.openClawExecutionMode -cne 'embedded-worker' -or
         $nativeTurnReceipt.sandboxDeleted -ne $true -or
         $nativeTurnReceipt.artifactStagedAtDriveRoot -ne $true) {
         Fail-PackageQualification 'Installed NemoClaw native turn receipt is incomplete.'

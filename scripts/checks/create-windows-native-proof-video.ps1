@@ -301,6 +301,7 @@ if (-not $qualification.repairRestoredDigest -or
     -not $qualification.machinePathRemoved -or
     $qualification.nativeTurn.verdict -cne 'pass' -or
     $qualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
+    $qualification.nativeTurn.openClawExecutionMode -cne 'embedded-worker' -or
     $qualification.nativeTurn.sandboxDeleted -ne $true -or
     @($qualification.nativeExecutions).Count -ne 3 -or
     @($qualification.applicationExecutions).Count -ne 2 -or
@@ -555,6 +556,7 @@ public static class NemoClawConsoleVideoEncoder
     $recordedQualification = Get-Content -LiteralPath $consoleQualificationReceipt -Raw | ConvertFrom-Json
     if ($recordedQualification.nativeTurn.verdict -cne 'pass' -or
         $recordedQualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
+        $recordedQualification.nativeTurn.openClawExecutionMode -cne 'embedded-worker' -or
         $recordedQualification.nativeTurn.sandboxDeleted -ne $true) {
         Fail-ProofVideo 'The recorded qualification receipt does not prove the installed NemoClaw turn.'
     }
