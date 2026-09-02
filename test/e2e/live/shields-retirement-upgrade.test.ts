@@ -515,7 +515,9 @@ test.skipIf(process.platform !== "linux")(
     expect(candidatePath.stdout.trim()).toBe(candidateRealPath);
     const candidateVersion = await candidateNemoclaw(host, ["--version"], "candidate-version");
     expectExitZero(candidateVersion, "candidate nemoclaw --version");
-    expect(resultText(candidateVersion)).toContain(EXPECTED_CANDIDATE_SHA.slice(0, 10));
+    const candidateAbbreviation = resultText(candidateVersion).match(/\bg([0-9a-f]{7,40})\b/u)?.[1];
+    expect(candidateAbbreviation).toBeDefined();
+    expect(EXPECTED_CANDIDATE_SHA.startsWith(candidateAbbreviation!)).toBe(true);
     expectLegacyStateRecord();
 
     progress.phase("detect legacy posture and fail closed before mutation");
