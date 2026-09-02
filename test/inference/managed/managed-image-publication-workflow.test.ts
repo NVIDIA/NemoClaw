@@ -600,8 +600,11 @@ describe("complete managed-image publication workflow", () => {
 
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
+        ".github/workflows/managed-runtime-base-qualification.yaml",
         "src/lib/onboard/**",
         "test/e2e/live/managed-image-activation-e2e*.ts",
+        "test/e2e/support/managed-runtime-comparison.test.ts",
+        "tools/e2e/managed-runtime-comparison.mts",
       ]),
     );
     expect(workflow.jobs?.["pr-managed-activation"]).toBeUndefined();

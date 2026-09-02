@@ -34,6 +34,7 @@ on:
       - ".github/actions/ci-reviewed-npm-audit/**"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
+      - ".github/workflows/managed-runtime-base-qualification.yaml"
       - ".dockerignore"
       - "Dockerfile"
       - "agents/**"
@@ -56,8 +57,14 @@ on:
       - "src/lib/state/state-root.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/live/managed-image-activation-e2e*.ts"
+      - "test/e2e/support/managed-runtime-comparison.test.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
+      - "tools/e2e/base-image-publication.mts"
+      - "tools/e2e/exact-artifact-download.mts"
+      - "tools/e2e/managed-image-cohort-contract.mts"
+      - "tools/e2e/managed-runtime-comparison.mts"
+      - "tools/e2e/pr-managed-image-publication.mts"
       - "tsconfig.runtime-preloads.json"
 
 permissions:
