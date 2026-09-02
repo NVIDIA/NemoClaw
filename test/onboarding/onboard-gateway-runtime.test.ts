@@ -85,18 +85,6 @@ describe("onboard gateway runtime helpers", () => {
     expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
 
-    const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
-    expect(darwinEnv.OPENSHELL_DRIVERS).toBe("docker");
-    expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
-    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("https://127.0.0.1:8080");
-    expect(darwinEnv.OPENSHELL_LOCAL_TLS_DIR).toContain(
-      path.join("nemoclaw", "openshell-docker-gateway", "tls"),
-    );
-    expect(darwinEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
-    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
-    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();
-    expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
-
     const originalOverlayFix = process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
     process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
     try {

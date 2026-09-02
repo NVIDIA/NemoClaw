@@ -6,10 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  formatOpenShellPolicyRecoveryAction,
   isPolicyObservationError,
   PolicyObservationError,
 } from "../../adapters/openshell/policy-state";
+import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { secureTempFile } from "../../onboard/temp-files";

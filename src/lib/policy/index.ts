@@ -21,10 +21,7 @@ import {
   type OpenShellSandboxPolicySetSubmission,
   type OpenShellSandboxResult,
 } from "../adapters/openshell/sandbox-policy-cli";
-import {
-  formatOpenShellPolicyRecoveryAction,
-  PolicyObservationError,
-} from "../adapters/openshell/policy-state";
+import { PolicyObservationError } from "../adapters/openshell/policy-state";
 export { isPolicyObservationError } from "../adapters/openshell/policy-state";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
@@ -52,6 +49,7 @@ import {
   removeBaselineEntryFromPolicy,
 } from "./baseline-exclusion";
 import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
+import { reconcileTeamsOutlookLoginCredentialBinding } from "./microsoft-login-credential-binding";
 import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
@@ -1569,101 +1567,6 @@ function policyHasNetworkPolicy(policyContent: string, policyKey: string): boole
   return isPolicyObject(parseNetworkPolicies(policyContent)?.[policyKey]);
 }
 
-const MICROSOFT_LOGIN_HOST = "login.microsoftonline.com";
-const TEAMS_POLICY_KEY = "teams";
-const OUTLOOK_POLICY_KEY = "outlook_graph";
-
-function findMicrosoftLoginEndpoint(policy: PolicyObject, policyKey: string): PolicyObject {
-  const endpoints = policy.endpoints;
-  if (!Array.isArray(endpoints)) {
-    throw new Error(
-      `Cannot reconcile Microsoft login policy metadata: '${policyKey}' endpoints are missing.`,
-    );
-  }
-  const matches = endpoints.filter(
-    (endpoint) =>
-      isPolicyObject(endpoint) && endpoint.host === MICROSOFT_LOGIN_HOST && endpoint.port === 443,
-  );
-  if (matches.length !== 1) {
-    throw new Error(
-      `Cannot reconcile Microsoft login policy metadata: '${policyKey}' must declare exactly one ${MICROSOFT_LOGIN_HOST}:443 endpoint.`,
-    );
-  }
-  return matches[0] as PolicyObject;
-}
-
-/**
- * OpenShell requires overlapping endpoints to carry identical credential
- * metadata. Outlook and Teams share Microsoft's OAuth host, so the Outlook
- * endpoint borrows Teams' bridge binding only for the lifetime of the Teams
- * policy. Removing Teams restores Outlook's reviewed unbound endpoint.
- */
-function reconcileTeamsOutlookLoginCredentialBinding(
-  policyContent: string,
-  sandboxName: string | undefined,
-  teamsActiveOverride?: boolean,
-): string {
-  let parsed: PolicyValue;
-  try {
-    parsed = YAML.parse(policyContent);
-  } catch {
-    throw new Error("Cannot reconcile Microsoft login policy metadata: policy YAML is invalid.");
-  }
-  if (!isPolicyDocument(parsed)) {
-    throw new Error(
-      "Cannot reconcile Microsoft login policy metadata: policy must be a YAML mapping.",
-    );
-  }
-
-  const networkPolicies = parsed.network_policies;
-  if (!networkPolicies || !isPolicyObject(networkPolicies)) return policyContent;
-  const outlookPolicy = networkPolicies[OUTLOOK_POLICY_KEY];
-  if (!isPolicyObject(outlookPolicy)) return policyContent;
-
-  const teamsPolicy = networkPolicies[TEAMS_POLICY_KEY];
-  const teamsActive = teamsActiveOverride ?? isPolicyObject(teamsPolicy);
-  const outlookEndpoint = findMicrosoftLoginEndpoint(outlookPolicy, OUTLOOK_POLICY_KEY);
-  const expectedProvider = sandboxName ? `${sandboxName}-teams-bridge` : null;
-  const expectedBinding = expectedProvider ? { provider: expectedProvider } : null;
-  const existingOutlookBinding = outlookEndpoint.credential_binding;
-
-  if (!teamsActive) {
-    if (existingOutlookBinding === undefined) return policyContent;
-    if (!expectedBinding || !isDeepStrictEqual(existingOutlookBinding, expectedBinding)) {
-      throw new Error(
-        "Cannot restore Outlook Microsoft login policy metadata: the existing credential binding is not owned by Teams.",
-      );
-    }
-    delete outlookEndpoint.credential_binding;
-    return YAML.stringify(parsed);
-  }
-
-  if (!expectedBinding) {
-    throw new Error(
-      "Cannot reconcile Microsoft login policy metadata: a sandbox name is required for the Teams credential provider.",
-    );
-  }
-  if (isPolicyObject(teamsPolicy)) {
-    const teamsEndpoint = findMicrosoftLoginEndpoint(teamsPolicy, TEAMS_POLICY_KEY);
-    if (teamsEndpoint.credential_binding === undefined) return policyContent;
-    if (!isDeepStrictEqual(teamsEndpoint.credential_binding, expectedBinding)) {
-      throw new Error(
-        "Cannot reconcile Microsoft login policy metadata: the Teams credential binding does not match its sandbox-owned provider.",
-      );
-    }
-  }
-  if (
-    existingOutlookBinding !== undefined &&
-    !isDeepStrictEqual(existingOutlookBinding, expectedBinding)
-  ) {
-    throw new Error(
-      "Cannot reconcile Microsoft login policy metadata: the Outlook endpoint already has a different credential binding.",
-    );
-  }
-  outlookEndpoint.credential_binding = expectedBinding;
-  return YAML.stringify(parsed);
-}
-
 function logOpenClawNpmCompatibilityDisclosure(logger: (line: string) => void = console.log): void {
   logger("  OpenClaw npm compatibility scope while this preset is active:");
   logger(
@@ -1876,9 +1779,8 @@ function removePreset(
         const exclusionError = openClawNpmExclusionStateError(sandboxName, currentPolicy);
         if (exclusionError) throw new Error(exclusionError);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to remove npm policy compatibility: ${message}`);
+    } catch {
+      console.error("  Refusing to remove npm policy compatibility: validation failed.");
       return false;
     }
   }
@@ -1902,18 +1804,16 @@ function removePreset(
               "teams",
             );
       updated = reconcileTeamsOutlookLoginCredentialBinding(updated, sandboxName, teamsActive);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to remove preset '${presetName}': ${message}`);
+    } catch {
+      console.error(`  Refusing to remove preset '${presetName}': validation failed.`);
       return false;
     }
   }
   if (openClawNpmBaseline) {
     try {
       updated = restoreOpenClawNpmCompatibility(currentPolicy, updated, openClawNpmBaseline);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to remove npm policy compatibility: ${message}`);
+    } catch {
+      console.error("  Refusing to remove npm policy compatibility: validation failed.");
       return false;
     }
   }
@@ -2399,9 +2299,8 @@ function applyPresetContent(
         merged = activation.policy;
         npmBaselineWidened = activation.widenedBaseline;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to apply npm policy compatibility: ${message}`);
+    } catch {
+      console.error("  Refusing to apply npm policy compatibility: validation failed.");
       return false;
     }
   }
@@ -2577,9 +2476,8 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
         merged = activation.policy;
         npmBaselineWidened = activation.widenedBaseline;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to apply npm policy compatibility: ${message}`);
+    } catch {
+      console.error("  Refusing to apply npm policy compatibility: validation failed.");
       return false;
     }
   }
@@ -2974,7 +2872,6 @@ export {
   excludeBaselineEntry,
   extractPresetEntries,
   filterSetupPolicyPresets,
-  formatOpenShellPolicyRecoveryAction,
   getAppliedPresets,
   getGatewayPresets,
   getOpenClawNpmCompatibilityState,

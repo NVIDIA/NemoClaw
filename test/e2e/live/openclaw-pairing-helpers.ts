@@ -165,11 +165,12 @@ export async function startFakeSlackApi(
   botToken: string,
   appToken: string,
   redactions: string[],
+  transport: "rest" | "websocket",
 ): Promise<FakeDockerApi> {
   return startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-    kind: "slack",
+    kind: transport === "rest" ? "slack-rest" : "slack-websocket",
     imageScript: "fake-slack-api.cjs",
-    containerPrefix: "nemoclaw-fake-slack-pairing",
+    containerPrefix: `nemoclaw-fake-slack-pairing-${transport}`,
     portEnv: "FAKE_SLACK_API_PORT",
     captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
     expectedEnv: {

@@ -6,14 +6,12 @@ import {
   type CliOpenShellSandboxPolicyRead,
   readCliOpenShellSandboxPolicy,
 } from "../../adapters/openshell/sandbox-policy-cli";
-import {
-  formatOpenShellPolicyRecoveryAction,
-  PolicyObservationError,
-} from "../../adapters/openshell/policy-state";
+import { PolicyObservationError } from "../../adapters/openshell/policy-state";
 import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
+import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 

@@ -45,8 +45,10 @@ function providerMetadata(
   return {
     status: 0,
     stdout: [
+      `Id: provider-${name}`,
       `Name: ${name}`,
       `Type: ${type}`,
+      "Resource version: 1",
       `Credential keys: ${credentialKey}`,
       "Config keys: <none>",
     ].join("\n"),
@@ -135,6 +137,38 @@ describe("credential provider registration", () => {
       expect(override).toHaveBeenCalledExactlyOnceWith(tokenDefs, runOpenshell, {
         replaceExisting: true,
       });
+    } finally {
+      restore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("leaves unrelated provider batches on the production path while the live override is installed", () => {
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "e2e-oc-ch-cycle-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        token: null,
+        providerType: "generic",
+      },
+    ];
+    const runOpenshell = vi.fn();
+    const override = vi.fn(() => ["e2e-oc-ch-cycle-googlechat-bridge"]);
+    const restore = installLiveE2eCredentialProviderRegistrationOverride({
+      expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
+      expectedType: "google-chat-bridge",
+      upsert: override,
+    });
+    try {
+      expect(
+        credentialProviderRegistrationDependencies.upsertMessagingProviders(
+          tokenDefs,
+          runOpenshell,
+          {},
+        ),
+      ).toEqual([]);
+      expect(override).not.toHaveBeenCalled();
     } finally {
       restore();
       vi.unstubAllEnvs();

@@ -75,7 +75,13 @@ export type CliOpenShellSandboxObserverDeps = Readonly<{
 
 export type RunSandboxCommand = (
   args: string[],
-  options: { ignoreError: true; suppressOutput: true; timeout: number },
+  options: {
+    ignoreError: true;
+    killProcessTreeOnTimeout: true;
+    killSignal: "SIGKILL";
+    suppressOutput: true;
+    timeout: number;
+  },
 ) => Readonly<{
   status?: number | null;
   stdout?: string | Buffer | null;
@@ -258,6 +264,8 @@ export function createCliOpenShellSandboxObserverFromRunner(
     capture: (args, options) => {
       const result = run(args, {
         ignoreError: true,
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
         suppressOutput: true,
         timeout: options.timeout,
       });
@@ -280,8 +288,7 @@ export function createCliOpenShellLegacyPodReadinessProbe(
   deps: CliOpenShellSandboxObserverDeps,
 ): OpenShellSandboxReadinessProbe {
   return async (request) => {
-    const gatewayArgs =
-      request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+    const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
     const result = await deps.capture(
       [
         "doctor",

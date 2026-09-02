@@ -299,8 +299,9 @@ export function createHermesUnsafeConfigHarness(
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       }));
-      vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-        (_sandboxName: unknown, cmd: unknown) => cmd as string[],
+      vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockImplementation(
+        (_sandboxName: unknown, cmd: unknown) =>
+          Buffer.from(dockerExec.dockerExecFileSync(cmd as string[])),
       );
       vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
