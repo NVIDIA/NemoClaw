@@ -10,10 +10,8 @@ import { describe, expect, it } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import {
   bashPrintfQ,
-  createHermesHistoryRootSwapFixture,
-  createHermesUnsafeLogFixture,
   extractShellFunction as extractShellFunctionFromSource,
-  filesystemFingerprint,
+  LOCKED_HERMES_CONFIG_STAT_MOCK,
   lstatIfPresent,
   runHermesSandboxInitPreludeWithFakePath,
   writeFakeProcCmdline,
@@ -41,6 +39,65 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
 const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
+
+function filesystemFingerprint(entry: string): string {
+  const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const metadata = fs.fstatSync(fd);
+    const contents = metadata.isDirectory() ? "" : fs.readFileSync(fd, "utf8");
+    return `${metadata.dev}:${metadata.ino}:${metadata.uid}:${metadata.gid}:${metadata.mode & 0o7777}:${metadata.size}:${metadata.mtimeMs}:${contents}`;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function createHermesUnsafeLogFixture(
+  tmpDir: string,
+  hermesHome: string,
+  kind: "root-symlink" | "nested-symlink",
+): { before: string[]; fingerprint: () => string[] } {
+  const target = path.join(tmpDir, "unsafe-log-target");
+  const sentinel = path.join(target, "sentinel.log");
+  fs.mkdirSync(target);
+  fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
+  if (kind === "root-symlink") {
+    fs.symlinkSync(target, path.join(hermesHome, "logs"));
+  } else {
+    const nested = path.join(hermesHome, "logs", "curator", "nested");
+    fs.mkdirSync(nested, { recursive: true });
+    fs.symlinkSync(sentinel, path.join(nested, "sentinel-link"));
+  }
+  const fingerprint = () => [filesystemFingerprint(target), filesystemFingerprint(sentinel)];
+  return { before: fingerprint(), fingerprint };
+}
+
+function createHermesHistoryRootSwapFixture(tmpDir: string, hermesHome: string) {
+  const externalRoot = path.join(tmpDir, "unsafe-history-root");
+  const sentinel = path.join(externalRoot, "sentinel.txt");
+  const originalRoot = path.join(tmpDir, "original-hermes-root");
+  const marker = path.join(tmpDir, "history-root-swapped");
+  const fakeBin = path.join(tmpDir, "history-swap-bin");
+  fs.mkdirSync(externalRoot);
+  fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(
+    path.join(fakeBin, "python3"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `if [ -n "\${NEMOCLAW_HERMES_HISTORY_FILE:-}" ] && [ ! -e ${shellQuote(marker)} ]; then`,
+      `  mv ${shellQuote(hermesHome)} ${shellQuote(originalRoot)}`,
+      `  ln -s ${shellQuote(externalRoot)} ${shellQuote(hermesHome)}`,
+      `  : > ${shellQuote(marker)}`,
+      "fi",
+      `export PATH=${shellQuote(process.env.PATH ?? "")}`,
+      'exec python3 "$@"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  const fingerprint = () => [filesystemFingerprint(externalRoot), filesystemFingerprint(sentinel)];
+  return { fakeBin, before: fingerprint(), fingerprint };
+}
 
 function extractRuntimeShellEnvBlock(src: string): string {
   const start = src.indexOf("write_runtime_shell_env() {");
@@ -425,23 +482,6 @@ function runTirithFinalizerPathResolution(installed: boolean) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
-
-const LOCKED_HERMES_CONFIG_STAT_MOCK = [
-  "stat() {",
-  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
-  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
-  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
-  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
-  '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
-  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
-  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
-  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
-  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
-  "    ;;",
-  "  esac",
-  '  command stat "$@"',
-  "}",
-].join("\n");
 
 type HermesStateDir = "sessions" | "gateway" | "runtime";
 
@@ -1382,85 +1422,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
     },
   );
-});
-
-function runShieldsUpRuntimeEnv(opts: { locked: boolean; presetValue?: string }) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shields-env-"));
-  const hermesHome = path.join(tmpDir, ".hermes");
-  const scriptPath = path.join(tmpDir, "run.sh");
-
-  fs.mkdirSync(hermesHome, { recursive: true });
-  if (opts.locked) {
-    fs.chmodSync(hermesHome, 0o755);
-    fs.writeFileSync(path.join(hermesHome, "config.yaml"), "model: test\n");
-    fs.writeFileSync(path.join(hermesHome, ".env"), "HERMES_TEST=1\n");
-  }
-
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const statMock = opts.locked ? LOCKED_HERMES_CONFIG_STAT_MOCK : "";
-  const presetLine =
-    opts.presetValue === undefined
-      ? "unset HERMES_KANBAN_DISPATCH_IN_GATEWAY"
-      : `export HERMES_KANBAN_DISPATCH_IN_GATEWAY=${shellQuote(opts.presetValue)}`;
-
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -uo pipefail",
-      extractShellFunctionFromSource(src, "hermes_config_path_is_locked"),
-      extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
-      extractShellFunctionFromSource(src, "apply_shields_up_runtime_env"),
-      `HERMES_DIR=${shellQuote(hermesHome)}`,
-      statMock,
-      presetLine,
-      "apply_shields_up_runtime_env",
-      'printf "KANBAN=%s\\n" "${HERMES_KANBAN_DISPATCH_IN_GATEWAY-<unset>}"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    const result = spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
-    });
-    const match = result.stdout.match(/KANBAN=(.*)/);
-    return {
-      result,
-      kanbanValue: match ? match[1] : "",
-    };
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
-describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
-  it("disables the embedded Hermes kanban dispatcher when the config root is locked", () => {
-    const run = runShieldsUpRuntimeEnv({ locked: true });
-
-    expect(run.result.status).toBe(0);
-    expect(run.kanbanValue).toBe("0");
-    expect(run.result.stderr).toContain("Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
-    expect(run.result.stderr).toContain("embedded kanban dispatcher suspended");
-  });
-
-  it("leaves the Hermes kanban dispatcher untouched when shields are down", () => {
-    const run = runShieldsUpRuntimeEnv({ locked: false });
-
-    expect(run.result.status).toBe(0);
-    expect(run.kanbanValue).toBe("<unset>");
-    expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY");
-  });
-
-  it("preserves a caller-supplied HERMES_KANBAN_DISPATCH_IN_GATEWAY value under shields-up", () => {
-    const run = runShieldsUpRuntimeEnv({ locked: true, presetValue: "1" });
-
-    expect(run.result.status).toBe(0);
-    expect(run.kanbanValue).toBe("1");
-    expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
-  });
 });
 
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {

@@ -8,6 +8,23 @@ import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../src/lib/core/shell-quote";
 
+export const LOCKED_HERMES_CONFIG_STAT_MOCK = [
+  "stat() {",
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
+  "    ;;",
+  "  esac",
+  '  command stat "$@"',
+  "}",
+].join("\n");
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -35,65 +52,6 @@ export function lstatIfPresent(entry: string): fs.Stats | null {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
-}
-
-export function filesystemFingerprint(entry: string): string {
-  const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try {
-    const metadata = fs.fstatSync(fd);
-    const contents = metadata.isDirectory() ? "" : fs.readFileSync(fd, "utf8");
-    return `${metadata.dev}:${metadata.ino}:${metadata.uid}:${metadata.gid}:${metadata.mode & 0o7777}:${metadata.size}:${metadata.mtimeMs}:${contents}`;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-export function createHermesUnsafeLogFixture(
-  tmpDir: string,
-  hermesHome: string,
-  kind: "root-symlink" | "nested-symlink",
-): { before: string[]; fingerprint: () => string[] } {
-  const target = path.join(tmpDir, "unsafe-log-target");
-  const sentinel = path.join(target, "sentinel.log");
-  fs.mkdirSync(target);
-  fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
-  if (kind === "root-symlink") {
-    fs.symlinkSync(target, path.join(hermesHome, "logs"));
-  } else {
-    const nested = path.join(hermesHome, "logs", "curator", "nested");
-    fs.mkdirSync(nested, { recursive: true });
-    fs.symlinkSync(sentinel, path.join(nested, "sentinel-link"));
-  }
-  const fingerprint = () => [filesystemFingerprint(target), filesystemFingerprint(sentinel)];
-  return { before: fingerprint(), fingerprint };
-}
-
-export function createHermesHistoryRootSwapFixture(tmpDir: string, hermesHome: string) {
-  const externalRoot = path.join(tmpDir, "unsafe-history-root");
-  const sentinel = path.join(externalRoot, "sentinel.txt");
-  const originalRoot = path.join(tmpDir, "original-hermes-root");
-  const marker = path.join(tmpDir, "history-root-swapped");
-  const fakeBin = path.join(tmpDir, "history-swap-bin");
-  fs.mkdirSync(externalRoot);
-  fs.writeFileSync(sentinel, "outside sentinel\n", { mode: 0o640 });
-  fs.mkdirSync(fakeBin);
-  fs.writeFileSync(
-    path.join(fakeBin, "python3"),
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `if [ -n "\${NEMOCLAW_HERMES_HISTORY_FILE:-}" ] && [ ! -e ${shellQuote(marker)} ]; then`,
-      `  mv ${shellQuote(hermesHome)} ${shellQuote(originalRoot)}`,
-      `  ln -s ${shellQuote(externalRoot)} ${shellQuote(hermesHome)}`,
-      `  : > ${shellQuote(marker)}`,
-      "fi",
-      `export PATH=${shellQuote(process.env.PATH ?? "")}`,
-      'exec python3 "$@"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  const fingerprint = () => [filesystemFingerprint(externalRoot), filesystemFingerprint(sentinel)];
-  return { fakeBin, before: fingerprint(), fingerprint };
 }
 
 export function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {

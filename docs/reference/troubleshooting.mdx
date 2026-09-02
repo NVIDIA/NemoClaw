@@ -1492,7 +1492,7 @@ Hermes stops startup when `/sandbox/.hermes/sessions`, `/sandbox/.hermes/gateway
 When the Hermes config root is not locked, startup also stops when the `logs` directory tree contains a symbolic link, a hard-linked file, another unsafe entry, or changes during descriptor-anchored repair.
 Startup also stops when `/sandbox/.hermes/.hermes_history` is a symbolic link, a nonregular or hard-linked file, or cannot be repaired safely.
 `/tmp/nemoclaw-start.log` names the reported state item and reports `Hermes pre-launch layout repair failed`.
-Failed host control can include the accepted line as `NEMOCLAW_START_LOG=...`.
+When a host-side control command fails, its output can include matching startup diagnostics as `NEMOCLAW_START_LOG=...`.
 Do not run `chown`, `chmod`, or another in-place repair on the reported path.
 Follow [Hermes startup reports HERMES_CONFIG_MUTATION_ORPHANED](#hermes-startup-reports-hermes_config_mutation_orphaned) to restore a trusted host-side snapshot into a recreated sandbox.
 If no trusted snapshot exists, recreate the sandbox from host-side onboarding configuration only if you accept losing its inaccessible state.
