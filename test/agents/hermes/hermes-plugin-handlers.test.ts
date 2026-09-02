@@ -356,6 +356,108 @@ print(json.dumps(result))
     expect(result.firecrawl_url).toBe("http://host.openshell.internal:11436/firecrawl/v2/search");
   });
 
+  it("blocks private broker URLs and patches loaded Hermes URL guards", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import os
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+os.environ["NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER"] = "1"
+
+def add_module(name, module):
+    sys.modules[name] = module
+    parent, _, child = name.rpartition(".")
+    if parent:
+        parent_module = sys.modules.setdefault(parent, types.ModuleType(parent))
+        setattr(parent_module, child, module)
+    return module
+
+url_safety = add_module("tools.url_safety", types.ModuleType("tools.url_safety"))
+url_safety.is_safe_url = lambda _url: True
+web_tools = add_module("tools.web_tools", types.ModuleType("tools.web_tools"))
+web_tools.is_safe_url = lambda _url: True
+browser_tool = add_module("tools.browser_tool", types.ModuleType("tools.browser_tool"))
+browser_tool._is_safe_url = lambda _url: True
+browser_tool._allow_private_urls_resolved = True
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+plugin._load_hermes_config = lambda: {"security": {"allow_private_urls": False}}
+
+blocked_urls = [
+    "http://169.254.169.254/latest/meta-data",
+    "http://169.254.170.2/v2/credentials",
+    "http://169.254.169.253/metadata",
+    "http://100.100.100.200/latest/meta-data",
+    "http://[fd00:ec2::254]/latest/meta-data",
+    "http://metadata.google.internal/computeMetadata/v1",
+    "http://metadata.goog/computeMetadata/v1",
+    "http://127.0.0.1",
+    "http://[::1]",
+    "http://10.0.0.1",
+    "http://172.16.0.1",
+    "http://192.168.0.1",
+    "http://[fc00::1]",
+    "http://169.254.1.1",
+    "http://[fe80::1]",
+    "http://240.0.0.1",
+    "http://224.0.0.1",
+    "http://[ff02::1]",
+    "http://0.0.0.0",
+    "http://[::]",
+    "http://100.64.0.1",
+    "https://service.internal",
+    "https://service.local",
+    "https://service.lan",
+    "https://single-label",
+    "https://123.456",
+    "ftp://example.com/file",
+    "file:///etc/passwd",
+    "://missing-scheme",
+    "https://[bad",
+    "",
+]
+
+patched = plugin._install_broker_url_safety_patch()
+print(json.dumps({
+    "accepted": [
+        plugin._broker_safe_url("https://example.com/path"),
+        plugin._broker_safe_url("https://8.8.8.8/dns-query"),
+    ],
+    "blocked": [plugin._broker_safe_url(url) for url in blocked_urls],
+    "patched": patched,
+    "same_predicate": [
+        url_safety.is_safe_url is plugin._broker_safe_url,
+        web_tools.is_safe_url is plugin._broker_safe_url,
+        browser_tool._is_safe_url is plugin._broker_safe_url,
+    ],
+    "allow_private_urls": browser_tool._allow_private_urls_resolved,
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      accepted: boolean[];
+      blocked: boolean[];
+      patched: boolean;
+      same_predicate: boolean[];
+      allow_private_urls: boolean;
+    };
+
+    expect(result.accepted).toEqual([true, true]);
+    expect(result.blocked.every((value) => value === false)).toBe(true);
+    expect(result.patched).toBe(true);
+    expect(result.same_predicate).toEqual([true, true, true]);
+    expect(result.allow_private_urls).toBe(false);
+  });
+
   it("normalizes raw messaging pseudo-tool responses before delivery", () => {
     const output = runPython(`
 import importlib.util

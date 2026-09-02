@@ -8,57 +8,36 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 const root = path.join(import.meta.dirname, "../../..");
-const dockerfileBase = fs.readFileSync(path.join(root, "agents/hermes/Dockerfile.base"), "utf8");
-const hindsightProbeRequirementsPath = path.join(
-  root,
-  "agents/hermes/hindsight-client-probe-requirements.txt",
-);
-
-function arg(name: string): string {
-  const match = dockerfileBase.match(new RegExp(`^ARG ${name}=(.+)$`, "mu"));
-  expect(match, `Missing Dockerfile ARG ${name}`).not.toBeNull();
-  return match?.[1] ?? "";
-}
+const uvVersionCheckPath = path.join(root, "agents/hermes/check-uv-version.py");
 
 function uvVersionCheckStatus(output: string, expectedVersion: string): number | null {
-  const dockerfileLines = dockerfileBase.split("\n");
-  const installIndex = dockerfileLines.findIndex(
-    (line) => line.startsWith("RUN pip3 install ") && line.includes('"uv==${UV_VERSION}"'),
-  );
-  expect(installIndex, "Missing Dockerfile uv install command").toBeGreaterThanOrEqual(0);
-  const commandLines = dockerfileLines.slice(installIndex);
-  const commandEndIndex = commandLines.findIndex((line) => !line.endsWith("\\"));
-  const versionCheckLines = commandLines.slice(1, commandEndIndex + 1);
-  const script = [
-    'uv() { printf "%s\\n" "$UV_OUTPUT"; }',
-    "set -e",
-    ...versionCheckLines.map((line) => line.replace(/^\s*&&\s*/u, "").replace(/\s*\\$/u, "")),
-  ].join("\n");
-  return spawnSync("/bin/sh", ["-c", script], {
-    env: { ...process.env, UV_OUTPUT: output, UV_VERSION: expectedVersion },
-  }).status;
+  return spawnSync("python3", [uvVersionCheckPath, output, expectedVersion]).status;
 }
 
 describe("Hermes 0.20.6 dependency review", () => {
   it("accepts uv build metadata and rejects a different semantic version", () => {
-    const expectedVersion = arg("UV_VERSION");
-    const differentVersion = expectedVersion.replace(/\d+$/u, (patchVersion) =>
-      String(Number.parseInt(patchVersion, 10) + 1),
-    );
+    const expectedVersion = "0.11.33";
     expect(
       uvVersionCheckStatus(
         `uv ${expectedVersion} (fece32fc5 2026-07-28 aarch64-unknown-linux-gnu)`,
         expectedVersion,
       ),
     ).toBe(0);
-    expect(uvVersionCheckStatus(`uv ${differentVersion} (different)`, expectedVersion)).toBe(1);
+    expect(uvVersionCheckStatus("uv 0.11.34 (different)", expectedVersion)).toBe(1);
+    expect(uvVersionCheckStatus(expectedVersion, expectedVersion)).toBe(1);
   });
 
   it("rejects an altered Hindsight wheel before the compatibility import", () => {
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hindsight-hash-"));
     const artifact = path.join(temporaryRoot, "hindsight_client-0.6.1-py3-none-any.whl");
     const installTarget = path.join(temporaryRoot, "install");
+    const requirementsPath = path.join(temporaryRoot, "requirements.txt");
     fs.writeFileSync(artifact, "same version, altered wheel digest\n", "utf8");
+    fs.writeFileSync(
+      requirementsPath,
+      `hindsight-client==0.6.1 --hash=sha256:${"0".repeat(64)}\n`,
+      "utf8",
+    );
     try {
       const result = spawnSync(
         "python3",
@@ -74,7 +53,7 @@ describe("Hermes 0.20.6 dependency review", () => {
           temporaryRoot,
           "--require-hashes",
           "-r",
-          hindsightProbeRequirementsPath,
+          requirementsPath,
         ],
         { encoding: "utf8" },
       );
