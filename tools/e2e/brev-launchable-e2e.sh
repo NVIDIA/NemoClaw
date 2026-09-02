@@ -816,13 +816,9 @@ existing="$(workspace)" || die "Brev workspace inventory failed"
   die "workspace name already exists"
 }
 cleanup_required=1
-if [ "$VALIDATION_MODE" = identity-smoke ]; then
-  write_workspace_ownership pending
-fi
+write_workspace_ownership pending
 timeout 900s brev create "$INSTANCE_NAME" --launchable "$BREV_LAUNCHABLE_ID" --detached --timeout 900
-if [ "$VALIDATION_MODE" = identity-smoke ]; then
-  write_workspace_ownership accepted
-fi
+write_workspace_ownership accepted
 deadline=$((SECONDS + ${BREV_READY_TIMEOUT_SECONDS:-1200}))
 ready=""
 while [ "$SECONDS" -lt "$deadline" ]; do
