@@ -185,19 +185,22 @@ describe("Hermes image build probes", () => {
     }
   });
 
-  it("checks only platform configurations exercised by hostile build inputs", () => {
+  it("keeps A2A, Buzz, Google Chat, and WhatsApp Cloud disabled under hostile build inputs", () => {
     const result = runNeutralPlatformProbe(
       `from enum import Enum
 from types import SimpleNamespace
 
 class Platform(Enum):
+    A2A = "a2a"
+    BUZZ = "buzz"
     GOOGLE_CHAT = "google_chat"
     WHATSAPP_CLOUD = "whatsapp_cloud"
-    BUZZ = "buzz"
 
 def load_gateway_config():
     disabled = lambda: SimpleNamespace(enabled=False, token=None, api_key=None, extra={})
     return SimpleNamespace(platforms={
+        Platform.A2A: disabled(),
+        Platform.BUZZ: disabled(),
         Platform.GOOGLE_CHAT: disabled(),
         Platform.WHATSAPP_CLOUD: disabled(),
     })
@@ -213,6 +216,8 @@ def load_gateway_config():
 from types import SimpleNamespace
 
 class Platform(Enum):
+    A2A = "a2a"
+    BUZZ = "buzz"
     GOOGLE_CHAT = "google_chat"
     WHATSAPP_CLOUD = "whatsapp_cloud"
 
@@ -220,6 +225,8 @@ def load_gateway_config():
     disabled = SimpleNamespace(enabled=False, token=None, api_key=None, extra={})
     enabled = SimpleNamespace(enabled=True, token="unexpected", api_key=None, extra={})
     return SimpleNamespace(platforms={
+        Platform.A2A: disabled,
+        Platform.BUZZ: disabled,
         Platform.GOOGLE_CHAT: enabled,
         Platform.WHATSAPP_CLOUD: disabled,
     })

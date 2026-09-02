@@ -109,6 +109,7 @@ network_policies:
           - allow: { method: GET, path: "/devtools/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
+      - { path: /usr/local/bin/agent-browser* }
       - { path: /usr/local/bin/node* }
       - { path: /usr/local/bin/npx* }
       - { path: /usr/bin/node* }

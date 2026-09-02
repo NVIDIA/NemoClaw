@@ -162,7 +162,6 @@ JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetim
                     if (
                         not isinstance(schedule, dict)
                         or schedule.get("kind") != "once"
-                        or job.get("nemoclaw_restore_rearm_gate") == rearm_gate
                         or job.get("enabled", True) is not True
                         or job.get("state") not in {None, "scheduled"}
                         or job.get("last_run_at") is not None

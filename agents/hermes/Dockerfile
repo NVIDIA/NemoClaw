@@ -86,9 +86,8 @@ COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
-COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py
-COPY agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/finalize-image-layout.sh
-COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
+COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
+COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
@@ -258,7 +257,7 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 COPY --from=hermes-npm-patch-payload / /
 
 # The immutable selected base owns the reviewed Hindsight and agent-browser
-# patches and the sandbox user's npm cache. Verify that inherited boundary
+# patches and the root-owned agent-browser runtime. Verify that inherited boundary
 # without adding a second network-capable install owner in the final image.
 # Apply the dashboard Host guard when the published 0.20.6 base predates that
 # source fix, then verify the exact accepted-host contract.
@@ -266,23 +265,13 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
     && grep -Fq 'outcome = install_specs(missing, timeout=120)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
     && grep -Fqx 'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"' /opt/hermes/tools/browser_tool.py \
-    && install -o sandbox -g sandbox -m 0400 /dev/null \
-        /tmp/nemoclaw-agent-browser-userconfig \
-    && install -o sandbox -g sandbox -m 0400 /dev/null \
-        /tmp/nemoclaw-agent-browser-globalconfig \
+    && test "$(readlink /usr/local/bin/agent-browser)" = \
+        '/opt/nemoclaw-agent-browser-runtime/node_modules/.bin/agent-browser' \
     && agent_browser_version="$( \
-        HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
-            npm_config_registry=https://registry.npmjs.org/ \
-            npm_config_userconfig=/tmp/nemoclaw-agent-browser-userconfig \
-            npm_config_globalconfig=/tmp/nemoclaw-agent-browser-globalconfig \
-            npm_config_ignore_scripts=true \
-            /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-            /usr/local/bin/npx --ignore-scripts --prefer-offline -y \
-            agent-browser@0.26.0 --version \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+            /usr/local/bin/agent-browser --version \
     )" \
     && test "$agent_browser_version" = 'agent-browser 0.26.0' \
-    && rm -f /tmp/nemoclaw-agent-browser-userconfig \
-        /tmp/nemoclaw-agent-browser-globalconfig \
     && if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_cli/web_server.py \
@@ -417,7 +406,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=99b93a69cd853714f5d5bf65732ac3ef2abc965a162ecb1277a21da08213e361
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=05232e6759d835de2a82ef3c4481394df27facadbdb8467829fd2ea0186ab83a
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -575,13 +564,13 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # predicate to compose an independent root-owned marker, hydrate that predicate
 # during GatewayRunner construction, and re-arm only unclaimed one-shots held
 # overdue when the authenticated release record opens the gate.
-ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=ad6bf56b770519022cdff131ed08ea71d1bbf7aef581eab8c170e0f5b3ae71fb
+ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=d28c55ebad5a10c3086d2cf8360f136002f9a9fca1a9ec129f75365b76ef4a74
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256=4195245d27b7b067b416b69f4728fcfcdd97c912bdb0954f14402b35601f76cc
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256=8b8def1d9cb8088d4de7dd3d920d31fb0d959f4d6ffffadf6dd8f8320da5e00b
 ARG NEMOCLAW_HERMES_CRON_JOBS_SOURCE_SHA256=dd5c7c601e23e5058e93d824b17ff426ed2cc5113c20d431ea4937274be59923
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256=6d1c20afd6d0030a4d7c0fcc5a82dea1a9d9b912886aff1343597cfe74be1c8a
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256=30a36097a525449bc9d3b721ba3c3047b1c4f2d8a19da8027bb280867c2d6823
-ARG NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256=03aa96f0ac2ad4b255b6b4ba5e7f682cc0b0a85ea1fcce685909c45c30a82e52
+ARG NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256=1ff52425b966497831e911eb89e7707238d7a03e1839f8c941ded3eedb3216dd
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
@@ -940,7 +929,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 RUN /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py prepare-generated-config \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 30; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.3"'; \
+        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 32; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.3"'; \
     fi \
     && rm -rf /sandbox/.cache
 
@@ -987,7 +976,26 @@ RUN /usr/bin/python3 -I \
         "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256" /opt/hermes/gateway/config.py \
     | sha256sum -c -
 
+# A2A has no accepted NVIDIA/NemoClaw product scope. Keep the inbound adapter
+# disabled and remove its outbound tools from every Hermes process.
+RUN git -C /opt/hermes apply --check \
+        --include=plugins/platforms/a2a/plugin.yaml \
+        --include=plugins/platforms/a2a/__init__.py \
+        /opt/nemoclaw-hermes-config/a2a-neutral.patch \
+    && git -C /opt/hermes apply \
+        --include=plugins/platforms/a2a/plugin.yaml \
+        --include=plugins/platforms/a2a/__init__.py \
+        /opt/nemoclaw-hermes-config/a2a-neutral.patch \
+    && ! grep -Fq 'provides_tools:' /opt/hermes/plugins/platforms/a2a/plugin.yaml \
+    && ! grep -Fq 'from .tools import register_tools' /opt/hermes/plugins/platforms/a2a/__init__.py \
+    && HERMES_HOME=/sandbox/.hermes /opt/hermes/.venv/bin/python -I -c \
+        'from hermes_cli.plugins import discover_plugins; from tools.registry import registry; discover_plugins(); assert registry.get_tool_names_for_toolset("a2a") == []; assert not any(name.startswith("a2a_") for name in registry.get_all_tool_names())' \
+    && rm /opt/nemoclaw-hermes-config/a2a-neutral.patch
+
 RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        A2A_PORT=9900 \
+        BUZZ_RELAY_URL=https://nemoclaw-hostile.invalid \
+        BUZZ_PRIVATE_KEY=nemoclaw-hostile \
         GOOGLE_CHAT_PROJECT_ID=nemoclaw-hostile \
         GOOGLE_CHAT_SUBSCRIPTION_NAME=projects/nemoclaw-hostile/subscriptions/nemoclaw-hostile \
         GOOGLE_CHAT_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"nemoclaw-hostile"}' \

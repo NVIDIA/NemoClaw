@@ -452,11 +452,7 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 COPY agents/hermes/agent-browser-runtime/package.json \
     agents/hermes/agent-browser-runtime/package-lock.json \
-    /tmp/nemoclaw-agent-browser-runtime/
-COPY scripts/checks/materialize-locked-npm-cache-seed.mts /tmp/nemoclaw-agent-browser-cache/checks/
-COPY scripts/lib/reviewed-npm-archive.mts \
-    scripts/lib/seed-reviewed-npm-cache.mts \
-    /tmp/nemoclaw-agent-browser-cache/lib/
+    /opt/nemoclaw-agent-browser-runtime/
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
 RUN mkdir -p /opt/hermes \
@@ -630,49 +626,49 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 
-# Hermes 0.20.6 removed agent-browser from its root dependency graph. Prove
-# that the patched source selects the exact npx fallback. Install the reviewed
-# lockfile once to populate the sandbox-owned cache, then prove the cached
-# package works without network access.
+# Hermes 0.20.6 removed agent-browser from its root dependency graph. Install
+# the reviewed lockfile into an immutable root-owned runtime so browser
+# credentials never cross a sandbox-writable executable boundary.
 RUN HOME=/sandbox \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -c \
         'from tools import browser_tool; assert browser_tool.AGENT_BROWSER_NPX_SPEC == "agent-browser@0.26.0"; assert browser_tool._find_agent_browser() == browser_tool.NPX_AGENT_BROWSER_SENTINEL'
-RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
-    && install -o sandbox -g sandbox -m 0400 /dev/null \
-        /tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
-    && install -o sandbox -g sandbox -m 0400 /dev/null \
-        /tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
-    && HOME=/sandbox npm_config_cache=/sandbox/.npm \
+RUN install -o root -g root -m 0400 /dev/null \
+        /tmp/nemoclaw-agent-browser-userconfig \
+    && install -o root -g root -m 0400 /dev/null \
+        /tmp/nemoclaw-agent-browser-globalconfig \
+    && HOME=/root npm_config_cache=/root/.npm \
         npm_config_registry=https://registry.npmjs.org/ \
-        npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
-        npm_config_globalconfig=/tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
-        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        npm_config_userconfig=/tmp/nemoclaw-agent-browser-userconfig \
+        npm_config_globalconfig=/tmp/nemoclaw-agent-browser-globalconfig \
         /usr/local/bin/npm ci \
-            --prefix /tmp/nemoclaw-agent-browser-runtime \
+            --prefix /opt/nemoclaw-agent-browser-runtime \
             --ignore-scripts --no-audit --no-fund \
-    && HOME=/sandbox \
-        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        /usr/local/bin/node --experimental-strip-types \
-            /tmp/nemoclaw-agent-browser-cache/lib/seed-reviewed-npm-cache.mts \
-            --packuments-only \
-            --lockfile /tmp/nemoclaw-agent-browser-runtime/package-lock.json \
-            --cache /sandbox/.npm \
-            --registry-origin https://registry.npmjs.org/ \
-    && rm -rf /tmp/nemoclaw-agent-browser-runtime/node_modules \
-        /tmp/nemoclaw-agent-browser-cache
+    && agent_browser_install_version="$( \
+        /opt/nemoclaw-agent-browser-runtime/node_modules/.bin/agent-browser --version \
+    )" \
+    && test "$agent_browser_install_version" = 'agent-browser 0.26.0' \
+    && chown -R root:root /opt/nemoclaw-agent-browser-runtime \
+    && chmod -R go-w /opt/nemoclaw-agent-browser-runtime \
+    && ln -s /opt/nemoclaw-agent-browser-runtime/node_modules/.bin/agent-browser \
+        /usr/local/bin/agent-browser \
+    && rm -rf /root/.npm \
+        /tmp/nemoclaw-agent-browser-userconfig \
+        /tmp/nemoclaw-agent-browser-globalconfig
 RUN --network=none agent_browser_version="$( \
-        HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
-            npm_config_registry=https://registry.npmjs.org/ \
-            npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
-            npm_config_globalconfig=/tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
-            npm_config_ignore_scripts=true \
-            /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-            /usr/local/bin/npx --ignore-scripts --prefer-offline -y \
-            agent-browser@0.26.0 --version \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+            /usr/local/bin/agent-browser --version \
     )" \
     && test "${agent_browser_version}" = 'agent-browser 0.26.0' \
-    && rm -rf /tmp/nemoclaw-agent-browser-runtime
+    && test "$(readlink /usr/local/bin/agent-browser)" = \
+        '/opt/nemoclaw-agent-browser-runtime/node_modules/.bin/agent-browser' \
+    && ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /bin/sh -c 'printf unsafe >> /opt/nemoclaw-agent-browser-runtime/node_modules/agent-browser/bin/agent-browser.js' \
+    && ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /bin/sh -c 'rm /usr/local/bin/agent-browser' \
+    && HOME=/sandbox /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -c \
+        'from tools import browser_tool; assert browser_tool._find_agent_browser() == "/usr/local/bin/agent-browser"'
 
 RUN /usr/local/bin/hermes --version \
     && /usr/local/bin/hermes acp --check \

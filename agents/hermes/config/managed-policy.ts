@@ -54,7 +54,9 @@ export const MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS = [
 // must explicitly disable the complete installed surface, while keeping this
 // list separate from the supported/activatable contract above.
 export const MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS = [
+  "a2a",
   "bluebubbles",
+  "buzz",
   "dingtalk",
   "discord",
   "email",

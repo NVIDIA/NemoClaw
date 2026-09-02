@@ -42,7 +42,6 @@ export type ReviewedNpmCacheSeedRequest = Readonly<{
 }>;
 
 type LockedPackage = Readonly<{
-  bin?: Readonly<Record<string, unknown>>;
   bundleDependencies?: readonly string[];
   dependencies?: Readonly<Record<string, unknown>>;
   hasShrinkwrap?: true;
@@ -128,7 +127,6 @@ function readLockedPackages(
         : requireObject(value, `reviewed npm cache seed ${packageSpec} ${field}`);
     };
     locked.push({
-      bin: optionalRecord("bin"),
       ...(bundleDependencies ? { bundleDependencies: bundleDependencies as string[] } : {}),
       dependencies: optionalRecord("dependencies"),
       ...(record.hasShrinkwrap === true ? { hasShrinkwrap: true as const } : {}),
@@ -295,7 +293,6 @@ export async function seedReviewedNpmCache(
 
     if (!request.tarballsOnly) {
       const version = {
-        ...(entry.bin ? { bin: entry.bin } : {}),
         ...(entry.bundleDependencies ? { bundleDependencies: entry.bundleDependencies } : {}),
         ...(entry.dependencies ? { dependencies: entry.dependencies } : {}),
         dist: { integrity: entry.integrity, tarball: entry.resolved },

@@ -266,10 +266,15 @@ print(json.dumps({"changed": changed, "replayed": replayed, "stores": stores, "s
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(observed.changed).toBe(2);
-      expect(observed.replayed).toBe(0);
-      expect(observed.saved.map(({ home }) => home)).toEqual(["default", "named"]);
+      expect(observed.replayed).toBe(2);
+      expect(observed.saved.map(({ home }) => home)).toEqual([
+        "default",
+        "named",
+        "default",
+        "named",
+      ]);
       expect(observed.stores.default.find((job) => job.id === "held")?.next_run_at).toBe(
-        "2026-08-30T12:00:02+00:00",
+        "2026-08-30T12:00:07+00:00",
       );
       expect(observed.stores.default.find((job) => job.id === "future")?.next_run_at).toBe(
         "2026-08-30T12:05:00+00:00",
@@ -281,7 +286,7 @@ print(json.dumps({"changed": changed, "replayed": replayed, "stores": stores, "s
         "2026-08-30T11:55:00+00:00",
       );
       expect(observed.stores.named.find((job) => job.id === "named-held")?.next_run_at).toBe(
-        "2026-08-30T12:00:02+00:00",
+        "2026-08-30T12:00:07+00:00",
       );
       expect(
         observed.stores.default.find((job) => job.id === "held")?.nemoclaw_restore_rearm_gate,

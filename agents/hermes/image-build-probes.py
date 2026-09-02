@@ -213,7 +213,7 @@ def verify_neutral_platform_inertness() -> None:
     finally:
         socket.socket.connect = original_connect
         socket.create_connection = original_create_connection
-    for name in ("google_chat", "whatsapp_cloud"):
+    for name in ("a2a", "buzz", "google_chat", "whatsapp_cloud"):
         platform = Platform(name)
         platform_config = config.platforms.get(platform)
         assert platform_config is not None, name
