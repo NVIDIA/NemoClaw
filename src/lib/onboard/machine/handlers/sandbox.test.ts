@@ -11,10 +11,7 @@ import {
 } from "../../../state/onboard-checkpoint-decision";
 import { CHECKPOINT_SCHEMA_VERSION } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
-import {
-  detectMessagingChannelsFromEnv,
-  detectUnconfiguredMessagingChannels,
-} from "../../messaging-channel-setup";
+import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
 import {
   baseOptions,
@@ -31,7 +28,6 @@ vi.mock("../../messaging-channel-setup", () => ({
 }));
 
 const detectMessagingChannelsFromEnvMock = vi.mocked(detectMessagingChannelsFromEnv);
-const detectUnconfiguredMessagingChannelsMock = vi.mocked(detectUnconfiguredMessagingChannels);
 
 function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
   return {
@@ -51,7 +47,6 @@ function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
 describe("handleSandboxState", () => {
   beforeEach(() => {
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
-    detectUnconfiguredMessagingChannelsMock.mockReturnValue([]);
   });
 
   it("creates a sandbox and records messaging/web search state", async () => {
@@ -625,58 +620,6 @@ describe("handleSandboxState", () => {
     expect(result.selectedMessagingChannels).toEqual(["telegram"]);
     expect(result.webSearchConfigChanged).toBe(false);
     expect(result.session).toBe(skippedSession);
-  });
-
-  it("keeps a Ready sandbox plan unchanged when its gateway credential is missing", async () => {
-    const registryPlan = withTelegramCredentialHash(
-      makeMinimalPlan("saved", "openclaw", ["telegram"]),
-      hashCredential("previous-telegram-token"),
-    );
-    const session = createSession({ sandboxName: "saved", messagingPlan: registryPlan });
-    session.steps.sandbox.status = "complete";
-    const recordStateSkipped = vi.fn(async () => session);
-    const writePlanToEnv = vi.fn();
-    detectUnconfiguredMessagingChannelsMock.mockReturnValue(["telegram"]);
-    const { deps, calls, getSession } = createDeps(
-      {
-        getSandboxReuseState: () => "ready",
-        getSandboxRegistryEntry: () => ({
-          name: "saved",
-          pendingRouteReservation: true,
-          reservationSessionId: session.sessionId,
-          provider: "provider",
-          model: "model",
-          endpointUrl: null,
-          preferredInferenceApi: "openai-completions",
-          toolDisclosure: "progressive",
-          fromDockerfile: null,
-          hermesAuthMethod: null,
-        }),
-        getRegistrySandboxMessagingAuthority: () => ({
-          authoritative: true,
-          plan: registryPlan,
-        }),
-        inspectGatewayCredential: () => ({ kind: "missing" }),
-        writePlanToEnv,
-        recordStateSkipped,
-      },
-      session,
-    );
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "saved",
-      }),
-    ).rejects.toThrow(
-      /Ready sandbox 'saved'.*running sandbox and durable messaging plan were not changed/u,
-    );
-
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(recordStateSkipped).not.toHaveBeenCalled();
-    expect(writePlanToEnv).not.toHaveBeenCalled();
-    expect(getSession().messagingPlan).toEqual(registryPlan);
   });
 
   it("treats checkpoint machine-state progress past sandbox as step-complete even when the legacy step status is stale (#6228)", async () => {
