@@ -21,16 +21,6 @@ vi.mock("../runner", () => ({
 }));
 
 vi.mock("../policy", () => ({
-  buildPolicyGetCommand: vi.fn((name) => ["openshell", "policy", "get", "--base", name]),
-  buildPolicySetCommand: vi.fn((file, name) => [
-    "openshell",
-    "policy",
-    "set",
-    "--policy",
-    file,
-    "--wait",
-    name,
-  ]),
   parseCurrentPolicy: vi.fn((raw) => raw || ""),
   PERMISSIVE_POLICY_PATH: "/mock/permissive.yaml",
   resolvePermissivePolicyPath: vi.fn(() => "/mock/permissive.yaml"),

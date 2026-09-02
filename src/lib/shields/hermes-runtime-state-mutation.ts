@@ -23,6 +23,17 @@ import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provi
 import { prepareAgentDefinitionProtectionTransitionPlan } from "../onboard/runtime-provider/state-mutation";
 import { resolveCurrentAgentDefinition } from "../sandbox/agent-config";
 import type { SandboxEntry } from "../state/registry/types";
+import { parseLiveSandboxEntries } from "../runtime-recovery";
+
+export const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
+
+/** Parse the Hermes sandbox phase from OpenShell sandbox-list output. */
+export function parseHermesRuntimeProviderSandboxPhase(
+  sandboxName: string,
+  output: string,
+): string | null {
+  return parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null;
+}
 
 export const HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH =
   "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json";
