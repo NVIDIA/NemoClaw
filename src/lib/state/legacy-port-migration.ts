@@ -17,9 +17,11 @@ import {
   registryEntryGatewayPort,
 } from "./gateway-registry";
 import {
+  classifyOnboardLockContents,
   listRetainedSandboxRecoveryRecords,
-  onboardLockHolderStillMatches,
   retainedSandboxRecoveryFile,
+  type OnboardLockDisposition,
+  type OnboardLockRecord,
   type RetainedSandboxRecoveryRecord,
 } from "./onboard-session/index";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
@@ -37,9 +39,6 @@ const STALE_MIGRATION_INTENT_PATTERN =
   /^\.gateway-state-migration\.(?:preparing|completed)\.[1-9][0-9]*\.[1-9][0-9]*$/;
 const MAX_MIGRATABLE_JSON_BYTES = 16 * 1024 * 1024;
 const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
-// Mirrors MALFORMED_STALE_SECONDS in ./onboard-session so both readers of
-// onboard.lock age an owner-less body out on the same schedule.
-const ONBOARD_LOCK_SETTLING_MS = 30_000;
 const LEGACY_BUNDLE_ENTRIES = [
   "backups",
   "blueprints",
@@ -739,32 +738,9 @@ function acquireDirectoryLock(home: string, lock: string): string {
   throw migrationError(`could not acquire ${lock}`);
 }
 
-interface OnboardLockRecord {
-  readonly pid: number;
-  readonly startedAt: string | null;
-  readonly command: string | null;
-}
-
-type OnboardLockDisposition =
+type ObservedOnboardLockDisposition =
   | { readonly state: "clear" }
-  | { readonly state: "held"; readonly record: OnboardLockRecord }
-  | { readonly state: "settling" };
-
-/**
- * Read the owner record an onboard writer serializes into onboard.lock. A pid
- * that is not a positive integer leaves no usable owner, because isProcessAlive
- * forwards it to process.kill, where 0 signals the whole process group.
- */
-function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
-  if (!isObjectRecord(value)) return null;
-  const { pid, startedAt, command } = value;
-  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
-  return {
-    pid,
-    startedAt: typeof startedAt === "string" ? startedAt : null,
-    command: typeof command === "string" ? command : null,
-  };
-}
+  | Exclude<OnboardLockDisposition, { readonly state: "stale" }>;
 
 /**
  * Decide what a leftover onboard.lock proves about the run that wrote it.
@@ -783,7 +759,7 @@ function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
  * reclaims it under an inode check, and unlinking a foreign path here would
  * reopen the race that check closes.
  */
-function classifyOnboardLock(home: string, activeLock: string): OnboardLockDisposition {
+function classifyOnboardLock(home: string, activeLock: string): ObservedOnboardLockDisposition {
   const stat = lstatNoFollow(home, activeLock);
   if (!stat) return { state: "clear" };
   if (!stat.isFile()) throw migrationError(`${activeLock} is not a regular file`);
@@ -796,7 +772,7 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
     if (isErrnoException(error) && error.code === "ENOENT") return { state: "clear" };
     throw error;
   }
-  let record: OnboardLockRecord | null = null;
+  let contents: string | null = null;
   let writtenAtMs: number | null = null;
   try {
     const beforeRead = lockFile.stat();
@@ -810,11 +786,9 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
       return { state: "settling" };
     }
     writtenAtMs = afterRead.mtimeMs;
-    record = parseOnboardLockRecord(JSON.parse(bytes.toString("utf8")));
+    contents = bytes.toString("utf8");
   } catch (error) {
-    if (error instanceof SyntaxError) {
-      // A stable owner-less body ages out on the writer's cleanup schedule.
-    } else if (error instanceof RangeError) {
+    if (error instanceof RangeError) {
       throw migrationError(
         `${activeLock} exceeds the ${String(MAX_ONBOARD_LOCK_BYTES)} byte onboarding lock limit`,
       );
@@ -832,13 +806,9 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
     lockFile.close();
   }
 
-  if (writtenAtMs === null) return { state: "settling" };
-  if (record === null) {
-    return Date.now() - writtenAtMs > ONBOARD_LOCK_SETTLING_MS
-      ? { state: "clear" }
-      : { state: "settling" };
-  }
-  return onboardLockHolderStillMatches(record) ? { state: "held", record } : { state: "clear" };
+  if (writtenAtMs === null || contents === null) return { state: "settling" };
+  const disposition = classifyOnboardLockContents(contents, writtenAtMs);
+  return disposition.state === "stale" ? { state: "clear" } : disposition;
 }
 
 function describeOnboardLockHolder(record: OnboardLockRecord): string {

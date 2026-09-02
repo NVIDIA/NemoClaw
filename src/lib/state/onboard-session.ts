@@ -54,13 +54,15 @@ import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
-  onboardLockHolderStillMatches,
+  classifyOnboardLockContents,
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
+  type OnboardLockDisposition,
+  type OnboardLockRecord,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
 } from "./onboard-session/index";
@@ -332,11 +334,7 @@ export interface WechatConfig {
   userId?: string;
 }
 
-export interface LockInfo {
-  pid: number;
-  startedAt: string | null;
-  command: string | null;
-}
+export type LockInfo = OnboardLockRecord;
 
 export interface LockResult {
   acquired: boolean;
@@ -764,15 +762,6 @@ function parseMachineSnapshot(
 function parseStoredCheckpoint(value: unknown): OnboardCheckpoint | null {
   const inspected = inspectCheckpoint(value);
   return inspected.status === "loaded" ? inspected.checkpoint : null;
-}
-
-function parseLockInfo(value: SessionJsonValue | undefined): LockInfo | null {
-  if (!isObject(value) || typeof value.pid !== "number") return null;
-  return {
-    pid: value.pid,
-    startedAt: readString(value.startedAt),
-    command: readString(value.command),
-  };
 }
 
 // redactSensitiveText and redactUrl imported from ./redact (#2381).
@@ -1339,18 +1328,9 @@ export function clearSession(): void {
 
 // ── Locking ──────────────────────────────────────────────────────
 
-function parseLockFile(contents: string): LockInfo | null {
-  try {
-    return parseLockInfo(JSON.parse(contents));
-  } catch {
-    return null;
-  }
-}
-
 interface LockFileSnapshot {
-  info: LockInfo | null;
+  disposition: OnboardLockDisposition;
   inode: bigint;
-  mtimeMs: number;
 }
 
 function readLockFileSnapshot(): LockFileSnapshot {
@@ -1358,19 +1338,19 @@ function readLockFileSnapshot(): LockFileSnapshot {
   try {
     const stat = fs.fstatSync(fd, { bigint: true });
     if (!stat.isFile()) {
-      return { info: null, inode: stat.ino, mtimeMs: Number(stat.mtimeMs) };
+      return { disposition: { state: "settling" }, inode: stat.ino };
     }
     return {
-      info: parseLockFile(String(fs.readFileSync(fd, "utf8"))),
+      disposition: classifyOnboardLockContents(
+        String(fs.readFileSync(fd, "utf8")),
+        Number(stat.mtimeMs),
+      ),
       inode: stat.ino,
-      mtimeMs: Number(stat.mtimeMs),
     };
   } finally {
     fs.closeSync(fd);
   }
 }
-
-const MALFORMED_STALE_SECONDS = 30;
 
 // File descriptor we hold across the lifetime of an acquired lock. On
 // release, fstat(fd).ino vs stat(path).ino confirms the on-disk path
@@ -1482,27 +1462,18 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         }
         throw readError;
       }
-      const { info: existing, inode: staleInode } = snapshot;
-      if (!existing) {
-        // Malformed lock file. If the file is very recent (<30 s), a
-        // concurrent process may be mid-write — leave it and retry.
-        // Otherwise the file is stale debris from a crash between
-        // openSync("wx") and writeSync() — remove it so subsequent
-        // onboard runs are not permanently blocked (#2765).
-        const ageMs = Date.now() - snapshot.mtimeMs;
-        if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
-          unlinkIfInodeMatches(LOCK_FILE, staleInode);
-        }
+      const { disposition, inode: staleInode } = snapshot;
+      if (disposition.state === "settling") {
         continue;
       }
-      if (onboardLockHolderStillMatches(existing)) {
+      if (disposition.state === "held") {
         return {
           acquired: false,
           lockFile: LOCK_FILE,
           stale: false,
-          holderPid: existing.pid,
-          holderStartedAt: existing.startedAt,
-          holderCommand: existing.command,
+          holderPid: disposition.record.pid,
+          holderStartedAt: disposition.record.startedAt,
+          holderCommand: disposition.record.command,
         };
       }
 
@@ -1655,8 +1626,8 @@ export function releaseOnboardLock(): void {
       if (isErrnoException(error) && error.code === "ENOENT") return;
       throw error;
     }
-    if (!snapshot.info) return;
-    if (snapshot.info.pid !== process.pid) return;
+    if (snapshot.disposition.state !== "held") return;
+    if (snapshot.disposition.record.pid !== process.pid) return;
     unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
   } catch {
     return;

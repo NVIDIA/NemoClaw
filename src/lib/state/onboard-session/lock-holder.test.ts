@@ -1,0 +1,59 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { classifyOnboardLockContents } from "./lock-holder";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("onboarding lock classification", () => {
+  it.each([
+    ["malformed JSON", "{not-json"],
+    ["zero PID", JSON.stringify({ pid: 0 })],
+    ["negative PID", JSON.stringify({ pid: -1 })],
+    ["fractional PID", JSON.stringify({ pid: 1.5 })],
+  ])("ages a stable owner-less record from settling to stale [%s]", (_case, contents) => {
+    const nowMs = 100_000;
+
+    expect(classifyOnboardLockContents(contents, nowMs - 10_000, nowMs)).toEqual({
+      state: "settling",
+    });
+    expect(classifyOnboardLockContents(contents, nowMs - 31_000, nowMs)).toEqual({
+      state: "stale",
+    });
+  });
+
+  it("classifies a live valid owner as held", () => {
+    const contents = JSON.stringify({
+      pid: process.pid,
+      startedAt: "2026-09-01T00:00:00.000Z",
+      command: "nemoclaw onboard",
+    });
+
+    expect(classifyOnboardLockContents(contents, 0, 100_000)).toEqual({
+      state: "held",
+      record: {
+        pid: process.pid,
+        startedAt: "2026-09-01T00:00:00.000Z",
+        command: "nemoclaw onboard",
+      },
+    });
+  });
+
+  it("classifies a valid record whose owner departed as stale", () => {
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("process not found"), { code: "ESRCH" });
+    });
+
+    expect(
+      classifyOnboardLockContents(
+        JSON.stringify({ pid: 424_242, startedAt: null, command: null }),
+        90_000,
+        100_000,
+      ),
+    ).toEqual({ state: "stale" });
+  });
+});

@@ -519,7 +519,7 @@ describe("legacy non-default gateway state migration", () => {
   });
 
   it.each(ONBOARD_LOCK_ROOTS)(
-    "refuses recovery-only migration while the %s onboarding lock is still being written",
+    "refuses recovery-only migration for a recent owner-less %s onboarding lock",
     (_scope, root) => {
       const home = makeHome();
       const shared = path.join(home, ".nemoclaw");

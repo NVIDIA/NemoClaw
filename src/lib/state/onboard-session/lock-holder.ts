@@ -10,6 +10,17 @@ export interface OnboardLockHolderIdentity {
   readonly startedAt: string | null;
 }
 
+export interface OnboardLockRecord extends OnboardLockHolderIdentity {
+  readonly command: string | null;
+}
+
+export type OnboardLockDisposition =
+  | { readonly state: "held"; readonly record: OnboardLockRecord }
+  | { readonly state: "settling" }
+  | { readonly state: "stale" };
+
+export const ONBOARD_LOCK_SETTLING_MS = 30_000;
+
 function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -66,4 +77,41 @@ export function onboardLockHolderStillMatches(lock: OnboardLockHolderIdentity): 
   // the currently-live PID started after the lock timestamp, the PID was reused
   // and the lock is stale even though kill(pid, 0) succeeds.
   return processStartMs <= lockStartedMs + 1000;
+}
+
+function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const { pid, startedAt, command } = value as Record<string, unknown>;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+  return {
+    pid,
+    startedAt: typeof startedAt === "string" ? startedAt : null,
+    command: typeof command === "string" ? command : null,
+  };
+}
+
+/**
+ * Classify a stable snapshot of an onboarding lock. Filesystem readers own
+ * their race protections, while this function is the single policy owner for
+ * the persisted record, malformed-write grace period, and holder identity.
+ */
+export function classifyOnboardLockContents(
+  contents: string,
+  modifiedAtMs: number,
+  nowMs = Date.now(),
+): OnboardLockDisposition {
+  let value: unknown;
+  try {
+    value = JSON.parse(contents);
+  } catch {
+    value = null;
+  }
+
+  const record = parseOnboardLockRecord(value);
+  if (record === null) {
+    return nowMs - modifiedAtMs > ONBOARD_LOCK_SETTLING_MS
+      ? { state: "stale" }
+      : { state: "settling" };
+  }
+  return onboardLockHolderStillMatches(record) ? { state: "held", record } : { state: "stale" };
 }
