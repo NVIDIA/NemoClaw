@@ -30,6 +30,7 @@ import {
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
 import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
+import { applyFakePolicy } from "../live/openclaw-pairing-helpers.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
@@ -329,8 +330,7 @@ function fakeDockerHost(
       expect(["docker", "node", "podman"]).toContain(command);
       runtimeProviderId =
         command === "podman" ? "podman" : command === "docker" ? "docker" : runtimeProviderId;
-      const runtimeArgs =
-        command === "podman" && args[0] === "--url" ? args.slice(2) : args;
+      const runtimeArgs = command === "podman" && args[0] === "--url" ? args.slice(2) : args;
       const result =
         command === "node"
           ? options.proxyReady === false
@@ -432,6 +432,62 @@ async function tcpRequest(host: string, port: number, payload: string): Promise<
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("propagates caller-selected binaries through fake policy application", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return successfulCommand();
+      },
+    } as unknown as HostCliClient;
+    const allowedBinaries = ["/opt/hermes/.venv/bin/python3", "/opt/hermes/.venv/bin/python"];
+
+    await applyFakePolicy({
+      host,
+      sandboxName: "e2e-hermes-discord",
+      api: { kind: "discord-gateway", port: "43117", captureFile: "/tmp/capture.jsonl" },
+      protocol: "websocket",
+      rewrite: "websocket-credential-rewrite",
+      providerName: "e2e-hermes-discord-discord-bridge",
+      env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
+      redactions: ["test-fixture-token"],
+      artifactName: "apply-hermes-fake-discord-gateway-policy",
+      allowedBinaries,
+    });
+
+    expect(commands).toHaveLength(2);
+    expect(commands[0]?.args).toEqual([
+      "policy",
+      "update",
+      "e2e-hermes-discord",
+      "--add-endpoint",
+      "host.openshell.internal:43117:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+      "--add-allow",
+      "host.openshell.internal:43117:GET:/**",
+      "--add-allow",
+      "host.openshell.internal:43117:WEBSOCKET_TEXT:/**",
+      "--binary",
+      allowedBinaries[0],
+      "--binary",
+      allowedBinaries[1],
+      "--wait",
+    ]);
+    expect(commands[1]?.args).toEqual([
+      "-lc",
+      expect.stringContaining("--assert-binaries"),
+      "bind-fake-websocket-policy",
+      "/usr/local/bin/openshell",
+      "e2e-hermes-discord",
+      "e2e-hermes-discord-discord-bridge",
+      "host.openshell.internal",
+      "43117",
+      "websocket",
+      expect.stringMatching(/test\/e2e\/fixtures\/hermes-discord-policy-binding\.ts$/u),
+      ...allowedBinaries,
+    ]);
+  });
+
   it("rejects Docker state that publishes the credential-bearing fake API", async () => {
     const { host } = fakeDockerHost({ apiPublished: true });
     const cleanup: CleanupAction[] = [];
