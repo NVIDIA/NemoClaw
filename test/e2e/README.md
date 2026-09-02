@@ -161,8 +161,11 @@ runtime activation scenario only; it does not qualify the Hermes dependency lane
 The trusted workflow publishes `NemoClaw / Exact-base managed runtime` as a pending status on the
 candidate before either live scenario starts, then replaces it with success, failure, or error from
 the comparison receipt. A cancelled workflow leaves the status pending, which fails closed when
-the context is required. For recovery, rerun the exact failed qualification attempt or manually
-dispatch the workflow from `main` with the still-current PR identities. If the comparison reports
+the context is required. For recovery, rerun the exact failed qualification attempt. To dispatch
+the workflow manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
+its current head SHA, `base_sha` to its current base SHA, and `candidate_run_id` plus
+`candidate_run_attempt` to the failed managed-image workflow run ID and attempt. That source run
+must belong to the same open PR and current candidate SHA. If the comparison reports
 `base evidence validation failed`, use the retained receipt and evidence artifact IDs plus the
 bounded cause (`metadata lookup`, `receipt download or validation`, or `evidence download or digest
 validation`) to repair or rerun the affected producer. Do not substitute artifacts from another

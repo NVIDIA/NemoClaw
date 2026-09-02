@@ -23,7 +23,6 @@ const WORKFLOW_NAME = "Security / Package OpenShell SDK for PR";
 const WORKFLOW_PATH = `.github/workflows/${WORKFLOW_FILE}`;
 const PRODUCER_KIND = "nemoclaw-openshell-sdk-producer-v1";
 const SELECTION_KIND = "nemoclaw-openshell-sdk-selection-v1";
-const BOOTSTRAP_SELECTION_KIND = "nemoclaw-openshell-sdk-bootstrap-selection-v1";
 const RECEIPT_FILE = "receipt.json";
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -61,25 +60,6 @@ export interface OpenShellSdkSelectionReceipt extends Omit<OpenShellSdkProducerR
   };
 }
 
-export interface OpenShellSdkBootstrapSelectionReceipt {
-  readonly kind: typeof BOOTSTRAP_SELECTION_KIND;
-  readonly pullRequest: number;
-  readonly candidate: { readonly repository: typeof REPOSITORY; readonly sha: string };
-  readonly base: { readonly repository: typeof REPOSITORY; readonly sha: string };
-  readonly workflow: {
-    readonly repository: typeof REPOSITORY;
-    readonly path: typeof WORKFLOW_PATH;
-  };
-  readonly run: { readonly id: number; readonly attempt: number };
-  readonly package: { readonly fileName: string; readonly digest: string; readonly size: number };
-  readonly artifact: {
-    readonly id: number;
-    readonly name: string;
-    readonly digest: string;
-    readonly size: number;
-  };
-}
-
 interface ResolveInput {
   readonly baseSha: string;
   readonly candidateSha: string;
@@ -87,10 +67,6 @@ interface ResolveInput {
   readonly pullRequest: number;
   readonly selectionPath: string;
   readonly token: string;
-}
-
-interface ResolveBootstrapInput extends ResolveInput {
-  readonly expectedPackageName: string;
 }
 
 interface ResolveOptions {
@@ -148,15 +124,6 @@ function packageName(value: unknown): string {
 
 function packageDigest(bytes: Buffer): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-}
-
-function selectionArtifact(identity: BoundArtifactIdentity) {
-  return {
-    id: identity.id,
-    name: identity.name,
-    digest: identity.digest,
-    size: identity.size,
-  };
 }
 
 function producerArtifactName(candidateSha: string, runId: number, runAttempt: number): string {
@@ -542,117 +509,6 @@ export async function resolveOpenShellSdkPackage(
   return selection;
 }
 
-function materializeBootstrapArchive(
-  archive: Buffer,
-  expectedPackageName: string,
-  outputDirectory: string,
-): OpenShellSdkBootstrapSelectionReceipt["package"] {
-  const fileName = packageName(expectedPackageName);
-  const entries = listValidatedArtifactZipEntries(archive, { maxEntries: 2 });
-  if (!entries || JSON.stringify(entries) !== JSON.stringify([fileName])) {
-    throw new Error("bootstrap OpenShell SDK artifact must contain only the expected package");
-  }
-  const bytes = readValidatedArtifactZipEntryBytes(archive, fileName, {
-    maxBytes: MAX_PACKAGE_BYTES,
-    maxEntries: 2,
-  });
-  if (!bytes || bytes.length < 1) throw new Error("bootstrap OpenShell SDK package is invalid");
-  const destination = path.resolve(outputDirectory);
-  fs.mkdirSync(destination, { mode: 0o700, recursive: true });
-  fs.writeFileSync(path.join(destination, fileName), bytes, { flag: "wx", mode: 0o600 });
-  return { fileName, digest: packageDigest(bytes), size: bytes.length };
-}
-
-/**
- * Bridge the one PR that introduces producer receipts. This path is selected
- * only when the authenticated PR base does not contain the receipt resolver.
- */
-export async function resolveBootstrapOpenShellSdkPackage(
-  input: ResolveBootstrapInput,
-  options: ResolveOptions = {},
-): Promise<OpenShellSdkBootstrapSelectionReceipt> {
-  const baseSha = sha(input.baseSha, "base SHA");
-  const candidateSha = sha(input.candidateSha, "candidate SHA");
-  const pullRequest = positiveInteger(input.pullRequest, "pull request number");
-  const expectedPackageName = packageName(input.expectedPackageName);
-  if (!input.token) throw new Error("GITHUB_TOKEN is required");
-  const waitMilliseconds = options.waitMilliseconds ?? 420_000;
-  const pollMilliseconds = options.pollMilliseconds ?? 5_000;
-  if (
-    !Number.isSafeInteger(waitMilliseconds) ||
-    waitMilliseconds < 0 ||
-    waitMilliseconds > 420_000 ||
-    !Number.isSafeInteger(pollMilliseconds) ||
-    pollMilliseconds < 1 ||
-    pollMilliseconds > 30_000
-  ) {
-    throw new Error("OpenShell SDK bootstrap wait duration is invalid");
-  }
-  const request = options.request ?? ((apiPath: string) => githubRequest(apiPath, input.token));
-  const download =
-    options.downloadArtifact ??
-    ((identity: BoundArtifactIdentity) =>
-      downloadBoundArtifact(identity, input.token, { log: console.error }));
-  const sleep =
-    options.sleep ??
-    ((milliseconds: number) => new Promise((done) => setTimeout(done, milliseconds)));
-  validateCurrentPullRequest(await request(`/repos/${REPOSITORY}/pulls/${pullRequest}`), {
-    baseSha,
-    candidateSha,
-    pullRequest,
-  });
-  const workflowId = validateWorkflow(
-    await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
-  );
-  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request_target&head_sha=${candidateSha}&per_page=100`;
-  const deadline = Date.now() + waitMilliseconds;
-  let selected: { readonly id: number; readonly attempt: number } | null = null;
-  do {
-    selected = selectSuccessfulRun(await collectPaginated(request, runsPath, "workflow_runs"), {
-      baseSha,
-      candidateSha,
-      pullRequest,
-      workflowId,
-    });
-    if (selected || Date.now() >= deadline) break;
-    await sleep(Math.min(pollMilliseconds, Math.max(0, deadline - Date.now())));
-  } while (true);
-  if (!selected) throw new Error("bootstrap OpenShell SDK producer is missing");
-
-  const artifactName = `openshell-sdk-${candidateSha}`;
-  const metadata = await request(
-    `/repos/${REPOSITORY}/actions/runs/${selected.id}/artifacts?name=${encodeURIComponent(artifactName)}&per_page=100`,
-  );
-  const identity = bindNamedExactArtifact(
-    metadata,
-    { headSha: candidateSha, runAttempt: selected.attempt, runId: selected.id },
-    artifactName,
-    { maxArchiveBytes: MAX_PACKAGE_BYTES + 512 * 1024 },
-  );
-  const packageValue = materializeBootstrapArchive(
-    await download(identity),
-    expectedPackageName,
-    input.outputDirectory,
-  );
-  const selection: OpenShellSdkBootstrapSelectionReceipt = {
-    kind: BOOTSTRAP_SELECTION_KIND,
-    pullRequest,
-    candidate: { repository: REPOSITORY, sha: candidateSha },
-    base: { repository: REPOSITORY, sha: baseSha },
-    workflow: { repository: REPOSITORY, path: WORKFLOW_PATH },
-    run: { id: selected.id, attempt: selected.attempt },
-    package: packageValue,
-    artifact: selectionArtifact(identity),
-  };
-  const selectionPath = path.resolve(input.selectionPath);
-  fs.mkdirSync(path.dirname(selectionPath), { mode: 0o700, recursive: true });
-  fs.writeFileSync(selectionPath, `${JSON.stringify(selection)}\n`, {
-    flag: "wx",
-    mode: 0o600,
-  });
-  return selection;
-}
-
 function requiredInteger(value: string | undefined, label: string): number {
   if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error(`${label} is required`);
   return positiveInteger(Number(value), label);
@@ -689,21 +545,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     process.stdout.write(`${selection.package.fileName}\n`);
     return;
   }
-  if (argv[0] === "resolve-bootstrap") {
-    if (argv.length !== 3) throw new Error("expected package directory and selection path");
-    const selection = await resolveBootstrapOpenShellSdkPackage({
-      baseSha: env.BASE_SHA ?? "",
-      candidateSha: env.CANDIDATE_SHA ?? "",
-      expectedPackageName: env.EXPECTED_PACKAGE_NAME ?? "",
-      outputDirectory: argv[1],
-      pullRequest: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
-      selectionPath: argv[2],
-      token: env.GITHUB_TOKEN ?? "",
-    });
-    process.stdout.write(`${selection.package.fileName}\n`);
-    return;
-  }
-  throw new Error("expected create, resolve, or resolve-bootstrap");
+  throw new Error("expected create or resolve");
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
