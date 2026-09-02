@@ -32,6 +32,7 @@ describe("PR review advisor security boundaries", () => {
           timeoutMs: 1000,
           heartbeatMs: 1000,
           maxCaptureBytes: 1024,
+          provider: "advisor-credential-cleanup-test",
           modelId: "missing-model",
           credentialEnv,
           logPrefix: "test",
