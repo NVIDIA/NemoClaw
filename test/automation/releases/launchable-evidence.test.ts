@@ -309,6 +309,23 @@ describe("Launchable evidence inspection", () => {
       ).run.id,
     ).toBe(11);
   });
+  it("rejects newest lane-only evidence instead of accepting older success (#10798)", () => {
+    const reads: number[] = [];
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        {
+          listRuns: () => [run(10, "2026-06-01T00:00:00Z"), run(11, "2026-07-01T00:00:00Z")],
+          listJobs: (id) => [job(id + 10)],
+          readArtifact: (id) => {
+            reads.push(id);
+            return id === 11 ? { "lane.log": "failed preparation" } : files();
+          },
+        },
+      ),
+    ).toThrow("artifact is missing launchable-e2e.json");
+    expect(reads).toEqual([11]);
+  });
   it("rejects the newest failed job instead of accepting older success (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({

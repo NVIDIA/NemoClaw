@@ -35,6 +35,7 @@ export interface WorkflowJob {
   html_url: string;
 }
 export interface ArtifactFiles {
+  "lane.log"?: string;
   "workspace-recovery.json"?: string;
   "launchable-e2e.json"?: string;
   "full-e2e.log"?: string;
@@ -391,11 +392,20 @@ export function createGitHubReader(): EvidenceReader {
     readArtifact(runId, name) {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-launchable-evidence-"));
       try {
-        execFileSync("gh", artifactDownloadArgs(runId, name, directory), {
-          timeout: 120_000,
-        });
+        try {
+          execFileSync("gh", artifactDownloadArgs(runId, name, directory), { timeout: 120_000 });
+        } catch (error) {
+          const stderr =
+            typeof error === "object" && error !== null && "stderr" in error
+              ? String(error.stderr)
+              : "";
+          if (/no valid artifacts found|no artifacts found|artifact not found/iu.test(stderr))
+            return {};
+          throw error;
+        }
         const result: ArtifactFiles = {};
         for (const file of [
+          "lane.log",
           "workspace-recovery.json",
           "launchable-e2e.json",
           "full-e2e.log",
