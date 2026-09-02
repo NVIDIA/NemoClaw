@@ -269,7 +269,7 @@ export class RuntimePhaseFixture {
   ) {}
 
   async expectInferenceLocalModels(
-    instance: NemoClawInstance,
+    instance: Pick<NemoClawInstance, "sandboxName">,
     options: InferenceRuntimeRouteOptions = {},
   ): Promise<InferenceRuntimeProbeResult> {
     const endpoint = inferenceRouteUrl(options.route, options.path ?? MODELS_PATH);
@@ -294,7 +294,7 @@ export class RuntimePhaseFixture {
   }
 
   async expectInferenceLocalChatCompletion(
-    instance: NemoClawInstance,
+    instance: Pick<NemoClawInstance, "sandboxName">,
     options: InferenceRuntimeChatOptions & {
       readonly route?: InferenceRoute;
     } = {},
@@ -326,7 +326,7 @@ export class RuntimePhaseFixture {
   }
 
   async expectInferenceLocalPong(
-    instance: NemoClawInstance,
+    instance: Pick<NemoClawInstance, "sandboxName">,
     options: InferenceRuntimeChatOptions & {
       readonly attempts?: number;
       readonly retryDelayMs?: number;
@@ -358,7 +358,7 @@ export class RuntimePhaseFixture {
   }
 
   async expectInferenceLocalStatus(
-    instance: NemoClawInstance,
+    instance: Pick<NemoClawInstance, "sandboxName">,
     options: InferenceRuntimeStatusOptions = {},
   ): Promise<InferenceRuntimeProbeResult> {
     const allowedStatusCodes = options.allowedStatusCodes ?? [200];

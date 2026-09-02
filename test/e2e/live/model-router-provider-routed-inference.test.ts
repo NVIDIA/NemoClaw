@@ -4,12 +4,9 @@
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import {
-  buildProviderRoutedEnv,
-  requireModelRouterPublicKey,
-  routedCompletionReason,
-} from "./model-router-provider-routed-inference-helpers.ts";
+import { buildProviderRoutedEnv } from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
 // onboard boundary plus a valid sandbox inference.local completion.
@@ -32,13 +29,14 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+  async ({ artifacts, cleanup, host, progress, runtime, runtimeProvider, secrets }) => {
+    progress.phase("confirm routed-provider prerequisites");
     await runtimeProvider.requireAvailable({
       artifactName: "prereq-runtime-info-model-router-provider-routed",
       scenarioLabel: "provider-routed Model Router onboarding",
     });
 
-    const apiKey = requireModelRouterPublicKey(secrets);
+    const apiKey = requirePublicNvidiaInferenceKey(secrets.required("NVIDIA_API_KEY"));
 
     await artifacts.target.declare({
       id: "model-router-provider-routed-inference",
@@ -86,37 +84,18 @@ test(
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
     progress.phase("request a routed inference.local completion");
-    const payload = JSON.stringify({
-      model: "nvidia-routed",
-      messages: [{ role: "user", content: "Reply with a short greeting." }],
-      max_tokens: 128,
-    });
-    const completion = await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "curl",
-        "-sk",
-        "--max-time",
-        "90",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        payload,
-      ],
+    await runtime.expectInferenceLocalChatCompletion(
+      { sandboxName: SANDBOX_NAME },
       {
         artifactName: "sandbox-inference-local-routed-completion",
-        env: buildAvailabilityProbeEnv(),
+        curlMaxTimeSeconds: 90,
+        maxTokens: 128,
+        model: "nvidia-routed",
+        prompt: "Reply with a short greeting.",
         redactionValues: [apiKey],
         timeoutMs: 120_000,
       },
     );
-    expect(completion.exitCode, resultText(completion)).toBe(0);
-    const completionReason = routedCompletionReason(completion.stdout);
-    expect(
-      completionReason,
-      `Model Router inference.local did not return a valid chat completion: ${completion.stdout.slice(0, 500)}`,
-    ).toBe("ok");
 
     progress.phase("record the routed inference contract result");
     await artifacts.target.complete({
@@ -124,7 +103,7 @@ test(
       assertions: {
         runtimeProviderAvailable: true,
         onboardCompleted: onboard.exitCode === 0,
-        routedCompletion: completionReason === "ok",
+        routedCompletion: true,
       },
     });
   },
