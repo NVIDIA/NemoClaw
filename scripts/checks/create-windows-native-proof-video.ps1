@@ -7,9 +7,9 @@
 
 .DESCRIPTION
     Launches the real setup/install/repair/reinstall/uninstall qualification
-    in PowerShell, samples its actual evolving console output four times per
-    second, renders the scrolling console buffer, and encodes those live frames
-    to H.264 with the Windows Media Foundation-backed Windows.Media.Editing API.
+    in a real Windows console, captures the actual console and WiX installer
+    window pixels four times per second, and encodes those live frames to H.264
+    with the Windows Media Foundation-backed Windows.Media.Editing API.
 #>
 
 [CmdletBinding()]
@@ -58,103 +58,166 @@ function Resolve-RequiredFile {
     return $resolved
 }
 
-function ConvertTo-BoundedConsoleLines {
-    param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
-        [Parameter(Mandatory)][int]$MaximumCharacters
-    )
+function Initialize-NativeWindowCapture {
+    Add-Type -AssemblyName System.Drawing
+    $captureSource = @'
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Text;
 
-    $bounded = @()
-    foreach ($line in $Lines) {
-        $remaining = $line
-        while ($remaining.Length -gt $MaximumCharacters) {
-            $splitAt = $remaining.LastIndexOf(' ', $MaximumCharacters)
-            if ($splitAt -lt 24) {
-                $splitAt = $MaximumCharacters
-            }
-            $bounded += $remaining.Substring(0, $splitAt).TrimEnd()
-            $remaining = '    ' + $remaining.Substring($splitAt).TrimStart()
-        }
-        $bounded += $remaining
+public static class NemoClawNativeWindowCapture
+{
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lparam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
-    return @($bounded)
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lparam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int maximumCount);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+
+    public static IntPtr FindWindowContaining(string titleFragment, IntPtr excluded)
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows(delegate(IntPtr hwnd, IntPtr lparam)
+        {
+            if (hwnd == excluded)
+            {
+                return true;
+            }
+            int length = GetWindowTextLength(hwnd);
+            if (length <= 0)
+            {
+                return true;
+            }
+            var title = new StringBuilder(length + 1);
+            GetWindowText(hwnd, title, title.Capacity);
+            if (title.ToString().IndexOf(titleFragment, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                found = hwnd;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    public static string[] ListWindowTitles()
+    {
+        var titles = new List<string>();
+        EnumWindows(delegate(IntPtr hwnd, IntPtr lparam)
+        {
+            int length = GetWindowTextLength(hwnd);
+            if (length > 0)
+            {
+                var title = new StringBuilder(length + 1);
+                GetWindowText(hwnd, title, title.Capacity);
+                titles.Add(title.ToString());
+            }
+            return true;
+        }, IntPtr.Zero);
+        return titles.ToArray();
+    }
+
+    public static Bitmap Capture(IntPtr hwnd)
+    {
+        Rect rect;
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out rect))
+        {
+            throw new InvalidOperationException("Window handle is unavailable.");
+        }
+        int width = rect.Right - rect.Left;
+        int height = rect.Bottom - rect.Top;
+        if (width < 64 || height < 64)
+        {
+            throw new InvalidOperationException("Window is too small to record.");
+        }
+
+        var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            IntPtr hdc = graphics.GetHdc();
+            try
+            {
+                if (!PrintWindow(hwnd, hdc, 2))
+                {
+                    throw new InvalidOperationException("PrintWindow failed.");
+                }
+            }
+            finally
+            {
+                graphics.ReleaseHdc(hdc);
+            }
+        }
+        return bitmap;
+    }
+}
+'@
+    Add-Type `
+        -TypeDefinition $captureSource `
+        -Language CSharp `
+        -ReferencedAssemblies @([Drawing.Bitmap].Assembly.Location)
 }
 
-function Save-ConsoleFrame {
+function Save-ActualWindowFrame {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
-        [Parameter(Mandatory)][int]$FrameNumber,
-        [Parameter(Mandatory)][long]$ElapsedMilliseconds
+        [Parameter(Mandatory)][IntPtr]$ConsoleWindow,
+        [Parameter(Mandatory)][IntPtr]$InstallerWindow
     )
 
-    $bitmap = [Drawing.Bitmap]::new(1280, 720, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
-    $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    $titleFont = [Drawing.Font]::new('Consolas', 18, [Drawing.FontStyle]::Bold)
-    $consoleFont = [Drawing.Font]::new('Consolas', 15, [Drawing.FontStyle]::Regular)
-    $footerFont = [Drawing.Font]::new('Consolas', 11, [Drawing.FontStyle]::Regular)
-    $backgroundBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(10, 12, 16))
-    $titleBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(225, 230, 238))
-    $textBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(220, 224, 230))
-    $commandBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(102, 194, 255))
-    $passBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(94, 220, 126))
-    $hostBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(252, 210, 92))
-    $failBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(255, 108, 108))
-    $footerBrush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(145, 154, 168))
+    $consoleBitmap = [NemoClawNativeWindowCapture]::Capture($ConsoleWindow)
+    $installerBitmap = $null
+    if ($InstallerWindow -ne [IntPtr]::Zero) {
+        $installerBitmap = [NemoClawNativeWindowCapture]::Capture($InstallerWindow)
+    }
+    $frame = [Drawing.Bitmap]::new(1280, 720, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $graphics = [Drawing.Graphics]::FromImage($frame)
     try {
-        $graphics.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
-        $graphics.FillRectangle($backgroundBrush, 0, 0, 1280, 720)
-        $graphics.DrawString(
-            'PowerShell - NemoClaw native Windows ARM64 installer - LIVE',
-            $titleFont,
-            $titleBrush,
-            28,
-            18
-        )
-        $graphics.DrawLine([Drawing.Pens]::DimGray, 24, 54, 1256, 54)
+        $graphics.Clear([Drawing.Color]::Black)
+        $consoleScale = [Math]::Min(1280 / $consoleBitmap.Width, 720 / $consoleBitmap.Height)
+        $consoleWidth = [int]($consoleBitmap.Width * $consoleScale)
+        $consoleHeight = [int]($consoleBitmap.Height * $consoleScale)
+        $consoleX = [int]((1280 - $consoleWidth) / 2)
+        $consoleY = [int]((720 - $consoleHeight) / 2)
+        $graphics.DrawImage($consoleBitmap, $consoleX, $consoleY, $consoleWidth, $consoleHeight)
 
-        $boundedLines = @(ConvertTo-BoundedConsoleLines -Lines $Lines -MaximumCharacters 120)
-        if ($boundedLines.Count -gt 27) {
-            $boundedLines = @($boundedLines[($boundedLines.Count - 27)..($boundedLines.Count - 1)])
+        if ($null -ne $installerBitmap) {
+            $installerScale = [Math]::Min(620 / $installerBitmap.Width, 620 / $installerBitmap.Height)
+            $installerWidth = [int]($installerBitmap.Width * $installerScale)
+            $installerHeight = [int]($installerBitmap.Height * $installerScale)
+            $installerX = [int]((1280 - $installerWidth) / 2)
+            $installerY = [int]((720 - $installerHeight) / 2)
+            $graphics.FillRectangle([Drawing.Brushes]::Black, $installerX - 8, $installerY - 8, $installerWidth + 16, $installerHeight + 16)
+            $graphics.DrawImage($installerBitmap, $installerX, $installerY, $installerWidth, $installerHeight)
         }
-        $y = 68
-        foreach ($line in $boundedLines) {
-            $brush = if ($line.StartsWith('[PASS]')) {
-                $passBrush
-            } elseif ($line.StartsWith('[FAIL]')) {
-                $failBrush
-            } elseif ($line.StartsWith('PS>')) {
-                $commandBrush
-            } elseif ($line.StartsWith('HOST>')) {
-                $hostBrush
-            } else {
-                $textBrush
-            }
-            $graphics.DrawString($line, $consoleFont, $brush, 28, $y)
-            $y += 22
-        }
-        $graphics.DrawString(
-            "LIVE CAPTURE  |  4 fps  |  frame $FrameNumber  |  elapsed $([Math]::Round($ElapsedMilliseconds / 1000, 2)) s",
-            $footerFont,
-            $footerBrush,
-            28,
-            690
-        )
-        $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
+        $frame.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
     } finally {
-        $footerBrush.Dispose()
-        $failBrush.Dispose()
-        $hostBrush.Dispose()
-        $passBrush.Dispose()
-        $commandBrush.Dispose()
-        $textBrush.Dispose()
-        $titleBrush.Dispose()
-        $backgroundBrush.Dispose()
-        $footerFont.Dispose()
-        $consoleFont.Dispose()
-        $titleFont.Dispose()
         $graphics.Dispose()
-        $bitmap.Dispose()
+        $frame.Dispose()
+        if ($null -ne $installerBitmap) {
+            $installerBitmap.Dispose()
+        }
+        $consoleBitmap.Dispose()
     }
 }
 
@@ -236,10 +299,9 @@ if (-not $qualification.repairRestoredDigest -or
 }
 
 Add-Type -AssemblyName System.Drawing
+Initialize-NativeWindowCapture
 [IO.Directory]::CreateDirectory($output) | Out-Null
 $consoleTranscript = Join-Path $output 'live-console-transcript.txt'
-$consoleOutput = Join-Path $output 'live-console-output.txt'
-$consoleError = Join-Path $output 'live-console-error.txt'
 $frameRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-console-frames-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($frameRoot) | Out-Null
 $proofProcess = $null
@@ -265,38 +327,48 @@ try {
     $proofProcess = Start-Process `
         -FilePath $powershell `
         -ArgumentList $proofArguments `
-        -NoNewWindow `
-        -RedirectStandardOutput $consoleOutput `
-        -RedirectStandardError $consoleError `
+        -WindowStyle Normal `
         -PassThru `
         -ErrorAction Stop
 
+    $consoleWindowTitle = 'NemoClaw Native Windows ARM64 Installer - Live Qualification'
+    $consoleWindow = [IntPtr]::Zero
+    $windowDeadline = [DateTime]::UtcNow.AddSeconds(12)
+    while ($consoleWindow -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $windowDeadline) {
+        $consoleWindow = [NemoClawNativeWindowCapture]::FindWindowContaining(
+            $consoleWindowTitle,
+            [IntPtr]::Zero
+        )
+        if ($consoleWindow -eq [IntPtr]::Zero) {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if ($consoleWindow -eq [IntPtr]::Zero) {
+        $titles = [NemoClawNativeWindowCapture]::ListWindowTitles() -join ' | '
+        Fail-ProofVideo "The real PowerShell console window was not created. Windows: $titles"
+    }
+
     $recordingClock = [Diagnostics.Stopwatch]::StartNew()
     $framePaths = @()
-    $consoleSnapshots = @()
+    $installerWindowFrameCount = 0
     while (-not $proofProcess.HasExited) {
         if ($recordingClock.ElapsedMilliseconds -gt $script:MaximumRecordingMilliseconds) {
             $proofProcess.Kill()
             $proofProcess.WaitForExit()
-            Fail-ProofVideo 'Visible console qualification exceeded its recording timeout.'
+            Fail-ProofVideo 'Real console qualification exceeded its recording timeout.'
         }
-        $consoleContent = ''
-        if (Test-Path -LiteralPath $consoleOutput -PathType Leaf) {
-            try {
-                $consoleContent = [IO.File]::ReadAllText($consoleOutput)
-            } catch {
-                # The child may be flushing the file; the next 250 ms sample retries.
-            }
+        $installerWindow = [NemoClawNativeWindowCapture]::FindWindowContaining(
+            'NemoClaw Native Windows Candidate Setup',
+            $consoleWindow
+        )
+        if ($installerWindow -ne [IntPtr]::Zero) {
+            $installerWindowFrameCount++
         }
-        $consoleContent = $consoleContent -replace "$([char]27)\[[0-9;?]*[ -/]*[@-~]", ''
-        $consoleLines = @($consoleContent -split '\r?\n')
-        $consoleSnapshots += $consoleContent
         $framePath = Join-Path $frameRoot ('frame-{0:D5}.png' -f ($framePaths.Count + 1))
-        Save-ConsoleFrame `
+        Save-ActualWindowFrame `
             -Path $framePath `
-            -Lines $consoleLines `
-            -FrameNumber ($framePaths.Count + 1) `
-            -ElapsedMilliseconds $recordingClock.ElapsedMilliseconds
+            -ConsoleWindow $consoleWindow `
+            -InstallerWindow $installerWindow
         $framePaths += $framePath
         Start-Sleep -Milliseconds $script:FrameDurationMilliseconds
         $proofProcess.Refresh()
@@ -305,12 +377,12 @@ try {
     $recordingClock.Stop()
     $proofExitCode = $proofProcess.ExitCode
     if ($proofExitCode -ne 0) {
-        $failureText = if (Test-Path -LiteralPath $consoleError -PathType Leaf) {
-            [IO.File]::ReadAllText($consoleError).Trim()
+        $failureText = if (Test-Path -LiteralPath $consoleTranscript -PathType Leaf) {
+            [IO.File]::ReadAllText($consoleTranscript).Trim()
         } else {
             ''
         }
-        Fail-ProofVideo "Live console qualification failed with exit code $proofExitCode. $failureText"
+        Fail-ProofVideo "Real console qualification failed with exit code $proofExitCode. $failureText"
     }
     if ($framePaths.Count -lt $script:MinimumCaptureFrames) {
         Fail-ProofVideo "The live console recording captured too few frames: $($framePaths.Count)."
@@ -320,9 +392,15 @@ try {
         Fail-ProofVideo 'The live console transcript is missing.'
     }
 
-    $uniqueSnapshotCount = @($consoleSnapshots | Sort-Object -Unique).Count
-    if ($uniqueSnapshotCount -lt $script:MinimumUniqueFrames) {
-        Fail-ProofVideo "The live console did not change enough to prove the install: only $uniqueSnapshotCount unique states."
+    if ($installerWindowFrameCount -lt 4) {
+        Fail-ProofVideo 'The real WiX installer window was not captured for at least one second.'
+    }
+    $frameHashes = @($framePaths | ForEach-Object {
+        (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
+    })
+    $uniqueFrameCount = @($frameHashes | Sort-Object -Unique).Count
+    if ($uniqueFrameCount -lt $script:MinimumUniqueFrames) {
+        Fail-ProofVideo "The real window recording changed too little: only $uniqueFrameCount unique frames."
     }
 
     $middleIndex = [int][Math]::Floor(($framePaths.Count - 1) / 2)
@@ -443,7 +521,7 @@ public static class NemoClawConsoleVideoEncoder
         -Label 'Recorded console qualification receipt'
     $receipt = [pscustomobject]@{
         schemaVersion = 2
-        classification = 'native-windows-candidate-preview-live-console-recording'
+        classification = 'native-windows-candidate-preview-actual-window-recording'
         candidateSha = $CandidateSha
         productVersion = $ProductVersion
         architecture = 'arm64'
@@ -456,13 +534,14 @@ public static class NemoClawConsoleVideoEncoder
             consoleTranscriptSha256 = (Get-FileHash -LiteralPath $consoleTranscript -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         capture = [pscustomobject]@{
-            kind = 'live PowerShell console output sampled while complete installer qualification executes'
+            kind = 'actual PrintWindow capture of real PowerShell console and WiX installer windows'
             sourceWidth = 1280
             sourceHeight = 720
             requestedFramesPerSecond = $script:CaptureFramesPerSecond
             frameDurationMilliseconds = $script:FrameDurationMilliseconds
             frameCount = $framePaths.Count
-            uniqueConsoleStateCount = $uniqueSnapshotCount
+            uniqueFrameCount = $uniqueFrameCount
+            installerWindowFrameCount = $installerWindowFrameCount
             recordingWallTimeMilliseconds = $recordingClock.ElapsedMilliseconds
             qualificationExitCode = $proofExitCode
         }

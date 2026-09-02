@@ -33,6 +33,10 @@ try {
     $bufferSize.Width = 140
     $bufferSize.Height = 3000
     $rawUi.BufferSize = $bufferSize
+    $windowSize = $rawUi.WindowSize
+    $windowSize.Width = [Math]::Min(120, $rawUi.MaxPhysicalWindowSize.Width)
+    $windowSize.Height = [Math]::Min(35, $rawUi.MaxPhysicalWindowSize.Height)
+    $rawUi.WindowSize = $windowSize
 } catch {
     # Window sizing is presentation-only; qualification remains authoritative.
 }
@@ -81,14 +85,15 @@ try {
     }
     Write-Host '[PASS] Downloaded EXE, MSI, and manifest match the GitHub artifact digests' -ForegroundColor Green
     Write-Host ''
-    Write-Host "PS> Launch downloaded app: $downloadedSetup /install /quiet /norestart"
+    Write-Host "PS> Launch downloaded app with real WiX UI: $downloadedSetup /install /passive /norestart"
 
     & $QualificationScript `
         -ProductVersion $ProductVersion `
         -MsiPath $downloadedMsi `
         -SetupPath $downloadedSetup `
         -PackageManifestPath $downloadedManifest `
-        -ArtifactDirectory $QualificationArtifactDirectory
+        -ArtifactDirectory $QualificationArtifactDirectory `
+        -InteractiveProof
 
     Write-Host ''
     Write-Host '[PASS] LIVE CONSOLE PROOF COMPLETE' -ForegroundColor Green

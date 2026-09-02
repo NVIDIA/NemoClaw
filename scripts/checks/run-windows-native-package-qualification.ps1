@@ -17,7 +17,8 @@ param(
     [Parameter(Mandatory)][string]$MsiPath,
     [Parameter(Mandatory)][string]$SetupPath,
     [Parameter(Mandatory)][string]$PackageManifestPath,
-    [Parameter(Mandatory)][string]$ArtifactDirectory
+    [Parameter(Mandatory)][string]$ArtifactDirectory,
+    [switch]$InteractiveProof
 )
 
 Set-StrictMode -Version Latest
@@ -369,9 +370,14 @@ Write-Host "HOST> NemoClaw native Windows ARM64 package qualification"
 Write-Host "HOST> os=$([Environment]::OSVersion.Version) architecture=$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) product=$ProductVersion"
 
 try {
+    $bundleInstallArguments = if ($InteractiveProof) {
+        @('/install', '/passive', '/norestart', '/log', $bundleInstallLog)
+    } else {
+        @('/install', '/quiet', '/norestart', '/log', $bundleInstallLog)
+    }
     Invoke-BoundedProcess `
         -FilePath $setup `
-        -Arguments @('/install', '/quiet', '/norestart', '/log', $bundleInstallLog) `
+        -Arguments $bundleInstallArguments `
         -Label 'Burn bundle install' `
         -AllowedExitCodes @(0, 3010) | Out-Null
 
