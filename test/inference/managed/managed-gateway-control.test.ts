@@ -8,10 +8,7 @@ import { describe, expect, it } from "vitest";
 const HELPER = path.join(import.meta.dirname, "../../..", "scripts", "managed-gateway-control.py");
 const BOUNDARY_VALIDATOR = path.join(
   import.meta.dirname,
-  "../../..",
-  "agents",
-  "hermes",
-  "validate-env-secret-boundary.py",
+  "../../../agents/hermes/validate-env-secret-boundary.py",
 );
 const NONCE = "a".repeat(64);
 const LAYOUT_REPAIR_DIAGNOSTICS = ["sessions", "gateway", "runtime"]
@@ -19,6 +16,9 @@ const LAYOUT_REPAIR_DIAGNOSTICS = ["sessions", "gateway", "runtime"]
   .concat(
     "[gateway] Hermes pre-launch layout repair failed at logs directory",
     "[gateway] Hermes pre-launch layout repair failed at history file",
+    ...["config root", "hooks directory", "image_cache directory", "audio_cache directory"].map(
+      (resource) => `[gateway] Hermes pre-launch layout repair failed at ${resource}`,
+    ),
   );
 const HERMES_HASH_HARNESS = String.raw`
 import importlib.util
@@ -997,11 +997,11 @@ with tempfile.TemporaryDirectory() as root:
     os.makedirs(os.path.join(system_root, "tmp"), exist_ok=True)
     start_log_path = os.path.join(system_root, "tmp/nemoclaw-start.log")
     layout_repair_events = [
-        "[gateway] Hermes pre-launch layout repair failed at sessions state directory",
-        "[gateway] Hermes pre-launch layout repair failed at gateway state directory",
-        "[gateway] Hermes pre-launch layout repair failed at runtime state directory",
-        "[gateway] Hermes pre-launch layout repair failed at logs directory",
-        "[gateway] Hermes pre-launch layout repair failed at history file",
+        f"[gateway] Hermes pre-launch layout repair failed at {resource}"
+        for resource in (
+            "sessions state directory", "gateway state directory", "runtime state directory",
+            "logs directory", "history file", "config root", "hooks directory", "image_cache directory", "audio_cache directory",
+        )
     ]
     start_log_events = [
         "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",

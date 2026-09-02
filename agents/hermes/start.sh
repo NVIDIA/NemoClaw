@@ -1644,15 +1644,23 @@ repair_hermes_startup_layout() {
     return 0
   fi
 
-  ensure_hermes_config_root_mode || return 1
+  if ! ensure_hermes_config_root_mode; then
+    echo "[gateway] Hermes pre-launch layout repair failed at config root" >&2
+    echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+    return 1
+  fi
   if ! repair_hermes_log_permissions; then
     echo "[gateway] Hermes pre-launch layout repair failed at logs directory" >&2
     echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
     return 1
   fi
-  ensure_hermes_state_dir hooks 770 || return 1
-  ensure_hermes_state_dir image_cache 770 || return 1
-  ensure_hermes_state_dir audio_cache 770 || return 1
+  for state_dir in hooks image_cache audio_cache; do
+    if ! ensure_hermes_state_dir "$state_dir" 770; then
+      echo "[gateway] Hermes pre-launch layout repair failed at ${state_dir} directory" >&2
+      echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+      return 1
+    fi
+  done
   if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
     echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
     echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2

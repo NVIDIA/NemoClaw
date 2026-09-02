@@ -80,7 +80,9 @@ function createHermesUnsafeLogFixture(
   return { before: fingerprint(), fingerprint };
 }
 
-function createLayoutSwapFixture(tmpDir: string, hermesHome: string, target: "." | "hooks") {
+type MutableLayoutTarget = "." | "hooks" | "image_cache" | "audio_cache";
+
+function createLayoutSwapFixture(tmpDir: string, hermesHome: string, target: MutableLayoutTarget) {
   const externalRoot = path.join(tmpDir, "unsafe-layout-target");
   const sentinel = path.join(externalRoot, "sentinel.txt");
   const originalEntry = path.join(tmpDir, `original-${target === "." ? "hermes-root" : target}`);
@@ -517,7 +519,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   lockedConfigRoot?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   unsafeLog?: "root-symlink" | "nested-symlink" | "fifo";
-  swapLayoutDir?: "." | "hooks";
+  swapLayoutDir?: MutableLayoutTarget;
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
   unsafeState?: readonly [name: HermesStateDir, kind: "symlink" | "file"];
 }) {
@@ -1360,13 +1362,15 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     );
   });
 
-  it.each([".", "hooks"] as const)(
+  it.each([".", "hooks", "image_cache", "audio_cache"] as const)(
     "rejects a swapped mutable layout directory %s after validation without mutating its external target",
     (swapLayoutDir) => {
       const run = runHermesGatewayRuntimeCleanup({ swapLayoutDir });
+      const resource = swapLayoutDir === "." ? "config root" : `${swapLayoutDir} directory`;
       expect(run.result.status).not.toBe(0);
       expect(run.layoutSwapAfter).toEqual(run.layoutSwapBefore);
-      expect(run.result.stderr).toContain("changed during repair");
+      expect(run.result.stderr).toContain(`layout repair failed at ${resource}`);
+      expect(run.result.stderr).toContain("Restore a trusted snapshot into a recreated sandbox");
     },
   );
 

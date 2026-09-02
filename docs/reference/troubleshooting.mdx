@@ -1496,7 +1496,8 @@ This refusal means Hermes config files look shields-locked but `/sandbox` is not
 ### Hermes startup refuses an unsafe state directory
 
 Hermes stops startup when `/sandbox/.hermes/sessions`, `/sandbox/.hermes/gateway`, or `/sandbox/.hermes/runtime` is a symbolic link, a file, or cannot be repaired safely.
-When the Hermes config root is not locked, startup also stops when the `logs` directory tree contains a symbolic link, a hard-linked file, another unsafe entry, or changes during descriptor-anchored repair.
+When the Hermes config root is not locked, startup also stops if the config root or its `hooks`, `image_cache`, or `audio_cache` directories cannot be repaired safely, or if any of those paths changes during descriptor-anchored repair.
+The same unlocked startup stops when the `logs` directory tree contains a symbolic link, a hard-linked file, another unsafe entry, or changes during descriptor-anchored repair.
 Startup also stops when `/sandbox/.hermes/.hermes_history` is a symbolic link, a nonregular or hard-linked file, or cannot be repaired safely.
 `/tmp/nemoclaw-start.log` names the reported state item and reports `Hermes pre-launch layout repair failed`.
 When a host-side control command fails, its output can include matching startup diagnostics as `NEMOCLAW_START_LOG=...`.

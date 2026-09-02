@@ -121,7 +121,10 @@ START_LOG_DIAGNOSTIC_PATTERNS = (
         r"\[gateway\] Hermes gateway launch failed; retrying under the same supervisor"
     ),
     re.compile(
-        r"\[gateway\] Hermes pre-launch layout repair failed at (?:sessions state directory|gateway state directory|runtime state directory|logs directory|history file)"
+        r"\[gateway\] Hermes pre-launch layout repair failed at (?:"
+        r"sessions state directory|gateway state directory|runtime state directory|"
+        r"config root|logs directory|hooks directory|image_cache directory|"
+        r"audio_cache directory|history file)"
     ),
     re.compile(
         r"\[gateway\] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy"
