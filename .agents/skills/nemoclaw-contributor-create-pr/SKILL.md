@@ -44,7 +44,7 @@ Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, 
 Select review evidence for the publication state before every agent-managed push:
 
 - For an initial publication, use the implementation handoff's self-review and any other available pre-publication review evidence. Do not query PR state or follow the open-PR workflow because the PR does not exist.
-- Before updating an open PR, follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide). Set the repair scope, group valid code-changing findings by root cause, and route only in-scope groups to `nemoclaw-contributor-implement-issue`. The shared contract does not repair, validate, commit, or push. After the implementation workflow returns its change and test evidence, this workflow resumes its trusted validation and publication gates. Do not push while automated evaluation is pending, a finding is unclassified, or an unresolved finding requires a change. Preserve excluded or deferred dispositions. Repeat collection as the final review step before the canonical base fetch. The initial and final `headRefOid` values must match.
+- Before updating an open PR, follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide). Record the reviewed remote `headRefOid`. Set the repair scope, group valid code-changing findings by root cause, and route only in-scope groups to `nemoclaw-contributor-implement-issue`. The shared contract does not repair, validate, commit, or push. After the implementation workflow returns its change and test evidence, this workflow resumes its trusted validation and publication gates. Record the final local repair commit as the expected publication SHA. Immediately before publication, require the remote `headRefOid` to still equal the reviewed remote SHA and require the push tool's expected commit to equal the local publication SHA. A local repair commit does not violate the remote guard; an unrelated remote update does. Do not push while automated evaluation is pending, a finding is unclassified, or an unresolved finding requires a change. Preserve the complete disposition record. Repeat collection for the reviewed remote commit as the final feedback check before the canonical base fetch.
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 
@@ -135,13 +135,10 @@ If a triage write is rejected, do not repeat that write through another endpoint
 
 ## Follow up and report
 
-Use [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate),
-[Collect](../_shared/pr-follow-up.md#collect), [Decide](../_shared/pr-follow-up.md#decide), and permitted
-[base integration](../_shared/pr-follow-up.md#integrate-the-base-branch) from the shared contract. Route
-accepted repair groups to `nemoclaw-contributor-implement-issue`, then apply this skill's validation
-and publication gates. The shared contract is not a second repair or publication owner. Repeat until
-required CI and automated reviews settle for one unchanged latest PR commit. Do not report pending
-evaluation as completed work. Then report:
+Follow the [PR follow-up contract](../_shared/pr-follow-up.md). Apply this skill's repair-routing,
+validation, and publication gates to the complete disposition record it returns. Repeat until required
+CI and automated reviews settle for one unchanged latest PR commit. Do not report pending evaluation
+as completed work. Then report:
 
 ```text
 Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
