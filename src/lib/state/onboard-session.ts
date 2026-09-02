@@ -61,6 +61,7 @@ import {
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
+  createOnboardLockOwner,
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
@@ -69,7 +70,7 @@ import {
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
-} from "./onboard-session/retained-sandbox-recovery";
+} from "./onboard-session/index";
 import type { SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
@@ -1489,7 +1490,7 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
   const payload = JSON.stringify(
-    {
+    createOnboardLockOwner(typeof command === "string" ? command : null) ?? {
       pid: process.pid,
       startedAt: new Date().toISOString(),
       command: typeof command === "string" ? command : null,

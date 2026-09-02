@@ -15,6 +15,7 @@ import {
   readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "./gateway-registry";
+import { observeOnboardLock } from "./onboard-session/lock-observation";
 import {
   listRetainedSandboxRecoveryRecords,
   retainedSandboxRecoveryFile,
@@ -745,9 +746,12 @@ function acquireDirectoryLock(home: string, lock: string): string {
 function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[]): void {
   for (const stateRoot of stateRoots) {
     const activeLock = path.join(stateRoot, "onboard.lock");
-    if (lstatNoFollow(home, activeLock)) {
+    const lock = observeOnboardLock(activeLock);
+    if (lock.kind === "busy") {
+      const owner = lock.owner ? ` recorded for PID ${String(lock.owner.pid)}` : "";
       throw migrationError(
-        `onboarding lock ${activeLock} is present; finish or stop that run before migrating state`,
+        `onboarding lock ${activeLock}${owner} is ${lock.reason}; ` +
+          "finish that run or verify the lock owner before retrying",
       );
     }
   }
