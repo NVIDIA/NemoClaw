@@ -8,7 +8,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { readE2eOperationsWorkflow } from "../../../tools/e2e/operations-workflow-boundary.mts";
+const MANUAL_PR_DISPATCH_SCRIPT = join(
+  process.cwd(),
+  "scripts/e2e/manual-pr-dispatch.sh",
+);
 
 describe("manual PR E2E credential authorization", () => {
   it.each([
@@ -93,13 +96,7 @@ describe("manual PR E2E credential authorization", () => {
       workflowShaMatches,
       expectedAllowed,
     }) => {
-      const workflow = readE2eOperationsWorkflow();
-      const credentialAuthorization = workflow.jobs["generate-matrix"].steps!.find(
-        (step) => step.name === "Authorize E2E credentials",
-      )!;
-      const checkedOutSha = spawnSync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-      }).stdout.trim();
+      const checkedOutSha = "a".repeat(40);
       const checkoutSha = checkoutShaMatches ? checkedOutSha : "0".repeat(40);
       const workflowSha = "c".repeat(40);
       const expectedWorkflowSha = workflowShaMatches ? workflowSha : "d".repeat(40);
@@ -108,25 +105,22 @@ describe("manual PR E2E credential authorization", () => {
 
       try {
         writeFileSync(output, "");
-        const result = spawnSync(
-          "bash",
-          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", credentialAuthorization.run!],
-          {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              CHECKOUT_REPOSITORY: checkoutRepository,
-              CHECKOUT_SHA: checkoutSha,
-              EVENT_NAME: "workflow_dispatch",
-              EXPECTED_WORKFLOW_SHA: expectedWorkflowSha,
-              GITHUB_OUTPUT: output,
-              NVIDIA_OWNED: nvidiaOwned ? "true" : "false",
-              REF: workflowRef,
-              WORKFLOW_REPOSITORY: workflowRepository,
-              WORKFLOW_SHA: workflowSha,
-            },
+        const result = spawnSync("bash", [MANUAL_PR_DISPATCH_SCRIPT, "authorize-credentials"], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CHECKED_OUT_SHA: checkedOutSha,
+            CHECKOUT_REPOSITORY: checkoutRepository,
+            CHECKOUT_SHA: checkoutSha,
+            EVENT_NAME: "workflow_dispatch",
+            EXPECTED_WORKFLOW_SHA: expectedWorkflowSha,
+            GITHUB_OUTPUT: output,
+            NVIDIA_OWNED: nvidiaOwned ? "true" : "false",
+            REF: workflowRef,
+            WORKFLOW_REPOSITORY: workflowRepository,
+            WORKFLOW_SHA: workflowSha,
           },
-        );
+        });
 
         expect(result.status, result.stderr).toBe(0);
         expect(readFileSync(output, "utf8")).toBe(

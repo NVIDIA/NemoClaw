@@ -193,6 +193,13 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      - name: Check out trusted E2E workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - id: publication_mode
         name: Classify base-image publication requirement
         env:
@@ -203,38 +210,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
-        run: |
-          set -euo pipefail
-          case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in
-            NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
-              expected_sha="$WORKFLOW_SHA"
-              allow_non_head=0
-              select_nearest_successful=0
-              ;;
-            NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)
-              [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-                echo "::error::manual PR publication selection requires an exact base SHA" >&2
-                exit 1
-              }
-              expected_sha="$BASE_SHA"
-              allow_non_head=1
-              select_nearest_successful=1
-              ;;
-            *)
-              echo "::error::base-image publication mode is not trusted" >&2
-              exit 1
-              ;;
-          esac
-          printf 'allow_non_head=%s\n' "${allow_non_head}" >> "${GITHUB_OUTPUT}"
-          printf 'expected_sha=%s\n' "${expected_sha}" >> "${GITHUB_OUTPUT}"
-          printf 'select_nearest_successful=%s\n' "${select_nearest_successful}" >> "${GITHUB_OUTPUT}"
-
-      - name: Check out trusted E2E workflow
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
+        run: bash scripts/e2e/base-image-publication-mode.sh
 
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -385,6 +361,18 @@ jobs:
           runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger}')"
           printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
+      - name: Check out trusted E2E planner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Stage trusted manual PR dispatch boundary
+        shell: bash
+        run: install -m 0555 scripts/e2e/manual-pr-dispatch.sh "${RUNNER_TEMP}/manual-pr-dispatch.sh"
+
       - id: candidate_authorization
         name: Authenticate manual PR dispatch
         if: ${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}
@@ -392,8 +380,8 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
           JOBS: ${{ inputs.jobs }}
           PR_NUMBER: ${{ inputs.pr_number }}
@@ -404,61 +392,14 @@ jobs:
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
-
         shell: bash
         run: |
           set -euo pipefail
-
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || {
-            echo "::error::Manual PR E2E must be dispatched from the trusted main branch" >&2
-            exit 1
-          }
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
-          [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name" >&2; exit 1; }
-          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
-          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA" >&2; exit 1; }
-          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
-          [[ "$REVISION" == "candidate" || "$REVISION" == "base" ]] || { echo "::error::revision must be candidate or base" >&2; exit 1; }
-
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must be open" >&2; exit 1; }
-          [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
-          [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
-          pr_head_sha="$(jq -r '.head.sha' <<< "$pull_json")"
-          [[ "$pr_head_sha" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::pull request head SHA is invalid" >&2; exit 1; }
-          case "$REVISION" in
-            candidate)
-              [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
-              [[ "$pr_head_sha" == "$CHECKOUT_SHA" ]] || { echo "::error::candidate checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
-              ;;
-            base)
-              [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::exact-base E2E must use the trusted main workflow" >&2; exit 1; }
-              [[ "$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw" && "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::exact-base E2E requires a same-repository PR" >&2; exit 1; }
-              [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]] || { echo "::error::base checkout_sha must match the exact PR base SHA" >&2; exit 1; }
-              [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::exact-base E2E requires the failed candidate selector" >&2; exit 1; }
-              [[ ",${JOBS}," != *",native-runtime-qualification-producer,"* ]] || { echo "::error::native runtime qualification evidence is candidate-only" >&2; exit 1; }
-              [[ ",${JOBS}," != *",staging-brev-launchable,"* && ",${JOBS}," != *",staging-brev-launchable-identity,"* ]] || { echo "::error::exact-base E2E cannot select staging Launchable" >&2; exit 1; }
-              [[ "$INCLUDE_LAUNCHABLE" != "true" && "$ALLOW_JETSON_DISPATCH" != "true" && "$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true" ]] || { echo "::error::exact-base E2E cannot launch staging or dedicated hardware dispatches" >&2; exit 1; }
-              ;;
-          esac
-          nvidia_owned=false
-          if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
-                "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]]; then
-            nvidia_owned=true
-          fi
-          if [[ ",${JOBS}," == *",staging-brev-launchable-identity,"* ]]; then
-            echo "::error::Launchable identity smoke runs only against trusted main" >&2
-            exit 1
-          fi
-          if [[ "$INCLUDE_LAUNCHABLE" == "true" || ",${JOBS}," == *",staging-brev-launchable,"* ]]; then
-            [[ "$nvidia_owned" == "true" ]] || { echo "::error::Launchable PR E2E requires an NVIDIA-owned source repository" >&2; exit 1; }
-            [[ "$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw" ]] || { echo "::error::Launchable PR E2E requires a branch in NVIDIA/NemoClaw" >&2; exit 1; }
-          fi
-          printf 'nvidia_owned=%s\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"
-          printf 'pr_head_sha=%s\n' "$pr_head_sha" >> "$GITHUB_OUTPUT"
+          PULL_JSON="$pull_json" bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" authenticate
 
       - id: controller_matrix
         name: Build trusted controller target matrix
@@ -467,33 +408,7 @@ jobs:
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         shell: bash
-        run: |
-          set -euo pipefail
-          test_matrix='[]'
-          case "${JOBS}:${TARGETS}" in
-            :)
-              matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
-              test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboarding/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/platform/images/vllm-docker-storage.test.ts","project":"integration"}]'
-              ;;
-            inference-routing: | managed-image-protected-runtime: | native-runtime-qualification-producer: | :jetson-nvmap-gpu)
-              matrix='[]'
-              ;;
-            :ubuntu-repo-cloud-langchain-deepagents-code)
-              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
-              ;;
-            :ubuntu-repo-docker-post-reboot-recovery)
-              matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
-              ;;
-            :ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
-              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
-              ;;
-            *)
-              echo "::error::PR E2E target is not approved by the trusted controller" >&2
-              exit 1
-              ;;
-          esac
-          printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
-          printf 'test_matrix=%s\n' "${test_matrix}" >> "${GITHUB_OUTPUT}"
+        run: bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" controller-matrix
 
       - name: Record trusted E2E dispatch receipt
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -666,14 +581,6 @@ jobs:
             require_maintainer "$TRIGGERING_ACTOR"
           fi
 
-      - name: Check out trusted E2E planner
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -773,28 +680,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha" >&2; exit 1; }
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open" >&2; exit 1; }
-          [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$PR_HEAD_SHA" ]] || { echo "::error::PR head changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
-          case "$REVISION" in
-            candidate) [[ "$CHECKOUT_SHA" == "$PR_HEAD_SHA" ]] || { echo "::error::candidate checkout changed before execution" >&2; exit 1; } ;;
-            base) [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]] || { echo "::error::exact base checkout changed before execution" >&2; exit 1; } ;;
-            *) echo "::error::revision changed before execution" >&2; exit 1 ;;
-          esac
-          if [[ "$NVIDIA_OWNED" == "true" ]]; then
-            [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
-                  "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]] || {
-              echo "::error::PR source repository ownership changed before execution" >&2
-              exit 1
-            }
-          fi
+          CHECKED_OUT_SHA="$(git rev-parse --verify HEAD)" PULL_JSON="$pull_json" \
+            bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" validate-checkout
 
       - id: e2e_credentials
         name: Authorize E2E credentials
@@ -811,18 +702,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          credentials_allowed=false
-          if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
-                "$NVIDIA_OWNED" == "true" &&
-                "$EVENT_NAME" == "workflow_dispatch" &&
-                "$REF" == "refs/heads/main" &&
-                "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ &&
-                "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ &&
-                "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" &&
-                "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]; then
-            credentials_allowed=true
-          fi
-          printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"
+          CHECKED_OUT_SHA="$(git rev-parse --verify HEAD)" \
+            bash "${RUNNER_TEMP}/manual-pr-dispatch.sh" authorize-credentials
 
       - name: Prepare E2E workspace
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}

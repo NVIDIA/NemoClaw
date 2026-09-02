@@ -205,4 +205,20 @@ describe("CLI artifact packaging", () => {
       fixture.cleanup();
     }
   });
+
+  it("fails before publication when a required shared module is missing", () => {
+    const missingModule = "openshell-policy-boundary.cjs";
+    const fixture = runCliArtifactPackaging((workspace) => {
+      fs.rmSync(path.join(workspace, "nemoclaw", "dist", "shared", missingModule));
+    });
+    try {
+      expect(fixture.result.status).toBe(1);
+      expect(fixture.output).toContain(
+        `candidate CLI build shared module is missing or is not a nonempty regular file: ${missingModule}`,
+      );
+      expect(fixture.artifactExists).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
 });

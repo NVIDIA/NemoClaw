@@ -39,19 +39,6 @@ const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
 ] as const;
 const EXPECTED_OPENCLAW_INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
-const REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE = [
-  "async function fetchWithWebToolsNetworkGuard(params) {",
-  "  const { timeoutSeconds, useEnvProxy, ...rest } = params;",
-  "  const resolved = {",
-  "    ...rest,",
-  "    timeoutMs: resolveTimeoutMs({",
-  "      timeoutMs: rest.timeoutMs,",
-  "      timeoutSeconds",
-  "    })",
-  "  };",
-  "  return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode(resolved) : withStrictGuardedFetchMode(resolved));",
-  "}",
-].join("\n");
 const REVIEWED_OPENCLAW_2026_7_1_MANAGED_PROXY_SHAPE =
   "const isStrictManagedProxyActive = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive();";
 function readRequiredMatch(file: string, pattern: RegExp, description: string): string {
@@ -323,15 +310,6 @@ function webGuardedFetchFixtureSource(): string {
 }
 
 describe("fetch-guard patch regression guard", () => {
-  it("anchors web_fetch proxy mode to the reviewed OpenClaw 2026.7.1 contract", () => {
-    expect(REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE).toContain(
-      "function fetchWithWebToolsNetworkGuard(params)",
-    );
-    expect(REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE).toContain(
-      "withTrustedEnvProxyGuardedFetchMode(resolved)",
-    );
-  });
-
   it("fails the image build when the NemoClaw OpenClaw plugin cannot install", () => {
     const command = dockerRunCommandBetween(
       "# Install NemoClaw plugin into OpenClaw",
