@@ -161,7 +161,8 @@ describe("policies", () => {
         expect(warning).not.toContain("Node HTTPS");
         expect(warning).toContain("https://discord.com/api/v10/gateway");
         expect(warning).toContain('dns.resolve("gateway.discord.gg")');
-        expect(warning).toContain("prints 200 on success");
+        expect(warning).toContain("Any HTTP response confirms reachability");
+        expect(warning).not.toContain("prints 200 on success");
         expect(warning).toContain(expectedLabel);
         expect(warning).toContain(expectedCommand);
         expect(warning).not.toContain(absentCommand);

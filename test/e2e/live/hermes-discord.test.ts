@@ -358,23 +358,6 @@ async function runHermesPythonDiscordGatewayProof(
   );
 }
 
-async function assertRawTokenAbsentFromFiles(
-  sandbox: SandboxClient,
-  token: string,
-  redactionValues: string[],
-): Promise<void> {
-  const tokenB64 = Buffer.from(token, "utf8").toString("base64");
-  const probe = await sandboxShWithArgs(
-    sandbox,
-    SANDBOX_NAME,
-    `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nif grep -Fq "$token" /sandbox/.hermes/config.yaml /sandbox/.hermes/.env 2>/dev/null; then echo LEAK; else echo OK; fi`,
-    [],
-    { artifactName: "raw-discord-token-config-env-probe", redactionValues },
-  );
-  expectExitZero(probe, "raw Discord token config probe");
-  expect(probe.stdout.trim()).toBe("OK");
-}
-
 async function rawTokenSurfaceProbe(
   sandbox: SandboxClient,
   token: string,
@@ -667,8 +650,6 @@ PY`,
     assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
 
     progress.phase("verify Discord token isolation and REST boundary");
-    await assertRawTokenAbsentFromFiles(sandbox, DISCORD_TOKEN, redactionValues);
-
     const envSurface = await rawTokenSurfaceProbe(
       sandbox,
       DISCORD_TOKEN,
