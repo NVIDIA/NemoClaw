@@ -85,6 +85,35 @@ function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
 }
 
 describe("complete managed-image publication workflow", () => {
+  it("authorizes exact reviewed lock transitions in the general PR audit", () => {
+    const reviewedAudit = required(
+      readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"],
+      "PR workflow is missing its reviewed npm audit",
+    );
+    const lockTransition = step(
+      reviewedAudit,
+      "Authorize exact same-repository PR lock replacements",
+    );
+    expect(lockTransition.if).toBe(
+      "github.event.pull_request.head.repo.full_name == github.repository",
+    );
+    expect(lockTransition.env).toEqual({
+      CANDIDATE_ROOT: "${{ github.workspace }}",
+      TRUSTED_ROOT: "${{ github.workspace }}/.trusted-reviewed-npm-audit",
+    });
+    expect(lockTransition.run).toContain("withoutLockedGraphs(candidate)");
+    expect(lockTransition.run).toContain("candidate replacement digest is forbidden");
+    expect(lockTransition.run).toContain('createHash("sha256")');
+    expect(lockTransition.run).toContain("actualLockSha256");
+    expect(lockTransition.run).toContain(
+      "trustedGraph.replacementLockSha256 = candidateLockSha256",
+    );
+    expect(lockTransition.run).toContain("fs.renameSync(temporaryConfigPath, trustedConfigPath)");
+    expect(reviewedAudit.steps!.indexOf(lockTransition)).toBeLessThan(
+      reviewedAudit.steps!.indexOf(step(reviewedAudit, "Audit reviewed production npm graphs")),
+    );
+  });
+
   it("rejects managed package paths redirected outside node_modules", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
     try {
