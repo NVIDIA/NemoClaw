@@ -35,7 +35,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:CaptureFramesPerSecond = 4
 $script:FrameDurationMilliseconds = 250
-$script:MaximumRecordingMilliseconds = 180000
+$script:MaximumRecordingMilliseconds = 1800000
 $script:MinimumCaptureFrames = 40
 $script:MinimumUniqueFrames = 8
 
@@ -299,6 +299,9 @@ if (-not $qualification.repairRestoredDigest -or
     -not $qualification.reinstallPreservedRegistration -or
     -not $qualification.finalAbsence -or
     -not $qualification.machinePathRemoved -or
+    $qualification.nativeTurn.verdict -cne 'pass' -or
+    $qualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
+    $qualification.nativeTurn.sandboxDeleted -ne $true -or
     @($qualification.nativeExecutions).Count -ne 2 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
     @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0) {
@@ -412,6 +415,13 @@ try {
     if (-not (Test-Path -LiteralPath $consoleTranscript -PathType Leaf) -or
         (Get-Item -LiteralPath $consoleTranscript).Length -eq 0) {
         Fail-ProofVideo 'The live console transcript is missing.'
+    }
+    $consoleTranscriptText = [IO.File]::ReadAllText($consoleTranscript)
+    if (-not $consoleTranscriptText.Contains('AGENT> CHAT_OK') -or
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
+        )) {
+        Fail-ProofVideo 'The recorded console did not show the installed NemoClaw agent turn.'
     }
 
     if ($installerWindowFrameCount -lt 4) {
@@ -541,6 +551,12 @@ public static class NemoClawConsoleVideoEncoder
     $consoleQualificationReceipt = Resolve-RequiredFile `
         -Path (Join-Path $consoleQualification 'package-qualification.json') `
         -Label 'Recorded console qualification receipt'
+    $recordedQualification = Get-Content -LiteralPath $consoleQualificationReceipt -Raw | ConvertFrom-Json
+    if ($recordedQualification.nativeTurn.verdict -cne 'pass' -or
+        $recordedQualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
+        $recordedQualification.nativeTurn.sandboxDeleted -ne $true) {
+        Fail-ProofVideo 'The recorded qualification receipt does not prove the installed NemoClaw turn.'
+    }
     $receipt = [pscustomobject]@{
         schemaVersion = 2
         classification = 'native-windows-candidate-preview-actual-window-recording'
@@ -566,6 +582,7 @@ public static class NemoClawConsoleVideoEncoder
             installerWindowFrameCount = $installerWindowFrameCount
             recordingWallTimeMilliseconds = $recordingClock.ElapsedMilliseconds
             qualificationExitCode = $proofExitCode
+            installedNemoClawTurn = 'CHAT_OK'
         }
         video = [pscustomobject]@{
             file = $videoName

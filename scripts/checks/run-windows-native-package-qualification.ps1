@@ -503,6 +503,9 @@ try {
         Fail-PackageQualification 'Installed NemoClaw native turn receipt is incomplete.'
     }
     Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
+    if ($InteractiveProof) {
+        Start-Sleep -Seconds 3
+    }
     $msiArp = @(Get-ArpEntries -DisplayName $script:MsiDisplayName)
     $bundleArp = @(Get-ArpEntries -DisplayName $script:BundleDisplayName)
     if ($msiArp.Count -ne 1 -or $msiArp[0].displayVersion -cne $ProductVersion) {
