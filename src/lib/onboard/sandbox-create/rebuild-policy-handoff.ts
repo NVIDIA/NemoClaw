@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { parseOpenShellPolicy } from "../../policy/merge";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
@@ -200,6 +201,13 @@ function mergeRequestedReplacementNetworkPolicies(
     }
     if (Object.hasOwn(livePolicies, key)) {
       if (!isDeepStrictEqual(livePolicies[key], replacementPolicies[key])) {
+        if (
+          isReviewedMessagingChannelPolicyUpgrade(key, livePolicies[key], replacementPolicies[key])
+        ) {
+          livePolicies[key] = structuredClone(replacementPolicies[key]);
+          changed = true;
+          continue;
+        }
         throw new Error(
           `Cannot prepare rebuild policy handoff: live network policy '${key}' does not match the enabled channel requirement.`,
         );
