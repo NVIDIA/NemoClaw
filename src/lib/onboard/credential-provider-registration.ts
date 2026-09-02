@@ -12,59 +12,6 @@ import { createGatewayScopedOpenshellRunner } from "./setup-inference";
 
 const providers = require("./providers");
 
-type CredentialProviderRegistrationUpsert = (
-  tokenDefs: MessagingTokenDef[],
-  runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  options: MessagingProviderRegistrationOptions,
-) => string[];
-
-type LiveE2eCredentialProviderOverride = {
-  readonly expectedName: string;
-  readonly expectedType: string;
-  readonly upsert: CredentialProviderRegistrationUpsert;
-};
-
-const LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY =
-  "__nemoclawLiveE2eCredentialProviderRegistrationOverride" as const;
-
-function liveE2eCredentialProviderOverride(): LiveE2eCredentialProviderOverride | null {
-  const state = globalThis as typeof globalThis & {
-    [LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]?: LiveE2eCredentialProviderOverride;
-  };
-  return state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] ?? null;
-}
-
-/** Install the exact Google Chat fake-mint boundary used by the destructive live E2E. */
-export function installLiveE2eCredentialProviderRegistrationOverride(input: {
-  readonly expectedName: string;
-  readonly expectedType: "google-chat-bridge" | "google-chat-hermes-bridge";
-  readonly upsert: CredentialProviderRegistrationUpsert;
-}): () => void {
-  if (
-    process.env.NEMOCLAW_RUN_LIVE_E2E !== "1" ||
-    !/^e2e-(?:oc|hm)-ch-[a-z0-9-]+-googlechat-bridge$/u.test(input.expectedName)
-  ) {
-    throw new Error("Google Chat provider override is restricted to its destructive live E2E.");
-  }
-  const state = globalThis as typeof globalThis & {
-    [LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]?: LiveE2eCredentialProviderOverride;
-  };
-  if (state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]) {
-    throw new Error("A live E2E credential provider override is already installed.");
-  }
-  const installed = { ...input };
-  state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] = installed;
-  let restored = false;
-  return () => {
-    if (restored) return;
-    if (state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] !== installed) {
-      throw new Error("The live E2E credential provider override changed before cleanup.");
-    }
-    delete state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY];
-    restored = true;
-  };
-}
-
 /** Late-bound provider upsert seam used by live credential fixtures. */
 export const credentialProviderRegistrationDependencies = {
   upsertMessagingProviders(
@@ -72,21 +19,6 @@ export const credentialProviderRegistrationDependencies = {
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
     options: MessagingProviderRegistrationOptions,
   ): string[] {
-    const override = liveE2eCredentialProviderOverride();
-    if (override) {
-      const selected = tokenDefs.filter(({ name }) => name === override.expectedName);
-      if (selected.length === 0) {
-        return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
-      }
-      if (
-        selected.length !== 1 ||
-        selected[0]?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
-        selected[0]?.providerType !== override.expectedType
-      ) {
-        throw new Error("Google Chat live E2E provider override received an unexpected plan.");
-      }
-      return override.upsert(tokenDefs, runOpenshell, options);
-    }
     return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
   },
 };

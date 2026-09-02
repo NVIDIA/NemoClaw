@@ -307,7 +307,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv,
-        inspectGatewayCredential: () => ({ kind: "missing" }),
+        inspectGatewayCredential: () => ({ kind: "exact" }),
         note: vi.fn(),
         writePlanToEnv: vi.fn(),
       },
@@ -346,7 +346,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv: vi.fn(),
-        inspectGatewayCredential: () => ({ kind: "missing" }),
+        inspectGatewayCredential: () => ({ kind: "exact" }),
         note: vi.fn(),
         writePlanToEnv: vi.fn(),
       },
@@ -543,7 +543,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       { name: "openclaw" },
       {
         clearPlanEnv() {},
-        inspectGatewayCredential: () => ({ kind: "missing" }),
+        inspectGatewayCredential: () => ({ kind: "exact" }),
         note() {},
         writePlanToEnv() {},
       },

@@ -88,10 +88,10 @@ describe("channels stop/start Google Chat live composition", () => {
     expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
   });
 
-  it("routes rebuild registration through the process-global live fixture", () => {
-    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+  it("routes rebuild registration through the live fixture dependency and restores it", () => {
     const sandboxName = "e2e-oc-ch-cycle";
     const expectedName = `${sandboxName}-googlechat-bridge`;
+    const originalUpsert = credentialProviderRegistrationDependencies.upsertMessagingProviders;
     const runMock = vi.fn((args: string[]) => ({
       status: args[1] === "get" ? 1 : 0,
       stdout: "",
@@ -122,8 +122,10 @@ describe("channels stop/start Google Chat live composition", () => {
       expect(runMock.mock.calls.some(([args]) => args.includes("refresh"))).toBe(false);
     } finally {
       restore();
-      vi.unstubAllEnvs();
     }
+    expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).toBe(
+      originalUpsert,
+    );
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {

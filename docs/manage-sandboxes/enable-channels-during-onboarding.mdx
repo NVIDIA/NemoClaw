@@ -98,6 +98,8 @@ $$nemoclaw <sandbox> channels remove <channel>
 ```
 
 Accept the rebuild to remove the channel configuration and its network policy preset from the replacement sandbox.
+When onboarding runs without a terminal on stdin or with `NEMOCLAW_NON_INTERACTIVE=1`, NemoClaw queues the removal.
+Run `$$nemoclaw <sandbox> rebuild` to apply it.
 Clearing the channel's host environment variables is not a removal signal when the matching provider remains in OpenShell.
 Onboarding reuses that provider and keeps the channel selected, including its network egress.
 

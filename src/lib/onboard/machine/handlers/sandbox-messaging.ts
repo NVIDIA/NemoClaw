@@ -293,6 +293,28 @@ function channelCredentialLivesAtGateway<Agent>(
   return inspections.every(({ inspection }) => inspection.kind === "exact");
 }
 
+function reconcileGatewayCredentialChannels<Agent>(
+  plan: SandboxMessagingPlan,
+  channelIds: readonly string[],
+  missingChannels: Set<string>,
+  deps: Pick<SandboxMessagingDeps<Agent>, "inspectGatewayCredential">,
+  addMissingChannels: boolean,
+): void {
+  for (const channelId of channelIds) {
+    const providerBindings = requiredMessagingProviderBindings(
+      plan.sandboxName,
+      plan,
+      new Set([channelId]),
+    );
+    if (providerBindings.length === 0) continue;
+    if (channelCredentialLivesAtGateway(plan, channelId, deps)) {
+      missingChannels.delete(channelId);
+    } else if (addMissingChannels) {
+      missingChannels.add(channelId);
+    }
+  }
+}
+
 function persistMessagingPlan<Agent>(
   plan: SandboxMessagingPlan | null,
   deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "writePlanToEnv">,
@@ -327,11 +349,17 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
   // - Without this, every later rebuild strips the channel's bindings and egress.
   const planForGatewayCheck = selection.plan;
   if (planForGatewayCheck) {
-    for (const channelId of [...unconfiguredChannels]) {
-      if (channelCredentialLivesAtGateway(planForGatewayCheck, channelId, deps)) {
-        unconfiguredChannels.delete(channelId);
-      }
-    }
+    const inspectAllActiveCredentialChannels = missingAction === "reject-ready-reuse";
+    const channelsToInspect = inspectAllActiveCredentialChannels
+      ? selection.selectedChannels
+      : [...unconfiguredChannels];
+    reconcileGatewayCredentialChannels(
+      planForGatewayCheck,
+      channelsToInspect,
+      unconfiguredChannels,
+      deps,
+      inspectAllActiveCredentialChannels,
+    );
   }
   if (unconfiguredChannels.size === 0) return selection;
   if (missingAction === "reject-ready-reuse") {
@@ -719,7 +747,11 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
     return { plan: null, selectedChannels: [] };
   }
 
-  const filteredPlan = filterMessagingPlanForCurrentAgent(validationPlan, options.agent);
+  const normalizedValidationPlan = normalizeMessagingProviderBindings(
+    options.sandboxName,
+    validationPlan,
+  );
+  const filteredPlan = filterMessagingPlanForCurrentAgent(normalizedValidationPlan, options.agent);
   if (!filteredPlan) {
     options.deps.clearPlanEnv();
     options.deps.showMessagingStage?.();
