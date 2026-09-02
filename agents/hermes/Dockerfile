@@ -694,7 +694,7 @@ RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
 # to its matching standard Langfuse key. Raw keys keep Hermes' upstream
 # pk-lf-/sk-lf- validation, and every authenticated client requires an absolute
 # HTTPS base URL. The patcher fails closed when the pinned source shape changes.
-ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=af7541363720f5ad5e9bbded56df296d93b0a52c396cef0da61b90a1fb7342b9
+ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=a505357f9991d85e42d6cb2fcd320fb6f3a989f090a7969c0460265254e7d9c6
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \

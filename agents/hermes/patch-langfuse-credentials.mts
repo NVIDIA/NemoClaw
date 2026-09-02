@@ -25,15 +25,8 @@ const DEFAULT_PLUGIN_PATH = "/opt/hermes/plugins/observability/langfuse/__init__
 const replacements = [
   {
     name: "HTTPS URL parser",
-    old: `\
-import re
-from typing import Any, Dict, Optional
-`,
-    patched: `\
-import re
-from typing import Any, Dict, Optional
-from urllib.parse import urlsplit
-`,
+    old: `from typing import Any, Dict, Optional\n`,
+    patched: `from typing import Any, Dict, Optional\nfrom urllib.parse import urlsplit\n`,
   },
   {
     name: "credential-name binding",
