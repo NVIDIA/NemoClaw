@@ -144,7 +144,7 @@ describe("PR review advisor specialist prompts", () => {
     const expected = ADVISOR_SPECIALISTS.map(({ interest, label }, index) => ({
       interest,
       label,
-      model: index % 2 === 0 ? "openai/openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
+      model: index % 2 === 0 ? "openai/gpt-5.6-terra" : "azure/openai/gpt-5.6-terra",
       artifact_dir: `pr-review-specialist-${interest}`,
       artifact_name: `pr-review-specialist-${interest}`,
     }));
