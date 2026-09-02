@@ -269,7 +269,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       undefined,
       0o600,
       {
-        statAfterManagedEloopAsRegular: true,
+        swapAfterManagedEloop: true,
         symlink: true,
         timeoutMs: managedCommandTimeoutMs,
       },

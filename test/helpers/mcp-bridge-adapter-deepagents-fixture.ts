@@ -47,7 +47,7 @@ export interface DeepAgentsManagedFixtureOptions {
   fifo?: boolean;
   mode?: number;
   parentSymlink?: boolean;
-  statAfterManagedEloopAsRegular?: boolean;
+  swapAfterManagedEloop?: boolean;
   swapAfterManagedOpen?: "fifo" | "symlink";
   swapAfterMissingManagedOpen?: "fifo" | "symlink";
   swapBeforeManagedLink?: string;
@@ -63,36 +63,47 @@ type ManagedSwap = {
   content?: string;
   kind: "fifo" | "regular" | "socket" | "symlink";
   phase:
-    | "after-missing-open"
-    | "after-open"
-    | "before-link"
-    | "before-open"
-    | "eloop-regular-stat"
-    | "read"
-    | "seek";
+    | "after-missing-projection-open"
+    | "after-projection-eloop"
+    | "after-projection-open"
+    | "before-projection-open"
+    | "projection-publication-begins"
+    | "projection-read-begins"
+    | "projection-rewrite-begins";
 };
 
 function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSwap | undefined {
   if (options.swapOnManagedOpen) {
-    return { kind: options.swapOnManagedOpen, phase: "before-open" };
+    return { kind: options.swapOnManagedOpen, phase: "before-projection-open" };
   }
   if (options.swapAfterManagedOpen) {
-    return { kind: options.swapAfterManagedOpen, phase: "after-open" };
+    return { kind: options.swapAfterManagedOpen, phase: "after-projection-open" };
   }
   if (options.swapAfterMissingManagedOpen) {
-    return { kind: options.swapAfterMissingManagedOpen, phase: "after-missing-open" };
+    return {
+      kind: options.swapAfterMissingManagedOpen,
+      phase: "after-missing-projection-open",
+    };
   }
   if (options.swapOnManagedRead) {
-    return { kind: options.swapOnManagedRead, phase: "read" };
+    return { kind: options.swapOnManagedRead, phase: "projection-read-begins" };
   }
-  if (options.statAfterManagedEloopAsRegular) {
-    return { kind: "symlink", phase: "eloop-regular-stat" };
+  if (options.swapAfterManagedEloop) {
+    return { kind: "symlink", phase: "after-projection-eloop" };
   }
   if (options.swapBeforeManagedLink !== undefined) {
-    return { content: options.swapBeforeManagedLink, kind: "regular", phase: "before-link" };
+    return {
+      content: options.swapBeforeManagedLink,
+      kind: "regular",
+      phase: "projection-publication-begins",
+    };
   }
   if (options.swapOnManagedSeek !== undefined) {
-    return { content: options.swapOnManagedSeek, kind: "regular", phase: "seek" };
+    return {
+      content: options.swapOnManagedSeek,
+      kind: "regular",
+      phase: "projection-rewrite-begins",
+    };
   }
   return undefined;
 }
@@ -161,6 +172,7 @@ function createDeepAgentsFixturePythonExecutable(
     { mode: 0o600 },
   );
   const wrapper = [
+    "import errno",
     "import os",
     "import socket",
     "import sys",
@@ -173,6 +185,12 @@ function createDeepAgentsFixturePythonExecutable(
     "managed_eloop_stage = 0",
     "managed_socket = None",
     "managed_swapped = False",
+    "managed_descriptor = None",
+    "managed_entry_name = os.path.basename(managed_path)",
+    "managed_real_link = os.link",
+    "managed_real_lseek = os.lseek",
+    "managed_real_open = os.open",
+    "managed_real_read = os.read",
     "def replace_managed_path():",
     "    global managed_socket, managed_swapped",
     "    if managed_swapped:",
@@ -205,37 +223,65 @@ function createDeepAgentsFixturePythonExecutable(
     "    os.unlink(managed_path)",
     "    os.symlink(managed_target, managed_path)",
     "    managed_eloop_stage = 2",
-    "def managed_profile(_frame, event, target):",
-    "    if managed_swap_phase == 'eloop-regular-stat':",
-    "        if managed_eloop_stage == 0 and event == 'c_exception' and target is os.open:",
+    "def is_managed_entry(value, directory_descriptor):",
+    "    try:",
+    "        return directory_descriptor is not None and os.fspath(value) == managed_entry_name",
+    "    except TypeError:",
+    "        return False",
+    "def managed_boundary_open(value, flags, mode=0o777, *, dir_fd=None):",
+    "    global managed_descriptor",
+    "    projection_entry = is_managed_entry(value, dir_fd)",
+    "    if projection_entry and managed_swap_phase == 'before-projection-open':",
+    "        replace_managed_path()",
+    "    try:",
+    "        if dir_fd is None:",
+    "            descriptor = managed_real_open(value, flags, mode)",
+    "        else:",
+    "            descriptor = managed_real_open(value, flags, mode, dir_fd=dir_fd)",
+    "    except OSError as exc:",
+    "        if projection_entry and managed_swap_phase == 'after-missing-projection-open' and isinstance(exc, FileNotFoundError):",
+    "            replace_managed_path()",
+    "        elif projection_entry and managed_swap_phase == 'after-projection-eloop' and exc.errno == errno.ELOOP:",
     "            replace_managed_symlink_with_regular()",
-    "        elif managed_eloop_stage == 1 and event == 'c_return' and target is os.stat:",
-    "            restore_managed_symlink()",
+    "        raise",
+    "    if projection_entry:",
+    "        managed_descriptor = descriptor",
+    "        if managed_swap_phase == 'after-projection-open':",
+    "            replace_managed_path()",
+    "    return descriptor",
+    "def managed_boundary_read(descriptor, length):",
+    "    if managed_swap_phase == 'projection-read-begins' and descriptor == managed_descriptor:",
+    "        replace_managed_path()",
+    "    return managed_real_read(descriptor, length)",
+    "def managed_boundary_link(source, destination, *args, **kwargs):",
+    "    if managed_swap_phase == 'projection-publication-begins' and is_managed_entry(destination, kwargs.get('dst_dir_fd')):",
+    "        replace_managed_path()",
+    "    return managed_real_link(source, destination, *args, **kwargs)",
+    "def managed_boundary_lseek(descriptor, position, how):",
+    "    if managed_swap_phase == 'projection-rewrite-begins' and descriptor == managed_descriptor:",
+    "        replace_managed_path()",
+    "    return managed_real_lseek(descriptor, position, how)",
+    "def install_managed_boundaries():",
+    "    if not managed_swap_phase:",
     "        return",
-    "    if managed_swapped:",
-    "        return",
-    "    if managed_swap_phase == 'before-open' and event == 'c_call' and target is os.open:",
-    "        replace_managed_path()",
-    "    elif managed_swap_phase == 'after-open' and event == 'c_return' and target is os.open and _frame.f_code.co_name == 'open_managed_projection':",
-    "        replace_managed_path()",
-    "    elif managed_swap_phase == 'after-missing-open' and event == 'c_exception' and target is os.open:",
-    "        replace_managed_path()",
-    "    elif managed_swap_phase == 'read' and event == 'c_call' and target is os.read:",
-    "        replace_managed_path()",
-    "    elif managed_swap_phase == 'before-link' and event == 'c_call' and target is os.link:",
-    "        replace_managed_path()",
-    "    elif managed_swap_phase == 'seek' and event == 'c_call' and target is os.lseek:",
-    "        replace_managed_path()",
+    "    os.link = managed_boundary_link",
+    "    os.lseek = managed_boundary_lseek",
+    "    os.open = managed_boundary_open",
+    "    os.read = managed_boundary_read",
+    "def restore_managed_boundaries():",
+    "    os.link = managed_real_link",
+    "    os.lseek = managed_real_lseek",
+    "    os.open = managed_real_open",
+    "    os.read = managed_real_read",
     "source = sys.stdin.read()",
     "namespace = {'__name__': '__main__'}",
     "sys.path.insert(0, fixture_root)",
-    "if managed_swap_phase:",
-    "    sys.setprofile(managed_profile)",
+    "install_managed_boundaries()",
     "try:",
     "    exec(compile(source, '<nemoclaw-managed-command>', 'exec'), namespace)",
     "finally:",
-    "    sys.setprofile(None)",
-    "    if managed_swap_phase == 'eloop-regular-stat' and managed_eloop_stage == 1:",
+    "    restore_managed_boundaries()",
+    "    if managed_swap_phase == 'after-projection-eloop' and managed_eloop_stage == 1:",
     "        restore_managed_symlink()",
     "",
   ].join("\n");
@@ -307,12 +353,15 @@ export function runDeepAgentsConfigCommand(
   } else {
     if (managedTargetReadPath === managedSymlinkTarget) {
       createFifo(managedSymlinkTarget, managedOptions.mode);
-    } else if (!managedOptions.danglingSymlink && managedSwap?.phase !== "after-missing-open") {
+    } else if (
+      !managedOptions.danglingSymlink &&
+      managedSwap?.phase !== "after-missing-projection-open"
+    ) {
       initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
       if (initialConfig !== undefined)
         fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
     }
-    if (managedSwap?.phase === "after-missing-open") {
+    if (managedSwap?.phase === "after-missing-projection-open") {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
     }
     if (managedSymlink) {
