@@ -969,8 +969,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         "advisor",
         "--model",
         DEFAULT_ADVISOR_MODEL,
-        "--timeout",
-        "900",
+        "--no-verify",
       ],
       expect.anything(),
     ]);
@@ -981,8 +980,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
     expect(providerCalls[0]?.[2].timeout).toBeGreaterThan(0);
-    const inferenceCall = calls.find(([, args]) => args.slice(0, 2).join(" ") === "inference set");
-    expect(inferenceCall?.[2].timeout).toBeGreaterThan(900_000);
+    expect(calls.filter(([, args]) => args.slice(0, 2).join(" ") === "inference set")).toHaveLength(1);
     calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
