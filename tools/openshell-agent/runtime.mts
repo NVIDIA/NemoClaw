@@ -356,14 +356,20 @@ function startOpenShellGateway(
     }),
     { mode: 0o600 },
   );
-  const stopGateway: OpenShellStop =
-    tools.start("openshell-gateway", ["--config", configurationPath], {
-      env: commandEnv,
-      logPath: path.join(gatewayDirectory, "gateway.log"),
-    }) ?? (async () => undefined);
+  const stopGateway = tools.start("openshell-gateway", ["--config", configurationPath], {
+    env: commandEnv,
+    logPath: path.join(gatewayDirectory, "gateway.log"),
+  });
+  if (!stopGateway?.exit || !stopGateway.isRunning) {
+    throw new OpenShellAgentError(
+      "openshell-gateway start did not return a supervised process handle",
+    );
+  }
+  const gatewayExit = stopGateway.exit;
+  const gatewayIsRunning = stopGateway.isRunning;
 
   let exited: OpenShellProcessExit | undefined;
-  void stopGateway.exit?.then((value) => {
+  void gatewayExit.then((value) => {
     exited = value;
   });
   const ready = (async (): Promise<void> => {
@@ -380,7 +386,7 @@ function startOpenShellGateway(
           assertExpectedGatewayInfo(info, gatewayEndpoint, input.gatewayId);
           await tools.wait(50);
           if (exited) throw gatewayExitError(exited);
-          if (stopGateway.isRunning && !stopGateway.isRunning())
+          if (!gatewayIsRunning())
             throw new OpenShellAgentError("openshell-gateway exited before becoming ready");
           return;
         } catch (error) {

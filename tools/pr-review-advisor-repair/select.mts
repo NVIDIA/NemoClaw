@@ -20,7 +20,6 @@ import {
 } from "../pr-review-advisor/review-state.mts";
 import {
   CANONICAL_REPOSITORY,
-  parseSelectionBundle,
   parseSelectionInput,
   readBoundedJson,
   readBoundedRegularFile,
@@ -629,7 +628,7 @@ export function parseRepairSelectionAuthority(value: unknown): RepairSelectionAu
     ],
     "selection authority",
   );
-  const pullRequest = exactRecord(
+  exactRecord(
     authority.pullRequest,
     ["state", "draft", "author", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
     "selection authority pullRequest",

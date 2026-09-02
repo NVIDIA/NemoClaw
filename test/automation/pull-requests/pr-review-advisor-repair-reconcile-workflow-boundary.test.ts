@@ -133,6 +133,21 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
     ).toContain("publish.mts");
   });
 
+  it("references only outputs declared by the producing job (#10791)", () => {
+    const declared = new Map(
+      Object.entries(jobs).map(([name, job]) => [name, Object.keys(record(record(job).outputs))]),
+    );
+    const violations = Array.from(
+      source.matchAll(/needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)/gu),
+      (match) => `${match[1]}.${match[2]}`,
+    ).filter((reference) => {
+      const [job, output] = reference.split(".");
+      return !declared.get(job!)?.includes(output!);
+    });
+
+    expect(violations).toEqual([]);
+  });
+
   it("pins every third-party action and uses credential-free trusted checkouts (#10791)", () => {
     const actionSteps = Object.values(jobs).map(record).flatMap(steps);
     const actions = actionSteps

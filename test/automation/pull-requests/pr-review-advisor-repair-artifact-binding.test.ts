@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  ADVISOR_FINDING_EXCLUSIONS,
   buildAdvisorFindingLedger,
   writeAdvisorFindingLedger,
   type AdvisorFindingLedger,
@@ -66,11 +67,11 @@ function writeSpecialistArtifact(
   root: string,
   interest: AdvisorInterest,
   ledger: AdvisorFindingLedger,
-): void {
+): string {
   const directory = path.join(root, `pr-review-specialist-${interest}-2`);
   write(directory, `pr-review-${interest}-summary.md`, `Summary for ${interest}.\n`);
   write(directory, `pr-review-${interest}-session.jsonl`, '{"type":"assistant"}\n');
-  writeAdvisorFindingLedger(directory, interest, ledger);
+  return writeAdvisorFindingLedger(directory, interest, ledger);
 }
 
 describe("PR Review Advisor repair artifact binding", () => {
@@ -168,7 +169,9 @@ describe("PR Review Advisor repair artifact binding", () => {
     const writtenLedgers = ledgers.map((ledger) =>
       writeSpecialistArtifact(downloadRoot, ledger.interest, ledger),
     );
-    expect(writtenLedgers).toHaveLength(ADVISOR_INTERESTS.length);
+    expect(writtenLedgers.map((file) => fs.existsSync(file))).toEqual(
+      ADVISOR_INTERESTS.map(() => true),
+    );
 
     const collected = bindDownloadedAdvisorArtifacts({
       downloadDirectory: downloadRoot,
@@ -212,5 +215,41 @@ describe("PR Review Advisor repair artifact binding", () => {
         manifest,
       }),
     ).toThrow("bounded regular file");
+  });
+
+  it("keeps fixed repair schemas aligned with canonical Advisor inventories (#10791)", () => {
+    const selectionSchema = JSON.parse(
+      fs.readFileSync(
+        path.resolve("tools/pr-review-advisor-repair/schemas/selection-input.schema.json"),
+        "utf8",
+      ),
+    );
+    const validationSchema = JSON.parse(
+      fs.readFileSync(
+        path.resolve("tools/pr-review-advisor-repair/schemas/validation-receipt.schema.json"),
+        "utf8",
+      ),
+    );
+    const artifactCount = expectedAdvisorArtifactNames(700, 2).length;
+
+    expect(selectionSchema.properties.advisor.properties.artifactIds).toMatchObject({
+      minItems: artifactCount,
+      maxItems: artifactCount,
+    });
+    expect(selectionSchema.properties.advisor.properties.artifactDigests).toMatchObject({
+      minItems: artifactCount,
+      maxItems: artifactCount,
+    });
+    expect(validationSchema.properties.advisor.properties.artifactIds).toMatchObject({
+      minItems: artifactCount,
+      maxItems: artifactCount,
+    });
+    expect(validationSchema.properties.advisor.properties.artifactDigests).toMatchObject({
+      minItems: artifactCount,
+      maxItems: artifactCount,
+    });
+    expect(selectionSchema.$defs.finding.properties.exclusions.items.enum).toEqual(
+      ADVISOR_FINDING_EXCLUSIONS,
+    );
   });
 });

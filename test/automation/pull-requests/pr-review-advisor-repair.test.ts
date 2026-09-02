@@ -12,6 +12,8 @@ import { createAttemptReceipt } from "../../../tools/pr-review-advisor-repair/au
 import { pullRequestReviewStateDigest } from "../../../tools/pr-review-advisor/review-state.mts";
 import {
   startOwnedOpenShellGateway,
+  type OpenShellProcessExit,
+  type OpenShellStop,
   type OpenShellTools,
 } from "../../../tools/openshell-agent/runtime.mts";
 import {
@@ -19,7 +21,6 @@ import {
   parseSelectionInput,
   parseProposalDraft,
   parseProposalReceipt,
-  parseValidationReceipt,
   repairClassForPath,
   safeRelativePath,
   sanitizeDiagnostic,
@@ -1258,7 +1259,13 @@ describe("PR Review Advisor repair Phase 1", () => {
 
   it("starts a bind-mount gateway without configuring a model provider (#10791)", async () => {
     const root = temporaryDirectory();
-    const stop = vi.fn(async () => undefined);
+    const stop = Object.assign(
+      vi.fn(async () => undefined),
+      {
+        exit: new Promise<OpenShellProcessExit>(() => undefined),
+        isRunning: () => true,
+      },
+    ) satisfies OpenShellStop;
     const tools: OpenShellTools = {
       run: vi.fn((command, args, options) => {
         switch (`${command} ${args.join(" ")}`) {

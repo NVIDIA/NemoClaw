@@ -703,7 +703,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     },
   );
 
-  it("uses an atomic non-force update and exact generated-head dispatch payloads (#10791)", async () => {
+  it("uses an atomic non-force update (#10791)", async () => {
     const bundle = selection();
     const afterOid = "d".repeat(40);
     const graphql = vi.fn().mockResolvedValue({

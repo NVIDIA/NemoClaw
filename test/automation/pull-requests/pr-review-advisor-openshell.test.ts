@@ -14,7 +14,11 @@ import {
   DEFAULT_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
 } from "../../../tools/advisors/session.mts";
-import type { OpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
+import type {
+  OpenShellProcessExit,
+  OpenShellStop,
+  OpenShellTools,
+} from "../../../tools/openshell-agent/runtime.mts";
 import {
   collectGitHubReviewContext,
   MAX_PREPARED_GITHUB_CONTEXT_BYTES,
@@ -89,6 +93,10 @@ function advisorEnvironment(): NodeJS.ProcessEnv {
 }
 
 function advisorTools(runImplementation?: OpenShellTools["run"]): OpenShellTools {
+  const stop = Object.assign(vi.fn(async () => undefined), {
+    exit: new Promise<OpenShellProcessExit>(() => undefined),
+    isRunning: () => true,
+  }) satisfies OpenShellStop;
   return {
     run: vi.fn(
       runImplementation ??
@@ -98,7 +106,7 @@ function advisorTools(runImplementation?: OpenShellTools["run"]): OpenShellTools
               return "/trusted/bin/openshell-sandbox";
             case "openshell gateway info -o json":
               return JSON.stringify({
-                gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+                gateway: "pr-review-advisor",
                 server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
                 status: "healthy",
               });
@@ -111,7 +119,7 @@ function advisorTools(runImplementation?: OpenShellTools["run"]): OpenShellTools
       cancel: vi.fn(),
       completion: Promise.resolve(),
     })),
-    start: vi.fn(),
+    start: vi.fn(() => stop),
     wait: vi.fn(async () => undefined),
   };
 }
@@ -1043,6 +1051,16 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     expect(gatewayConfig).not.toContain("model-host-secret");
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
+  });
+
+  it("fails closed when gateway startup is not supervised (#10791)", () => {
+    const env = advisorEnvironment();
+    const tools = advisorTools();
+    vi.mocked(tools.start).mockReturnValue(undefined);
+
+    expect(() => startAdvisorOpenShellInference(env, tools)).toThrow(
+      "did not return a supervised process handle",
+    );
   });
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", async () => {

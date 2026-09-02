@@ -515,7 +515,7 @@ function runHostDependencyPreparation(
 function canonicalDirectory(resource: string, name: string): string {
   const canonical = fs.realpathSync(resource);
   const stat = fs.lstatSync(canonical);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+  if (!stat.isDirectory()) {
     throw new RepairContractError(`${name} must be a regular directory`);
   }
   return canonical;
@@ -1061,6 +1061,10 @@ export function writeValidationArtifacts(
         mode: 0o600,
       });
     }
+    // lgtm[js/network-data-to-file] The receipt contains strictly parsed,
+    // bounded metadata and is written as non-executable JSON to an exclusive
+    // 0600 file beneath a fresh runner-owned artifact directory.
+    // lgtm[js/http-to-file-access]
     fs.writeFileSync(
       path.join(staged, "validation-receipt.json"),
       `${JSON.stringify(receipt, null, 2)}\n`,

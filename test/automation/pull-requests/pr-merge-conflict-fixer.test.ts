@@ -29,6 +29,10 @@ import {
   resolverPrompt,
   runResolutionTask,
 } from "../../../tools/pr-merge-conflict-fixer/resolve.mts";
+import type {
+  OpenShellProcessExit,
+  OpenShellStop,
+} from "../../../tools/openshell-agent/runtime.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -81,18 +85,22 @@ function resolverEnvironment(): NodeJS.ProcessEnv {
 }
 
 function resolverTools(outputs: string[] = []): ResolverTools {
+  const stop = Object.assign(vi.fn(async () => undefined), {
+    exit: new Promise<OpenShellProcessExit>(() => undefined),
+    isRunning: () => true,
+  }) satisfies OpenShellStop;
   return {
     run: vi.fn((_command, args, options) =>
       args.join(" ") === "gateway info -o json"
         ? JSON.stringify({
-            gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+            gateway: "pr-conflict-fixer",
             server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
             status: "healthy",
           })
         : (outputs.shift() ?? ""),
     ),
     runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
-    start: vi.fn(),
+    start: vi.fn(() => stop),
     wait: vi.fn(async () => undefined),
   };
 }
@@ -513,7 +521,10 @@ describe("PR merge conflict fixer", () => {
   it("configures approved inference through a loopback gateway (#7542)", async () => {
     const env = resolverEnvironment();
     const tools = resolverTools(["/trusted/bin/openshell-sandbox"]);
-    const stopGateway = vi.fn(async () => undefined);
+    const stopGateway = Object.assign(vi.fn(async () => undefined), {
+      exit: new Promise<OpenShellProcessExit>(() => undefined),
+      isRunning: () => true,
+    }) satisfies OpenShellStop;
     vi.mocked(tools.start).mockReturnValue(stopGateway);
 
     await configureOpenShellInference(env, tools);

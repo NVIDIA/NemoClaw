@@ -3,44 +3,27 @@
 
 import fs from "node:fs";
 
-import { RepairContractError, type ProposalReceipt, type ValidationReceipt } from "./contract.mts";
+import type { AttemptReceipt } from "./audit.mts";
+import {
+  RepairContractError,
+  type ProposalReceipt,
+  type SelectionBundle,
+  type ValidationReceipt,
+} from "./contract.mts";
+import type { PublicationReceipt } from "./publish.mts";
 
 const MAX_JOB_SUMMARY_BYTES = 1024 * 1024;
 const MAX_RENDERED_SUMMARY_BYTES = 8 * 1024;
 
-type AttemptSummaryReceipt = {
-  workflow: { runId: number; runAttempt: number; workflowSha: string };
-  dispatch: {
-    prNumber: number | null;
-    advisorRunId: number | null;
-    findingIdsSha256: string;
-    repositoryEgressAuthorized: boolean;
-  };
-  emergencySwitch: { enabled: boolean };
-  outcome: string;
-  reason: string;
-};
+type AttemptSummaryReceipt = Pick<
+  AttemptReceipt,
+  "workflow" | "dispatch" | "emergencySwitch" | "outcome" | "reason"
+>;
 
-type SelectionSummary = {
-  attemptKey: string;
-  identityStatus: string;
-  input: {
-    sourceHeadSha: string;
-    baseSha: string;
-    advisor: { runId: number; runAttempt: number; artifactIds: number[] };
-  };
-  selectedFindingIds: string[];
-  selectedPaths: string[];
-  outcome: string;
-};
-
-type PublicationSummaryReceipt = {
-  attemptKey: string;
-  sourceHeadSha: string;
-  candidateTreeSha: string;
-  commitSha: string;
-  dispatchedWorkflows: string[];
-};
+type PublicationSummaryReceipt = Pick<
+  PublicationReceipt,
+  "attemptKey" | "sourceHeadSha" | "candidateTreeSha" | "commitSha" | "dispatchedWorkflows"
+>;
 
 function safeValue(value: string | number | boolean | null): string {
   const rendered = value === null ? "none" : String(value);
@@ -121,7 +104,7 @@ export function appendAttemptJobSummary(
 
 export function appendSelectionJobSummary(
   file: string | undefined,
-  selection: SelectionSummary,
+  selection: SelectionBundle,
 ): void {
   report(file, () =>
     render("trusted selection", [

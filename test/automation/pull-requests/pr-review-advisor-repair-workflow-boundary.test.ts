@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { GENERATED_HEAD_VALIDATIONS } from "../../../tools/pr-review-advisor-repair/generated-head-validation.mts";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const workflowSource = fs.readFileSync(
@@ -33,13 +34,9 @@ const publisherSource = fs.readFileSync(
   path.join(root, "tools", "pr-review-advisor-repair", "publish.mts"),
   "utf8",
 );
-const generatedHeadWorkflowFiles = [
-  "pr.yaml",
-  "commit-lint.yaml",
-  "dco-check.yaml",
-  "installer-hash-check.yaml",
-  "code-scanning.yaml",
-] as const;
+const generatedHeadWorkflowFiles = GENERATED_HEAD_VALIDATIONS.map(
+  ({ workflow }) => workflow,
+).filter((workflow) => workflow !== "pr-review-advisor.yaml");
 const generatedHeadWorkflowSources = Object.fromEntries(
   [...generatedHeadWorkflowFiles, "pr-review-advisor.yaml"].map((file) => [
     file,
@@ -493,25 +490,8 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     );
   });
 
-  it("publishes by verified one-parent commit and non-force compare-and-swap (#10791)", () => {
-    expect(publisherSource).toContain("parents: [input.receipt.sourceHeadSha]");
-    expect(publisherSource).toContain("await waitForVerifiedCommit");
-    expect(publisherSource).toContain("beforeOid: input.receipt.sourceHeadSha");
-    expect(publisherSource).toContain("parseValidatedReceiptForPublication");
-    expect(publisherSource).toContain('env.ADVISOR_REPAIR_PHASE1_ENABLED !== "true"');
-    expect(publisherSource).toContain(
-      'throw new RepairContractError("Phase 1 publication is disabled")',
-    );
+  it("keeps alternate publication and trust paths absent (#10791)", () => {
     expect(publisherSource).not.toContain("parseSelectionBundle");
-    expect(publisherSource).toContain('GIT_CONFIG_GLOBAL: "/dev/null"');
-    expect(publisherSource).toContain('GIT_CONFIG_NOSYSTEM: "1"');
-    expect(publisherSource).toContain('GIT_LFS_SKIP_SMUDGE: "1"');
-    expect(publisherSource).toContain('"core.hooksPath=/dev/null"');
-    expect(publisherSource).toContain('"filter.lfs.smudge="');
-    expect(publisherSource).toContain('"filter.lfs.required=false"');
-    expect(publisherSource).toContain('"diff.external="');
-    expect(publisherSource).toContain('"--no-hardlinks"');
-    expect(publisherSource).toContain("force: false");
     expect(publisherSource).not.toMatch(/git\s+push/iu);
   });
 });

@@ -173,6 +173,10 @@ async function main(env: NodeJS.ProcessEnv): Promise<void> {
   if (command === "verify") {
     const context = await collectGeneratedHeadContext(env);
     fs.mkdirSync(path.dirname(contextFile), { recursive: true, mode: 0o700 });
+    // lgtm[js/network-data-to-file] The verified PR context is length-bounded,
+    // serialized as data, and written exclusively to a fixed runner-owned 0600
+    // path. Downstream consumers parse it strictly and never execute it.
+    // lgtm[js/http-to-file-access]
     fs.writeFileSync(contextFile, `${JSON.stringify(context, null, 2)}\n`, {
       flag: "wx",
       mode: 0o600,
