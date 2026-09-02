@@ -376,9 +376,19 @@ async function expectTelegramGatewayCredentialReady(
   sandbox: SandboxClient,
   artifactName: string,
 ): Promise<void> {
+  const source = [
+    'const fs = require("node:fs")',
+    'let output = ""',
+    'try { output = fs.readFileSync("/tmp/gateway.log", "utf8").split(/\\r?\\n/u).slice(-400).join("\\n") } catch {}',
+    'const ready = output.includes("runtime credential is ready (revision-scoped)")',
+    'const invalid = /TELEGRAM_BOT_TOKEN is missing|identityless canonical placeholder|placeholder is malformed/u.test(output)',
+    'const state = ready && !invalid ? "ready" : "invalid"',
+    "console.log(state)",
+    'process.exit(state === "ready" ? 0 : 1)',
+  ].join("; ");
   const result = await sandbox.exec(
     SANDBOX_NAME,
-    ["sh", "-c", "tail -n 400 /tmp/gateway.log 2>/dev/null || true"],
+    ["node", "-e", source],
     {
       artifactName,
       env: sandboxAccessEnv(),
@@ -386,11 +396,7 @@ async function expectTelegramGatewayCredentialReady(
     },
   );
   assertExitZero(result, "Telegram gateway credential diagnostic");
-  const output = resultText(result);
-  expect(output).toContain("runtime credential is ready (revision-scoped)");
-  expect(output).not.toMatch(
-    /TELEGRAM_BOT_TOKEN is missing|identityless canonical placeholder|placeholder is malformed/u,
-  );
+  expect(result.stdout.trim(), resultText(result)).toBe("ready");
 }
 
 /** Detect an active policy preset in the human-readable policy listing. */
