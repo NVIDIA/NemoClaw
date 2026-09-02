@@ -29,16 +29,16 @@ describe("runOllamaRestartRecovery", () => {
       endpointUrl,
     };
 
-    runOllamaRestartRecovery(route, proc, recoverOllama);
+    runOllamaRestartRecovery(route, proc, {}, recoverOllama);
 
-    expect(recoverOllama).toHaveBeenCalledWith(route);
+    expect(recoverOllama).toHaveBeenCalledWith(route, {});
     expect(writes.join("")).toContain("Ollama model 'qwen3.6:35b' is already loaded");
   });
 
   it("reports a successful warm-up", () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, () => ({
+    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "warmed",
       ok: true,
       timedOut: false,
@@ -50,7 +50,7 @@ describe("runOllamaRestartRecovery", () => {
   it("reports a timeout before continuing to OpenClaw", () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, () => ({
+    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "warmed",
       ok: false,
       timedOut: true,
@@ -76,7 +76,7 @@ describe("runOllamaRestartRecovery", () => {
   ] as const)("reports a %s warm-up failure", (reason, message) => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, () => ({
+    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "warmed",
       ok: false,
       timedOut: false,
@@ -99,7 +99,7 @@ describe("runOllamaRestartRecovery", () => {
   ] as const)("handles the %s skip reason", (reason, message) => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, () => ({
+    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "skipped",
       reason,
     }));
@@ -110,7 +110,7 @@ describe("runOllamaRestartRecovery", () => {
   it("reports the endpoint, model, and recovery action when Ollama is unreachable", () => {
     const { writes, proc } = makeProcMock();
 
-    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, () => ({
+    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "skipped",
       reason: "unreachable",
       endpoint: "http://host.docker.internal:11434",
@@ -124,6 +124,28 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("then rerun this command");
   });
 
+  it("reports a warm-up skipped after the command timeout budget is exhausted", () => {
+    const { writes, proc } = makeProcMock();
+
+    runOllamaRestartRecovery(
+      { provider: "ollama-local", model: "qwen3.6:35b" },
+      proc,
+      { timeoutSeconds: 1 },
+      () => ({
+        kind: "skipped",
+        reason: "deadline-exhausted",
+        endpoint: "http://host.docker.internal:11434",
+      }),
+    );
+
+    const stderr = writes.join("");
+    expect(stderr).toContain("warm-up for 'qwen3.6:35b'");
+    expect(stderr).toContain("http://host.docker.internal:11434");
+    expect(stderr).toContain("was skipped");
+    expect(stderr).toContain("timeout left no recovery budget");
+    expect(stderr).toContain("continuing to OpenClaw dispatch");
+  });
+
   it("names the endpoint and its reported models when the model is absent (#9455)", () => {
     const { writes, proc } = makeProcMock();
 
@@ -134,6 +156,7 @@ describe("runOllamaRestartRecovery", () => {
         endpointUrl: "http://host.openshell.internal:11434/v1",
       },
       proc,
+      {},
       () => ({
         kind: "skipped",
         reason: "model-absent",
@@ -155,15 +178,18 @@ describe("runOllamaRestartRecovery", () => {
   it("redacts and bounds recovery exceptions", () => {
     const { writes, proc } = makeProcMock();
     const exposedToken = "sk-proj-NOT-A-REAL-SECRET-1234567890";
+    const directionalControls =
+      "\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
 
     expect(() =>
       runOllamaRestartRecovery(
         {
           provider: "ollama-local",
-          model: "qwen3.6:35b\u001b[2J\u0007",
-          endpointUrl: "http://host.openshell.internal:11434/v1\u001b]52;c;clipboard\u0007",
+          model: `qwen3.6:35b${directionalControls}\u001b[2J\u0007`,
+          endpointUrl: `http://host.openshell.internal:11434/v1${directionalControls}\u001b]52;c;clipboard\u0007`,
         },
         proc,
+        {},
         () => {
           throw new Error(
             `synthetic\u001b[2J Docker transport failure\u0007 OPENAI_API_KEY=${exposedToken} ${"x".repeat(400)} END-OF-DETAIL`,
@@ -184,7 +210,9 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).not.toContain("END-OF-DETAIL");
     expect(stderr).not.toContain("\u001b");
     expect(stderr).not.toContain("\u0007");
-    expect(stderr.replace(/\n/gu, "")).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+    expect(stderr.replace(/\n/gu, "")).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
   });
 });
 
@@ -241,11 +269,11 @@ describe("agent passthrough Ollama recovery ordering", () => {
       ),
     ).rejects.toThrow("__exit:0");
 
-    expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process);
+    expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process, {});
     expect(events).toEqual(["recovery", "dispatch"]);
   });
 
-  it("checks a WSL direct route before non-JSON dispatch", async () => {
+  it("passes a short command timeout budget before non-JSON dispatch", async () => {
     const events: string[] = [];
     const route = {
       provider: "ollama-local",
@@ -260,12 +288,14 @@ describe("agent passthrough Ollama recovery ordering", () => {
     await expect(
       runAgentPassthrough(
         "alpha",
-        { extraArgs: ["--agent", "main", "-m", "ping"] },
+        { extraArgs: ["--agent", "main", "--timeout", "30", "-m", "ping"] },
         { ...deps, runOllamaRestartRecovery: runRecovery },
       ),
     ).rejects.toThrow("__exit:0");
 
-    expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process);
+    expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process, {
+      timeoutSeconds: 30,
+    });
     expect(events).toEqual(["recovery", "dispatch"]);
   });
 
@@ -292,7 +322,7 @@ describe("agent passthrough Ollama recovery ordering", () => {
       registeredRoute: Parameters<typeof runOllamaRestartRecovery>[0],
       proc: Parameters<typeof runOllamaRestartRecovery>[1],
     ) =>
-      runOllamaRestartRecovery(registeredRoute, proc, () => {
+      runOllamaRestartRecovery(registeredRoute, proc, {}, () => {
         throw new Error("synthetic recovery failure");
       });
 

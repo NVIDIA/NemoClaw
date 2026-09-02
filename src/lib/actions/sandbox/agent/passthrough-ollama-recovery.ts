@@ -6,6 +6,7 @@ import {
   maybeWarmOllamaAfterDaemonRestart,
   OLLAMA_LOCAL_PROVIDER,
   type OllamaRestartRecoveryFailureReason,
+  type OllamaRestartRecoveryOptions,
   type OllamaRestartRecoveryResult,
   type OllamaRestartRecoveryRoute,
 } from "./ollama-restart-recovery";
@@ -14,6 +15,7 @@ export { OLLAMA_LOCAL_PROVIDER };
 
 export type OllamaRestartRecoveryFn = (
   route: OllamaRestartRecoveryRoute,
+  options?: OllamaRestartRecoveryOptions,
 ) => OllamaRestartRecoveryResult;
 
 export interface OllamaRestartRecoveryProcess {
@@ -83,6 +85,15 @@ function reportRecovery(
     return;
   }
 
+  if (result.reason === "deadline-exhausted") {
+    const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
+    proc.stderr.write(
+      `  Ollama warm-up for '${model}' at ${endpoint} was skipped because the agent command ` +
+        `timeout left no recovery budget; continuing to OpenClaw dispatch.\n`,
+    );
+    return;
+  }
+
   const reason = result.reason;
   switch (reason) {
     case "already-loaded":
@@ -115,11 +126,12 @@ function reportRecovery(
 export function runOllamaRestartRecovery(
   route: OllamaRestartRecoveryRoute,
   proc: OllamaRestartRecoveryProcess,
+  options: OllamaRestartRecoveryOptions = {},
   recoverOllama: OllamaRestartRecoveryFn = maybeWarmOllamaAfterDaemonRestart,
 ): void {
   proc.stderr.write("  Checking whether the Ollama model is loaded...\n");
   try {
-    reportRecovery(route, recoverOllama(route), proc);
+    reportRecovery(route, recoverOllama(route, options), proc);
   } catch (error) {
     const model = boundedOllamaRestartRecoveryDetail(route.model, "the registered model");
     const endpoint = recordedEndpointLabel(route);

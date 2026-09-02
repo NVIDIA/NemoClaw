@@ -41,7 +41,11 @@ export interface OllamaRestartRecoveryRoute {
   endpointUrl?: string | null;
 }
 
-export interface OllamaRestartRecoveryDeps {
+export interface OllamaRestartRecoveryOptions {
+  timeoutSeconds?: number;
+}
+
+export interface OllamaRestartRecoveryDeps extends OllamaRestartRecoveryOptions {
   probeRuntimeModelStatus?: (
     model: string,
     getOllamaHost: () => string,
@@ -52,6 +56,7 @@ export interface OllamaRestartRecoveryDeps {
   getOllamaHost?: () => string;
   runCaptureImpl?: RunCaptureFn;
   prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
+  now?: () => number;
 }
 
 export type OllamaRestartRecoveryFailureReason =
@@ -64,6 +69,7 @@ export type OllamaRestartRecoveryFailureReason =
 export type OllamaRestartRecoveryResult =
   | { kind: "skipped"; reason: "not-ollama" | "missing-model" | "already-loaded" }
   | { kind: "skipped"; reason: "unreachable"; endpoint: string }
+  | { kind: "skipped"; reason: "deadline-exhausted"; endpoint: string }
   | { kind: "skipped"; reason: "model-absent"; endpoint: string; inventoryLabel: string }
   | { kind: "warmed"; ok: true; timedOut: false }
   | {
@@ -145,7 +151,7 @@ function resolveRawOllamaHost(
   return getAllowedFallbackHost(getOllamaHost);
 }
 
-function buildWarmCommand(model: string, hostname: string): string[] {
+function buildWarmCommand(model: string, hostname: string, maxTimeSeconds: number): string[] {
   const body = JSON.stringify({
     model,
     prompt: "Hello, reply in less than 5 words",
@@ -160,7 +166,7 @@ function buildWarmCommand(model: string, hostname: string): string[] {
       "--connect-timeout",
       "3",
       "--max-time",
-      String(OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS),
+      String(maxTimeSeconds),
       "-H",
       "Content-Type: application/json",
       "-d",
@@ -169,6 +175,24 @@ function buildWarmCommand(model: string, hostname: string): string[] {
     ]),
     hostname,
   );
+}
+
+function recoveryDeadlineMilliseconds(
+  timeoutSeconds: number | undefined,
+  now: () => number,
+): number | null {
+  if (timeoutSeconds === undefined) return null;
+  const boundedSeconds =
+    Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+      ? Math.min(timeoutSeconds, OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS)
+      : 0;
+  return now() + boundedSeconds * 1000;
+}
+
+function remainingRecoveryMilliseconds(deadline: number | null, now: () => number): number {
+  return deadline === null
+    ? OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS * 1000
+    : Math.max(0, Math.floor(deadline - now()));
 }
 
 function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-response" {
@@ -196,7 +220,7 @@ function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-
 export function boundedOllamaRestartRecoveryDetail(value: unknown, fallback: string): string {
   const raw = value instanceof Error ? value.message : String(value ?? "");
   const detail = redactFull(redact(raw))
-    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
   return (detail || fallback).slice(0, 300);
@@ -218,6 +242,9 @@ export function maybeWarmOllamaAfterDaemonRestart(
   if (!model) {
     return { kind: "skipped", reason: "missing-model" };
   }
+
+  const now = deps.now ?? Date.now;
+  const recoveryDeadline = recoveryDeadlineMilliseconds(deps.timeoutSeconds, now);
 
   const getOllamaHost = deps.getOllamaHost ?? getResolvedOllamaHost;
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
@@ -246,8 +273,16 @@ export function maybeWarmOllamaAfterDaemonRestart(
     return { kind: "skipped", reason: "already-loaded" };
   }
 
+  const warmupTimeoutMilliseconds = remainingRecoveryMilliseconds(recoveryDeadline, now);
+  if (warmupTimeoutMilliseconds === 0) {
+    return { kind: "skipped", reason: "deadline-exhausted", endpoint: rawEndpoint };
+  }
+  const warmupTimeoutSeconds = warmupTimeoutMilliseconds / 1000;
+
   try {
-    const result = rawCaptureEx(buildWarmCommand(model, rawHost));
+    const result = rawCaptureEx(buildWarmCommand(model, rawHost, warmupTimeoutSeconds), {
+      timeout: warmupTimeoutMilliseconds,
+    });
     if (result.timedOut) {
       return {
         kind: "warmed",
@@ -257,7 +292,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
         endpoint: rawEndpoint,
         detail: boundedOllamaRestartRecoveryDetail(
           result.stderr,
-          `warm-up exceeded ${OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS} seconds`,
+          `warm-up exceeded ${String(warmupTimeoutSeconds)} seconds`,
         ),
       };
     }

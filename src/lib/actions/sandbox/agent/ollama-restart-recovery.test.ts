@@ -224,6 +224,52 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     });
   });
 
+  it("limits warm-up to the command timeout budget remaining after the probe", () => {
+    const runCaptureExImpl = vi.fn(
+      (_command: string[], _options?: { env?: NodeJS.ProcessEnv; timeout?: number }) =>
+        successfulWarmResult(),
+    );
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(6_000);
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          runCaptureExImpl,
+          timeoutSeconds: 30,
+          now,
+        },
+      ),
+    ).toEqual({ kind: "warmed", ok: true, timedOut: false });
+
+    const warmCommand = runCaptureExImpl.mock.calls[0][0];
+    expect(warmCommand[warmCommand.indexOf("--max-time") + 1]).toBe("25");
+    expect(runCaptureExImpl.mock.calls[0][1]?.timeout).toBe(25_000);
+  });
+
+  it("skips warm-up when the probe consumes the command timeout budget", () => {
+    const runCaptureExImpl = vi.fn(() => successfulWarmResult());
+    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(31_000);
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          runCaptureExImpl,
+          timeoutSeconds: 30,
+          now,
+        },
+      ),
+    ).toEqual({
+      kind: "skipped",
+      reason: "deadline-exhausted",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
+    expect(runCaptureExImpl).not.toHaveBeenCalled();
+  });
+
   it("does not treat an exit-zero Ollama error body as a successful warm-up", () => {
     expect(
       maybeWarmOllamaAfterDaemonRestart(

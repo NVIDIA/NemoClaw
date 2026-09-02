@@ -133,7 +133,10 @@ export {
   MIN_OLLAMA_VERSION,
 } from "./ollama-version";
 
-export type RunCaptureExFn = (cmd: string[], opts?: { env?: NodeJS.ProcessEnv }) => CaptureResult;
+export type RunCaptureExFn = (
+  cmd: string[],
+  opts?: { env?: NodeJS.ProcessEnv; timeout?: number },
+) => CaptureResult;
 
 // Hosts that local-provider discovery may try when probing Ollama. The Windows
 // onboarding path separately checks host.docker.internal from Docker Desktop's

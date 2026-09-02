@@ -132,6 +132,7 @@ import {
   isTimedOutAgentDispatch,
   OPENCLAW_AGENT_BOOLEAN_FLAGS,
   OPENCLAW_AGENT_VALUE_FLAGS,
+  requestedAgentTimeoutSeconds,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
@@ -553,7 +554,8 @@ export async function runAgentPassthrough(
   if (isOpenClawPassthroughCommand(command)) {
     if (lookup.kind === "agent" && lookup.provider === OLLAMA_LOCAL_PROVIDER) {
       const recoverOllama = deps.runOllamaRestartRecovery ?? runOllamaRestartRecovery;
-      recoverOllama(lookup, proc);
+      const timeoutSeconds = requestedAgentTimeoutSeconds(command);
+      recoverOllama(lookup, proc, timeoutSeconds === null ? {} : { timeoutSeconds });
     }
     maybeEmitShieldsRelockWarning(proc, sandboxName, deps.getRecentShieldsAutoRestore);
   }
