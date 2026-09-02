@@ -102,6 +102,20 @@ describe("CLI OpenShell provider adapter", () => {
       adapter.inspectProviderProfile({ target, profileType: "tavily" }),
       adapter.deleteProvider({ target, providerName: "search-prod" }),
       adapter.detachProvider({ target, providerName: "search-prod", sandboxName: "alpha" }),
+      adapter.attachProvider({ target, providerName: "search-prod", sandboxName: "alpha" }),
+      adapter.configureProviderRefresh({
+        target,
+        providerName: "search-prod",
+        credentialKey: "TAVILY_API_KEY",
+        strategy: "test-refresh",
+        material: [{ key: "scope", value: "search" }],
+        secretMaterial: [{ key: "private_key", value: credentialValue }],
+      }),
+      adapter.getProviderRefreshStatus({
+        target,
+        providerName: "search-prod",
+        credentialKey: "TAVILY_API_KEY",
+      }),
     ];
 
     const results = await Promise.all(operations);
@@ -115,6 +129,9 @@ describe("CLI OpenShell provider adapter", () => {
       },
     };
     expect(results).toEqual([
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
       expectedFailure,
       expectedFailure,
       expectedFailure,
@@ -340,6 +357,86 @@ describe("CLI OpenShell provider adapter", () => {
       },
     );
     expect(run.mock.calls[0]?.[0]).not.toContain(credentialValue);
+  });
+
+  it("attaches a provider and keeps refresh secrets in the child environment (#9806)", async () => {
+    const run = vi.fn<RunProviderCommand>((args) =>
+      args.includes("status")
+        ? captured(0, "search-prod  TAVILY_API_KEY  test-refresh  refreshed  2026-09-02 20:00:00\n")
+        : captured(0),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+    const target = namedOpenShellGateway("nemoclaw-18080");
+    const refreshSecret = "refresh-secret-value";
+
+    const attached = await adapter.attachProvider({
+      target,
+      providerName: "search-prod",
+      sandboxName: "alpha",
+    });
+    const configured = await adapter.configureProviderRefresh({
+      target,
+      providerName: "search-prod",
+      credentialKey: "TAVILY_API_KEY",
+      strategy: "test-refresh",
+      material: [{ key: "scope", value: "search" }],
+      secretMaterial: [{ key: "private_key", value: refreshSecret }],
+    });
+    const status = await adapter.getProviderRefreshStatus({
+      target,
+      providerName: "search-prod",
+      credentialKey: "TAVILY_API_KEY",
+      timeoutMs: 4_321,
+    });
+
+    expect([attached, configured, status]).toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true, value: { status: "refreshed" } },
+    ]);
+    expect(run).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "provider", "attach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      [
+        "provider",
+        "refresh",
+        "-g",
+        "nemoclaw-18080",
+        "configure",
+        "--credential-key",
+        "TAVILY_API_KEY",
+        "--strategy",
+        "test-refresh",
+        "--material",
+        "scope=search",
+        "--secret-material-env",
+        "private_key=NEMOCLAW_PROVIDER_REFRESH_SECRET_0",
+        "search-prod",
+      ],
+      expect.objectContaining({
+        env: { NEMOCLAW_PROVIDER_REFRESH_SECRET_0: refreshSecret },
+      }),
+    );
+    expect(run).toHaveBeenNthCalledWith(
+      3,
+      [
+        "provider",
+        "refresh",
+        "-g",
+        "nemoclaw-18080",
+        "status",
+        "search-prod",
+        "--credential-key",
+        "TAVILY_API_KEY",
+      ],
+      expect.objectContaining({ suppressOutput: true, timeout: 4_321 }),
+    );
+    expect(run.mock.calls.flatMap(([args]) => args)).not.toContain(refreshSecret);
+    expect(JSON.stringify([attached, configured, status])).not.toContain(refreshSecret);
   });
 
   it("updates a provider without placing credential values in argv (#9806)", async () => {

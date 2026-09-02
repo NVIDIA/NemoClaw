@@ -93,6 +93,8 @@ const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
   inference_capable: false,
 };
 const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
+const realUpsertMessagingProviders =
+  policyChannelDependencies.upsertMessagingProviders.bind(policyChannelDependencies);
 
 // Why this mock exists: the real googlechat tunnel/audience gate needs a human
 // operator (Google Cloud Console steps), so on a non-interactive test run it
@@ -293,9 +295,9 @@ beforeEach(() => {
     const runEnv = options?.env as Record<string, string> | undefined;
     bridgeRefreshWasSecure = configuringRefresh
       ? command.includes("--secret-material-env") &&
-        command.includes("private_key=MESSAGING_BRIDGE_SECRET_0") &&
+        command.includes("private_key=NEMOCLAW_PROVIDER_REFRESH_SECRET_0") &&
         !command.join(" ").includes("fake-test-private-key-material") &&
-        runEnv?.MESSAGING_BRIDGE_SECRET_0 === "fake-test-private-key-material"
+        runEnv?.NEMOCLAW_PROVIDER_REFRESH_SECRET_0 === "fake-test-private-key-material"
       : bridgeRefreshWasSecure;
     const invalidRefresh = configuringRefresh && !bridgeRefreshWasSecure;
     refreshStatusFailure
@@ -376,6 +378,10 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       ],
       "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
+      expect.objectContaining({
+        channelName: "googlechat",
+        sandboxName: "test-sb",
+      }),
     );
     expect(bridgeProfileWasImported).toBe(true);
     expect(bridgeRefreshWasSecure).toBe(true);
@@ -411,7 +417,8 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
   });
 
   it("detaches and deletes the newly created bridge provider when registration fails", async () => {
-    providerSpy.mockImplementation(() => {
+    providerSpy.mockImplementation(async (tokenDefs, gatewayName, options, context) => {
+      await realUpsertMessagingProviders(tokenDefs, gatewayName, options, context);
       throw new Error("simulated gateway failure");
     });
 
@@ -435,9 +442,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     const diagnostics = printedText();
     expect(diagnostics).toContain("test-sb-googlechat-bridge");
     expect(diagnostics).toContain("gateway unavailable");
-    expect(diagnostics).toContain(
-      'openshell provider delete -g "nemoclaw" "test-sb-googlechat-bridge"',
-    );
+    expect(diagnostics).toContain("nemoclaw test-sb channels remove googlechat");
   });
 
   it("reports an uncertain existing provider when refresh status inspection throws", async () => {

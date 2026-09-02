@@ -433,7 +433,7 @@ describe("MessagingSetupApplier", () => {
       return { status: 0 };
     };
 
-    const result = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+    const result = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: {
         TELEGRAM_BOT_TOKEN: "123456:telegram-token",
         SLACK_BOT_TOKEN: "xoxb-slack-token",
@@ -443,8 +443,17 @@ describe("MessagingSetupApplier", () => {
     });
 
     expect(calls.map((call) => call.args)).toEqual([
-      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       ["provider", "get", "demo-telegram-bridge"],
+      ["provider", "get", "demo-slack-bridge"],
+      ["provider", "get", "demo-slack-app"],
+      [
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        expect.stringContaining("provider-profiles/nemoclaw-mcp-v1.yaml"),
+      ],
+      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       [
         "provider",
         "create",
@@ -456,10 +465,8 @@ describe("MessagingSetupApplier", () => {
         "TELEGRAM_BOT_TOKEN",
       ],
       ["provider", "get", "demo-telegram-bridge"],
-      ["provider", "get", "demo-slack-bridge"],
       ["provider", "update", "demo-slack-bridge", "--credential", "SLACK_BOT_TOKEN"],
       ["provider", "get", "demo-slack-bridge"],
-      ["provider", "get", "demo-slack-app"],
       [
         "provider",
         "create",
@@ -472,7 +479,7 @@ describe("MessagingSetupApplier", () => {
       ],
       ["provider", "get", "demo-slack-app"],
     ]);
-    expect(calls[2]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
+    expect(calls[5]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
     expect(result.upserted.map((entry) => `${entry.action}:${entry.providerName}`)).toEqual([
       "create:demo-telegram-bridge",
       "update:demo-slack-bridge",
@@ -508,12 +515,12 @@ describe("MessagingSetupApplier", () => {
           : { status: 0 };
     };
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell,
       }),
-    ).toThrow(/does not match the required endpointless credential binding/);
+    ).rejects.toThrow(/does not match the required endpointless credential binding/);
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
@@ -523,7 +530,7 @@ describe("MessagingSetupApplier", () => {
     ]);
     const calls: string[] = [];
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: {},
         runOpenshell: (args) => {
@@ -551,7 +558,7 @@ describe("MessagingSetupApplier", () => {
           }
         },
       }),
-    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
+    ).rejects.toThrow("does not match the checked-in credential boundary");
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
@@ -576,7 +583,7 @@ describe("MessagingSetupApplier", () => {
 
     let message = "";
     try {
-      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+      await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "tokensecretvalue" },
         runOpenshell,
       });
@@ -584,7 +591,7 @@ describe("MessagingSetupApplier", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("TELEGRAM_BOT_TOKEN=toke");
+    expect(message).toContain("TELEGRAM_BOT_TOKEN=<REDACTED>");
     expect(message).not.toContain("tokensecretvalue");
   });
 
@@ -593,7 +600,7 @@ describe("MessagingSetupApplier", () => {
       "telegram",
     ]);
     const calls: string[] = [];
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -603,7 +610,7 @@ describe("MessagingSetupApplier", () => {
             : { status: 1, stderr: "gateway unavailable" };
         },
       }),
-    ).toThrow("Could not inspect messaging provider 'demo-telegram-bridge'.");
+    ).rejects.toThrow("Could not inspect messaging provider 'demo-telegram-bridge'");
     expect(calls.some((command) => command.startsWith("provider create"))).toBe(false);
   });
 
@@ -612,7 +619,7 @@ describe("MessagingSetupApplier", () => {
       "telegram",
     ]);
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -626,7 +633,7 @@ describe("MessagingSetupApplier", () => {
           }
         },
       }),
-    ).toThrow("Failed to create messaging provider 'demo-telegram-bridge'");
+    ).rejects.toThrow("Failed to create messaging provider 'demo-telegram-bridge'");
   });
 
   it("rejects a provider mutation whose exact postcondition is absent (#9875)", async () => {
@@ -635,7 +642,7 @@ describe("MessagingSetupApplier", () => {
     ]);
     let lookups = 0;
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -656,7 +663,9 @@ describe("MessagingSetupApplier", () => {
           }
         },
       }),
-    ).toThrow("OpenShell did not confirm messaging provider 'demo-telegram-bridge' after create.");
+    ).rejects.toThrow(
+      "OpenShell did not confirm messaging provider 'demo-telegram-bridge' after create.",
+    );
   });
 
   it("does not mutate after a not-found message with an unavailable status (#9875)", async () => {
@@ -665,7 +674,7 @@ describe("MessagingSetupApplier", () => {
     ]);
     const calls: string[] = [];
 
-    expect(() =>
+    await expect(
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
         runOpenshell: (args) => {
@@ -678,7 +687,7 @@ describe("MessagingSetupApplier", () => {
               };
         },
       }),
-    ).toThrow(/Could not inspect messaging provider/u);
+    ).rejects.toThrow(/Could not inspect messaging provider/u);
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
@@ -877,7 +886,7 @@ describe("MessagingSetupApplier", () => {
         : { status: written === undefined ? 1 : 0 };
     };
 
-    const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+    const credentialResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: ALL_CHANNEL_ENV,
       runOpenshell: (args) => {
         switch (args[1]) {
@@ -1021,7 +1030,7 @@ describe("MessagingSetupApplier", () => {
 
     const providerCalls: string[][] = [];
     const providers = new Map<string, string>();
-    const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+    const credentialResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: {
         TELEGRAM_BOT_TOKEN: "123456:telegram-token",
         SLACK_BOT_TOKEN: "xoxb-slack-token",

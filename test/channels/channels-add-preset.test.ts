@@ -426,12 +426,8 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         entry === `applyPreset:${channel}` ? [index] : [],
       );
       expect(presetCallIndexes).toHaveLength(2);
-      expect(presetCallIndexes[0]).toBeLessThan(
-        callOrder.indexOf("upsertMessagingProviders"),
-      );
-      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
-        presetCallIndexes[1],
-      );
+      expect(presetCallIndexes[0]).toBeLessThan(callOrder.indexOf("upsertMessagingProviders"));
+      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(presetCallIndexes[1]);
       expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );
@@ -601,7 +597,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(callOrder).not.toContain("promptAndRebuild");
   });
 
-  it("keeps plan state and skips provider delete when rollback detach fails", async () => {
+  it("keeps plan state and does not retry provider delete when rollback detach fails", async () => {
     applyPresetSpy
       .mockImplementationOnce((_name, presetName) => {
         callOrder.push(`applyPreset:${presetName}`);
@@ -611,21 +607,28 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         callOrder.push(`applyPreset:${presetName}`);
         return false;
       });
-    runOpenshellSpy.mockImplementation((args: string[]) =>
-      args.slice(0, 3).join(" ") === "sandbox provider detach"
-        ? { ...successfulOpenshellResult(), status: 1, stderr: "permission denied" }
-        : successfulOpenshellResult(),
-    );
+    runOpenshellSpy.mockImplementation((args: string[]) => {
+      const command = args.slice(0, 2).join(" ");
+      return command === "provider delete"
+        ? {
+            ...successfulOpenshellResult(),
+            status: 1,
+            stderr: "provider is attached to sandbox(es): test-sb.",
+          }
+        : args.slice(0, 3).join(" ") === "sandbox provider detach"
+          ? { ...successfulOpenshellResult(), status: 1, stderr: "permission denied" }
+          : successfulOpenshellResult();
+    });
 
     await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
 
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
-    expect(runOpenshellSpy.mock.calls.map(([args]) => args)).not.toContainEqual([
-      "provider",
-      "delete",
-      "test-sb-telegram-bridge",
-    ]);
+    expect(
+      runOpenshellSpy.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args.slice(0, 2).join(" ") === "provider delete"),
+    ).toEqual([["provider", "delete", "-g", "nemoclaw", "test-sb-telegram-bridge"]]);
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
     expect(printedText()).toContain("'nemoclaw test-sb channels remove telegram'");
     expect(callOrder).not.toContain("promptAndRebuild");

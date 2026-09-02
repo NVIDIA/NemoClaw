@@ -82,6 +82,10 @@ function providerMetadata(
   };
 }
 
+function providerMissing(name: string) {
+  return { status: 1, stdout: "", stderr: `provider '${name}' not found` };
+}
+
 function registrationDeps(
   runOpenshellMock: ReturnType<typeof vi.fn>,
   session: Session,
@@ -384,10 +388,13 @@ describe("credential provider registration", () => {
 
     await expect(
       registration.stageSandboxCredentialProviders(
-        sandboxInput(requiredBindings([tokenDef])),
+        {
+          ...sandboxInput(requiredBindings([tokenDef])),
+          agent: { name: "hermes" },
+        },
         async () => ({ messagingTokenDefs: [tokenDef] }),
       ),
-    ).rejects.toThrow("existing credential provider does not match");
+    ).rejects.toThrow("does not match the checked-in credential boundary");
 
     expect(deps.updateSession).not.toHaveBeenCalled();
     expect(
@@ -555,10 +562,9 @@ describe("credential provider registration", () => {
 
   it("creates a missing messaging provider and records its receipt (#6743)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const runOpenshell = vi.fn((args: string[]) =>
-      args[0] === "provider" && args[1] === "get" ? missing : success,
+      args[0] === "provider" && args[1] === "get" ? providerMissing(String(args.at(-1))) : success,
     );
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
@@ -743,14 +749,13 @@ describe("credential provider registration", () => {
     const session = {
       stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
     } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const responses = new Map([
       [
         "provider get -g test-gateway alpha-slack-bridge",
         providerMetadata("alpha-slack-bridge", "slack", "SLACK_BOT_TOKEN"),
       ],
-      ["provider get -g test-gateway alpha-slack-app", missing],
+      ["provider get -g test-gateway alpha-slack-app", providerMissing("alpha-slack-app")],
     ]);
     const runOpenshell = vi.fn((args: string[]) => responses.get(args.join(" ")) ?? success);
     const deps = registrationDeps(runOpenshell, session);
@@ -818,7 +823,7 @@ describe("credential provider registration", () => {
   it.each([
     {
       condition: "the app provider is missing",
-      appProvider: { status: 1, stdout: "", stderr: "not found" },
+      appProvider: providerMissing("alpha-slack-app"),
       error:
         "A required credential provider is missing and no credential is available to recreate it.",
     },
@@ -833,10 +838,9 @@ describe("credential provider registration", () => {
       const session = {
         stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
       } as unknown as Session;
-      const missing = { status: 1, stdout: "", stderr: "not found" };
       const success = { status: 0, stdout: "", stderr: "" };
       const responses = new Map([
-        ["provider get -g test-gateway alpha-slack-bridge", missing],
+        ["provider get -g test-gateway alpha-slack-bridge", providerMissing("alpha-slack-bridge")],
         ["provider get -g test-gateway alpha-slack-app", appProvider],
       ]);
       const runOpenshell = vi.fn((args: string[]) => responses.get(args.join(" ")) ?? success);
@@ -985,7 +989,7 @@ describe("credential provider registration", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) =>
       args[1] === "get"
-        ? { status: 1, stdout: "", stderr: "not found" }
+        ? providerMissing(String(args.at(-1)))
         : { status: 0, stdout: "", stderr: "" },
     );
     const deps = registrationDeps(runOpenshell, session);

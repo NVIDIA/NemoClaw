@@ -76,7 +76,9 @@ export interface MessagingBridgeProfile {
   readonly sourceSecretEnv: string;
 }
 
-type RefreshingMessagingBridgeProfile = MessagingBridgeProfile & { readonly strategy: string };
+export type RefreshingMessagingBridgeProfile = MessagingBridgeProfile & {
+  readonly strategy: string;
+};
 
 function hasRefreshStrategy(
   profile: MessagingBridgeProfile,
@@ -312,7 +314,7 @@ export function listMessagingBridgeProfiles(
  * key resolution). Using `getCredential` alone misses non-interactive runs where
  * the value arrives through the passed-in env.
  */
-function resolveBridgeSecret(
+export function resolveMessagingBridgeSecret(
   envKey: string,
   deps: MessagingBridgeSecretResolveDeps,
 ): string | null {
@@ -372,7 +374,7 @@ export function collectMessagingBridgeTokenDefs(
     if (input.disabledChannelNames.has(profile.channelId)) continue;
     if (input.enabledChannels != null && !input.enabledChannels.includes(profile.channelId))
       continue;
-    const secret = resolveBridgeSecret(profile.sourceSecretEnv, input);
+    const secret = resolveMessagingBridgeSecret(profile.sourceSecretEnv, input);
     if (!secret) continue;
     defs.push({
       name: bridgeProviderNameFor(input.sandboxName, profile.channelId),
@@ -487,7 +489,7 @@ export function ensureMessagingBridgeProfiles(
   }
 }
 
-function buildRefreshMaterial(
+export function buildMessagingBridgeRefreshMaterial(
   profile: RefreshingMessagingBridgeProfile,
   secret: string,
 ):
@@ -641,7 +643,7 @@ export function configureMessagingBridgeRefreshes(
     );
     if (!bridge) continue;
 
-    const secret = resolveBridgeSecret(profile.sourceSecretEnv, deps);
+    const secret = resolveMessagingBridgeSecret(profile.sourceSecretEnv, deps);
     if (!secret) {
       warn(
         `\n  ✗ ${profile.channelId} bridge: secret material unavailable; cannot configure gateway token minting.`,
@@ -649,7 +651,7 @@ export function configureMessagingBridgeRefreshes(
       return { ok: false, reason: "secret material unavailable" };
     }
 
-    const built = buildRefreshMaterial(profile, secret);
+    const built = buildMessagingBridgeRefreshMaterial(profile, secret);
     if (!built.ok) {
       warn(
         `\n  ✗ ${profile.channelId} bridge: ${built.reason}; cannot configure gateway token minting.`,

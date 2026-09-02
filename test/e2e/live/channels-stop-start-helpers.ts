@@ -8,6 +8,7 @@ import path from "node:path";
 import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandbox/policy-channel-dependencies.ts";
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
+import { scopeGatewayOpenshellArgs } from "../../../src/lib/adapters/openshell/gateway-scope.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
@@ -116,10 +117,7 @@ interface GooglechatLiveE2eDependencies {
 }
 
 interface GooglechatCredentialFixtureDependencies {
-  readonly channelDependencies?: Pick<
-    typeof policyChannelDependencies,
-    "runGatewayOpenshell" | "upsertMessagingProviders"
-  >;
+  readonly channelDependencies?: Pick<typeof policyChannelDependencies, "upsertMessagingProviders">;
   readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
   readonly providerDependencies?: ProviderDependencies;
   readonly legacyProviderDependencies?: ProviderDependencies;
@@ -160,7 +158,7 @@ export function installGooglechatCredentialFixture(
   const originalChannelUpsert = channelDependencies.upsertMessagingProviders;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
-  const directUpsert: InstalledGooglechatCredentialFixture["upsertMessagingProviders"] = (
+  const directUpsert: InstalledGooglechatCredentialFixture["upsertMessagingProviders"] = async (
     tokenDefs,
     gatewayName,
     options = {},
@@ -175,12 +173,12 @@ export function installGooglechatCredentialFixture(
       throw new Error("Google Chat live fixture received an unexpected provider definition");
     }
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
-    const delegatedProviderNames =
-      delegatedTokenDefs.length === 0
-        ? []
-        : originalChannelUpsert.call(channelDependencies, delegatedTokenDefs, gatewayName, options);
+    const delegatedProviderNames = await (delegatedTokenDefs.length === 0
+      ? []
+      : originalChannelUpsert.call(channelDependencies, delegatedTokenDefs, gatewayName, options));
+    const baseRun = dependencies.run ?? runOpenshell;
     const effectiveRun: typeof runOpenshell = (args, runOptions) =>
-      channelDependencies.runGatewayOpenshell(gatewayName, args, runOptions);
+      baseRun(scopeGatewayOpenshellArgs(args, gatewayName), runOptions);
     ensureProfiles(fixtureTokenDefs, {
       root: dependencies.root ?? ROOT,
       runOpenshell: effectiveRun,
