@@ -14,7 +14,17 @@ Use the reported status or lifecycle error to choose the matching remediation.
 ## Credential Resolution Is Unknown
 
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
-Rotate it with `mcp restart` when in doubt.
+To replace the credential, export the recorded environment variable and run restart:
+
+```bash
+export <CREDENTIAL_ENV>='replacement-value'
+$$nemoclaw <sandbox> mcp restart <server>
+unset <CREDENTIAL_ENV>
+```
+
+Without an exported replacement, restart does not rotate the credential.
+It verifies the existing stored credential and reuses it only when the credential-resolution probe succeeds.
+A failed or inconclusive probe exits before policy, provider, or adapter changes.
 
 For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
