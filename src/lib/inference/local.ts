@@ -221,7 +221,7 @@ export function findReachableOllamaHost(
       ],
       { ignoreError: true },
     );
-    if (result) {
+    if (isValidOllamaTagsResponseBody(result)) {
       _resolvedOllamaHost = host;
       return host;
     }

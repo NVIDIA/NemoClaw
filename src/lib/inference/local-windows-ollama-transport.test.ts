@@ -233,6 +233,63 @@ describe("Windows-host Ollama transport", () => {
     }
   });
 
+  it("probes WSL loopback before Windows-host Ollama", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-discovery-"));
+    const commands: (readonly string[])[] = [];
+    const endpoints: string[] = [];
+    const capture = vi.fn((command: readonly string[]) => {
+      commands.push(command);
+      const endpoint = command.at(-1) ?? "";
+      endpoints.push(endpoint);
+      return endpoint.includes("host.docker.internal") ? JSON.stringify({ models: [] }) : "";
+    });
+
+    try {
+      expect(findReachableOllamaHost(capture, { isWsl: true }, stateRoot)).toBe(
+        OLLAMA_HOST_DOCKER_INTERNAL,
+      );
+      expect(endpoints).toEqual([
+        "http://127.0.0.1:11434/api/tags",
+        "http://host.docker.internal:11434/api/tags",
+      ]);
+      expect(commands.map((command) => command[0])).toEqual(["curl", "docker"]);
+      expect(commands[0]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]),
+      );
+      expect(commands[1]).toEqual(
+        expect.arrayContaining([
+          CONTAINER_REACHABILITY_IMAGE,
+          "--connect-timeout",
+          "3",
+          "--max-time",
+          "5",
+        ]),
+      );
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a nonempty invalid Windows-host inventory during WSL discovery", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-invalid-discovery-"));
+    const invalidCapture = vi.fn((command: readonly string[]) =>
+      (command.at(-1) ?? "").includes("host.docker.internal") ? "<html>proxy error</html>" : "",
+    );
+    const validCapture = vi.fn((command: readonly string[]) =>
+      (command.at(-1) ?? "").includes("host.docker.internal") ? JSON.stringify({ models: [] }) : "",
+    );
+
+    try {
+      expect(findReachableOllamaHost(invalidCapture, { isWsl: true }, stateRoot)).toBeNull();
+      expect(findReachableOllamaHost(validCapture, { isWsl: true }, stateRoot)).toBe(
+        OLLAMA_HOST_DOCKER_INTERNAL,
+      );
+      expect(validCapture).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an untrusted persisted host", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-invalid-"));
     try {
