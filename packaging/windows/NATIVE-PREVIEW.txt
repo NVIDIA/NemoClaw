@@ -7,8 +7,9 @@ and the pinned Microsoft MXC 0.8.0 ARM64 runtime tools.
 
 The packaged OpenShell gateway is a source-built NVIDIA/OpenShell#2721
 derivative with the checked-in OPENSHELL-NODE-UI-COMPATIBILITY.patch applied.
-That single compatibility change emits ui.disable=false for the one-shot
-ProcessContainer request so the packaged Node.js runtime can initialize.
+That compatibility change relaxes the one-shot ProcessContainer UI/job policy
+so the packaged Node.js/OpenClaw process tree can initialize. MXC filesystem
+containment remains active.
 
 The setup executable applies Microsoft MXC's elevated prepare-system-drive and
 prepare-null-device host prerequisites before installing the MSI. Windows

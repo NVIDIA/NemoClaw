@@ -1,12 +1,45 @@
 diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mxc/src/mxc.rs
-index 32d7006d..5bf24476 100644
+index 32d7006d..72175517 100644
 --- a/crates/openshell-driver-mxc/src/mxc.rs
 +++ b/crates/openshell-driver-mxc/src/mxc.rs
-@@ -177,6 +177,7 @@ fn oneshot_config_json(
+@@ -165,6 +165,12 @@ fn oneshot_config_json(
+     if !pc.capabilities.is_empty() {
+         pc_json.insert("capabilities".into(), pc.capabilities.clone().into());
+     }
++    pc_json.insert(
++        "ui".into(),
++        serde_json::json!({
++            "isolation": "desktop", "desktopSystemControl": true, "systemSettings": "all", "ime": true
++        }),
++    );
+-
++
+     let mut config = serde_json::json!({
+         "version": MXC_SCHEMA_VERSION,
+@@ -177,6 +183,7 @@ fn oneshot_config_json(
              "timeout": process.timeout,
          },
          "processContainer": serde_json::Value::Object(pc_json),
-+        "ui": { "disable": false },
++        "ui": { "disable": false, "clipboard": "all", "injection": true },
          "filesystem": serde_json::Value::Object(filesystem_json),
      });
      if let Some(network) = network {
+@@ -810,6 +817,16 @@ mod tests {
+         let config = oneshot_config_json("sb-1", &filesystem, &pc, &process, None);
+-
++
+         assert!(config.get("network").is_none());
++        assert_eq!(config["ui"]["disable"], false);
++        assert_eq!(config["ui"]["clipboard"], "all");
++        assert_eq!(config["ui"]["injection"], true);
++        assert_eq!(config["processContainer"]["ui"]["isolation"], "desktop");
++        assert_eq!(
++            config["processContainer"]["ui"]["desktopSystemControl"],
++            true
++        );
++        assert_eq!(config["processContainer"]["ui"]["systemSettings"], "all");
++        assert_eq!(config["processContainer"]["ui"]["ime"], true);
+     }
+-
++
+     #[test]

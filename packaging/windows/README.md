@@ -17,10 +17,12 @@ registers normal Add/Remove Programs metadata and adds the installed `bin`
 directory to the machine PATH.
 
 The workflow first builds and qualifies the unmodified NVIDIA/OpenShell#2721
-merge commit, then applies the checked-in one-line Node UI compatibility patch
+merge commit, then applies the checked-in Node process-tree compatibility patch
 and rebuilds the packaged derivative. The patch and its exact hash are installed
-with the product; it adds `ui.disable=false` to the one-shot ProcessContainer
-request and does not bypass OpenShell or call MXC directly from NemoClaw.
+with the product; it opts the one-shot ProcessContainer out of the default MXC
+UI/job restrictions that prevent the packaged Node/OpenClaw child processes from
+initializing. MXC filesystem containment remains active. The package does not
+bypass OpenShell or call MXC directly from NemoClaw.
 
 The Burn setup runs the pinned Microsoft `wxc-host-prep.exe` system-drive and
 null-device prerequisites through its per-machine elevated engine before
