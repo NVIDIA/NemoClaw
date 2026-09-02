@@ -3,12 +3,32 @@
 
 name: Governance / Lint PR Title
 
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+  format('Generated-head title {0} {1}', inputs.repair_attempt_key, inputs.source_head_sha) ||
+  format('Lint PR title {0}', github.event.pull_request.number) }}
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      source_head_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      repair_attempt_key:
+        required: true
+        type: string
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,6 +54,26 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Lint PR title
+        if: github.event_name == 'pull_request'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+
+      - name: Verify generated-head dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          GENERATED_HEAD_COMMAND: verify
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
+
+      - name: Lint generated-head PR title
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GENERATED_HEAD_COMMAND: print-title
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts | npx commitlint --verbose

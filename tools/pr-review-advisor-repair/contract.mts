@@ -20,6 +20,7 @@ export const FINDING_EXCLUSIONS = [
   "external-mutation",
   "maintainer-decision",
   "product-scope",
+  "security-sensitive",
   "unsupported-path",
 ] as const;
 
@@ -44,6 +45,7 @@ export type SelectionInput = {
     baseRef: "main";
     headRepository: typeof CANONICAL_REPOSITORY;
     headRef: string;
+    maintainerCanModify: true;
   };
   sourceHeadSha: string;
   baseSha: string;
@@ -54,8 +56,9 @@ export type SelectionInput = {
     artifactIds: number[];
   };
   optIn: {
-    kind: "phase0-manual-dispatch";
+    kind: "phase1-maintainer-dispatch";
     actor: string;
+    triggeringActor: string;
     headSha: string;
   };
   productScope: {
@@ -75,8 +78,8 @@ export type SelectionDecision = {
 
 export type SelectionBundle = {
   version: 1;
-  phase: "phase0-no-publication";
-  identityStatus: "provisional-dispatcher-supplied";
+  phase: "phase1-manual-publication";
+  identityStatus: "exact-head-dispatcher-supplied";
   attemptKey: string;
   input: SelectionInput;
   decisions: SelectionDecision[];
@@ -267,13 +270,19 @@ export function readBoundedJson(file: string, maximum: number): unknown {
 }
 
 const DENIED_BASENAMES = new Set([
+  ".gitattributes",
+  ".gitmodules",
+  ".npmrc",
   "AGENTS.md",
+  "biome.json",
   "CODEOWNERS",
   "SECURITY.md",
   "package.json",
   "package-lock.json",
   "npm-shrinkwrap.json",
   "pnpm-lock.yaml",
+  "tsconfig.json",
+  "vitest.config.ts",
   "yarn.lock",
 ]);
 
@@ -365,12 +374,17 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   }
 
   const pullRequest = record(input.pullRequest, "pullRequest");
-  exactKeys(pullRequest, ["state", "draft", "baseRef", "headRepository", "headRef"], "pullRequest");
+  exactKeys(
+    pullRequest,
+    ["state", "draft", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
+    "pullRequest",
+  );
   if (
     pullRequest.state !== "open" ||
     pullRequest.draft !== false ||
     pullRequest.baseRef !== "main" ||
-    pullRequest.headRepository !== CANONICAL_REPOSITORY
+    pullRequest.headRepository !== CANONICAL_REPOSITORY ||
+    pullRequest.maintainerCanModify !== true
   ) {
     throw new RepairContractError("pull request is not an eligible canonical open PR into main");
   }
@@ -388,9 +402,9 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   }
 
   const optIn = record(input.optIn, "optIn");
-  exactKeys(optIn, ["kind", "actor", "headSha"], "optIn");
-  if (optIn.kind !== "phase0-manual-dispatch") {
-    throw new RepairContractError("Phase 0 requires an explicit manual dispatch opt-in");
+  exactKeys(optIn, ["kind", "actor", "triggeringActor", "headSha"], "optIn");
+  if (optIn.kind !== "phase1-maintainer-dispatch") {
+    throw new RepairContractError("Phase 1 requires an explicit maintainer dispatch opt-in");
   }
 
   const productScope = record(input.productScope, "productScope");
@@ -423,6 +437,7 @@ export function parseSelectionInput(value: unknown): SelectionInput {
       baseRef: "main",
       headRepository: CANONICAL_REPOSITORY,
       headRef: boundedString(pullRequest.headRef, "pullRequest.headRef", 255),
+      maintainerCanModify: true,
     },
     sourceHeadSha,
     baseSha: sha(input.baseSha, "baseSha"),
@@ -433,8 +448,9 @@ export function parseSelectionInput(value: unknown): SelectionInput {
       artifactIds,
     },
     optIn: {
-      kind: "phase0-manual-dispatch",
+      kind: "phase1-maintainer-dispatch",
       actor: boundedString(optIn.actor, "optIn.actor", 256),
+      triggeringActor: boundedString(optIn.triggeringActor, "optIn.triggeringActor", 256),
       headSha: optInHeadSha,
     },
     productScope: {
@@ -455,7 +471,7 @@ function skipReason(finding: FindingInput): string | null {
   return null;
 }
 
-export function selectPhaseZeroAttempt(input: SelectionInput): SelectionBundle {
+export function selectRepairAttempt(input: SelectionInput): SelectionBundle {
   const decisions = [...input.findings]
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((finding): SelectionDecision => {
@@ -491,8 +507,8 @@ export function selectPhaseZeroAttempt(input: SelectionInput): SelectionBundle {
   };
   return {
     version: 1,
-    phase: "phase0-no-publication",
-    identityStatus: "provisional-dispatcher-supplied",
+    phase: "phase1-manual-publication",
+    identityStatus: "exact-head-dispatcher-supplied",
     attemptKey: `sha256:${sha256(canonicalJson(identity))}`,
     input,
     decisions,
@@ -519,7 +535,7 @@ export function parseSelectionBundle(value: unknown): SelectionBundle {
     ],
     "selection bundle",
   );
-  const recomputed = selectPhaseZeroAttempt(parseSelectionInput(input.input));
+  const recomputed = selectRepairAttempt(parseSelectionInput(input.input));
   if (canonicalJson(input) !== canonicalJson(recomputed)) {
     throw new RepairContractError("selection bundle does not match its trusted recomputation");
   }
@@ -595,6 +611,179 @@ export function parseProposalReceipt(value: unknown, selection: SelectionBundle)
     changedPaths,
     summary,
     outcome,
+  };
+}
+
+export function parseValidationReceipt(
+  value: unknown,
+  selection: SelectionBundle,
+  patch: Buffer,
+): ValidationReceipt {
+  const input = record(value, "validation receipt");
+  exactKeys(
+    input,
+    [
+      "version",
+      "attemptKey",
+      "repository",
+      "prNumber",
+      "headRef",
+      "sourceHeadSha",
+      "baseSha",
+      "advisor",
+      "findingIds",
+      "patchSha256",
+      "candidateTreeSha",
+      "changedPaths",
+      "validation",
+      "productScope",
+      "optIn",
+      "outcome",
+      "reason",
+    ],
+    "validation receipt",
+  );
+  if (input.version !== 1 || input.outcome !== "validated" || input.reason !== null) {
+    throw new RepairContractError("validation receipt is not an accepted candidate");
+  }
+  if (
+    digest(input.attemptKey, "validation receipt attemptKey") !== selection.attemptKey ||
+    input.repository !== selection.input.repository ||
+    integer(input.prNumber, "validation receipt prNumber") !== selection.input.prNumber ||
+    boundedString(input.headRef, "validation receipt headRef", 255) !==
+      selection.input.pullRequest.headRef ||
+    sha(input.sourceHeadSha, "validation receipt sourceHeadSha") !==
+      selection.input.sourceHeadSha ||
+    sha(input.baseSha, "validation receipt baseSha") !== selection.input.baseSha ||
+    canonicalJson(input.advisor) !== canonicalJson(selection.input.advisor) ||
+    canonicalJson(input.productScope) !== canonicalJson(selection.input.productScope) ||
+    canonicalJson(input.optIn) !== canonicalJson(selection.input.optIn)
+  ) {
+    throw new RepairContractError("validation receipt identity differs from selection");
+  }
+  const findingIds = sortedUniqueStrings(input.findingIds, "validation receipt findingIds").map(
+    (item, index) => findingId(item, `validation receipt findingIds[${index}]`),
+  );
+  if (
+    findingIds.length !== selection.selectedFindingIds.length ||
+    findingIds.some((item, index) => item !== selection.selectedFindingIds[index])
+  ) {
+    throw new RepairContractError("validation receipt finding set differs from selection");
+  }
+  const patchSha256 = boundedString(input.patchSha256, "validation receipt patchSha256", 64);
+  if (!/^[0-9a-f]{64}$/u.test(patchSha256) || patchSha256 !== sha256(patch)) {
+    throw new RepairContractError("validation receipt patch digest is invalid");
+  }
+  const candidateTreeSha = sha(input.candidateTreeSha, "validation receipt candidateTreeSha");
+  if (
+    !Array.isArray(input.changedPaths) ||
+    input.changedPaths.length < 1 ||
+    input.changedPaths.length > MAX_CHANGED_FILES
+  ) {
+    throw new RepairContractError(
+      "validation receipt changed paths must be a bounded non-empty array",
+    );
+  }
+  const changedPaths = input.changedPaths.map((value, index): ChangedPath => {
+    const changed = record(value, `validation receipt changedPaths[${index}]`);
+    exactKeys(
+      changed,
+      ["path", "status", "mode", "type", "bytes"],
+      `validation receipt changedPaths[${index}]`,
+    );
+    const changedPath = boundedString(
+      changed.path,
+      `validation receipt changedPaths[${index}].path`,
+      512,
+    );
+    if (!selection.selectedPaths.includes(changedPath)) {
+      throw new RepairContractError("validation receipt changed a path outside selection");
+    }
+    if (
+      !/^[ADM]$/u.test(String(changed.status)) ||
+      changed.mode !== "100644" ||
+      changed.type !== "blob"
+    ) {
+      throw new RepairContractError("validation receipt contains an unsupported Git object");
+    }
+    if (
+      !Number.isSafeInteger(changed.bytes) ||
+      Number(changed.bytes) < 0 ||
+      Number(changed.bytes) > MAX_CHANGED_FILE_BYTES
+    ) {
+      throw new RepairContractError("validation receipt changed-file size is invalid");
+    }
+    return {
+      path: changedPath,
+      status: changed.status as ChangedPath["status"],
+      mode: "100644",
+      type: "blob",
+      bytes: Number(changed.bytes),
+    };
+  });
+  const paths = changedPaths.map(({ path: changedPath }) => changedPath);
+  if (
+    new Set(paths).size !== paths.length ||
+    paths.some((item, index) => item !== [...paths].sort()[index])
+  ) {
+    throw new RepairContractError("validation receipt changed paths must be sorted and unique");
+  }
+  const validation = record(input.validation, "validation receipt validation");
+  exactKeys(
+    validation,
+    ["candidateDigestBefore", "candidateDigestAfter", "commands"],
+    "validation receipt validation",
+  );
+  const candidateDigestBefore = digest(
+    validation.candidateDigestBefore,
+    "validation receipt candidateDigestBefore",
+  );
+  const candidateDigestAfter = digest(
+    validation.candidateDigestAfter,
+    "validation receipt candidateDigestAfter",
+  );
+  if (candidateDigestBefore !== candidateDigestAfter) {
+    throw new RepairContractError("validation receipt reports candidate mutation");
+  }
+  if (
+    !Array.isArray(validation.commands) ||
+    validation.commands.length < 1 ||
+    validation.commands.length > 12
+  ) {
+    throw new RepairContractError("validation receipt commands must be a bounded non-empty array");
+  }
+  const commands = validation.commands.map((value, index): ValidationCommand => {
+    const command = record(value, `validation receipt commands[${index}]`);
+    exactKeys(command, ["argv", "exitCode"], `validation receipt commands[${index}]`);
+    if (!Array.isArray(command.argv) || command.argv.length < 1 || command.argv.length > 16) {
+      throw new RepairContractError("validation receipt command argv is invalid");
+    }
+    const argv = command.argv.map((argument, argumentIndex) =>
+      boundedString(argument, `validation receipt commands[${index}].argv[${argumentIndex}]`, 256),
+    );
+    if (!Number.isSafeInteger(command.exitCode) || Number(command.exitCode) !== 0) {
+      throw new RepairContractError("validation receipt contains a failed command");
+    }
+    return { argv, exitCode: 0 };
+  });
+  return {
+    version: 1,
+    attemptKey: selection.attemptKey,
+    repository: CANONICAL_REPOSITORY,
+    prNumber: selection.input.prNumber,
+    headRef: selection.input.pullRequest.headRef,
+    sourceHeadSha: selection.input.sourceHeadSha,
+    baseSha: selection.input.baseSha,
+    advisor: selection.input.advisor,
+    findingIds,
+    patchSha256,
+    candidateTreeSha,
+    changedPaths,
+    validation: { candidateDigestBefore, candidateDigestAfter, commands },
+    productScope: selection.input.productScope,
+    optIn: selection.input.optIn,
+    outcome: "validated",
+    reason: null,
   };
 }
 

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Automation / PR Review Advisor Repair Phase 0
+name: Automation / PR Review Advisor Repair
 
 on:
   workflow_dispatch:
@@ -10,6 +10,15 @@ on:
         description: Open canonical PR number
         required: true
         type: number
+      source_head_sha:
+        description: Exact live PR head SHA authorized by the maintainer
+        required: true
+        type: string
+      repository_egress_authorized:
+        description: Explicitly authorize sending repository-derived context to the configured Advisor model endpoint
+        required: true
+        type: boolean
+        default: false
       advisor_run_id:
         description: Successful exact-head PR Review Advisor run ID
         required: true
@@ -26,19 +35,19 @@ on:
         required: true
         type: string
       findings_json:
-        description: Phase-0-only finding records with exact paths and exclusions
+        description: Eligible Advisor finding records with exact paths and exclusions
         required: true
         type: string
 
 permissions: {}
 
 concurrency:
-  group: pr-review-advisor-repair-phase0-${{ inputs.pr_number }}
+  group: pr-review-advisor-repair-phase1-${{ inputs.pr_number }}
   cancel-in-progress: false
 
 jobs:
   collect:
-    name: Select and bind Phase 0 repair inputs
+    name: Select and bind Phase 1 repair inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -54,8 +63,8 @@ jobs:
       selection_artifact_id: ${{ steps.upload-selection.outputs.artifact-id }}
       source_head_sha: ${{ steps.select.outputs.source_head_sha }}
     env:
-      AUDIT_OUTPUT_DIR: ${{ runner.temp }}/phase0-audit
-      SELECTION_OUTPUT_DIR: ${{ runner.temp }}/phase0-selection
+      AUDIT_OUTPUT_DIR: ${{ runner.temp }}/phase1-audit
+      SELECTION_OUTPUT_DIR: ${{ runner.temp }}/phase1-selection
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
       - name: Checkout trusted workflow code
@@ -80,17 +89,18 @@ jobs:
           FINDINGS_JSON: ${{ inputs.findings_json }}
           GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          PHASE0_ENABLED: ${{ vars.ADVISOR_REPAIR_PHASE0_ENABLED == 'true' }}
+          PHASE1_ENABLED: ${{ vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PRODUCT_SCOPE_IDENTITY: ${{ inputs.product_scope_identity }}
           PRODUCT_SCOPE_KIND: ${{ inputs.product_scope_kind }}
+          REPOSITORY_EGRESS_AUTHORIZED: ${{ inputs.repository_egress_authorized }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/audit.mts"
 
       - name: Upload the attempt audit receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-review-advisor-repair-phase0-attempt-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr-review-advisor-repair-phase1-attempt-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.AUDIT_OUTPUT_DIR }}/attempt-receipt.json
           if-no-files-found: error
           retention-days: 14
@@ -107,6 +117,8 @@ jobs:
           PRODUCT_SCOPE_IDENTITY: ${{ inputs.product_scope_identity }}
           PRODUCT_SCOPE_KIND: ${{ inputs.product_scope_kind }}
           REPAIR_COMMAND: collect
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/select.mts"
 
       - name: Download the exact Advisor artifact IDs
@@ -131,19 +143,67 @@ jobs:
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/select.mts"
 
       - id: upload-selection
-        name: Upload the bound Phase 0 selection
+        name: Upload the bound Phase 1 selection
         if: ${{ steps.select.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-review-advisor-repair-phase0-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr-review-advisor-repair-phase1-selection-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.SELECTION_OUTPUT_DIR }}/
           if-no-files-found: error
           retention-days: 1
 
-  repair:
-    name: Generate one offline Phase 0 patch
+  claim:
+    name: Claim the exact repair attempt
     needs: collect
-    if: ${{ needs.collect.outputs.selected == 'true' && vars.ADVISOR_REPAIR_PHASE0_ENABLED == 'true' }}
+    if: ${{ needs.collect.outputs.selected == 'true' && vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+    env:
+      SELECTION_DIR: ${{ runner.temp }}/selection
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Download the exact selection artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.collect.outputs.selection_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ github.run_id }}
+          path: ${{ env.SELECTION_DIR }}
+          merge-multiple: true
+
+      - name: Create the durable one-shot claim
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/claim.mts"
+
+  repair:
+    name: Generate one offline Phase 1 patch
+    needs:
+      - collect
+      - claim
+    if: ${{ needs.claim.result == 'success' && needs.collect.outputs.selected == 'true' && vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
@@ -253,17 +313,19 @@ jobs:
         if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-review-advisor-repair-phase0-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr-review-advisor-repair-phase1-patch-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.REPAIR_ARTIFACT_DIR }}/
           if-no-files-found: error
           retention-days: 1
 
   validate:
-    name: Validate the Phase 0 patch without publication
+    name: Validate the Phase 1 patch before publication
     needs:
       - collect
       - repair
-    if: ${{ needs.repair.result == 'success' && needs.repair.outputs.repair_artifact_id != '' && vars.ADVISOR_REPAIR_PHASE0_ENABLED == 'true' }}
+    if: ${{ needs.repair.result == 'success' && needs.repair.outputs.repair_artifact_id != '' && vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
+    outputs:
+      validation_artifact_id: ${{ steps.upload-validation.outputs.artifact-id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -344,11 +406,139 @@ jobs:
           SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/validate.mts"
 
-      - name: Upload the trusted validation receipt and validated patch
+      - id: upload-validation
+        name: Upload the trusted validation receipt and validated patch
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-review-advisor-repair-phase0-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr-review-advisor-repair-phase1-validation-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.VALIDATION_ARTIFACT_DIR }}/
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    name: Publish the validated exact-head repair
+    needs:
+      - collect
+      - validate
+    if: ${{ needs.validate.result == 'success' && needs.validate.outputs.validation_artifact_id != '' && vars.ADVISOR_REPAIR_PHASE1_ENABLED == 'true' }}
+    environment: advisor-repair-publication
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: read
+    outputs:
+      commit_sha: ${{ steps.publish.outputs.commit_sha }}
+      head_ref: ${{ steps.publish.outputs.head_ref }}
+      publication_artifact_id: ${{ steps.upload-publication.outputs.artifact-id }}
+    env:
+      PUBLICATION_OUTPUT_DIR: ${{ runner.temp }}/publication
+      PUBLISH_STAGING_ROOT: ${{ runner.temp }}/publisher
+      SELECTION_DIR: ${{ runner.temp }}/selection
+      SOURCE_CHECKOUT: ${{ github.workspace }}/source
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+      VALIDATION_DIR: ${{ runner.temp }}/validation
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Checkout the exact selected PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ needs.collect.outputs.source_head_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Download the exact selection artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.collect.outputs.selection_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ github.run_id }}
+          path: ${{ env.SELECTION_DIR }}
+          merge-multiple: true
+
+      - name: Download the exact validation artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.validate.outputs.validation_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ github.run_id }}
+          path: ${{ env.VALIDATION_DIR }}
+          merge-multiple: true
+
+      - id: publish
+        name: Create a verified commit and atomically update the live head
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+          VALIDATED_PATCH_FILE: ${{ env.VALIDATION_DIR }}/validated.patch
+          VALIDATION_RECEIPT_FILE: ${{ env.VALIDATION_DIR }}/validation-receipt.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/publish.mts"
+
+      - id: upload-publication
+        name: Upload the publication receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase1-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PUBLICATION_OUTPUT_DIR }}/publication-receipt.json
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-generated-head:
+    name: Verify every generated-head gate on the exact commit
+    needs:
+      - collect
+      - publish
+    if: ${{ needs.publish.result == 'success' && needs.publish.outputs.commit_sha != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    env:
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Wait for the exact required checks, CodeQL, and Advisor run
+        env:
+          ATTEMPT_KEY: ${{ needs.collect.outputs.attempt_key }}
+          COMMIT_SHA: ${{ needs.publish.outputs.commit_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ needs.publish.outputs.head_ref }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/verify-generated-head.mts"

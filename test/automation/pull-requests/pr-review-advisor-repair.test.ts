@@ -17,10 +17,11 @@ import {
   parseSelectionBundle,
   parseSelectionInput,
   parseProposalReceipt,
+  parseValidationReceipt,
   repairClassForPath,
   safeRelativePath,
   sanitizeDiagnostic,
-  selectPhaseZeroAttempt,
+  selectRepairAttempt,
   type FindingInput,
   type SelectionBundle,
 } from "../../../tools/pr-review-advisor-repair/contract.mts";
@@ -99,6 +100,7 @@ function selectionInput(overrides: Record<string, unknown> = {}): Record<string,
       baseRef: "main",
       headRepository: "NVIDIA/NemoClaw",
       headRef: "fix/demo",
+      maintainerCanModify: true,
     },
     sourceHeadSha: head,
     baseSha: "b".repeat(40),
@@ -109,8 +111,9 @@ function selectionInput(overrides: Record<string, unknown> = {}): Record<string,
       artifactIds: Array.from({ length: 10 }, (_value, index) => index + 100),
     },
     optIn: {
-      kind: "phase0-manual-dispatch",
+      kind: "phase1-maintainer-dispatch",
       actor: "maintainer",
+      triggeringActor: "maintainer",
       headSha: head,
     },
     productScope: {
@@ -123,7 +126,7 @@ function selectionInput(overrides: Record<string, unknown> = {}): Record<string,
 }
 
 function selection(overrides: Record<string, unknown> = {}): SelectionBundle {
-  return selectPhaseZeroAttempt(parseSelectionInput(selectionInput(overrides)));
+  return selectRepairAttempt(parseSelectionInput(selectionInput(overrides)));
 }
 
 function writeJson(file: string, value: unknown): void {
@@ -220,8 +223,9 @@ function createSourceFixture(): { repository: string; headSha: string; bundle: S
     baseSha,
     sourceHeadSha: headSha,
     optIn: {
-      kind: "phase0-manual-dispatch",
+      kind: "phase1-maintainer-dispatch",
       actor: "maintainer",
+      triggeringActor: "maintainer",
       headSha,
     },
   });
@@ -293,7 +297,7 @@ afterEach(() => {
   }
 });
 
-describe("PR Review Advisor repair Phase 0", () => {
+describe("PR Review Advisor repair Phase 1", () => {
   it("records the emergency switch without retaining raw finding text (#10791)", () => {
     const receipt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
@@ -303,14 +307,14 @@ describe("PR Review Advisor repair Phase 0", () => {
       GITHUB_RUN_ID: "900",
       GITHUB_TRIGGERING_ACTOR: "maintainer",
       GITHUB_WORKFLOW_SHA: "d".repeat(40),
-      PHASE0_ENABLED: "false",
+      PHASE1_ENABLED: "false",
       PR_NUMBER: "42",
       PRODUCT_SCOPE_IDENTITY: "#10791",
       PRODUCT_SCOPE_KIND: "accepted-issue",
     });
 
     expect(receipt.emergencySwitch).toEqual({
-      variable: "ADVISOR_REPAIR_PHASE0_ENABLED",
+      variable: "ADVISOR_REPAIR_PHASE1_ENABLED",
       enabled: false,
     });
     expect(receipt.outcome).toBe("disabled");
@@ -328,7 +332,8 @@ describe("PR Review Advisor repair Phase 0", () => {
       GITHUB_RUN_ID: "900",
       GITHUB_TRIGGERING_ACTOR: "maintainer",
       GITHUB_WORKFLOW_SHA: "d".repeat(40),
-      PHASE0_ENABLED: "true",
+      PHASE1_ENABLED: "true",
+      REPOSITORY_EGRESS_AUTHORIZED: "true",
       PR_NUMBER: "42",
       PRODUCT_SCOPE_IDENTITY: "#10791",
       PRODUCT_SCOPE_KIND: "accepted-issue",
@@ -348,7 +353,8 @@ describe("PR Review Advisor repair Phase 0", () => {
       GITHUB_RUN_ID: "900",
       GITHUB_TRIGGERING_ACTOR: "maintainer",
       GITHUB_WORKFLOW_SHA: "d".repeat(40),
-      PHASE0_ENABLED: "true",
+      PHASE1_ENABLED: "true",
+      REPOSITORY_EGRESS_AUTHORIZED: "true",
       PR_NUMBER: "42",
       PRODUCT_SCOPE_IDENTITY: "#10791",
       PRODUCT_SCOPE_KIND: "accepted-issue",
@@ -378,11 +384,49 @@ describe("PR Review Advisor repair Phase 0", () => {
       outcome: "validated",
       reason: null,
     };
+    const publicationReceipt = {
+      version: 1,
+      attemptKey: bundle.attemptKey,
+      sourceHeadSha: bundle.input.sourceHeadSha,
+      candidateTreeSha: "f".repeat(40),
+      commitSha: "d".repeat(40),
+      headRef: bundle.input.pullRequest.headRef,
+      dispatchedWorkflows: [
+        "pr.yaml",
+        "commit-lint.yaml",
+        "dco-check.yaml",
+        "installer-hash-check.yaml",
+        "code-scanning.yaml",
+        "pr-review-advisor.yaml",
+      ],
+    };
 
     expectSchemaValid("attempt-receipt", attempt);
     expectSchemaValid("selection-input", bundle.input);
     expectSchemaValid("proposal-receipt", proposalReceipt);
     expectSchemaValid("validation-receipt", validationReceipt);
+    expectSchemaValid("publication-receipt", publicationReceipt);
+  });
+
+  it("does not treat maintainer permission as model data-egress consent (#10791)", () => {
+    const receipt = createAttemptReceipt({
+      ADVISOR_RUN_ID: "700",
+      FINDINGS_JSON: "[]",
+      GITHUB_ACTOR: "maintainer",
+      GITHUB_RUN_ATTEMPT: "1",
+      GITHUB_RUN_ID: "900",
+      GITHUB_TRIGGERING_ACTOR: "maintainer",
+      GITHUB_WORKFLOW_SHA: "d".repeat(40),
+      PHASE1_ENABLED: "true",
+      PR_NUMBER: "42",
+      PRODUCT_SCOPE_IDENTITY: "#10791",
+      PRODUCT_SCOPE_KIND: "accepted-issue",
+      REPOSITORY_EGRESS_AUTHORIZED: "false",
+    });
+
+    expect(receipt.dispatch.repositoryEgressAuthorized).toBe(false);
+    expect(receipt.outcome).toBe("disabled");
+    expect(receipt.reason).toBe("repository-egress-not-authorized");
   });
 
   it("redacts credential-shaped diagnostics before logging or receipt storage (#10791)", () => {
@@ -424,10 +468,10 @@ describe("PR Review Advisor repair Phase 0", () => {
         ],
       }),
     );
-    const bundle = selectPhaseZeroAttempt(parsed);
+    const bundle = selectRepairAttempt(parsed);
 
-    expect(bundle.phase).toBe("phase0-no-publication");
-    expect(bundle.identityStatus).toBe("provisional-dispatcher-supplied");
+    expect(bundle.phase).toBe("phase1-manual-publication");
+    expect(bundle.identityStatus).toBe("exact-head-dispatcher-supplied");
     expect(bundle.selectedFindingIds).toEqual(["behavior:001"]);
     expect(bundle.selectedPaths).toEqual(["src/demo.ts"]);
     expect(bundle.decisions).toEqual([
@@ -452,8 +496,9 @@ describe("PR Review Advisor repair Phase 0", () => {
       parseSelectionInput(
         selectionInput({
           optIn: {
-            kind: "phase0-manual-dispatch",
+            kind: "phase1-maintainer-dispatch",
             actor: "maintainer",
+            triggeringActor: "maintainer",
             headSha: "f".repeat(40),
           },
         }),
@@ -568,7 +613,7 @@ describe("PR Review Advisor repair Phase 0", () => {
     });
     expect(JSON.parse(fs.readFileSync(output, "utf8"))).toMatchObject({
       attemptKey: bundle.attemptKey,
-      phase: "phase0-no-publication",
+      phase: "phase1-manual-publication",
       selectedPaths: ["src/demo.ts"],
     });
 
@@ -785,7 +830,12 @@ describe("PR Review Advisor repair Phase 0", () => {
     const bundle = selection({
       baseSha: fixture.bundle.input.baseSha,
       sourceHeadSha,
-      optIn: { kind: "phase0-manual-dispatch", actor: "maintainer", headSha: sourceHeadSha },
+      optIn: {
+        kind: "phase1-maintainer-dispatch",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        headSha: sourceHeadSha,
+      },
     });
     const root = temporaryDirectory();
     const selectionFile = path.join(root, "selection.json");
@@ -826,7 +876,7 @@ describe("PR Review Advisor repair Phase 0", () => {
         stagingDirectory: path.join(root, "validation-staging"),
         commandRunner: () => ({ argv: ["unused"], exitCode: 0 }),
       }),
-    ).toThrow("validation refuses PR-controlled dependency inputs: package.json");
+    ).toThrow("pull request changes a control surface that Phase 1 cannot validate: package.json");
   });
 
   it("rejects candidate paths, special files, secrets, and validation mutation (#10791)", () => {
@@ -988,8 +1038,9 @@ describe("PR Review Advisor repair Phase 0", () => {
       baseSha: fixture.bundle.input.baseSha,
       sourceHeadSha: headSha,
       optIn: {
-        kind: "phase0-manual-dispatch",
+        kind: "phase1-maintainer-dispatch",
         actor: "maintainer",
+        triggeringActor: "maintainer",
         headSha,
       },
     });
@@ -1065,8 +1116,9 @@ describe("PR Review Advisor repair Phase 0", () => {
       baseSha: headSha,
       sourceHeadSha: headSha,
       optIn: {
-        kind: "phase0-manual-dispatch",
+        kind: "phase1-maintainer-dispatch",
         actor: "maintainer",
+        triggeringActor: "maintainer",
         headSha,
       },
     });
@@ -1136,7 +1188,7 @@ describe("PR Review Advisor repair Phase 0", () => {
     const runnerTemp = path.join(temporaryDirectory(), "runner");
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(runnerTemp, { recursive: true });
-    const sandboxName = "phase0-validation-test";
+    const sandboxName = "phase1-validation-test";
     const tools: OpenShellTools = {
       run: vi.fn((_command, args) =>
         args.slice(0, 3).join(" ") === "sandbox list --names" ? sandboxName : "",
@@ -1227,7 +1279,7 @@ describe("PR Review Advisor repair Phase 0", () => {
     runner.cleanup();
     expect(
       calls.some(
-        ([, args]) => args.slice(0, 3).join(" ") === "sandbox delete phase0-validation-test",
+        ([, args]) => args.slice(0, 3).join(" ") === "sandbox delete phase1-validation-test",
       ),
     ).toBe(true);
   });
@@ -1251,7 +1303,7 @@ describe("PR Review Advisor repair Phase 0", () => {
         PATH: "/usr/bin",
         RUNNER_TEMP: root,
       },
-      { enableBindMounts: true, gatewayId: "phase0-validation" },
+      { enableBindMounts: true, gatewayId: "phase1-validation" },
       tools,
     );
 

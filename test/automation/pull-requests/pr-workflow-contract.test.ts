@@ -582,13 +582,14 @@ describe("pull request and main workflow contracts", () => {
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });
     expect(packageJob.outputs).toEqual({ required: "${{ steps.locate.outputs.required }}" });
     expect(requiredWorkflowStep(packageJob, "Checkout base package decision").with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
+      ref: "${{ env.CI_BASE_SHA }}",
       path: ".trusted-sdk-package-decision",
     });
     const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
-    expect(locate.env?.HEAD_REPOSITORY).toBe(
-      "${{ github.event.pull_request.head.repo.full_name }}",
-    );
+    expect(locate.env?.HEAD_REPOSITORY).toBe("${{ env.CI_HEAD_REPOSITORY }}");
+    expect(locate.env?.HEAD_SHA).toBe("${{ env.CI_HEAD_SHA }}");
+    expect(locate.env?.BASE_SHA).toBe("${{ env.CI_BASE_SHA }}");
+    expect(locate.env?.PR_NUMBER).toBe("${{ env.CI_PR_NUMBER }}");
     expect(locate.run).toContain(
       "trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
     );

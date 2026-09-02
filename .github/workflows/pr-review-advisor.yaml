@@ -3,6 +3,11 @@
 
 name: Automation / PR Review Advisor
 
+run-name: >-
+  ${{ inputs.repair_attempt_key != '' &&
+  format('Generated-head Advisor {0} {1}', inputs.repair_attempt_key, inputs.source_head_sha) ||
+  format('PR Review Advisor {0}', github.event.pull_request.number || inputs.target_pr || github.sha) }}
+
 on:
   # The target event loads this workflow from the trusted base branch and makes
   # advisor secrets available for both internal and fork PRs. The analysis job
@@ -34,6 +39,21 @@ on:
         required: false
         type: string
         default: main
+      source_head_sha:
+        description: Exact generated PR head for a repair validation run
+        required: false
+        type: string
+        default: ""
+      base_sha:
+        description: Exact PR base for a repair validation run
+        required: false
+        type: string
+        default: ""
+      repair_attempt_key:
+        description: Exact repair attempt identity for generated-head validation
+        required: false
+        type: string
+        default: ""
 # Each job declares its own privilege domain. In particular, no model-bearing
 # job can write to a pull request, and the publisher never receives the model
 # credential or the untrusted PR worktree.
@@ -65,6 +85,17 @@ jobs:
       - name: Read specialist prompts
         id: specialists
         run: node --experimental-strip-types tools/pr-review-advisor/render-specialist-matrix.mts
+      - name: Verify generated-head dispatch
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          GENERATED_HEAD_COMMAND: verify
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.target_pr }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
       - name: Collect GitHub review context
         env:
           GH_TOKEN: ${{ github.token }}

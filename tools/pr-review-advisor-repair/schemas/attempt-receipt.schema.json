@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor-repair/schemas/attempt-receipt.schema.json",
-  "title": "Trusted PR Review Advisor repair Phase 0 attempt receipt",
+  "title": "Trusted PR Review Advisor repair Phase 1 attempt receipt",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,7 @@
   ],
   "properties": {
     "version": { "const": 1 },
-    "phase": { "const": "phase0-no-publication" },
+    "phase": { "const": "phase1-manual-publication" },
     "repository": { "const": "NVIDIA/NemoClaw" },
     "workflow": {
       "type": "object",
@@ -38,7 +38,8 @@
         "advisorRunId",
         "productScopeKind",
         "productScopeIdentity",
-        "findingsSha256"
+        "findingsSha256",
+        "repositoryEgressAuthorized"
       ],
       "properties": {
         "actor": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -47,7 +48,8 @@
         "advisorRunId": { "type": ["integer", "null"], "minimum": 1 },
         "productScopeKind": { "type": "string", "maxLength": 64 },
         "productScopeIdentity": { "type": "string", "maxLength": 256 },
-        "findingsSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "findingsSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "repositoryEgressAuthorized": { "type": "boolean" }
       }
     },
     "emergencySwitch": {
@@ -55,7 +57,7 @@
       "additionalProperties": false,
       "required": ["variable", "enabled"],
       "properties": {
-        "variable": { "const": "ADVISOR_REPAIR_PHASE0_ENABLED" },
+        "variable": { "const": "ADVISOR_REPAIR_PHASE1_ENABLED" },
         "enabled": { "type": "boolean" }
       }
     },
@@ -64,6 +66,7 @@
       "enum": [
         "enabled",
         "emergency-switch-disabled",
+        "repository-egress-not-authorized",
         "workflow-rerun-disabled",
         "dispatch-actor-mismatch"
       ]

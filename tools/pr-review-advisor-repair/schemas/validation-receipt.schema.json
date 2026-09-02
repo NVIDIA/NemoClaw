@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor-repair/schemas/validation-receipt.schema.json",
-  "title": "Trusted PR Review Advisor repair Phase 0 validation receipt",
+  "title": "Trusted PR Review Advisor repair Phase 1 validation receipt",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -111,10 +111,11 @@
     "optIn": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "actor", "headSha"],
+      "required": ["kind", "actor", "triggeringActor", "headSha"],
       "properties": {
-        "kind": { "const": "phase0-manual-dispatch" },
+        "kind": { "const": "phase1-maintainer-dispatch" },
         "actor": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "triggeringActor": { "type": "string", "minLength": 1, "maxLength": 256 },
         "headSha": { "$ref": "#/$defs/sha" }
       }
     },

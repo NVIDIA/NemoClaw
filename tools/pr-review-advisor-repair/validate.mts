@@ -206,6 +206,68 @@ function assertExactCleanSource(
   }
 }
 
+const GENERATED_HEAD_DENIED_PREFIXES = [
+  ".agents/",
+  ".claude/",
+  ".github/",
+  "ci/",
+  "scripts/",
+  "test/e2e/",
+  "tools/",
+] as const;
+
+const GENERATED_HEAD_DENIED_BASENAMES = new Set([
+  ".gitattributes",
+  ".gitmodules",
+  ".npmrc",
+  "AGENTS.md",
+  "biome.json",
+  "CODEOWNERS",
+  "SECURITY.md",
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "tsconfig.json",
+  "vitest.config.ts",
+  "yarn.lock",
+]);
+
+export function assertEligibleSourceDiff(
+  repository: string,
+  selection: SelectionBundle,
+  env: NodeJS.ProcessEnv,
+): void {
+  runGit(repository, ["cat-file", "-e", `${selection.input.baseSha}^{commit}`], env);
+  const output = String(
+    runGit(
+      repository,
+      [
+        "diff",
+        "--name-only",
+        "-z",
+        `${selection.input.baseSha}...${selection.input.sourceHeadSha}`,
+        "--",
+      ],
+      env,
+    ),
+  );
+  const paths = output.split("\0").filter(Boolean);
+  const denied = paths.find((changedPath) => {
+    const basename = path.posix.basename(changedPath);
+    return (
+      GENERATED_HEAD_DENIED_BASENAMES.has(basename) ||
+      /^tsconfig(?:[.].+)?[.]json$/u.test(basename) ||
+      GENERATED_HEAD_DENIED_PREFIXES.some((prefix) => changedPath.startsWith(prefix))
+    );
+  });
+  if (denied) {
+    throw new RepairContractError(
+      `pull request changes a control surface that Phase 1 cannot validate: ${denied}`,
+    );
+  }
+}
+
 function parseNameStatus(output: Buffer): Array<{ status: "A" | "D" | "M"; path: string }> {
   const fields = output.toString("utf8").split("\0");
   if (fields.at(-1) === "") fields.pop();
@@ -375,11 +437,11 @@ function materializeCandidateCommit(
   const commitEnvironment = {
     ...env,
     GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
-    GIT_AUTHOR_EMAIL: "phase0-validator@example.invalid",
-    GIT_AUTHOR_NAME: "Phase 0 Validator",
+    GIT_AUTHOR_EMAIL: "phase1-validator@example.invalid",
+    GIT_AUTHOR_NAME: "Phase 1 Validator",
     GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
-    GIT_COMMITTER_EMAIL: "phase0-validator@example.invalid",
-    GIT_COMMITTER_NAME: "Phase 0 Validator",
+    GIT_COMMITTER_EMAIL: "phase1-validator@example.invalid",
+    GIT_COMMITTER_NAME: "Phase 1 Validator",
   };
   const candidateCommit = String(
     runGit(
@@ -390,7 +452,7 @@ function materializeCandidateCommit(
         "-p",
         selection.input.sourceHeadSha,
         "-m",
-        "chore: materialize Phase 0 validation candidate",
+        "chore: materialize Phase 1 validation candidate",
       ],
       commitEnvironment,
     ),
@@ -717,6 +779,7 @@ export async function assertLivePullRequestIdentity(
     number?: unknown;
     state?: unknown;
     draft?: unknown;
+    maintainer_can_modify?: unknown;
     head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
     base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
   }>(`repos/${CANONICAL_REPOSITORY}/pulls/${selection.input.prNumber}`, token);
@@ -724,6 +787,7 @@ export async function assertLivePullRequestIdentity(
     pull.number !== selection.input.prNumber ||
     pull.state !== "open" ||
     pull.draft !== false ||
+    pull.maintainer_can_modify !== true ||
     pull.head?.sha !== selection.input.sourceHeadSha ||
     pull.head?.ref !== selection.input.pullRequest.headRef ||
     pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
@@ -753,6 +817,7 @@ export function validateRepairLocally(input: {
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   const env = validationEnvironment(input.env ?? process.env, home);
   assertExactCleanSource(input.sourceCheckout, input.selection.input.sourceHeadSha, env);
+  assertEligibleSourceDiff(input.sourceCheckout, input.selection, env);
   const patch = readBoundedRegularFile(input.patchFile, MAX_PATCH_BYTES, true);
   const proposal = parseProposalReceipt(
     readBoundedJson(input.proposalFile, 512 * 1024),

@@ -15,7 +15,7 @@ import {
 
 export type AttemptReceipt = {
   version: 1;
-  phase: "phase0-no-publication";
+  phase: "phase1-manual-publication";
   repository: typeof CANONICAL_REPOSITORY;
   workflow: {
     runId: number;
@@ -30,15 +30,17 @@ export type AttemptReceipt = {
     productScopeKind: string;
     productScopeIdentity: string;
     findingsSha256: string;
+    repositoryEgressAuthorized: boolean;
   };
   emergencySwitch: {
-    variable: "ADVISOR_REPAIR_PHASE0_ENABLED";
+    variable: "ADVISOR_REPAIR_PHASE1_ENABLED";
     enabled: boolean;
   };
   outcome: "gate-enabled" | "disabled";
   reason:
     | "enabled"
     | "emergency-switch-disabled"
+    | "repository-egress-not-authorized"
     | "workflow-rerun-disabled"
     | "dispatch-actor-mismatch";
 };
@@ -64,7 +66,7 @@ function bounded(value: string | undefined, maximum: number): string {
 }
 
 export function createAttemptReceipt(env: NodeJS.ProcessEnv): AttemptReceipt {
-  const switchEnabled = env.PHASE0_ENABLED === "true";
+  const switchEnabled = env.PHASE1_ENABLED === "true";
   const workflowSha = required(env, "GITHUB_WORKFLOW_SHA");
   if (!/^[0-9a-f]{40}$/u.test(workflowSha)) {
     throw new RepairContractError("GITHUB_WORKFLOW_SHA must be a full SHA");
@@ -74,16 +76,19 @@ export function createAttemptReceipt(env: NodeJS.ProcessEnv): AttemptReceipt {
   if (!runId || !runAttempt) throw new RepairContractError("workflow run identity is invalid");
   const actor = bounded(required(env, "GITHUB_ACTOR"), 256);
   const triggeringActor = bounded(required(env, "GITHUB_TRIGGERING_ACTOR"), 256);
+  const repositoryEgressAuthorized = env.REPOSITORY_EGRESS_AUTHORIZED === "true";
   const reason: AttemptReceipt["reason"] = !switchEnabled
     ? "emergency-switch-disabled"
-    : runAttempt !== 1
-      ? "workflow-rerun-disabled"
-      : actor !== triggeringActor
-        ? "dispatch-actor-mismatch"
-        : "enabled";
+    : !repositoryEgressAuthorized
+      ? "repository-egress-not-authorized"
+      : runAttempt !== 1
+        ? "workflow-rerun-disabled"
+        : actor !== triggeringActor
+          ? "dispatch-actor-mismatch"
+          : "enabled";
   return {
     version: 1,
-    phase: "phase0-no-publication",
+    phase: "phase1-manual-publication",
     repository: CANONICAL_REPOSITORY,
     workflow: { runId, runAttempt, workflowSha },
     dispatch: {
@@ -94,9 +99,10 @@ export function createAttemptReceipt(env: NodeJS.ProcessEnv): AttemptReceipt {
       productScopeKind: bounded(env.PRODUCT_SCOPE_KIND, 64),
       productScopeIdentity: bounded(env.PRODUCT_SCOPE_IDENTITY, 256),
       findingsSha256: sha256(env.FINDINGS_JSON ?? ""),
+      repositoryEgressAuthorized,
     },
     emergencySwitch: {
-      variable: "ADVISOR_REPAIR_PHASE0_ENABLED",
+      variable: "ADVISOR_REPAIR_PHASE1_ENABLED",
       enabled: switchEnabled,
     },
     outcome: reason === "enabled" ? "gate-enabled" : "disabled",

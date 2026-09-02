@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor-repair/schemas/selection-input.schema.json",
-  "title": "PR Review Advisor repair Phase 0 selection input",
+  "title": "PR Review Advisor repair Phase 1 selection input",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,13 +23,14 @@
     "pullRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state", "draft", "baseRef", "headRepository", "headRef"],
+      "required": ["state", "draft", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
       "properties": {
         "state": { "const": "open" },
         "draft": { "const": false },
         "baseRef": { "const": "main" },
         "headRepository": { "const": "NVIDIA/NemoClaw" },
-        "headRef": { "type": "string", "minLength": 1, "maxLength": 255 }
+        "headRef": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "maintainerCanModify": { "const": true }
       }
     },
     "sourceHeadSha": { "$ref": "#/$defs/sha" },
@@ -54,10 +55,11 @@
     "optIn": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "actor", "headSha"],
+      "required": ["kind", "actor", "triggeringActor", "headSha"],
       "properties": {
-        "kind": { "const": "phase0-manual-dispatch" },
+        "kind": { "const": "phase1-maintainer-dispatch" },
         "actor": { "$ref": "#/$defs/identity" },
+        "triggeringActor": { "$ref": "#/$defs/identity" },
         "headSha": { "$ref": "#/$defs/sha" }
       }
     },
@@ -103,6 +105,7 @@
               "external-mutation",
               "maintainer-decision",
               "product-scope",
+              "security-sensitive",
               "unsupported-path"
             ]
           }

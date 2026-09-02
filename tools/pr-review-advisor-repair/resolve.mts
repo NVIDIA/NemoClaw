@@ -267,7 +267,7 @@ export async function configureOpenShellInference(
   await configureSharedOpenShellInference(
     env,
     {
-      gatewayId: "pr-review-advisor-repair-phase0",
+      gatewayId: "pr-review-advisor-repair-phase1",
       modelId: REPAIR_MODEL_ID,
       providerName: "terra",
     },

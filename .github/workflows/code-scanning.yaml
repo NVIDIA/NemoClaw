@@ -6,6 +6,11 @@
 # existing PR and main workflows remain the merge-gating CI path.
 name: Security / Code Scanning
 
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' &&
+  format('Generated-head CodeQL {0} {1}', inputs.repair_attempt_key, inputs.source_head_sha) ||
+  format('Code scanning {0} {1}', github.event_name, github.sha) }}
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -14,6 +19,23 @@ on:
   schedule:
     - cron: "23 6 * * 1"
   workflow_dispatch:
+    inputs:
+      pr_number:
+        required: false
+        type: string
+        default: ""
+      source_head_sha:
+        required: false
+        type: string
+        default: ""
+      base_sha:
+        required: false
+        type: string
+        default: ""
+      repair_attempt_key:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -21,7 +43,33 @@ permissions:
   security-events: write
 
 jobs:
+  generated-head-context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify generated-head dispatch
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != ''
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          GENERATED_HEAD_COMMAND: verify
+          GENERATED_HEAD_CONTEXT_FILE: ${{ runner.temp }}/generated-head-context.json
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor-repair/generated-head-context.mts
+
   codeql:
+    needs: generated-head-context
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -46,6 +94,7 @@ jobs:
         uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
 
   shellcheck:
+    needs: generated-head-context
     name: ShellCheck SARIF
     runs-on: ubuntu-latest
     timeout-minutes: 10
