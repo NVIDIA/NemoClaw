@@ -10,7 +10,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { stopModelRouterForDestroyedSandbox } from "../../dist/lib/actions/sandbox/destroy-preflight";
-import type { Session } from "../../dist/lib/state/onboard-session";
+import {
+  describeOnboardLockContention,
+  type Session,
+} from "../../dist/lib/state/onboard-session";
 
 // A real detached HTTP server whose command line matches the model-router
 // proxy shape (venv-style interposition: args[0]=node, args[1]=.../model-router).
@@ -113,6 +116,7 @@ describe("destroySandbox model-router teardown (#9098)", () => {
             }),
             listHostRegistryEntries: () => [],
             compareAndSwapSession,
+            describeOnboardLockContention,
             expectedSession: session,
             loadSession: () => session,
             releaseOnboardLock: () => undefined,
