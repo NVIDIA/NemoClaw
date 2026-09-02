@@ -3172,7 +3172,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             agentSupportsWebSearch,
             agentSupportsWebSearchProvider,
             ...{ note, cliName },
-            updateSession: onboardSession.updateSession,
+            ...{
+              loadSession: onboardSession.loadSession,
+              updateSession: onboardSession.updateSession,
+              compareAndSwapSession: onboardSession.compareAndSwapSession,
+            },
             getStoredMessagingChannelConfig,
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
