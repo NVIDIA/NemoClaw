@@ -6,6 +6,8 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 
 const JOB_NAME = "openshell-gateway-auth-contract";
 const OPENSHELL_RELEASE_VERSION = "0.0.116";
+const OPENSHELL_SOURCE_REVISION = "d1155aa70042d3e2ee49dbfa15346b108b7c1d92";
+const OPENSHELL_SOURCE_CHECKOUT_PATH = "${{ github.workspace }}/openshell-v0116-source";
 const OPENSHELL_INSTALL_RUN =
   "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
@@ -90,6 +92,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
     NEMOCLAW_CANDIDATE_VERSION: OPENSHELL_RELEASE_VERSION,
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_OPENSHELL_SOURCE_CHECKOUT: OPENSHELL_SOURCE_CHECKOUT_PATH,
     NEMOCLAW_RUN_LIVE_E2E: "1",
   };
   for (const [name, value] of Object.entries(expectedEnv)) {
@@ -119,6 +122,17 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@")) ?? {};
   if (checkout.with?.["persist-credentials"] !== false) {
     errors.push(`${JOB_NAME} checkout must disable persisted credentials`);
+  }
+
+  const sourceCheckout = findStep(job, "Check out exact OpenShell driver behavior source");
+  if (
+    sourceCheckout.uses !== "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" ||
+    sourceCheckout.with?.repository !== "NVIDIA/OpenShell" ||
+    sourceCheckout.with?.ref !== OPENSHELL_SOURCE_REVISION ||
+    sourceCheckout.with?.path !== "openshell-v0116-source" ||
+    sourceCheckout.with?.["persist-credentials"] !== false
+  ) {
+    errors.push(`${JOB_NAME} must check out the exact credential-free OpenShell behavior source`);
   }
 
   const prepare = findStep(job, "Prepare E2E workspace");
@@ -165,6 +179,12 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
 
   requireStepOrder(errors, steps, "Prepare E2E workspace", "Install OpenShell CLI");
+  requireStepOrder(
+    errors,
+    steps,
+    "Check out exact OpenShell driver behavior source",
+    "Run OpenShell gateway auth contract live test",
+  );
   requireStepOrder(
     errors,
     steps,

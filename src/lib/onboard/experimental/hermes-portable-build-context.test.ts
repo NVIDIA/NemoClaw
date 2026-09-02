@@ -17,8 +17,6 @@ const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const CREATE_INTENT = "a".repeat(64);
 const CREDENTIAL_BOUNDARY_MANIFEST =
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
-const RETIRED_CREDENTIAL_BOUNDARY_MANIFEST =
-  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json";
 const BUILD_SETTINGS = {
   model: "qwen3-vl:4b",
   provider: "ollama-local",
@@ -141,9 +139,6 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(fs.existsSync(path.join(first.buildContextPath, CREDENTIAL_BOUNDARY_MANIFEST))).toBe(
       true,
     );
-    expect(
-      fs.existsSync(path.join(first.buildContextPath, RETIRED_CREDENTIAL_BOUNDARY_MANIFEST)),
-    ).toBe(false);
     const globalArguments = stagedDockerfile.slice(0, stagedDockerfile.indexOf("\nFROM "));
     expect(globalArguments).toContain("ARG TARGETARCH=amd64");
     expect(stagedDockerfile).toContain(

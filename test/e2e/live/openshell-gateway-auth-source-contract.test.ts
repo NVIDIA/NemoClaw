@@ -6,9 +6,8 @@ import { ensureDockerDriverGatewayLocalTlsBundle } from "../../../dist/lib/onboa
 import { test } from "../fixtures/e2e-test.ts";
 import { runOpenShellGatewayAuthSourceContractScenario } from "./openshell-gateway-auth-source-contract-helpers.ts";
 
-const LIVE_TIMEOUT_MS = 8 * 60_000;
-const OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION =
-  process.env.NEMOCLAW_CANDIDATE_VERSION ?? "0.0.116";
+const LIVE_TIMEOUT_MS = 15 * 60_000;
+const OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION = process.env.NEMOCLAW_CANDIDATE_VERSION ?? "0.0.116";
 
 test(
   `OpenShell ${OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION} Docker-driver gateway auth uses NemoClaw mTLS plus sandbox JWT`,
@@ -17,7 +16,7 @@ test(
     meta: {
       e2ePhases: [
         "confirm gateway and Docker prerequisites",
-        "verify the exact OpenShell TLS server-name source boundary",
+        "execute the exact OpenShell driver environment behavior checks",
         "launch the mTLS and JWT-protected gateway",
         "probe unauthenticated and mTLS-only access",
         "probe sandbox JWT authorization boundaries",

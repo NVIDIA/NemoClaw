@@ -29,7 +29,7 @@ import {
   mintSandboxJwt,
   runSandboxTokenContainerProbe,
 } from "./openshell-gateway-auth-probe.ts";
-import { verifyOpenShellTlsServerNameSourceBoundary } from "./openshell-v0116-tls-server-name-source.ts";
+import { verifyOpenShellDriverEnvironmentBehavior } from "./openshell-v0116-driver-environment-behavior.ts";
 
 export { buildSandboxTokenContainerProbeInvocation } from "./openshell-gateway-auth-probe.ts";
 
@@ -448,9 +448,9 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   await requireDockerDaemon({ dockerBin, host, skip });
 
-  progress.phase("verify the exact OpenShell TLS server-name source boundary");
-  const sourceBoundary = await verifyOpenShellTlsServerNameSourceBoundary();
-  await artifacts.writeJson("tls-server-name-source-boundary.json", sourceBoundary);
+  progress.phase("execute the exact OpenShell driver environment behavior checks");
+  const driverEnvironmentBehavior = verifyOpenShellDriverEnvironmentBehavior();
+  await artifacts.writeJson("driver-environment-behavior.json", driverEnvironmentBehavior);
 
   progress.phase("launch the mTLS and JWT-protected gateway");
   const port = await pickPort();
