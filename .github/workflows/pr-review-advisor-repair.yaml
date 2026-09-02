@@ -213,7 +213,7 @@ jobs:
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/claim.mts"
 
   repair:
-    name: Generate one offline Phase 1 patch
+    name: Generate one bounded offline Phase 1 patch
     needs:
       - collect
       - claim
@@ -304,7 +304,7 @@ jobs:
           REPAIR_COMMAND: create
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
 
-      - name: Run one Pi repair task without shell or test tools
+      - name: Run the bounded two-turn Pi repair without shell or test tools
         env:
           REPAIR_COMMAND: run
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"

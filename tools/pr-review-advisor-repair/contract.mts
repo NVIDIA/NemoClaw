@@ -104,6 +104,8 @@ export type ProposalReceipt = {
   outcome: "proposed" | "no-change" | "blocked";
 };
 
+export type ProposalDraft = Omit<ProposalReceipt, "attemptKey" | "sourceHeadSha">;
+
 export type ChangedPath = {
   path: string;
   status: "A" | "D" | "M";
@@ -609,31 +611,10 @@ export function parseSelectionBundle(value: unknown): SelectionBundle {
   return recomputed;
 }
 
-export function parseProposalReceipt(value: unknown, selection: SelectionBundle): ProposalReceipt {
-  const input = record(value, "proposal receipt");
-  exactKeys(
-    input,
-    [
-      "version",
-      "attemptKey",
-      "sourceHeadSha",
-      "findingIds",
-      "unresolvedFindingIds",
-      "changedPaths",
-      "summary",
-      "outcome",
-    ],
-    "proposal receipt",
-  );
-  if (input.version !== 1) throw new RepairContractError("proposal receipt version must be 1");
-  if (digest(input.attemptKey, "proposal receipt attemptKey") !== selection.attemptKey) {
-    throw new RepairContractError("proposal receipt is bound to a different attempt");
-  }
-  if (
-    sha(input.sourceHeadSha, "proposal receipt sourceHeadSha") !== selection.input.sourceHeadSha
-  ) {
-    throw new RepairContractError("proposal receipt is bound to a different source head");
-  }
+function parseProposalFields(
+  input: Record<string, unknown>,
+  selection: SelectionBundle,
+): Omit<ProposalReceipt, "version" | "attemptKey" | "sourceHeadSha"> {
   const findingIds = sortedUniqueStrings(input.findingIds, "proposal receipt findingIds").map(
     (item, index) => findingId(item, `proposal receipt findingIds[${index}]`),
   );
@@ -669,15 +650,55 @@ export function parseProposalReceipt(value: unknown, selection: SelectionBundle)
   );
   if (!summary)
     throw new RepairContractError("proposal receipt summary is empty after sanitization");
+  return { findingIds, unresolvedFindingIds, changedPaths, summary, outcome };
+}
+
+export function parseProposalDraft(value: unknown, selection: SelectionBundle): ProposalReceipt {
+  const input = record(value, "proposal draft");
+  exactKeys(
+    input,
+    ["version", "findingIds", "unresolvedFindingIds", "changedPaths", "summary", "outcome"],
+    "proposal draft",
+  );
+  if (input.version !== 1) throw new RepairContractError("proposal draft version must be 1");
   return {
     version: 1,
     attemptKey: selection.attemptKey,
     sourceHeadSha: selection.input.sourceHeadSha,
-    findingIds,
-    unresolvedFindingIds,
-    changedPaths,
-    summary,
-    outcome,
+    ...parseProposalFields(input, selection),
+  };
+}
+
+export function parseProposalReceipt(value: unknown, selection: SelectionBundle): ProposalReceipt {
+  const input = record(value, "proposal receipt");
+  exactKeys(
+    input,
+    [
+      "version",
+      "attemptKey",
+      "sourceHeadSha",
+      "findingIds",
+      "unresolvedFindingIds",
+      "changedPaths",
+      "summary",
+      "outcome",
+    ],
+    "proposal receipt",
+  );
+  if (input.version !== 1) throw new RepairContractError("proposal receipt version must be 1");
+  if (digest(input.attemptKey, "proposal receipt attemptKey") !== selection.attemptKey) {
+    throw new RepairContractError("proposal receipt is bound to a different attempt");
+  }
+  if (
+    sha(input.sourceHeadSha, "proposal receipt sourceHeadSha") !== selection.input.sourceHeadSha
+  ) {
+    throw new RepairContractError("proposal receipt is bound to a different source head");
+  }
+  return {
+    version: 1,
+    attemptKey: selection.attemptKey,
+    sourceHeadSha: selection.input.sourceHeadSha,
+    ...parseProposalFields(input, selection),
   };
 }
 

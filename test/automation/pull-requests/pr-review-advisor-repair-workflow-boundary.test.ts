@@ -288,7 +288,7 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
 
   it("isolates the model credential and gives Pi no bash or test tool (#10791)", () => {
     const configure = namedStep(repair, "Configure host-side OpenShell inference");
-    const pi = namedStep(repair, "Run one Pi repair task without shell or test tools");
+    const pi = namedStep(repair, "Run the bounded two-turn Pi repair without shell or test tools");
     expect(configure.env).toEqual({
       OPENAI_API_KEY: "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}",
       REPAIR_COMMAND: "configure",

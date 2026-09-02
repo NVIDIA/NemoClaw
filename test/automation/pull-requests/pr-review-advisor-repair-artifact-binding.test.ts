@@ -177,11 +177,12 @@ describe("PR Review Advisor repair artifact binding", () => {
       manifest,
     });
     expect(JSON.parse(fs.readFileSync(output, "utf8"))).toMatchObject({
-      attemptKey: collected.selection.attemptKey,
-      phase: "phase1-manual-publication",
+      conversation: { turns: 2, persistentMemory: false, commitMetadataVisible: false },
+      phase: "phase1-manual-repair",
       selectedFindingIds: [selectedFindingId],
       selectedPaths: ["src/demo.ts"],
     });
+    expect(fs.readFileSync(output, "utf8")).not.toContain(collected.selection.attemptKey);
 
     const behaviorSummary = path.join(
       downloadRoot,

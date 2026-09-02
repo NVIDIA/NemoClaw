@@ -17,6 +17,7 @@ import {
 import {
   parseSelectionBundle,
   parseSelectionInput,
+  parseProposalDraft,
   parseProposalReceipt,
   parseValidationReceipt,
   repairClassForPath,
@@ -28,13 +29,9 @@ import {
   type SelectionBundle,
 } from "../../../tools/pr-review-advisor-repair/contract.mts";
 import {
-  createRepairSandbox,
   exportTrustedRepairPatch,
   prepareRepairWorkspace,
-  repairPrompt,
   resolverGitEnvironment,
-  runRepairTask,
-  type ResolverTools,
 } from "../../../tools/pr-review-advisor-repair/resolve.mts";
 import {
   expectedAdvisorArtifactNames,
@@ -250,9 +247,15 @@ function createSourceFixture(): { repository: string; headSha: string; bundle: S
 
 function proposal(bundle: SelectionBundle, changedPaths: string[]) {
   return {
-    version: 1,
     attemptKey: bundle.attemptKey,
     sourceHeadSha: bundle.input.sourceHeadSha,
+    ...proposalDraft(bundle, changedPaths),
+  };
+}
+
+function proposalDraft(bundle: SelectionBundle, changedPaths: string[]) {
+  return {
+    version: 1,
     findingIds: bundle.selectedFindingIds,
     unresolvedFindingIds: [],
     changedPaths,
@@ -274,7 +277,7 @@ function expectCredentialPatchRejected(options: {
   fs.cpSync(options.baselineExport, candidate, { recursive: true });
   write(candidate, "src/demo.ts", options.content);
   const proposalFile = path.join(options.root, `${options.suffix}-proposal.json`);
-  writeJson(proposalFile, proposal(options.bundle, ["src/demo.ts"]));
+  writeJson(proposalFile, proposalDraft(options.bundle, ["src/demo.ts"]));
   const artifactDirectory = path.join(options.root, `${options.suffix}-artifact`);
   exportTrustedRepairPatch({
     sourceCheckout: options.sourceCheckout,
@@ -295,15 +298,6 @@ function expectCredentialPatchRejected(options: {
       commandRunner: () => ({ argv: ["unused"], exitCode: 0 }),
     }),
   ).toThrow("possible credential");
-}
-
-function resolverTools(): ResolverTools {
-  return {
-    run: vi.fn(() => ""),
-    runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
-    start: vi.fn(),
-    wait: vi.fn(async () => undefined),
-  };
 }
 
 afterEach(() => {
@@ -339,7 +333,7 @@ describe("PR Review Advisor repair Phase 1", () => {
     expect(JSON.stringify(receipt)).not.toContain("untrusted secret-shaped text");
   });
 
-  it("records but disables workflow reruns before a second Pi turn (#10791)", () => {
+  it("records but disables workflow reruns before a second repair attempt (#10791)", () => {
     const receipt = createAttemptReceipt({
       ADVISOR_RUN_ID: "700",
       FINDING_IDS_JSON: "[]",
@@ -376,7 +370,9 @@ describe("PR Review Advisor repair Phase 1", () => {
       PRODUCT_SCOPE_KIND: "accepted-issue",
     });
     const bundle = selection();
+    const draft = proposalDraft(bundle, ["src/demo.ts"]);
     const proposalReceipt = proposal(bundle, ["src/demo.ts"]);
+    expect(parseProposalDraft(draft, bundle)).toEqual(proposalReceipt);
     const validationReceipt = {
       version: 1,
       attemptKey: bundle.attemptKey,
@@ -421,6 +417,7 @@ describe("PR Review Advisor repair Phase 1", () => {
 
     expectSchemaValid("attempt-receipt", attempt);
     expectSchemaValid("selection-input", bundle.input);
+    expectSchemaValid("proposal-draft", draft);
     expectSchemaValid("proposal-receipt", proposalReceipt);
     expectSchemaValid("validation-receipt", validationReceipt);
     expectSchemaValid("publication-receipt", publicationReceipt);
@@ -594,42 +591,6 @@ describe("PR Review Advisor repair Phase 1", () => {
     ).toThrow("pull_request_target");
   });
 
-  it("gives Pi no shell, Git, tests, network credentials, or publication tool (#10791)", () => {
-    const tools = resolverTools();
-    const env = {
-      GH_TOKEN: "gh-secret",
-      GITHUB_TOKEN: "github-secret",
-      HOME: "/home/test",
-      OPENAI_API_KEY: "model-secret",
-      PATH: "/usr/bin",
-      PI_IMAGE: "pinned-image",
-      PR_REVIEW_ADVISOR_API_KEY: "advisor-secret",
-      REPAIR_CONFIG_DIR: "/config",
-      REPAIR_EXPORT_DIR: "/export",
-      REPAIR_OUTPUT_DIR: "/output",
-      SANDBOX_NAME: "repair-test",
-      TRUSTED_CHECKOUT: "/trusted",
-    };
-
-    createRepairSandbox(env, tools);
-    runRepairTask(env, tools);
-
-    const calls = vi.mocked(tools.run).mock.calls;
-    const createArgs = calls[0]![1];
-    const runArgs = calls[1]![1];
-    expect(createArgs).toContain("/trusted/tools/pr-review-advisor-repair/policy.yaml");
-    expect(runArgs).toContain("read,edit,write,grep,find,ls");
-    expect(runArgs).not.toContain("read,bash,edit,write,grep,find,ls");
-    expect(runArgs[runArgs.lastIndexOf("--") + 1]).toBe("/usr/bin/node");
-    expect(runArgs).not.toContain("/usr/bin/bash");
-    expect(runArgs).not.toContain("/usr/bin/git");
-    expect(runArgs).not.toContain("/usr/bin/curl");
-    expect(runArgs).not.toContain("/usr/bin/npm");
-    expectSecretFreeOpenShellEnvironment(calls[0]![2].env);
-    expectSecretFreeOpenShellEnvironment(calls[1]![2].env);
-    expect(repairPrompt(selection())).toContain("Do not create a commit or attempt to publish");
-  });
-
   it("constructs resolver Git environments without inheriting host authority (#10791)", () => {
     expect(
       resolverGitEnvironment({
@@ -679,11 +640,27 @@ describe("PR Review Advisor repair Phase 1", () => {
       configDirectory,
       outputDirectory,
     });
+    expect(fs.readdirSync(configDirectory).sort()).toEqual([
+      "models.json",
+      "proposal-template.json",
+      "repair-input.json",
+      "turn-1.txt",
+      "turn-2.txt",
+    ]);
+    expect(fs.readFileSync(path.join(configDirectory, "repair-input.json"), "utf8")).not.toContain(
+      fixture.bundle.input.sourceHeadSha,
+    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(configDirectory, "proposal-template.json"), "utf8")),
+    ).not.toHaveProperty("sourceHeadSha");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(configDirectory, "proposal-template.json"), "utf8")),
+    ).not.toHaveProperty("attemptKey");
     const candidate = path.join(root, "candidate");
     fs.cpSync(path.join(exportDirectory, "repo"), candidate, { recursive: true });
     write(candidate, "src/demo.ts", "export const value = 2;\n");
     const proposalFile = path.join(root, "proposal.json");
-    writeJson(proposalFile, proposal(fixture.bundle, ["src/demo.ts"]));
+    writeJson(proposalFile, proposalDraft(fixture.bundle, ["src/demo.ts"]));
     const repairArtifact = path.join(root, "repair-artifact");
 
     exportTrustedRepairPatch({
@@ -802,7 +779,7 @@ describe("PR Review Advisor repair Phase 1", () => {
     fs.cpSync(path.join(exportDirectory, "repo"), candidate, { recursive: true });
     write(candidate, "src/demo.ts", "export const value = 2;\n");
     const proposalFile = path.join(root, "proposal.json");
-    writeJson(proposalFile, proposal(bundle, ["src/demo.ts"]));
+    writeJson(proposalFile, proposalDraft(bundle, ["src/demo.ts"]));
     const repairArtifact = path.join(root, "repair-artifact");
     exportTrustedRepairPatch({
       sourceCheckout: fixture.repository,
@@ -846,7 +823,10 @@ describe("PR Review Advisor repair Phase 1", () => {
     const escapedCandidate = path.join(root, "candidate-escape");
     fs.cpSync(path.join(exportDirectory, "repo"), escapedCandidate, { recursive: true });
     write(escapedCandidate, "docs/example.mdx", "# unrelated\n");
-    writeJson(path.join(root, "escaped-proposal.json"), proposal(fixture.bundle, ["src/demo.ts"]));
+    writeJson(
+      path.join(root, "escaped-proposal.json"),
+      proposalDraft(fixture.bundle, ["src/demo.ts"]),
+    );
     expect(() =>
       exportTrustedRepairPatch({
         sourceCheckout: fixture.repository,
@@ -863,7 +843,10 @@ describe("PR Review Advisor repair Phase 1", () => {
     fs.cpSync(path.join(exportDirectory, "repo"), symlinkCandidate, { recursive: true });
     fs.rmSync(path.join(symlinkCandidate, "src/demo.ts"));
     fs.symlinkSync(contextFile, path.join(symlinkCandidate, "src/demo.ts"));
-    writeJson(path.join(root, "symlink-proposal.json"), proposal(fixture.bundle, ["src/demo.ts"]));
+    writeJson(
+      path.join(root, "symlink-proposal.json"),
+      proposalDraft(fixture.bundle, ["src/demo.ts"]),
+    );
     expect(() =>
       exportTrustedRepairPatch({
         sourceCheckout: fixture.repository,
@@ -899,7 +882,7 @@ describe("PR Review Advisor repair Phase 1", () => {
     fs.cpSync(path.join(exportDirectory, "repo"), validCandidate, { recursive: true });
     write(validCandidate, "src/demo.ts", "export const value = 2;\n");
     const validProposal = path.join(root, "mutation-proposal.json");
-    writeJson(validProposal, proposal(fixture.bundle, ["src/demo.ts"]));
+    writeJson(validProposal, proposalDraft(fixture.bundle, ["src/demo.ts"]));
     const validArtifact = path.join(root, "mutation-artifact");
     exportTrustedRepairPatch({
       sourceCheckout: fixture.repository,
@@ -945,7 +928,7 @@ describe("PR Review Advisor repair Phase 1", () => {
     fs.cpSync(path.join(exportDirectory, "repo"), candidate, { recursive: true });
     write(candidate, "src/demo.ts", "export const value = 2;\n");
     const proposalFile = path.join(root, "ignored-mutation-proposal.json");
-    writeJson(proposalFile, proposal(fixture.bundle, ["src/demo.ts"]));
+    writeJson(proposalFile, proposalDraft(fixture.bundle, ["src/demo.ts"]));
     const repairArtifact = path.join(root, "ignored-mutation-artifact");
     exportTrustedRepairPatch({
       sourceCheckout: fixture.repository,
@@ -1010,7 +993,7 @@ describe("PR Review Advisor repair Phase 1", () => {
     fs.cpSync(path.join(exportDirectory, "repo"), candidate, { recursive: true });
     write(candidate, "src/demo.ts", "export const value = 2;\n");
     const proposalFile = path.join(root, "proposal.json");
-    writeJson(proposalFile, proposal(bundle, ["src/demo.ts"]));
+    writeJson(proposalFile, proposalDraft(bundle, ["src/demo.ts"]));
     expect(() =>
       exportTrustedRepairPatch({
         sourceCheckout: fixture.repository,
@@ -1036,12 +1019,14 @@ describe("PR Review Advisor repair Phase 1", () => {
         { cwd: patchRepository },
       ),
     );
+    const trustedProposalFile = path.join(root, "trusted-proposal.json");
+    writeJson(trustedProposalFile, proposal(bundle, ["src/demo.ts"]));
     expect(() =>
       validateRepairLocally({
         sourceCheckout: fixture.repository,
         selection: bundle,
         patchFile: maliciousPatch,
-        proposalFile,
+        proposalFile: trustedProposalFile,
         stagingDirectory: path.join(root, "validation-staging"),
         commandRunner: () => ({ argv: ["unused"], exitCode: 0 }),
       }),
@@ -1087,7 +1072,7 @@ describe("PR Review Advisor repair Phase 1", () => {
     fs.cpSync(path.join(exportDirectory, "repo"), candidate, { recursive: true });
     fs.rmSync(path.join(candidate, "src/demo.ts"));
     const proposalFile = path.join(root, "proposal.json");
-    writeJson(proposalFile, proposal(bundle, ["src/demo.ts"]));
+    writeJson(proposalFile, proposalDraft(bundle, ["src/demo.ts"]));
     const artifactDirectory = path.join(root, "artifact");
     exportTrustedRepairPatch({
       sourceCheckout: repository,
