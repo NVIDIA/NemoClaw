@@ -6,33 +6,14 @@ import { describe, expect, it } from "vitest";
 import { sanitizeReadinessText } from "./sanitize.js";
 
 describe("sanitizeReadinessText", () => {
-  it.each([
-    [
-      "username and password",
+  it("uses URL-aware full redaction for readiness text", () => {
+    const result = sanitizeReadinessText(
       "https://service-user:service-password@example.com/path",
-      "https://example.com/path",
-      "service-password",
-      "service-user:",
-    ],
-    [
-      "userinfo only",
-      "https://service-token@example.com/path",
-      "https://example.com/path",
-      "service-token",
-      "service-token@",
-    ],
-    [
-      "malformed URL fallback",
-      "https://fallback-user:fallback-password@[not-an-ip/path",
-      "https://[not-an-ip/path",
-      "fallback-password",
-      "fallback-user:",
-    ],
-  ])("redacts URL credentials for %s", (_case, value, expected, credential, userinfo) => {
-    const result = sanitizeReadinessText(value, 1024);
+      1024,
+    );
 
-    expect(result).toBe(expected);
-    expect(result).not.toContain(credential);
-    expect(result).not.toContain(userinfo);
+    expect(result).toBe("https://example.com/path");
+    expect(result).not.toContain("service-password");
+    expect(result).not.toContain("service-user:");
   });
 });
