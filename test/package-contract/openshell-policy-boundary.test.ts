@@ -62,8 +62,8 @@ describe("OpenShell policy boundary package contract", () => {
     },
   );
 
-  it("routes the CommonJS CLI and ESM plugin through one canonical CJS boundary", async () => {
-    const cliPolicy = require("../../dist/lib/policy/merge.js") as {
+  it("keeps the CommonJS CLI and ESM plugin policy behavior compatible", async () => {
+    const cliPolicy = require("../../dist/lib/adapters/openshell/policy-boundary.js") as {
       assertPolicyRequirementContainment: (...args: unknown[]) => void;
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;
@@ -103,14 +103,6 @@ describe("OpenShell policy boundary package contract", () => {
       ) => Record<string, unknown>;
       stripProviderComposedPolicies: (policy: string) => string;
     };
-    const canonicalBoundary =
-      require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
-        assertPolicyRequirementContainment: typeof cliPolicy.assertPolicyRequirementContainment;
-        parseActiveGlobalPolicyMetadata: typeof cliPolicy.parseActiveGlobalPolicyMetadata;
-        parseOpenShellPolicy: typeof cliPolicy.parseOpenShellPolicy;
-        parseSandboxPolicyMetadata: typeof cliPolicy.parseSandboxPolicyMetadata;
-        stripProviderComposedPolicies: typeof cliPolicy.stripProviderComposedPolicies;
-      };
     expect(
       pluginBoundary.withoutProviderComposedPolicies({ safe: {}, _provider_generated: {} }),
     ).toEqual({ safe: {} });
@@ -120,27 +112,20 @@ describe("OpenShell policy boundary package contract", () => {
       future_policy: { keep: true },
       network_policies: { safe: {}, _provider_generated: {} },
     });
-    expect(YAML.parse(cliPolicy.stripProviderComposedPolicies(policy))).toEqual(
-      YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy)),
-    );
+    const expectedPolicy = {
+      version: 1,
+      future_policy: { keep: true },
+      network_policies: { safe: {} },
+    };
+    expect(YAML.parse(cliPolicy.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
+    expect(YAML.parse(pluginBoundary.stripProviderComposedPolicies(policy))).toEqual(expectedPolicy);
     expect(() => cliPolicy.stripProviderComposedPolicies("version: [unterminated")).toThrow();
     expect(() => pluginBoundary.stripProviderComposedPolicies("version: [unterminated")).toThrow();
 
     const policyOutput = ["Version: 1", "Hash: sha256:test", "---", policy].join("\n");
-    expect(cliPolicy.parseOpenShellPolicy(policyOutput)).toEqual(
-      pluginBoundary.parseOpenShellPolicy(policyOutput),
-    );
-    expect(cliPolicy.parseOpenShellPolicy).toBe(canonicalBoundary.parseOpenShellPolicy);
-    expect(cliPolicy.stripProviderComposedPolicies).toBe(
-      canonicalBoundary.stripProviderComposedPolicies,
-    );
-    expect(cliPolicy.parseActiveGlobalPolicyMetadata).toBe(
-      canonicalBoundary.parseActiveGlobalPolicyMetadata,
-    );
-    expect(cliPolicy.parseSandboxPolicyMetadata).toBe(canonicalBoundary.parseSandboxPolicyMetadata);
-    expect(cliPolicy.assertPolicyRequirementContainment).toBe(
-      canonicalBoundary.assertPolicyRequirementContainment,
-    );
+    const expectedParsedPolicy = { yamlBody: policy.trim(), policy: YAML.parse(policy) };
+    expect(cliPolicy.parseOpenShellPolicy(policyOutput)).toEqual(expectedParsedPolicy);
+    expect(pluginBoundary.parseOpenShellPolicy(policyOutput)).toEqual(expectedParsedPolicy);
     const sandboxMetadata = JSON.stringify({
       scope: "sandbox",
       sandbox: "alpha",
@@ -150,8 +135,16 @@ describe("OpenShell policy boundary package contract", () => {
       active_version: 1,
       policy: { version: 1, network_policies: {} },
     });
+    const expectedSandboxMetadata = {
+      policySource: "global",
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:sandbox", activeVersion: 1 },
+    };
+    expect(cliPolicy.parseSandboxPolicyMetadata(sandboxMetadata, "alpha")).toEqual(
+      expectedSandboxMetadata,
+    );
     expect(pluginBoundary.parseSandboxPolicyMetadata(sandboxMetadata, "alpha")).toEqual(
-      canonicalBoundary.parseSandboxPolicyMetadata(sandboxMetadata, "alpha"),
+      expectedSandboxMetadata,
     );
     const globalMetadata = JSON.stringify({
       scope: "global",
@@ -161,8 +154,19 @@ describe("OpenShell policy boundary package contract", () => {
       active_version: 1,
       policy: { version: 1, network_policies: {} },
     });
+    const expectedGlobalMetadata = {
+      state: "active",
+      inspection: {
+        policySource: "global",
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:global", activeVersion: 1 },
+      },
+    };
+    expect(cliPolicy.parseActiveGlobalPolicyMetadata(globalMetadata)).toEqual(
+      expectedGlobalMetadata,
+    );
     expect(pluginBoundary.parseActiveGlobalPolicyMetadata(globalMetadata)).toEqual(
-      canonicalBoundary.parseActiveGlobalPolicyMetadata(globalMetadata),
+      expectedGlobalMetadata,
     );
 
     const pluginRunner = await import(
