@@ -88,6 +88,7 @@ const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const gatewaySecurity = require("./src/lib/actions/sandbox/mcp-bridge/gateway-security.js");
 const runner = require("./src/lib/runner.js");
 runner.runCapture = (args) =>
   Array.isArray(args) && args[0] === "policy" && args[1] === "get"
@@ -102,6 +103,11 @@ runner.run = (args) => {
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const ownershipLocks = require("./src/lib/state/mcp-lifecycle-lock/credential-ownership.js");
+
+Object.defineProperty(gatewaySecurity, "assertMcpGatewayProxyDnsDisabled", {
+  configurable: true,
+  value: () => {},
+});
 
 if (crashAfter === "credential-command-race") {
   const withMcpCredentialOwnershipLock = ownershipLocks.withMcpCredentialOwnershipLock;

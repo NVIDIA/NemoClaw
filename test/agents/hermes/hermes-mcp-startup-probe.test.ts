@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   isShieldsDown: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
   sleepMs: vi.fn(),
+  sleepSeconds: vi.fn(),
   waitUntil: vi.fn(),
 }));
 
@@ -23,6 +24,7 @@ vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
 
 vi.mock("../../../src/lib/core/wait", () => ({
   sleepMs: mocks.sleepMs,
+  sleepSeconds: mocks.sleepSeconds,
   waitUntil: mocks.waitUntil,
 }));
 
@@ -158,16 +160,19 @@ describe("Hermes managed MCP startup probe", () => {
     "GATEWAY_HEALTH_TIMEOUT",
     "SUPERVISOR_TIMEOUT",
     "SUPERVISOR_BUSY",
-  ])("fails typed managed-recovery integrity refusal %s without another sandbox probe", (marker) => {
-    const result = runHermesProbe([starting, starting, starting, ready], true, [
-      { status: 1, stdout: "", stderr: marker },
-    ]);
+  ])(
+    "fails typed managed-recovery integrity refusal %s without another sandbox probe",
+    (marker) => {
+      const result = runHermesProbe([starting, starting, starting, ready], true, [
+        { status: 1, stdout: "", stderr: marker },
+      ]);
 
-    expect(result.calls).toBe(3);
-    expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
-    expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
-    expect(result.message).toContain(marker);
-  });
+      expect(result.calls).toBe(3);
+      expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
+      expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
+      expect(result.message).toContain(marker);
+    },
+  );
 
   it.each([
     {

@@ -11,6 +11,7 @@ import { mockManagedEndpointlessProviderProfileRun } from "../../helpers/onboard
 
 const mocks = vi.hoisted(() => ({
   applyPresetContent: vi.fn(),
+  assertMcpGatewayProxyDnsDisabled: vi.fn(),
   executeGatewaySupervisorAction: vi.fn(),
   executeSandboxCommand: vi.fn(),
   executeSandboxExecCommand: vi.fn(),
@@ -29,6 +30,10 @@ vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
 
 vi.mock("../../../src/lib/gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
+}));
+
+vi.mock("../../../src/lib/actions/sandbox/mcp-bridge/gateway-security", () => ({
+  assertMcpGatewayProxyDnsDisabled: mocks.assertMcpGatewayProxyDnsDisabled,
 }));
 
 vi.mock("../../../src/lib/policy", async (importOriginal) => ({
@@ -114,6 +119,8 @@ beforeEach(() => {
   policyApplyCalls = 0;
   policyState = "match";
   adapterCalls = [];
+
+  mocks.assertMcpGatewayProxyDnsDisabled.mockReset();
 
   mocks.runOpenshellProviderCommand.mockReset().mockImplementation((args: string[]) => {
     const command = args.join(" ");
