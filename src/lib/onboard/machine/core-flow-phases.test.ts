@@ -239,7 +239,9 @@ function createPhases(
       note: vi.fn(),
 
       cliName: () => "nemoclaw",
+      loadSession: () => createSession(),
       updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
+      compareAndSwapSession: vi.fn(() => "mismatch" as const),
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config) => config,
       messagingChannelConfigsEqual: () => true,
@@ -645,9 +647,7 @@ describe("core onboard flow phases", () => {
         resolved?: { policy?: { basePolicyPath?: string } };
       };
       const runVerifiedEffects = args[16] as
-        | ((context: {
-            revalidateSandboxIdentity: (operation: string) => void;
-          }) => Promise<void>)
+        | ((context: { revalidateSandboxIdentity: (operation: string) => void }) => Promise<void>)
         | undefined;
       expect(createIntent).toMatchObject({
         resolved: { policy: { basePolicyPath: "/repo/policy.yaml" } },
