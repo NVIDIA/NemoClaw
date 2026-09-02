@@ -8,7 +8,12 @@ import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
 import type { SandboxEntry } from "../../src/lib/state/registry";
-import { livePolicyMutationContext } from "./shields-flow-harness";
+import {
+  bindPolicySubmissionConfirmation,
+  bindTypedPolicyReader,
+  bindTypedPolicyWriter,
+  livePolicyMutationContext,
+} from "./shields-flow-harness";
 
 const INDEX_MODULE = "./index.js";
 export const HERMES_PROVIDER_CAPABILITY_PATH =
@@ -263,6 +268,7 @@ export function createHermesShieldsProviderConsumerHarness(
 
   const runner = loadSource("../runner.js");
   const policy = loadSource("../policy/index.js");
+  const policyAdapter = loadSource("../adapters/openshell/sandbox-policy-cli.js");
   const registry = loadSource("../state/registry.js");
   const privilegedExec = loadSource("../sandbox/privileged-exec.js");
   const dockerExec = loadSource("../adapters/docker/exec.js");
@@ -298,18 +304,17 @@ export function createHermesShieldsProviderConsumerHarness(
     runSpy,
     runCaptureSpy,
     vi.spyOn(runner, "validateName").mockImplementation((value: unknown) => String(value)),
-    vi
-      .spyOn(policy, "buildPolicySetCommand")
-      .mockImplementation((file: unknown, name: unknown) => [
-        "policy",
-        "set",
-        String(file),
-        String(name),
-      ]),
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    bindTypedPolicyWriter(
+      policyAdapter,
+      (command, options) => runner.run(command, options),
+      undefined,
+      ["policy", "set"],
+    ),
+    bindTypedPolicyReader(policyAdapter, () => "version: 1\nnetwork_policies:\n  test: {}\n"),
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
+    bindPolicySubmissionConfirmation(policy),
     registrySpy,
     vi
       .spyOn(privilegedExec, "capturePrivilegedSandboxCommand")
