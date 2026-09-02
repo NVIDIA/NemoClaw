@@ -328,10 +328,26 @@ public static class NemoClawProofVideoEncoder
     }
 }
 '@
-    Add-Type `
-        -TypeDefinition $encoderSource `
-        -Language CSharp `
-        -ReferencedAssemblies @($windowsWinMd[0].FullName, $runtimeWinRt)
+    $compiler = Join-Path $runtimeDirectory 'csc.exe'
+    if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
+        Fail-ProofVideo 'The .NET Framework C# compiler is missing.'
+    }
+    $encoderSourcePath = Join-Path $frameRoot 'NemoClawProofVideoEncoder.cs'
+    $encoderAssemblyPath = Join-Path $frameRoot 'NemoClawProofVideoEncoder.dll'
+    [IO.File]::WriteAllText($encoderSourcePath, $encoderSource, [Text.UTF8Encoding]::new($false))
+    $compilerArguments = @(
+        '/nologo',
+        '/target:library',
+        "/out:$encoderAssemblyPath",
+        "/reference:$($windowsWinMd[0].FullName)",
+        "/reference:$runtimeWinRt",
+        $encoderSourcePath
+    )
+    & $compiler @compilerArguments
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $encoderAssemblyPath -PathType Leaf)) {
+        Fail-ProofVideo 'The Windows Media Foundation encoder did not compile.'
+    }
+    Add-Type -Path $encoderAssemblyPath
 
     $videoName = "NemoClaw-$ProductVersion-windows-arm64-proof-$($CandidateSha.Substring(0, 12)).mp4"
     $videoPath = Join-Path $output $videoName
