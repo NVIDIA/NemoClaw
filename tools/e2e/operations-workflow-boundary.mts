@@ -741,7 +741,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           REQUIRE_MANAGED_IMAGE_PUBLICATION:
             "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || '1' }}",
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
-            "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || steps.publication_mode.outputs.select_nearest_successful }}",
+            "${{ steps.publication_mode.outputs.select_nearest_successful }}",
         },
         shell: "bash",
         run: [
