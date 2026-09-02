@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   readE2eOperationsWorkflow,
+  type OperationsWorkflow,
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
@@ -280,21 +281,41 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("runs authentication when any candidate identity input is present and skips it when all are empty", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate manual PR dispatch",
-    )!;
+  it("requires authentication when every candidate identity input can be present", () => {
     const validationError =
       "Manual PR authentication must run when any candidate identity input is present";
+    const condition =
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}";
+    const workflow = {
+      jobs: {
+        "generate-matrix": {
+          steps: [
+            {
+              id: "candidate_authorization",
+              name: "Authenticate manual PR dispatch",
+              if: condition,
+            },
+          ],
+        },
+      },
+    } satisfies OperationsWorkflow;
 
     expect(validateE2eOperationsWorkflow(workflow)).not.toContain(validationError);
-    expect(authentication.if).toBe(
-      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
-    );
 
-    authentication.if = "${{ inputs.checkout_sha != '' }}";
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(validationError);
+    const incompleteWorkflow: OperationsWorkflow = {
+      jobs: {
+        "generate-matrix": {
+          steps: [
+            {
+              id: "candidate_authorization",
+              name: "Authenticate manual PR dispatch",
+              if: "${{ inputs.checkout_sha != '' }}",
+            },
+          ],
+        },
+      },
+    };
+    expect(validateE2eOperationsWorkflow(incompleteWorkflow)).toContain(validationError);
   });
 
   it("pins the trusted planner checkout to the workflow repository", () => {
@@ -513,8 +534,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "b",
       "c",
       "refs/heads/pr-controlled-workflow",
-      0,
-      "",
+      1,
+      "::error::Manual PR E2E must be dispatched from the trusted main branch\n",
     ],
   ] as const)(
     "handles manual PR authentication for %s",

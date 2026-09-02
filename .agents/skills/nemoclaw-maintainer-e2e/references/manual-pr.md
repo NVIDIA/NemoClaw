@@ -61,8 +61,10 @@ Choose the selection from the source owner:
   every default-enabled E2E. Any supported job or target selector is allowed.
 - An external PR keeps the credential-free controller selection. Empty selectors run the trusted
   default PR selection. The controller also permits `jobs=inference-routing`,
-  `jobs=managed-image-protected-runtime`, `jobs=native-runtime-qualification-producer`, or the
-  documented credential-free target selectors.
+  `jobs=managed-image-protected-runtime`, or the documented credential-free target selectors.
+
+`jobs=native-runtime-qualification-producer` requires an NVIDIA-owned branch in
+`NVIDIA/NemoClaw`; it is not available for external PRs.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
@@ -73,6 +75,7 @@ Set the requested selectors and flags, or leave them empty:
 ```bash
 E2E_JOBS="${E2E_JOBS:-}"
 E2E_TARGETS="${E2E_TARGETS:-}"
+E2E_GATEWAY_RUNTIMES="${E2E_GATEWAY_RUNTIMES:-docker}"
 ALLOW_JETSON_DISPATCH="${ALLOW_JETSON_DISPATCH:-false}"
 INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:-false}"
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -82,6 +85,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
   -f inference_mode=mock \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
   -f allow_dgx_spark_runner_queue=false \
@@ -182,6 +186,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
   -f inference_mode=mock \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f include_staging_brev_launchable=false \
   -f allow_jetson_dispatch=false \
   -f allow_dgx_spark_runner_queue=false \

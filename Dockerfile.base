@@ -426,6 +426,7 @@ COPY agents/openclaw/mcporter-runtime/package.json \
 COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
+    scripts/lib/reviewed-mcporter-package.mts \
     scripts/lib/reviewed-npm-audit.mts \
     scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
@@ -560,12 +561,10 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && case "$OPENCLAW_VERSION" in \
         2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
     esac \
-    && MCPORTER_EXPECTED_INTEGRITY="" \
-    && MCPORTER_EXPECTED_TARBALL="" \
-    && if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; fi \
-    && if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
-    fi \
+    && MCPORTER_REVIEWED_PACKAGE="$(node --experimental-strip-types /scripts/lib/reviewed-mcporter-package.mts \
+        "$MCPORTER_VERSION" "$MCPORTER_0_7_3_INTEGRITY" "$MCPORTER_0_7_3_TARBALL")" \
+    && MCPORTER_EXPECTED_INTEGRITY="${MCPORTER_REVIEWED_PACKAGE%% *}" \
+    && MCPORTER_EXPECTED_TARBALL="${MCPORTER_REVIEWED_PACKAGE#* }" \
     && node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
         --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
         --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}" \

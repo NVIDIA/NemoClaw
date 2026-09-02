@@ -75,7 +75,7 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "    allow_non_head=0",
     "    select_nearest_successful=0",
     "    ;;",
-    "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
+    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
     '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
     '      echo "::error::manual PR publication selection requires an exact base SHA" >&2',
     "      exit 1",
@@ -404,7 +404,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == refs/heads/*',
+    '"$WORKFLOW_REF" == "refs/heads/main"',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
@@ -539,7 +539,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
-    '"$REF" == refs/heads/*',
+    '"$REF" == "refs/heads/main"',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',

@@ -15,7 +15,13 @@ import {
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
 const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "..", "Dockerfile.base");
-const BLUEPRINT = path.join(import.meta.dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
+const BLUEPRINT = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "nemoclaw-blueprint",
+  "blueprint.yaml",
+);
 const REVIEWED_NPM_AUDIT_HELPER = path.join(
   import.meta.dirname,
   "..",
@@ -23,6 +29,14 @@ const REVIEWED_NPM_AUDIT_HELPER = path.join(
   "scripts",
   "lib",
   "reviewed-npm-audit.mts",
+);
+const REVIEWED_MCPORTER_PACKAGE_HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "scripts",
+  "lib",
+  "reviewed-mcporter-package.mts",
 );
 const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
   "2026.4.24",
@@ -200,6 +214,10 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     .replaceAll(
       'from "/scripts/lib/reviewed-npm-audit.mts"',
       `from ${JSON.stringify(REVIEWED_NPM_AUDIT_HELPER)}`,
+    )
+    .replaceAll(
+      "/scripts/lib/reviewed-mcporter-package.mts",
+      JSON.stringify(REVIEWED_MCPORTER_PACKAGE_HELPER),
     )
     .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptions);
   const script = [

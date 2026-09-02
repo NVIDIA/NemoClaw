@@ -446,6 +446,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "reviewed-mcporter-package.mts"),
+    path.join(stagedScriptsDir, "lib", "reviewed-mcporter-package.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "bundled-npm-package.mts"),
     path.join(stagedScriptsDir, "lib", "bundled-npm-package.mts"),
   );

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,15 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { CLI_ARTIFACT_PACKAGE_SCRIPT } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
 
-type CatalogInput = "absent" | "file" | "symlink";
-
-const CATALOG_INPUT_WRITERS = {
-  absent: () => undefined,
-  file: (catalog: string) => fs.writeFileSync(catalog, "{}\n"),
-  symlink: (catalog: string) => fs.symlinkSync("missing-catalog.json", catalog),
-} satisfies Record<CatalogInput, (catalog: string) => void>;
-
-function runCliArtifactPackaging(catalogInput: CatalogInput, trustedCatalog = false) {
+function runCliArtifactPackaging() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-package-"));
   const workspace = path.join(root, "workspace");
   const runnerTemp = path.join(root, "runner-temp");
@@ -84,24 +75,14 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({ nemoclawVersion: "0.0.0", sourceRevision: candidateSha })}\n`,
   );
-  for (const boundary of [
-    "openshell-gateway-health-sdk.js",
-    "openshell-observation-boundary.cjs",
-    "openshell-policy-boundary.cjs",
-    "sandbox-name.cjs",
-    "snapshot-sanitizer-boundary.cjs",
-  ]) {
-    fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
-  }
-
-  const catalog = path.join(dist, "e2e-managed-image-catalog.json");
-  CATALOG_INPUT_WRITERS[catalogInput](catalog);
-  const trustedCatalogPath = path.join(runnerTemp, "pr-managed-image-catalog.json");
-  const trustedCatalogJson = '{"trusted":true}';
-  trustedCatalog && fs.writeFileSync(trustedCatalogPath, `${trustedCatalogJson}\n`);
-  const trustedCatalogSha256 = trustedCatalog
-    ? createHash("sha256").update(fs.readFileSync(trustedCatalogPath)).digest("hex")
-    : "";
+  fs.writeFileSync(path.join(shared, "openshell-gateway-health-sdk.js"), "module.exports = {};\n");
+  fs.writeFileSync(
+    path.join(shared, "openshell-observation-boundary.cjs"),
+    "module.exports = {};\n",
+  );
+  fs.writeFileSync(path.join(shared, "openshell-policy-boundary.cjs"), "module.exports = {};\n");
+  fs.writeFileSync(path.join(shared, "sandbox-name.cjs"), "module.exports = {};\n");
+  fs.writeFileSync(path.join(shared, "snapshot-sanitizer-boundary.cjs"), "module.exports = {};\n");
 
   const result = spawnSync("bash", [path.resolve(CLI_ARTIFACT_PACKAGE_SCRIPT)], {
     cwd: workspace,
@@ -111,8 +92,6 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: candidateSha,
       GITHUB_OUTPUT: path.join(root, "github-output"),
-      MANAGED_IMAGE_CATALOG: trustedCatalog ? trustedCatalogJson : "",
-      MANAGED_IMAGE_CATALOG_SHA256: trustedCatalogSha256,
       PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
       RUN_ATTEMPT: "1",
       RUN_ID: "12345",
@@ -124,7 +103,6 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   });
   return {
     artifactExists: fs.existsSync(path.join(runnerTemp, "nemoclaw-cli-artifact")),
-    artifactPayload: path.join(runnerTemp, "nemoclaw-cli-artifact", "nemoclaw-cli.tar"),
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
     output: `${result.stdout}${result.stderr}`,
     result,
@@ -132,8 +110,8 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
 }
 
 describe("CLI artifact packaging", () => {
-  it("packages the candidate CLI when no managed-image catalog exists", () => {
-    const fixture = runCliArtifactPackaging("absent");
+  it("packages the candidate CLI", () => {
+    const fixture = runCliArtifactPackaging();
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
       expect(fixture.artifactExists).toBe(true);
@@ -141,30 +119,4 @@ describe("CLI artifact packaging", () => {
       fixture.cleanup();
     }
   });
-
-  it("seals a trusted managed-image catalog into the exact candidate artifact", () => {
-    const fixture = runCliArtifactPackaging("absent", true);
-    try {
-      expect(fixture.result.status, fixture.output).toBe(0);
-      expect(
-        execFileSync("tar", ["-tf", fixture.artifactPayload], { encoding: "utf8" }).split("\n"),
-      ).toContain("dist/e2e-managed-image-catalog.json");
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  it.each(["file", "symlink"] as const)(
-    "rejects a candidate-created managed-image catalog %s before artifact creation",
-    (catalogInput) => {
-      const fixture = runCliArtifactPackaging(catalogInput);
-      try {
-        expect(fixture.result.status, fixture.output).not.toBe(0);
-        expect(fixture.output).toContain("candidate build created the managed-image catalog path");
-        expect(fixture.artifactExists).toBe(false);
-      } finally {
-        fixture.cleanup();
-      }
-    },
-  );
 });
