@@ -52,12 +52,15 @@ Select review evidence for the publication state before every agent-managed push
   4. Route only in-scope groups to `nemoclaw-contributor-implement-issue` with the scope record and complete root-cause group.
   5. Inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
   6. Create one local repair commit and record it as the expected publication SHA.
-  7. Repeat collection for the reviewed remote commit before the canonical base fetch.
-  8. Do not push while required CI or a scheduled automated review is pending, a finding is unclassified, or an unresolved finding requires a change.
-  9. Immediately before publication, require the remote `headRefOid` to equal the reviewed remote SHA.
-  10. Require the push tool's expected commit to equal the local publication SHA.
+  7. Mark each accepted repair group resolved by the inspected local repair, subject to trusted validation.
+  8. Reread `headRefOid` before the canonical base fetch and restart collection only when it differs from the reviewed remote SHA.
+  9. Do not push while the original collection is pending, a finding is unclassified, an accepted group lacks an inspected repair, or validation is unresolved.
+  10. Immediately before publication, require the remote `headRefOid` to equal the reviewed remote SHA.
+  11. Require the push tool's expected commit to equal the local publication SHA.
 
-  A local repair commit does not violate the remote guard. An unrelated remote update does.
+  Do not repeat classification of the unchanged remote candidate after a local repair. The reviewed
+  remote SHA is now only the competing-update guard. A local repair commit does not violate that
+  guard. An unrelated remote update does.
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 

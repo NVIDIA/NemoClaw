@@ -84,6 +84,19 @@
     ]
   },
   {
+    "id": "guard-local-review-repair-publication",
+    "question": "A completed review found one in-scope defect. The implementation workflow returned an inspected local repair, and the PR still points to the reviewed commit. Publish the repair, but stop if another workflow updates the PR first.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An inspected local repair resolves the accepted group subject to trusted validation. The unchanged reviewed remote SHA becomes a competing-update guard, not a reason to reclassify the old defect.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and preserves the completed collection and disposition record.",
+      "Marks the accepted group resolved by the inspected local repair, subject to trusted validation.",
+      "Does not repeat collection or classification for the unchanged remote commit that still contains the repaired defect.",
+      "Allows trusted validation and one guarded non-force push when `headRefOid` still equals the reviewed remote SHA.",
+      "Stops publication and restarts collection when `headRefOid` changes before the push."
+    ]
+  },
+  {
     "id": "positive-base-conflict-lifecycle-owner",
     "question": "Automated review is complete on my open NemoClaw PR, but it now conflicts with main. Resolve the conflict and update the PR.",
     "expected_skill": "nemoclaw-contributor-create-pr",
