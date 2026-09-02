@@ -212,18 +212,48 @@ function awaitWindowsOllamaReady(opts: { prepareDockerEnvironment?: () => unknow
   return false;
 }
 
+type WindowsOllamaLaunchAttempt = {
+  kind: "watcher" | "installed" | "path";
+  label: string;
+  script: string;
+};
+
+type WindowsOllamaLaunchOperations = {
+  runAttempt: (attempt: WindowsOllamaLaunchAttempt) => {
+    status: number | null;
+    stderr?: string;
+    error?: Error;
+  };
+  awaitReady: () => boolean;
+  stopProcesses: () => void;
+  wait: (seconds: number) => void;
+};
+
+const WINDOWS_OLLAMA_LAUNCH_OPERATIONS: WindowsOllamaLaunchOperations = {
+  runAttempt: (attempt) =>
+    run(["powershell.exe", "-Command", attempt.script], {
+      ignoreError: true,
+      suppressOutput: true,
+    }),
+  awaitReady: awaitWindowsOllamaReady,
+  stopProcesses: killWindowsOllamaProcesses,
+  wait: sleepSeconds,
+};
+
 // Relaunch via the watcher path when available so the tray icon and the
 // watcher's auto-restart survive; fall back through the verified installed
 // path and finally refreshed PATH because stale watcher paths are possible.
 function launchAndAwaitWindowsOllama(
   opts: { watcherPath?: string; installedPath?: string } = {},
+  operations: WindowsOllamaLaunchOperations = WINDOWS_OLLAMA_LAUNCH_OPERATIONS,
 ): boolean {
   console.log("  Starting Ollama on Windows host via WSL interop...");
   const watcherPath = typeof opts.watcherPath === "string" ? opts.watcherPath.trim() : "";
   const installedPath = typeof opts.installedPath === "string" ? opts.installedPath.trim() : "";
-  const launchAttempts: Array<{ label: string; script: string }> = [];
+  const launchAttempts: WindowsOllamaLaunchAttempt[] = [];
   if (watcherPath) {
     launchAttempts.push({
+      kind: "watcher",
       label: "Ollama tray app",
       script:
         `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
@@ -232,6 +262,7 @@ function launchAndAwaitWindowsOllama(
   }
   if (installedPath) {
     launchAttempts.push({
+      kind: "installed",
       label: "verified ollama.exe",
       script:
         `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
@@ -239,6 +270,7 @@ function launchAndAwaitWindowsOllama(
     });
   }
   launchAttempts.push({
+    kind: "path",
     label: "refreshed Windows PATH",
     script:
       "$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User'); " +
@@ -247,11 +279,8 @@ function launchAndAwaitWindowsOllama(
 
   for (let i = 0; i < launchAttempts.length; i++) {
     const attempt = launchAttempts[i];
-    const result = run(["powershell.exe", "-Command", attempt.script], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (result.status === 0 && awaitWindowsOllamaReady()) {
+    const result = operations.runAttempt(attempt);
+    if (result.status === 0 && operations.awaitReady()) {
       return true;
     }
 
@@ -263,8 +292,8 @@ function launchAndAwaitWindowsOllama(
         : error || `exit ${result.status}${stderr ? `: ${stderr}` : ""}`;
     console.error(`  PowerShell launch via ${attempt.label} failed: ${detail}`);
     if (i < launchAttempts.length - 1) {
-      killWindowsOllamaProcesses();
-      sleepSeconds(1);
+      operations.stopProcesses();
+      operations.wait(1);
     }
   }
   return false;
@@ -277,7 +306,7 @@ type WindowsOllamaSetupOperations = {
   persistBinding: () => boolean;
   stopProcesses: () => void;
   wait: (seconds: number) => void;
-  launch: (opts: { watcherPath?: string; installedPath?: string }) => boolean;
+  launchOperations: WindowsOllamaLaunchOperations;
   rollbackSnapshot: (snapshot: WindowsOllamaHostSnapshot) => boolean;
   registerInterruptHandler: (handler: (signal: WindowsOllamaInterruptSignal) => void) => () => void;
   preserveInterrupt: (signal: WindowsOllamaInterruptSignal) => void;
@@ -301,7 +330,7 @@ const WINDOWS_OLLAMA_SETUP_OPERATIONS: WindowsOllamaSetupOperations = {
   persistBinding: persistOllamaHostEnvVar,
   stopProcesses: killWindowsOllamaProcesses,
   wait: sleepSeconds,
-  launch: launchAndAwaitWindowsOllama,
+  launchOperations: WINDOWS_OLLAMA_LAUNCH_OPERATIONS,
   rollbackSnapshot: rollbackWindowsOllamaHostSnapshot,
   registerInterruptHandler: registerWindowsOllamaInterruptHandler,
   preserveInterrupt: (signal) => {
@@ -354,10 +383,13 @@ function setupWindowsOllamaWith0000Binding(
     }
     operations.stopProcesses();
     operations.wait(1);
-    const launched = operations.launch({
-      watcherPath: snapshot.watcherPath || undefined,
-      installedPath: opts.installedPath,
-    });
+    const launched = launchAndAwaitWindowsOllama(
+      {
+        watcherPath: snapshot.watcherPath || undefined,
+        installedPath: opts.installedPath,
+      },
+      operations.launchOperations,
+    );
     if (launched) {
       rollbackRequired = false;
       return true;
