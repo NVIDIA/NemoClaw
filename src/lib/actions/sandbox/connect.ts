@@ -1949,6 +1949,12 @@ async function runConnectEntryPreflight(
                   hermesPortable && probeTiming
                     ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
                     : undefined,
+                  hermesPortable && probeTiming
+                    ? { onComplete: writeHermesPortableCurrentnessTiming }
+                    : undefined,
+                  hermesPortable && probeTiming
+                    ? { onComplete: writeHermesPortableInspectionTiming }
+                    : undefined,
                 )
               : hermesPortable && probeTiming
                 ? recoverPortableDemoSandboxLifecycleForConnect(
@@ -1957,6 +1963,8 @@ async function runConnectEntryPreflight(
                     gatewayName,
                     undefined,
                     { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                    { onComplete: writeHermesPortableCurrentnessTiming },
+                    { onComplete: writeHermesPortableInspectionTiming },
                   )
                 : recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
@@ -2025,6 +2033,8 @@ async function runConnectEntryPreflight(
                   probeTiming
                     ? { onComplete: writeHermesPortableLifecycleRecoveryTiming }
                     : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableCurrentnessTiming } : undefined,
+                  probeTiming ? { onComplete: writeHermesPortableInspectionTiming } : undefined,
                 )
               : hermesPortable && probeTiming
                 ? recoverPortableDemoSandboxLifecycleForConnect(
@@ -2033,6 +2043,8 @@ async function runConnectEntryPreflight(
                     currentGateway,
                     undefined,
                     { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+                    { onComplete: writeHermesPortableCurrentnessTiming },
+                    { onComplete: writeHermesPortableInspectionTiming },
                   )
                 : recoverPortableDemoSandboxLifecycleForConnect(
                     sandboxName,
