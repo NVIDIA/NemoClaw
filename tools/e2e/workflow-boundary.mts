@@ -1767,7 +1767,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
     errors.push("jetson-nvmap-gpu job must depend on managed publication and generate-matrix");
   }
   const trustedPushOrManualSelector =
-    "${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}";
+    "${{ always() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}";
   if (job.if !== trustedPushOrManualSelector) {
     errors.push(
       "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in for same-repository manual selections",

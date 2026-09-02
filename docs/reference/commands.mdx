@@ -366,7 +366,7 @@ When the recovery record contains a durable identity fingerprint, run `$$nemocla
 Use the result from `destroy` to choose the next action:
 
 - If OpenShell still reports the sandbox present, `destroy` preserves the record and removes no resources. Do not delete the sandbox manually by mutable name. Give the displayed create-attempt label to an OpenShell administrator when present and ask them to remove that exact sandbox through an identity-bound procedure. Without a label, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence.
-- After the administrator removes the exact sandbox, rerun `$$nemoclaw <sandbox-name> destroy`.
+- After the administrator removes the exact sandbox, run `$$nemoclaw <sandbox-name> destroy --yes` to reconcile the recovery record.
 - If OpenShell confirms the sandbox is absent, `destroy` verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, it also verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
 
@@ -555,7 +555,19 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
-Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Install Managed llama.cpp on DGX Spark](../inference/local-inference/choose-local-inference-server#install-managed-llamacpp-on-dgx-spark).
+On a qualifying Windows WSL N1x host, Windows Express selects the explicit Experimental managed Qwen 3.6 recipe.
+Before selection, unset `DOCKER_HOST` and select Docker's `default` context.
+Onboarding also requires local Docker Desktop, Arm64, N1x product identity, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
+Select that recipe non-interactively with these values:
+
+```bash
+NEMOCLAW_PROVIDER=install-llama-cpp \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Set Up llama.cpp](../inference/local-inference/set-up-llama-cpp).
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference. The interactive review offers these actions:
 
@@ -3195,9 +3207,9 @@ $$nemoclaw credentials list
 
 ### `$$nemoclaw credentials add <PROVIDER>`
 
-Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. `--from-existing` is available only when no managed MCP server reserves credential keys. The command fails before gateway work when a reservation exists because `--from-existing` does not expose credential keys before provider creation. Rerun with explicit `--credential <ENV_NAME>` input, or remove every managed MCP server that reserves credential keys before retrying. After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
+Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. With `--from-existing`, NemoClaw inspects the provider profile and rejects registration when one of its credential keys is reserved by a managed MCP server. After the gateway accepts the provider, rebuild each sandbox that should use it.
 
-Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes). If you want a provider available to only some sandboxes, scope it with `nemoclaw credentials reset <PROVIDER>` once those sandboxes finish using it.
+Registered providers are gateway-wide and attach to every sandbox you build or rebuild after the call. `nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes. To replace a credential, reset the provider, register the replacement, and rebuild each detached sandbox.
 
 ```bash
 $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY
@@ -3207,8 +3219,8 @@ $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_K
 | --- | --- |
 | `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
 | `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
-| `--config <K=V>` | Provider configuration pair. Repeatable |
-| `--from-existing` | Load credentials and config from existing local state when no managed MCP server reserves credential keys |
+| `--config <K=V>` | Typed non-secret provider configuration. Supported: `OPENAI_BASE_URL=<http(s)://public-IP/path>` with `--type openai`. DNS hostnames are rejected because this gateway-wide credential path cannot enforce admission-time address pins. URLs with credentials, query parameters, fragments, loopback, link-local, private, internal, or reserved IP destinations are also rejected. Configure hostname-based and trusted private inference endpoints through onboarding so NemoClaw can preserve their trust and address pins. Repeatable |
+| `--from-existing` | Load credentials and config from existing local state after checking the provider profile for credential keys reserved by managed MCP servers |
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
@@ -3638,9 +3650,9 @@ non-interactive, disables Express selection, and sets this value automatically w
 `--local-model-runtime=vllm`. | | `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` | Selects the fixed vLLM
 local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also
 requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from
-`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID |
+`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug, Hugging Face model ID, or registered served model name |
 Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station
-installer setup. Slugs and full model IDs are case-insensitive. Recognized slugs: `qwen3.6-27b`,
+installer setup. Slugs, full model IDs, and registered served model names are case-insensitive. Recognized slugs: `qwen3.6-27b`,
 `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`,
 `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b`
 and `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a
