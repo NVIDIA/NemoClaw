@@ -84,4 +84,13 @@ describe("onboard lock ownership", () => {
       command: "replacement owner",
     });
   });
+
+  it("refuses cleanup authority after the acquired lock gains a hard link (#9833)", () => {
+    expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
+    const linkedLock = `${session.LOCK_FILE}.linked`;
+    fs.linkSync(session.LOCK_FILE, linkedLock);
+
+    expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
+    expect(() => session.assertOnboardLockOwned()).toThrow(/onboarding lock ownership changed/u);
+  });
 });

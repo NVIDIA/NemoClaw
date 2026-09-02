@@ -17,7 +17,11 @@ export interface OnboardLockRecord extends OnboardLockHolderIdentity {
 }
 
 export type OnboardLockDisposition =
-  | { readonly state: "held"; readonly record: OnboardLockRecord }
+  | {
+      readonly state: "held";
+      readonly record: OnboardLockRecord;
+      readonly identityVerified: boolean;
+    }
   | { readonly state: "settling" }
   | { readonly state: "stale" };
 
@@ -29,14 +33,15 @@ export const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
  * lock. Process-start metadata distinguishes a reused PID; unavailable
  * metadata stays fail-closed and continues to treat it as held.
  */
-export function onboardLockHolderStillMatches(
+function onboardLockHolderIdentity(
   lock: OnboardLockHolderIdentity,
   probes: ProcessIdentityProbes = hostProcessIdentityProbes,
-): boolean {
-  if (!probes.isAlive(lock.pid)) return false;
-  if (lock.processStartIdentity === null) return true;
+): "departed" | "verified" | "unavailable" {
+  if (!probes.isAlive(lock.pid)) return "departed";
+  if (lock.processStartIdentity === null) return "unavailable";
   const currentIdentity = probes.readStartIdentity(lock.pid);
-  return currentIdentity === null || currentIdentity === lock.processStartIdentity;
+  if (currentIdentity === null) return "unavailable";
+  return currentIdentity === lock.processStartIdentity ? "verified" : "departed";
 }
 
 function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
@@ -54,7 +59,7 @@ function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
   };
 }
 
-/** Build the persisted owner record with exact process-start identity evidence. */
+/** Build the persisted owner record with process-start identity evidence when available. */
 export function createOnboardLockRecord(
   command: string | null,
   startedAt: string,
@@ -92,7 +97,8 @@ export function classifyOnboardLockContents(
       ? { state: "stale" }
       : { state: "settling" };
   }
-  return onboardLockHolderStillMatches(record, probes)
-    ? { state: "held", record }
-    : { state: "stale" };
+  const holderIdentity = onboardLockHolderIdentity(record, probes);
+  return holderIdentity === "departed"
+    ? { state: "stale" }
+    : { state: "held", record, identityVerified: holderIdentity === "verified" };
 }

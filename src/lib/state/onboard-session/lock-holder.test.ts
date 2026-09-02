@@ -43,6 +43,7 @@ describe("onboarding lock classification", () => {
 
     expect(classifyOnboardLockContents(contents, 0, 100_000, liveProbes)).toEqual({
       state: "held",
+      identityVerified: false,
       record: {
         pid: liveProbes.currentPid,
         processStartIdentity: null,
@@ -64,13 +65,13 @@ describe("onboarding lock classification", () => {
   });
 
   it.each([
-    ["matching", "proc:100", "proc:100", "held"],
-    ["reused", "proc:100", "proc:101", "stale"],
-    ["reused current PID", "proc:100", "proc:101", "stale"],
-    ["unverifiable", "proc:100", null, "held"],
+    ["matching", "proc:100", "proc:100", "held", true],
+    ["reused", "proc:100", "proc:101", "stale", null],
+    ["reused current PID", "proc:100", "proc:101", "stale", null],
+    ["unverifiable", "proc:100", null, "held", false],
   ] as const)(
     "classifies a live foreign PID from exact process identity evidence [%s]",
-    (_case, recordedIdentity, observedIdentity, expectedState) => {
+    (_case, recordedIdentity, observedIdentity, expectedState, identityVerified) => {
       const probes: ProcessIdentityProbes = {
         currentPid: 101,
         isAlive: () => true,
@@ -83,8 +84,11 @@ describe("onboarding lock classification", () => {
         command: "nemoclaw onboard",
       });
 
-      expect(classifyOnboardLockContents(contents, 99_999, 100_000, probes).state).toBe(
-        expectedState,
+      const disposition = classifyOnboardLockContents(contents, 99_999, 100_000, probes);
+      expect(disposition).toMatchObject(
+        identityVerified === null
+          ? { state: expectedState }
+          : { state: expectedState, identityVerified },
       );
     },
   );

@@ -1115,13 +1115,14 @@ describe("onboard session", () => {
       session.LOCK_FILE,
       JSON.stringify({
         pid: reusedPid,
-        processStartIdentity: "proc:12000",
+        processStartIdentity: "linux:test-boot:12000",
         startedAt: "2026-09-01T00:00:00.100Z",
         command: "nemoclaw onboard",
       }),
       { mode: 0o600 },
     );
 
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
     const originalReadFileSync = fs.readFileSync;
     const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
@@ -1134,6 +1135,7 @@ describe("onboard session", () => {
         }).join(" ");
         return `${reusedPid} (node) ${fieldsAfterComm}`;
       }
+      if (fileName === "/proc/sys/kernel/random/boot_id") return "test-boot\n";
       return originalReadFileSync(file, options);
     }) as typeof fs.readFileSync);
 
@@ -1146,6 +1148,7 @@ describe("onboard session", () => {
     } finally {
       readSpy.mockRestore();
       killSpy.mockRestore();
+      platformSpy.mockRestore();
       session.releaseOnboardLock();
     }
   });

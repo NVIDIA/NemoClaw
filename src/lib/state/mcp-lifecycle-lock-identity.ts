@@ -1,16 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
-import { performance } from "node:perf_hooks";
 
-import { isErrnoException } from "../core/errno";
-import { buildSubprocessEnv } from "../subprocess-env";
+import {
+  processIsAlive as hostProcessIsAlive,
+  readProcessIdentity,
+} from "../adapters/process/identity";
 
 const LOCK_SCHEMA_VERSION = 1;
-const OWNER_IDENTITY_CACHE_MS = 1_000;
 
 export interface McpLifecycleLockOwner {
   version: typeof LOCK_SCHEMA_VERSION;
@@ -55,8 +54,6 @@ export interface McpLifecycleLockIdentityProbes {
   processIsAlive(pid: number): boolean;
   readProcessIdentity(pid: number, fresh?: boolean): string | null;
 }
-
-const processIdentityCache = new Map<number, { checkedAt: number; identity: string | null }>();
 
 export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLockOwner {
   if (!value || typeof value !== "object") return false;
@@ -106,34 +103,7 @@ export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLo
   );
 }
 
-function readLinuxProcessState(pid: number): string | null {
-  if (process.platform !== "linux") return null;
-  try {
-    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const closeParen = statText.lastIndexOf(")");
-    if (closeParen < 0) return null;
-    return (
-      statText
-        .slice(closeParen + 2)
-        .trim()
-        .split(/\s+/)[0] ?? null
-    );
-  } catch {
-    return null;
-  }
-}
-
-export function processIsAlive(pid: number): boolean {
-  // kill(pid, 0) succeeds for an unreaped zombie even though it can no longer
-  // own or release a lifecycle lock.
-  if (readLinuxProcessState(pid) === "Z") return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isErrnoException(error) && error.code === "EPERM";
-  }
-}
+export const processIsAlive = hostProcessIsAlive;
 
 /**
  * Returns an OS process-start identity rather than only a PID. A stale lock
@@ -142,60 +112,7 @@ export function processIsAlive(pid: number): boolean {
  * other supported POSIX hosts fall back to ps(1)'s process start timestamp.
  */
 export function readMcpLockProcessIdentity(pid: number, fresh = false): string | null {
-  const cached = processIdentityCache.get(pid);
-  const now = performance.now();
-  if (
-    !fresh &&
-    cached &&
-    now >= cached.checkedAt &&
-    now - cached.checkedAt < OWNER_IDENTITY_CACHE_MS
-  ) {
-    return cached.identity;
-  }
-
-  let identity: string | null = null;
-  if (process.platform === "linux") {
-    try {
-      const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-      const closeParen = statText.lastIndexOf(")");
-      if (closeParen >= 0) {
-        const fieldsAfterComm = statText
-          .slice(closeParen + 2)
-          .trim()
-          .split(/\s+/);
-        // The first value after comm is field 3; index 19 is field 22,
-        // process start time in clock ticks since boot.
-        const startTicks = fieldsAfterComm[19];
-        if (startTicks && /^\d+$/.test(startTicks)) {
-          let bootIdentity = "unknown-boot";
-          try {
-            bootIdentity = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-          } catch {
-            const bootTime = fs
-              .readFileSync("/proc/stat", "utf8")
-              .split("\n")
-              .find((line) => line.startsWith("btime "));
-            if (bootTime) bootIdentity = bootTime.trim();
-          }
-          identity = `linux:${bootIdentity}:${startTicks}`;
-        }
-      }
-    } catch {
-      identity = null;
-    }
-  } else {
-    const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-      encoding: "utf8",
-      env: buildSubprocessEnv(),
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1_000,
-    });
-    const startedAt = result.status === 0 ? result.stdout.trim() : "";
-    if (startedAt) identity = `${process.platform}:${startedAt}`;
-  }
-
-  processIdentityCache.set(pid, { checkedAt: now, identity });
-  return identity;
+  return readProcessIdentity(pid, fresh, true);
 }
 
 /** Stable enough to distinguish independent hosts sharing a state directory. */

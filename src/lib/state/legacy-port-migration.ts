@@ -813,6 +813,14 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
     const activeLock = path.join(stateRoot, "onboard.lock");
     const disposition = classifyOnboardLock(home, activeLock);
     if (disposition.state === "held") {
+      if (!disposition.identityVerified) {
+        throw migrationError(
+          `onboarding lock ${activeLock} records live PID ` +
+            `${String(disposition.record.pid)}${describeOnboardLockHolder(disposition.record)}, ` +
+            "but no process-start identity verifies that it is still the owner; verify no " +
+            "onboarding run is active, and if none is active remove only this lock file, then retry",
+        );
+      }
       throw migrationError(
         `onboarding lock ${activeLock} is held by running process ` +
           `${String(disposition.record.pid)}${describeOnboardLockHolder(disposition.record)}; ` +
@@ -821,8 +829,7 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
     }
     if (disposition.state === "settling") {
       throw migrationError(
-        `onboarding lock ${activeLock} records no owner yet and is still changing; ` +
-          "retry once the run writing it settles",
+        `onboarding lock ${activeLock} has no valid owner record; retry after 30 seconds`,
       );
     }
   }

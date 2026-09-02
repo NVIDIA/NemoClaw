@@ -43,6 +43,13 @@ function onboardLockBody(
   });
 }
 
+function linuxProcessStat(pid: number, startTicks: string, state = "S"): string {
+  const fieldsAfterComm = Array.from({ length: 50 }, (_, index) =>
+    index === 0 ? state : index === 19 ? startTicks : "0",
+  );
+  return `${String(pid)} (node) ${fieldsAfterComm.join(" ")}`;
+}
+
 function writeOnboardLock(stateRoot: string, body: string): string {
   fs.mkdirSync(stateRoot, { recursive: true });
   const lockFile = path.join(stateRoot, "onboard.lock");
@@ -452,22 +459,55 @@ describe("legacy non-default gateway state migration", () => {
       writeOnboardLock(root(shared, selected), onboardLockBody(process.pid));
 
       expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-        /onboarding lock .* is held by running process/u,
+        /records live PID .* but no process-start identity verifies/u,
       );
       expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
       expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
     },
   );
 
-  it("names the process and command recorded in a held onboarding lock", () => {
+  it("reports cautious recovery for an unverifiable live onboarding PID", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
     writeOnboardLock(shared, onboardLockBody(process.pid));
     const migrate = (): unknown => migrateLegacyPortState({ home, gatewayPort: 9123 });
 
-    expect(migrate).toThrow(`is held by running process ${String(process.pid)}`);
+    expect(migrate).toThrow(`records live PID ${String(process.pid)}`);
     expect(migrate).toThrow('(command "onboard", started 2026-09-01T00:00:00.000Z)');
+    expect(migrate).toThrow(/verify no onboarding run is active/u);
+    expect(migrate).not.toThrow(/stop that process/u);
+  });
+
+  it("names a live onboarding process only after its strong identity matches", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    writeOnboardLock(
+      shared,
+      onboardLockBody(process.pid, "2026-09-01T00:00:00.000Z", "linux:test-boot:12000"),
+    );
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const originalReadFileSync = fs.readFileSync;
+    const fakeReads = new Map<string, string>([
+      [`/proc/${String(process.pid)}/stat`, linuxProcessStat(process.pid, "12000")],
+      ["/proc/sys/kernel/random/boot_id", "test-boot\n"],
+    ]);
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
+      const fileName = String(file);
+      return fakeReads.get(fileName) ?? originalReadFileSync(file, options);
+    }) as typeof fs.readFileSync);
+
+    try {
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+        `is held by running process ${String(process.pid)}`,
+      );
+    } finally {
+      readSpy.mockRestore();
+      killSpy.mockRestore();
+      platformSpy.mockRestore();
+    }
   });
 
   it.each(ONBOARD_LOCK_ROOTS)(
@@ -497,14 +537,21 @@ describe("legacy non-default gateway state migration", () => {
     const selected = path.join(shared, "gateways", "9123");
     recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
     const reusedPid = 424_242;
-    writeOnboardLock(shared, onboardLockBody(reusedPid, "2026-09-01T00:00:00.100Z", "proc:12000"));
-    const procFields = Array.from({ length: 50 }, () => "0");
-    procFields[0] = "S";
-    procFields[19] = "23000";
+    writeOnboardLock(
+      shared,
+      onboardLockBody(reusedPid, "2026-09-01T00:00:00.100Z", "linux:test-boot:12000"),
+    );
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
-    const readSpy = vi
-      .spyOn(fs, "readFileSync")
-      .mockImplementationOnce(() => `${String(reusedPid)} (node) ${procFields.join(" ")}`);
+    const originalReadFileSync = fs.readFileSync;
+    const fakeReads = new Map<string, string>([
+      [`/proc/${String(reusedPid)}/stat`, linuxProcessStat(reusedPid, "23000")],
+      ["/proc/sys/kernel/random/boot_id", "test-boot\n"],
+    ]);
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
+      const fileName = String(file);
+      return fakeReads.get(fileName) ?? originalReadFileSync(file, options);
+    }) as typeof fs.readFileSync);
 
     try {
       const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
@@ -519,6 +566,7 @@ describe("legacy non-default gateway state migration", () => {
     } finally {
       readSpy.mockRestore();
       killSpy.mockRestore();
+      platformSpy.mockRestore();
     }
   });
 
@@ -534,7 +582,7 @@ describe("legacy non-default gateway state migration", () => {
       writeOnboardLock(root(shared, selected), "active writer");
 
       expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-        /onboarding lock .* records no owner yet and is still changing/u,
+        /onboarding lock .* has no valid owner record; retry after 30 seconds/u,
       );
       expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
       expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
@@ -579,7 +627,7 @@ describe("legacy non-default gateway state migration", () => {
 
     try {
       expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-        /onboarding lock .* is still changing/u,
+        /onboarding lock .* has no valid owner record; retry after 30 seconds/u,
       );
       expect(readSpy).toHaveBeenCalled();
     } finally {

@@ -5,10 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { readProcessStartIdentity } from "../../adapters/process/identity";
+import { processIsAlive, readProcessStartIdentity } from "../../adapters/process/identity";
 import { isObjectRecord } from "../../core/json-types";
 import { isValidName, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
-import { processIsAlive } from "../mcp-lifecycle-lock-identity";
 import { resolveNemoclawStateDir } from "../paths";
 
 export interface ShieldsTimerMarker {
@@ -278,22 +277,8 @@ export interface ShieldsTimerLivenessProbes {
   readProcessStartIdentity?(pid: number): string | null;
 }
 
-const DEFAULT_TIMER_IDENTITY_TIMEOUT_MS = 5_000;
-
-/**
- * Read the same start identity Shields timer control records: Linux
- * `/proc/<pid>/stat` starttime as `proc:<ticks>`, then `ps -o lstart=` as
- * `ps:<start-time>` when `/proc` is unavailable.
- */
-export function readTimerProcessStartIdentity(
-  pid: number,
-  timeoutMs = DEFAULT_TIMER_IDENTITY_TIMEOUT_MS,
-): string | null {
-  return readProcessStartIdentity(pid, timeoutMs);
-}
-
 export const localTimerProcessStartIdentity = {
-  read: readTimerProcessStartIdentity,
+  read: readProcessStartIdentity,
 };
 
 const LOCAL_TIMER_LIVENESS_PROBES: ShieldsTimerLivenessProbes = {

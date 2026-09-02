@@ -8,6 +8,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+import { readProcessStartIdentity as readHostProcessStartIdentity } from "../adapters/process/identity";
 import {
   formatTerminalSafeDiagnosticValue,
   hasQuarantinedShieldsTimerRecoveryArtifact,
@@ -17,7 +18,6 @@ import {
   readShieldsTimerMarkerFile,
   readShieldsTimerRecoveryCandidate,
   readShieldsTimerTakeoverToken,
-  readTimerProcessStartIdentity,
   sameShieldsTimerMarkerGeneration,
   type ShieldsTimerMarker,
   shieldsTimerMarkerPath,
@@ -397,7 +397,7 @@ function readProcessStartIdentity(
 ): string | null {
   const timeout = remainingProcessInspectionTimeout(deadline);
   if (timeout === null) return null;
-  return readTimerProcessStartIdentity(pid, timeout);
+  return readHostProcessStartIdentity(pid, timeout);
 }
 
 function readProcessCommandLine(
