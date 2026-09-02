@@ -110,6 +110,7 @@ const {
 const {
   buildConfigHashRepairCommand,
   buildDeepAgentsConfigLockCommand,
+  buildDeepAgentsShieldsDownHashMintGateCommand,
   DEEP_AGENTS_CONFIG_LOCK_ERROR_PROTOCOL_PREFIX,
   parseSha256Output,
   isHashVerificationIssue,
@@ -977,6 +978,18 @@ function isUnsafeShieldsConfigPathError(error: unknown): boolean {
   );
 }
 
+function isDeepAgentsConfigHashMintDeferredToPreflightError(error: unknown): boolean {
+  const message = errorText(error);
+  return (
+    isUnsafeShieldsConfigPathError(error) ||
+    /not a regular file:/i.test(message) ||
+    /not a directory:/i.test(message) ||
+    /refusing multiply linked file:/i.test(message) ||
+    /refusing (?:invalid config path|config path outside config dir)/i.test(message) ||
+    /open failed for /i.test(message)
+  );
+}
+
 function assertShieldsDownConfigPathsSafe(sandboxName: string, target: AgentConfigTarget): void {
   const files = [target.configPath, ...(target.sensitiveFiles || [])];
   try {
@@ -1588,16 +1601,20 @@ function isDeepAgentsTarget(target: AgentConfigTarget): boolean {
   return target.agentName === DEEP_AGENTS_NAME;
 }
 
+function isCanonicalDeepAgentsTarget(target: AgentConfigTarget): boolean {
+  const files = [target.configPath, ...(target.sensitiveFiles || [])];
+  return (
+    target.configDir === DEEP_AGENTS_CONFIG_DIR &&
+    target.configPath === DEEP_AGENTS_CONFIG_PATH &&
+    files.length === 2 &&
+    files[0] === DEEP_AGENTS_CONFIG_PATH &&
+    files[1] === DEEP_AGENTS_CONFIG_HASH_PATH
+  );
+}
+
 function assertCanonicalDeepAgentsTarget(target: AgentConfigTarget): void {
   if (!isDeepAgentsTarget(target)) return;
-  const files = [target.configPath, ...(target.sensitiveFiles || [])];
-  if (
-    target.configDir !== DEEP_AGENTS_CONFIG_DIR ||
-    target.configPath !== DEEP_AGENTS_CONFIG_PATH ||
-    files.length !== 2 ||
-    files[0] !== DEEP_AGENTS_CONFIG_PATH ||
-    files[1] !== DEEP_AGENTS_CONFIG_HASH_PATH
-  ) {
+  if (!isCanonicalDeepAgentsTarget(target)) {
     throw new Error(
       `Deep Agents shields require the canonical protected-file set under ${DEEP_AGENTS_CONFIG_DIR}`,
     );
@@ -3108,6 +3125,24 @@ function writeAbsentConfigHashNoSymlinkFollow(
     sandboxName,
     buildConfigHashRepairCommand(target.configDir, target.configPath),
   );
+}
+
+function mintAbsentDeepAgentsConfigHashBeforeShieldsDownPreflight(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): void {
+  if (!isDeepAgentsTarget(target) || !isCanonicalDeepAgentsTarget(target)) return;
+  try {
+    const decision = privilegedSandboxExecCapture(
+      sandboxName,
+      buildDeepAgentsShieldsDownHashMintGateCommand(target.configDir, target.configPath),
+    ).trim();
+    if (decision !== "mint") return;
+    writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
+  } catch (error) {
+    if (isDeepAgentsConfigHashMintDeferredToPreflightError(error)) return;
+    throw error;
+  }
 }
 
 type DeepAgentsConfigLockFailureStatus =
@@ -5293,6 +5328,13 @@ function shieldsDownWithoutHostLock(
     ? "provider-state-mutation-v2"
     : requireHermesShieldsProtocol(sandboxName, target, opts.allowLegacyHermesProtocol === true);
 
+  // Deep Agents Code may omit a reconstructable `.config-hash` after onboard,
+  // `mcp restart`, or image rebuild. Lock already mints that record. Mint only
+  // the canonical dcode pair, and only when a nofollow gate sees an absent hash
+  // plus a regular `config.toml`. Skip non-canonical descriptors and leave
+  // missing or unsafe paths to preflight. Do not re-run lock-oriented
+  // parent/dir repair while status is still UP (#10752).
+  mintAbsentDeepAgentsConfigHashBeforeShieldsDownPreflight(sandboxName, target);
   // Refuse an unsafe config path before timer, host state, or policy mutation.
   // Otherwise unlock rejects the path after the provisional DOWN/permissive
   // record is already live, and status integrity fails when re-lock cannot

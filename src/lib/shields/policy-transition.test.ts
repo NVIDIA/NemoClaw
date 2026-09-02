@@ -436,6 +436,39 @@ describe("shields config lock without a shipped config hash", () => {
     return "";
   }
 
+  function runConfigHashRepair(_command: string[]): string {
+    entries.set("/sandbox", { mode: "1775", owner: "root:sandbox" });
+    entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
+    entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
+    return "hash-created";
+  }
+
+  function runConfigPreflight(command: string[]): string {
+    const missing = command.slice(5).find((pathname) => !entries.has(pathname));
+    return new Map<boolean, () => string>([
+      [
+        true,
+        () => {
+          throw sandboxCommandFailure(
+            `missing config path: ${missing}\n`,
+            `missing config path: ${missing}`,
+          );
+        },
+      ],
+      [false, () => ""],
+    ]).get(missing !== undefined)!();
+  }
+
+  function runShieldsDownHashMintGate(command: string[]): string {
+    const configDir = String(command[4] ?? "");
+    const configPath = String(command[5] ?? "");
+    const hashPath = `${configDir.replace(/\/+$/, "")}/.config-hash`;
+    return new Map<boolean, () => string>([
+      [true, () => "mint\n"],
+      [false, () => "skip\n"],
+    ]).get(!entries.has(hashPath) && entries.has(configPath))!();
+  }
+
   const exactPythonFixtureHandlers = new Map<string, (command: string[]) => string>([
     [LOCK_COMMAND_KEY, runConfigLock],
   ]);
@@ -444,7 +477,14 @@ describe("shields config lock without a shipped config hash", () => {
   ]);
 
   function runPythonFixtureCommand(_args: string[], command: string[]): string {
+    const body = String(command[3] ?? "");
+    const classifiedHandler = new Map([
+      [body.includes("missing config path:"), runConfigPreflight],
+      [body.includes("config hash changed during repair"), runConfigHashRepair],
+      [body.includes("unsupported shields-down hash mint gate arguments"), runShieldsDownHashMintGate],
+    ]).get(true);
     const handler =
+      classifiedHandler ??
       exactPythonFixtureHandlers.get(pythonCommandKey(command)) ??
       leadingPythonFixtureHandlers.get(String(command[4])) ??
       unsupportedCommand;
@@ -801,6 +841,95 @@ describe("shields config lock without a shipped config hash", () => {
 
     expect(entries.get("/sandbox")).toEqual({ mode: "755", owner: "sandbox:sandbox" });
     expect(entries.get(CONFIG_DIR)).toEqual({ mode: "2770", owner: "sandbox:sandbox" });
+  });
+
+  it("mints an absent Deep Agents config hash before shields-down preflight (#10752)", () => {
+    expect(entries.has(HASH_PATH)).toBe(false);
+
+    let caught: unknown;
+    try {
+      shields.shieldsDown("dcode-safety", {
+        timeout: "15m",
+        reason: "provider continuity verification",
+        throwOnError: true,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("Cannot capture current policy");
+  });
+
+  it("does not repair a present Deep Agents config hash before shields-down preflight (#10752)", () => {
+    entries.set("/sandbox", { mode: "755", owner: "sandbox:sandbox" });
+    entries.set(CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" });
+    entries.set(HASH_PATH, { mode: "444", owner: "sandbox:sandbox" });
+
+    let caught: unknown;
+    try {
+      shields.shieldsDown("dcode-safety", {
+        timeout: "15m",
+        reason: "provider continuity verification",
+        throwOnError: true,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(entries.get("/sandbox")).toEqual({ mode: "755", owner: "sandbox:sandbox" });
+    expect(entries.get(CONFIG_DIR)).toEqual({ mode: "2770", owner: "sandbox:sandbox" });
+    expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "sandbox:sandbox" });
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("Cannot capture current policy");
+  });
+
+  it("still refuses shields down when Deep Agents config.toml is absent (#10752)", () => {
+    entries.delete(CONFIG_PATH);
+
+    let caught: unknown;
+    try {
+      shields.shieldsDown("dcode-safety", {
+        timeout: "15m",
+        reason: "provider continuity verification",
+        throwOnError: true,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(entries.has(HASH_PATH)).toBe(false);
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe(`missing config path: ${CONFIG_PATH}`);
+  });
+
+  it("propagates unexpected Deep Agents hash mint gate failures (#10752)", () => {
+    const originalPython = commandHandlers.get("python3") ?? unsupportedCommand;
+    commandHandlers.set("python3", (args, command) => {
+      const body = String(command[3] ?? "");
+      const unexpectedGate = new Map<boolean, () => string>([
+        [
+          true,
+          () => {
+            throw sandboxCommandFailure(
+              "python interpreter aborted\n",
+              "python interpreter aborted",
+            );
+          },
+        ],
+      ]).get(body.includes("unsupported shields-down hash mint gate arguments"));
+      return (unexpectedGate ?? (() => originalPython(args, command)))();
+    });
+
+    expect(() =>
+      shields.shieldsDown("dcode-safety", {
+        timeout: "15m",
+        reason: "provider continuity verification",
+        throwOnError: true,
+      }),
+    ).toThrow("python interpreter aborted");
+    expect(entries.has(HASH_PATH)).toBe(false);
   });
 });
 
