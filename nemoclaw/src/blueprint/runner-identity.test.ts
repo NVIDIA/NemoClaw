@@ -65,6 +65,10 @@ vi.mock("./ssrf.js", async (importOriginal) => {
     validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
+vi.mock("./private-networks.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./private-networks.js")>()),
+  isPrivateHostname: () => false,
+}));
 
 const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } =
   await import("./runner.js");

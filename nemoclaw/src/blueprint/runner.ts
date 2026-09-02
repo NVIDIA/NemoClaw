@@ -25,6 +25,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -50,6 +51,7 @@ import type {
   OpenShellGatewayHealthObserver,
 } from "../shared/openshell-observation-boundary.cjs";
 import { createBlueprintOpenShellPolicyClient } from "./openshell-policy.js";
+import { isPrivateHostname } from "./private-networks.js";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -190,6 +192,7 @@ const MISSING_PROVIDER_INSPECTION_PATTERN =
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
 const POLICY_INSPECTION_TIMEOUT_MS = 30_000;
 const BLUEPRINT_POLICY_REBASE_ATTEMPTS = 3;
+const UNRESTRICTED_POLICY_HOSTS = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
 
 interface InferenceRouteBinding {
   provider: string;
@@ -351,6 +354,67 @@ function isPolicyAddition(value: unknown): value is PolicyAddition {
 
 function isPolicyAdditions(value: unknown): value is PolicyAdditions {
   return isPlainObject(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
+}
+
+function normalizeBlueprintPolicyHost(raw: string): string {
+  const value = raw.trim();
+  if (!value || value !== raw) throw new Error("policy host is empty or not canonical");
+  if (UNRESTRICTED_POLICY_HOSTS.has(value.toLowerCase())) {
+    throw new Error("policy host grants unrestricted egress");
+  }
+
+  const wildcard = value.startsWith("*.");
+  const candidate = wildcard ? value.slice(2) : value;
+  if (
+    !candidate ||
+    candidate.includes("://") ||
+    /[\\/?#@%*]/u.test(candidate) ||
+    candidate.startsWith(".")
+  ) {
+    throw new Error("policy host must be an exact hostname, IP literal, or scoped wildcard");
+  }
+
+  if (candidate.startsWith("[") || candidate.endsWith("]")) {
+    if (!(candidate.startsWith("[") && candidate.endsWith("]"))) {
+      throw new Error("policy host contains malformed IPv6 brackets");
+    }
+    const address = candidate.slice(1, -1);
+    if (isIP(address) !== 6) throw new Error("policy host is not an IPv6 literal");
+    return address.toLowerCase();
+  }
+
+  const normalized = candidate.replace(/\.$/u, "").toLowerCase();
+  if (isIP(normalized) !== 0) return normalized;
+  if (normalized.includes(":")) throw new Error("policy host must not include a port");
+  if (/^\d+(?:\.\d+){3}$/u.test(normalized) || normalized.length > 253) {
+    throw new Error("policy host is malformed");
+  }
+  const labels = normalized.split(".");
+  if (
+    labels.some(
+      (label) => !label || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+    )
+  ) {
+    throw new Error("policy host is malformed");
+  }
+  return wildcard ? `*.${normalized}` : normalized;
+}
+
+function assertBlueprintPolicyAdditionHostsSafe(additions: PolicyAdditions): void {
+  for (const [policyName, addition] of Object.entries(additions)) {
+    for (const [endpointIndex, endpoint] of addition.endpoints.entries()) {
+      try {
+        const host = normalizeBlueprintPolicyHost(endpoint.host);
+        if (isPrivateHostname(host)) throw new Error("policy host is private or reserved");
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "policy host is unsafe";
+        throw new Error(
+          `Blueprint policy addition '${policyName}' endpoint ${String(endpointIndex + 1)} is rejected: ${detail}.`,
+          { cause: error },
+        );
+      }
+    }
+  }
 }
 
 function isInferenceProfile(value: unknown): value is InferenceProfile {
@@ -1173,6 +1237,8 @@ async function resolveRunConfig(
     const available = Object.keys(inferenceProfiles).join(", ");
     throw new Error(`Profile '${profile}' not found. Available: ${available}`);
   }
+
+  assertBlueprintPolicyAdditionHostsSafe(blueprint.components?.policy?.additions ?? {});
 
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {

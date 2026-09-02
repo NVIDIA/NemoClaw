@@ -310,6 +310,7 @@ async function rebuildSandboxUnlocked(
       const backup = runRebuildBackupPhase({
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
+        gatewayPort: recreateOptions.targetGatewayPort,
         // The requested observability bit is replacement intent, not a
         // preflight mutation of the old registry row. Use a copy only for
         // target policy normalization; replacement registration commits it.

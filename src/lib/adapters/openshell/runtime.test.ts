@@ -106,7 +106,7 @@ describe("captureResolvedOpenshell", () => {
   });
 });
 
-describe("captureSanitizedResolvedOpenshell", () => {
+describe("sanitized OpenShell capture", () => {
   it("gives policy and identity reads the same gateway-pinned sanitized environment", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-env-test-"));
     directories.push(directory);
@@ -118,9 +118,9 @@ describe("captureSanitizedResolvedOpenshell", () => {
         'fs.appendFileSync(process.env.OPENSHELL_WORKSPACE, JSON.stringify(process.env) + "\\n");',
         'if (process.argv[2] === "policy") {',
         '  process.stdout.write("Version: 1\\nActive: 1\\n---\\nversion: 1\\nnetwork_policies: {}\\n");',
-        '} else {',
+        "} else {",
         '  process.stdout.write("Name: alpha\\nID: sandbox-alpha\\n");',
-        '}',
+        "}",
       ].join("\n"),
     );
     vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
