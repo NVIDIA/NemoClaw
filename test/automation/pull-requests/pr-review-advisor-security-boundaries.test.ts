@@ -18,11 +18,12 @@ describe("PR review advisor security boundaries", () => {
     vi.restoreAllMocks();
   });
 
-  it("removes the model credential from the tool environment after in-memory setup", async () => {
+  it("removes the model credential after registering the selected model in memory", async () => {
     const credentialEnv = "PR_REVIEW_ADVISOR_TEST_API_KEY";
     vi.stubEnv(credentialEnv, "test-secret");
     vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
+    vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
 
     try {
       await expect(
@@ -35,6 +36,7 @@ describe("PR review advisor security boundaries", () => {
           timeoutMs: 1000,
           heartbeatMs: 1000,
           maxCaptureBytes: 1024,
+          provider: "advisor-credential-cleanup-test",
           modelId: "missing-model",
           credentialEnv,
           logPrefix: "test",

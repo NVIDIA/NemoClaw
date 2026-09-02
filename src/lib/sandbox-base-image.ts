@@ -282,11 +282,7 @@ function validatePulledCandidate(
     glibcVersion = check.version;
     if (!check.ok) {
       if (warn) {
-        console.warn(
-          `  Warning: ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
-            `${glibcVersion || "unknown"}; OpenShell sandbox supervisor requires ` +
-            `glibc >= ${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
-        );
+        console.warn("  Warning: sandbox base image does not meet the required glibc version.");
       }
       return null;
     }
@@ -294,10 +290,7 @@ function validatePulledCandidate(
 
   if (options.validateImage && !options.validateImage(imageRef)) {
     if (warn) {
-      console.warn(
-        `  Warning: ${options.label || "sandbox base image"} ${imageRef} lacks ` +
-          `${options.validationDescription || "a required runtime capability"}.`,
-      );
+      console.warn("  Warning: sandbox base image lacks a required runtime capability.");
     }
     return null;
   }
@@ -434,19 +427,12 @@ function resolveLocalCandidate(
     ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
     : { ok: true, version: null };
   if (!check.ok) {
-    console.error(
-      `  Local ${label} ${imageRef} has glibc ` +
-        `${check.version || "unknown"}; expected >= ` +
-        `${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
-    );
+    console.error("  Local sandbox base image does not meet the required glibc version.");
     return null;
   }
 
   if (options.validateImage && !options.validateImage(imageRef)) {
-    console.error(
-      `  Local ${label} ${imageRef} lacks ` +
-        `${options.validationDescription || "a required runtime capability"}.`,
-    );
+    console.error("  Local sandbox base image lacks a required runtime capability.");
     return null;
   }
 

@@ -35,7 +35,14 @@ const PLAN_ARRAY_FIELDS = [
 ] as const;
 const PLAN_FIELDS = new Set(["$comment", "version", ...PLAN_ARRAY_FIELDS]);
 
-type GuardAction = "preflight" | "lock" | "unlock" | "verify-mutable" | "startup";
+type GuardAction =
+  | "preflight"
+  | "lock"
+  | "unlock"
+  | "verify-lock"
+  | "verify-unlock"
+  | "verify-mutable"
+  | "startup";
 
 type GuardIssue = {
   type: "issue";
@@ -192,6 +199,8 @@ function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): st
       (record.action === "preflight" ||
         record.action === "lock" ||
         record.action === "unlock" ||
+        record.action === "verify-lock" ||
+        record.action === "verify-unlock" ||
         record.action === "verify-mutable" ||
         record.action === "startup") &&
       (record.status === "ok" || record.status === "failed") &&
@@ -317,6 +326,7 @@ function runHostStateDirGuard(
   configDir: string,
   plan: AgentStateLockPlan,
   mutableTopLevelFiles: string[] = [],
+  mutableServiceUsers: string[] = [],
 ): string[] {
   let input: string;
   try {
@@ -336,6 +346,7 @@ function runHostStateDirGuard(
     "--plan-json",
     JSON.stringify(plan),
     ...mutableTopLevelFiles.flatMap((file) => ["--mutable-top-level-file", file]),
+    ...mutableServiceUsers.flatMap((user) => ["--mutable-service-user", user]),
   ];
   return parseGuardOutput(action, privileged.run(command, input));
 }
@@ -352,6 +363,15 @@ export function preflightStateDirLock(
   return runStateDirGuard(privileged, "preflight", configDir, plan, stateLockPlanInImage);
 }
 
+/** Read and verify the complete recursive locked posture without changing filesystem state. */
+export function verifyLockedStateDirPosture(
+  privileged: PrivilegedExec,
+  configDir: string,
+  plan: AgentStateLockPlan,
+): string[] {
+  return runHostStateDirGuard(privileged, "verify-lock", configDir, plan);
+}
+
 // Existing images predate this read-only action, so inject the current trusted
 // host helper while verifying the complete recursive mutable posture.
 export function verifyStateDirMutablePosture(
@@ -360,6 +380,7 @@ export function verifyStateDirMutablePosture(
   plan: AgentStateLockPlan,
   stateLockPlanInImage: boolean,
   mutableTopLevelFiles: string[] = [],
+  mutableServiceUsers: string[] = [],
 ): string[] {
   const compatibilityIssues = stateLockPlanCompatibilityIssues(
     privileged,
@@ -373,6 +394,7 @@ export function verifyStateDirMutablePosture(
     configDir,
     plan,
     mutableTopLevelFiles,
+    mutableServiceUsers,
   );
 }
 

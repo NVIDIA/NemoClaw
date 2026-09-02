@@ -19,7 +19,11 @@ import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isObjectRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
-import { unloadOllamaModels as unloadDefaultOllamaModels } from "../inference/ollama/proxy";
+import {
+  clearPendingOllamaModelCleanup as clearDefaultPendingOllamaModelCleanup,
+  unloadOllamaModels as unloadDefaultOllamaModels,
+  type OllamaUnloadResult,
+} from "../inference/ollama/proxy";
 import { buildSubprocessEnv } from "../subprocess-env";
 import * as agentForwardStop from "./agent-forward-stop";
 import { registerTunnelOrigin } from "./allowed-origins";
@@ -45,7 +49,11 @@ export interface ServiceOptions {
   /** Injectable process operations (identity + signalling) for tests. */
   processControl?: ProcessControl;
   /** Injectable Ollama model cleanup for tests. */
-  unloadOllamaModels?: () => void;
+  unloadOllamaModels?: () => OllamaUnloadResult | void;
+  /** Whether this scoped stop owns Ollama models that require cleanup. Defaults to true. */
+  cleanupOllamaModels?: boolean;
+  /** Clears pending Ollama cleanup recovery after this sandbox's models unload. */
+  clearPendingOllamaModelCleanup?: (sandboxName: string) => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
@@ -491,7 +499,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
   }
 }
 
-export function stopAll(opts: ServiceOptions = {}): void {
+export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // Resolve the target sandbox once and reuse it for in-sandbox and host-side cleanup.
   const rawSandboxName =
     opts.sandboxName ??
@@ -522,12 +530,47 @@ export function stopAll(opts: ServiceOptions = {}): void {
     warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
   }
 
-  try {
-    const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
-    unloadOllamaModels();
-  } catch {
-    /* best-effort */
+  let ollamaCleanupIncomplete = false;
+  let ollamaCleanup: OllamaUnloadResult | undefined;
+  let ollamaCleanupError: Error | undefined;
+  if (opts.cleanupOllamaModels !== false) {
+    try {
+      const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
+      const cleanup = unloadOllamaModels();
+      if (cleanup) ollamaCleanup = cleanup;
+      if (cleanup && !cleanup.ok) {
+        ollamaCleanupIncomplete = true;
+        warn(
+          `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; ${
+            cleanup.outcome === "discovery-failed"
+              ? `restore access to ${cleanup.endpoint}`
+              : cleanup.outcome === "still-resident"
+                ? `stop the recorded model at ${cleanup.endpoint}`
+                : `allow the model unload request at ${cleanup.endpoint}`
+          }, then retry this command.`,
+        );
+      } else if (sandboxName) {
+        (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(sandboxName);
+      }
+    } catch (error) {
+      ollamaCleanupIncomplete = true;
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      ollamaCleanupError = new Error(
+        `Ollama model cleanup failed unexpectedly: ${detail || "unknown error"}. ` +
+          "The saved local route was retained; restore access to the saved local Ollama " +
+          "endpoint, then retry this command.",
+        { cause: error },
+      );
+      warn(ollamaCleanupError.message);
+    }
   }
+  const finishOllamaCleanup = (): OllamaUnloadResult | void => {
+    if (ollamaCleanupError) throw ollamaCleanupError;
+    return ollamaCleanup;
+  };
 
   // Stop host-side services only when their state directory is explicit or
   // derived from a trusted sandbox name. An invalid requested sandbox must not
@@ -560,15 +603,20 @@ export function stopAll(opts: ServiceOptions = {}): void {
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
     info("Host services stopped; managed gateway not released.");
-    return;
+    return finishOllamaCleanup();
   }
 
   if (gatewayOutcome === "unconfirmed") {
     info("Host services stopped; managed gateway release was not confirmed.");
-    return;
+    return finishOllamaCleanup();
   }
 
-  info("All services stopped.");
+  if (ollamaCleanupIncomplete) {
+    info("Host services stopped; Ollama model cleanup remains incomplete.");
+  } else {
+    info("All services stopped.");
+  }
+  return finishOllamaCleanup();
 }
 
 /**

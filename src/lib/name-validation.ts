@@ -15,7 +15,7 @@ import {
 
 // sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
 // generatedBoundary: build:cli emits the canonical .cjs/.d.cts before this
-// module is compiled (mirrors src/lib/policy/merge.ts). Keep the name grammar
+// module is compiled (mirrors src/lib/adapters/openshell/policy-boundary.ts). Keep the name grammar
 // definition-free here so the CLI, the plugin, and CI share one rule and cannot
 // drift.
 export const NAME_MAX_LENGTH = CANONICAL_NAME_MAX_LENGTH;

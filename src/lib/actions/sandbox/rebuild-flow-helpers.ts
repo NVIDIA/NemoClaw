@@ -38,16 +38,18 @@ import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
+import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
   printWrongGatewayActiveGuidance,
+  usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
 import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
 import * as snapshotBackup from "./snapshot/backup-authority";
 
-export { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
+export { removeStaleRebuildDockerOrphan };
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -210,6 +212,16 @@ export async function resolveRebuildLiveState(
 
   if (reconciled.state === "missing") {
     if (options.authoritativeRecoveryPolicyAvailable === true) {
+      if (usesLegacyRuntimeLifecycleCompatibility(sb)) {
+        try {
+          removeStaleRebuildDockerOrphan(sandboxName, sb.openshellDriver, log);
+        } catch (error) {
+          bail(
+            `Stale-recovery Docker orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}.`,
+          );
+          return null;
+        }
+      }
       log(
         "Stale-sandbox recovery: the sandbox is absent, but its transaction-bound policy handoff is intact",
       );
@@ -411,7 +423,7 @@ export function ensureRebuildAgentBaseImage(
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
-    console.error(`  ${message}`);
+    console.error("  Inspect the redacted rebuild diagnostics for details.");
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
     bail(message);
