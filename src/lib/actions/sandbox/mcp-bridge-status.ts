@@ -125,13 +125,20 @@ function getAdapterRegistration(
   if (!result)
     return credentialInspectionFailure ?? { registered: null, detail: "sandbox unreachable" };
   if (result.status !== 0 && adapter === "deepagents-config") {
-    const detail = redactBridgeSecretsForDisplay(
-      result.stderr || result.stdout || "not found",
-      entry,
-      resolvePersistedCredentialEnvForRedaction(entry.env),
-    ).trim();
-    if (detail.startsWith(`${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}:`)) {
-      throw new McpBridgeError(detail, 2);
+    const detail = (result.stderr || result.stdout || "not found").trim();
+    const unsafeProjectionPrefix = ["symbolic link", "FIFO", "non-regular file"]
+      .map((type) => `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at `)
+      .find((prefix) => detail.startsWith(prefix));
+    const projectionPath = unsafeProjectionPrefix
+      ? detail.slice(unsafeProjectionPrefix.length)
+      : "";
+    if (unsafeProjectionPrefix && projectionPath && !/[\r\n]/u.test(projectionPath)) {
+      const redactedPath = redactBridgeSecretsForDisplay(
+        projectionPath,
+        entry,
+        resolvePersistedCredentialEnvForRedaction(entry.env),
+      ).trim();
+      throw new McpBridgeError(`${unsafeProjectionPrefix}${redactedPath}`, 2);
     }
   }
   if (credentialInspectionFailure) return credentialInspectionFailure;
