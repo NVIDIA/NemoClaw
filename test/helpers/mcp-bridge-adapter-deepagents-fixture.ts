@@ -29,6 +29,7 @@ export interface DeepAgentsConfigCommandResult {
   configIsFifo: boolean;
   configIsSocket: boolean;
   configIsSymlink: boolean;
+  configMode: number | null;
   config: Record<string, unknown> | null;
   configText: string | null;
   legacyConfigExists: boolean;
@@ -410,6 +411,7 @@ export function runDeepAgentsConfigCommand(
     const configIsSocket = configStat?.isSocket() === true;
     const configIsSymlink = configStat?.isSymbolicLink() === true;
     const configIsDirectory = configStat?.isDirectory() === true;
+    const configMode = configStat === null ? null : configStat.mode & 0o777;
     const configText =
       configExists && !configIsFifo && !configIsSocket && !configIsSymlink && !configIsDirectory
         ? fs.readFileSync(configPath, "utf-8")
@@ -454,6 +456,7 @@ export function runDeepAgentsConfigCommand(
       configIsFifo,
       configIsSocket,
       configIsSymlink,
+      configMode,
       config: parseConfigText(configText),
       configText,
       legacyConfigExists,

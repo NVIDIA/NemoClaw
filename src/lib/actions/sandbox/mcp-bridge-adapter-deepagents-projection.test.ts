@@ -426,6 +426,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     );
     expect(forcedSymlink.status).toBe(2);
     expect(forcedSymlink.configExists).toBe(true);
+    expect(forcedSymlink.configIsSymlink).toBe(true);
     expect(forcedSymlink.managedSymlinkTargetExists).toBe(true);
     expect(forcedSymlink.managedSymlinkTargetText).toBe(
       `${JSON.stringify(emptyProjection, null, 2)}\n`,
@@ -443,6 +444,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       { mode: 0o644 },
     );
     expect(forcedUnsafeMode.status).toBe(2);
+    expect(forcedUnsafeMode.configMode).toBe(0o644);
     expect(forcedUnsafeMode.config).toEqual(emptyProjection);
   });
 
