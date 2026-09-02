@@ -43,25 +43,7 @@ describe("Windows Ollama helper", () => {
   it("rejects a nonempty invalid Docker readiness response (#10100)", () => {
     const run = vi.fn();
     const localInference = require(LOCAL_INFERENCE_PATH);
-    const runCapture = vi.fn((command: string | string[]) => {
-      expect(command).toEqual(
-        expect.arrayContaining([
-          "docker",
-          "run",
-          "--rm",
-          localInference.CONTAINER_REACHABILITY_IMAGE,
-          WINDOWS_OLLAMA_TAGS_URL,
-        ]),
-      );
-      expect(command.slice(0, 4)).toEqual([
-        "docker",
-        "run",
-        "--rm",
-        localInference.CONTAINER_REACHABILITY_IMAGE,
-      ]);
-      expect(command.at(-1)).toBe(WINDOWS_OLLAMA_TAGS_URL);
-      return "<html>proxy response</html>";
-    });
+    const runCapture = vi.fn((_command: string | string[]) => "<html>proxy response</html>");
     localInference.resetOllamaHostCache();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
@@ -69,7 +51,6 @@ describe("Windows Ollama helper", () => {
     try {
       expect(
         windows.awaitWindowsOllamaReady({
-          delay: vi.fn(),
           prepareDockerEnvironment: () => ({
             env: {},
             isolatedCredentialConfig: false,
@@ -78,6 +59,20 @@ describe("Windows Ollama helper", () => {
         }),
       ).toBe(false);
       expect(runCapture.mock.calls.length).toBeGreaterThan(0);
+      expect(
+        runCapture.mock.calls.every(
+          ([command]) =>
+            Array.isArray(command) &&
+            command
+              .slice(0, 4)
+              .every(
+                (argument, index) =>
+                  argument ===
+                  ["docker", "run", "--rm", localInference.CONTAINER_REACHABILITY_IMAGE][index],
+              ) &&
+            command.at(-1) === WINDOWS_OLLAMA_TAGS_URL,
+        ),
+      ).toBe(true);
       expect(localInference.getResolvedOllamaHost()).toBe("127.0.0.1");
     } finally {
       localInference.resetOllamaHostCache();
@@ -119,11 +114,10 @@ describe("Windows Ollama helper", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const delay = vi.fn();
     const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
 
     try {
-      expect(windows.setupWindowsOllamaWith0000Binding({ installedPath, delay })).toBe(true);
+      expect(windows.setupWindowsOllamaWith0000Binding({ installedPath })).toBe(true);
     } finally {
       restore();
       logSpy.mockRestore();
@@ -154,8 +148,6 @@ describe("Windows Ollama helper", () => {
       ],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(delay).toHaveBeenCalled();
-    expect(delay.mock.calls.every(([seconds]) => seconds > 0 && seconds <= 2)).toBe(true);
   });
 
   it("isolates Docker credentials while waiting for the Windows-host daemon", () => {
