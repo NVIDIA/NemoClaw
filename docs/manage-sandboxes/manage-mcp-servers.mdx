@@ -111,7 +111,13 @@ The raw value passes only through the OpenShell provider command's process envir
 
 If the provider was deleted, restart recreates it from the exported value.
 
-When the host variable is unset, restart reuses an existing provider whose current ID and credential-key metadata match the registry and whose type is `nemoclaw-mcp-v1`. If the provider is missing, export the recorded variable before retrying. If the provider has the profile-less legacy `generic` type, remove the server and add it again with the recorded variable exported. Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
+When the host variable is unset, restart reuses an existing provider only when its current ID and credential-key metadata match the registry, its type is `nemoclaw-mcp-v1`, and the credential-resolution probe verifies the stored credential.
+Restart checks every selected server before it reapplies a policy, updates a provider, or changes an agent adapter.
+If credential verification fails or is inconclusive, restart exits without those changes.
+Export the recorded variable and retry to replace the stored credential.
+If the provider is missing, export the recorded variable before retrying.
+If the provider has the profile-less legacy `generic` type, remove the server and add it again with the recorded variable exported.
+Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
 
 Running restart without a server name refreshes every managed server. Export only the variables whose credentials you intend to replace.
 
