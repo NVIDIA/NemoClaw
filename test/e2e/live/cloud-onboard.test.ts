@@ -171,7 +171,6 @@ test(
     corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
-      "native Podman public install runs with no Docker client available",
       "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
       "tampered non-credential legacy fields do not become gateway providers",
       "successful onboard removes plaintext credentials.json",
