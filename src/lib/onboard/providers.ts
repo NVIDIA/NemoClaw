@@ -965,6 +965,16 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // when no bridge token definition exists. A configuration failure stops onboarding
   // and cleans up newly created providers where possible. Secret material stays
   // gateway-side and is never written into the sandbox.
+  const upsertedNames = new Set(upserted);
+  for (const { name, token } of tokenDefs) {
+    if (
+      token === messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE &&
+      upsertedNames.has(name) &&
+      !mutatedProviderNames.includes(name)
+    ) {
+      mutatedProviderNames.push(name);
+    }
+  }
   let refreshResult;
   try {
     refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
@@ -989,8 +999,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // paths report residual work by throwing; the normal path exits like a failed
   // provider upsert above).
   if (refreshResult && !refreshResult.ok) {
+    const refreshFailure = refreshResult.reason
+      ? `Failed to configure gateway token minting for a messaging bridge: ${refreshResult.reason}`
+      : "Failed to configure gateway token minting for a messaging bridge.";
     const failure = cleanupCreatedMessagingProvidersAfterRefreshFailure(
-      new Error("Failed to configure gateway token minting for a messaging bridge."),
+      new Error(refreshFailure),
       mutatedProviderNames,
       createdProviderNames,
       runMessagingBridgeOpenshell,

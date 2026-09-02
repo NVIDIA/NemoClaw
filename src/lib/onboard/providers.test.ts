@@ -1206,7 +1206,12 @@ describe("onboard provider helpers", () => {
           },
           { bestEffort: true, gatewayName: "test-gateway" },
         ),
-      ).toThrow(/gateway token minting/u);
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringMatching(/gateway token minting/u),
+          mutatedProviderNames: ["alpha-googlechat-bridge"],
+        }),
+      );
       expect(commands).toEqual(["provider get alpha-googlechat-bridge"]);
       expect(commands.some((command) => /provider (create|update|delete)/u.test(command))).toBe(
         false,

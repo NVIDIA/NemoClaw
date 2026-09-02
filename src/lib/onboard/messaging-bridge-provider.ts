@@ -475,7 +475,7 @@ export function ensureMessagingBridgeProfiles(
     errorLog(`    ${result.error.message}`);
     errorLog("    Inspect the preceding OpenShell error.");
     if (result.error.kind === "schema") {
-      errorLog("    Update OpenShell with scripts/install-openshell.sh, then retry.");
+      errorLog("    Update NemoClaw and its managed OpenShell with `nemoclaw update`.");
     } else if (result.error.kind === "validation") {
       errorLog("    Restore the checked-in provider profile, then retry.");
     } else {
@@ -674,27 +674,57 @@ export function configureMessagingBridgeRefreshes(
       }
       materialArgs.push("--material", `${key}=${value}`);
     }
-    const result = deps.runOpenshell(
-      [
-        "provider",
-        "refresh",
-        "configure",
-        "--credential-key",
-        profile.credentialKey,
-        "--strategy",
-        profile.strategy,
-        ...materialArgs,
-        bridge.name,
-      ],
-      {
-        env: secretMaterialEnv,
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-      },
-    );
+    let result;
+    try {
+      result = deps.runOpenshell(
+        [
+          "provider",
+          "refresh",
+          "configure",
+          "--credential-key",
+          profile.credentialKey,
+          "--strategy",
+          profile.strategy,
+          ...materialArgs,
+          bridge.name,
+        ],
+        {
+          env: secretMaterialEnv,
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        },
+      );
+    } catch (error) {
+      const diagnostic = compactText(
+        redactRefreshDiagnostic(
+          error instanceof Error ? error.message : String(error),
+          secret,
+          built.material.map(({ value }) => value),
+          deps.redactFull,
+        ),
+      );
+      warn(`\n  ✗ ${profile.channelId} bridge: gateway refresh configuration failed.`);
+      if (diagnostic) warn(`    ${diagnostic.slice(0, 500)}`);
+      return { ok: false, reason: diagnostic || "gateway refresh configuration failed" };
+    }
     if (result.status === 0) {
-      const minted = waitForMintedBridgeCredential(bridge.name, profile.credentialKey, deps);
+      let minted;
+      try {
+        minted = waitForMintedBridgeCredential(bridge.name, profile.credentialKey, deps);
+      } catch (error) {
+        const diagnostic = compactText(
+          redactRefreshDiagnostic(
+            error instanceof Error ? error.message : String(error),
+            secret,
+            built.material.map(({ value }) => value),
+            deps.redactFull,
+          ),
+        );
+        warn(`\n  ✗ ${profile.channelId} bridge: gateway refresh status inspection failed.`);
+        if (diagnostic) warn(`    ${diagnostic.slice(0, 500)}`);
+        return { ok: false, reason: diagnostic || "gateway refresh status inspection failed" };
+      }
       if (minted.ok) continue;
       warn(`\n  ✗ ${profile.channelId} bridge: ${minted.reason}.`);
       warn("    Outbound replies for this channel will not authenticate until this is resolved.");

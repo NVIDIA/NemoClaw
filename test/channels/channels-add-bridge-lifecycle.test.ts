@@ -140,6 +140,7 @@ let detachedProviders: Set<string>;
 let deletedProviders: Set<string>;
 let registeredProviders: Set<string>;
 let bridgeRefreshError: string | null;
+let bridgeRefreshStatusError: string | null;
 let providerDeleteError: string | null;
 
 function printedText(): string {
@@ -254,6 +255,7 @@ beforeEach(() => {
   deletedProviders = new Set();
   registeredProviders = new Set();
   bridgeRefreshError = null;
+  bridgeRefreshStatusError = null;
   providerDeleteError = null;
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args, options) => {
     gatewayCallCount += 1;
@@ -279,7 +281,9 @@ beforeEach(() => {
         : null;
     const configuringRefresh =
       command[0] === "provider" && command[1] === "refresh" && command[2] === "configure";
+    const readingRefreshStatus = isRefreshStatus(args);
     const refreshFailure = configuringRefresh ? bridgeRefreshError : null;
+    const refreshStatusFailure = readingRefreshStatus ? bridgeRefreshStatusError : null;
     const deleteFailure = deletedProvider ? providerDeleteError : null;
     const commandFailure = refreshFailure ?? deleteFailure ?? "";
     detachedProvider ? detachedProviders.add(detachedProvider) : undefined;
@@ -294,10 +298,15 @@ beforeEach(() => {
         runEnv?.MESSAGING_BRIDGE_SECRET_0 === "fake-test-private-key-material"
       : bridgeRefreshWasSecure;
     const invalidRefresh = configuringRefresh && !bridgeRefreshWasSecure;
+    refreshStatusFailure
+      ? (() => {
+          throw new Error(refreshStatusFailure);
+        })()
+      : undefined;
     return {
       pid: 0,
       output: [null, "", ""],
-      stdout: isRefreshStatus(args)
+      stdout: readingRefreshStatus
         ? refreshStatusTable(command)
         : exportingProfile && !profileMissing
           ? JSON.stringify(GOOGLECHAT_PROFILE_DOC)
@@ -429,6 +438,30 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(diagnostics).toContain(
       'openshell provider delete -g "nemoclaw" "test-sb-googlechat-bridge"',
     );
+  });
+
+  it("reports an uncertain existing provider when refresh status inspection throws", async () => {
+    bridgeProfileRegistered = true;
+    registeredProviders.add("test-sb-googlechat-bridge");
+    bridgeRefreshStatusError = `status inspection failed: ${SA_JSON}`;
+
+    await expect(addSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
+      code: 1,
+    });
+
+    const diagnostics = printedText();
+    expect(diagnostics).toContain("test-sb-googlechat-bridge");
+    expect(diagnostics).toContain("status inspection failed");
+    expect(diagnostics).toContain("inspect the named provider");
+    expect(diagnostics).toContain("correct the gateway failure");
+    expect(diagnostics).not.toContain(SA_JSON);
+    expect(diagnostics).not.toContain("fake-test-private-key-material");
+    expect(diagnostics).not.toContain("fake");
+    expect(deletedProviders.has("test-sb-googlechat-bridge")).toBe(false);
+    expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).not.toContain(
+      "googlechat",
+    );
+    expect(session.messagingPlan).toBeUndefined();
   });
 
   it("removes the bridge provider, policy, and durable plan through the channel action", async () => {

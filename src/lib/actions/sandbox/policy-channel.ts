@@ -951,16 +951,20 @@ async function applyChannelAddToGatewayAndRegistry(
       const updatedProviderNames = err.mutatedProviderNames.filter(
         (providerName) => !createdProviders.has(providerName),
       );
+      const originalFailure = redactFullWithUrls(
+        err instanceof Error ? err.message : String(err),
+      )
+        .replace(/\s+/gu, " ")
+        .trim()
+        .slice(0, 500);
+      if (originalFailure) console.error(`  ${originalFailure}`);
       if (updatedProviderNames.length > 0) {
-        console.error(`  ${YW}⚠${R} Updated provider state remains; resolve it and retry.`);
+        const providerNames = updatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
+        console.error(
+          `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`,
+        );
       }
       if (cleanupFailures.length > 0) {
-        const originalFailure = redactFullWithUrls(
-          err instanceof Error ? err.message : String(err),
-        )
-          .replace(/\s+/gu, " ")
-          .trim();
-        if (originalFailure) console.error(`  ${originalFailure}`);
         for (const { providerName, diagnostic } of cleanupFailures) {
           console.error(
             `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`,
