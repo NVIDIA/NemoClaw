@@ -72,7 +72,9 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("at http://host.docker.internal:11434");
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
-    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).toContain(
+      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+    );
     expect(stderr).not.toContain("rerun this command");
   });
 
@@ -102,7 +104,9 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("http://host.docker.internal:11434");
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
-    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).toContain(
+      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+    );
     expect(stderr).not.toContain("rerun this command");
   });
 
@@ -142,7 +146,9 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("qwen3.6:35b");
     expect(stderr).toContain("Restore Ollama access");
     expect(stderr).toContain("confirm that it serves");
-    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).toContain(
+      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+    );
     expect(stderr).not.toContain("rerun this command");
   });
 
@@ -227,7 +233,9 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("OPENAI_API_KEY=<REDACTED>");
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("Restore Ollama access to that endpoint");
-    expect(stderr).toContain("NemoClaw will retry the warm-up before the next agent command");
+    expect(stderr).toContain(
+      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+    );
     expect(stderr).not.toContain("rerun this command");
     expect(stderr).not.toContain(exposedToken);
     expect(stderr).not.toContain("END-OF-DETAIL");

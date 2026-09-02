@@ -150,24 +150,17 @@ function buildWindowsOllamaRestoreScript(snapshot: WindowsOllamaHostSnapshot): s
   return script.join("; ");
 }
 
-function previousOllamaHostLabel(value: string | null): string {
-  if (value === null) return "unset";
-  const terminalSafe = value.replace(/[\u202A-\u202E\u2066-\u2069]/gu, "").slice(0, 200);
-  return JSON.stringify(terminalSafe);
+function rollbackWindowsOllamaHostSnapshot(snapshot: WindowsOllamaHostSnapshot): boolean {
+  const script = buildWindowsOllamaRestoreScript(snapshot);
+  return runWindowsOllamaStateScript(script);
 }
 
-function restoreWindowsOllamaHostSnapshot(snapshot: WindowsOllamaHostSnapshot): boolean {
-  const script = buildWindowsOllamaRestoreScript(snapshot);
-  if (runWindowsOllamaStateScript(script)) return true;
-  const encodedCommand = Buffer.from(
-    `$ErrorActionPreference='Stop'; ${script}`,
-    "utf16le",
-  ).toString("base64");
+function reportWindowsOllamaRollbackFailure(): void {
   console.error("  Failed to restore the previous Windows Ollama state.");
-  console.error(`  Previous User-scope OLLAMA_HOST: ${previousOllamaHostLabel(snapshot.userHost)}`);
-  console.error("  Restore it and relaunch the previous Ollama process with:");
-  console.error(`    powershell.exe -NoProfile -EncodedCommand ${encodedCommand}`);
-  return false;
+  console.error(
+    "  In Windows PowerShell, stop Ollama, restore your previous User-scope OLLAMA_HOST " +
+      "value, and relaunch the previous Ollama app or daemon.",
+  );
 }
 
 // Order matters: kill 'ollama app' (the tray watcher) before 'ollama'
@@ -277,35 +270,109 @@ function launchAndAwaitWindowsOllama(
   return false;
 }
 
+type WindowsOllamaInterruptSignal = "SIGINT" | "SIGTERM";
+
+type WindowsOllamaSetupOperations = {
+  captureSnapshot: () => WindowsOllamaHostSnapshot | null;
+  persistBinding: () => boolean;
+  stopProcesses: () => void;
+  wait: (seconds: number) => void;
+  launch: (opts: { watcherPath?: string; installedPath?: string }) => boolean;
+  rollbackSnapshot: (snapshot: WindowsOllamaHostSnapshot) => boolean;
+  registerInterruptHandler: (handler: (signal: WindowsOllamaInterruptSignal) => void) => () => void;
+  preserveInterrupt: (signal: WindowsOllamaInterruptSignal) => void;
+};
+
+function registerWindowsOllamaInterruptHandler(
+  handler: (signal: WindowsOllamaInterruptSignal) => void,
+): () => void {
+  const onSigint = () => handler("SIGINT");
+  const onSigterm = () => handler("SIGTERM");
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+  return () => {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+  };
+}
+
+const WINDOWS_OLLAMA_SETUP_OPERATIONS: WindowsOllamaSetupOperations = {
+  captureSnapshot: captureWindowsOllamaHostSnapshot,
+  persistBinding: persistOllamaHostEnvVar,
+  stopProcesses: killWindowsOllamaProcesses,
+  wait: sleepSeconds,
+  launch: launchAndAwaitWindowsOllama,
+  rollbackSnapshot: rollbackWindowsOllamaHostSnapshot,
+  registerInterruptHandler: registerWindowsOllamaInterruptHandler,
+  preserveInterrupt: (signal) => {
+    process.kill(process.pid, signal);
+  },
+};
+
+function rollbackWindowsOllamaSetup(
+  snapshot: WindowsOllamaHostSnapshot,
+  operations: WindowsOllamaSetupOperations,
+): void {
+  if (!operations.rollbackSnapshot(snapshot)) reportWindowsOllamaRollbackFailure();
+}
+
 // Used by start and restart paths to force a 0.0.0.0 binding on an already
 // installed Ollama. Fresh install fallback passes installedPath to avoid
 // relying on a newly-mutated Windows PATH from this process.
 function setupWindowsOllamaWith0000Binding(
   opts: { announceStop?: boolean; installedPath?: string } = {},
+  operations: WindowsOllamaSetupOperations = WINDOWS_OLLAMA_SETUP_OPERATIONS,
 ): boolean {
-  const snapshot = captureWindowsOllamaHostSnapshot();
+  const snapshot = operations.captureSnapshot();
   if (!snapshot) {
     console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
     return false;
   }
-  if (!persistOllamaHostEnvVar()) {
-    console.error(
-      "  Could not persist the Windows Ollama host binding; leaving processes running.",
-    );
+  let rollbackRequired = false;
+  let removeInterruptHandler = () => {};
+  const handleInterrupt = (signal: WindowsOllamaInterruptSignal) => {
+    const shouldRollback = rollbackRequired;
+    rollbackRequired = false;
+    try {
+      if (shouldRollback) rollbackWindowsOllamaSetup(snapshot, operations);
+    } finally {
+      removeInterruptHandler();
+      operations.preserveInterrupt(signal);
+    }
+  };
+  removeInterruptHandler = operations.registerInterruptHandler(handleInterrupt);
+  try {
+    if (!operations.persistBinding()) {
+      console.error(
+        "  Could not persist the Windows Ollama host binding; leaving processes running.",
+      );
+      return false;
+    }
+    rollbackRequired = true;
+    if (opts.announceStop) {
+      console.log("  Stopping existing Ollama on Windows host...");
+    }
+    operations.stopProcesses();
+    operations.wait(1);
+    const launched = operations.launch({
+      watcherPath: snapshot.watcherPath || undefined,
+      installedPath: opts.installedPath,
+    });
+    if (launched) {
+      rollbackRequired = false;
+      return true;
+    }
+    rollbackRequired = false;
+    rollbackWindowsOllamaSetup(snapshot, operations);
     return false;
+  } catch (error) {
+    const shouldRollback = rollbackRequired;
+    rollbackRequired = false;
+    if (shouldRollback) rollbackWindowsOllamaSetup(snapshot, operations);
+    throw error;
+  } finally {
+    removeInterruptHandler();
   }
-  if (opts.announceStop) {
-    console.log("  Stopping existing Ollama on Windows host...");
-  }
-  killWindowsOllamaProcesses();
-  sleepSeconds(1);
-  const launched = launchAndAwaitWindowsOllama({
-    watcherPath: snapshot.watcherPath || undefined,
-    installedPath: opts.installedPath,
-  });
-  if (launched) return true;
-  restoreWindowsOllamaHostSnapshot(snapshot);
-  return false;
 }
 
 function switchToWindowsOllamaHost(): void {
