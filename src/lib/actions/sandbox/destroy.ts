@@ -798,13 +798,33 @@ async function destroySandboxUnlocked(
       retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
     }),
   );
-  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
+  const {
+    cleanupGatewayName,
+    runOpenshell,
+    sandbox,
+    sandboxConfirmedAbsent,
+    presentSandboxIdentityFingerprint,
+  } = destroyPreflight;
   if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
-    console.error(
-      `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell still reports it present, but its delete command accepts only the mutable sandbox name. NemoClaw cannot bind that deletion to the retained immutable identity. No sandbox resources were removed. Ask an OpenShell administrator to resolve create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}' to the exact sandbox and use an identity-bound removal procedure. After OpenShell confirms the retained sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
-    );
-    preparedManagedLlamaCppCleanup?.abort();
-    requestSandboxDestroyExit(1);
+    // The live OpenShell sandbox with this mutable name may be the exact
+    // retained sandbox recovery is waiting on, or (rarely) a replacement
+    // sandbox that has since reused the same name. Prove which one this is
+    // from the live sandbox id fingerprint before deciding (#10863): a
+    // confirmed match is provably the retained sandbox, so destroy proceeds
+    // exactly as it would for any other present sandbox — an ordinary user
+    // running `openshell sandbox delete <name>` themselves reaches the same
+    // outcome, so NemoClaw can safely do it once identity is proven.
+    const identityConfirmedMatch =
+      retainedRecoveryAuthority.sandboxIdentityFingerprint !== null &&
+      presentSandboxIdentityFingerprint !== null &&
+      retainedRecoveryAuthority.sandboxIdentityFingerprint === presentSandboxIdentityFingerprint;
+    if (!identityConfirmedMatch) {
+      console.error(
+        `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell reports a sandbox present under this name, but NemoClaw could not prove it is the exact retained sandbox (create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}') rather than a different sandbox that has since reused the same name. No sandbox resources were removed. Compare 'openshell sandbox list -o json' against the create-attempt label above; if you confirm it is the same sandbox, 'openshell sandbox delete ${sandboxName}' is the exact command NemoClaw would otherwise run, and is safe to run yourself. After OpenShell confirms the retained sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
+      );
+      preparedManagedLlamaCppCleanup?.abort();
+      requestSandboxDestroyExit(1);
+    }
   }
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.

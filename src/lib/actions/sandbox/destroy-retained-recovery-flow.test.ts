@@ -168,7 +168,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("delete command accepts only the mutable sandbox name"),
+        expect.stringContaining("could not prove it is the exact retained sandbox"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -202,7 +202,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("cannot bind that deletion to the retained immutable identity"),
+        expect.stringContaining("could not prove it is the exact retained sandbox"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -210,6 +210,35 @@ describe("destroySandbox retained recovery flow", () => {
       );
       expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
       expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
+    "issues mutable-name deletion for a live retained sandbox with a proven-matching OpenShell identity (#10863)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord("sandbox-alpha");
+      const containerId = "a".repeat(64);
+      const harness = createDestroyHarness({
+        dockerRunResult: {
+          status: 0,
+          stdout: `${containerId}\topenshell\tdefault\tsandbox-alpha`,
+        },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(exitSpy).not.toHaveBeenCalled();
     },
   );
 
