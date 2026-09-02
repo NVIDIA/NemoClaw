@@ -21,6 +21,7 @@
       <ExePackage
         Id="MxcSystemDrivePreparation"
         CacheId="MxcSystemDrivePreparation-0.8.0-arm64"
+        Name="mxc\wxc-host-prep-system-drive.exe"
         SourceFile="$(var.WxcHostPrepPath)"
         InstallArguments="prepare-system-drive"
         PerMachine="yes"
@@ -30,6 +31,7 @@
       <ExePackage
         Id="MxcNullDevicePreparation"
         CacheId="MxcNullDevicePreparation-0.8.0-arm64"
+        Name="mxc\wxc-host-prep-null-device.exe"
         SourceFile="$(var.WxcHostPrepPath)"
         InstallArguments="prepare-null-device"
         PerMachine="yes"
