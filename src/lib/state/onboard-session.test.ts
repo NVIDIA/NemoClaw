@@ -9,6 +9,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
+import {
+  readMcpLockHostIdentity,
+  readMcpLockPidNamespaceIdentity,
+} from "./mcp-lifecycle-lock-identity";
 import { decisionSelected } from "./onboard-checkpoint-decision";
 
 const require = createRequire(import.meta.url);
@@ -24,6 +28,11 @@ type NullableSessionUpdateKey = import("./onboard-session").NullableSessionUpdat
 let session: OnboardSessionModule;
 let machineEvents: OnboardMachineEventsModule;
 let tmpDir: string;
+
+const LOCAL_ONBOARD_LOCK_PROVENANCE = {
+  hostIdentity: readMcpLockHostIdentity(),
+  pidNamespaceIdentity: readMcpLockPidNamespaceIdentity(),
+};
 
 const _nullableSessionUpdateKeyAcceptsNullableFields: Record<
   Extract<"model" | "credentialEnv" | "webSearchConfig", NullableSessionUpdateKey>,
@@ -1095,6 +1104,7 @@ describe("onboard session", () => {
       session.LOCK_FILE,
       JSON.stringify({
         pid: 999999,
+        ...LOCAL_ONBOARD_LOCK_PROVENANCE,
         startedAt: "2026-03-25T00:00:00.000Z",
         command: "nemoclaw onboard",
       }),
@@ -1116,6 +1126,7 @@ describe("onboard session", () => {
       JSON.stringify({
         pid: reusedPid,
         processStartIdentity: "linux:test-boot:12000",
+        ...LOCAL_ONBOARD_LOCK_PROVENANCE,
         startedAt: "2026-09-01T00:00:00.100Z",
         command: "nemoclaw onboard",
       }),
@@ -1154,21 +1165,16 @@ describe("onboard session", () => {
   });
 
   it("does not unlink a fresh lock claimed by another process during a stale-cleanup race (#1281)", () => {
-    // Reproduces the race: the lock file we read as 'stale' gets replaced
-    // with a fresh claim from a faster concurrent process between our
-    // read and our unlink. The slower process must NOT unlink the fresh
-    // lock, otherwise both processes end up thinking they hold the lock.
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
 
-    // 1. Lay down a stale lock from a dead PID (PID 999999 on the test box).
     const staleLock = JSON.stringify({
       pid: 999999,
+      ...LOCAL_ONBOARD_LOCK_PROVENANCE,
       startedAt: "2026-03-25T00:00:00.000Z",
       command: "nemoclaw onboard",
     });
     fs.writeFileSync(session.LOCK_FILE, staleLock, { mode: 0o600 });
 
-    // 2. Wrap fs.statSync so the swap happens just before stat #2:
     //    - stat #1 (inside acquireOnboardLock): reads the stale inode
     //      and returns it unmodified. readFileSync then reads the
     //      ORIGINAL stale lock (dead PID 999999), isProcessAlive
@@ -1178,9 +1184,6 @@ describe("onboard session", () => {
     //      stat, swap the file for a fresh claim. stat #1 then sees
     //      a different inode → must skip the unlink.
     //
-    //    CodeRabbit correctly flagged the original test: swapping on
-    //    stat #1 caused readFileSync to see the live PID and exit
-    //    via isProcessAlive, never reaching unlinkIfInodeMatches.
     let statCallCount = 0;
     const originalStatSync = fs.statSync;
     const statSpy = vi.spyOn(fs, "statSync").mockImplementation((...args) => {
@@ -1197,6 +1200,7 @@ describe("onboard session", () => {
           tmpClaim,
           JSON.stringify({
             pid: process.ppid,
+            ...LOCAL_ONBOARD_LOCK_PROVENANCE,
             startedAt: new Date().toISOString(),
             command: "nemoclaw onboard (fresh claim from concurrent process)",
           }),
@@ -1276,6 +1280,7 @@ describe("onboard session", () => {
             tmpClaim,
             JSON.stringify({
               pid: process.pid,
+              ...LOCAL_ONBOARD_LOCK_PROVENANCE,
               startedAt: new Date().toISOString(),
               command: "nemoclaw onboard (fresh malformed-cleanup race claimant)",
             }),

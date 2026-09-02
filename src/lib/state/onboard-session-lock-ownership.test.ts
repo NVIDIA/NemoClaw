@@ -12,8 +12,10 @@ import { createMcpLifecycleLockOwner } from "./mcp-lifecycle-lock-identity";
 
 type OnboardSessionModule = typeof import("./onboard-session");
 type ReclamationGuardModule = typeof import("./onboard-session/reclamation-guard");
+type LockHolderModule = typeof import("./onboard-session/lock-holder");
 let session: OnboardSessionModule;
 let reclamationGuard: ReclamationGuardModule;
+let lockHolder: LockHolderModule;
 let tmpDir: string;
 
 beforeEach(async () => {
@@ -22,6 +24,7 @@ beforeEach(async () => {
   vi.resetModules();
   session = await import("./onboard-session");
   reclamationGuard = await import("./onboard-session/reclamation-guard");
+  lockHolder = await import("./onboard-session/lock-holder");
   session.releaseOnboardLock();
 });
 
@@ -68,13 +71,15 @@ describe("onboard lock ownership", () => {
 
   it("gives guarded recovery for a live PID without verified process identity", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    const record = lockHolder.createOnboardLockRecord(
+      "unverified onboarding owner",
+      "2026-09-02T00:00:00.000Z",
+    );
     fs.writeFileSync(
       session.LOCK_FILE,
       JSON.stringify({
-        pid: process.pid,
+        ...record,
         processStartIdentity: null,
-        startedAt: "2026-09-02T00:00:00.000Z",
-        command: "unverified onboarding owner",
       }),
       { mode: 0o600 },
     );
@@ -98,6 +103,68 @@ describe("onboard lock ownership", () => {
         `'${session.LOCK_FILE}', then retry.`,
     );
     expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+  });
+
+  it.each([
+    [
+      "foreign host",
+      (record: ReturnType<LockHolderModule["createOnboardLockRecord"]>) => ({
+        record: { ...record, hostIdentity: `${record.hostIdentity ?? "host"}:foreign` },
+        provenance: "foreign",
+        reason: "in a different host or PID namespace",
+      }),
+    ],
+    [
+      "foreign PID namespace",
+      (record: ReturnType<LockHolderModule["createOnboardLockRecord"]>) => ({
+        record: {
+          ...record,
+          pidNamespaceIdentity: `${record.pidNamespaceIdentity ?? "pid:[local]"}:foreign`,
+        },
+        provenance: record.pidNamespaceIdentity === null ? "unknown" : "foreign",
+        reason:
+          record.pidNamespaceIdentity === null
+            ? "has no verifiable host and PID-namespace provenance"
+            : "in a different host or PID namespace",
+      }),
+    ],
+    [
+      "legacy owner without provenance",
+      (record: ReturnType<LockHolderModule["createOnboardLockRecord"]>) => ({
+        record: {
+          pid: record.pid,
+          processStartIdentity: record.processStartIdentity,
+          startedAt: record.startedAt,
+          command: record.command,
+        },
+        provenance: "unknown",
+        reason: "has no verifiable host and PID-namespace provenance",
+      }),
+    ],
+  ] as const)("does not replace an onboard lock from a %s", (_case, makeOwner) => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    const localRecord = lockHolder.createOnboardLockRecord(
+      "foreign or legacy onboarding owner",
+      "2026-09-02T00:00:00.000Z",
+    );
+    const owner = makeOwner(localRecord);
+    const contents = JSON.stringify(owner.record);
+    fs.writeFileSync(session.LOCK_FILE, contents, { mode: 0o600 });
+    const inode = fs.statSync(session.LOCK_FILE).ino;
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      holderPid: process.pid,
+      holderIdentityVerified: false,
+      holderProvenance: owner.provenance,
+    });
+    expect(fs.statSync(session.LOCK_FILE).ino).toBe(inode);
+    expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(contents);
+    const contention = session.describeOnboardLockContention(result);
+    expect(contention.reason).toContain(session.LOCK_FILE);
+    expect(contention.reason).toContain(owner.reason);
   });
 
   it("refuses cleanup authority after the acquired lock path is replaced (#9833)", () => {
@@ -138,9 +205,11 @@ describe("onboard lock ownership", () => {
     fs.writeFileSync(
       session.LOCK_FILE,
       JSON.stringify({
+        ...lockHolder.createOnboardLockRecord(
+          "departed onboarding owner",
+          "2026-03-25T00:00:00.000Z",
+        ),
         pid: 999999,
-        startedAt: "2026-03-25T00:00:00.000Z",
-        command: "departed onboarding owner",
       }),
       { mode: 0o600 },
     );

@@ -805,6 +805,29 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
     const activeLock = path.join(stateRoot, "onboard.lock");
     const disposition = classifyOnboardLock(home, activeLock);
     if (disposition.state === "held") {
+      if (disposition.provenance !== "local") {
+        const record = disposition.record;
+        const recordedEnvironment = [
+          record.hostIdentity === null
+            ? null
+            : `host ${JSON.stringify(record.hostIdentity)}`,
+          record.pidNamespaceIdentity === null
+            ? null
+            : `PID namespace ${JSON.stringify(record.pidNamespaceIdentity)}`,
+        ]
+          .filter((detail): detail is string => detail !== null)
+          .join(", ");
+        const provenanceReason =
+          disposition.provenance === "foreign"
+            ? `belongs to a different environment${recordedEnvironment ? ` (${recordedEnvironment})` : ""}`
+            : "has no verifiable host and PID-namespace provenance";
+        throw migrationError(
+          `onboarding lock ${activeLock} records PID ${String(record.pid)}` +
+            `${describeOnboardLockHolder(record)} and ${provenanceReason}; verify in every ` +
+            "environment sharing this state directory that no onboarding run is active, and " +
+            "remove only this lock file if none is active, then retry",
+        );
+      }
       if (!disposition.identityVerified) {
         throw migrationError(
           `onboarding lock ${activeLock} records live PID ` +

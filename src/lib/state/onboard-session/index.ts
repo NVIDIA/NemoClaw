@@ -6,6 +6,7 @@ export {
   classifyOnboardLockContents,
   createOnboardLockRecord,
   MAX_ONBOARD_LOCK_BYTES,
+  type OnboardLockIdentityProbes,
   type OnboardLockDisposition,
   type OnboardLockRecord,
 } from "./lock-holder";

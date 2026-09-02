@@ -350,6 +350,9 @@ export interface LockResult {
   holderStartedAt?: string | null;
   holderCommand?: string | null;
   holderIdentityVerified?: boolean;
+  holderProvenance?: "foreign" | "local" | "unknown";
+  holderHostIdentity?: string | null;
+  holderPidNamespaceIdentity?: string | null;
   reclamationGuard?: OnboardLockReclamationGuardContention;
 }
 
@@ -397,6 +400,37 @@ export function describeOnboardLockContention(lock: LockResult): OnboardLockCont
   }
 
   if (lock.holderIdentityVerified === false) {
+    const recordedPid =
+      lock.holderPid === undefined ? "an unknown PID" : `PID ${String(lock.holderPid)}`;
+    if (lock.holderProvenance === "foreign") {
+      const provenanceDetails = [
+        lock.holderHostIdentity ? `host ${quotedIdentity(lock.holderHostIdentity)}` : null,
+        lock.holderPidNamespaceIdentity
+          ? `PID namespace ${quotedIdentity(lock.holderPidNamespaceIdentity)}`
+          : null,
+      ]
+        .filter((detail): detail is string => detail !== null)
+        .join(", ");
+      return {
+        reason:
+          `Onboarding lock '${lock.lockFile}' records ${recordedPid} in a different host or ` +
+          `PID namespace${provenanceDetails ? ` (${provenanceDetails})` : ""}.`,
+        remediation:
+          "Confirm in the recorded environment that no onboarding run is active. Do not remove " +
+          "the lock if you cannot confirm this; ask that environment's administrator to resolve " +
+          `'${lock.lockFile}', then retry.`,
+      };
+    }
+    if (lock.holderProvenance === "unknown") {
+      return {
+        reason:
+          `Onboarding lock '${lock.lockFile}' records ${recordedPid}, but has no verifiable ` +
+          "host and PID-namespace provenance.",
+        remediation:
+          "Verify in every environment sharing this state directory that no onboarding run is " +
+          `active. If none is active, remove only '${lock.lockFile}', then retry.`,
+      };
+    }
     const pid =
       lock.holderPid === undefined ? "an unknown PID" : `live PID ${String(lock.holderPid)}`;
     return {
@@ -1563,6 +1597,9 @@ function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
           holderStartedAt: disposition.record.startedAt,
           holderCommand: disposition.record.command,
           holderIdentityVerified: disposition.identityVerified,
+          holderProvenance: disposition.provenance,
+          holderHostIdentity: disposition.record.hostIdentity,
+          holderPidNamespaceIdentity: disposition.record.pidNamespaceIdentity,
         };
       }
 

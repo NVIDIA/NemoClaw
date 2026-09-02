@@ -10,6 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "../onboard/entry-options";
 import { migrateLegacyPortState } from "./legacy-port-migration";
 import {
+  readMcpLockHostIdentity,
+  readMcpLockPidNamespaceIdentity,
+} from "./mcp-lifecycle-lock-identity";
+import {
   listRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery,
 } from "./onboard-session/retained-sandbox-recovery";
@@ -34,10 +38,17 @@ function onboardLockBody(
   pid: number,
   startedAt = "2026-09-01T00:00:00.000Z",
   processStartIdentity: string | null = null,
+  provenance: "legacy" | "local" = "local",
 ): string {
   return JSON.stringify({
     pid,
     processStartIdentity,
+    ...(provenance === "local"
+      ? {
+          hostIdentity: readMcpLockHostIdentity(),
+          pidNamespaceIdentity: readMcpLockPidNamespaceIdentity(),
+        }
+      : {}),
     startedAt,
     command: "onboard",
   });
@@ -477,6 +488,23 @@ describe("legacy non-default gateway state migration", () => {
     expect(migrate).toThrow('(command "onboard", started 2026-09-01T00:00:00.000Z)');
     expect(migrate).toThrow(/verify no onboarding run is active/u);
     expect(migrate).not.toThrow(/stop that process/u);
+  });
+
+  it("fails closed for a legacy onboarding owner without provenance even after its PID exits", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    recordRecovery(recoveryFile, "port-box", 9123, "d");
+    const before = fs.readFileSync(recoveryFile, "utf8");
+    writeOnboardLock(
+      shared,
+      onboardLockBody(DEPARTED_PID, "2026-09-01T00:00:00.000Z", null, "legacy"),
+    );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /has no verifiable host and PID-namespace provenance/u,
+    );
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
   });
 
   it("names a live onboarding process only after its strong identity matches", () => {
