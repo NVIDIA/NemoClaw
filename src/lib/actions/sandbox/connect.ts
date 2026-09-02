@@ -100,6 +100,7 @@ import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   createProbeTimingRecorder,
   createBoundLaunchReadinessDeps,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   portableOpenClawPairingIncompleteMessage,
   type ProbeTimingRecorder,
@@ -2746,7 +2747,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
       if (gated.kind === "unsafe") {
         probeTiming!.markFailureStage("publication");
         console.error(
-          "  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+          `  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated.${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
         );
         process.exit(1);
       }

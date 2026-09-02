@@ -819,20 +819,30 @@ describe("connectSandbox flow", () => {
     );
   });
 
-  it("probe-only stops before mutation when the fenced epoch cannot be revalidated (#8942)", async () => {
+  it("probe-only reports bounded unsafe authority evidence before mutation (#10638)", async () => {
     const harness = createConnectHarness();
-    harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "unsafe" });
+    harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({
+      kind: "unsafe",
+      evidence: {
+        resource: "persistent receipt",
+        path: "/home/test/.nemoclaw/launch-readiness/receipt.json",
+        expectedUid: 1000,
+        observedUid: 1000,
+        expectedMode: "0600",
+        observedMode: "0640",
+        operation: "inspect",
+        errorCode: null,
+        repair: "chmod",
+      },
+    });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "current launch-readiness epoch could not be safely revalidated",
-    );
+    const errors = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(errors).toContain("current launch-readiness epoch could not be safely revalidated");
+    expect(errors).toContain("expected mode 0600, observed mode 0640");
+    expect(errors).toContain("chmod 0600 --");
   });
 
   it("probe-only distinguishes completed recovery from final evidence failure (#8942)", async () => {

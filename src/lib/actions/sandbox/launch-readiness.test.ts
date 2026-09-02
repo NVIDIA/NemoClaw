@@ -15,6 +15,7 @@ import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
 import {
   buildLaunchReadinessRegistryProjection,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   type LaunchReadinessDeps,
   launchReadinessDigest,
@@ -510,6 +511,53 @@ describe("launch readiness validation", () => {
       "gateway:end",
       "sandbox:end",
     ]);
+  });
+
+  it("returns unsafe authority evidence without entering the mutation callback (#10638)", async () => {
+    const currentDeps = deps();
+    const evidence = {
+      resource: "persistent receipt" as const,
+      path: "/home/test/.nemoclaw/launch-readiness/receipt.json",
+      expectedUid: 1000,
+      observedUid: 1000,
+      expectedMode: "0600" as const,
+      observedMode: "0640",
+      operation: "inspect" as const,
+      errorCode: null,
+      repair: "chmod" as const,
+    };
+    currentDeps.checkMutationAuthority = vi.fn(() => ({ kind: "unsafe" as const, evidence }));
+    const mutation = vi.fn();
+
+    await expect(
+      withLaunchReadinessMutationGate(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        mutation,
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "unsafe", evidence });
+    expect(mutation).not.toHaveBeenCalled();
+    expect(formatLaunchReadinessUnsafeAuthorityEvidence(evidence)).toContain(
+      "expected mode 0600, observed mode 0640",
+    );
+    expect(formatLaunchReadinessUnsafeAuthorityEvidence(evidence)).toContain("chmod 0600 --");
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({ ...evidence, observedUid: 999, repair: "manual" }),
+    ).toContain("verifying it is owned by the current user");
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({
+        ...evidence,
+        path: "/home/$HOME/it's.json",
+      }),
+    ).toContain(`chmod 0600 -- '/home/$HOME/it'"'"'s.json'`);
+    expect(formatLaunchReadinessUnsafeAuthorityEvidence(undefined)).toContain(
+      "Repair the current user's secure OS runtime authority",
+    );
   });
 
   it("rejects a stale fenced epoch before entering the mutation callback (#8942)", async () => {

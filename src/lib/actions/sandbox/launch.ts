@@ -34,14 +34,15 @@ import {
 import { getKnownSandboxTarget } from "./gateway-target";
 import {
   createBoundLaunchReadinessDeps,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   publicationFromDecision,
   publishLaunchReadiness,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
-const LAUNCH_READINESS_FENCE_REPAIR =
-  "Launch readiness evidence could not be safely invalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+const LAUNCH_READINESS_FENCE_FAILURE =
+  "Launch readiness evidence could not be safely invalidated.";
 
 /**
  * Connect to a sandbox and start its agent in one host-side step (#6006).
@@ -333,7 +334,11 @@ export async function launchSandbox(
     ) {
       throw new Error(`Sandbox '${sandboxName}' is not registered in the local NemoClaw state.`);
     }
-    if (decision.recoveryBlocked) throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    if (decision.recoveryBlocked) {
+      throw new Error(
+        `${LAUNCH_READINESS_FENCE_FAILURE}${formatLaunchReadinessUnsafeAuthorityEvidence(undefined)}`,
+      );
+    }
     const fallbackDecision = decision;
     const publicationRequest = publicationFromDecision(sandboxName, fallbackDecision);
     const gated = await enterMutationGate(publicationRequest, async () => {
@@ -349,7 +354,11 @@ export async function launchSandbox(
       acceptedHermesAuthority = inspection.hermesAuthority;
       continue;
     }
-    if (gated.kind === "unsafe") throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
+    if (gated.kind === "unsafe") {
+      throw new Error(
+        `${LAUNCH_READINESS_FENCE_FAILURE}${formatLaunchReadinessUnsafeAuthorityEvidence(gated.evidence)}`,
+      );
+    }
     if (gated.value.publication?.kind === "validation-failed") {
       throw new Error(
         `Launch readiness final validation failed due to ${gated.value.publication.category}. Retry launch.`,

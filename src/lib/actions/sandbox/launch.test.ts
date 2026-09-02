@@ -65,6 +65,10 @@ vi.mock("./connect-hermes-light-skin", () => ({
 }));
 vi.mock("./launch-readiness", () => ({
   createBoundLaunchReadinessDeps: () => ({ boundReadinessCapture: true }),
+  formatLaunchReadinessUnsafeAuthorityEvidence: (evidence?: { observedMode?: string | null }) =>
+    evidence
+      ? ` persistent receipt evidence: observed mode ${evidence.observedMode}`
+      : " Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
   inspectLaunchReadiness: mocks.inspectLaunchReadiness,
   publishLaunchReadiness: mocks.publishLaunchReadiness,
   withLaunchReadinessMutationGate: mocks.withLaunchReadinessMutationGate,
@@ -1010,10 +1014,13 @@ describe("launchSandbox", () => {
       fenceFailed: false,
       recoveryBlocked: false,
     });
-    mocks.withLaunchReadinessMutationGate.mockResolvedValue({ kind: "unsafe" });
+    mocks.withLaunchReadinessMutationGate.mockResolvedValue({
+      kind: "unsafe",
+      evidence: { observedMode: "0640" },
+    });
 
     await expect(launchSandbox("alpha")).rejects.toThrow(
-      "Launch readiness evidence could not be safely invalidated",
+      "Launch readiness evidence could not be safely invalidated. persistent receipt evidence: observed mode 0640",
     );
 
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
