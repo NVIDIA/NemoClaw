@@ -9,7 +9,7 @@ const { spawn } = require("child_process");
 const { run, runCapture } = require("../../runner");
 const {
   createOllamaApiCapture,
-  getWindowsHostOllamaDockerReachabilityArgs,
+  getOllamaApiCommand,
   isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
   setResolvedOllamaHost,
@@ -418,7 +418,19 @@ function printWindowsOllamaTimeoutDiagnostics(): void {
   console.error(
     '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
   );
-  console.error(`    docker ${getWindowsHostOllamaDockerReachabilityArgs().join(" ")}`);
+  console.error(
+    `    ${getOllamaApiCommand(
+      [
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
+      ],
+      OLLAMA_HOST_DOCKER_INTERNAL,
+    ).join(" ")}`,
+  );
 }
 
 module.exports = {

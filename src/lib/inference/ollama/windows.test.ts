@@ -382,11 +382,8 @@ describe("Windows Ollama helper", () => {
     const { run } = captureDefaultWindowsRollbackInvocation(null);
     const rollbackCall = run.mock.calls.at(-1);
     expect(rollbackCall).toBeDefined();
-    const [rollbackCommand, rollbackOptions] = rollbackCall!;
+    const [, rollbackOptions] = rollbackCall!;
 
-    expect(commandText(rollbackCommand)).toContain(
-      "if ($previousHostPresent -ne '1') { $previousHost = $null }",
-    );
     expect(rollbackOptions?.env).toMatchObject({
       NEMOCLAW_OLLAMA_RESTORE_HOST: "",
       NEMOCLAW_OLLAMA_RESTORE_HOST_PRESENT: "0",

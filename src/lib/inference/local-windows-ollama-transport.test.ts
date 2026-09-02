@@ -51,7 +51,14 @@ describe("Windows-host Ollama transport", () => {
   it("selects Docker Desktop only for the Windows-host transport owner", () => {
     expect(
       getOllamaApiCommand(
-        ["-sf", "http://host.docker.internal:11434/api/tags"],
+        [
+          "-sf",
+          "--connect-timeout",
+          "2",
+          "--max-time",
+          "5",
+          "http://host.docker.internal:11434/api/tags",
+        ],
         OLLAMA_HOST_DOCKER_INTERNAL,
       ),
     ).toEqual([
@@ -60,6 +67,10 @@ describe("Windows-host Ollama transport", () => {
       "--rm",
       CONTAINER_REACHABILITY_IMAGE,
       "-sf",
+      "--connect-timeout",
+      "2",
+      "--max-time",
+      "5",
       "http://host.docker.internal:11434/api/tags",
     ]);
     expect(getOllamaApiCommand(["-sf", "http://127.0.0.1:11434/api/tags"], "127.0.0.1")).toEqual([

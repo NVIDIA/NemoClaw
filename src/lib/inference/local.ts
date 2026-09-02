@@ -149,21 +149,6 @@ export {
   OLLAMA_LOCALHOST,
 } from "./local-adapter-lifecycle";
 
-/** Build the credential-free Docker Desktop probe for Windows-host Ollama. */
-export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
-  return [
-    "run",
-    "--rm",
-    CONTAINER_REACHABILITY_IMAGE,
-    "-sf",
-    "--connect-timeout",
-    "2",
-    "--max-time",
-    "5",
-    `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
-  ];
-}
-
 let _resolvedOllamaHost: string | null = null;
 const OLLAMA_HOST_RECEIPT_NAME = "ollama-host.json";
 
