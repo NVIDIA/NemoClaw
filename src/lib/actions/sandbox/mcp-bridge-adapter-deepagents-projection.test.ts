@@ -366,12 +366,17 @@ describe("Deep Agents managed MCP projection safety", () => {
   it.each([
     ["registration", registrationCommand],
     ["v2 rollback", rollbackCommand],
-  ])("rejects duplicate JSON and unsafe projection metadata during %s", (_name, command) => {
+  ])("rejects duplicate JSON during %s", (_name, command) => {
     const duplicate = runDeepAgentsConfigCommand(command, duplicateProjection);
     expect(duplicate.status).toBe(2);
     expect(duplicate.stderr).toContain("duplicate JSON key: mcpServers");
     expect(duplicate.configText).toBe(duplicateProjection);
+  });
 
+  it.each([
+    ["registration", registrationCommand],
+    ["v2 rollback", rollbackCommand],
+  ])("rejects an unsafe projection mode during %s", (_name, command) => {
     const unsafeMode = runDeepAgentsConfigCommand(
       command,
       emptyProjection,
@@ -383,7 +388,12 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(unsafeMode.status).toBe(2);
     expect(unsafeMode.stderr).toContain("unsafe ownership, mode, type, links, or path identity");
     expect(unsafeMode.config).toEqual(emptyProjection);
+  });
 
+  it.each([
+    ["registration", registrationCommand],
+    ["v2 rollback", rollbackCommand],
+  ])("rejects a projection symlink during %s without mutating its target", (_name, command) => {
     const symlink = runDeepAgentsConfigCommand(command, emptyProjection, "v2", undefined, 0o600, {
       symlink: true,
     });
@@ -391,7 +401,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(symlink.managedSymlinkTargetText).toBe(`${JSON.stringify(emptyProjection, null, 2)}\n`);
   });
 
-  it("never clobbers a projection that appears during absent publication or fd rewrite", () => {
+  it("preserves a projection that appears during absent publication", () => {
     const absentResult = runDeepAgentsConfigCommand(
       registrationCommand,
       undefined,
@@ -403,7 +413,9 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(absentResult.status).toBe(2);
     expect(absentResult.stderr).toContain("appeared during publication");
     expect(absentResult.configText).toBe(attackerProjection);
+  });
 
+  it("preserves a replacement during a descriptor rewrite", () => {
     const existingResult = runDeepAgentsConfigCommand(
       registrationCommand,
       emptyProjection,
@@ -433,7 +445,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(raced.configText).toBe(attackerProjection);
   });
 
-  it("keeps forced removal identity-bound for malformed and unsafe projections", () => {
+  it("preserves a projection symlink during forced removal", () => {
     const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
     const forcedSymlink = runDeepAgentsConfigCommand(
       forcedCommand,
@@ -449,7 +461,10 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(forcedSymlink.managedSymlinkTargetText).toBe(
       `${JSON.stringify(emptyProjection, null, 2)}\n`,
     );
+  });
 
+  it("preserves an unsafe projection mode during forced removal", () => {
+    const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
     const forcedUnsafeMode = runDeepAgentsConfigCommand(
       forcedCommand,
       emptyProjection,
@@ -460,7 +475,10 @@ describe("Deep Agents managed MCP projection safety", () => {
     );
     expect(forcedUnsafeMode.status).toBe(2);
     expect(forcedUnsafeMode.config).toEqual(emptyProjection);
+  });
 
+  it("preserves a projection FIFO during forced removal", () => {
+    const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
     const forcedFifo = runDeepAgentsConfigCommand(
       forcedCommand,
       undefined,
@@ -472,11 +490,16 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(forcedFifo.status).toBe(2);
     expect(forcedFifo.configExists).toBe(true);
     expect(forcedFifo.configIsFifo).toBe(true);
+  });
 
+  it("rejects duplicate projection JSON during ordinary removal", () => {
     const duplicate = runDeepAgentsConfigCommand(removalCommand, duplicateProjection);
     expect(duplicate.status).toBe(2);
     expect(duplicate.configText).toBe(duplicateProjection);
+  });
 
+  it("repairs duplicate projection JSON during forced removal", () => {
+    const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
     const forcedDuplicate = runDeepAgentsConfigCommand(forcedCommand, duplicateProjection);
     expect(forcedDuplicate.status, forcedDuplicate.stderr).toBe(0);
     expect(forcedDuplicate.config).toEqual(emptyProjection);
