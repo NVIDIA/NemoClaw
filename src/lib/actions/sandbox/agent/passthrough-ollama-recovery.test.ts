@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
+import { requestedAgentTimeoutSeconds } from "./passthrough-dispatch";
 import { runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 
 function makeProcMock() {
@@ -41,7 +42,6 @@ describe("runOllamaRestartRecovery", () => {
     runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "warmed",
       ok: true,
-      timedOut: false,
     }));
 
     expect(writes.join("")).toContain("Ollama model 'qwen3.6:35b' is loaded and ready");
@@ -53,7 +53,6 @@ describe("runOllamaRestartRecovery", () => {
     runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "warmed",
       ok: false,
-      timedOut: true,
       reason: "timeout",
       endpoint: "http://host.docker.internal:11434",
       detail: "curl timed out after 300 seconds",
@@ -79,7 +78,6 @@ describe("runOllamaRestartRecovery", () => {
     runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, {}, () => ({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason,
       endpoint: "http://host.docker.internal:11434",
       detail: "bounded failure detail",
@@ -273,31 +271,52 @@ describe("agent passthrough Ollama recovery ordering", () => {
     expect(events).toEqual(["recovery", "dispatch"]);
   });
 
-  it("passes a short command timeout budget before non-JSON dispatch", async () => {
-    const events: string[] = [];
-    const route = {
-      provider: "ollama-local",
-      model: "qwen3.6:35b",
-      endpointUrl: "http://host.openshell.internal:11434/v1",
-    };
-    const deps = makePassthroughDeps(route, events);
-    const runRecovery = vi.fn(() => {
-      events.push("recovery");
-    });
+  it.each([
+    ["partial recovery", 5_000, 25],
+    ["an exhausted recovery budget", 30_000, 1],
+  ])(
+    "reduces a 30-second timeout after %s",
+    async (_name, elapsedMilliseconds, expectedTimeout) => {
+      const events: string[] = [];
+      const dispatchedTimeouts: number[] = [];
+      const route = {
+        provider: "ollama-local",
+        model: "qwen3.6:35b",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+      };
+      const deps = makePassthroughDeps(route, events);
+      const now = vi
+        .fn()
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(elapsedMilliseconds);
+      const runRecovery = vi.fn(() => {
+        events.push("recovery");
+      });
+      const execNonJson = vi.fn(((
+        _sandboxName: string,
+        dispatchedCommand: readonly string[],
+      ): never => {
+        dispatchedTimeouts.push(requestedAgentTimeoutSeconds(dispatchedCommand) ?? -1);
+        events.push("dispatch");
+        throw new Error("__exit:0");
+      }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
 
-    await expect(
-      runAgentPassthrough(
-        "alpha",
-        { extraArgs: ["--agent", "main", "--timeout", "30", "-m", "ping"] },
-        { ...deps, runOllamaRestartRecovery: runRecovery },
-      ),
-    ).rejects.toThrow("__exit:0");
+      await expect(
+        runAgentPassthrough(
+          "alpha",
+          { extraArgs: ["--agent", "main", "--timeout", "30", "-m", "ping"] },
+          { ...deps, execNonJson, now, runOllamaRestartRecovery: runRecovery },
+        ),
+      ).rejects.toThrow("__exit:0");
 
-    expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process, {
-      timeoutSeconds: 30,
-    });
-    expect(events).toEqual(["recovery", "dispatch"]);
-  });
+      expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process, {
+        timeoutSeconds: 29,
+      });
+      expect(events).toEqual(["recovery", "dispatch"]);
+      expect(dispatchedTimeouts).toEqual([expectedTimeout]);
+    },
+  );
 
   it("dispatches after reporting an Ollama recovery exception", async () => {
     const events: string[] = [];

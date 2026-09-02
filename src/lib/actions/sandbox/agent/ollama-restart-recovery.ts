@@ -71,11 +71,10 @@ export type OllamaRestartRecoveryResult =
   | { kind: "skipped"; reason: "unreachable"; endpoint: string }
   | { kind: "skipped"; reason: "deadline-exhausted"; endpoint: string }
   | { kind: "skipped"; reason: "model-absent"; endpoint: string; inventoryLabel: string }
-  | { kind: "warmed"; ok: true; timedOut: false }
+  | { kind: "warmed"; ok: true }
   | {
       kind: "warmed";
       ok: false;
-      timedOut: boolean;
       reason: OllamaRestartRecoveryFailureReason;
       endpoint: string;
       detail: string;
@@ -182,11 +181,7 @@ function recoveryDeadlineMilliseconds(
   now: () => number,
 ): number | null {
   if (timeoutSeconds === undefined) return null;
-  const boundedSeconds =
-    Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
-      ? Math.min(timeoutSeconds, OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS)
-      : 0;
-  return now() + boundedSeconds * 1000;
+  return now() + Math.min(timeoutSeconds, OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS) * 1000;
 }
 
 function remainingRecoveryMilliseconds(deadline: number | null, now: () => number): number {
@@ -243,12 +238,17 @@ export function maybeWarmOllamaAfterDaemonRestart(
     return { kind: "skipped", reason: "missing-model" };
   }
 
-  const now = deps.now ?? Date.now;
-  const recoveryDeadline = recoveryDeadlineMilliseconds(deps.timeoutSeconds, now);
-
   const getOllamaHost = deps.getOllamaHost ?? getResolvedOllamaHost;
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
   const rawEndpoint = `http://${rawHost}:${OLLAMA_PORT}`;
+  if (
+    deps.timeoutSeconds !== undefined &&
+    (!Number.isFinite(deps.timeoutSeconds) || deps.timeoutSeconds <= 0)
+  ) {
+    return { kind: "skipped", reason: "deadline-exhausted", endpoint: rawEndpoint };
+  }
+  const now = deps.now ?? Date.now;
+  const recoveryDeadline = recoveryDeadlineMilliseconds(deps.timeoutSeconds, now);
   const probe = deps.probeRuntimeModelStatus ?? probeOllamaRuntimeModelStatus;
   const rawCapture = createOllamaApiCapture(
     deps.runCaptureImpl,
@@ -287,7 +287,6 @@ export function maybeWarmOllamaAfterDaemonRestart(
       return {
         kind: "warmed",
         ok: false,
-        timedOut: true,
         reason: "timeout",
         endpoint: rawEndpoint,
         detail: boundedOllamaRestartRecoveryDetail(
@@ -300,7 +299,6 @@ export function maybeWarmOllamaAfterDaemonRestart(
       return {
         kind: "warmed",
         ok: false,
-        timedOut: false,
         reason: "command-failed",
         endpoint: rawEndpoint,
         detail: boundedOllamaRestartRecoveryDetail(
@@ -331,18 +329,16 @@ export function maybeWarmOllamaAfterDaemonRestart(
       return {
         kind: "warmed",
         ok: false,
-        timedOut: false,
         reason: response,
         endpoint: rawEndpoint,
         detail: boundedOllamaRestartRecoveryDetail(result.stdout, `Ollama returned ${response}`),
       };
     }
-    return { kind: "warmed", ok: true, timedOut: false };
+    return { kind: "warmed", ok: true };
   } catch (error) {
     return {
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "spawn-failed",
       endpoint: rawEndpoint,
       detail: boundedOllamaRestartRecoveryDetail(

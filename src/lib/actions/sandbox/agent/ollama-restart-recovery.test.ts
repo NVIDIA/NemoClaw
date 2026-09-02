@@ -77,7 +77,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           prepareDockerEnvironment,
         },
       ),
-    ).toEqual({ kind: "warmed", ok: true, timedOut: false });
+    ).toEqual({ kind: "warmed", ok: true });
 
     expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
@@ -217,7 +217,6 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     ).toEqual({
       kind: "warmed",
       ok: false,
-      timedOut: true,
       reason: "timeout",
       endpoint: "http://127.0.0.1:11434",
       detail: "warm-up exceeded 300 seconds",
@@ -241,7 +240,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           now,
         },
       ),
-    ).toEqual({ kind: "warmed", ok: true, timedOut: false });
+    ).toEqual({ kind: "warmed", ok: true });
 
     const warmCommand = runCaptureExImpl.mock.calls[0][0];
     expect(warmCommand[warmCommand.indexOf("--max-time") + 1]).toBe("25");
@@ -287,7 +286,6 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     ).toMatchObject({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "ollama-error",
       endpoint: "http://127.0.0.1:11434",
       detail: expect.stringContaining("model not found"),
@@ -340,7 +338,6 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     ).toMatchObject({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "ollama-error",
       endpoint: "http://127.0.0.1:11434",
       detail: expect.stringContaining("runner stopped unexpectedly"),
@@ -360,7 +357,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: true, timedOut: false });
+    ).toEqual({ kind: "warmed", ok: true });
   });
 
   it.each([
@@ -380,7 +377,6 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     ).toMatchObject({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "invalid-response",
       endpoint: "http://127.0.0.1:11434",
     });
@@ -398,7 +394,6 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     ).toEqual({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "command-failed",
       endpoint: "http://127.0.0.1:11434",
       detail: "warm-up exited 7",
@@ -418,7 +413,6 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     ).toEqual({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "spawn-failed",
       endpoint: "http://127.0.0.1:11434",
       detail: "spawn failed",

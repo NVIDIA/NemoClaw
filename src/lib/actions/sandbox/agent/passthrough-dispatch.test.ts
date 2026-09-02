@@ -12,6 +12,7 @@ import {
   agentDispatchStdio,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
+  replaceRequestedAgentTimeoutSeconds,
   requestedAgentTimeoutSeconds,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
@@ -174,11 +175,19 @@ describe("requestedAgentTimeoutSeconds", () => {
   });
 
   it("reads a separated --timeout value (#8723)", () => {
-    expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "--timeout", "30"))).toBe(30);
+    const command = agent("--agent", "main", "--timeout", "30");
+    expect(requestedAgentTimeoutSeconds(command)).toBe(30);
+    expect(replaceRequestedAgentTimeoutSeconds(command, 20)).toEqual(
+      agent("--agent", "main", "--timeout", "20"),
+    );
   });
 
   it("reads an equals-form --timeout value (#8723)", () => {
-    expect(requestedAgentTimeoutSeconds(agent("--timeout=45", "-m", "hi"))).toBe(45);
+    const command = agent("--timeout=45", "-m", "hi");
+    expect(requestedAgentTimeoutSeconds(command)).toBe(45);
+    expect(replaceRequestedAgentTimeoutSeconds(command, 20)).toEqual(
+      agent("--timeout=20", "-m", "hi"),
+    );
   });
 
   it("reads a timeout after documented boolean and equals-form options (#8723)", () => {
