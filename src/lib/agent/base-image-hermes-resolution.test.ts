@@ -12,6 +12,7 @@ import { makeAgent } from "../../../test/helpers/base-image-test-harness";
 const dockerMocks = vi.hoisted(() => ({
   build: vi.fn(),
   capture: vi.fn(),
+  forceRm: vi.fn(),
   imageInspect: vi.fn(),
   imageInspectFormat: vi.fn(),
   infoFormat: vi.fn(),
@@ -28,6 +29,7 @@ const sourceMocks = vi.hoisted(() => ({
 vi.mock("../adapters/docker", () => ({
   dockerBuild: dockerMocks.build,
   dockerCapture: dockerMocks.capture,
+  dockerForceRm: dockerMocks.forceRm,
   dockerImageInspect: dockerMocks.imageInspect,
   dockerImageInspectFormat: dockerMocks.imageInspectFormat,
   dockerInfoFormat: dockerMocks.infoFormat,
@@ -72,6 +74,7 @@ describe("Hermes base-image resolver integration", () => {
     sourceMocks.nearestTags.mockReturnValue([]);
     dockerMocks.infoFormat.mockReturnValue("linux/aarch64\n");
     dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.forceRm.mockReturnValue({ status: 0 });
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-resolution-test-"));
 
     const dockerfile = fs.readFileSync(makeAgent().dockerfilePath ?? "", "utf8");
@@ -149,6 +152,7 @@ describe("Hermes base-image resolver integration", () => {
   }, 15_000);
 
   it("stops before a release fallback when the tracked Hermes base fails qualification (#10826)", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const versionRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:v0.0.118";
     const fallbackDigest = `sha256:${"c".repeat(64)}`;
     const fallbackRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${fallbackDigest}`;
@@ -191,11 +195,16 @@ describe("Hermes base-image resolver integration", () => {
       );
     });
 
-    expect(() => stageHermesSandbox()).toThrow(
-      `Hermes Agent sandbox base image '${trackedRef}' is required but could not be pulled or did not pass the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory. No compatible local base image could be produced.`,
-    );
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(versionRef, expect.anything());
-    expect(dockerMocks.build).not.toHaveBeenCalled();
+    try {
+      expect(() => stageHermesSandbox()).toThrow(
+        `Hermes Agent sandbox base image '${trackedRef}' is required but could not be pulled or did not pass the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory. No compatible local base image could be produced.`,
+      );
+      expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(versionRef, expect.anything());
+      expect(dockerMocks.forceRm).toHaveBeenCalledTimes(2);
+      expect(dockerMocks.build).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
   });
 
   it("rejects an explicit platform digest override without pinned provenance", () => {

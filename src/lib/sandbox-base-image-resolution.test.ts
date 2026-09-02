@@ -808,6 +808,18 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("rejects required pin mode without a pinned remote reference (#10826)", () => {
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        requirePinnedRemoteRef: true,
+      }),
+    ).toThrow("Sandbox base image requires a non-empty pinned remote reference.");
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("uses a proven local image after a required remote pin fails (#10826)", () => {
     const options = resolutionOptions();
     const provenance = `${createSandboxBaseImageBuildProvenanceKey(options)}.${"c".repeat(64)}`;
@@ -820,10 +832,12 @@ describe("sandbox base-image warm resolution", () => {
     });
 
     expect(resolved).toMatchObject({ ref: options.localTag, source: "local" });
-    expect(dockerMocks.pull).toHaveBeenCalledWith(REF, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
+    const dockerOptions = { ignoreError: true, suppressOutput: true };
+    expect(dockerMocks.pull.mock.calls).toEqual([[REF, dockerOptions]]);
+    expect(dockerMocks.imageInspect.mock.calls).toEqual([
+      [REF, dockerOptions],
+      [options.localTag, dockerOptions],
+    ]);
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
