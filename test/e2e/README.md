@@ -627,8 +627,8 @@ mode.
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
 1. Onboard the custom weather plugin as v1.
-2. Install v1 with OpenClaw across distinct filesystems.
-3. Restart the gateway and verify v1.
+2. Install v1-exdev with OpenClaw across distinct filesystems.
+3. Restart the gateway and verify v1-exdev.
 4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
 The recreation remains the replacement boundary. `tools.invoke` assertions
@@ -641,10 +641,10 @@ permutations are outside this live contract. Workspace preservation and policy
 selection retain their focused coverage instead of another assertion in this
 target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
-The current-checkout fixture locally prebuilds its repository-controlled v1
-and v2 Dockerfiles with BuildKit, then hands only those local image references
-to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
-trust boundary and are never host-prebuilt by this fixture.
+The current-checkout fixture locally prebuilds repository-controlled images
+with BuildKit. It verifies each local tag, then passes the matching immutable
+image ID to OpenShell. User-supplied `--from` Dockerfiles retain the
+gateway-builder trust boundary and are never host-prebuilt by this fixture.
 The current-checkout fixture enables local base-image resolution after the
 workflow removes Docker Hub credentials.
 
