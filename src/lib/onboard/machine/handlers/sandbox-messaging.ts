@@ -20,7 +20,10 @@ import {
 import { hashCredential } from "../../../security/credential-hash";
 import { isDecisionSelected, isDecisionUnset } from "../../../state/onboard-checkpoint-decision";
 import type { Session } from "../../../state/onboard-session";
-import { collectRequiredMessagingProviderBindings } from "../../checkpoint-replay";
+import {
+  normalizeMessagingProviderBindings,
+  requiredMessagingProviderBindings,
+} from "../../checkpoint-replay";
 import type { GatewayCredentialOnlyProviderInspection } from "../../gateway-provider-metadata";
 import {
   detectMessagingChannelsFromEnv,
@@ -221,14 +224,15 @@ function prepareReusablePlan<Agent>(
   agent: Agent,
 ): PreparedReusablePlan {
   const refreshed = refreshCredentialHashesFromEnv(plan);
-  const filtered = filterMessagingPlanForCurrentAgent(refreshed.plan, agent);
+  const normalized = normalizeMessagingProviderBindings(plan.sandboxName, refreshed.plan);
+  const filtered = filterMessagingPlanForCurrentAgent(normalized, agent);
   if (!filtered) {
     return { plan: null, selectedChannels: [], changed: true };
   }
   return {
     plan: filtered,
     selectedChannels: getActiveChannelsFromPlan(filtered),
-    changed: refreshed.changed || filtered !== refreshed.plan,
+    changed: refreshed.changed || normalized !== refreshed.plan || filtered !== normalized,
   };
 }
 
@@ -257,7 +261,7 @@ function channelCredentialLivesAtGateway<Agent>(
   channelId: string,
   deps: Pick<SandboxMessagingDeps<Agent>, "inspectGatewayCredential">,
 ): boolean {
-  const providerBindings = collectRequiredMessagingProviderBindings(
+  const providerBindings = requiredMessagingProviderBindings(
     plan.sandboxName,
     plan,
     new Set([channelId]),
@@ -300,6 +304,7 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     "clearPlanEnv" | "inspectGatewayCredential" | "note" | "writePlanToEnv"
   >,
   persist = true,
+  missingAction: "disable" | "reject-ready-reuse" = "disable",
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -324,6 +329,12 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     }
   }
   if (unconfiguredChannels.size === 0) return selection;
+  if (missingAction === "reject-ready-reuse") {
+    const sandboxName = selection.plan?.sandboxName ?? "unknown";
+    throw new Error(
+      `Messaging channel credentials for Ready sandbox '${sandboxName}' are missing at the gateway: ${[...unconfiguredChannels].join(", ")}. The running sandbox and durable messaging plan were not changed. Run 'nemoclaw ${sandboxName} channels remove <channel>' for each listed channel, or restore its gateway credential and rerun onboarding.`,
+    );
+  }
   deps.note(
     `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,
   );
@@ -588,6 +599,8 @@ export function reconcileReusedSandboxMessaging<Agent>(
     { plan: filtered, selectedChannels: getActiveChannelsFromPlan(filtered) },
     agent,
     deps,
+    false,
+    "reject-ready-reuse",
   );
   const changed = !isDeepStrictEqual(selection.plan, recordedPlan);
   if (changed && isDeepStrictEqual(selection.plan, filtered)) deps.clearPlanEnv();

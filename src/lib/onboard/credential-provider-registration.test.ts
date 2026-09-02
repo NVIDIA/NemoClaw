@@ -251,10 +251,23 @@ describe("credential provider registration", () => {
         "DISCORD_BOT_TOKEN",
       ),
     ).toBe(true);
-    expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
-      "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
-      "provider get -g test-gateway alpha-discord-bridge",
-    ]);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      [
+        "provider",
+        "profile",
+        "-g",
+        "test-gateway",
+        "export",
+        "discord-hermes-static-v1",
+        "--output",
+        "json",
+      ],
+      expect.anything(),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "-g", "test-gateway", "alpha-discord-bridge"],
+      expect.anything(),
+    );
   });
 
   it.each([
