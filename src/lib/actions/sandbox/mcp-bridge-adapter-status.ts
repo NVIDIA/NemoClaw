@@ -8,9 +8,12 @@ import {
   DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
 } from "./mcp-bridge/deepagents-legacy-config";
 import {
+  DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL,
   DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
 } from "./mcp-bridge-adapter-deepagents-projection";
+
+export { DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL };
 
 // NemoClaw owns this dedicated projection. Deep Agents Code's user/project
 // `.mcp.json` discovery is disabled in the managed image so user-authored MCP

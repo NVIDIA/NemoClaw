@@ -234,6 +234,22 @@ describe("Deep Agents managed MCP projection safety", () => {
     },
   );
 
+  it("rejects a projection removed after it is opened (#10754)", () => {
+    const result = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { removeAfterManagedOpen: true, timeoutMs: managedCommandTimeoutMs },
+    );
+    expect(result.status).toBe(2);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain("Could not inspect managed Deep Agents MCP state");
+    expect(result.stderr).toContain("managed MCP projection changed while reading");
+    expect(result.configExists).toBe(false);
+  });
+
   it("rejects a symbolic-link replacement while reading the projection (#10754)", () => {
     const result = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpStatusCommand(baseEntry),

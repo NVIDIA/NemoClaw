@@ -45,6 +45,7 @@ export interface DeepAgentsManagedFixtureOptions {
   directory?: boolean;
   fifo?: boolean;
   mode?: number;
+  removeAfterManagedOpen?: boolean;
   swapAfterManagedEloop?: boolean;
   swapAfterManagedOpen?: "fifo" | "symlink";
   swapAfterMissingManagedOpen?: "fifo" | "symlink";
@@ -59,7 +60,7 @@ export interface DeepAgentsManagedFixtureOptions {
 
 type ManagedSwap = {
   content?: string;
-  kind: "fifo" | "regular" | "socket" | "symlink";
+  kind: "absent" | "fifo" | "regular" | "socket" | "symlink";
   phase:
     | "after-missing-projection-open"
     | "after-projection-eloop"
@@ -76,6 +77,9 @@ function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSw
   }
   if (options.swapAfterManagedOpen) {
     return { kind: options.swapAfterManagedOpen, phase: "after-projection-open" };
+  }
+  if (options.removeAfterManagedOpen) {
+    return { kind: "absent", phase: "after-projection-open" };
   }
   if (options.swapAfterMissingManagedOpen) {
     return {
@@ -198,6 +202,8 @@ function createDeepAgentsFixturePythonExecutable(
     "        os.unlink(managed_path)",
     "    except FileNotFoundError:",
     "        pass",
+    "    if managed_swap_kind == 'absent':",
+    "        return",
     "    if managed_swap_kind == 'symlink':",
     "        os.symlink(managed_target, managed_path)",
     "    elif managed_swap_kind == 'fifo':",

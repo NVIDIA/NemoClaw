@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const DEEPAGENTS_MCP_MAX_SERVERS = 64;
+export const DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL =
+  "managed MCP projection changed while reading";
 
 export const DEEPAGENTS_STRICT_JSON_HELPERS = [
   "def reject_duplicate_keys(pairs):",
@@ -102,8 +104,11 @@ export const DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS = [
   "                raise ValueError(f'{unsafe_path_prefix}: {unsafe_path_kind}')",
   "        stable = (managed_fingerprint(before) == managed_fingerprint(after) and managed_fingerprint(after) == managed_fingerprint(linked_after))",
   "        if remaining or not stable:",
-  "            raise ValueError('managed MCP projection changed while reading')",
+  `            raise ValueError(${JSON.stringify(DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL)})`,
   "        return b''.join(chunks), managed_fingerprint(after), descriptor",
+  "    except FileNotFoundError as exc:",
+  "        os.close(descriptor)",
+  `        raise ValueError(${JSON.stringify(DEEPAGENTS_CHANGED_MCP_PROJECTION_DETAIL)}) from exc`,
   "    except Exception:",
   "        os.close(descriptor)",
   "        raise",
