@@ -7,7 +7,6 @@ import {
   isSandboxPortForwardHealthy,
   teardownSandboxDashboardForward,
 } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -46,7 +45,7 @@ runDashboardRemoteBindTest(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
     const sandboxName = SANDBOX_NAME;
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
     const remoteHost = remoteHostCandidate();
@@ -68,17 +67,10 @@ runDashboardRemoteBindTest(
       ],
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "dashboard-remote-bind-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "dashboard-remote-bind-runtime-info",
+      scenarioLabel: "dashboard remote-bind",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for dashboard remote-bind E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for dashboard remote-bind E2E");
-    }
 
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "dashboard-remote-bind-cleanup-gateway",
@@ -168,7 +160,9 @@ runDashboardRemoteBindTest(
       redactionValues,
       timeoutMs: 10 * 60_000,
     });
-    expect(start.exitCode, `Sandbox start failed after remote rebind\n${resultText(start)}`).toBe(0);
+    expect(start.exitCode, `Sandbox start failed after remote rebind\n${resultText(start)}`).toBe(
+      0,
+    );
 
     progress.phase("verify all-interface dashboard forward");
     expect(isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0")).toBe(true);
