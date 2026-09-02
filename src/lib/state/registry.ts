@@ -109,6 +109,7 @@ export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
   getHydratedMessagingPlanFromEntry,
+  getMessagingChannelConfigFromEntry,
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
