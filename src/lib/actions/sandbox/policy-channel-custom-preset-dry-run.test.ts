@@ -64,13 +64,16 @@ afterEach(() => {
 });
 
 describe("policy add --from-file --dry-run custom preset validation", () => {
-  it("rejects npm_yarn before preview or policy mutation (#10773)", async () => {
+  it.each([
+    ["npm_yarn", "npm-yarn"],
+    ["personal_open_internet", "personal-open-internet"],
+  ])("rejects reserved key %s before preview or policy mutation (#10773)", async (key, name) => {
     const file = writePreset(
-      "npm-yarn",
+      name,
       `preset:
-  name: qa-npm-test
+  name: qa-${name}
 network_policies:
-  npm_yarn:
+  ${key}:
     endpoints:
       - host: api.example.com
         port: 443
@@ -82,7 +85,7 @@ network_policies:
     ).resolves.toBe(1);
 
     expect(printedText()).toContain(
-      "Custom presets cannot own reserved network policy key 'npm_yarn'.",
+      `Custom presets cannot own reserved network policy key '${key}'.`,
     );
     expect(printedText()).not.toContain("Effective egress that would be opened:");
     expect(applyPresetContentSpy).not.toHaveBeenCalled();
