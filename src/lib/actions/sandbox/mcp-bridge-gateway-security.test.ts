@@ -83,10 +83,10 @@ afterEach(() => {
 });
 
 describe("managed MCP gateway proxy DNS boundary", () => {
-  it("accepts an explicit false setting bound to the launch marker", () => {
+  it("accepts the omitted disabled default when it is bound to the launch marker", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
     try {
-      writeRuntimeIdentity(stateDir, gatewayConfig(false));
+      writeRuntimeIdentity(stateDir, gatewayConfig());
 
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
     } finally {
@@ -100,9 +100,9 @@ describe("managed MCP gateway proxy DNS boundary", () => {
       writeRuntimeIdentity(stateDir, gatewayConfig(false, "podman"), "podman");
 
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
-      expect(processProofs.standaloneOwnershipFailure).toHaveBeenCalledWith(
-        {},
-        expect.objectContaining({ stateDir }),
+      processProofs.standaloneOwnershipFailure.mockReturnValue("process identity does not match");
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /process identity does not match/,
       );
       const marker = JSON.parse(fs.readFileSync(path.join(stateDir, "runtime.json"), "utf-8")) as {
         driver: string;

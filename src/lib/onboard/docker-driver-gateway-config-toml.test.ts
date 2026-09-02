@@ -55,9 +55,16 @@ function legacyGatewayIdForStateDir(stateDir: string): string {
 
 function parseGatewayProxyConnectByHostname(toml: string): unknown {
   const parsed = parseToml(toml) as {
-    openshell?: { drivers?: { docker?: { proxy_connect_by_hostname?: unknown } } };
+    openshell?: {
+      gateway?: { compute_drivers?: unknown };
+      drivers?: Record<string, { proxy_connect_by_hostname?: unknown }>;
+    };
   };
-  return parsed.openshell?.drivers?.docker?.proxy_connect_by_hostname;
+  const computeDrivers = parsed.openshell?.gateway?.compute_drivers;
+  const driver = Array.isArray(computeDrivers) ? computeDrivers[0] : undefined;
+  return typeof driver === "string"
+    ? parsed.openshell?.drivers?.[driver]?.proxy_connect_by_hostname
+    : undefined;
 }
 
 function podmanGatewayRuntime(env: Record<string, string>) {
@@ -140,7 +147,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(toml).toContain('compute_drivers = ["docker"]');
-      expect(parseGatewayProxyConnectByHostname(toml)).toBe(false);
+      expect(parseGatewayProxyConnectByHostname(toml)).toBeUndefined();
       expect(toml).toContain('grpc_endpoint = "https://127.0.0.1:8080"');
       expect(toml).toContain(`guest_tls_ca = "${path.join(stateDir, "tls", "ca.crt")}"`);
       expect(toml).toContain(
@@ -175,20 +182,38 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
-  it("rewrites the exact prior false-by-default proxy setting to explicit false", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-proxy-upgrade-"));
+  it("omits the false-by-default proxy setting for a proxy-free Podman gateway", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-proxy-default-"));
     try {
-      const env = writeGatewayConfig(stateDir);
-      const configPath = path.join(stateDir, "openshell-gateway.toml");
-      const priorToml = fs
+      const { configPath } = writePreScopedGatewayConfig(stateDir, false, "podman");
+
+      expect(
+        parseGatewayProxyConnectByHostname(fs.readFileSync(configPath, "utf-8")),
+      ).toBeUndefined();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rewrites an explicit false proxy setting to the proxy-free Podman default", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-proxy-repair-"));
+    try {
+      const { configPath, env } = writePreScopedGatewayConfig(stateDir, false, "podman");
+      const explicitFalseToml = fs
         .readFileSync(configPath, "utf-8")
-        .replace("proxy_connect_by_hostname = false\n", "");
-      expect(parseGatewayProxyConnectByHostname(priorToml)).toBeUndefined();
-      fs.writeFileSync(configPath, priorToml, { mode: 0o600 });
+        .replace(
+          "[openshell.drivers.podman]\n",
+          "[openshell.drivers.podman]\nproxy_connect_by_hostname = false\n",
+        );
+      fs.writeFileSync(configPath, explicitFalseToml, { mode: 0o600 });
 
-      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        gatewayRuntime: podmanGatewayRuntime(env),
+      });
 
-      expect(parseGatewayProxyConnectByHostname(fs.readFileSync(configPath, "utf-8"))).toBe(false);
+      expect(
+        parseGatewayProxyConnectByHostname(fs.readFileSync(configPath, "utf-8")),
+      ).toBeUndefined();
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -197,15 +222,19 @@ describe("docker-driver-gateway config TOML", () => {
   it("refuses an operator-enabled proxy hostname setting without rewriting it", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-proxy-unsafe-"));
     try {
-      const env = writeGatewayConfig(stateDir);
-      const configPath = path.join(stateDir, "openshell-gateway.toml");
+      const { configPath, env } = writePreScopedGatewayConfig(stateDir, false, "podman");
       const unsafeToml = fs
         .readFileSync(configPath, "utf-8")
-        .replace("proxy_connect_by_hostname = false", "proxy_connect_by_hostname = true");
+        .replace(
+          "[openshell.drivers.podman]\n",
+          "[openshell.drivers.podman]\nproxy_connect_by_hostname = true\n",
+        );
       fs.writeFileSync(configPath, unsafeToml, { mode: 0o600 });
 
       expect(() =>
-        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+          gatewayRuntime: podmanGatewayRuntime(env),
+        }),
       ).toThrow(/does not match NemoClaw's generated form/);
       expect(fs.readFileSync(configPath, "utf-8")).toBe(unsafeToml);
       expect(parseGatewayProxyConnectByHostname(unsafeToml)).toBe(true);

@@ -164,7 +164,7 @@ Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenS
 Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
-Managed MCP also verifies that the selected host OpenShell gateway was launched from the current private configuration with `proxy_connect_by_hostname = false`.
+Managed MCP also verifies that the selected host OpenShell gateway was launched from a private configuration that does not enable `proxy_connect_by_hostname`.
 An older running gateway without launch-bound configuration identity is refused before MCP mutation.
 Rerun `$$nemoclaw onboard` to replace a NemoClaw-owned host gateway, or restart an externally managed gateway through its declared supervisor, then retry the MCP command.
 For a public DNS hostname, preflight must return at least two public addresses.

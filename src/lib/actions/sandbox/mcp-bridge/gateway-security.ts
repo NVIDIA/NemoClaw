@@ -57,7 +57,7 @@ function configuredDriverProxyHostnameMode(configBytes: Buffer): {
 
 function refusal(detail: string): Error {
   return new Error(
-    `Managed MCP requires the selected OpenShell gateway to run with proxy_connect_by_hostname = false (${detail}). ` +
+    `Managed MCP requires the selected OpenShell gateway to keep proxy_connect_by_hostname disabled (${detail}). ` +
       "Restart the gateway through its declared lifecycle authority after applying that setting, then retry. Refusing MCP policy, provider, and adapter mutation.",
   );
 }
@@ -66,7 +66,8 @@ function refusal(detail: string): Error {
  * Bind MCP address pins to the selected running gateway. The ordinary gateway
  * ownership proof ties the PID, runtime marker, process environment, command
  * line, state directory, and canonical config together. This additional proof
- * requires proxy hostname resolution to be disabled and binds the exact
+ * requires proxy hostname resolution to stay at its disabled default or be
+ * explicitly disabled, and binds the exact
  * config bytes to the launch marker or managed-service environment.
  */
 export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPort: number): void {

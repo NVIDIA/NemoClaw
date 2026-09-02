@@ -42,7 +42,9 @@ describe("gateway runtime state files", () => {
 
   it("rejects a gateway state file readable outside its owner", () => {
     const stateDir = makeStateDir();
-    fs.writeFileSync(path.join(stateDir, "openshell-gateway.toml"), "config", { mode: 0o640 });
+    const configPath = path.join(stateDir, "openshell-gateway.toml");
+    fs.writeFileSync(configPath, "config", { mode: 0o640 });
+    fs.chmodSync(configPath, 0o640);
 
     expect(() => readPrivateGatewayConfig(stateDir)).toThrow(/file is not private/);
   });
