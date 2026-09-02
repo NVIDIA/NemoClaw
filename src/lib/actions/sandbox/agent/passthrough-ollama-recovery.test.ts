@@ -94,7 +94,6 @@ describe("runOllamaRestartRecovery", () => {
 
   it.each([
     ["already-loaded", "Ollama model 'qwen3.6:35b' is already loaded"],
-    ["unreachable", "Ollama was unreachable during the model check"],
     ["missing-model", "No Ollama model is recorded for this sandbox"],
     ["not-ollama", "Checking whether the Ollama model is loaded"],
   ] as const)("handles the %s skip reason", (reason, message) => {
@@ -106,6 +105,23 @@ describe("runOllamaRestartRecovery", () => {
     }));
 
     expect(writes.join("")).toContain(message);
+  });
+
+  it("reports the endpoint, model, and recovery action when Ollama is unreachable", () => {
+    const { writes, proc } = makeProcMock();
+
+    runOllamaRestartRecovery({ provider: "ollama-local", model: "qwen3.6:35b" }, proc, () => ({
+      kind: "skipped",
+      reason: "unreachable",
+      endpoint: "http://host.docker.internal:11434",
+    }));
+
+    const stderr = writes.join("");
+    expect(stderr).toContain("http://host.docker.internal:11434");
+    expect(stderr).toContain("qwen3.6:35b");
+    expect(stderr).toContain("Restore Ollama access");
+    expect(stderr).toContain("confirm that it serves");
+    expect(stderr).toContain("then rerun this command");
   });
 
   it("names the endpoint and its reported models when the model is absent (#9455)", () => {
@@ -136,7 +152,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).not.toContain("Ollama was unreachable during the restart check");
   });
 
-  it("continues dispatch with redacted, bounded detail when recovery throws", () => {
+  it("redacts and bounds recovery exceptions", () => {
     const { writes, proc } = makeProcMock();
     const exposedToken = "sk-proj-NOT-A-REAL-SECRET-1234567890";
 
@@ -251,6 +267,45 @@ describe("agent passthrough Ollama recovery ordering", () => {
 
     expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process);
     expect(events).toEqual(["recovery", "dispatch"]);
+  });
+
+  it("dispatches after reporting an Ollama recovery exception", async () => {
+    const events: string[] = [];
+    const diagnostics: string[] = [];
+    const route = {
+      provider: "ollama-local",
+      model: "qwen3.6:35b",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+    };
+    const deps = makePassthroughDeps(route, events);
+    deps.process = {
+      ...deps.process!,
+      stderr: {
+        write: (value: string) => {
+          diagnostics.push(value);
+          value.includes("failed unexpectedly") && events.push("diagnostic");
+          return true;
+        },
+      },
+    };
+    const runRecovery = (
+      registeredRoute: Parameters<typeof runOllamaRestartRecovery>[0],
+      proc: Parameters<typeof runOllamaRestartRecovery>[1],
+    ) =>
+      runOllamaRestartRecovery(registeredRoute, proc, () => {
+        throw new Error("synthetic recovery failure");
+      });
+
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "main", "-m", "ping"] },
+        { ...deps, runOllamaRestartRecovery: runRecovery },
+      ),
+    ).rejects.toThrow("__exit:0");
+
+    expect(events).toEqual(["diagnostic", "dispatch"]);
+    expect(diagnostics.join("")).toContain("failed unexpectedly");
   });
 
   it("does not run Ollama recovery for a non-Ollama route", async () => {

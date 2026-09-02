@@ -88,11 +88,15 @@ function reportRecovery(
     case "already-loaded":
       proc.stderr.write(`  Ollama model '${model}' is already loaded.\n`);
       break;
-    case "unreachable":
+    case "unreachable": {
+      const endpoint = boundedRecoveryEndpoint(result.endpoint, "the saved local Ollama endpoint");
       proc.stderr.write(
-        "  Ollama was unreachable during the model check; continuing to OpenClaw dispatch.\n",
+        `  Ollama at ${endpoint} was unreachable while checking '${model}'; continuing to ` +
+          `OpenClaw dispatch. Restore Ollama access to ${endpoint}, confirm that it serves ` +
+          `'${model}', then rerun this command.\n`,
       );
       break;
+    }
     case "missing-model":
       proc.stderr.write(
         "  No Ollama model is recorded for this sandbox; continuing to OpenClaw dispatch.\n",

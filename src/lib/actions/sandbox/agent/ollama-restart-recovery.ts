@@ -62,7 +62,8 @@ export type OllamaRestartRecoveryFailureReason =
   | "spawn-failed";
 
 export type OllamaRestartRecoveryResult =
-  | { kind: "skipped"; reason: "not-ollama" | "missing-model" | "already-loaded" | "unreachable" }
+  | { kind: "skipped"; reason: "not-ollama" | "missing-model" | "already-loaded" }
+  | { kind: "skipped"; reason: "unreachable"; endpoint: string }
   | { kind: "skipped"; reason: "model-absent"; endpoint: string; inventoryLabel: string }
   | { kind: "warmed"; ok: true; timedOut: false }
   | {
@@ -236,10 +237,10 @@ export function maybeWarmOllamaAfterDaemonRestart(
   try {
     status = probe(model, () => rawHost, rawCapture);
   } catch {
-    return { kind: "skipped", reason: "unreachable" };
+    return { kind: "skipped", reason: "unreachable", endpoint: rawEndpoint };
   }
   if (!status.probed) {
-    return { kind: "skipped", reason: "unreachable" };
+    return { kind: "skipped", reason: "unreachable", endpoint: rawEndpoint };
   }
   if (status.loaded) {
     return { kind: "skipped", reason: "already-loaded" };

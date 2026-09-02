@@ -193,7 +193,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         { provider: "ollama-local", model: "qwen3.6:35b" },
         { runCaptureImpl: () => "", runCaptureExImpl },
       ),
-    ).toEqual({ kind: "skipped", reason: "unreachable" });
+    ).toEqual({
+      kind: "skipped",
+      reason: "unreachable",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
     expect(runCaptureExImpl).not.toHaveBeenCalled();
   });
 
