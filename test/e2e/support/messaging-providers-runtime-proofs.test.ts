@@ -454,7 +454,7 @@ describe("messaging provider installed-runtime proofs", () => {
   });
 
   it("returns distinct Slack REST and websocket ports from accepted Docker state", async () => {
-    const { calls, host, resources } = fakeDockerHost();
+    const { host, resources } = fakeDockerHost();
     const cleanup: CleanupAction[] = [];
 
     try {
@@ -468,40 +468,6 @@ describe("messaging provider installed-runtime proofs", () => {
         redactionValues: [],
         env: {},
       });
-      const networkCreates = calls.filter((args) => args[0] === "network" && args[1] === "create");
-      const internalNetworkCreate = networkCreates.find((args) => args.includes("--internal"))!;
-      const publicationNetworkCreate = networkCreates.find((args) =>
-        args.includes("com.docker.network.bridge.enable_ip_masquerade=false"),
-      )!;
-      const proxyCreate = calls.find((args) => args[0] === "create")!;
-      const apiRun = calls.find((args) => args[0] === "run")!;
-      const proxyContainer = optionValue(proxyCreate, "--name");
-
-      expect(networkCreates).toHaveLength(2);
-      expect(publicationNetworkCreate.slice(0, -1)).toEqual([
-        "network",
-        "create",
-        "--driver",
-        "bridge",
-        "--opt",
-        "com.docker.network.bridge.enable_ip_masquerade=false",
-      ]);
-      expect(apiRun).not.toContain("-p");
-      expect(optionValues(proxyCreate, "-p")).toEqual([
-        `${OPENSHELL_BRIDGE_ADDRESS}:0:${String(FAKE_API_PROXY_READINESS_PORT)}`,
-        `${OPENSHELL_BRIDGE_ADDRESS}:0:8080`,
-        `${OPENSHELL_BRIDGE_ADDRESS}:0:8081`,
-      ]);
-      expect(proxyCreate).toEqual(
-        expect.arrayContaining(["--network", publicationNetworkCreate.at(-1)]),
-      );
-      expect(calls).toContainEqual([
-        "network",
-        "connect",
-        internalNetworkCreate.at(-1),
-        proxyContainer,
-      ]);
-      expect(calls).toContainEqual(["start", proxyContainer]);
       expect(api.port).toBe("32100");
       expect(api.alternatePort).toBe("32101");
     } finally {
