@@ -176,6 +176,28 @@ describe("exact artifact download (#9340)", () => {
     expect(log.mock.calls.flat().join("\n")).not.toMatch(/secret|upstream body|Authorization/u);
   });
 
+  it("keeps default attempt evidence off machine-readable stdout", async () => {
+    const bytes = archive();
+    const fetchImpl = vi
+      .fn<(input: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(response(bytes));
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await expect(
+        downloadBoundArtifact(identity(bytes), "secret-token", { fetchImpl }),
+      ).resolves.toEqual(bytes);
+      expect(stdout).not.toHaveBeenCalled();
+      expect(stderr).toHaveBeenCalledWith(
+        "artifact-content-read attempt=1 outcome=passed-first-attempt",
+      );
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
   it("fails after three transient responses without changing identity", async () => {
     const fetchImpl = vi
       .fn<(input: string, init: RequestInit) => Promise<Response>>()

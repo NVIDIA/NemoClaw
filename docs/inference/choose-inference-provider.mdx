@@ -13,9 +13,10 @@ Choose a provider based on where the model runs, which API it exposes, and which
 NemoClaw validates the provider and model before it creates the sandbox.
 
 <Warning>
-On N1x, the Deferred managed-vLLM preview is the only admitted inference route.
-Hosted providers, compatible endpoints, Model Router, Ollama, existing vLLM or llama.cpp servers, managed llama.cpp, fixed vLLM profiles, and NVIDIA NIM are unavailable.
-Accept the N1x Express prompt or set `NEMOCLAW_PROVIDER=install-vllm` to provide the required explicit preview intent.
+On native N1x FASTOS, the Deferred managed-vLLM preview is the only admitted inference route.
+Accept the native N1x Express prompt or set `NEMOCLAW_PROVIDER=install-vllm` to provide the required explicit preview intent.
+On a qualifying Windows WSL N1x host, Windows Express uses managed llama.cpp after Docker Desktop GPU passthrough succeeds.
+Other Windows WSL hosts retain Windows-host or WSL-local Ollama.
 </Warning>
 
 ## Provider Support
@@ -65,21 +66,21 @@ Local providers run on the host and keep inference traffic on infrastructure tha
 | Provider | When it appears | Setup guide |
 |---|---|---|
 | Local Ollama | Ollama is installed or running on the host. | [Use Ollama](../local-inference/set-up-ollama) |
-| Local vLLM already running | On hosts other than N1x, NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local vLLM already running | On hosts other than native N1x FASTOS, NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local vLLM managed install | The host matches a supported GPU profile and any required opt-in is present. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local llama.cpp already running | You explicitly select an authenticated server on loopback port `8081`. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
-| Local llama.cpp managed install | A qualified DGX Spark host satisfies the declarative recipe requirements. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
-| Local NVIDIA NIM | Unavailable on N1x. On other hosts, a NIM-capable NVIDIA GPU must be present and experimental setup must be enabled. | [Set Up NVIDIA NIM](../local-inference/set-up-nvidia-nim) |
+| Local llama.cpp managed install | A qualified DGX Spark or Windows WSL N1x host satisfies the declarative recipe requirements. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
+| Local NVIDIA NIM | Unavailable on native N1x FASTOS. On other hosts, a NIM-capable NVIDIA GPU must be present and experimental setup must be enabled. | [Set Up NVIDIA NIM](../local-inference/set-up-nvidia-nim) |
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
 | Provider | When it appears | Setup guide |
 |---|---|---|
-| Local vLLM already running | On hosts other than N1x, NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local vLLM already running | On hosts other than native N1x FASTOS, NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local vLLM managed install | The host matches a supported GPU profile and any required opt-in is present. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local llama.cpp already running | You explicitly select an authenticated server on loopback port `8081`. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
-| Local llama.cpp managed install | A qualified DGX Spark host satisfies the declarative recipe requirements. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
-| Local NVIDIA NIM | Unavailable on N1x. On other hosts, a NIM-capable NVIDIA GPU must be present and experimental setup must be enabled. | [Set Up NVIDIA NIM](../local-inference/set-up-nvidia-nim) |
+| Local llama.cpp managed install | A qualified DGX Spark or Windows WSL N1x host satisfies the declarative recipe requirements. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
+| Local NVIDIA NIM | Unavailable on native N1x FASTOS. On other hosts, a NIM-capable NVIDIA GPU must be present and experimental setup must be enabled. | [Set Up NVIDIA NIM](../local-inference/set-up-nvidia-nim) |
 </AgentOnly>
 
 ## Compatible Endpoints
