@@ -42,7 +42,16 @@ import type {
   ManagedHermesStateVolumeCleanupResult,
   ManagedHermesStateVolumeContext,
 } from "../managed-workload/hermes-state-volume";
-import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
+import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
+import {
+  createOnboardRecreateGatewayAuthorityRevalidator,
+  type OwnedSandboxRecreateRuntime,
+} from "../onboard-recreate-journal";
+import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import {
+  managedStartupStateRoots,
+  MANAGED_HERMES_STATE_ROOT,
+} from "../managed-startup/state-roots";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
 import type {
@@ -258,6 +267,7 @@ export function selectRebuildCreatePolicy(
     return source;
   });
   return materializeRebuildPolicyHandoff({
+    sandboxName,
     livePolicyPath: policySourcePath,
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
@@ -1205,6 +1215,35 @@ function readHermesPortableLifecycleGeneration(input: {
     : undefined;
 }
 
+function selectRecreateGatewayAuthority(
+  requested: boolean,
+  target: { sandboxName: string; gatewayName: string; gatewayPort: number },
+) {
+  return requested ? createOnboardRecreateGatewayAuthorityRevalidator(target) : undefined;
+}
+
+function deleteJournaledRecreateSource(input: {
+  readonly runtime: Pick<
+    import("../sandbox-recreate-transaction").SandboxRecreateRuntime,
+    "beginDelete" | "journaledGatewayName"
+  >;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+}): void {
+  if (input.runtime.beginDelete() !== "source") return;
+  input.runOpenshell(
+    [
+      "sandbox",
+      "delete",
+      "-g",
+      input.runtime.journaledGatewayName ?? input.gatewayName,
+      input.sandboxName,
+    ],
+    { ignoreError: true },
+  );
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
@@ -1530,15 +1569,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             managedWorkloadRuntime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
           );
-    const prepareHermesStateVolumeLifecycle = (
+    const prepareManagedStateVolumeLifecycle = (
       workload: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-    ) =>
-      managedWorkloadOnboard.createManagedHermesStateVolumeOnboardLifecycle({
-        agentName: requestedAgentName,
+    ) => {
+      const managedStateRoots =
+        workload.source.kind === "managed-image"
+          ? managedStartupStateRoots({
+              agent: workload.source.contract.agent,
+              sandboxName,
+              agentIdentity: managedImageRuntimeIdentity(workload.source.contract.agent),
+            })
+          : [];
+      return managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle({
+        roots: managedStateRoots,
         runtimeProvider: managedWorkloadRuntime.runtimeProvider,
-        sandboxName,
-        workloadKind: workload.source.kind,
       });
+    };
     const finalizeRecreatedSourceHermesVolume = (
       sourceConfirmedAbsent: boolean,
       sourceEntry: SandboxEntry | null,
@@ -1553,7 +1599,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         {
           normalizeRuntimeProviderIdentity: managedWorkloadOnboard.normalizeRuntimeProviderIdentity,
-          removeManagedHermesStateVolume: managedWorkloadOnboard.removeManagedHermesStateVolume,
+          removeManagedHermesStateVolume: (context) =>
+            removeManagedHermesStateVolume(context, {
+              runtimeProvider: managedWorkloadRuntime.runtimeProvider ?? undefined,
+            }),
           removeSourceRegistryEntry: sandboxLifecycle.removeSandboxUnlessSessionReservation,
           note,
           warn: (message) => console.warn(message),
@@ -1594,6 +1643,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       existingEntry,
       readRegistry: registry.getSandbox,
     });
+    const recreateGatewayAuthority = selectRecreateGatewayAuthority(
+      Boolean(createIntent?.recreateTransaction),
+      { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+    );
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
       | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
@@ -1604,6 +1657,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       recreateRegistryEntry,
       getSandboxRecreateObservation,
       note,
+      () => registry.getSandbox(sandboxName),
+      recreateGatewayAuthority?.revalidate,
     );
     const acceptedTargetPendingIdentity = readAcceptedPendingVerifiedCreate({
       acceptedTarget: recreateRuntime.acceptedTarget,
@@ -1673,7 +1728,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     let pendingStateRestoreBackupPath: string | null = null,
       preparedSandboxWorkload!: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-      hermesStateVolumeLifecycle!: ReturnType<typeof prepareHermesStateVolumeLifecycle>;
+      managedStateVolumeLifecycle!: ReturnType<typeof prepareManagedStateVolumeLifecycle>;
     if (!liveExists && existingEntry)
       ({ runtime: recreateRuntime, backupPath: pendingStateRestoreBackupPath } =
         recreateProtection.selectJournalBoundPreUpgradeBackup({
@@ -1963,7 +2018,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
       revalidateSandboxIdentity(true, `recreating sandbox '${sandboxName}'`);
@@ -1976,16 +2031,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           redact,
         });
         revalidateSandboxIdentity(true, `deleting sandbox '${sandboxName}'`);
-        runOpenshell(
-          [
-            "sandbox",
-            "delete",
-            "-g",
-            recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
-            sandboxName,
-          ],
-          { ignoreError: true },
-        );
+        deleteJournaledRecreateSource({
+          runtime: recreateRuntime,
+          sandboxName,
+          gatewayName: GATEWAY_NAME,
+          runOpenshell,
+        });
         if (
           !waitForSandboxRecreateDeleteAbsence(
             sandboxName,
@@ -1998,7 +2049,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
-      finalizeRecreatedSourceHermesVolume(true, previousEntry, hermesStateVolumeLifecycle !== null);
+      finalizeRecreatedSourceHermesVolume(
+        true,
+        previousEntry,
+        managedStateVolumeLifecycle.roots.some(
+          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
+        ),
+      );
       await hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(
         hermesApiPortReservationInput,
       );
@@ -2006,17 +2063,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     if (resumingVerifiedCreate) {
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
     } else if (!liveExists || agentCreateInput.hermesPortableLifecycle) {
       if (!agentCreateInput.hermesPortableLifecycle) {
         await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       }
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       finalizeRecreatedSourceHermesVolume(
         !liveExists,
         existingEntry,
-        hermesStateVolumeLifecycle !== null,
+        managedStateVolumeLifecycle.roots.some(
+          (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
+        ),
       );
     }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
@@ -2177,12 +2236,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             dependencies: {
               materializeSandboxCreatePlan: (input) =>
-                hermesStateVolumeLifecycle
-                  ? hermesStateVolumeLifecycle.materializeSandboxCreatePlan(
-                      input,
-                      sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
-                    )
-                  : sandboxCreatePlanMaterialization.materializeSandboxCreatePlan(input),
+                managedStateVolumeLifecycle.materializeSandboxCreatePlan(
+                  input,
+                  sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
+                ),
               prepareSandboxBuildPatchConfig:
                 sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig,
             },
@@ -2264,6 +2321,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
       runtime: managedWorkloadRuntime,
       workload: preparedSandboxWorkload,
+      sandboxName,
       stateRoot: getDockerDriverGatewayStateDir(),
       bootstrapIdentity: managedBootstrapIdentity,
       request: managedStartupRootApplyRequest,
@@ -2899,7 +2957,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     }
     return runWithPostCreateRecovery(
       () => {
-        hermesStateVolumeLifecycle?.commit();
+        managedStateVolumeLifecycle.commit();
         if ("complete" in recreateRuntime) recreateRuntime.complete();
         if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
         return completeOrdinaryOnboardSandboxCreation(

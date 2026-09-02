@@ -11,6 +11,12 @@ import {
   createShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
+import {
+  createHermesShieldsProviderConsumerHarness,
+  createTransitionFailureForPosture,
+  hermesProviderConsumerSandbox as hermesSandbox,
+  hermesProviderConsumerTarget as hermesTarget,
+} from "../../../test/helpers/hermes-shields-provider-consumer-harness";
 
 const requireSource = createRequire(import.meta.url);
 const SHIELDS_MODULE = "./index.js";
@@ -30,40 +36,35 @@ function sandboxCommandFailure(
 }
 const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 
-function mockLivePolicy(sandboxName: string): void {
+function mockLivePolicy(sandboxName: string): MockInstance {
   const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
-  const policyState = requireSource(
-    "../adapters/openshell/policy-state.js",
-  ) as typeof import("../adapters/openshell/policy-state.js");
   const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: sandboxName,
     openshellDriver: "docker",
   });
   vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-  vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue({
-    policySource: "sandbox",
-    effectivePolicy: { version: 1, network_policies: {} },
-    policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
-  });
   const receipt = {
     gatewayName: "nemoclaw",
+    basePolicyDocument: "version: 1\nnetwork_policies: {}\n",
     inspection: {
       policySource: "sandbox" as const,
       effectivePolicy: { version: 1, network_policies: {} },
       policyIdentity: { hash: "sha256:managed", activeVersion: 1 },
     },
   };
-  vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(receipt);
-  vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(receipt);
+  const policyContextSpy = vi
+    .spyOn(policy, "inspectPolicyMutationContext")
+    .mockReturnValue(receipt);
   vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(receipt);
   vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
+  return policyContextSpy;
 }
 
 describe("shields policy transition", () => {
   let homeDir: string;
+  let policyContextSpy: MockInstance;
   let runSpy: MockInstance;
-  let runCaptureSpy: MockInstance;
   let shields: typeof import("./index.js");
 
   beforeEach(() => {
@@ -78,9 +79,6 @@ describe("shields policy transition", () => {
     const dockerExec = requireSource("../adapters/docker/exec.js");
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
-    runCaptureSpy = vi.spyOn(runner, "runCapture").mockImplementation(() => {
-      throw new Error("policy get failed with status 42");
-    });
     vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
       agentName: "langchain-deepagents-code",
       configDir: "/sandbox/.deepagents",
@@ -97,11 +95,9 @@ describe("shields policy transition", () => {
       },
       stateLockPlanInImage: false,
     });
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
-    );
+    vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockReturnValue(Buffer.alloc(0));
     vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
-    mockLivePolicy("openclaw");
+    policyContextSpy = mockLivePolicy("openclaw");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -116,6 +112,9 @@ describe("shields policy transition", () => {
   });
 
   it("never relaxes policy or persists mutable state when the base-policy read fails", () => {
+    policyContextSpy.mockImplementation(() => {
+      throw new Error("policy get failed with status 42");
+    });
     expect(() => shields.shieldsDown("openclaw", { throwOnError: true })).toThrow(
       "Cannot capture current policy",
     );
@@ -126,22 +125,84 @@ describe("shields policy transition", () => {
       [],
     );
   });
+});
 
-  it.each([
-    ["message", "message: gateway unavailable"],
-    ["details", "details: grpc unavailable"],
-    ["arbitrary diagnostic", "reason: gateway unavailable\nretryable: true"],
-  ])("never relaxes policy or persists mutable state for exit-zero %s output", (_name, output) => {
-    runCaptureSpy.mockReturnValue(output);
+describe("Hermes provider locked status", () => {
+  let harness: ReturnType<typeof createHermesShieldsProviderConsumerHarness>;
+  let shields: typeof import("./index");
+  let spies: MockInstance[];
+  let transitionSpy: MockInstance;
+  let verifyLockedStateDirPostureSpy: MockInstance;
 
-    expect(() => shields.shieldsDown("openclaw", { throwOnError: true })).toThrow(
-      "Cannot capture current policy",
+  beforeEach(() => {
+    harness = createHermesShieldsProviderConsumerHarness(requireSource);
+    ({ shields, spies, transitionSpy, verifyLockedStateDirPostureSpy } = harness);
+  });
+
+  afterEach(() => harness.cleanup());
+
+  it("does not report clean UP when provider verification finds nested skills or pairing drift", () => {
+    const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
+    const stateDir = statePaths.resolveNemoclawStateDir();
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${hermesSandbox.name}.json`),
+      JSON.stringify({
+        shieldsDown: false,
+        chattrApplied: true,
+        fileHashes: { [hermesTarget.configPath]: "c".repeat(64) },
+        updatedAt: new Date().toISOString(),
+      }),
     );
-    expect(runSpy).not.toHaveBeenCalled();
+    verifyLockedStateDirPostureSpy.mockReturnValue([
+      "recursive state lock plan drift under skills/pairing",
+    ]);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as never);
+    spies.push(exitSpy);
 
-    const stateFiles = fs.readdirSync(path.join(homeDir, ".nemoclaw", "state"));
-    expect(stateFiles.filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name))).toEqual(
-      [],
+    expect(() => shields.shieldsStatus(hermesSandbox.name)).toThrow("process exit 2");
+
+    const errors = vi.mocked(console.error).mock.calls.flat().map(String).join("\n");
+    const logs = vi.mocked(console.log).mock.calls.flat().map(String).join("\n");
+    expect(errors).toContain("recursive state lock plan drift under skills/pairing");
+    expect(errors).toContain("UP (DRIFTED");
+    expect(logs).not.toContain("UP (lockdown active)");
+    expect(transitionSpy).not.toHaveBeenCalled();
+    expect(verifyLockedStateDirPostureSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      hermesTarget.configDir,
+      expect.objectContaining({
+        readOnlyRoots: expect.arrayContaining(["skills"]),
+        confidentialRoots: expect.arrayContaining(["pairing"]),
+      }),
+    );
+
+    transitionSpy.mockClear();
+    transitionSpy.mockImplementation(
+      createTransitionFailureForPosture(
+        "locked",
+        "recursive state lock plan drift under skills/pairing",
+      ),
+    );
+    vi.mocked(console.log).mockClear();
+    expect(() => shields.shieldsUp(hermesSandbox.name, { throwOnError: true })).toThrow(
+      "recursive state lock plan drift under skills/pairing",
+    );
+    expect(vi.mocked(console.log).mock.calls.flat().map(String).join("\n")).not.toContain(
+      "already locked",
+    );
+    expect(transitionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ target: "locked", rollback: "locked" }),
+    );
+
+    transitionSpy.mockClear();
+    expect(() => shields.lockAgentConfig(hermesSandbox.name, hermesTarget, true, false)).toThrow(
+      "recursive state lock plan drift under skills/pairing",
+    );
+    expect(transitionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ target: "locked", rollback: "locked" }),
     );
   });
 });
@@ -162,9 +223,14 @@ describe("shields down policy rejection", () => {
 
   function createRejectedPolicyHarness() {
     return createShieldsFlowHarness(requireSource, tmpDir, {
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
   }
 
@@ -263,9 +329,11 @@ describe("shields down policy rejection", () => {
     expect(policyCommands.length).toBeGreaterThan(0);
     expect(policyCommands.every((command) => command.includes(gatewayName))).toBe(true);
     expect(harness.policyVerificationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: expect.objectContaining({ kind: "applied" }) }),
       "openclaw",
       expect.stringContaining("network_policies"),
       expect.objectContaining({ gatewayName }),
+      "apply the Shields down policy",
     );
   });
 
@@ -277,7 +345,7 @@ describe("shields down policy rejection", () => {
         reason: "verify",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
     expect(harness.isShieldsDown("openclaw")).toBe(false);
 
     const state = JSON.parse(
@@ -310,16 +378,21 @@ describe("shields down policy rejection", () => {
         send: vi.fn(() => true),
         kill: timerKill,
       }),
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
     expect(() =>
       harness.shieldsDown("openclaw", {
         reason: "verify recovery authority",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
 
     expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
       shieldsDown: true,
@@ -384,9 +457,14 @@ describe("shields down policy rejection", () => {
         send: vi.fn(() => true),
         kill: vi.fn(() => true),
       }),
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (cmd) =>
+        Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set")
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Failed precondition', message: 'policy rejected', source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+            }
+          : { status: 0 },
     });
 
     expect(() =>
@@ -394,7 +472,7 @@ describe("shields down policy rejection", () => {
         reason: "verify incomplete rejection",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(/OpenShell rejected/);
 
     const transitionName = fs
       .readdirSync(stateDir)
@@ -687,39 +765,40 @@ describe("shields config lock without a shipped config hash", () => {
     resolveAgentConfigSpy = vi
       .spyOn(agentConfig, "resolveAgentConfig")
       .mockImplementation(() => target());
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
+    vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockImplementation(
+      (_sandboxName: unknown, cmd: unknown) => Buffer.from(runSandboxCommand(cmd as string[])),
     );
     vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd: unknown) =>
       runSandboxCommand(cmd as string[]),
     );
-    vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((rawCommand: unknown) => {
-      const command = Array.isArray(rawCommand) ? rawCommand.map(String) : [];
-      const action = (["preflight", "lock", "unlock"] as const).find((candidate) =>
-        command.includes(candidate),
-      );
-      const handler =
-        stateDirGuardCommandHandlers.get(String(action ?? command[0])) ??
-        (() => unsupportedCommand(command));
-      handler();
+    vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand").mockImplementation(
+      (_sandboxName: unknown, rawCommand: unknown) => {
+        const command = Array.isArray(rawCommand) ? rawCommand.map(String) : [];
+        const action = (["preflight", "lock", "unlock"] as const).find((candidate) =>
+          command.includes(candidate),
+        );
+        const handler =
+          stateDirGuardCommandHandlers.get(String(action ?? command[0])) ??
+          (() => unsupportedCommand(command));
+        handler();
 
-      return {
-        status: 0,
-        signal: null,
-        stdout:
-          action === undefined
-            ? ""
-            : `${JSON.stringify({
-                type: "result",
-                action,
-                status: "ok",
-                issueCount: 0,
-              })}\n`,
-        stderr: "",
-        pid: 0,
-        output: [],
-      } as never;
-    });
+        return {
+          status: 0,
+          signal: null,
+          stdout: Buffer.from(
+            action === undefined
+              ? ""
+              : `${JSON.stringify({
+                  type: "result",
+                  action,
+                  status: "ok",
+                  issueCount: 0,
+                })}\n`,
+          ),
+          stderr: Buffer.alloc(0),
+        } as never;
+      },
+    );
     vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
     restoreStateDirLockPostureSpy = vi.spyOn(stateDirLock, "restoreStateDirLockPosture");
@@ -1028,7 +1107,23 @@ describe("shields-down rollback flow", () => {
     ).toThrow("Cannot revoke stale auto-restore timer authority for openclaw");
 
     expect(harness.getOpenClawPosture()).toBe("locked");
-    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runCaptureSpy).toHaveBeenCalledTimes(2);
+    expect(harness.runCaptureSpy).toHaveBeenNthCalledWith(1, [
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--base",
+      "openclaw",
+    ]);
+    expect(harness.runCaptureSpy).toHaveBeenNthCalledWith(2, [
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--base",
+      "openclaw",
+    ]);
     expect(harness.runSpy).not.toHaveBeenCalled();
     expect(harness.auditSpy).not.toHaveBeenCalled();
     expect(fork).not.toHaveBeenCalled();

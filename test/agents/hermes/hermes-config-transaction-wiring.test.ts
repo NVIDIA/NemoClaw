@@ -48,17 +48,12 @@ installMock(source("adapters", "openshell", "client.js"), {
   runOpenshellCommand: () => ({ status: 0 }),
 });
 installMock(source("sandbox", "privileged-exec.js"), {
-  privilegedSandboxExecArgv: (sandboxName, command, stdin, sanitizeEnvironment) => {
-    capturedPrivilegedExec = { command, sanitizeEnvironment };
-    return ["docker", "exec", ...(stdin ? ["-i"] : []), sandboxName, ...command];
+  capturePrivilegedSandboxCommand: (sandboxName, command, options) => {
+    capturedPrivilegedExec = { command, sanitizeEnvironment: options.sanitizeEnvironment };
+    captured = { argv: command, options };
+    return Buffer.from("updated=1\n");
   },
   withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),
-});
-installMock(source("adapters", "docker", "exec.js"), {
-  dockerExecFileSync: (argv, options) => {
-    captured = { argv, options };
-    return "updated=1\n";
-  },
 });
 
 const config = require(source("sandbox", "config.js"));
@@ -79,13 +74,12 @@ process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivi
     expect(result.status, result.stderr).toBe(0);
     const captured = JSON.parse(result.stdout) as {
       argv: string[];
-      options: { input: string; timeout: number; stdio: string[] };
+      options: { input: string; timeout: number; sanitizeEnvironment: boolean };
       privilegedExec: { command: string[]; sanitizeEnvironment: boolean };
     };
     const digestFlag = captured.argv.indexOf("--expected-config-sha256");
     expect(captured.argv).toEqual(
       expect.arrayContaining([
-        "-i",
         "timeout",
         "--signal=TERM",
         "--kill-after=5s",
@@ -106,7 +100,7 @@ process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivi
     expect(captured.argv[digestFlag + 1]).toBe(expectedDigest);
     expect(captured.options.input).toContain("default: trusted-model-v2");
     expect(captured.options.timeout).toBe(150000);
-    expect(captured.options.stdio).toEqual(["pipe", "pipe", "pipe"]);
+    expect(captured.options.sanitizeEnvironment).toBe(true);
     expect(captured.privilegedExec.sanitizeEnvironment).toBe(true);
     expect(captured.privilegedExec.command).toEqual(
       expect.arrayContaining([

@@ -69,11 +69,13 @@ function denialResult(
   };
 }
 
-async function captureRestoreScript(hostBackupPath: string, sandboxBackupPath: string) {
+async function captureRestoreCommand(hostBackupPath: string, sandboxBackupPath: string) {
+  let restoreArgs: string[] = [];
   let restoreScript = "";
   const host = {
     command: async (_command: string, args: string[]) => {
       restoreScript = args[1] ?? "";
+      restoreArgs = args.slice(2);
       return denialResult();
     },
   } as unknown as HostCliClient;
@@ -83,7 +85,7 @@ async function captureRestoreScript(hostBackupPath: string, sandboxBackupPath: s
     hostBackupPath,
     sandboxBackupPath,
   });
-  return restoreScript;
+  return { restoreArgs, restoreScript };
 }
 
 describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
@@ -92,7 +94,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     const host = {
       command: async (_command: string, args: string[]) => {
         probeScript = args[1] ?? "";
-        return { ...denialResult(), stdout: "10.20.30.40\n" };
+        return { ...denialResult(), stdout: "route 10.20.30.40\n" };
       },
     } as unknown as HostCliClient;
 
@@ -386,7 +388,10 @@ network_policies:
   });
 
   it("restores host DNS strictly while treating the ephemeral sandbox as best effort", async () => {
-    const restoreScript = await captureRestoreScript("/tmp/host-backup", "/tmp/sandbox-backup");
+    const { restoreScript } = await captureRestoreCommand(
+      "/tmp/host-backup",
+      "/tmp/sandbox-backup",
+    );
 
     expect(restoreScript).toContain("set -uo pipefail");
     expect(restoreScript).not.toContain("set -euo pipefail");
@@ -395,7 +400,10 @@ network_policies:
     expect(restoreScript).toContain("host_restore_failed=1");
     expect(restoreScript).toContain('if [ "$host_restore_failed" -ne 0 ]; then exit 1; fi');
     expect(restoreScript).toContain("for attempt in 1 2 3; do");
-    expect(restoreScript).toContain('docker exec --user 0 -i "$container_id"');
+    expect(restoreScript).toContain('runtime_command=("$@")');
+    expect(restoreScript).toContain(
+      '"${runtime_command[@]}" container exec --user 0 --interactive "$container_id"',
+    );
     expect(restoreScript).toContain(
       "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox",
     );
@@ -418,16 +426,20 @@ network_policies:
       '#!/bin/sh\n[ "${FAKE_SUDO_STATUS:-0}" -eq 0 ] || exit "$FAKE_SUDO_STATUS"\ncat > "$FAKE_HOSTS_PATH"\n',
     );
     writeExecutable("cmp", '#!/bin/sh\nexit "${FAKE_CMP_STATUS:-0}"\n');
-    writeExecutable(
-      "docker",
-      '#!/bin/sh\nif [ "$1" = ps ]; then echo fake-container; exit 0; fi\nif [ "$1" = exec ]; then cat >/dev/null; exit "${FAKE_DOCKER_EXEC_STATUS:-0}"; fi\nexit 64\n',
-    );
     writeExecutable("sleep", "#!/bin/sh\nexit 0\n");
 
     try {
-      const restoreScript = await captureRestoreScript(hostBackupPath, sandboxBackupPath);
+      const { restoreArgs, restoreScript } = await captureRestoreCommand(
+        hostBackupPath,
+        sandboxBackupPath,
+      );
+      const runtimeCommand = restoreArgs[1] ?? "missing-runtime-command";
+      writeExecutable(
+        runtimeCommand,
+        '#!/bin/sh\nif [ "$1" = container ] && [ "$2" = ps ]; then echo fake-container; exit 0; fi\nif [ "$1" = container ] && [ "$2" = exec ]; then cat >/dev/null; exit "${FAKE_RUNTIME_EXEC_STATUS:-0}"; fi\nexit 64\n',
+      );
       const runRestore = (extraEnv: Record<string, string> = {}) =>
-        spawnSync("/bin/bash", ["-c", restoreScript], {
+        spawnSync("/bin/bash", ["-c", restoreScript, ...restoreArgs], {
           encoding: "utf8",
           env: {
             ...process.env,
@@ -458,7 +470,7 @@ network_policies:
       expect(fs.existsSync(sandboxBackupPath)).toBe(true);
 
       resetBackups();
-      const sandboxFailure = runRestore({ FAKE_DOCKER_EXEC_STATUS: "1" });
+      const sandboxFailure = runRestore({ FAKE_RUNTIME_EXEC_STATUS: "1" });
       expect(sandboxFailure.status, sandboxFailure.stderr).toBe(0);
       expect(sandboxFailure.stderr).toContain(
         "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox",

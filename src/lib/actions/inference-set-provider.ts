@@ -14,6 +14,7 @@ import {
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
   requireRuntimeProviderBundleForSandbox,
@@ -106,9 +107,10 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
 export function requireInferenceSetRuntimeAuthority(
   entry: SandboxEntry,
   providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
-): void {
+): RuntimeProviderBundle {
   const runtimeProvider = requireRuntimeProviderBundleForSandbox(entry, providers);
   requireRuntimeProviderMutationAuthority(runtimeProvider, "inference-set");
+  return runtimeProvider;
 }
 
 export function assertInferenceSetCommandAvailable(sandboxName: string): void {

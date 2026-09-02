@@ -196,7 +196,24 @@ function withMockedDockerExecFileSync<T>(
     filename: privilegedExecPath,
     loaded: true,
     exports: {
-      privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
+      capturePrivilegedSandboxCommand: (_sandboxName: string, cmd: readonly string[]) =>
+        Buffer.from(dockerExecModule.dockerExecFileSync([...cmd])),
+      executePrivilegedSandboxCommand: (_sandboxName: string, cmd: readonly string[]) => {
+        const result = dockerExecModule.dockerSpawnSync([...cmd]) as {
+          status: number | null;
+          signal: NodeJS.Signals | null;
+          stdout: string;
+          stderr: string;
+          error?: Error;
+        };
+        return {
+          status: result.status,
+          signal: result.signal,
+          stdout: Buffer.from(result.stdout),
+          stderr: Buffer.from(result.stderr),
+          ...(result.error ? { error: result.error } : {}),
+        };
+      },
       withPrivilegedSandboxExecutionLease: <T>(
         _sandboxName: string,
         _operation: string,
@@ -628,9 +645,7 @@ describe("mutable agent config permissions", () => {
     ).toBe(false);
   });
 
-  it.each(
-    ["run-state-dir-transition", "apply-shields-transition", "finish-shields-transition"],
-  )(
+  it.each(["run-state-dir-transition", "apply-shields-transition", "finish-shields-transition"])(
     "shields-down restores Hermes sticky group-writable config root without group-writable config files [%s]",
     (action) => {
       const commands: string[][] = [];
@@ -844,8 +859,20 @@ Module._load = function patchedLoad(request, parent, isMain) {
   }
   if (request === "../sandbox/privileged-exec") {
     return {
-      privilegedSandboxExecArgv(_sandboxName, cmd) {
-        return [...cmd];
+      capturePrivilegedSandboxCommand(_sandboxName, cmd) {
+        const docker = Module._load("../adapters/docker/exec", parent, isMain);
+        return Buffer.from(docker.dockerExecFileSync([...cmd]));
+      },
+      executePrivilegedSandboxCommand(_sandboxName, cmd) {
+        const docker = Module._load("../adapters/docker/exec", parent, isMain);
+        const result = docker.dockerSpawnSync([...cmd]);
+        return {
+          status: result.status,
+          signal: result.signal,
+          stdout: Buffer.from(result.stdout || ""),
+          stderr: Buffer.from(result.stderr || ""),
+          ...(result.error ? { error: result.error } : {}),
+        };
       },
       withPrivilegedSandboxExecutionLease(_sandboxName, _operation, fn) {
         return fn();
