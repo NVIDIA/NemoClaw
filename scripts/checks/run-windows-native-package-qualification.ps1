@@ -77,10 +77,14 @@ function Invoke-BoundedProcess {
         [Parameter(Mandatory)][string]$FilePath,
         [Parameter(Mandatory)][string[]]$Arguments,
         [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][int[]]$AllowedExitCodes
+        [Parameter(Mandatory)][int[]]$AllowedExitCodes,
+        [switch]$SuppressProofOutput
     )
 
     $argumentList = @($Arguments | ForEach-Object { ConvertTo-NativeArgument -Value $_ })
+    if (-not $SuppressProofOutput) {
+        Write-Host "PS> $Label :: $(Split-Path -Leaf $FilePath) $($argumentList -join ' ')"
+    }
     $process = Start-Process -FilePath $FilePath -ArgumentList $argumentList -PassThru -ErrorAction Stop
     try {
         if (-not $process.WaitForExit($script:OperationTimeoutMilliseconds)) {
@@ -95,6 +99,9 @@ function Invoke-BoundedProcess {
     if ($AllowedExitCodes -cnotcontains $exitCode) {
         Fail-PackageQualification "$Label failed with exit code $exitCode."
     }
+    if (-not $SuppressProofOutput) {
+        Write-Host "[PASS] $Label exit=$exitCode"
+    }
     return $exitCode
 }
 
@@ -105,6 +112,7 @@ function Invoke-NativeVersionProbe {
     )
 
     Assert-Arm64PortableExecutable -Path $Path -Label $Label
+    Write-Host "PS> $Label :: $(Split-Path -Leaf $Path) --version"
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $Path
     $startInfo.Arguments = '--version'
@@ -138,6 +146,8 @@ function Invoke-NativeVersionProbe {
     if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($output) -or $output.Length -gt 4096) {
         Fail-PackageQualification "$Label did not complete a bounded native version probe."
     }
+    Write-Host "OUTPUT> $($output -replace '[\r\n]+', ' | ')"
+    Write-Host "[PASS] $Label exit=$exitCode"
     return [pscustomobject]@{
         file = Split-Path -Leaf $Path
         exitCode = $exitCode
@@ -355,6 +365,9 @@ $preExecution = Get-ProhibitedProcessSnapshot -Phase 'pre-execution'
 $processAudit = Start-ProhibitedProcessAudit
 $processAuditStopped = $false
 
+Write-Host "HOST> NemoClaw native Windows ARM64 package qualification"
+Write-Host "HOST> os=$([Environment]::OSVersion.Version) architecture=$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) product=$ProductVersion"
+
 try {
     Invoke-BoundedProcess `
         -FilePath $setup `
@@ -371,6 +384,7 @@ try {
         (Get-FileHash -LiteralPath $gatewayPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['openshell-gateway.exe']) {
         Fail-PackageQualification 'Installed payload digests do not match the package manifest.'
     }
+    Write-Host '[PASS] Setup installed the exact MSI-owned four-file tree'
     $nativeEvidence = @(
         Invoke-NativeVersionProbe -Path $openshellPath -Label 'Installed openshell.exe'
         Invoke-NativeVersionProbe -Path $gatewayPath -Label 'Installed openshell-gateway.exe'
@@ -386,6 +400,8 @@ try {
     if (-not (Test-MachinePathContains -ExpectedPath $installBin)) {
         Fail-PackageQualification 'Machine PATH does not contain the installed bin directory exactly once.'
     }
+    Write-Host "[PASS] Add/Remove Programs registered MSI=$($msiArp[0].displayVersion) bundle=$($bundleArp[0].displayVersion)"
+    Write-Host '[PASS] Machine PATH contains the installed bin directory exactly once'
 
     [IO.File]::AppendAllText($openshellPath, 'msi-repair-drift', [Text.UTF8Encoding]::new($false))
     Invoke-BoundedProcess `
@@ -397,6 +413,7 @@ try {
         Fail-PackageQualification 'MSI repair did not restore the corrupted OpenShell CLI.'
     }
     Assert-InstalledTree -Root $installRoot -Phase 'MSI repair'
+    Write-Host '[PASS] MSI repair restored the deliberately corrupted openshell.exe digest'
 
     Invoke-BoundedProcess `
         -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
@@ -407,6 +424,7 @@ try {
         Fail-PackageQualification 'MSI reinstall did not preserve one product registration.'
     }
     Assert-InstalledTree -Root $installRoot -Phase 'MSI reinstall'
+    Write-Host '[PASS] MSI reinstall preserved exactly one product registration'
 
     Invoke-BoundedProcess `
         -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
@@ -429,6 +447,7 @@ try {
     if (Test-MachinePathContains -ExpectedPath $installBin) {
         Fail-PackageQualification 'Machine PATH still contains the removed bin directory.'
     }
+    Write-Host '[PASS] Windows Installer uninstall removed files, registrations, and PATH'
 
     $auditResult = Stop-ProhibitedProcessAudit -SourceIdentifier $processAudit -RootProcessId $PID
     $processAuditStopped = $true
@@ -460,6 +479,7 @@ try {
     if ($newPackageDescendantProhibitedProcesses.Count -ne 0) {
         Fail-PackageQualification 'A new prohibited package descendant remains after qualification.'
     }
+    Write-Host "[PASS] Zero prohibited package descendants; runner-wide prohibited starts recorded=$($prohibitedStarts.Count)"
 
     foreach ($logPath in @($bundleInstallLog, $msiRepairLog, $msiReinstallLog, $msiUninstallLog, $bundleUninstallLog)) {
         if (-not (Test-Path -LiteralPath $logPath -PathType Leaf) -or (Get-Item -LiteralPath $logPath).Length -eq 0) {
@@ -503,6 +523,7 @@ try {
         (($receipt | ConvertTo-Json -Depth 12) + [Environment]::NewLine),
         [Text.UTF8Encoding]::new($false)
     )
+    Write-Host '[PASS] NATIVE WINDOWS PACKAGE QUALIFICATION COMPLETE'
     Write-Host "Windows native package qualification receipts: $artifactRoot"
 } finally {
     if (-not $processAuditStopped) {
@@ -518,7 +539,8 @@ try {
                 -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
                 -Arguments @('/x', $msi, '/qn', '/norestart') `
                 -Label 'Failure cleanup MSI uninstall' `
-                -AllowedExitCodes @(0, 1605, 3010) | Out-Null
+                -AllowedExitCodes @(0, 1605, 3010) `
+                -SuppressProofOutput | Out-Null
         } catch {
             Write-Warning "MSI failure cleanup did not complete: $($_.Exception.Message)"
         }
@@ -528,7 +550,8 @@ try {
             -FilePath $setup `
             -Arguments @('/uninstall', '/quiet', '/norestart') `
             -Label 'Failure cleanup bundle uninstall' `
-            -AllowedExitCodes @(0, 1605, 3010) | Out-Null
+            -AllowedExitCodes @(0, 1605, 3010) `
+            -SuppressProofOutput | Out-Null
     } catch {
         Write-Warning "Bundle failure cleanup did not complete: $($_.Exception.Message)"
     }

@@ -346,8 +346,11 @@ jobs:
           $version = '${{ steps.windows-package.outputs.product_version }}'
           $packageRoot = '${{ steps.windows-package.outputs.package_root }}'
           & "$candidate\scripts\checks\create-windows-native-proof-video.ps1" `
+            -CandidateCheckout $candidate `
             -ProductVersion $version `
             -CandidateSha $env:GITHUB_SHA `
+            -MsiPath "$packageRoot\NemoClaw-$version-windows-arm64.msi" `
+            -SetupPath "$packageRoot\NemoClawSetup-$version-windows-arm64.exe" `
             -PackageManifestPath "$packageRoot\package-manifest.json" `
             -QualificationReceiptPath "$packageRoot\qualification\package-qualification.json" `
             -HostReceiptPath "$packageRoot\reference-qualification\host-platform.json" `
