@@ -24,6 +24,7 @@ import {
   createProtectedManagedImageBootstrapInput,
   failureInjectingAdapter,
   MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
+  MANAGED_IMAGE_PROBE_FIXTURE_ROOT_ENV,
   type ManagedImageCommandResult,
   type ManagedImageCommandRunner,
   managedImageLocalInferenceBaseUrl,
@@ -881,14 +882,27 @@ describe("protected managed-image runtime contract", () => {
         sandbox: managedImageProtectedSandboxName(agent, "nim"),
       });
       expect(path.isAbsolute(managedImageOpenShellBasePolicyPath(agent))).toBe(true);
-      const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-probe-"));
+      const fixtureRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-managed-probe-$(printf injected)-"),
+      );
       try {
         materializeManagedProbeFixture(fixtureRoot);
-        const probe = managedImageOpenShellProbe(agent, LOCAL_MODEL, { rootPath: fixtureRoot });
-        const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
+        const probe = managedImageOpenShellProbe(agent, LOCAL_MODEL, { useFixtureRoot: true });
+        expect(probe).not.toContain(fixtureRoot);
+        const probeEnvironment = {
+          ...process.env,
+          [MANAGED_IMAGE_PROBE_FIXTURE_ROOT_ENV]: fixtureRoot,
+        };
+        const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], {
+          encoding: "utf8",
+          env: probeEnvironment,
+        });
         expect(syntax.status, syntax.stderr).toBe(0);
 
-        const verified = spawnSync("/bin/sh", ["-eu", "-c", probe], { encoding: "utf8" });
+        const verified = spawnSync("/bin/sh", ["-eu", "-c", probe], {
+          encoding: "utf8",
+          env: probeEnvironment,
+        });
         expect(verified.status, verified.stderr).toBe(0);
 
         fs.chmodSync(
@@ -897,6 +911,7 @@ describe("protected managed-image runtime contract", () => {
         );
         const mutableReceipt = spawnSync("/bin/sh", ["-eu", "-c", probe], {
           encoding: "utf8",
+          env: probeEnvironment,
         });
         expect(mutableReceipt.status).not.toBe(0);
         expect(mutableReceipt.stderr).toContain(
@@ -1045,10 +1060,20 @@ describe("protected managed-image runtime contract", () => {
       ]),
     ).toMatchObject({ failureInjection: "bootstrap-completion" });
 
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-committed-probe-"));
+    const fixtureRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-committed-probe-$(printf injected)-"),
+    );
     try {
-      const probe = managedImageOpenShellCommittedProbe({ rootPath: fixtureRoot });
-      const completed = spawnSync("/bin/sh", ["-eu", "-c", probe], { encoding: "utf8" });
+      const probe = managedImageOpenShellCommittedProbe({ useFixtureRoot: true });
+      expect(probe).not.toContain(fixtureRoot);
+      const probeEnvironment = {
+        ...process.env,
+        [MANAGED_IMAGE_PROBE_FIXTURE_ROOT_ENV]: fixtureRoot,
+      };
+      const completed = spawnSync("/bin/sh", ["-eu", "-c", probe], {
+        encoding: "utf8",
+        env: probeEnvironment,
+      });
       expect(completed.status, completed.stderr).toBe(0);
 
       const retainedTransaction = managedProbeFixturePath(
@@ -1056,7 +1081,10 @@ describe("protected managed-image runtime contract", () => {
         "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
       );
       fs.mkdirSync(retainedTransaction, { recursive: true });
-      const incomplete = spawnSync("/bin/sh", ["-eu", "-c", probe], { encoding: "utf8" });
+      const incomplete = spawnSync("/bin/sh", ["-eu", "-c", probe], {
+        encoding: "utf8",
+        env: probeEnvironment,
+      });
       expect(incomplete.status).not.toBe(0);
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });

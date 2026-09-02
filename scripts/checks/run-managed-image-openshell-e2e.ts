@@ -496,17 +496,23 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
   }
 }
 
+export const MANAGED_IMAGE_PROBE_FIXTURE_ROOT_ENV = "NEMOCLAW_MANAGED_PROBE_FIXTURE_ROOT";
+
+function managedImageProbePath(absolutePath: string, useFixtureRoot: boolean): string {
+  return useFixtureRoot
+    ? `"\${${MANAGED_IMAGE_PROBE_FIXTURE_ROOT_ENV}}${absolutePath}"`
+    : JSON.stringify(absolutePath);
+}
+
 export function managedImageOpenShellProbe(
   agent: ShippedManagedImageAgent,
   model: string = MODEL,
-  options: { readonly rootPath?: string } = {},
+  options: { readonly useFixtureRoot?: boolean } = {},
 ): string {
-  const rootPath = options.rootPath ? path.resolve(options.rootPath) : null;
-  const probePath = (absolutePath: string) =>
-    rootPath ? path.join(rootPath, absolutePath.replace(/^\/+/, "")) : absolutePath;
-  const quotePath = (absolutePath: string) => JSON.stringify(probePath(absolutePath));
-  const stat = rootPath ? quotePath("/usr/bin/stat") : "stat";
-  const openssl = rootPath ? quotePath("/usr/bin/openssl") : "openssl";
+  const useFixtureRoot = options.useFixtureRoot ?? false;
+  const quotePath = (absolutePath: string) => managedImageProbePath(absolutePath, useFixtureRoot);
+  const stat = useFixtureRoot ? quotePath("/usr/bin/stat") : "stat";
+  const openssl = useFixtureRoot ? quotePath("/usr/bin/openssl") : "openssl";
   const curl = quotePath("/usr/bin/curl");
   const healthProbe =
     agent === "openclaw"
@@ -609,18 +615,13 @@ export function managedImageOpenShellProbe(
 }
 
 export function managedImageOpenShellCommittedProbe(
-  options: { readonly rootPath?: string } = {},
+  options: { readonly useFixtureRoot?: boolean } = {},
 ): string {
-  const transactionPath = options.rootPath
-    ? path.join(
-        path.resolve(options.rootPath),
-        "var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
-      )
-    : "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1";
-  return [
-    "set -eu",
-    `test ! -e ${JSON.stringify(transactionPath)}`,
-  ].join("\n");
+  const transactionPath = managedImageProbePath(
+    "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
+    options.useFixtureRoot ?? false,
+  );
+  return ["set -eu", `test ! -e ${transactionPath}`].join("\n");
 }
 
 export type ManagedImageCommittedProbeWaitOptions = {
