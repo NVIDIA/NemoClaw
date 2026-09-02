@@ -330,7 +330,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(reference).toContain('E2E_GATEWAY_RUNTIMES="${E2E_GATEWAY_RUNTIMES:-docker}"');
     expect(gatewayRuntimeDispatches).toHaveLength(2);
     expect(trustedMainDispatches).toHaveLength(2);
-    expect(externalPrGuidance?.[0]).not.toContain("native-runtime-qualification-producer");
+    expect(externalPrGuidance?.[0]).toContain("it is not available for external PRs");
   });
 
   it("pins the trusted planner checkout to the workflow repository", () => {

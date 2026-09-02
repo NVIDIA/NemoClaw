@@ -543,6 +543,7 @@ COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/we
 COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
+COPY scripts/lib/reviewed-mcporter-package.mts /scripts/lib/reviewed-mcporter-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
@@ -883,12 +884,10 @@ RUN --network=default set -eu; \
     elif [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
         OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; \
     fi; \
-    MCPORTER_EXPECTED_INTEGRITY=""; \
-    MCPORTER_EXPECTED_TARBALL=""; \
-    if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; fi; \
-    if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
-    fi; \
+    MCPORTER_REVIEWED_PACKAGE="$(node --experimental-strip-types /scripts/lib/reviewed-mcporter-package.mts \
+        "$MCPORTER_VERSION" "$MCPORTER_0_7_3_INTEGRITY" "$MCPORTER_0_7_3_TARBALL")"; \
+    MCPORTER_EXPECTED_INTEGRITY="${MCPORTER_REVIEWED_PACKAGE%% *}"; \
+    MCPORTER_EXPECTED_TARBALL="${MCPORTER_REVIEWED_PACKAGE#* }"; \
     MCPORTER_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json | awk '{print $1}')"; \
     [ -n "$MCPORTER_LOCK_SHA256" ] \
         || { echo "ERROR: Could not hash the committed mcporter lockfile" >&2; exit 1; }; \

@@ -80,7 +80,7 @@ describe("manual PR E2E credential authorization", () => {
       workflowRef: "refs/heads/pr-controlled-workflow",
       checkoutShaMatches: true,
       workflowShaMatches: true,
-      expectedAllowed: true,
+      expectedAllowed: false,
     },
   ])(
     "sets E2E credential access to $expectedAllowed for $caseName (#9047)",

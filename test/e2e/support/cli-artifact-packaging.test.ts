@@ -75,23 +75,14 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({ nemoclawVersion: "0.0.0", sourceRevision: candidateSha })}\n`,
   );
-  fs.writeFileSync(
-    path.join(shared, "openshell-gateway-health-sdk.js"),
-    "module.exports = {};\n",
-  );
+  fs.writeFileSync(path.join(shared, "openshell-gateway-health-sdk.js"), "module.exports = {};\n");
   fs.writeFileSync(
     path.join(shared, "openshell-observation-boundary.cjs"),
     "module.exports = {};\n",
   );
-  fs.writeFileSync(
-    path.join(shared, "openshell-policy-boundary.cjs"),
-    "module.exports = {};\n",
-  );
+  fs.writeFileSync(path.join(shared, "openshell-policy-boundary.cjs"), "module.exports = {};\n");
   fs.writeFileSync(path.join(shared, "sandbox-name.cjs"), "module.exports = {};\n");
-  fs.writeFileSync(
-    path.join(shared, "snapshot-sanitizer-boundary.cjs"),
-    "module.exports = {};\n",
-  );
+  fs.writeFileSync(path.join(shared, "snapshot-sanitizer-boundary.cjs"), "module.exports = {};\n");
 
   const result = spawnSync("bash", [path.resolve(CLI_ARTIFACT_PACKAGE_SCRIPT)], {
     cwd: workspace,
@@ -112,7 +103,6 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   });
   return {
     artifactExists: fs.existsSync(path.join(runnerTemp, "nemoclaw-cli-artifact")),
-    artifactPayload: path.join(runnerTemp, "nemoclaw-cli-artifact", "nemoclaw-cli.tar"),
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
     output: `${result.stdout}${result.stderr}`,
     result,

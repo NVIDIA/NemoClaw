@@ -211,7 +211,7 @@ jobs:
               allow_non_head=0
               select_nearest_successful=0
               ;;
-            NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)
+            NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)
               [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
                 echo "::error::manual PR publication selection requires an exact base SHA" >&2
                 exit 1
@@ -815,7 +815,7 @@ jobs:
           if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
                 "$NVIDIA_OWNED" == "true" &&
                 "$EVENT_NAME" == "workflow_dispatch" &&
-                "$REF" == refs/heads/* &&
+                "$REF" == "refs/heads/main" &&
                 "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" &&

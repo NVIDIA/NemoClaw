@@ -352,7 +352,6 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
   const githubOutput = path.join(root, "github-output");
-  const githubEnv = path.join(root, "github-env");
   const identityResult = spawnSync(IDENTITY_SCRIPT, [], {
     cwd: workspace,
     encoding: "utf8",
@@ -395,7 +394,6 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
         ARTIFACT_NAME: identityOutputs.artifact_name,
         CANDIDATE_REPOSITORY: identityOutputs.candidate_repository,
         CANDIDATE_SHA: identityOutputs.candidate_sha,
-        GITHUB_ENV: githubEnv,
         GITHUB_WORKSPACE: workspace,
         PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
         PAYLOAD_SHA256: identityOutputs.payload_sha256,
@@ -411,7 +409,6 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   return {
     candidateSha,
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
-    githubEnv: fs.existsSync(githubEnv) ? fs.readFileSync(githubEnv, "utf8") : "",
     output: `${identityResult.stdout}${identityResult.stderr}${
       identitySucceeded ? `${restoreResult.stdout}${restoreResult.stderr}` : ""
     }`,

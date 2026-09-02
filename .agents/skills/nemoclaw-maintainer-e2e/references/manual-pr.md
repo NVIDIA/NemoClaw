@@ -62,7 +62,9 @@ Choose the selection from the source owner:
 - An external PR keeps the credential-free controller selection. Empty selectors run the trusted
   default PR selection. The controller also permits `jobs=inference-routing`,
   `jobs=managed-image-protected-runtime`, or the documented credential-free target selectors.
-  Native-runtime qualification requires an NVIDIA-owned branch in `NVIDIA/NemoClaw`.
+
+`jobs=native-runtime-qualification-producer` requires an NVIDIA-owned branch in
+`NVIDIA/NemoClaw`; it is not available for external PRs.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
