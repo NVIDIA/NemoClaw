@@ -141,11 +141,17 @@ function executeGenerateMatrixWithPlannerOutput(
 const DEFAULT_TEST_MATRIX: CredentialFreeTestMatrixRow[] = [
   {
     id: "alpha",
+    execution_id: "alpha-docker",
+    runtime_provider: "docker",
+    coverage_variant: "docker",
     file: "test/e2e/live/alpha.test.ts",
     project: "e2e-live",
   },
   {
     id: "beta",
+    execution_id: "beta-docker",
+    runtime_provider: "docker",
+    coverage_variant: "docker",
     file: "test/e2e/live/beta.test.ts",
     project: "e2e-live",
   },
@@ -444,32 +450,32 @@ it.each([
     label: "target",
     requestedLine: "**Requested targets:** `hermes-e2e`",
   },
-])("reports the canonical Hermes result for a retired dashboard $label selector", ({
-  env,
-  requestedLine,
-}) => {
-  const report = renderE2eReport({
-    needs: {
-      "generate-matrix": { result: "success" },
-      "hermes-e2e": { result: "success" },
-    },
-    env: {
-      EXPLICIT_ONLY_JOBS: "",
-      TEST_MATRIX: "[]",
-      JOB_PR_NUMBER: "42",
-      ...env,
-    },
-    apiJobs: [{ conclusion: "success", name: "hermes-e2e", status: "completed" }],
-    apiJobsLoaded: true,
-    context: REPORT_CONTEXT,
-  });
+])(
+  "reports the canonical Hermes result for a retired dashboard $label selector",
+  ({ env, requestedLine }) => {
+    const report = renderE2eReport({
+      needs: {
+        "generate-matrix": { result: "success" },
+        "hermes-e2e": { result: "success" },
+      },
+      env: {
+        EXPLICIT_ONLY_JOBS: "",
+        TEST_MATRIX: "[]",
+        JOB_PR_NUMBER: "42",
+        ...env,
+      },
+      apiJobs: [{ conclusion: "success", name: "hermes-e2e", status: "completed" }],
+      apiJobsLoaded: true,
+      context: REPORT_CONTEXT,
+    });
 
-  expect(report.fatal).toBeUndefined();
-  expect(report.body).toContain(requestedLine);
-  expect(report.body).toContain("| hermes-e2e | ✅ success | — |");
-  expect(report.body).not.toContain("| hermes-dashboard |");
-  expect(report.body).not.toContain("not reported");
-});
+    expect(report.fatal).toBeUndefined();
+    expect(report.body).toContain(requestedLine);
+    expect(report.body).toContain("| hermes-e2e | ✅ success | — |");
+    expect(report.body).not.toContain("| hermes-dashboard |");
+    expect(report.body).not.toContain("not reported");
+  },
+);
 
 it("fails closed on an invalid test matrix without rendering a comment", () => {
   const report = renderE2eReport({
@@ -892,7 +898,14 @@ it(
       expect(generated.status, generated.stderr || generated.stdout).toBe(0);
       const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
       const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
-      expect(testMatrix).toEqual([selected]);
+      expect(testMatrix).toEqual([
+        {
+          ...selected,
+          execution_id: `${selected.id}-docker`,
+          runtime_provider: "docker",
+          coverage_variant: "docker",
+        },
+      ]);
 
       const { body, setFailed } = await executeReport({
         apiJobs: [

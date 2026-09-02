@@ -25,6 +25,13 @@ type FixtureProviderDependencies = {
     },
   ): string[];
 };
+type FixtureLegacyProviderDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[0],
+    run: FixtureRunner,
+    options?: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[2],
+  ): string[];
+};
 
 type FixtureChannelDependencies = Pick<
   (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"],
@@ -338,6 +345,12 @@ describe("channels stop/start Google Chat live composition", () => {
       }));
       const run = runMock as unknown as FixtureRunner;
       const revalidateSandboxIdentity = vi.fn();
+      const googlechatTokenDef = {
+        name: `${sandboxName}-googlechat-bridge`,
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: null,
+        providerType,
+      };
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
@@ -346,15 +359,7 @@ describe("channels stop/start Google Chat live composition", () => {
         run,
       });
       const providerNames = providerDependencies.upsertMessagingProviders(
-        [
-          delegatedTokenDef,
-          {
-            name: `${sandboxName}-googlechat-bridge`,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType,
-          },
-        ],
+        [delegatedTokenDef, googlechatTokenDef],
         run,
         { revalidateSandboxIdentity },
       );
@@ -468,7 +473,6 @@ describe("channels stop/start Google Chat live composition", () => {
         root: "/repo",
         run,
       });
-
       providerDependencies.upsertMessagingProviders(
         [
           {

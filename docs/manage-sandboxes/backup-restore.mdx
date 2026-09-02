@@ -87,7 +87,7 @@ Wait for active `dcode` work to finish before running `$$nemoclaw <name> snapsho
 
 </AgentOnly>
 
-Snapshot clone reads the source sandbox policy from OpenShell and passes that complete current OpenShell policy to destination creation through a private temporary handoff. The snapshot manifest and registry contain no custom-preset copy, baseline-exclusion record, or desired-policy replay state.
+Snapshot clone reads the source sandbox policy from OpenShell and passes it to destination creation through a private temporary handoff. If the policy contains a literal credential value, NemoClaw stops before it writes the handoff or changes the destination. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then rerun the restore. The snapshot manifest and registry contain no custom-preset copy, baseline-exclusion record, or desired-policy replay state.
 
 The target sandbox's current agent manifest remains authoritative for directory and state-file restore behavior. NemoClaw rejects the restore when the snapshot's agent, config directory, any snapshot directory, state-file path, or state-file strategy conflicts with that manifest. Restore limits directory cleanup to state directories authorized by both the snapshot and the current manifest. It preserves target-only directories and directories whose backup failed.
 
@@ -167,6 +167,8 @@ $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone 
 Cross-sandbox restore from a stopped source is available for Docker- and VM-driver sandboxes. For a stopped source, its registry entry must record both the sandbox image and a complete inference route; NemoClaw creates the destination from the recorded image. NemoClaw stops before creating or replacing the destination when either record is missing, and directs you to run `$$nemoclaw onboard` when no image is recorded. For a Kubernetes-driver source, the pod image must remain resolvable through its gateway.
 
 For a new destination, NemoClaw waits for the owning gateway to report the sandbox as Ready with a valid live identity. It checks that identity again immediately before registration. NemoClaw assigns the destination a new lifecycle generation instead of copying the source sandbox's generation.
+
+If NemoClaw cannot securely remove the temporary clone policy after destination creation, it leaves the destination as a pending clone and does not restore snapshot state. Inspect and remove the task-owned file identified by the error, then rerun the same restore without `--force` so NemoClaw can reconcile the destination without deleting or recreating it.
 
 If the destination is not Ready with the same valid identity, the restore exits nonzero before registration or state restore. The OpenShell sandbox remains created but unregistered, so `--force` cannot select it for deletion. Run the exact owner-scoped deletion command printed by the failure:
 

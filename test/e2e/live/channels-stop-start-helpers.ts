@@ -12,7 +12,7 @@ import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/run
 import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
-import { clearStoppedDockerSandboxChannelState } from "../../../src/lib/sandbox/privileged-exec.ts";
+import { clearStoppedSandboxStateRoots } from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -39,7 +39,7 @@ import {
   type AgentKind,
   runSecondaryCleanup as bestEffortPreclean,
   CLI,
-  dockerInfo,
+  requirePhase6RuntimeProvider,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
@@ -244,6 +244,9 @@ export function installGooglechatCredentialFixture(
   const run = dependencies.run ?? runOpenshell;
   const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;
   const originalLegacyUpsert = effectiveLegacyProviderDependencies.upsertMessagingProviders;
+  const delegatedUpsert = dependencies.legacyProviderDependencies
+    ? originalLegacyUpsert
+    : originalRegistrationUpsert;
 
   const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
     tokenDefs,
@@ -264,7 +267,7 @@ export function installGooglechatCredentialFixture(
     const delegatedProviderNames =
       delegatedTokenDefs.length === 0
         ? []
-        : originalLegacyUpsert(delegatedTokenDefs, providerRun, options);
+        : delegatedUpsert(delegatedTokenDefs, providerRun, options);
     const baseRun = providerRun ?? run;
     const revalidate = () =>
       options.revalidateSandboxIdentity?.(
@@ -1056,7 +1059,7 @@ async function removeChannelsAndRebuild(
     expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
 
     const cleanupResult = await withLiveE2eEnvironment(env, async () =>
-      clearStoppedDockerSandboxChannelState(SANDBOX_NAME, [
+      clearStoppedSandboxStateRoots(SANDBOX_NAME, [
         "/sandbox/.openclaw/wechat",
         "/sandbox/.openclaw/openclaw-weixin",
       ]),
@@ -1191,6 +1194,7 @@ export async function runChannelsStopStartTarget({
   cleanup,
   host,
   progress,
+  runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -1240,8 +1244,7 @@ export async function runChannelsStopStartTarget({
   );
   await precleanProviders(host, env, redactions, `preclean-channels-stop-start-${AGENT}`);
 
-  const docker = await dockerInfo(host, env);
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+  await requirePhase6RuntimeProvider(runtimeProvider, `${AGENT} channels stop/start`);
   progress.phase("onboard sandbox with all messaging channels");
   const onboardingEnv = withoutGooglechatOnboardInputs(env);
   const install = await installSandboxOrSkipOnRateLimit(
