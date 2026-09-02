@@ -113,17 +113,51 @@ info "4. Verify blueprint runner plan command"
 # -------------------------------------------------------
 prepare_command_blueprint() {
   local destination="$1"
-  cp -R /opt/nemoclaw-blueprint/. "$destination"
   node --input-type=module -e "
     import { createRequire } from 'node:module';
-    import { readFileSync, writeFileSync } from 'node:fs';
+    import { writeFileSync } from 'node:fs';
+    import { join } from 'node:path';
     const require = createRequire('/opt/nemoclaw/');
     const YAML = require('yaml');
-    const path = process.argv[1];
-    const bp = YAML.parse(readFileSync(path, 'utf-8'));
-    bp.components.policy.additions.nim_service.endpoints[0].host = '93.184.216.34';
-    writeFileSync(path, YAML.stringify(bp));
-  " "$destination/blueprint.yaml"
+    const destination = process.argv[1];
+    const blueprint = {
+      version: '1.0',
+      components: {
+        sandbox: {
+          image: 'openclaw',
+          name: 'openclaw',
+          forward_ports: [18789],
+        },
+        inference: {
+          profiles: {
+            ncp: {
+              provider_type: 'nvidia',
+              provider_name: 'nvidia-ncp',
+              endpoint: '',
+              model: 'nvidia/nemotron-3-super-120b-a12b',
+            },
+          },
+        },
+        policy: {
+          additions: {
+            nim_service: {
+              name: 'nim_service',
+              endpoints: [{ host: '93.184.216.34', port: 8000, access: 'full' }],
+            },
+          },
+        },
+      },
+    };
+    writeFileSync(join(destination, 'blueprint.yaml'), YAML.stringify(blueprint));
+    writeFileSync(
+      join(destination, 'sandbox-policy.yaml'),
+      YAML.stringify({ version: 1, network_policies: {} }),
+    );
+    writeFileSync(
+      join(destination, 'private-networks.yaml'),
+      YAML.stringify({ ipv4: [], ipv6: [], names: [] }),
+    );
+  " "$destination"
 }
 
 (
@@ -132,8 +166,8 @@ prepare_command_blueprint() {
   prepare_command_blueprint "$PLAN_BLUEPRINT_PATH"
   cd "$PLAN_BLUEPRINT_PATH"
   # Steps 3 and 3b validate the shipped blueprint. This command smoke test uses
-  # a copy with a stable public IP fixture so DNS and the local service hostname
-  # cannot preempt the expected OpenShell prerequisite boundary.
+  # an independent fixture with a stable public IP so DNS cannot preempt the
+  # expected OpenShell prerequisite boundary.
   NEMOCLAW_BLUEPRINT_PATH="$PLAN_BLUEPRINT_PATH" node --input-type=module -e "
     const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
     try {
@@ -256,7 +290,7 @@ SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
 PATH="$FAKE_OPENSHELL_BIN:$PATH" \
   NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_PATH" \
-  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_PATH/policies/openclaw-sandbox.yaml" \
+  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" \
   node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
