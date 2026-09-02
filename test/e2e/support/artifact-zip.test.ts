@@ -198,6 +198,27 @@ describe("validated GitHub artifact ZIP reader", () => {
     expect(readValidatedArtifactZipEntries(result, LIMITS)).toBeNull();
   });
 
+  it("accepts the UTF-8 names flag", () => {
+    const archive = artifactZip([{ name: "résumé.json", contents: "safe" }]);
+    const centralOffset = archive.readUInt32LE(archive.length - 6);
+    archive.writeUInt16LE(archive.readUInt16LE(6) | 0x0800, 6);
+    archive.writeUInt16LE(archive.readUInt16LE(centralOffset + 8) | 0x0800, centralOffset + 8);
+    expect(readValidatedArtifactZipEntries(archive, LIMITS)).toEqual([
+      { name: "résumé.json", bytes: Buffer.from("safe") },
+    ]);
+  });
+
+  it.each([
+    ["compression option", 0x0002],
+    ["patched data", 0x0020],
+  ])("rejects the unsupported %s flag", (_flag, flag) => {
+    const archive = artifactZip([{ name: "summary.json", contents: "safe" }]);
+    const centralOffset = archive.readUInt32LE(archive.length - 6);
+    archive.writeUInt16LE(archive.readUInt16LE(6) | flag, 6);
+    archive.writeUInt16LE(archive.readUInt16LE(centralOffset + 8) | flag, centralOffset + 8);
+    expect(readValidatedArtifactZipEntries(archive, LIMITS)).toBeNull();
+  });
+
   it("rejects encryption, local method disagreement, corrupt data, and CRC mismatch", () => {
     const encrypted = artifactZip([{ name: "summary.json", contents: "safe" }]);
     const encryptedCentral = encrypted.readUInt32LE(encrypted.length - 6);

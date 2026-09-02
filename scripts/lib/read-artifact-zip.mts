@@ -4,9 +4,12 @@
 import zlib from "node:zlib";
 
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_DATA_DESCRIPTOR_FLAG = 0x0008;
 const ZIP_DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
+const ZIP_UTF8_NAMES_FLAG = 0x0800;
+const ZIP_SUPPORTED_GENERAL_PURPOSE_FLAGS = ZIP_DATA_DESCRIPTOR_FLAG | ZIP_UTF8_NAMES_FLAG;
 
 type ParseOptions = {
   maxEntries: number;
@@ -154,7 +157,7 @@ function parseValidatedArtifactZip(
       totalUncompressedBytes > options.maxTotalUncompressedBytes ||
       seen.has(name) ||
       diskStart !== 0 ||
-      (flags & 0x1) !== 0 ||
+      (flags & ~ZIP_SUPPORTED_GENERAL_PURPOSE_FLAGS) !== 0 ||
       (compressionMethod !== 0 && compressionMethod !== 8) ||
       (creatorSystem !== 0 && creatorSystem !== 3) ||
       (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
@@ -174,7 +177,7 @@ function parseValidatedArtifactZip(
     const localNameEnd = localHeaderOffset + 30 + localNameLength;
     const compressedDataOffset = localNameEnd + localExtraLength;
     const dataEnd = compressedDataOffset + compressedSize;
-    const usesDataDescriptor = (flags & 0x8) !== 0;
+    const usesDataDescriptor = (flags & ZIP_DATA_DESCRIPTOR_FLAG) !== 0;
     const descriptorEnd = usesDataDescriptor
       ? matchingDataDescriptorEnd(
           archive,
