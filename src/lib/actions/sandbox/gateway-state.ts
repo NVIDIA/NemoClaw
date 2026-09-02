@@ -80,6 +80,7 @@ import {
   requireHermesPortableActiveLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
 import type {
+  HermesPortableContainerInspectionRecoveryTiming,
   HermesPortableCurrentnessTiming,
   HermesPortableLifecycleRecoveryTiming,
 } from "../../onboard/experimental/hermes-portable-lifecycle";
@@ -211,6 +212,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
   lifecycleTiming?: HermesPortableLifecycleRecoveryTiming,
   currentnessTiming?: HermesPortableCurrentnessTiming,
+  inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming,
 ): PortableDemoLifecycleRecoveryResult {
   const capture = (args: readonly string[], timeoutMs: number) => {
     commandAuthority?.assertTransactionCurrent();
@@ -271,6 +273,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
         readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
         ...(lifecycleTiming ? { recoveryTiming: lifecycleTiming } : {}),
         ...(currentnessTiming ? { currentnessTiming } : {}),
+        ...(inspectionTiming ? { inspectionTiming } : {}),
       },
     );
   } finally {

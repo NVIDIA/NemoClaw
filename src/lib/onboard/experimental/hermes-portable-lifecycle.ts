@@ -33,6 +33,7 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
   assertCurrentHermesPortableContainer,
+  createHermesPortableContainerInspectionTiming,
   observeHermesPortableAuthenticatedHealth,
   startHermesPortableContainer,
   stopHermesPortableContainer,
@@ -109,6 +110,12 @@ export interface HermesPortableLifecycleDeps {
   readonly log?: (message: string) => void;
   readonly recoveryTiming?: HermesPortableLifecycleRecoveryTiming;
   readonly currentnessTiming?: HermesPortableCurrentnessTiming;
+  readonly inspectionTiming?: HermesPortableContainerInspectionRecoveryTiming;
+}
+
+export interface HermesPortableContainerInspectionRecoveryTiming {
+  readonly now?: () => number;
+  readonly onComplete: Parameters<typeof createHermesPortableContainerInspectionTiming>[0];
 }
 
 export interface HermesPortableCurrentnessTimingEvidence {
@@ -991,6 +998,24 @@ export function recoverHermesPortableSandboxLifecycle(
 ): PortableDemoLifecycleRecoveryResult {
   const timing = createHermesPortableLifecycleTimingRecorder(deps.recoveryTiming);
   const currentnessTiming = createHermesPortableCurrentnessTimingRecorder(deps.currentnessTiming);
+  const inspectionTiming = deps.inspectionTiming
+    ? createHermesPortableContainerInspectionTiming(
+        deps.inspectionTiming.onComplete,
+        deps.inspectionTiming.now,
+      )
+    : undefined;
+  const instrumentedDeps: HermesPortableLifecycleDeps = inspectionTiming
+    ? {
+        ...deps,
+        container: (receipt) => ({
+          ...(typeof deps.container === "function"
+            ? deps.container(receipt)
+            : (deps.container ??
+              createContainerDeps(receipt, deps.env ?? process.env, deps.podmanAuthorityDeps))),
+          inspectionTiming,
+        }),
+      }
+    : deps;
   timing.increment("qualification");
   let qualified: QualifiedHermesPortableLifecycle;
   try {
@@ -998,7 +1023,7 @@ export function recoverHermesPortableSandboxLifecycle(
       qualify(
         sandboxName,
         context,
-        deps,
+        instrumentedDeps,
         undefined,
         ["Ready", "Error", "Stopped"],
         {},
@@ -1006,6 +1031,7 @@ export function recoverHermesPortableSandboxLifecycle(
       ),
     );
   } catch (error) {
+    inspectionTiming?.finish();
     currentnessTiming.finish();
     timing.finish("failed");
     throw error;
@@ -1048,7 +1074,7 @@ export function recoverHermesPortableSandboxLifecycle(
         throw startError;
       }
       qualified = timing.measure("postStartCurrentness", () =>
-        refreshLifecycleCurrentness(sandboxName, context, deps, qualified, timing, true, [
+        refreshLifecycleCurrentness(sandboxName, context, instrumentedDeps, qualified, timing, true, [
           "Ready",
           "Error",
           "Stopped",
@@ -1096,7 +1122,7 @@ export function recoverHermesPortableSandboxLifecycle(
       refreshLifecycleCurrentness(
         sandboxName,
         context,
-        deps,
+        instrumentedDeps,
         qualified,
         timing,
         true,
@@ -1126,7 +1152,7 @@ export function recoverHermesPortableSandboxLifecycle(
           qualify(
             sandboxName,
             context,
-            deps,
+            instrumentedDeps,
             qualified.snapshot,
             ["Ready"],
             {},
@@ -1136,6 +1162,7 @@ export function recoverHermesPortableSandboxLifecycle(
         const result = wasRunning
           ? { kind: "already-running" as const }
           : { kind: "recovered" as const };
+        inspectionTiming?.finish();
         currentnessTiming.finish();
         timing.finish(result.kind);
         return result;
@@ -1146,7 +1173,7 @@ export function recoverHermesPortableSandboxLifecycle(
         refreshLifecycleCurrentness(
         sandboxName,
         context,
-        deps,
+        instrumentedDeps,
         qualified,
         timing,
         true,
@@ -1183,7 +1210,7 @@ export function recoverHermesPortableSandboxLifecycle(
         refreshLifecycleCurrentness(
         sandboxName,
         context,
-        deps,
+        instrumentedDeps,
         qualified,
         timing,
         true,
@@ -1213,7 +1240,7 @@ export function recoverHermesPortableSandboxLifecycle(
       qualify(
         sandboxName,
         context,
-        deps,
+        instrumentedDeps,
         qualified.snapshot,
         ["Ready"],
         {},
@@ -1221,11 +1248,13 @@ export function recoverHermesPortableSandboxLifecycle(
       ),
     );
     if (wasRunning) {
+      inspectionTiming?.finish();
       currentnessTiming.finish();
       timing.finish("already-running");
       return { kind: "already-running" };
     }
     (deps.log ?? console.log)(`  Hermes portable lifecycle recovered sandbox '${sandboxName}'.`);
+    inspectionTiming?.finish();
     currentnessTiming.finish();
     timing.finish("recovered");
     return { kind: "recovered" };
@@ -1237,12 +1266,13 @@ export function recoverHermesPortableSandboxLifecycle(
           rollbackStartedHermesPortableRecovery(
             sandboxName,
             context,
-            deps,
+            instrumentedDeps,
             rollbackAuthority,
             timing,
           ),
         );
       } catch (rollbackError) {
+        inspectionTiming?.finish();
         currentnessTiming.finish();
         timing.finish("failed");
         throw new AggregateError(
@@ -1251,6 +1281,7 @@ export function recoverHermesPortableSandboxLifecycle(
         );
       }
     }
+    inspectionTiming?.finish();
     currentnessTiming.finish();
     timing.finish("failed");
     throw error;
