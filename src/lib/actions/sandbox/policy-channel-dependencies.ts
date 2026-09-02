@@ -2,13 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import { getCredential, normalizeCredentialValue } from "../../credentials/store";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+import {
+  isMessagingProviderBindingConflict as isTypedMessagingProviderBindingConflict,
+  isMessagingProviderMutationFailure as isTypedMessagingProviderMutationFailure,
+} from "../../messaging/applier/openshell-provider";
+import { buildMessagingProviderApplication } from "../../messaging/applier/provider-application";
+import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 
 type MessagingProviderTokenDefinition = {
   name: string;
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
 };
 
 type MessagingProviderUpsertOptions = {
@@ -99,6 +111,7 @@ export const policyChannelDependencies = {
     readonly mutatedProviderNames: readonly string[];
     readonly createdProviderNames?: readonly string[];
   } {
+    if (isTypedMessagingProviderBindingConflict(error)) return true;
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
     return providers.isMessagingProviderBindingConflict(error);
   },
@@ -106,16 +119,68 @@ export const policyChannelDependencies = {
     readonly mutatedProviderNames: readonly string[];
     readonly createdProviderNames: readonly string[];
   } {
+    if (isTypedMessagingProviderMutationFailure(error)) return true;
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
     return providers.isMessagingProviderMutationFailure(error);
+  },
+  async attachMessagingProvider(
+    providerName: string,
+    sandboxName: string,
+    gatewayName: string,
+  ): Promise<void> {
+    const result = await createCliOpenShellProviderAdapter().attachProvider({
+      target: namedOpenShellGateway(gatewayName),
+      providerName,
+      sandboxName,
+    });
+    if (!result.ok) {
+      throw new Error(
+        `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}': ${result.error.message}`,
+      );
+    }
+  },
+  async deleteMessagingProvider(providerName: string, gatewayName: string): Promise<boolean> {
+    const result = await createCliOpenShellProviderAdapter().deleteProvider({
+      target: namedOpenShellGateway(gatewayName),
+      providerName,
+    });
+    return (
+      result.ok ||
+      (result.error.kind === "command" && result.error.reason === "not_found")
+    );
   },
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     gatewayName: string,
     options?: MessagingProviderUpsertOptions,
-  ): string[] {
-    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), options);
+    context?: {
+      readonly plan: SandboxMessagingPlan;
+      readonly channelName: string;
+      readonly sandboxAgent: string | null | undefined;
+    },
+  ): string[] | Promise<string[]> {
+    if (!context) return Promise.reject(new Error("Messaging provider application context is missing."));
+    const application = buildMessagingProviderApplication({
+      tokenDefs,
+      root: REPOSITORY_ROOT,
+      agent: context.sandboxAgent,
+      getCredential,
+      env: process.env,
+      normalizeCredentialValue: (value) =>
+        normalizeCredentialValue(value as string | undefined),
+      channelIdForCredential: () => context.channelName,
+    });
+    if (application.otherTokenDefs.length > 0) {
+      return Promise.reject(new Error("Channel add produced a non-messaging provider definition."));
+    }
+    return MessagingSetupApplier.applyCredentialsAtOpenShell(context.plan, {
+      providerAdapter: createCliOpenShellProviderAdapter(),
+      target: namedOpenShellGateway(gatewayName),
+      definitions: application.definitions,
+      refreshes: application.refreshes,
+      bestEffort: options?.bestEffort,
+      log: (message) => console.error(`  ${message}`),
+    }).then((result) => [...result.providerNames]);
   },
   rebuildSandbox(
     sandboxName: Parameters<RebuildModule["rebuildSandbox"]>[0],

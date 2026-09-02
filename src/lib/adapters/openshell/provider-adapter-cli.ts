@@ -5,15 +5,19 @@ import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { redactFull } from "../../security/redact";
 import { parseCliOpenShellProviderNames, runOpenshellProviderCommand } from "./provider-command";
 import {
+  type AttachOpenShellProviderRequest,
+  type ConfigureOpenShellProviderRefreshRequest,
   type CreateOpenShellProviderRequest,
   type DeleteOpenShellProviderRequest,
   type DetachOpenShellProviderRequest,
   type EnsureOpenShellEndpointlessProviderProfileRequest,
   type GetOpenShellProviderRequest,
+  type GetOpenShellProviderRefreshStatusRequest,
   type ImportOpenShellProviderProfileRequest,
   type InspectOpenShellProviderProfileRequest,
   type OpenShellProviderAdapter,
   type OpenShellProviderError,
+  type OpenShellProviderInspectionAdapter,
   type OpenShellProviderRequest,
   type OpenShellProviderResult,
   type UpdateOpenShellProviderRequest,
@@ -26,6 +30,7 @@ import {
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 import { ensureEndpointlessProviderProfile as reconcileEndpointlessProviderProfile } from "./provider-profile";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./timeouts";
+import { providerProfileContractDigest } from "./provider-profile-contract";
 
 export type CapturedProviderCommandResult = Readonly<{
   status: number | null;
@@ -209,19 +214,52 @@ function parseProfileCredentialKeys(output: string): string[] | null {
   return [...keys].sort();
 }
 
-export function createCliOpenShellProviderAdapter(
-  deps: CliOpenShellProviderAdapterDeps = {},
-): OpenShellProviderAdapter {
+function parseProviderProfile(output: string):
+  | Readonly<{ credentialKeys: readonly string[]; contractDigest: string }>
+  | null {
+  let profile: unknown;
+  try {
+    profile = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  const credentialKeys = parseProfileCredentialKeys(output);
+  const contractDigest = providerProfileContractDigest(profile);
+  return credentialKeys && contractDigest ? { credentialKeys, contractDigest } : null;
+}
+
+function parseRefreshStatus(output: string, credentialKey: string): string | null {
+  const row = output
+    .split("\n")
+    .map((line) => line.replace(ANSI_RE, "").trim())
+    .find((line) => line.includes(credentialKey));
+  const columns = (row ?? "").split(/\s{2,}/u).filter(Boolean);
+  const keyIndex = columns.indexOf(credentialKey);
+  return keyIndex < 0 ? null : (columns[keyIndex + 2] ?? null);
+}
+
+type InvokeProviderCommand = (
+  args: string[],
+  request: OpenShellProviderRequest,
+  env?: Record<string, string>,
+  gatewayFlagIndex?: number,
+  suppressOutput?: boolean,
+  maxBuffer?: number,
+) => CapturedProviderCommandResult;
+
+function createProviderCommandInvoker(
+  deps: CliOpenShellProviderAdapterDeps,
+): InvokeProviderCommand {
   const run = deps.run ?? runOpenshellProviderCommand;
   const timeoutFor = (request: OpenShellProviderRequest) =>
     request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_OPERATION_TIMEOUT_MS;
-  const invoke = (
-    args: string[],
-    request: OpenShellProviderRequest,
-    env?: Record<string, string>,
+  return (
+    args,
+    request,
+    env,
     gatewayFlagIndex = 2,
     suppressOutput = false,
-    maxBuffer?: number,
+    maxBuffer,
   ) =>
     run(scopedArgs(args, request.target, gatewayFlagIndex), {
       ...(env ? { env } : {}),
@@ -231,6 +269,89 @@ export function createCliOpenShellProviderAdapter(
       ...(suppressOutput ? { suppressOutput: true } : {}),
       timeout: timeoutFor(request),
     });
+}
+
+function inspectProvider(
+  invoke: InvokeProviderCommand,
+  request: GetOpenShellProviderRequest,
+): ReturnType<OpenShellProviderInspectionAdapter["getProvider"]> {
+  if (!isValidCliOpenShellProviderIdentifier(request.providerName)) {
+    return failure({ kind: "validation", message: "Provider name is invalid." });
+  }
+  const result = invoke(
+    ["provider", "get", request.providerName],
+    request,
+    undefined,
+    2,
+    true,
+    PROVIDER_GET_DIAGNOSTIC_LIMIT,
+  );
+  const output = commandOutput(result);
+  if (
+    result.status === 1 &&
+    reportsExactProviderNotFound(output, request.providerName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+  ) {
+    return failure({
+      kind: "command",
+      reason: "not_found",
+      message: `OpenShell provider '${request.providerName}' was not found.`,
+    });
+  }
+  const error = commandError(result);
+  if (error) {
+    return failure(
+      error.kind === "command" && error.reason === "not_found"
+        ? {
+            kind: "command",
+            reason: "failed",
+            message: "OpenShell could not inspect the selected provider.",
+          }
+        : error,
+    );
+  }
+  const metadata = parseCliOpenShellProviderMetadata(output);
+  return metadata?.name === request.providerName
+    ? success(metadata)
+    : failure({ kind: "schema", message: "OpenShell returned invalid provider metadata." });
+}
+
+function inspectProfile(
+  invoke: InvokeProviderCommand,
+  request: InspectOpenShellProviderProfileRequest,
+): ReturnType<OpenShellProviderInspectionAdapter["inspectProviderProfile"]> {
+  const result = invoke(
+    ["provider", "profile", "export", request.profileType, "--output", "json"],
+    request,
+    undefined,
+    2,
+    true,
+  );
+  const error = commandError(result);
+  if (error) return failure(error);
+  const inspection = parseProviderProfile(bufferOrStringToText(result.stdout));
+  return inspection
+    ? success(inspection)
+    : failure({
+        kind: "schema",
+        message: "OpenShell returned an invalid provider profile.",
+      });
+}
+
+/** Create the synchronous typed inspection boundary used by onboarding planning. */
+export function createCliOpenShellProviderInspectionAdapter(
+  deps: CliOpenShellProviderAdapterDeps = {},
+): OpenShellProviderInspectionAdapter {
+  const invoke = createProviderCommandInvoker(deps);
+  return {
+    getProvider: (request) => inspectProvider(invoke, request),
+    inspectProviderProfile: (request) => inspectProfile(invoke, request),
+  };
+}
+
+export function createCliOpenShellProviderAdapter(
+  deps: CliOpenShellProviderAdapterDeps = {},
+): OpenShellProviderAdapter {
+  const invoke = createProviderCommandInvoker(deps);
 
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
     const result = invoke(["provider", "list", "--names"], request);
@@ -278,46 +399,7 @@ export function createCliOpenShellProviderAdapter(
 
   const getProvider: OpenShellProviderAdapter["getProvider"] = async (
     request: GetOpenShellProviderRequest,
-  ) => {
-    if (!isValidCliOpenShellProviderIdentifier(request.providerName)) {
-      return failure({ kind: "validation", message: "Provider name is invalid." });
-    }
-    const result = invoke(
-      ["provider", "get", request.providerName],
-      request,
-      undefined,
-      2,
-      true,
-      PROVIDER_GET_DIAGNOSTIC_LIMIT,
-    );
-    const output = commandOutput(result);
-    if (
-      result.status === 1 &&
-      reportsExactProviderNotFound(output, request.providerName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
-    ) {
-      return failure({
-        kind: "command",
-        reason: "not_found",
-        message: `OpenShell provider '${request.providerName}' was not found.`,
-      });
-    }
-    const error = commandError(result);
-    if (error) {
-      return failure(
-        error.kind === "command" && error.reason === "not_found"
-          ? {
-              kind: "command",
-              reason: "failed",
-              message: "OpenShell could not inspect the selected provider.",
-            }
-          : error,
-      );
-    }
-    const metadata = parseCliOpenShellProviderMetadata(output);
-    return metadata?.name === request.providerName
-      ? success(metadata)
-      : failure({ kind: "schema", message: "OpenShell returned invalid provider metadata." });
-  };
+  ) => inspectProvider(invoke, request);
 
   const updateProvider: OpenShellProviderAdapter["updateProvider"] = async (
     request: UpdateOpenShellProviderRequest,
@@ -382,21 +464,7 @@ export function createCliOpenShellProviderAdapter(
 
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (
     request: InspectOpenShellProviderProfileRequest,
-  ) => {
-    const result = invoke(
-      ["provider", "profile", "export", request.profileType, "--output", "json"],
-      request,
-    );
-    const error = commandError(result);
-    if (error) return failure(error);
-    const credentialKeys = parseProfileCredentialKeys(bufferOrStringToText(result.stdout));
-    return credentialKeys
-      ? success({ credentialKeys })
-      : failure({
-          kind: "schema",
-          message: "OpenShell returned an invalid provider profile.",
-        });
-  };
+  ) => inspectProfile(invoke, request);
 
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async (
     request: DeleteOpenShellProviderRequest,
@@ -423,6 +491,81 @@ export function createCliOpenShellProviderAdapter(
     return error ? failure(error) : success({ state: "detached" });
   };
 
+  const attachProvider: OpenShellProviderAdapter["attachProvider"] = async (
+    request: AttachOpenShellProviderRequest,
+  ) => {
+    const result = invoke(
+      ["sandbox", "provider", "attach", request.sandboxName, request.providerName],
+      request,
+      undefined,
+      3,
+    );
+    const error = commandError(result);
+    return error ? failure(error) : success({ state: "attached" });
+  };
+
+  const configureProviderRefresh: OpenShellProviderAdapter["configureProviderRefresh"] = async (
+    request: ConfigureOpenShellProviderRefreshRequest,
+  ) => {
+    if (
+      !isValidCliOpenShellProviderIdentifier(request.providerName) ||
+      !ENV_NAME_PATTERN.test(request.credentialKey) ||
+      !request.strategy ||
+      request.material.some((entry) => !entry.key || !entry.value) ||
+      request.secretMaterial.some((entry) => !entry.key || !entry.value)
+    ) {
+      return failure({ kind: "validation", message: "Provider refresh input is invalid." });
+    }
+    const args = [
+      "provider",
+      "refresh",
+      "configure",
+      "--credential-key",
+      request.credentialKey,
+      "--strategy",
+      request.strategy,
+    ];
+    for (const entry of request.material) args.push("--material", `${entry.key}=${entry.value}`);
+    const env: Record<string, string> = {};
+    request.secretMaterial.forEach((entry, index) => {
+      const envName = `NEMOCLAW_PROVIDER_REFRESH_SECRET_${index}`;
+      env[envName] = entry.value;
+      args.push("--secret-material-env", `${entry.key}=${envName}`);
+    });
+    args.push(request.providerName);
+    const result = invoke(args, request, env);
+    const error = commandError(result, Object.values(env));
+    return error ? failure(error) : success({ state: "configured" });
+  };
+
+  const getProviderRefreshStatus: OpenShellProviderAdapter["getProviderRefreshStatus"] = async (
+    request: GetOpenShellProviderRefreshStatusRequest,
+  ) => {
+    const result = invoke(
+      [
+        "provider",
+        "refresh",
+        "status",
+        request.providerName,
+        "--credential-key",
+        request.credentialKey,
+      ],
+      request,
+      undefined,
+      2,
+      true,
+    );
+    const error = commandError(result);
+    return error
+      ? failure(error)
+      : success({
+          status: parseRefreshStatus(
+            bufferOrStringToText(result.stdout),
+            request.credentialKey,
+          ),
+        });
+  };
+
   return {
     listProviders,
     createProvider,
@@ -433,5 +576,8 @@ export function createCliOpenShellProviderAdapter(
     inspectProviderProfile,
     deleteProvider,
     detachProvider,
+    attachProvider,
+    configureProviderRefresh,
+    getProviderRefreshStatus,
   };
 }

@@ -648,7 +648,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not confirm messaging provider 'my-assistant-telegram-bridge' before sandbox creation/,
+        /Could not inspect messaging provider 'my-assistant-telegram-bridge'/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(

@@ -640,6 +640,11 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
       ],
       "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
+      {
+        channelName: "discord",
+        plan: expect.objectContaining({ agent: "hermes", workflow: "add-channel" }),
+        sandboxAgent: "hermes",
+      },
     );
   });
 
@@ -668,6 +673,27 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         .map(([args]) => (args as string[]).join(" "))
         .filter((command) => command.includes("provider detach") || command.includes("delete")),
     ).toEqual([]);
+  });
+
+  it("reports state-neutral recovery after provider replacement cannot recreate (#9806)", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
+    upsertMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error("provider create failed"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE",
+        mutatedProviderNames: ["alpha-telegram-bridge"],
+        createdProviderNames: [],
+      });
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(loggedText()).toContain(
+      "Provider replacement or update is incomplete for alpha-telegram-bridge; rerun 'nemoclaw alpha channels add telegram' to reconcile it.",
+    );
+    expect(loggedText()).not.toContain("resolve the conflicting provider");
   });
 
   it("does not persist a multi-provider add when identity preflight fails", async () => {

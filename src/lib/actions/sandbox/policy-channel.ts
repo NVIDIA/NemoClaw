@@ -188,8 +188,23 @@ function withSandboxMutationLockUnlessPreview<T>(
  */
 export interface AddSandboxChannelDependencies {
   readonly googlechatNonInteractiveAudienceCapability?: GooglechatNonInteractiveAudienceCapability;
-  readonly upsertMessagingProviders?: typeof policyChannelDependencies.upsertMessagingProviders;
+  readonly upsertMessagingProviders?: ChannelMessagingProviderApplication;
 }
+
+type ChannelMessagingProviderApplication = (
+  tokenDefs: MessagingTokenDef[],
+  gatewayName: string,
+  options: {
+    readonly bestEffort?: boolean;
+    readonly replaceExisting?: boolean;
+    readonly requireExactBindings?: boolean;
+  },
+  context?: {
+    readonly plan: SandboxMessagingPlan;
+    readonly channelName: string;
+    readonly sandboxAgent: string | null | undefined;
+  },
+) => string[] | Promise<string[]>;
 
 const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
 
@@ -826,8 +841,10 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
+  plan: SandboxMessagingPlan,
   applyPolicyAfterAttachment?: () => boolean,
-  upsertMessagingProviders = policyChannelDependencies.upsertMessagingProviders,
+  upsertMessagingProviders: ChannelMessagingProviderApplication =
+    policyChannelDependencies.upsertMessagingProviders,
   cleanupCredentialFreePolicy?: () => void,
 ): Promise<boolean | null> {
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
@@ -886,21 +903,22 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    const providerNames = upsertMessagingProviders(tokenDefs, gatewayName, {
-      bestEffort: true,
-      requireExactBindings: true,
-    });
+    const providerNames = await upsertMessagingProviders(
+      tokenDefs,
+      gatewayName,
+      {
+        bestEffort: true,
+        requireExactBindings: true,
+      },
+      { plan, channelName, sandboxAgent },
+    );
     for (const providerName of providerNames) {
       revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
-      const attached = runOpenshell(
-        ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, providerName],
-        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      await policyChannelDependencies.attachMessagingProvider(
+        providerName,
+        sandboxName,
+        gatewayName,
       );
-      if (attached.status !== 0) {
-        throw new Error(
-          `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}'.`,
-        );
-      }
       revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
     }
     if (applyPolicyAfterAttachment && !applyPolicyAfterAttachment()) {
@@ -918,21 +936,24 @@ async function applyChannelAddToGatewayAndRegistry(
     ) {
       const createdProviderNames = [...(err.createdProviderNames ?? [])];
       const createdProviders = new Set(createdProviderNames);
-      const cleanupFailures = createdProviderNames.filter((providerName) => {
-        const result = policyChannelDependencies.runGatewayOpenshell(
-          gatewayName,
-          ["provider", "delete", providerName],
-          { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-        );
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
-        return result.status !== 0 && !/\bNotFound\b|not found/i.test(output);
-      });
+      const cleanupOutcomes = await Promise.all(
+        createdProviderNames.map(async (providerName) => ({
+          providerName,
+          removed: await policyChannelDependencies.deleteMessagingProvider(
+            providerName,
+            gatewayName,
+          ),
+        })),
+      );
+      const cleanupFailures = cleanupOutcomes
+        .filter(({ removed }) => !removed)
+        .map(({ providerName }) => providerName);
       const updatedProviderNames = err.mutatedProviderNames.filter(
         (providerName) => !createdProviders.has(providerName),
       );
       if (updatedProviderNames.length > 0) {
         console.error(
-          `  ${YW}⚠${R} Updated provider state remains for ${updatedProviderNames.join(", ")}; resolve the conflicting provider, then rerun '${CLI_NAME} ${sandboxName} channels add ${channelName}'.`,
+          `  ${YW}⚠${R} Provider replacement or update is incomplete for ${updatedProviderNames.join(", ")}; rerun '${CLI_NAME} ${sandboxName} channels add ${channelName}' to reconcile it.`,
         );
       }
       if (cleanupFailures.length > 0) {
@@ -1478,6 +1499,7 @@ async function addSandboxChannelUnlocked(
       sandboxName,
       canonical,
       {},
+      plan,
       undefined,
       dependencies.upsertMessagingProviders,
     );
@@ -1540,6 +1562,7 @@ async function addSandboxChannelUnlocked(
     sandboxName,
     canonical,
     acquired,
+    plan,
     () =>
       applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
@@ -1548,7 +1571,7 @@ async function addSandboxChannelUnlocked(
     cleanupCredentialFreePolicy,
   );
   if (registeredBridge === null) {
-    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, plan, {
       wasAlreadyEnabled,
       priorCreds,
     });
@@ -1561,7 +1584,7 @@ async function addSandboxChannelUnlocked(
 
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
-    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, plan, {
       wasAlreadyEnabled,
       priorCreds,
     });
@@ -1579,6 +1602,7 @@ async function rollbackChannelAdd(
   sandboxName: string,
   channel: ChannelDef,
   canonical: string,
+  plan: SandboxMessagingPlan,
   snapshot: {
     wasAlreadyEnabled: boolean;
     priorCreds: Record<string, string>;
@@ -1611,11 +1635,16 @@ async function rollbackChannelAdd(
           token,
           providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
-        policyChannelDependencies.upsertMessagingProviders(
+        await policyChannelDependencies.upsertMessagingProviders(
           priorTokenDefs,
           getSandboxTargetGatewayName(sandboxName),
           {
             bestEffort: true,
+          },
+          {
+            plan,
+            channelName: canonical,
+            sandboxAgent: registry.getSandbox(sandboxName)?.agent,
           },
         );
       } catch (err) {

@@ -179,6 +179,8 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/openshell-provider.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/plan-filter.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/policy.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/provider-application.test.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/provider-application.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier-credential-env.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier.ts", mode: "100644" },

@@ -43,6 +43,14 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 - Hook outputs must match manifest declarations and be JSON-serializable. Add outputs to the manifest before consuming them.
 - Channel render/build-file targets must stay inside `/sandbox/.openclaw` or `/sandbox/.hermes`; rely on existing applier validation instead of bypassing it.
 - Disabled channels are not active. Always filter effects through `enabledPlanChannels()` or `filterEnabledPlanEntries()` when applying providers, policies, render, hooks, runtime setup, or conflicts.
+- Route messaging provider profile inspection, get, create, update, standalone attachment, replacement, verification, and refresh observation through typed `OpenShellProviderAdapter` or `OpenShellProviderInspectionAdapter` results.
+- Atomic sandbox creation may pass preflighted provider names through `sandbox create --provider`; do not use that path for standalone attachment or provider state inspection.
+- Preflight every provider definition before profile preparation or mutation, and preserve exact created or mutated provider names on a partial failure.
+- Provider replacement must be explicit, identity-revalidated, and limited to the caller's authorized sandbox attachments.
+- Keep persistent source credentials in the existing environment or credential store; never copy them into serializable messaging plans.
+- During provider application, short-lived host-side copies may exist in token definitions, the application plan, adapter requests, and the OpenShell child environment.
+- Never place those copies in command arguments, logs, persistence, serializable plans, or typed adapter results.
+- Let the short-lived references leave scope after the awaited provider lifecycle returns; JavaScript does not guarantee immediate memory erasure.
 - Conflict detection has two axes: generic credential-hash overlap in `applier/conflict-detection/` and channel-owned `pre-enable` hooks such as Slack Socket Mode gateway checks.
 - Keep transitional compatibility tables derived from manifests. `src/lib/sandbox/channels.ts` intentionally builds legacy CLI metadata from `listBuiltInMessagingChannelManifests()`.
 
@@ -81,7 +89,9 @@ Start with `channels/<channel>/manifest.ts`.
 - New prompt, token, allowlist, provider, policy, render, package install, runtime setup, state hydration, or health-check metadata belongs in a channel manifest.
 - Nontrivial render derivation belongs in a channel template resolver.
 - Enrollment, external reachability checks, QR capture, channel-specific conflict checks, runtime status, and health probes belong in hooks.
-- Provider creation/reuse, policy application, config-file writes, plan env encoding, and registry persistence belong in `applier/`.
+- Provider preflight, profile validation, creation, reuse, replacement, verification, and refresh observation belong in `applier/` behind the typed OpenShell adapter.
+- Translation from onboarding token definitions to typed messaging provider definitions belongs in `applier/provider-application.ts`.
+- Policy application, config-file writes, plan env encoding, and registry persistence belong in `applier/`.
 - Onboard and `actions/sandbox/policy-channel.ts` should orchestrate planner/applier calls, not grow channel-specific rules.
 - Build-time config generation should use the compiled plan and `applier/build/messaging-build-applier.mts`; do not reintroduce channel-specific config rendering in `scripts/generate-openclaw-config.mts` or `agents/hermes/generate-config.ts`.
 

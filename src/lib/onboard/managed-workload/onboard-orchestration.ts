@@ -88,8 +88,8 @@ export { normalizeRuntimeProviderIdentity, removeManagedHermesStateVolume };
 export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
     input: MaterializeSandboxCreatePlanInput,
-    materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
-  ): SandboxCreatePlan;
+    materialize: (input: MaterializeSandboxCreatePlanInput) => Promise<SandboxCreatePlan>,
+  ): Promise<SandboxCreatePlan>;
   commit(): void;
 };
 
@@ -432,7 +432,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ? input.workload.source.reference
       : `${requireLegacyBuildContext(legacyBuildContext).buildCtx}/Dockerfile`;
   const messagingTokenDefs = await input.plan.rebindMessagingTokenDefs();
-  const createPlan = input.dependencies.materializeSandboxCreatePlan({
+  const createPlan = await input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
     policylessCreate: input.plan.policylessCreate,

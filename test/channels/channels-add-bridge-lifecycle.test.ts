@@ -34,6 +34,49 @@ class ExitError extends Error {
   }
 }
 
+const GOOGLE_CHAT_PROVIDER_PROFILE = {
+  id: "google-chat-bridge",
+  credentials: [
+    {
+      name: "access_token",
+      env_vars: ["GOOGLE_CHAT_ACCESS_TOKEN"],
+      required: true,
+      auth_style: "bearer",
+      header_name: "Authorization",
+      query_param: "",
+      refresh: {
+        strategy: "google-service-account-jwt",
+        scopes: ["https://www.googleapis.com/auth/chat.bot"],
+        material: [
+          {
+            name: "client_email",
+            description: "Service-account client email (JWT issuer)",
+            required: true,
+          },
+          {
+            name: "private_key",
+            description: "Service-account RSA private key (PEM); signs the JWT assertion",
+            required: true,
+            secret: true,
+          },
+          { name: "scope", description: "OAuth scope(s) to mint the token for" },
+        ],
+      },
+    },
+  ],
+  endpoints: [
+    {
+      host: "chat.googleapis.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+  inference_capable: false,
+};
+
 const SA_JSON = JSON.stringify({
   client_email: "bot@p.iam.gserviceaccount.com",
   private_key: "fake-test-private-key-material",
@@ -185,17 +228,45 @@ beforeEach(() => {
     return command[0] === "provider" && command[1] === "refresh" && command[2] === "status";
   };
 
+  const providers = new Set<string>();
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => {
     const command = withoutGateway(args);
-    const providerMissing = command[0] === "provider" && command[1] === "get";
-    return {
-      pid: 0,
-      output: [null, "", ""],
-      stdout: isRefreshStatus(args) ? refreshStatusTable(command) : "",
-      stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
-      status: providerMissing ? 1 : 0,
-      signal: null,
-    };
+    const profileExport = command.slice(0, 3).join(" ") === "provider profile export";
+    const mutatedProviderName =
+      command[0] !== "provider"
+        ? null
+        : command[1] === "create"
+          ? command[3]
+          : command[1] === "update"
+            ? command[2]
+            : null;
+    mutatedProviderName ? providers.add(mutatedProviderName) : undefined;
+    const providerName = command[0] === "provider" && command[1] === "get" ? command[2] : null;
+    const providerMissing = Boolean(providerName && !providers.has(providerName));
+    const providerMetadata = providerName
+      ? `Name: ${providerName}\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n`
+      : "";
+    return profileExport
+      ? {
+          pid: 0,
+          output: [null, JSON.stringify(GOOGLE_CHAT_PROVIDER_PROFILE), ""],
+          stdout: JSON.stringify(GOOGLE_CHAT_PROVIDER_PROFILE),
+          stderr: "",
+          status: 0,
+          signal: null,
+        }
+      : {
+          pid: 0,
+          output: [null, providerMetadata, ""],
+          stdout: isRefreshStatus(args)
+            ? refreshStatusTable(command)
+            : providerMissing
+              ? ""
+              : providerMetadata,
+          stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
+          status: providerMissing ? 1 : 0,
+          signal: null,
+        };
   });
 
   const healthyGatewayState = {
@@ -244,6 +315,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       ],
       "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
+      expect.objectContaining({ channelName: "googlechat", sandboxAgent: "openclaw" }),
     );
     const refreshCall = runOpenshellSpy.mock.calls.find(
       (call) =>
@@ -254,10 +326,10 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(refreshCall).toBeDefined();
     const refreshArgs = refreshCall?.[0] as string[];
     expect(refreshArgs).toContain("--secret-material-env");
-    expect(refreshArgs).toContain("private_key=MESSAGING_BRIDGE_SECRET_0");
+    expect(refreshArgs).toContain("private_key=NEMOCLAW_PROVIDER_REFRESH_SECRET_0");
     expect(refreshArgs.join(" ")).not.toContain("fake-test-private-key-material");
     expect(refreshCall?.[1]).toMatchObject({
-      env: { MESSAGING_BRIDGE_SECRET_0: "fake-test-private-key-material" },
+      env: { NEMOCLAW_PROVIDER_REFRESH_SECRET_0: "fake-test-private-key-material" },
     });
     expect(JSON.stringify({ registryEntry, session })).not.toContain(
       "fake-test-private-key-material",

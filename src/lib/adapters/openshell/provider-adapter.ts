@@ -57,6 +57,7 @@ export type OpenShellProviderMetadata = Readonly<{
 
 export type OpenShellProviderProfileInspection = Readonly<{
   credentialKeys: readonly string[];
+  contractDigest: string;
 }>;
 
 export type CreateOpenShellProviderRequest = OpenShellProviderRequest &
@@ -106,6 +107,21 @@ export type DetachOpenShellProviderRequest = DeleteOpenShellProviderRequest &
     sandboxName: string;
   }>;
 
+export type AttachOpenShellProviderRequest = DetachOpenShellProviderRequest;
+
+export type ConfigureOpenShellProviderRefreshRequest = GetOpenShellProviderRequest &
+  Readonly<{
+    credentialKey: string;
+    strategy: string;
+    material: readonly Readonly<{ key: string; value: string }>[];
+    secretMaterial: readonly Readonly<{ key: string; value: string }>[];
+  }>;
+
+export type GetOpenShellProviderRefreshStatusRequest = GetOpenShellProviderRequest &
+  Readonly<{
+    credentialKey: string;
+  }>;
+
 export type OpenShellProviderProfileImport = Readonly<{
   state: "already_present" | "imported";
 }>;
@@ -128,6 +144,18 @@ export type OpenShellProviderDelete = Readonly<{
 
 export type OpenShellProviderDetach = Readonly<{
   state: "absent" | "detached";
+}>;
+
+export type OpenShellProviderAttach = Readonly<{
+  state: "attached";
+}>;
+
+export type OpenShellProviderRefreshConfiguration = Readonly<{
+  state: "configured";
+}>;
+
+export type OpenShellProviderRefreshStatus = Readonly<{
+  status: string | null;
 }>;
 
 /** Transport-neutral provider operations used by NemoClaw consumers. */
@@ -167,4 +195,27 @@ export interface OpenShellProviderAdapter {
   detachProvider(
     request: DetachOpenShellProviderRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderDetach>>;
+
+  attachProvider(
+    request: AttachOpenShellProviderRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderAttach>>;
+
+  configureProviderRefresh(
+    request: ConfigureOpenShellProviderRefreshRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderRefreshConfiguration>>;
+
+  getProviderRefreshStatus(
+    request: GetOpenShellProviderRefreshStatusRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderRefreshStatus>>;
+}
+
+/** Synchronous typed reads for onboarding decisions made before async provider mutation. */
+export interface OpenShellProviderInspectionAdapter {
+  getProvider(
+    request: GetOpenShellProviderRequest,
+  ): OpenShellProviderResult<OpenShellProviderMetadata>;
+
+  inspectProviderProfile(
+    request: InspectOpenShellProviderProfileRequest,
+  ): OpenShellProviderResult<OpenShellProviderProfileInspection>;
 }

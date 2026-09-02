@@ -17,6 +17,7 @@ import type {
   MessagingHookRunResult,
 } from "../hooks";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
 
 export const MESSAGING_SETUP_APPLIER_ENV_KEY = "NEMOCLAW_MESSAGING_PLAN_B64";
 
@@ -70,8 +71,52 @@ export type MessagingOpenShellRunner = (
   options?: MessagingOpenShellRunOptions,
 ) => MessagingOpenShellRunResult;
 
+export type MessagingCredentialProviderProfile =
+  | Readonly<{
+      kind: "endpointless";
+      profilePath: string;
+      profileType: string;
+      inferenceCapable: false;
+    }>
+  | Readonly<{
+      kind: "checked-in";
+      profilePath: string;
+      profileType: string;
+      contractDigest: string;
+    }>;
+
+export type MessagingCredentialProviderDefinition = Readonly<{
+  channelId: MessagingChannelId;
+  credentialId: string;
+  providerName: string;
+  providerType: string;
+  credentials: readonly Readonly<{ name: string; value: string | null }>[];
+  profile: MessagingCredentialProviderProfile;
+}>;
+
+export type MessagingProviderRefreshDefinition = Readonly<{
+  channelId: MessagingChannelId;
+  providerName: string;
+  credentialKey: string;
+  strategy: string;
+  material: readonly Readonly<{ key: string; value: string }>[];
+  secretMaterial: readonly Readonly<{ key: string; value: string }>[];
+}>;
+
 export type MessagingCredentialApplyOptions = MessagingSetupEnvOptions &
-  Readonly<{ providerAdapter: OpenShellProviderAdapter }>;
+  Readonly<{
+    providerAdapter: OpenShellProviderAdapter;
+    target?: OpenShellGatewayTarget;
+    definitions?: readonly MessagingCredentialProviderDefinition[];
+    refreshes?: readonly MessagingProviderRefreshDefinition[];
+    replaceExisting?: boolean;
+    bestEffort?: boolean;
+    allowedSandboxes?: readonly string[];
+    revalidateSandboxIdentity?(operation: string): void;
+    sleep?(milliseconds: number): Promise<void>;
+    now?(): number;
+    log?(message: string): void;
+  }>;
 
 export interface MessagingCredentialApplyResult {
   readonly upserted: readonly {

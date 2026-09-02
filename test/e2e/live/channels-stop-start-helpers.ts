@@ -169,7 +169,6 @@ export function installGooglechatCredentialFixture(
   assertChannelsStopStartSandboxName(sandboxName, agent);
   const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
   const channelDependencies = dependencies.channelDependencies ?? policyChannelDependencies;
-  const originalChannelUpsert = channelDependencies.upsertMessagingProviders;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
   const directUpsert: InstalledGooglechatCredentialFixture["upsertMessagingProviders"] = (
@@ -187,10 +186,9 @@ export function installGooglechatCredentialFixture(
       throw new Error("Google Chat live fixture received an unexpected provider definition");
     }
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
-    const delegatedProviderNames =
-      delegatedTokenDefs.length === 0
-        ? []
-        : originalChannelUpsert.call(channelDependencies, delegatedTokenDefs, gatewayName, options);
+    if (delegatedTokenDefs.length > 0) {
+      throw new Error("Google Chat live fixture received unrelated provider definitions");
+    }
     const effectiveRun: typeof runOpenshell = (args, runOptions) =>
       channelDependencies.runGatewayOpenshell(gatewayName, args, runOptions);
     ensureProfiles(fixtureTokenDefs, {
@@ -233,7 +231,7 @@ export function installGooglechatCredentialFixture(
     if (mutated.status !== 0) {
       throw new Error(`Google Chat live fixture could not ${action} provider '${expectedName}'`);
     }
-    const registered = new Set([...delegatedProviderNames, expectedName]);
+    const registered = new Set([expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
   const providerDependencies =

@@ -45,7 +45,7 @@ function providerAdapter(
     async () => ({ ok: true, value: { state: "ready" } });
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async () => ({
     ok: true,
-    value: { credentialKeys: [] },
+    value: { credentialKeys: [], contractDigest: "test-profile-contract" },
   });
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async () => ({
     ok: true,
@@ -55,6 +55,14 @@ function providerAdapter(
     ok: true,
     value: { state: "detached" },
   });
+  const attachProvider: OpenShellProviderAdapter["attachProvider"] = async () => ({
+    ok: true,
+    value: { state: "attached" },
+  });
+  const configureProviderRefresh: OpenShellProviderAdapter["configureProviderRefresh"] =
+    async () => ({ ok: true, value: { state: "configured" } });
+  const getProviderRefreshStatus: OpenShellProviderAdapter["getProviderRefreshStatus"] =
+    async () => ({ ok: true, value: { status: "refreshed" } });
   return {
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
@@ -65,6 +73,9 @@ function providerAdapter(
     inspectProviderProfile: vi.fn(inspectProviderProfile),
     deleteProvider: vi.fn(deleteProvider),
     detachProvider: vi.fn(detachProvider),
+    attachProvider: vi.fn(attachProvider),
+    configureProviderRefresh: vi.fn(configureProviderRefresh),
+    getProviderRefreshStatus: vi.fn(getProviderRefreshStatus),
     ...overrides,
   };
 }

@@ -3,7 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createCliOpenShellProviderAdapter, type RunProviderCommand } from "./provider-adapter-cli";
+import {
+  createCliOpenShellProviderAdapter,
+  createCliOpenShellProviderInspectionAdapter,
+  type RunProviderCommand,
+} from "./provider-adapter-cli";
+import { providerProfileContractDigest } from "./provider-profile-contract";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 
 function captured(status: number | null, stdout = "", stderr = "", error?: Error) {
@@ -63,6 +68,36 @@ describe("CLI OpenShell provider adapter", () => {
       stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 4_321,
+    });
+  });
+
+  it("returns the same typed provider result to synchronous onboarding inspection (#9806)", () => {
+    const run = vi.fn(() =>
+      captured(
+        0,
+        [
+          "Name: search-prod",
+          "Type: tavily",
+          "Credential keys: TAVILY_API_KEY",
+          "Config keys: <none>",
+        ].join("\n"),
+      ),
+    );
+    const inspector = createCliOpenShellProviderInspectionAdapter({ run });
+
+    expect(
+      inspector.getProvider({
+        target: namedOpenShellGateway("nemoclaw-18080"),
+        providerName: "search-prod",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        name: "search-prod",
+        type: "tavily",
+        credentialKeys: ["TAVILY_API_KEY"],
+        configKeys: [],
+      },
     });
   });
 
@@ -278,14 +313,31 @@ describe("CLI OpenShell provider adapter", () => {
   });
 
   it("returns sorted unique credential keys from a provider profile (#9806)", async () => {
-    const run = vi.fn(() =>
-      captured(
-        0,
-        JSON.stringify({
-          credentials: [{ env_vars: ["ZETA_TOKEN", "ALPHA_TOKEN"] }, { env_vars: ["ALPHA_TOKEN"] }],
-        }),
-      ),
-    );
+    const profile = {
+      id: "custom",
+      credentials: [
+        {
+          name: "token",
+          env_vars: ["ZETA_TOKEN", "ALPHA_TOKEN"],
+          required: true,
+          auth_style: "bearer",
+          header_name: "Authorization",
+          query_param: "",
+        },
+        {
+          name: "backup",
+          env_vars: ["ALPHA_TOKEN"],
+          required: false,
+          auth_style: "header",
+          header_name: "x-backup-token",
+          query_param: "",
+        },
+      ],
+      endpoints: [],
+      binaries: [],
+      inference_capable: false,
+    };
+    const run = vi.fn(() => captured(0, JSON.stringify(profile)));
     const adapter = createCliOpenShellProviderAdapter({ run });
 
     await expect(
@@ -295,12 +347,73 @@ describe("CLI OpenShell provider adapter", () => {
       }),
     ).resolves.toEqual({
       ok: true,
-      value: { credentialKeys: ["ALPHA_TOKEN", "ZETA_TOKEN"] },
+      value: {
+        credentialKeys: ["ALPHA_TOKEN", "ZETA_TOKEN"],
+        contractDigest: providerProfileContractDigest(profile),
+      },
     });
     expect(run).toHaveBeenCalledWith(
       ["provider", "profile", "export", "custom", "--output", "json"],
       expect.any(Object),
     );
+  });
+
+  it("ignores explanatory refresh text but detects credential-boundary changes (#9806)", () => {
+    const profile = {
+      id: "custom",
+      credentials: [
+        {
+          name: "access_token",
+          env_vars: ["ACCESS_TOKEN"],
+          required: true,
+          auth_style: "bearer",
+          header_name: "Authorization",
+          query_param: "",
+          refresh: {
+            strategy: "test-refresh",
+            scopes: ["scope:a"],
+            material: [
+              { name: "private_key", description: "Original text", required: true, secret: true },
+            ],
+          },
+        },
+      ],
+      endpoints: [],
+      binaries: [],
+      inference_capable: false,
+    };
+    const digest = providerProfileContractDigest(profile);
+
+    expect(
+      providerProfileContractDigest({
+        ...profile,
+        credentials: [
+          {
+            ...profile.credentials[0],
+            refresh: {
+              ...profile.credentials[0].refresh,
+              material: [
+                {
+                  ...profile.credentials[0].refresh.material[0],
+                  description: "Rewritten explanatory text",
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toBe(digest);
+    expect(
+      providerProfileContractDigest({
+        ...profile,
+        credentials: [
+          {
+            ...profile.credentials[0],
+            refresh: { ...profile.credentials[0].refresh, scopes: ["scope:b"] },
+          },
+        ],
+      }),
+    ).not.toBe(digest);
   });
 
   it("reconciles an endpointless profile inside the CLI adapter (#9806)", async () => {
@@ -412,6 +525,122 @@ describe("CLI OpenShell provider adapter", () => {
     expect(run).toHaveBeenCalledWith(
       ["sandbox", "provider", "detach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
       expect.objectContaining({ ignoreError: true, timeout: 30_000 }),
+    );
+  });
+
+  it("places a named gateway flag before attach arguments (#9806)", async () => {
+    const run = vi.fn(() => captured(0));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.attachProvider({
+        target: namedOpenShellGateway("nemoclaw-18080"),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: { state: "attached" } });
+    expect(run).toHaveBeenCalledWith(
+      ["sandbox", "provider", "attach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
+      expect.objectContaining({ ignoreError: true, timeout: 30_000 }),
+    );
+  });
+
+  it("configures refresh secrets through the child environment (#9806)", async () => {
+    const run = vi.fn<RunProviderCommand>(() => captured(0));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+    const privateKey = "host-only-private-key";
+
+    await expect(
+      adapter.configureProviderRefresh({
+        target: namedOpenShellGateway("nemoclaw"),
+        providerName: "google-chat",
+        credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        strategy: "google-service-account-jwt",
+        material: [{ key: "client_email", value: "bot@example.com" }],
+        secretMaterial: [{ key: "private_key", value: privateKey }],
+      }),
+    ).resolves.toEqual({ ok: true, value: { state: "configured" } });
+    expect(run).toHaveBeenCalledWith(
+      [
+        "provider",
+        "refresh",
+        "-g",
+        "nemoclaw",
+        "configure",
+        "--credential-key",
+        "GOOGLE_CHAT_ACCESS_TOKEN",
+        "--strategy",
+        "google-service-account-jwt",
+        "--material",
+        "client_email=bot@example.com",
+        "--secret-material-env",
+        "private_key=NEMOCLAW_PROVIDER_REFRESH_SECRET_0",
+        "google-chat",
+      ],
+      expect.objectContaining({
+        env: { NEMOCLAW_PROVIDER_REFRESH_SECRET_0: privateKey },
+      }),
+    );
+    expect(run.mock.calls[0]?.[0].join(" ")).not.toContain(privateKey);
+  });
+
+  it("redacts refresh secrets from typed failures (#9806)", async () => {
+    const privateKey = "host-only-private-key";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", `refresh rejected ${privateKey}`),
+    });
+
+    const result = await adapter.configureProviderRefresh({
+      target: selectedOpenShellGateway(),
+      providerName: "google-chat",
+      credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+      strategy: "google-service-account-jwt",
+      material: [],
+      secretMaterial: [{ key: "private_key", value: privateKey }],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "refresh rejected <REDACTED>",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(privateKey);
+  });
+
+  it("parses a typed refresh status from a named gateway (#9806)", async () => {
+    const run = vi.fn(() =>
+      captured(
+        0,
+        [
+          "PROVIDER    KEY           STRATEGY                    STATUS",
+          "google-chat  GOOGLE_CHAT_ACCESS_TOKEN  google-service-account-jwt  refreshed",
+        ].join("\n"),
+      ),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.getProviderRefreshStatus({
+        target: namedOpenShellGateway("nemoclaw"),
+        providerName: "google-chat",
+        credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+      }),
+    ).resolves.toEqual({ ok: true, value: { status: "refreshed" } });
+    expect(run).toHaveBeenCalledWith(
+      [
+        "provider",
+        "refresh",
+        "-g",
+        "nemoclaw",
+        "status",
+        "google-chat",
+        "--credential-key",
+        "GOOGLE_CHAT_ACCESS_TOKEN",
+      ],
+      expect.objectContaining({ suppressOutput: true }),
     );
   });
 

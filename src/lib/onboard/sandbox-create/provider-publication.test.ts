@@ -62,7 +62,7 @@ function typedProviderAdapter(
     })),
     inspectProviderProfile: vi.fn(async () => ({
       ok: true as const,
-      value: { credentialKeys: [] },
+      value: { credentialKeys: [], contractDigest: "test-profile-contract" },
     })),
     deleteProvider: vi.fn(async () => ({
       ok: true as const,
@@ -71,6 +71,18 @@ function typedProviderAdapter(
     detachProvider: vi.fn(async () => ({
       ok: true as const,
       value: { state: "detached" as const },
+    })),
+    attachProvider: vi.fn(async () => ({
+      ok: true as const,
+      value: { state: "attached" as const },
+    })),
+    configureProviderRefresh: vi.fn(async () => ({
+      ok: true as const,
+      value: { state: "configured" as const },
+    })),
+    getProviderRefreshStatus: vi.fn(async () => ({
+      ok: true as const,
+      value: { status: "refreshed" },
     })),
   };
   return { ...adapter, ...overrides };

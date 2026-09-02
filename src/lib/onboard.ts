@@ -904,7 +904,7 @@ const registeredCredentialProviders =
     migratedLegacyKeys,
     persistMigratedLegacyKeys,
   });
-const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } =
+const { applyMessagingProviders, upsertProvider, providerMatchesGatewayCredential } =
   registeredCredentialProviders;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
   onboardProviders.providerExistsInGateway(
@@ -1625,7 +1625,7 @@ const sandboxCreateOrchestrationRuntime = {
   step,
   stringSetsEqual,
   toolDisclosureFlow,
-  upsertMessagingProviders,
+  applyMessagingProviders,
   usesManagedDcodeIdentity,
   validateName,
   verifyDirectSandboxGpu,

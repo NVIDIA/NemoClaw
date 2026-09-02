@@ -252,8 +252,8 @@ describe("credential provider registration", () => {
       ),
     ).toBe(true);
     expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
-      "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
       "provider get -g test-gateway alpha-discord-bridge",
+      "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
     ]);
   });
 
@@ -452,7 +452,7 @@ describe("credential provider registration", () => {
 
   it("creates a missing messaging provider and records its receipt (#6743)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = { status: 1, stdout: "", stderr: "Provider not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const runOpenshell = vi.fn((args: string[]) =>
       args[0] === "provider" && args[1] === "get" ? missing : success,
@@ -496,7 +496,7 @@ describe("credential provider registration", () => {
 
   it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = { status: 1, stdout: "", stderr: "Provider not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const runOpenshell = vi.fn((args: string[]) =>
       (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
@@ -630,7 +630,7 @@ describe("credential provider registration", () => {
     const session = {
       stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
     } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = { status: 1, stdout: "", stderr: "Provider not found" };
     const success = { status: 0, stdout: "", stderr: "" };
     const responses = new Map([
       [
@@ -705,7 +705,7 @@ describe("credential provider registration", () => {
   it.each([
     {
       condition: "the app provider is missing",
-      appProvider: { status: 1, stdout: "", stderr: "not found" },
+      appProvider: { status: 1, stdout: "", stderr: "Provider not found" },
       error:
         "A required credential provider is missing and no credential is available to recreate it.",
     },
@@ -720,7 +720,7 @@ describe("credential provider registration", () => {
       const session = {
         stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
       } as unknown as Session;
-      const missing = { status: 1, stdout: "", stderr: "not found" };
+      const missing = { status: 1, stdout: "", stderr: "Provider not found" };
       const success = { status: 0, stdout: "", stderr: "" };
       const responses = new Map([
         ["provider get -g test-gateway alpha-slack-bridge", missing],
@@ -872,7 +872,7 @@ describe("credential provider registration", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) =>
       args[1] === "get"
-        ? { status: 1, stdout: "", stderr: "not found" }
+        ? { status: 1, stdout: "", stderr: "Provider not found" }
         : { status: 0, stdout: "", stderr: "" },
     );
     const deps = registrationDeps(runOpenshell, session);
@@ -912,7 +912,7 @@ describe("credential provider registration", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) =>
       args[1] === "get"
-        ? { status: 1, stdout: "", stderr: "not found" }
+        ? { status: 1, stdout: "", stderr: "Provider not found" }
         : { status: 0, stdout: "", stderr: "" },
     );
     const deps = registrationDeps(runOpenshell, session);

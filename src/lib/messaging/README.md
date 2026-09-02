@@ -19,6 +19,7 @@ flowchart TD
   compiler["ManifestCompiler"]
   plan["SandboxMessagingPlan"]
   setup["MessagingSetupApplier"]
+  provider["typed OpenShell provider adapter"]
   dockerfile["src/lib/onboard/dockerfile-patch.ts"]
   build["applier/build/messaging-build-applier.mts"]
   openshell["OpenShell providers, policy, forwards, and config files"]
@@ -30,7 +31,8 @@ flowchart TD
   planner --> compiler
   compiler --> plan
   plan --> setup
-  setup --> openshell
+  setup --> provider
+  provider --> openshell
   setup --> dockerfile
   dockerfile --> build
   build --> openshell
@@ -186,6 +188,22 @@ Important plan sections are:
 
 Disabled channels must not produce side effects.
 Use `enabledPlanChannels()` and `filterEnabledPlanEntries()` before applying providers, policy, render entries, runtime setup, hooks, host forwards, or conflict checks.
+
+## Provider Lifecycle Boundary
+
+`applier/provider-application.ts` translates onboarding and channel token definitions into typed provider definitions, checked-in profile contracts, and refresh requests.
+`MessagingSetupApplier.applyCredentialsAtOpenShell()` owns provider preflight, profile preparation, create or update, replacement, verification, and refresh observation.
+All provider inspection and mutation crosses a typed adapter boundary; asynchronous lifecycle work uses `OpenShellProviderAdapter`, while synchronous onboarding preflight uses `OpenShellProviderInspectionAdapter`.
+Callers do not classify provider state from raw CLI text.
+
+The applier preflights every definition before it prepares profiles or changes provider state.
+Checked-in profiles are imported and then compared by a stable digest of their credential-boundary fields.
+Replacement is opt-in and may detach only explicitly allowed sandboxes after identity revalidation.
+Failures report the exact provider names already created or mutated so channel recovery can remove new providers and explain incomplete replacements or updates.
+Persistent source credentials remain in the existing environment or credential store and never enter serializable messaging plans.
+During provider application, short-lived copies may exist in token definitions, the application plan, adapter requests, and the OpenShell child environment.
+The CLI does not put those copies in command arguments, logs, persistence, or typed adapter results, and their local references leave scope after the awaited lifecycle returns.
+Sandbox create, reuse, direct channel add, and rollback await this lifecycle before publishing provider attachments or registry state.
 
 ## Hooks Architecture
 
