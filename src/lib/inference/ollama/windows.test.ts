@@ -204,6 +204,8 @@ describe("Windows Ollama helper", () => {
     }
 
     expect(rollbackScript).toContain("SetEnvironmentVariable('OLLAMA_HOST',$previousHost,'User')");
+    expect(rollbackScript).toContain("Get-Process 'ollama app'");
+    expect(rollbackScript).toContain("Get-Process ollama");
     expect(rollbackScript).toContain(Buffer.from(priorHost, "utf8").toString("base64"));
     expect(rollbackScript).toContain(Buffer.from(watcherPath, "utf8").toString("base64"));
     expect(rollbackScript).toContain("Start-Process -FilePath $previousWatcher");

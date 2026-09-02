@@ -130,6 +130,8 @@ function persistOllamaHostEnvVar(): boolean {
 
 function buildWindowsOllamaRestoreScript(snapshot: WindowsOllamaHostSnapshot): string {
   const script = [
+    "Get-Process 'ollama app' -EA SilentlyContinue | Stop-Process -Force",
+    "Get-Process ollama -EA SilentlyContinue | Stop-Process -Force",
     `$previousHost = ${psNullableUtf8Expression(snapshot.userHost)}`,
     "[Environment]::SetEnvironmentVariable('OLLAMA_HOST',$previousHost,'User')",
     "$env:OLLAMA_HOST = $previousHost",
