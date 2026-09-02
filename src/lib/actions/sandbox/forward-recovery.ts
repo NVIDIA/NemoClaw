@@ -6,10 +6,8 @@ import {
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
-import {
-  captureOpenshell,
-  runOpenshell,
-} from "../../adapters/openshell/runtime";
+import { isLegacySandboxForwardListed } from "../../adapters/openshell/forward-service-migration";
+import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
@@ -336,7 +334,22 @@ export function isSandboxPortForwardHealthy(
 ): SandboxForwardHealth {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
-  return isLocalForwardReachable(port);
+  if (!isLocalForwardReachable(port)) return false;
+  const gatewayName = resolveSandboxGatewayName(sandbox);
+  const listed = captureOpenshell(["forward", "list", "--gateway", gatewayName], {
+    ignoreError: true,
+    includeStreams: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (
+    !listed.error &&
+    !listed.signal &&
+    listed.status === 0 &&
+    isLegacySandboxForwardListed(listed.output, sandboxName, port)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function ensureSandboxPortForwardForPort(

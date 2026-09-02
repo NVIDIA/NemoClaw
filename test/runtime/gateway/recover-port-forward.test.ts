@@ -108,6 +108,7 @@ function setupFixture(opts: {
   forwardStartHeals?: boolean;
   /** Number of post-start list probes that remain stale before ownership is visible. */
   forwardStartDelayPolls?: number;
+  forwardReachable?: boolean;
   recoveryWaitMs?: string;
   port?: string;
 }): Fixture {
@@ -306,7 +307,8 @@ if (!(forwardIndex >= 0 && args[forwardIndex + 1] === "service")) process.exit(0
   // A running OpenShell row is only healthy when its local socket also
   // answers. Keep the listener alive in a separate process because runRecover
   // uses spawnSync and blocks this Vitest worker's event loop.
-  const reachablePorts = opts.forwardListStatus === "running" ? [port] : [];
+  const reachablePorts =
+    (opts.forwardReachable ?? opts.forwardListStatus === "running") ? [port] : [];
   reachablePorts.forEach((reachablePort) =>
     startReachableForward(reachablePort, listenerPidFile, listenerReadyFile),
   );
@@ -390,9 +392,9 @@ describe("nemoclaw <name> recover", () => {
     },
   );
 
-  it("no-ops when both the gateway and the forward are healthy", testTimeoutOptions(20_000), () => {
+  it("migrates a reachable tracked legacy forward", testTimeoutOptions(20_000), () => {
     const fixture = setupFixture({
-      sandboxName: "healthy-sandbox",
+      sandboxName: "legacy-sandbox",
       gatewayProbe: "RUNNING",
       forwardListStatus: "running",
     });
@@ -400,12 +402,27 @@ describe("nemoclaw <name> recover", () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
     const combined = (result.stdout || "") + (result.stderr || "");
-    expect(combined).toContain("gateway is running in 'healthy-sandbox'");
-    expect(combined).not.toContain("Re-establishing");
-    expect(combined).not.toContain("restored dashboard port forward");
+    expect(combined).toContain("gateway is running in 'legacy-sandbox'");
 
     const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-    expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
+    const stopIdx = calls.findIndex((line) => line.startsWith("forward stop "));
+    const startIdx = calls.findIndex((line) => line.includes("forward service "));
+    expect(stopIdx).toBeGreaterThanOrEqual(0);
+    expect(startIdx).toBeGreaterThan(stopIdx);
+  });
+
+  it("no-ops when a direct service is reachable and the legacy list is empty", () => {
+    const fixture = setupFixture({
+      sandboxName: "healthy-sandbox",
+      gatewayProbe: "RUNNING",
+      forwardListStatus: "missing",
+      forwardReachable: true,
+    });
+    const result = runRecover(fixture);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+    const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+    expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
     expect(calls.some((line) => line.includes("forward service "))).toBe(false);
   });
 });

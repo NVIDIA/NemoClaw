@@ -3,9 +3,25 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { retireLegacySandboxForwards } from "./forward-service-migration";
+import {
+  isLegacySandboxForwardListed,
+  retireLegacySandboxForwards,
+} from "./forward-service-migration";
 
 describe("ForwardTcp legacy migration", () => {
+  it("matches only the exact sandbox and port", () => {
+    const output = [
+      "SANDBOX  BIND       PORT   PID  STATUS",
+      "demo     127.0.0.1  18789  10   running",
+      "demo     127.0.0.1  19999  11   running",
+      "other    127.0.0.1  18789  12   running",
+    ].join("\n");
+
+    expect(isLegacySandboxForwardListed(output, "demo", 18_789)).toBe(true);
+    expect(isLegacySandboxForwardListed(output, "demo", 19_000)).toBe(false);
+    expect(isLegacySandboxForwardListed(output, "other", 19_999)).toBe(false);
+  });
+
   it("retires only registered NemoClaw ports for the selected sandbox", () => {
     const run = vi.fn(() => ({ status: 0 }));
 

@@ -18,6 +18,15 @@ function legacyForwardPorts(output: string | null | undefined, sandboxName: stri
     .filter((port) => Number.isInteger(port));
 }
 
+/** Identify an exact sandbox+port entry in OpenShell's legacy forward registry. */
+export function isLegacySandboxForwardListed(
+  output: string | null | undefined,
+  sandboxName: string,
+  port: number,
+): boolean {
+  return legacyForwardPorts(output, sandboxName).includes(port);
+}
+
 export interface LegacyForwardMigrationDeps {
   readonly capture: (gatewayName: string) => {
     readonly error?: unknown;

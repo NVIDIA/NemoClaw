@@ -75,11 +75,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", () => {
       hermesApiPort: 8643,
     });
     mocks.captureOpenshell.mockReturnValue(
-      forwardList([
-        "alpha 127.0.0.1 18789 101 running",
-        "alpha 127.0.0.1 8642 102 running",
-        "beta 127.0.0.1 8643 103 running",
-      ]),
+      forwardList(["alpha 127.0.0.1 18789 101 running", "alpha 127.0.0.1 8642 102 running"]),
     );
     const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
     expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
@@ -105,9 +101,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", () => {
 
   it("keeps the default API port for a sandbox registered without one (#8543)", async () => {
     mocks.getSandbox.mockReturnValue({ agent: "hermes", dashboardPort: 18789 });
-    mocks.captureOpenshell.mockReturnValue(
-      forwardList(["beta 127.0.0.1 18789 101 running", "beta 127.0.0.1 8642 102 running"]),
-    );
+    mocks.captureOpenshell.mockReturnValue(forwardList([]));
     const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
     expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18789)).toBe(true);
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
