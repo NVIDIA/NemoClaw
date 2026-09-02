@@ -631,7 +631,7 @@ exit 1
       }) as never);
 
       try {
-        expect(policies.applyPreset("my-assistant", "npm")).toBe(false);
+        expect(policies.applyPreset("my-assistant", "npm", { nonFatal: true })).toBe(false);
         expect(exitSpy).not.toHaveBeenCalled();
         // No `nemoclaw-policy-*` temp dir should have been created before
         // the resolvability check exited.

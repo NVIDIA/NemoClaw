@@ -225,9 +225,9 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("stops rebuild when OpenClaw messaging config reapply fails", async () => {
-    vi.mocked(
-      rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor,
-    ).mockRejectedValue(new Error("config write failed"));
+    vi.mocked(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).mockRejectedValue(
+      new Error("config write failed"),
+    );
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -238,9 +238,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw messaging manifest config reapply failed during rebuild.",
     );
-    expect(args.log).toHaveBeenCalledWith(
-      "Messaging manifest reapply failed: config write failed",
-    );
+    expect(args.log).toHaveBeenCalledWith("Messaging manifest reapply failed: config write failed");
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain("Messaging manifest config reapply failed after doctor");
   });
@@ -329,9 +327,12 @@ describe("rebuild post-restore phase", () => {
     expect(registry.updateSandbox).toHaveBeenNthCalledWith(1, "alpha", {
       agentVersion: null,
     });
+    expect(registry.updateSandbox).toHaveBeenNthCalledWith(2, "alpha", {
+      agentVersion: null,
+    });
     expect(registry.updateSandbox).not.toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ agentVersion: "0.20.6" }),
+      expect.objectContaining({ agentVersion: expect.stringMatching(/.+/) }),
     );
     expect(args.bail).toHaveBeenCalledWith(
       "Replacement agent version did not match the authoritative rebuild target.",

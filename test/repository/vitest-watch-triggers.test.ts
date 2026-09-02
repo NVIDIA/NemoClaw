@@ -198,9 +198,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/inference/managed/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(triggeredBy("internal/security-reviews/hermes-0.20.6-dependency-review.md")).toEqual([
-      "test/agents/hermes/hermes-dependency-review.test.ts",
-    ]);
+    expect(triggeredBy("internal/security-reviews/hermes-0.20.6-dependency-review.md")).toEqual([]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
@@ -214,7 +212,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
-      "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/runtime/sandbox/sandbox-provisioning.test.ts",
@@ -228,7 +225,6 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
-      "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/download-hermes-source-archive.sh")).toEqual([

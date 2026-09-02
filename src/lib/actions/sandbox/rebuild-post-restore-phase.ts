@@ -311,6 +311,9 @@ export async function runRebuildPostRestorePhase(
       rebuiltVersion.verificationFailed ||
       rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
     ) {
+      // checkAgentVersion caches a successful probe. Do not retain metadata
+      // from a replacement that this rebuild rejects.
+      registry.updateSandbox(sandboxName, { agentVersion: null });
       const observed = rebuiltVersion.sandboxVersion ?? "unverified";
       const detail = `  Replacement agent version did not match the rebuild target (expected ${versionCheck.expectedVersion}, observed ${observed}).`;
       if (hermesCronRestoreIdentity) {

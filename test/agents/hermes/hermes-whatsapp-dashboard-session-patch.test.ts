@@ -24,6 +24,15 @@ it("stores Hermes dashboard pairing state in the gateway session directory (#818
   );
 
   try {
+    const scoped = spawnSync(
+      "git",
+      ["apply", "--check", "--exclude=scripts/whatsapp-bridge/**", PATCH],
+      {
+        cwd: tmp,
+        encoding: "utf8",
+      },
+    );
+    expect(scoped.status, scoped.stderr).toBe(0);
     const applied = spawnSync("git", ["apply", "--include=hermes_cli/web_server.py", PATCH], {
       cwd: tmp,
       encoding: "utf8",

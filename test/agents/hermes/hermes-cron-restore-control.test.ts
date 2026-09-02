@@ -1158,9 +1158,10 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stderr).toContain(
       "Hermes cron restore drain release failed and its marker could not be restored",
     );
+    const originalGateStart = result.stdout.match(/^ORIGINAL_GATE_START:(.+)$/mu)?.[1];
     const rearmCalls = result.stdout.match(/^REARM_CALLS:(.+)$/mu)?.[1].split(",");
-    expect(rearmCalls).toHaveLength(2);
-    expect(rearmCalls?.[1]).toBe(rearmCalls?.[0]);
+    expect(originalGateStart).toBeTruthy();
+    expect(rearmCalls).toEqual([originalGateStart, originalGateStart]);
     const receipts = result.stdout
       .split("\n")
       .filter((line) => line.startsWith(RECEIPT_PREFIX))

@@ -101,10 +101,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)internal\/security-reviews\/hermes-0\.20\.6-dependency-review\.md$/,
-    testsToRun: runTests("test/agents/hermes/hermes-dependency-review.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/actions\/resolve-hermes-base-image\/action\.yaml$/,
     testsToRun: runTests("test/platform/images/base-image-resolver-helper.test.ts"),
   },
@@ -119,7 +115,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)agents\/hermes\/Dockerfile\.base$/,
     testsToRun: runTests(
-      "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/runtime/sandbox/sandbox-provisioning.test.ts",
@@ -136,7 +131,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
         return [
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
-          "test/agents/hermes/hermes-dependency-review.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
         ];
       }

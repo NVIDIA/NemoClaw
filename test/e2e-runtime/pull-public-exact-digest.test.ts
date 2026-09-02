@@ -13,10 +13,11 @@ const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh")
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
 
 type Scenario =
-  | "docker-exit-one-then-success"
   | "exhausted"
   | "modern-transient-then-success"
   | "near-match"
+  | "permanent-status-one"
+  | "reference-precedes-other-not-found"
   | "success"
   | "terminal"
   | "transient-then-success";
@@ -53,8 +54,12 @@ if [ "$SCENARIO" = "modern-transient-then-success" ] && [ "$count" -eq 1 ]; then
   echo "Error response from daemon: failed to resolve reference \"$EXPECTED_REFERENCE\": $EXPECTED_REFERENCE: not found" >&2
   exit 44
 fi
-if [ "$SCENARIO" = "docker-exit-one-then-success" ] && [ "$count" -eq 1 ]; then
+if [ "$SCENARIO" = "permanent-status-one" ]; then
   echo "unexpected registry response" >&2
+  exit 1
+fi
+if [ "$SCENARIO" = "reference-precedes-other-not-found" ]; then
+  echo "$EXPECTED_REFERENCE: access denied: not found" >&2
   exit 1
 fi
 if [ "$SCENARIO" = "exhausted" ] || { [ "$SCENARIO" = "transient-then-success" ] && [ "$count" -eq 1 ]; }; then
@@ -142,16 +147,26 @@ describe("pull-public-exact-digest", () => {
     expect(result.stdout + result.stderr).not.toContain(`${reference}: not found`);
   });
 
-  it("retries Docker's generic pull failure without exposing its output", () => {
-    const result = runPuller("docker-exit-one-then-success");
+  it("reports an unrecognized Docker status 1 failure without retrying", () => {
+    const result = runPuller("permanent-status-one");
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.count).toBe(2);
-    expect(result.sleeps).toEqual(["2"]);
+    expect(result.status).toBe(1);
+    expect(result.count).toBe(1);
+    expect(result.sleeps).toEqual([]);
     expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr).toContain("outcome=transient-external attempt=1/5 retry-in=2s");
-    expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
-    expect(result.stdout + result.stderr).not.toContain("unexpected registry response");
+    expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=1");
+    expect(result.stderr).toContain("Docker pull diagnostic: unexpected registry response");
+  });
+
+  it("does not treat a later not-found token as the exact reference missing", () => {
+    const result = runPuller("reference-precedes-other-not-found");
+
+    expect(result.status).toBe(1);
+    expect(result.count).toBe(1);
+    expect(result.sleeps).toEqual([]);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=1");
+    expect(result.stderr).toContain("access denied: not found");
   });
 
   it("does not retry a non-exact Docker error", () => {
@@ -162,7 +177,7 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual([]);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=41");
-    expect(result.stderr).not.toContain("permission_denied");
+    expect(result.stderr).toContain("Docker pull diagnostic: denied: permission_denied");
   });
 
   it("does not retry a near-match Docker not-found error", () => {
@@ -173,7 +188,7 @@ describe("pull-public-exact-digest", () => {
     expect(result.sleeps).toEqual([]);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=43");
-    expect(result.stderr).not.toContain("while resolving manifest");
+    expect(result.stderr).toContain("while resolving manifest");
   });
 
   it("fails after the bounded retry schedule is exhausted", () => {

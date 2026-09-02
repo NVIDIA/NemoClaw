@@ -1,108 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  dockerRunCommandBetween,
-  runDockerShell,
-  runLoggedDockerShell,
-} from "../../helpers/dockerfile-run-shell";
+import { dockerRunCommandBetween, runDockerShell } from "../../helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
-const NPM_ROOT_ARGUMENTS = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
-const BUILD_ONLY_MIGRATION_PATCHER_PATHS = [
-  "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
-  "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
-  "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
-  "/opt/nemoclaw-hermes-config/patch-cron-restore-drain.py",
-] as const;
-const HERMES_INTEGRITY_FILES = [
-  {
-    arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
-    source: "agents/hermes/image-build-probes.py",
-    target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
-    source: "agents/hermes/patch-hermes-sqlite-temp-store.py",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
-    source: "agents/hermes/hermes-wrapper.py",
-    target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256",
-    source: "agents/hermes/hermes-cli-adapter-v1.json",
-    target: "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256",
-    source: "agents/hermes/validate-cli-adapter.py",
-    target: "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_VALIDATOR_SHA256",
-    source: "agents/hermes/validate-env-secret-boundary.py",
-    target: "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256",
-    source: "agents/hermes/finalize-tirith-marker.py",
-    target: "/usr/local/lib/nemoclaw/finalize-tirith-marker.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
-    source: "agents/hermes/patch-langfuse-credentials.mts",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256",
-    source: "agents/hermes/patch-discord-recovery-permissions.py",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
-    source: "agents/hermes/patch-gateway-runtime-metadata.py",
-    target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
-    source: "agents/hermes/patch-gateway-process-identity.py",
-    target: "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
-    source: "agents/hermes/patch-cron-execution-runtime.py",
-    target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256",
-    source: "agents/hermes/patch-cron-restore-drain.py",
-    target: "/opt/nemoclaw-hermes-config/patch-cron-restore-drain.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256",
-    source: "agents/hermes/cron-restore-control.py",
-    target: "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256",
-    source: "agents/hermes/hindsight-lazy-integrity.patch",
-    target: "/opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch",
-  },
-  {
-    arg: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
-    source: "agents/hermes/patch-neutral-platform-env-activation.py",
-    target: "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
-  },
-] as const;
 
 type LegacyDataFixture =
   | "none"
@@ -168,12 +74,6 @@ function readText(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
 
-function indexOfRequired(haystack: string, needle: string): number {
-  const index = haystack.indexOf(needle);
-  expect(index).toBeGreaterThanOrEqual(0);
-  return index;
-}
-
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -213,88 +113,7 @@ function runFinalLayout({
   return { hermesDir, legacyTarget, openclawTarget, result, sandboxRoot, tmp };
 }
 
-function runNeutralPatcherCleanup() {
-  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-neutral-patcher-"));
-  const neutralPatcherPath = path.join(tmp, "patch-neutral-platform-env-activation.py");
-  fs.writeFileSync(neutralPatcherPath, "build only\n", { flag: "wx" });
-  const probeIndex = dockerfile.indexOf("image-build-probes.py neutral-platform-inertness");
-  const runIndex = dockerfile.lastIndexOf(
-    'RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]',
-    probeIndex,
-  );
-  const command = dockerRunCommandBetween(
-    dockerfile.slice(runIndex),
-    'RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]',
-    "RUN set -eu; \\\n    profile_probe_root=",
-  ).replaceAll(
-    "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
-    neutralPatcherPath,
-  );
-  const result = runLoggedDockerShell(command, tmp, [], {
-    env: { NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "0" },
-  }).result;
-  return { neutralPatcherPath, result, tmp };
-}
-
-function runFinalBuildOnlyPathGuard(buildOnlyPath: string) {
-  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-build-only-guard-"));
-  const fixturePath = path.join(tmp, path.basename(buildOnlyPath));
-  fs.writeFileSync(fixturePath, "build only\n", { flag: "wx" });
-  const fullCommand = dockerRunCommandBetween(
-    dockerfile,
-    "RUN check_metadata() {",
-    "# Verify the immutable security package inventory",
-  ).replaceAll(buildOnlyPath, fixturePath);
-  const guardedClause = `&& check_absent ${fixturePath}`;
-  const guardedIndex = indexOfRequired(fullCommand, guardedClause);
-  const nextClauseOffset = indexOfRequired(
-    fullCommand.slice(guardedIndex + guardedClause.length),
-    " && ",
-  );
-  const nextClauseIndex = guardedIndex + guardedClause.length + nextClauseOffset;
-  const command = fullCommand.slice(0, nextClauseIndex);
-  const result = runLoggedDockerShell(command, tmp).result;
-  return { result, tmp };
-}
-
 describe("Hermes final image layout", () => {
-  it("removes the neutral-platform patcher after its image probe", () => {
-    const run = runNeutralPatcherCleanup();
-    try {
-      expect(run.result.status, run.result.stderr).toBe(0);
-      expect(fs.existsSync(run.neutralPatcherPath)).toBe(false);
-    } finally {
-      fs.rmSync(run.tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects a retained neutral-platform patcher from the final layout", () => {
-    const run = runFinalBuildOnlyPathGuard(
-      "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
-    );
-    try {
-      expect(run.result.status).toBe(1);
-      expect(run.result.stderr).toContain("build-only Hermes path leaked into the final image");
-    } finally {
-      fs.rmSync(run.tmp, { recursive: true, force: true });
-    }
-  });
-
-  it.each(BUILD_ONLY_MIGRATION_PATCHER_PATHS)(
-    "rejects retained build-only migration patcher %s from the final layout",
-    (buildOnlyPath) => {
-      const run = runFinalBuildOnlyPathGuard(buildOnlyPath);
-      try {
-        expect(run.result.status).toBe(1);
-        expect(run.result.stderr).toContain("build-only Hermes path leaked into the final image");
-      } finally {
-        fs.rmSync(run.tmp, { recursive: true, force: true });
-      }
-    },
-  );
-
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
     try {

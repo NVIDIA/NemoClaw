@@ -421,8 +421,9 @@ ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=1fc80ba3b8b1f66e92fb242e48258131a5
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
     | sha256sum -c - \
-    && /opt/hermes/.venv/bin/python -I \
-    /opt/nemoclaw-hermes-config/image-build-probes.py managed-runtime-capability
+    || { echo "ERROR: image-build-probes.py hash mismatch (update NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256)" >&2; exit 1; }; \
+    /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py managed-runtime-capability
 
 # Ensure the NemoClaw plugin for Hermes is readable.
 # hadolint ignore=DL3059
@@ -678,7 +679,8 @@ ARG NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256=718315e7c36727ca49ac88a1
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     | sha256sum -c - \
-    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+    || { echo "ERROR: patch-session-list-preview.py hash mismatch (update NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256)" >&2; exit 1; }; \
+    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
     && grep -Fq 'if s.get("title_source") in ("derived", "llm")' /opt/hermes/hermes_cli/sessions_cmd.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
