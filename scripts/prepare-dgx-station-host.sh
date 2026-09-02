@@ -1327,6 +1327,32 @@ check_vllm_container_conflicts() {
     || existing_vllm_conflict "vLLM inference workload is active: ${vllm_containers}. NemoClaw did not stop or modify it."
 }
 
+agent_process_conflicts() {
+  local processes=$1 effective_uid=$2 sudo_uid=$3 self=$4 parent=$5
+  local scope_by_uid=1 scoped_uid
+  if [[ "$effective_uid" == "0" && -z "$sudo_uid" ]]; then
+    scope_by_uid=0
+    scoped_uid=0
+  else
+    scoped_uid="$(preparation_controller_uid_for "$effective_uid" "$sudo_uid")"
+  fi
+  awk -v scope_by_uid="$scope_by_uid" -v scoped_uid="$scoped_uid" -v self="$self" -v parent="$parent" '
+    {
+      owner_uid=$1
+      pid=$2
+      ppid=$3
+      comm=tolower($4)
+      $1=$2=$3=$4=""
+      args=tolower($0)
+      if ((scope_by_uid && owner_uid != scoped_uid) || pid == self || pid == parent) next
+      if (comm ~ /^(nemoclaw|openshell)$/ ||
+          args ~ /(^|[[:space:]\/])(nemoclaw|openshell)([[:space:]:]|\.js([[:space:]]|$)|$)/) {
+        print "pid=" pid " process=" comm
+      }
+    }
+  ' <<<"$processes"
+}
+
 check_agent_and_inference_conflicts() {
   local processes agent_matches inference_matches listeners vllm_port
   vllm_port="$(printf '%s' "${NEMOCLAW_VLLM_PORT:-8000}" | awk '{gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print}')"
@@ -1335,21 +1361,8 @@ check_agent_and_inference_conflicts() {
     fatal "NEMOCLAW_VLLM_PORT must be an integer from 1024 to 65535."
   fi
   vllm_port="$((10#$vllm_port))"
-  processes="$(ps -eo pid=,ppid=,comm=,args=)"
-  agent_matches="$(awk -v self="$$" -v parent="$PPID" '
-    {
-      pid=$1
-      ppid=$2
-      comm=tolower($3)
-      $1=$2=$3=""
-      args=tolower($0)
-      if (pid == self || pid == parent) next
-      if (comm ~ /^(nemoclaw|openshell)$/ ||
-          args ~ /(^|[[:space:]\/])(nemoclaw|openshell)([[:space:]:]|\.js([[:space:]]|$)|$)/) {
-        print "pid=" pid " process=" comm
-      }
-    }
-  ' <<<"$processes")"
+  processes="$(ps -eo euid=,pid=,ppid=,comm=,args=)"
+  agent_matches="$(agent_process_conflicts "$processes" "$EUID" "${SUDO_UID:-}" "$$" "$PPID")"
   [[ -z "$agent_matches" ]] \
     || fatal "Agent workload is active: ${agent_matches}. Stop the listed agent process before Station Express. Then rerun the installer."
 
@@ -1357,14 +1370,15 @@ check_agent_and_inference_conflicts() {
     check_vllm_container_conflicts
   fi
 
-  inference_matches="$(awk -v self="$$" -v parent="$PPID" '
+  inference_matches="$(awk -v current_uid="$EUID" -v self="$$" -v parent="$PPID" '
     {
-      pid=$1
-      ppid=$2
-      comm=tolower($3)
-      executable=tolower($4)
+      owner_uid=$1
+      pid=$2
+      ppid=$3
+      comm=tolower($4)
+      executable=tolower($5)
       sub(/^.*\//, "", executable)
-      $1=$2=$3=""
+      $1=$2=$3=$4=""
       args=tolower($0)
       if (pid == self || pid == parent) next
       python_module=(comm ~ /^python([0-9]+([.][0-9]+)*)?$/ &&
@@ -1372,7 +1386,11 @@ check_agent_and_inference_conflicts() {
       docker_init=(comm == "docker-init" &&
                    args ~ /(^|[[:space:]])--[[:space:]]+([^[:space:]]*\/)?vllm([[:space:]]|$)/)
       if (comm == "vllm" || executable == "vllm" || python_module || docker_init) {
-        print "pid=" pid " process=" comm " stop_command=\047kill -- " pid "\047"
+        if (owner_uid == current_uid) {
+          print "pid=" pid " process=" comm " stop_command=\047kill -- " pid "\047"
+        } else {
+          print "pid=" pid " process=" comm " owner_uid=" owner_uid " action=ask_owner_or_host_administrator_to_stop"
+        }
       }
     }
   ' <<<"$processes")"

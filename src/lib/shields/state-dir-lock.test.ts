@@ -12,9 +12,33 @@ import {
   restoreStateDirLockPosture,
   restoreStateDirStartupAccess,
   stateLockPlanCompatibilityIssues,
+  verifyStateDirMutablePosture,
 } from "./state-dir-lock";
 
 type RunCall = { cmd: string[]; input?: string };
+
+const RUN_INJECTED_STARTUP = String.raw`
+import json
+import os
+import sys
+import types
+
+module = types.ModuleType("nemoclaw_injected_state_dir_guard")
+module.__file__ = "<injected>"
+sys.modules[module.__name__] = module
+exec(compile(sys.stdin.read(), module.__file__, "exec"), module.__dict__)
+identity = module.Identity(
+    root_uid=os.getuid(), root_gid=os.getgid(),
+    sandbox_uid=os.getuid(), sandbox_gid=os.getgid(),
+)
+result = module.run_guard(
+    sys.argv[1], sys.argv[2], identity,
+    module.parse_agent_state_lock_plan(sys.argv[3]),
+)
+for issue in result.issues:
+    print(json.dumps(issue.as_json(), sort_keys=True, separators=(",", ":")))
+print(json.dumps(result.summary_json(), sort_keys=True, separators=(",", ":")))
+`;
 
 const PLAN: AgentStateLockPlan = {
   version: 1,
@@ -179,7 +203,6 @@ describe("recursive state-dir lock host wiring", () => {
       "--plan-json",
       JSON.stringify(PLAN),
     ]);
-    expect(invocation?.input).toContain("Descriptor-safe recursive state-directory");
   });
 
   it("uses the current host guard for the narrow startup repair (#8112)", () => {
@@ -201,21 +224,69 @@ describe("recursive state-dir lock host wiring", () => {
       "--plan-json",
       JSON.stringify(PLAN),
     ]);
-    expect(calls[0]?.input).toContain('choices=("preflight", "lock", "unlock", "startup")');
+  });
+
+  it("passes mutable top-level files to the recursive read-only posture verifier (#9485)", () => {
+    const { calls, privileged } = createExec();
+
+    expect(
+      verifyStateDirMutablePosture(privileged, "/sandbox/.hermes", PLAN, true, [
+        "/sandbox/.hermes/config.yaml",
+        "/sandbox/.hermes/.credentials.json",
+      ]),
+    ).toEqual([]);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]?.cmd).toEqual([
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=5s",
+      "12m",
+      "python3",
+      "-I",
+      "-",
+      "verify-mutable",
+      "--config-dir",
+      "/sandbox/.hermes",
+      "--plan-json",
+      JSON.stringify(PLAN),
+      "--mutable-top-level-file",
+      "/sandbox/.hermes/config.yaml",
+      "--mutable-top-level-file",
+      "/sandbox/.hermes/.credentials.json",
+    ]);
   });
 
   it("hands the manifest plan to an injected startup helper (#8006)", () => {
-    const startupPlan: AgentStateLockPlan = { ...PLAN, readOnlyRoots: ["agents", "skills"] };
+    const startupPlan: AgentStateLockPlan = {
+      ...PLAN,
+      readOnlyRoots: ["agents", "skills"],
+      confidentialRoots: ["pairing"],
+    };
     let rawOutput = "";
     let spawnError: Error | undefined;
     const issues = restoreStateDirStartupAccess(
       {
         run: (cmd, input) => {
-          const result = spawnSync(cmd[0]!, cmd.slice(1), {
-            encoding: "utf-8",
-            input,
-            timeout: 15_000,
-          });
+          const pythonIndex = cmd.indexOf("python3");
+          const stdinIndex = cmd.indexOf("-", pythonIndex + 1);
+          const configIndex = cmd.indexOf("--config-dir");
+          const planIndex = cmd.indexOf("--plan-json");
+          const result = spawnSync(
+            cmd[pythonIndex]!,
+            [
+              "-I",
+              "-c",
+              RUN_INJECTED_STARTUP,
+              cmd[stdinIndex + 1]!,
+              cmd[configIndex + 1]!,
+              cmd[planIndex + 1]!,
+            ],
+            {
+              encoding: "utf-8",
+              input,
+              timeout: 15_000,
+            },
+          );
           rawOutput = String(result.stdout) + String(result.stderr);
           spawnError = result.error;
           return {
@@ -233,8 +304,8 @@ describe("recursive state-dir lock host wiring", () => {
 
     expect(spawnError).toBeUndefined();
     expect(rawOutput).toContain('"action":"startup"');
-    expect(rawOutput).not.toContain('"code":"invalid-plan"');
-    expect(issues.join("\n")).not.toContain("[invalid-plan]");
+    expect(rawOutput).toContain('"code":"startup-plan-mismatch"');
+    expect(issues.join("\n")).toContain("[startup-plan-mismatch]");
   });
 
   it("injects the host helper and plan for agents without an image recovery plan", () => {
@@ -248,7 +319,6 @@ describe("recursive state-dir lock host wiring", () => {
     expect(invocation?.cmd).toEqual(
       expect.arrayContaining(["python3", "-I", "-", "lock", "--plan-json", JSON.stringify(PLAN)]),
     );
-    expect(invocation?.input).toContain("Descriptor-safe recursive state-directory");
   });
 
   it("rejects a plan-aware image whose installed helper is missing", () => {

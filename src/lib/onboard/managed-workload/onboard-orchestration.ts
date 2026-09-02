@@ -28,6 +28,7 @@ import {
 } from "../managed-startup/onboard-profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import { getChannelsFromPlan } from "../messaging-plan-session";
+import { getMessagingChannelConfigFromPlan } from "../messaging-config";
 import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
@@ -236,7 +237,9 @@ export function createManagedWorkloadOnboardRuntime(
     : {
         ...discoveredRuntimeCapabilities,
         managedImageSelectionPolicy: "prefer-managed" as const,
-        managedImages: input.stockManagedRuntime ? discoveredRuntimeCapabilities.managedImages : null,
+        managedImages: input.stockManagedRuntime
+          ? discoveredRuntimeCapabilities.managedImages
+          : null,
       };
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
@@ -273,6 +276,9 @@ export function createManagedWorkloadOnboardRuntime(
           customDockerfilePath: input.customDockerfilePath,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
+          ...(!input.tempManagedRuntimeCatalog && liveCatalog?.catalog
+            ? { catalog: liveCatalog.catalog }
+            : {}),
           catalogPath: input.tempManagedRuntimeCatalog ?? liveCatalog?.path ?? null,
           ...(liveCatalog ? { expectedCatalogRevision: liveCatalog.revision } : {}),
           ...(catalogRevision ? { catalogRevision } : {}),
@@ -373,6 +379,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     "createArgs" | "managedStartupRootApplyRequest"
   > & { readonly sandboxName: string };
   readonly plannedMessagingPlan: SandboxMessagingPlan | null;
+  readonly messagingConfig?: MaterializeSandboxCreatePlanInput["messagingConfig"];
   readonly gpu: {
     readonly provider: string;
     readonly config: SandboxGpuConfig;
@@ -438,6 +445,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     deferSandboxEffectsUntilIdentityVerification:
       input.plan.deferSandboxEffectsUntilIdentityVerification,
     messagingTokenDefs: [...messagingTokenDefs],
+    messagingConfig:
+      input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
     getHermesToolGatewayProviderName: input.plan.getHermesToolGatewayProviderName,

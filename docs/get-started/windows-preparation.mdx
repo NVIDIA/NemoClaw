@@ -154,7 +154,13 @@ docker info
 `docker info` prints server information.
 If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running and that Docker Desktop enables WSL integration.
 
-## Set Up Local Inference with Ollama (Optional)
+## Set Up Local Inference (Optional)
+
+If the installer offers Express on WSL, a qualifying N1x WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
+The installer uses local Docker Desktop, Arm64, the Windows N1x product identity, and at least 48,000 MiB of GPU memory as preliminary selection conditions.
+Onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+If any required readiness check fails, onboarding stops managed llama.cpp selection.
+Other WSL hosts retain the Windows-host and WSL-local Ollama rules in this section.
 
 If you plan to select Ollama as your inference provider during onboarding, use one Ollama instance.
 It can run inside WSL or on Windows through Docker Desktop.
@@ -169,21 +175,21 @@ You can also start it yourself beforehand with `ollama serve`.
 
 You can also use Ollama for Windows.
 During onboarding, NemoClaw can use an already-running Windows-host daemon, start or restart an installed daemon, or install Ollama on the Windows host.
-If the installer offers express install on WSL, accepting it selects a local Ollama path automatically based on the container runtime: the Windows-host Ollama path only when it detects Docker Desktop WSL integration, and WSL-local Ollama otherwise.
+For WSL hosts that do not qualify for managed llama.cpp, accepting Express selects a local Ollama path automatically based on the container runtime.
+The installer selects Windows-host Ollama only when it detects local Docker Desktop WSL integration, and it selects WSL-local Ollama otherwise.
 The Windows-host Ollama path requires Docker Desktop WSL integration; the express prompt appears on WSL regardless of the container runtime.
 When the installer must read the Docker configuration file to determine the effective Docker context and Node.js is unavailable, it defers provider selection until after it installs Node.js.
 It then reads the configuration and applies the same runtime check.
 The express selection does not waive system readiness.
-With native Docker Engine inside WSL, or when the Docker runtime is unavailable or cannot be probed, the installer skips onboarding until Docker Desktop WSL integration is available.
-After you fix the runtime, rerun the installer or run `$$nemoclaw onboard`.
-An installed Windows-host Ollama that Docker Desktop cannot reach leaves the WSL-local install available, in both the onboarding menu and a requested `install-ollama` provider, after Docker Desktop WSL integration is available.
+With native Docker Engine inside WSL, a remote or unknown Docker target, or failed Docker detection, Express selects WSL-local Ollama.
+An installed Windows-host Ollama that Docker Desktop cannot reach leaves the WSL-local install available in the onboarding menu and through a requested `install-ollama` provider.
 Qualified WSL routes reach the applicable host route directly and do not use the Ollama auth proxy.
 You can still decline the express prompt (or set `NEMOCLAW_NO_EXPRESS=1`) to choose a provider manually; the onboarding menu labels the Windows-host actions as requiring Docker Desktop integration.
 When Ollama runs on the Windows host, NemoClaw checks it from Docker Desktop through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 A direct request from WSL can fail because Docker Desktop defines this hostname in its container network context.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
-On Windows on Arm N1X systems with a Snapdragon X processor, let NemoClaw choose the Ollama starter model automatically.
+If a Windows on Arm N1x system does not qualify for managed llama.cpp and uses Ollama, let NemoClaw choose the starter model automatically.
 It selects the compute-constrained `qwen3.5:9b` path instead of recommending the 30B and 35B starter models.
 <AgentOnly variant="openclaw">
 For the selection boundary and remaining N1X limitations, refer to [Use Ollama for Local Inference](/user-guide/openclaw/inference/local-inference/set-up-ollama).
