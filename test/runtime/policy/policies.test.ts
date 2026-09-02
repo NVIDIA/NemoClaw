@@ -560,8 +560,15 @@ exit 1
       }) as never);
 
       try {
+        // Transactional callers retain control to roll back rather than exiting.
         expect(policies.applyPreset("my-assistant", "npm", { nonFatal: true })).toBe(false);
         expect(exitSpy).not.toHaveBeenCalled();
+
+        resolveSpy.mockReset().mockReturnValueOnce(fakeOpenshell).mockReturnValue(null);
+
+        // Normal command entry points still exit nonzero when OpenShell is unavailable.
+        expect(() => policies.applyPreset("my-assistant", "npm")).toThrow(/__test_exit__/);
+        expect(exitSpy).toHaveBeenCalledWith(1);
         // No `nemoclaw-policy-*` temp dir should have been created before
         // the resolvability check exited.
         expect(
