@@ -227,10 +227,11 @@ async function candidateNemoclaw(
   args: readonly string[],
   artifactName: string,
   timeoutMs = COMMAND_TIMEOUT_MS,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
   return bash(host, `nemoclaw ${args.map(shellQuote).join(" ")}`, {
     artifactName,
-    env: commandEnv(),
+    env: commandEnv(extraEnv),
     timeoutMs,
   });
 }
@@ -335,10 +336,11 @@ test.skipIf(process.platform !== "linux")(
       e2ePhases: [
         "clear prior fixture state and bind immutable release artifacts",
         "install the released Shields CLI and create a real sandbox",
-        "write durable user data and prove Shields are up",
+        "write durable user data and create the released recovery backup",
+        "raise and prove Shields are up",
         "switch the host to the exact candidate CLI artifact",
         "detect legacy posture and fail closed before mutation",
-        "snapshot and run the production managed sandbox upgrade",
+        "recover through the production managed sandbox upgrade",
         "verify user data runtime usability and legacy-state retirement",
         "prove the candidate exposes no Shields affordance",
       ],
@@ -435,7 +437,15 @@ test.skipIf(process.platform !== "linux")(
     ]);
     throwGatewayUpgradeSetupFailures(setupResults);
 
-    progress.phase("write durable user data and prove Shields are up");
+    const releasedOpenClawVersion = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
+      artifactName: "released-openclaw-version",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    });
+    expectExitZero(releasedOpenClawVersion, "released OpenClaw version");
+    expect(resultText(releasedOpenClawVersion)).toContain(RELEASE_OPENCLAW_VERSION);
+
+    progress.phase("write durable user data and create the released recovery backup");
     const markerWrite = await sandbox.exec(
       SANDBOX_NAME,
       [
@@ -450,6 +460,17 @@ test.skipIf(process.platform !== "linux")(
       },
     );
     expectExitZero(markerWrite, "write durable user-data marker");
+    const releasedBackup = await releasedNemoclaw(
+      host,
+      ["backup-all"],
+      "released-backup-before-shields",
+    );
+    expectExitZero(releasedBackup, "released pre-upgrade backup");
+    expect(resultText(releasedBackup)).toContain(
+      "Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped",
+    );
+
+    progress.phase("raise and prove Shields are up");
     const shieldsUp = await releasedNemoclaw(
       host,
       [SANDBOX_NAME, "shields", "up"],
@@ -532,24 +553,23 @@ test.skipIf(process.platform !== "linux")(
     );
     expectLegacyStateRecord();
 
-    progress.phase("snapshot and run the production managed sandbox upgrade");
-    const snapshot = await candidateNemoclaw(
-      host,
-      [SANDBOX_NAME, "snapshot", "create", "--name", "before-shields-retirement"],
-      "candidate-snapshot-before-retirement",
-      10 * 60_000,
-    );
-    expectExitZero(snapshot, "create trusted snapshot before Shields retirement rebuild");
+    progress.phase("recover through the production managed sandbox upgrade");
     expectLegacyStateRecord();
     const upgrade = await candidateNemoclaw(
       host,
       ["upgrade-sandboxes", "--auto"],
       "candidate-upgrade-retired-shields",
       50 * 60_000,
+      { NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1" },
     );
     expectExitZero(upgrade, "candidate managed upgrade of retired Shields sandbox");
-    expect(resultText(upgrade)).toContain("1 sandbox(es) rebuilt.");
-    expect(resultText(upgrade)).not.toContain("sandbox(es) failed");
+    const upgradeOutput = resultText(upgrade);
+    expect(upgradeOutput).toContain(
+      "Shields has been retired from NemoClaw. This release has no Shields commands or supported Shields posture.",
+    );
+    expect(upgradeOutput).toContain("Prepared backup recovery:");
+    expect(upgradeOutput).toContain("1 sandbox(es) rebuilt.");
+    expect(upgradeOutput).not.toContain("sandbox(es) failed");
 
     progress.phase("verify user data runtime usability and legacy-state retirement");
     const markerRead = await candidateNemoclaw(
