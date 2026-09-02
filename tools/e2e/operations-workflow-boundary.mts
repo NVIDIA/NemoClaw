@@ -35,7 +35,7 @@ const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifact
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const MANAGED_SOURCE_CONDITION =
-  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
+  "${{ inputs.pr_number == '' || inputs.revision == 'base' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
 const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
   [
     "set -euo pipefail",
@@ -284,6 +284,14 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`workflow_dispatch ${name} must be an optional string with an empty default`);
     }
   }
+  const revision = inputs.revision;
+  if (
+    revision?.type !== "choice" ||
+    revision.default !== "candidate" ||
+    !isDeepStrictEqual(revision.options, ["candidate", "base"])
+  ) {
+    errors.push("workflow_dispatch revision must be the candidate/base choice");
+  }
   const expectedEnvironment = {
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
@@ -293,20 +301,14 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (workflow.env?.[name] !== value) errors.push(`E2E workflow must bind ${name}`);
   }
   const runName = String(workflow["run-name"] ?? "");
-  for (const fragment of ["inputs.checkout_sha", "inputs.base_sha", "inputs.pr_number"]) {
+  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number", "inputs.revision"]) {
     if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must include ${fragment}`);
-  }
-  for (const fragment of [
-    "format('E2E PR #{0} base ({1})'",
-    "format('E2E PR #{0} head ({1})'",
-  ]) {
-    if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must distinguish ${fragment}`);
   }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");
   if (
     !concurrencyGroup.includes("inputs.checkout_sha") ||
-    !concurrencyGroup.includes("inputs.base_sha") ||
     !concurrencyGroup.includes("inputs.pr_number") ||
+    !concurrencyGroup.includes("inputs.revision") ||
     !concurrencyGroup.includes("manual-pr")
   ) {
     errors.push("Manual PR E2E concurrency must be scoped to its pull request");
@@ -377,6 +379,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -384,6 +388,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
+    REVISION: "${{ inputs.revision }}",
+    TARGETS: "${{ inputs.targets }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -404,13 +410,20 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    '"$REVISION" == "candidate" || "$REVISION" == "base"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
-    `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
-    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
-    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
-    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
-    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+    `pr_head_sha="$(jq -r '.head.sha' <<< "$pull_json")"`,
+    '"$pr_head_sha" =~ ^[a-f0-9]{40}$',
+    'case "$REVISION" in',
+    '"$pr_head_sha" == "$CHECKOUT_SHA"',
+    '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$CHECKOUT_SHA" == "$BASE_SHA"',
+    "exact-base E2E requires the failed candidate selector",
+    "exact-base E2E requires a same-repository PR",
+    "exact-base E2E cannot select staging Launchable",
+    "native runtime qualification evidence is candidate-only",
+    "exact-base E2E cannot launch staging or dedicated hardware dispatches",
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
     '"$INCLUDE_LAUNCHABLE" == "true"',
     '",${JOBS}," == *",staging-brev-launchable,"*',
@@ -425,6 +438,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "nvidia_owned=false",
     "nvidia_owned=true",
     `printf 'nvidia_owned=%s\\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"`,
+    `printf 'pr_head_sha=%s\\n' "$pr_head_sha" >> "$GITHUB_OUTPUT"`,
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
@@ -474,12 +488,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "pull request must still be open",
     "pull request base repository changed before execution",
-    "pull request base branch changed before execution",
+    "checkout_repository changed before execution",
+    "PR head changed before execution",
     "base_sha changed before execution",
-    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
-    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
-    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
-    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+    'case "$REVISION" in',
+    '"$CHECKOUT_SHA" == "$PR_HEAD_SHA"',
+    '"$CHECKOUT_SHA" == "$BASE_SHA"',
     '"$NVIDIA_OWNED" == "true"',
     "PR source repository ownership changed before execution",
   ]) {
@@ -731,7 +745,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "select_pr_source",
         name: "Resolve exact PR managed-image publication",
-        if: "${{ inputs.pr_number != '' }}",
+        if: "${{ inputs.pr_number != '' && inputs.revision != 'base' }}",
         env: {
           BASE_SHA: "${{ inputs.base_sha }}",
           CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",

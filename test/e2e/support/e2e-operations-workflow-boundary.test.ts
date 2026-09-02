@@ -407,9 +407,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
             GITHUB_TOKEN: "token",
             GITHUB_OUTPUT: output,
+            ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
+            ALLOW_JETSON_DISPATCH: "false",
             INCLUDE_LAUNCHABLE: "false",
             JOBS: "",
             PR_NUMBER: "42",
+            REVISION: "candidate",
+            TARGETS: "",
             WORKFLOW_EVENT: "workflow_dispatch",
             WORKFLOW_REF: "refs/heads/main",
             WORKFLOW_SHA: workflowSha,
@@ -420,7 +424,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       try {
         expect(result.status, result.stderr).toBe(0);
         expect(readFileSync(output, "utf8")).toBe(
-          `nvidia_owned=${expectedNvidiaOwned ? "true" : "false"}\n`,
+          `nvidia_owned=${expectedNvidiaOwned ? "true" : "false"}\npr_head_sha=${headSha}\n`,
         );
         expect(authentication.run).not.toContain("collaborators/");
         expect(authentication.run).not.toContain("role_name");
@@ -454,9 +458,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           EXPECTED_WORKFLOW_SHA: "c".repeat(40),
           GITHUB_OUTPUT: "/dev/null",
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
+          ALLOW_JETSON_DISPATCH: "false",
           INCLUDE_LAUNCHABLE: "false",
           JOBS: "",
           PR_NUMBER: "42",
+          REVISION: "candidate",
+          TARGETS: "",
           WORKFLOW_EVENT: "workflow_dispatch",
           WORKFLOW_REF: "refs/heads/main",
           WORKFLOW_SHA: "c".repeat(40),
@@ -468,16 +476,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   });
 
   it.each([
-    [
-      "an exact PR base revision",
-      "NVIDIA/NemoClaw",
-      "b",
-      "b",
-      "c",
-      "refs/heads/main",
-      0,
-      "",
-    ],
     [
       "an invalid source repository name",
       "invalid-repository",
@@ -556,9 +554,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_OUTPUT: "/dev/null",
             GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
             GITHUB_TOKEN: "token",
+            ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
+            ALLOW_JETSON_DISPATCH: "false",
             INCLUDE_LAUNCHABLE: "false",
             JOBS: "",
             PR_NUMBER: "42",
+            REVISION: "candidate",
+            TARGETS: "",
             WORKFLOW_EVENT: "workflow_dispatch",
             WORKFLOW_REF: workflowRef,
             WORKFLOW_SHA: workflowSha,
@@ -570,39 +572,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       expect(result.stderr).toBe(expectedStderr);
     },
   );
-
-  it("revalidates an exact PR base after checkout", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const validation = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Validate manual PR checkout",
-    )!;
-    const headSha = "a".repeat(40);
-    const baseSha = "b".repeat(40);
-    const prefix = [
-      "git() { printf '%s\\n' \"$CHECKOUT_SHA\"; }",
-      "curl() {",
-      `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${headSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}'`,
-      "}",
-    ].join("\n");
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${validation.run}`],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          BASE_SHA: baseSha,
-          CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
-          CHECKOUT_SHA: baseSha,
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          NVIDIA_OWNED: "true",
-          PR_NUMBER: "42",
-        },
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-  });
 
   it.each([
     ["NVIDIA inclusion flag", "NVIDIA/NemoClaw", "NVIDIA", "Organization", "true", "", 0, ""],
@@ -687,9 +656,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_OUTPUT: "/dev/null",
             GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
             GITHUB_TOKEN: "token",
+            ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
+            ALLOW_JETSON_DISPATCH: "false",
             INCLUDE_LAUNCHABLE: includeLaunchable,
             JOBS: jobs,
             PR_NUMBER: "42",
+            REVISION: "candidate",
+            TARGETS: "",
             WORKFLOW_EVENT: "workflow_dispatch",
             WORKFLOW_REF: "refs/heads/main",
             WORKFLOW_SHA: workflowSha,

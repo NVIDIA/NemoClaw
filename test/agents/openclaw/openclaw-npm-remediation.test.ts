@@ -550,10 +550,10 @@ describe("OpenClaw npm remediation", () => {
         "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
     });
     expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
-      version: "3.1.7",
-      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz",
+      version: "3.1.5",
+      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
       integrity:
-        "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==",
+        "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
     });
     expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
       version: "8.10.0",
