@@ -768,7 +768,6 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
     root: ROOT,
     runOpenshell: runMessagingBridgeOpenshell,
-    redact,
   });
   const upserted = [];
   const mutatedProviderNames = [];

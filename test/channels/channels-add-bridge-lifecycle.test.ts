@@ -11,7 +11,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import YAML from "yaml";
 import {
   addSandboxChannel,
   removeSandboxChannel,
@@ -45,15 +44,54 @@ const GOOGLECHAT_ENV = {
   GOOGLECHAT_AUDIENCE: "https://bot.example.com/googlechat",
   GOOGLECHAT_APP_PRINCIPAL: "123456789012345678901",
 };
-const GOOGLECHAT_PROFILE_DOC = YAML.parse(
-  fs.readFileSync(
-    path.join(
-      process.cwd(),
-      "src/lib/messaging/channels/googlechat/provider-profile/openclaw.yaml",
-    ),
-    "utf-8",
-  ),
-) as Record<string, unknown>;
+// Deliberately independent of the checked-in YAML read by production. If that
+// contract changes without the simulated gateway export changing too, the real
+// adapter comparison in this lifecycle test must fail.
+const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
+  id: "google-chat-bridge",
+  credentials: [
+    {
+      name: "access_token",
+      env_vars: ["GOOGLE_CHAT_ACCESS_TOKEN"],
+      required: true,
+      auth_style: "bearer",
+      header_name: "Authorization",
+      query_param: "",
+      refresh: {
+        strategy: "google-service-account-jwt",
+        scopes: ["https://www.googleapis.com/auth/chat.bot"],
+        material: [
+          {
+            name: "client_email",
+            description: "Service-account client email (JWT issuer)",
+            required: true,
+          },
+          {
+            name: "private_key",
+            description: "Service-account RSA private key (PEM); signs the JWT assertion",
+            required: true,
+            secret: true,
+          },
+          {
+            name: "scope",
+            description: "OAuth scope(s) to mint the token for",
+          },
+        ],
+      },
+    },
+  ],
+  endpoints: [
+    {
+      host: "chat.googleapis.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+  inference_capable: false,
+};
 const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
 
 // Why this mock exists: the real googlechat tunnel/audience gate needs a human
@@ -96,6 +134,8 @@ let session: onboardSession.Session;
 let stdinIsTty: PropertyDescriptor | undefined;
 let gatewayCallCount: number;
 let bridgeRefreshWasSecure: boolean;
+let bridgeProfileRegistered: boolean;
+let bridgeProfileWasImported: boolean;
 let detachedProviders: Set<string>;
 let deletedProviders: Set<string>;
 
@@ -113,6 +153,7 @@ function withoutGateway(args: readonly string[]): string[] {
 function resetGatewayObservations(): void {
   gatewayCallCount = 0;
   bridgeRefreshWasSecure = false;
+  bridgeProfileWasImported = false;
   detachedProviders.clear();
   deletedProviders.clear();
 }
@@ -204,6 +245,8 @@ beforeEach(() => {
 
   gatewayCallCount = 0;
   bridgeRefreshWasSecure = false;
+  bridgeProfileRegistered = false;
+  bridgeProfileWasImported = false;
   detachedProviders = new Set();
   deletedProviders = new Set();
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args, options) => {
@@ -212,6 +255,13 @@ beforeEach(() => {
     const providerMissing = command[0] === "provider" && command[1] === "get";
     const exportingProfile =
       command[0] === "provider" && command[1] === "profile" && command.includes("export");
+    const importingProfile =
+      command[0] === "provider" && command[1] === "profile" && command.includes("import");
+    const profileMissing = exportingProfile && !bridgeProfileRegistered;
+    if (importingProfile) {
+      bridgeProfileRegistered = true;
+      bridgeProfileWasImported = true;
+    }
     const detachedProvider =
       command[0] === "sandbox" && command[1] === "provider" && command[2] === "detach"
         ? command[4]
@@ -235,15 +285,17 @@ beforeEach(() => {
       output: [null, "", ""],
       stdout: isRefreshStatus(args)
         ? refreshStatusTable(command)
-        : exportingProfile
+        : exportingProfile && !profileMissing
           ? JSON.stringify(GOOGLECHAT_PROFILE_DOC)
           : "",
       stderr: invalidRefresh
         ? "invalid secret handoff"
-        : providerMissing
-          ? `provider '${args[args.length - 1]}' not found`
-          : "",
-      status: invalidRefresh || providerMissing ? 1 : 0,
+        : profileMissing
+          ? "provider profile 'google-chat-bridge' not found"
+          : providerMissing
+            ? `provider '${args[args.length - 1]}' not found`
+            : "",
+      status: invalidRefresh || profileMissing || providerMissing ? 1 : 0,
       signal: null,
     };
   });
@@ -295,6 +347,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
     );
+    expect(bridgeProfileWasImported).toBe(true);
     expect(bridgeRefreshWasSecure).toBe(true);
     expect(JSON.stringify({ registryEntry, session })).not.toContain(
       "fake-test-private-key-material",

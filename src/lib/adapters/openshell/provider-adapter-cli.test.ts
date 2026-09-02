@@ -331,32 +331,31 @@ describe("CLI OpenShell provider adapter", () => {
     expect(JSON.stringify(result)).not.toContain(storedCredentialValue);
   });
 
-  it("treats an existing provider profile as already present (#9806)", async () => {
+  it("validates an existing provider profile without importing it (#9806)", () => {
     const run = vi
       .fn<RunProviderCommand>()
-      .mockReturnValueOnce(captured(1, "", "provider profile already exists"))
       .mockReturnValueOnce(captured(0, JSON.stringify(TAVILY_PROFILE)));
     const adapter = createCliOpenShellProviderAdapter({
       run,
       readProfileFile: () => TAVILY_PROFILE_YAML,
     });
 
-    await expect(
+    expect(
       adapter.importProviderProfile({
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toEqual({ ok: true });
+    ).toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
       ["provider", "profile", "export", "tavily", "--output", "json"],
     ]);
-    expect(run.mock.calls[1]?.[1]).toMatchObject({ suppressOutput: true });
+    expect(run.mock.calls[0]?.[1]).toMatchObject({ suppressOutput: true, timeout: 30_000 });
   });
 
-  it("validates a newly imported provider profile before returning success (#9806)", async () => {
+  it("validates a newly imported provider profile before returning success (#9806)", () => {
     const run = vi
       .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile not found"))
       .mockReturnValueOnce(captured(0))
       .mockReturnValueOnce(captured(0, JSON.stringify(TAVILY_PROFILE)));
     const adapter = createCliOpenShellProviderAdapter({
@@ -364,17 +363,49 @@ describe("CLI OpenShell provider adapter", () => {
       readProfileFile: () => TAVILY_PROFILE_YAML,
     });
 
-    await expect(
+    expect(
       adapter.importProviderProfile({
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toEqual({ ok: true });
+    ).toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", "tavily", "--output", "json"],
       ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
       ["provider", "profile", "export", "tavily", "--output", "json"],
     ]);
+    for (const [, options] of run.mock.calls) {
+      expect(options).toMatchObject({ timeout: 30_000 });
+    }
   });
+
+  it.each(["authentication failed", "connection refused", "profile lookup failed"])(
+    "does not import when the profile export fails with %s (#9806)",
+    (diagnostic) => {
+      const run = vi.fn<RunProviderCommand>().mockReturnValueOnce(captured(1, "", diagnostic));
+      const adapter = createCliOpenShellProviderAdapter({
+        run,
+        readProfileFile: () => TAVILY_PROFILE_YAML,
+      });
+
+      expect(
+        adapter.importProviderProfile({
+          target: selectedOpenShellGateway(),
+          profilePath: "/repo/profile.yaml",
+        }),
+      ).toMatchObject({ ok: false });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0]).toEqual([
+        "provider",
+        "profile",
+        "export",
+        "tavily",
+        "--output",
+        "json",
+      ]);
+      expect(run.mock.calls[0]?.[1]).toMatchObject({ timeout: 30_000 });
+    },
+  );
 
   it.each([
     [
@@ -405,22 +436,21 @@ describe("CLI OpenShell provider adapter", () => {
         ],
       },
     ],
-  ])("rejects an existing profile with a widened %s boundary (#9806)", async (_field, profile) => {
+  ])("rejects an existing profile with a widened %s boundary (#9806)", (_field, profile) => {
     const run = vi
       .fn<RunProviderCommand>()
-      .mockReturnValueOnce(captured(1, "", "provider profile already exists"))
       .mockReturnValueOnce(captured(0, JSON.stringify(profile)));
     const adapter = createCliOpenShellProviderAdapter({
       run,
       readProfileFile: () => TAVILY_PROFILE_YAML,
     });
 
-    await expect(
+    expect(
       adapter.importProviderProfile({
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toEqual({
+    ).toEqual({
       ok: false,
       error: {
         kind: "command",
@@ -429,11 +459,13 @@ describe("CLI OpenShell provider adapter", () => {
           "The OpenShell provider profile does not match the checked-in credential boundary.",
       },
     });
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects a malformed exported profile after import (#9806)", async () => {
+  it("rejects a malformed exported profile after import (#9806)", () => {
     const run = vi
       .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile not found"))
       .mockReturnValueOnce(captured(0))
       .mockReturnValueOnce(captured(0, "not-json"));
     const adapter = createCliOpenShellProviderAdapter({
@@ -441,20 +473,21 @@ describe("CLI OpenShell provider adapter", () => {
       readProfileFile: () => TAVILY_PROFILE_YAML,
     });
 
-    await expect(
+    expect(
       adapter.importProviderProfile({
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toMatchObject({
+    ).toMatchObject({
       ok: false,
       error: { kind: "command", reason: "profile_incompatible" },
     });
   });
 
-  it("rejects a missing exported profile after import (#9806)", async () => {
+  it("rejects a missing exported profile after import (#9806)", () => {
     const run = vi
       .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile not found"))
       .mockReturnValueOnce(captured(0))
       .mockReturnValueOnce(captured(1, "", "provider profile not found"));
     const adapter = createCliOpenShellProviderAdapter({
@@ -462,18 +495,18 @@ describe("CLI OpenShell provider adapter", () => {
       readProfileFile: () => TAVILY_PROFILE_YAML,
     });
 
-    await expect(
+    expect(
       adapter.importProviderProfile({
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toMatchObject({
+    ).toMatchObject({
       ok: false,
       error: { kind: "command", reason: "not_found" },
     });
   });
 
-  it("rejects an unreadable checked-in profile before invoking OpenShell (#9806)", async () => {
+  it("rejects an unreadable checked-in profile before invoking OpenShell (#9806)", () => {
     const run = vi.fn<RunProviderCommand>();
     const adapter = createCliOpenShellProviderAdapter({
       run,
@@ -482,12 +515,12 @@ describe("CLI OpenShell provider adapter", () => {
       },
     });
 
-    await expect(
+    expect(
       adapter.importProviderProfile({
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toEqual({
+    ).toEqual({
       ok: false,
       error: {
         kind: "validation",

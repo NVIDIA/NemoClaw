@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
 import {
   exportedProviderProfileMatchesContract,
@@ -113,7 +114,6 @@ export interface CollectMessagingBridgeTokenDefsInput extends MessagingBridgeSec
 export interface EnsureMessagingBridgeProfilesDeps {
   readonly root: string;
   readonly runOpenshell: RunOpenshell;
-  readonly redact: (input: string) => string;
   readonly log?: (message?: string) => void;
   readonly exit?: (code?: number) => never;
   readonly profiles?: readonly MessagingBridgeProfile[];
@@ -182,7 +182,12 @@ export function matchesRegisteredMessagingBridgeProfile(
   if (!profile) return null;
   const exported = deps.runOpenshell(
     ["provider", "profile", "export", profile.profileId, "--output", "json"],
-    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
   );
   if (exported.status !== 0) return false;
   return profileMatchesCheckedInBoundary(
@@ -429,91 +434,44 @@ export function ensureMessagingBridgeProfiles(
 
   const errorLog = deps.log ?? console.error;
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
-  const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
-
-  const rejectMismatchedProfile = (profile: MessagingBridgeProfile): void => {
-    const contract =
-      profile.strategy === null
-        ? `endpointless ${profile.channelId} credential contract`
-        : `checked-in ${profile.channelId} credential boundary`;
-    errorLog(
-      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's ${contract}.`,
-    );
-    errorLog("    Remove the conflicting profile and re-run onboarding.");
-    exit(1);
-  };
+  const providerAdapter = createCliOpenShellProviderAdapter({
+    run: deps.runOpenshell,
+    readProfileFile:
+      deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
+  });
 
   for (const profile of active) {
-    // Onboard registers each bridge provider twice: once up front so an
-    // interrupted run can resume, then again during create-plan materialization.
-    // Probe first and skip the re-import so the second pass never hits OpenShell's
-    // "already exists" error. A fresh gateway answers the probe with a harmless
-    // "not found" that suppressOutput hides — only the exit status says whether
-    // the profile already exists.
-    const alreadyRegistered = deps.runOpenshell(
-      ["provider", "profile", "export", profile.profileId, "--output", "json"],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (alreadyRegistered.status === 0) {
-      if (
-        !profileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(alreadyRegistered.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedProfile(profile);
-        return;
-      }
-      continue;
-    }
-    // Probe failed for something other than "not found" (gateway down, auth, …):
-    // surface it instead of masking a real problem.
-    const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
-      alreadyRegistered.stdout,
-    )}`;
-    if (probeDiagnostic.trim() && !/not found/i.test(probeDiagnostic)) {
-      errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} provider profile:`);
-      const probeText = compactText(deps.redact(probeDiagnostic));
-      if (probeText) errorLog(`    ${probeText.slice(0, 500)}`);
-    }
-
-    const result = deps.runOpenshell(
-      ["provider", "profile", "import", "--file", profile.profilePath],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (result.status === 0) continue;
-
-    // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
-    const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-    if (/already exists/i.test(rawDiagnostic)) {
-      const racedProfile = deps.runOpenshell(
-        ["provider", "profile", "export", profile.profileId, "--output", "json"],
-        { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    const result = providerAdapter.importProviderProfile({
+      target: { kind: "selected" },
+      profilePath: profile.profilePath,
+      timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
+    if (result.ok) continue;
+    if (result.error.kind === "command" && result.error.reason === "profile_incompatible") {
+      const contract =
+        profile.strategy === null
+          ? `endpointless ${profile.channelId} credential contract`
+          : `checked-in ${profile.channelId} credential boundary`;
+      errorLog(
+        `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's ${contract}.`,
       );
-      if (
-        racedProfile.status !== 0 ||
-        !profileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(racedProfile.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedProfile(profile);
-        return;
-      }
-      continue;
+      errorLog("    Remove the conflicting profile and re-run onboarding.");
+      exit(1);
+      return;
     }
 
-    const diagnostic = compactText(deps.redact(rawDiagnostic));
     errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
-    if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
+    errorLog(`    ${result.error.message}`);
     errorLog("    Inspect the preceding OpenShell error.");
-    errorLog(
-      "    If OpenShell does not support this provider profile, update OpenShell with scripts/install-openshell.sh.",
-    );
+    if (result.error.kind === "schema") {
+      errorLog("    Update OpenShell with scripts/install-openshell.sh, then retry.");
+    } else if (result.error.kind === "validation") {
+      errorLog("    Restore the checked-in provider profile, then retry.");
+    } else {
+      errorLog("    Confirm OpenShell is available and authorized, then retry.");
+    }
     errorLog("    Then re-run onboarding.");
-    exit(result.status || 1);
+    exit(1);
     return;
   }
 }
