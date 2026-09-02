@@ -302,112 +302,25 @@ bridge.restartMcpBridge("alpha", "example").then(
     240 - redactedProbeDetailPrefix.length,
   )}`;
 
-  it.each([
-    {
-      title: "refuses a hostless restart whose stored credential is not verified",
-      statusResponse: {
-        kind: "probe",
-        value: {
-          ok: null,
-          httpStatus: 401,
-          controlHttpStatus: 401,
-          detail:
-            "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
-        },
-      },
-      expectedPayload: {
-        outcome: "rejected",
-        message:
-          "MCP server 'example' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
-        exitCode: 1,
-        policyApplyCalls: 0,
-        providerCalls: [],
-      },
-    },
-    {
-      title: "redacts and bounds an unverified credential probe detail",
-      statusResponse: {
-        kind: "probe",
-        value: {
-          ok: null,
-          httpStatus: 401,
-          controlHttpStatus: 401,
-          detail:
-            "MCP_TOKEN=untrusted-secret-value\nsandbox transport https://operator:credential@example.com failed; " +
-            "x".repeat(300),
-        },
-      },
-      expectedPayload: {
-        outcome: "rejected",
-        message: `MCP server 'example' cannot reuse its stored credential: ${boundedRedactedProbeDetail}. Export host environment variable 'MCP_TOKEN' and run \`nemoclaw alpha mcp restart example\` to replace it.`,
-        exitCode: 1,
-        policyApplyCalls: 0,
-        providerCalls: [],
-      },
-    },
-    {
-      title: "reuses a stored credential when credential status reports success",
-      statusResponse: {
-        kind: "probe",
-        value: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
-      },
-      expectedPayload: {
-        outcome: "refreshed",
-        policyApplyCalls: 2,
-        providerCalls: ["provider update alpha-mcp-example"],
-      },
-    },
-    {
-      title: "preserves a redacted actionable status failure",
-      statusResponse: {
-        kind: "error",
-        value:
-          "sandbox transport https://operator:credential@example.com failed; MCP_TOKEN=untrusted-secret-value",
-      },
-      expectedPayload: {
-        outcome: "rejected",
-        message:
-          "MCP server 'example' cannot reuse its stored credential: sandbox transport https://example.com/ failed; MCP_TOKEN=<REDACTED>. Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
-        exitCode: 1,
-        policyApplyCalls: 0,
-        providerCalls: [],
-      },
-    },
-    {
-      title: "preflights every selected server before mutating a hostless restart",
-      statusResponse: {
-        kind: "byServer",
-        value: {
-          example: {
-            kind: "probe",
-            value: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
-          },
-          later: {
-            kind: "probe",
-            value: {
-              ok: null,
-              httpStatus: 401,
-              controlHttpStatus: 401,
-              detail:
-                "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
-            },
-          },
-        },
-      },
-      expectedPayload: {
-        outcome: "rejected",
-        message:
-          "MCP server 'later' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'LATER_TOKEN' and run `nemoclaw alpha mcp restart later` to replace it.",
-        exitCode: 1,
-        policyApplyCalls: 0,
-        providerCalls: [],
-      },
-    },
-  ])(
-    "$title (#10750)",
-    ({ statusResponse, expectedPayload }) => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
-      const script = String.raw`
+  const runCredentialRestart = ({
+    probeResponses,
+    statusErrors = {},
+    restartAll = false,
+  }: {
+    probeResponses: Record<
+      string,
+      {
+        ok: boolean | null;
+        httpStatus?: number;
+        controlHttpStatus?: number;
+        detail?: string;
+      }
+    >;
+    statusErrors?: Record<string, string>;
+    restartAll?: boolean;
+  }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
+    const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 delete process.env.MCP_TOKEN;
 delete process.env.LATER_TOKEN;
@@ -488,14 +401,12 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
   stderr: "",
 });
-const statusResponse = ${JSON.stringify(statusResponse)};
+const probeResponses = ${JSON.stringify(probeResponses)};
+const statusErrors = ${JSON.stringify(statusErrors)};
 bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
   statusCalls.push({ sandboxName, server, options });
-  const selectedStatusResponse = statusResponse.kind === "byServer"
-    ? statusResponse.value[server]
-    : statusResponse;
-  if (selectedStatusResponse.kind === "error") throw new Error(selectedStatusResponse.value);
-  return [{ provider: { credentialResolution: selectedStatusResponse.value } }];
+  if (statusErrors[server]) throw new Error(statusErrors[server]);
+  return [{ provider: { credentialResolution: probeResponses[server] } }];
 };
 
 registry.registerSandbox({
@@ -503,9 +414,7 @@ registry.registerSandbox({
   agent: "openclaw",
   gatewayName: "nemoclaw",
   mcp: {
-    bridges: statusResponse.kind === "byServer"
-      ? { example: entry, later: laterEntry }
-      : { example: entry },
+    bridges: ${restartAll ? "{ example: entry, later: laterEntry }" : "{ example: entry }"},
   },
 });
 
@@ -513,7 +422,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const report = (payload) => {
   process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 };
-bridge.restartMcpBridge("alpha", statusResponse.kind === "byServer" ? undefined : "example").then(
+bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then(
   () => {
     report({
       outcome: "refreshed",
@@ -534,27 +443,173 @@ bridge.restartMcpBridge("alpha", statusResponse.kind === "byServer" ? undefined 
   },
 );
 `;
-      const result = spawnSync(process.execPath, ["-e", script], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
-        timeout: 60_000,
-      });
-      fs.rmSync(home, { recursive: true, force: true });
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
+      timeout: 60_000,
+    });
+    fs.rmSync(home, { recursive: true, force: true });
 
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as object;
-      expect(payload).toEqual({
-        ...expectedPayload,
-        statusCalls: (statusResponse.kind === "byServer" ? ["example", "later"] : ["example"]).map(
-          (server) => ({
-            sandboxName: "alpha",
-            server,
-            options: { probeCredentialResolution: true },
-          }),
-        ),
-      });
-    },
-    75_000,
-  );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    return JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
+      outcome: string;
+      message?: string;
+      exitCode?: number;
+      policyApplyCalls: number;
+      providerCalls: string[];
+      statusCalls: Array<{
+        sandboxName: string;
+        server: string;
+        options: { probeCredentialResolution: boolean };
+      }>;
+    };
+  };
+
+  it("refuses a hostless restart whose stored credential is not verified (#10750)", () => {
+    const payload = runCredentialRestart({
+      probeResponses: {
+        example: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail:
+            "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
+        },
+      },
+    });
+
+    expect(payload).toEqual({
+      outcome: "rejected",
+      message:
+        "MCP server 'example' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+      exitCode: 1,
+      policyApplyCalls: 0,
+      providerCalls: [],
+      statusCalls: [
+        {
+          sandboxName: "alpha",
+          server: "example",
+          options: { probeCredentialResolution: true },
+        },
+      ],
+    });
+  }, 75_000);
+
+  it("redacts and bounds an unverified credential probe detail (#10750)", () => {
+    const payload = runCredentialRestart({
+      probeResponses: {
+        example: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail:
+            "MCP_TOKEN=untrusted-secret-value\nsandbox transport https://operator:credential@example.com failed; " +
+            "x".repeat(300),
+        },
+      },
+    });
+
+    expect(payload).toEqual({
+      outcome: "rejected",
+      message: `MCP server 'example' cannot reuse its stored credential: ${boundedRedactedProbeDetail}. Export host environment variable 'MCP_TOKEN' and run \`nemoclaw alpha mcp restart example\` to replace it.`,
+      exitCode: 1,
+      policyApplyCalls: 0,
+      providerCalls: [],
+      statusCalls: [
+        {
+          sandboxName: "alpha",
+          server: "example",
+          options: { probeCredentialResolution: true },
+        },
+      ],
+    });
+  }, 75_000);
+
+  it("reuses a stored credential when credential status reports success (#10750)", () => {
+    const payload = runCredentialRestart({
+      probeResponses: {
+        example: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+      },
+    });
+
+    expect(payload).toEqual({
+      outcome: "refreshed",
+      policyApplyCalls: 2,
+      providerCalls: ["provider update alpha-mcp-example"],
+      statusCalls: [
+        {
+          sandboxName: "alpha",
+          server: "example",
+          options: { probeCredentialResolution: true },
+        },
+      ],
+    });
+  }, 75_000);
+
+  it("preserves a redacted actionable status failure (#10750)", () => {
+    const payload = runCredentialRestart({
+      probeResponses: {},
+      statusErrors: {
+        example:
+          "sandbox transport https://operator:credential@example.com failed; MCP_TOKEN=untrusted-secret-value",
+      },
+    });
+
+    expect(payload).toEqual({
+      outcome: "rejected",
+      message:
+        "MCP server 'example' cannot reuse its stored credential: sandbox transport https://example.com/ failed; MCP_TOKEN=<REDACTED>. Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+      exitCode: 1,
+      policyApplyCalls: 0,
+      providerCalls: [],
+      statusCalls: [
+        {
+          sandboxName: "alpha",
+          server: "example",
+          options: { probeCredentialResolution: true },
+        },
+      ],
+    });
+  }, 75_000);
+
+  it("preflights every selected server before mutating a hostless restart (#10750)", () => {
+    const payload = runCredentialRestart({
+      probeResponses: {
+        example: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+        later: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail:
+            "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
+        },
+      },
+      restartAll: true,
+    });
+
+    expect(payload).toMatchObject({
+      outcome: "rejected",
+      message:
+        "MCP server 'later' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'LATER_TOKEN' and run `nemoclaw alpha mcp restart later` to replace it.",
+      exitCode: 1,
+      policyApplyCalls: 0,
+      providerCalls: [],
+    });
+    expect(payload.statusCalls).toHaveLength(2);
+    expect(payload.statusCalls).toEqual(
+      expect.arrayContaining([
+        {
+          sandboxName: "alpha",
+          server: "example",
+          options: { probeCredentialResolution: true },
+        },
+        {
+          sandboxName: "alpha",
+          server: "later",
+          options: { probeCredentialResolution: true },
+        },
+      ]),
+    );
+  }, 75_000);
 });
