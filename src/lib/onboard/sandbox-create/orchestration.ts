@@ -10,9 +10,14 @@ import { createCliOpenShellSandboxObserverFromRunner } from "../../adapters/open
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
-import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
+import {
+  getMessagingPolicyKeysByChannel,
+  listMessagingPolicyPresetMetadata,
+} from "../../messaging/channels/metadata";
 import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
+import { normalizeWechatIlinkBaseUrl } from "../../messaging/channels/wechat/ilink-base-url";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import type { MessagingChannelConfig } from "../../messaging-channel-config";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -26,6 +31,10 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
+import {
+  getMessagingChannelConfigFromPlan,
+  getStoredMessagingChannelConfig,
+} from "../messaging-config";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -125,20 +134,52 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   return [...providers];
 }
 
+function asMessagingAgentId(
+  agent: string | null | undefined,
+): SandboxMessagingPlan["agent"] | null {
+  return agent === "openclaw" || agent === "hermes" ? agent : null;
+}
+
 export function resolveRebuildMessagingPolicyDeltas(
   plan:
     | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
     | null
     | undefined,
+  fallback?: {
+    readonly agent?: SandboxMessagingPlan["agent"] | null;
+    readonly messagingConfig?: MessagingChannelConfig | null;
+  },
 ): {
   readonly requiredNetworkPolicyKeys: readonly string[];
   readonly requiredNetworkPolicyPresetNames: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
+    const wechatIlinkOrigin = normalizeWechatIlinkBaseUrl(
+      fallback?.messagingConfig?.WECHAT_BASE_URL,
+    );
+    if (!wechatIlinkOrigin) {
+      return {
+        requiredNetworkPolicyKeys: [],
+        requiredNetworkPolicyPresetNames: [],
+        removedNetworkPolicyKeys: [],
+      };
+    }
+    const fallbackAgent = fallback?.agent;
+    const wechatPolicy = fallbackAgent
+      ? listMessagingPolicyPresetMetadata({ agent: fallbackAgent }).find(
+          ({ channelId }) => channelId === "wechat",
+        )
+      : undefined;
+    if (!fallbackAgent || !wechatPolicy) {
+      throw new Error(
+        "Cannot prepare a legacy WeChat rebuild policy without manifest metadata for the effective agent.",
+      );
+    }
     return {
-      requiredNetworkPolicyKeys: [],
-      requiredNetworkPolicyPresetNames: [],
+      requiredNetworkPolicyKeys:
+        wechatPolicy.agentPolicyKeys[fallbackAgent] ?? wechatPolicy.policyKeys,
+      requiredNetworkPolicyPresetNames: [wechatPolicy.presetName],
       removedNetworkPolicyKeys: [],
     };
   }
@@ -192,20 +233,22 @@ export function resolveRebuildObservabilityPolicyDelta(input: {
 }
 
 /** Preserve OpenShell's live policy plus bounded requirements for this explicit create. */
-function selectRebuildCreatePolicy(
+export function selectRebuildCreatePolicy(
   policySourcePath: string,
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
-  messagingPlan: SandboxMessagingPlan | null | undefined,
+  messagingAgent: string | null | undefined,
+  messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingPlan?.agent,
+      agent: messagingAgent,
       sandboxName,
+      messagingConfig,
     });
     if (!source) {
       throw new Error(
@@ -1528,6 +1571,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
     let createEffectsFinalized = false;
     const createCheckpointSession = onboardSession.loadSession();
+    const effectiveMessagingConfig =
+      getMessagingChannelConfigFromPlan(plannedMessagingState?.plan) ??
+      getStoredMessagingChannelConfig(sandboxName, createCheckpointSession);
+    const effectiveMessagingAgent = plannedMessagingState?.plan?.agent ?? effectiveAgent.name;
     const openingPendingCreateIdentity = pendingVerifiedCreateCheckpointForSession({
       sandboxName,
       gatewayName: GATEWAY_NAME,
@@ -2121,6 +2168,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               openshellArgv,
             },
             plannedMessagingPlan: plannedMessagingState?.plan ?? null,
+            messagingConfig: effectiveMessagingConfig,
             gpu: {
               provider,
               config: effectiveSandboxGpuConfig,
@@ -2163,6 +2211,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     } = preparedOnboardLaunch;
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
+      {
+        agent: asMessagingAgentId(effectiveMessagingAgent),
+        messagingConfig: effectiveMessagingConfig,
+      },
     );
     const rebuildObservabilityPolicyDelta = resolveRebuildObservabilityPolicyDelta({
       agent: agent?.name,
@@ -2189,7 +2241,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             ...rebuildObservabilityPolicyDelta.removedNetworkPolicyKeys,
           ],
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
-          plannedMessagingState?.plan,
+          effectiveMessagingAgent,
+          effectiveMessagingConfig,
           sandboxName,
           rebuildPolicyProviderAuthority,
         )
