@@ -542,7 +542,9 @@ describe("deferred provider effect authority", () => {
         route: "direct" as never,
         revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("OpenShell cannot attach providers to the immutable identity");
+    ).rejects.toThrow(
+      "OpenShell cannot attach providers to the immutable identity of sandbox 'alpha'. NemoClaw retained the incomplete sandbox on gateway 'nemoclaw'. Do not delete it by mutable sandbox name. Run 'nemoclaw alpha destroy' so NemoClaw can use the retained identity.",
+    );
 
     expect(runOpenshell).not.toHaveBeenCalledWith(
       expect.arrayContaining(["sandbox", "provider", "attach"]),

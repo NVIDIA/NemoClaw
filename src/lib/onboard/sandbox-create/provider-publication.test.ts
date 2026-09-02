@@ -197,6 +197,13 @@ describe("sandbox provider preparation", () => {
   it.each([
     ["provider type", { ...exactMetadata, type: "generic" }],
     ["credential key", { ...exactMetadata, credentialKeys: ["WRONG_TOKEN"] }],
+    [
+      "credential family",
+      {
+        ...exactMetadata,
+        credentialKeys: ["TELEGRAM_BOT_TOKEN", "UNRELATED_TOKEN"],
+      },
+    ],
     ["configuration", { ...exactMetadata, configKeys: ["UNEXPECTED_CONFIG"] }],
   ])(
     "rejects a messaging binding with the wrong %s before publication (#9875)",
