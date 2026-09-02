@@ -63,7 +63,7 @@ describe("OpenShell policy boundary package contract", () => {
   );
 
   it("routes the CommonJS CLI and ESM plugin through one canonical CJS boundary", async () => {
-    const cliPolicy = require("../../dist/lib/policy/merge.js") as {
+    const cliPolicy = require("../../dist/lib/adapters/openshell/policy-boundary.js") as {
       assertPolicyRequirementContainment: (...args: unknown[]) => void;
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;

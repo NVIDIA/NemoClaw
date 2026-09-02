@@ -13,6 +13,7 @@ import {
   isCredentialField,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
+  redactSensitiveDiagnostic,
   sanitizeEnvFileContent,
   SECRET_BLOCK_PATTERNS,
   SECRET_PATTERNS,
@@ -104,6 +105,17 @@ describe("shared credential filter", () => {
     expect(stripCredentials({ host: "https://operator:opaque-value@api.example" })).toEqual({
       host: CREDENTIAL_PLACEHOLDER,
     });
+  });
+
+  it("redacts URL and non-uppercase assignment credentials from diagnostics", () => {
+    const redacted = redactSensitiveDiagnostic(
+      "failed at https://operator:opaque-url-secret@example.com/path password=opaque-lower-secret",
+    );
+
+    expect(redacted).toContain("https://example.com/path");
+    expect(redacted).toContain("password=<REDACTED>");
+    expect(redacted).not.toContain("opaque-url-secret");
+    expect(redacted).not.toContain("opaque-lower-secret");
   });
 
   it.each([

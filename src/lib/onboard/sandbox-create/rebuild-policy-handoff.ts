@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
-import { parseOpenShellPolicy } from "../../policy/merge";
+import { parseOpenShellPolicy } from "../../adapters/openshell/policy-boundary";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 

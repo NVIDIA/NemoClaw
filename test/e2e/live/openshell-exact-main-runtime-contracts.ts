@@ -7,7 +7,7 @@ import YAML from "yaml";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { setPolicyDocument } from "../../../src/lib/policy";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
+import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
