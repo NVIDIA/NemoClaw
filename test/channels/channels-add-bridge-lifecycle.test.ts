@@ -258,10 +258,8 @@ beforeEach(() => {
     const importingProfile =
       command[0] === "provider" && command[1] === "profile" && command.includes("import");
     const profileMissing = exportingProfile && !bridgeProfileRegistered;
-    if (importingProfile) {
-      bridgeProfileRegistered = true;
-      bridgeProfileWasImported = true;
-    }
+    bridgeProfileRegistered ||= importingProfile;
+    bridgeProfileWasImported ||= importingProfile;
     const detachedProvider =
       command[0] === "sandbox" && command[1] === "provider" && command[2] === "detach"
         ? command[4]

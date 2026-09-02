@@ -374,9 +374,11 @@ describe("CLI OpenShell provider adapter", () => {
       ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
       ["provider", "profile", "export", "tavily", "--output", "json"],
     ]);
-    for (const [, options] of run.mock.calls) {
-      expect(options).toMatchObject({ timeout: 30_000 });
-    }
+    expect(run.mock.calls.map(([, options]) => options.timeout)).toEqual([
+      30_000,
+      30_000,
+      30_000,
+    ]);
   });
 
   it.each(["authentication failed", "connection refused", "profile lookup failed"])(

@@ -577,9 +577,11 @@ describe("ensureMessagingBridgeProfiles", () => {
       ["provider", "profile", "import", "--file", GC_PROFILE.profilePath],
       ["provider", "profile", "export", GC_PROFILE.profileId, "--output", "json"],
     ]);
-    for (const [, options] of runOpenshell.mock.calls) {
-      expect(options).toMatchObject({ timeout: 30_000 });
-    }
+    expect(runOpenshell.mock.calls.map(([, options]) => options.timeout)).toEqual([
+      30_000,
+      30_000,
+      30_000,
+    ]);
     expect(exit).not.toHaveBeenCalled();
   });
 
@@ -789,9 +791,10 @@ describe("ensureMessagingBridgeProfiles", () => {
     });
     expect(exit).toHaveBeenCalledWith(1);
     expect(runOpenshell).toHaveBeenCalledTimes(2);
-    for (const [, options] of runOpenshell.mock.calls) {
-      expect(options).toMatchObject({ timeout: 30_000 });
-    }
+    expect(runOpenshell.mock.calls.map(([, options]) => options.timeout)).toEqual([
+      30_000,
+      30_000,
+    ]);
   });
 });
 
