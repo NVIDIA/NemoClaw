@@ -26,6 +26,8 @@ import type {
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
+import { sameGatewayOwner } from "../gateway-ownership";
+import { resolveGatewayTeardownAuthority } from "../gateway-teardown-authority";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
@@ -1546,6 +1548,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       existingEntry,
       readRegistry: registry.getSandbox,
     });
+    const recreateGatewayAuthority = createIntent?.recreateTransaction
+      ? resolveGatewayTeardownAuthority({
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+        })
+      : null;
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
       | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
@@ -1556,6 +1564,20 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       recreateRegistryEntry,
       getSandboxRecreateObservation,
       note,
+      () => registry.getSandbox(sandboxName),
+      recreateGatewayAuthority
+        ? () => {
+            const currentAuthority = resolveGatewayTeardownAuthority({
+              gatewayName: GATEWAY_NAME,
+              gatewayPort: GATEWAY_PORT,
+            });
+            if (!sameGatewayOwner(recreateGatewayAuthority, currentAuthority)) {
+              throw new Error(
+                `Cannot delete sandbox '${sandboxName}': its gateway lifecycle authority changed.`,
+              );
+            }
+          }
+        : undefined,
     );
     const acceptedTargetPendingIdentity = readAcceptedPendingVerifiedCreate({
       acceptedTarget: recreateRuntime.acceptedTarget,
@@ -1928,16 +1950,18 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           redact,
         });
         revalidateSandboxIdentity(true, `deleting sandbox '${sandboxName}'`);
-        runOpenshell(
-          [
-            "sandbox",
-            "delete",
-            "-g",
-            recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
-            sandboxName,
-          ],
-          { ignoreError: true },
-        );
+        if (recreateRuntime.beginDelete() === "source") {
+          runOpenshell(
+            [
+              "sandbox",
+              "delete",
+              "-g",
+              recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
+              sandboxName,
+            ],
+            { ignoreError: true },
+          );
+        }
         if (
           !waitForSandboxRecreateDeleteAbsence(
             sandboxName,

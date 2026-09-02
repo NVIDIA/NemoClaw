@@ -429,11 +429,7 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
-const {
-  isRoutedInferenceProvider,
-  loadBlueprintProfile,
-  reconcileModelRouter,
-} = modelRouter;
+const { isRoutedInferenceProvider, loadBlueprintProfile, reconcileModelRouter } = modelRouter;
 const routedInference: typeof import("./onboard/routed-inference") = require("./onboard/routed-inference");
 const {
   OnboardRuntimeBoundary,
@@ -1508,17 +1504,13 @@ const gatewayRecovery = createGatewayRecoveryOrchestration({
   startGatewayWithOptions: gatewayStart.startGatewayWithOptions,
 });
 
-const {
-  recoverGatewayRuntime,
-  startDockerDriverGateway,
-  startGateway,
-  startGatewayForRecovery,
-} = createGatewayLifecycleApplication({
-  dockerDriverStart: dockerDriverGatewayStart,
-  recovery: gatewayRecovery,
-  registration: gatewayRegistration,
-  start: gatewayStart,
-});
+const { recoverGatewayRuntime, startDockerDriverGateway, startGateway, startGatewayForRecovery } =
+  createGatewayLifecycleApplication({
+    dockerDriverStart: dockerDriverGatewayStart,
+    recovery: gatewayRecovery,
+    registration: gatewayRegistration,
+    start: gatewayStart,
+  });
 
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
   sandboxRegistryMetadata.createSandboxRegistryMetadataHelpers({
@@ -3184,7 +3176,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             agentSupportsWebSearch,
             agentSupportsWebSearchProvider,
             ...{ note, cliName },
-            updateSession: onboardSession.updateSession,
+            ...{
+              loadSession: onboardSession.loadSession,
+              updateSession: onboardSession.updateSession,
+              compareAndSwapSession: onboardSession.compareAndSwapSession,
+            },
             getStoredMessagingChannelConfig,
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
