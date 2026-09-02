@@ -191,10 +191,7 @@ function discordPlan(
   };
 }
 
-function withChannelDisabled(
-  plan: SandboxMessagingPlan,
-  channelId: string,
-): SandboxMessagingPlan {
+function withChannelDisabled(plan: SandboxMessagingPlan, channelId: string): SandboxMessagingPlan {
   return {
     ...plan,
     channels: plan.channels.map((channel) =>
@@ -479,7 +476,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     expect(result.selectedChannels).toEqual(["discord"]);
   });
 
-  it("keeps a channel when its process inputs are absent but its gateway provider remains (#10667)", () => {
+  it("keeps a channel when every credential binding matches its gateway provider (#10667)", () => {
     const plan = discordPlan(hashCredential("previous-discord-token") ?? "", "hermes");
     const providerMatchesGatewayCredential = vi.fn(() => true);
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
@@ -627,7 +624,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
     ],
     ["teams", teamsPlan(hashCredential("teams-client-secret") ?? "")],
   ])(
-    "preserves active %s configuration when its gateway credential providers remain (#10667)",
+    "preserves active %s configuration when every credential binding matches its gateway provider (#10667)",
     async (channelId, registryPlan) => {
       const deps = reconcileDeps([]);
       deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
@@ -783,7 +780,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
     });
   });
 
-  it("keeps an explicit lifecycle opt-out disabled when its provider remains (#10667)", async () => {
+  it("keeps an explicit lifecycle opt-out disabled even when its credential bindings match (#10667)", async () => {
     const registryPlan = {
       ...withChannelDisabled(
         discordPlan(hashCredential("previous-discord-token") ?? "", "hermes"),
@@ -859,7 +856,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
     });
   });
 
-  it("preserves a provider-backed staged plan from recorded resume channels (#10667)", async () => {
+  it("preserves a staged plan when every credential binding matches its gateway provider (#10667)", async () => {
     const stagedPlan = discordPlan(hashCredential("previous-discord-token") ?? "", "hermes");
     const deps = reconcileDeps([stagedPlan]);
     deps.getRecordedMessagingChannelsForResume.mockReturnValue(["discord"]);
@@ -899,7 +896,9 @@ describe("reconcileSandboxMessaging plan authority", () => {
     // input; a channel the environment no longer configures must not re-enter
     // the selection, or its egress preset is re-applied.
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
-    expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure discord"));
+    expect(deps.note).toHaveBeenCalledWith(
+      expect.stringContaining("No host inputs configure discord"),
+    );
     expect(deps.clearPlanEnv).toHaveBeenCalledOnce();
     expect(deps.writePlanToEnv).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: null, selectedChannels: [] });

@@ -154,11 +154,12 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     activePlan ?? latestSession?.messagingPlan ?? null,
     deps.providerMatchesGatewayCredential,
   );
-  // A removed gateway credential is the durable opt-out signal for an active
-  // host-backed channel. Missing process inputs alone do not disable it because
-  // interactive values normally disappear between onboard runs. Adding a
-  // channel with no reusable provider to `disabledChannels` lets the existing
-  // pruning remove its preset from the merged and previously applied sets.
+  // An active host-backed channel remains selected only while every recorded
+  // credential binding matches its gateway provider. Missing process inputs
+  // alone do not disable it because interactive values normally disappear
+  // between onboard runs. A missing or mismatched binding adds the channel to
+  // `disabledChannels`, so existing pruning removes its preset from the merged
+  // and previously applied sets.
   const unconfiguredMessagingChannels = deps.detectUnconfiguredMessagingChannels(
     [...recordedMessagingChannels, ...activeMessagingChannels],
     [...new Set([...selectedMessagingChannels, ...reusableMessagingChannels])],

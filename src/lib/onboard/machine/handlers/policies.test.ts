@@ -77,7 +77,7 @@ describe("policy state handler", () => {
     expect(result.appliedPolicyPresets).toEqual([]);
   });
 
-  it("keeps a provider-backed channel in policy requirements when process inputs are absent (#10667)", async () => {
+  it("keeps a channel in policy requirements when every credential binding matches its gateway provider (#10667)", async () => {
     const discordPlan = makeMessagingPlan({
       channels: ["discord"],
       agent: "hermes",
@@ -108,12 +108,14 @@ describe("policy state handler", () => {
       agent: { name: "hermes" },
     });
 
-    expect(calls.unconfiguredChannels).toHaveBeenCalledWith(
-      ["discord"],
-      ["discord"],
-      { name: "hermes" },
-    );
+    expect(calls.unconfiguredChannels).toHaveBeenCalledWith(["discord"], ["discord"], {
+      name: "hermes",
+    });
     expect(calls.mergeChannels).toHaveBeenCalledWith([], [], ["discord"], []);
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: ["discord"], disabledChannels: [] }),
+    );
   });
 
   it("merges live messaging channels into policy requirements", async () => {
