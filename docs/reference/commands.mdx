@@ -1909,23 +1909,24 @@ After OpenShell confirms deletion of a sandbox that owns managed llama.cpp, `des
 
 ### `$$nemoclaw <name> policy get`
 
-Export the sandbox's round-trippable OpenShell base policy as YAML. The command runs `openshell policy get --base`, validates the returned policy, and strips the OpenShell metadata header. The default output is suitable for review, editing, and later use with `openshell policy set`. The command exits non-zero when OpenShell fails, returns an empty response, or returns content that is not valid policy YAML.
+Export the sandbox's OpenShell base policy as parsed YAML. The command runs `openshell policy get --base`, strips the metadata header, and replaces literal credential values with `[STRIPPED_BY_MIGRATION]`. Before using the file with `openshell policy set`, replace every marker with a supported OpenShell credential binding or resolver placeholder. The command exits nonzero for an OpenShell failure, empty response, or invalid policy YAML.
 
 ```bash
 $$nemoclaw my-assistant policy get > current-policy.yaml
 ```
 
-Use `--raw` only to inspect the unparsed OpenShell response, including its metadata header:
+Use `--raw` to retain safe OpenShell metadata with the parsed, credential-redacted policy:
 
 ```bash
 $$nemoclaw my-assistant policy get --raw
 ```
 
-Do not pass `--raw` output to `openshell policy set` because the metadata header is not part of the policy document.
+The `--raw` output omits unknown metadata fields and literal credentials.
+Do not pass it to `openshell policy set` because the metadata header is not part of the policy document.
 
 | Flag | Description |
 | --- | --- |
-| `--raw` | Print the unparsed `openshell policy get --base` response, including its metadata header. |
+| `--raw` | Print allowlisted OpenShell metadata with the parsed, credential-redacted base policy. |
 
 ### `$$nemoclaw <name> policy add`
 
@@ -1943,7 +1944,7 @@ $$nemoclaw my-assistant policy add pypi --yes
 
 The positional form is required in scripted workflows. Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` for the same non-interactive behavior. If the preset is already present with identical content, the command reports no changes. If its content differs, NemoClaw previews the change and asks for confirmation before applying it again.
 
-Every mutation starts from the round-trippable base document returned by OpenShell, merges the requested built-in or custom content, submits the complete document, and verifies the live result. NemoClaw stores no applied-preset list or custom-policy copy in its registry. Custom preset names are encoded in namespaced keys in the live policy so later `policy list` and `policy remove` commands can derive them from OpenShell. If the live policy cannot be read or parsed, the command exits without writing a replacement.
+Every mutation starts from the parsed base document returned by OpenShell, merges the requested built-in or custom content, submits the complete document, and verifies the live result. NemoClaw stores no applied-preset list or custom-policy copy in its registry. Custom preset names are encoded in namespaced keys in the live policy so later `policy list` and `policy remove` commands can derive them from OpenShell. If the live policy cannot be read or parsed, the command exits without writing a replacement.
 
 With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit matching RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local endpoints. The option is invalid for built-in presets. You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options. NemoClaw resolves each matching exact host and adds generated `allowed_ips` pins to an in-memory copy of the preset. User-authored `allowed_ips` remains rejected. Dry-run output shows the generated pins. Applying the preset places those pins in the current OpenShell policy, which rebuild carries forward without re-resolving ambient DNS.
 
@@ -2708,13 +2709,14 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state. Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, and web search selection instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
 
 ```bash
-$$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability|--no-observability]
+$$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability|--no-observability]
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--yes`, `-y` | Skip the confirmation prompt. |
 | `--force` | Skip the confirmation prompt. If a sandbox with managed MCP servers cannot run the pre-mutation no-op, NemoClaw can use bounded host-side recovery to preserve registered MCP intent. The flag does not allow rebuild to continue when a manifest-declared state directory or state file cannot be fully backed up. |
+| `--retire-recovery <transaction-id>` | Retire the exact rebuild-recovery transaction after the recorded sandbox is confirmed deleted and required data recovery is complete. Requires `--yes`; it removes only the transaction-bound policy handoff and recovery marker, preserves the remaining backup, and does not start a rebuild. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |

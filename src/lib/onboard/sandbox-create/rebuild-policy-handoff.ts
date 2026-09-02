@@ -5,9 +5,12 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import {
+  parseOpenShellPolicy,
+  stripProviderComposedPolicies,
+} from "../../adapters/openshell/policy-boundary";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
-import * as policies from "../../policy";
-import { parseOpenShellPolicy, stripProviderComposedPolicies } from "../../policy/merge";
+import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
@@ -250,7 +253,7 @@ export function mergeReplacementPolicyAccess(
       : null;
   const normalizedLivePolicySource =
     teamsActive !== null
-      ? policies.reconcileTeamsOutlookLoginCredentialBinding(
+      ? reconcileTeamsOutlookLoginCredentialBinding(
           providerNormalizedLivePolicySource,
           sandboxName,
           teamsActive,
