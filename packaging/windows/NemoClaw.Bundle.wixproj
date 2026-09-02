@@ -10,6 +10,9 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- The null-device prerequisite is boot-ephemeral by Windows design, so a
+         durable DetectCondition would incorrectly skip it after reboot. -->
+    <SuppressSpecificWarnings>1161</SuppressSpecificWarnings>
     <DebugType>none</DebugType>
     <BootstrapperApplicationsExtensionPath>$(RestorePackagesPath)\wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll</BootstrapperApplicationsExtensionPath>
   </PropertyGroup>
