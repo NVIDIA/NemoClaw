@@ -11,7 +11,6 @@ import {
   ensureMessagingBridgeProfiles,
   inspectRegisteredStaticMessagingProfile,
   listMessagingBridgeProfiles,
-  matchesRegisteredStaticMessagingProfile,
   MESSAGING_BRIDGE_PENDING_VALUE,
   type MessagingBridgeProfile,
   refreshStatusForCredential,
@@ -90,6 +89,44 @@ const DISCORD_PROFILE_DOC = {
   ],
   endpoints: [],
   binaries: [],
+  inference_capable: false,
+};
+
+const GC_PROFILE_DOC = {
+  id: GC_PROFILE.profileId,
+  display_name: "Google Chat Bridge",
+  description: "Gateway-minted Google Chat bot token",
+  category: "agent",
+  credentials: [
+    {
+      name: "access_token",
+      description: "Google Chat access token",
+      env_vars: [GC_PROFILE.credentialKey],
+      required: true,
+      auth_style: "bearer",
+      header_name: "Authorization",
+      query_param: "",
+      refresh: {
+        strategy: "google-service-account-jwt",
+        scopes: [...GC_PROFILE.scopes],
+        material: [
+          { name: "client_email", description: "JWT issuer", required: true },
+          { name: "private_key", description: "JWT key", required: true, secret: true },
+          { name: "scope", description: "OAuth scopes" },
+        ],
+      },
+    },
+  ],
+  endpoints: [
+    {
+      host: "chat.googleapis.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node"],
   inference_capable: false,
 };
 
@@ -480,6 +517,7 @@ describe("ensureMessagingBridgeProfiles", () => {
     log: noLog,
     exit: vi.fn(() => undefined as never),
     profiles: [GC_PROFILE],
+    readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
   });
 
   it("does nothing when there is no bridge token def", () => {
@@ -490,7 +528,9 @@ describe("ensureMessagingBridgeProfiles", () => {
 
   it("imports the profile from its co-located path when not yet registered", () => {
     const runOpenshell = vi.fn((args: string[], _opts: unknown) =>
-      args.includes("export") ? { status: 1 } : { status: 0 },
+      args.includes("export")
+        ? { status: 1, stderr: "provider profile not found" }
+        : { status: 0 },
     );
     const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
@@ -503,7 +543,10 @@ describe("ensureMessagingBridgeProfiles", () => {
   it("skips the import when the profile is already registered", () => {
     // A fresh onboard registers bridge providers twice; the second pass must not
     // re-import and trigger OpenShell's "already exists / import failed" output.
-    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({ status: 0 }));
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: JSON.stringify(GC_PROFILE_DOC),
+    }));
     const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
@@ -580,10 +623,73 @@ describe("ensureMessagingBridgeProfiles", () => {
     expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
   });
 
+  const alteredGoogleChatBoundaries = [
+    ["endpoint authority", { endpoints: [{ ...GC_PROFILE_DOC.endpoints[0], host: "evil.invalid" }] }],
+    ["binary authority", { binaries: ["/tmp/untrusted-node"] }],
+    [
+      "credential configuration",
+      {
+        credentials: [
+          { ...GC_PROFILE_DOC.credentials[0], header_name: "X-Google-Chat-Token" },
+        ],
+      },
+    ],
+    [
+      "refresh material",
+      {
+        credentials: [
+          {
+            ...GC_PROFILE_DOC.credentials[0],
+            refresh: {
+              ...GC_PROFILE_DOC.credentials[0].refresh,
+              material: [{ name: "attacker_material", required: true, secret: true }],
+            },
+          },
+        ],
+      },
+    ],
+  ] as const;
+
+  it.each(alteredGoogleChatBoundaries)(
+    "rejects an existing refresh-enabled profile with different %s",
+    (_label, override) => {
+      const runOpenshell = vi.fn(() => ({
+        status: 0,
+        stdout: JSON.stringify({ ...GC_PROFILE_DOC, ...override }),
+      }));
+      const exit = vi.fn(() => undefined as never);
+
+      ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(runOpenshell).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(alteredGoogleChatBoundaries)(
+    "rejects a raced refresh-enabled profile with different %s",
+    (_label, override) => {
+      const runOpenshell = vi
+        .fn()
+        .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+        .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
+        .mockReturnValueOnce({
+          status: 0,
+          stdout: JSON.stringify({ ...GC_PROFILE_DOC, ...override }),
+        });
+      const exit = vi.fn(() => undefined as never);
+
+      ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(runOpenshell).toHaveBeenCalledTimes(3);
+    },
+  );
+
   it("rejects a mismatched static profile that wins an import race", () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
       .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
       .mockReturnValueOnce({
         status: 0,
@@ -603,74 +709,30 @@ describe("ensureMessagingBridgeProfiles", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(3);
   });
 
-  it("tolerates an already-registered profile without exiting", () => {
-    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "profile already exists" }));
+  it("validates a matching refresh-enabled profile that wins an import race", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(GC_PROFILE_DOC) });
     const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(exit).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenCalledTimes(3);
   });
 
   it("exits when profile import fails for another reason", () => {
-    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "connection refused" }));
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 1, stderr: "connection refused" });
     const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(exit).toHaveBeenCalled();
   });
 });
 
-describe("matchesRegisteredStaticMessagingProfile", () => {
-  it("accepts only the checked-in static credential boundary", () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: JSON.stringify(DISCORD_PROFILE_DOC),
-    }));
-
-    expect(
-      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
-        root: "/repo",
-        profiles: [DISCORD_PROFILE],
-        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
-        runOpenshell,
-      }),
-    ).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["provider", "profile", "export", DISCORD_PROFILE.profileId, "--output", "json"],
-      expect.objectContaining({ suppressOutput: true }),
-    );
-  });
-
-  it("rejects a registered static profile with endpoint authority", () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: JSON.stringify({
-        ...DISCORD_PROFILE_DOC,
-        endpoints: [{ host: "gateway.discord.gg", port: 443 }],
-      }),
-    }));
-
-    expect(
-      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
-        root: "/repo",
-        profiles: [DISCORD_PROFILE],
-        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
-        runOpenshell,
-      }),
-    ).toBe(false);
-  });
-
-  it("does not apply the static-profile check to other provider types", () => {
-    const runOpenshell = vi.fn();
-
-    expect(
-      matchesRegisteredStaticMessagingProfile("generic", {
-        root: "/repo",
-        profiles: [DISCORD_PROFILE],
-        runOpenshell,
-      }),
-    ).toBeNull();
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
+describe("inspectRegisteredStaticMessagingProfile", () => {
   it("distinguishes static profile drift from an unavailable gateway inspection", () => {
     const deps = {
       root: "/repo",

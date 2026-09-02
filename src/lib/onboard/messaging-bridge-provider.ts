@@ -154,26 +154,42 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   return "";
 }
 
+function checkedInProfileContract(
+  profile: MessagingBridgeProfile,
+  readFileSync: (file: string) => string,
+): ReturnType<typeof parseCheckedInProviderProfileContract> {
+  try {
+    const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
+    return expected?.profileId === profile.profileId ? expected : null;
+  } catch {
+    return null;
+  }
+}
+
+function profileMatchesCheckedInBoundary(
+  profile: MessagingBridgeProfile,
+  exported: string,
+  readFileSync: (file: string) => string,
+): boolean | null {
+  const expected = checkedInProfileContract(profile, readFileSync);
+  return expected === null ? null : compareExportedProviderProfileWithContract(exported, expected);
+}
+
 function staticProfileMatchesCheckedInBoundary(
   profile: MessagingBridgeProfile,
   exported: string,
   readFileSync: (file: string) => string,
 ): boolean | null {
-  try {
-    const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
-    if (
-      expected === null ||
-      expected.profileId !== profile.profileId ||
-      expected.boundary.endpoints.length !== 0 ||
-      expected.boundary.binaries.length !== 0 ||
-      expected.boundary.inference_capable !== false
-    ) {
-      return null;
-    }
-    return compareExportedProviderProfileWithContract(exported, expected);
-  } catch {
+  const expected = checkedInProfileContract(profile, readFileSync);
+  if (
+    expected === null ||
+    expected.boundary.endpoints.length !== 0 ||
+    expected.boundary.binaries.length !== 0 ||
+    expected.boundary.inference_capable !== false
+  ) {
     return null;
   }
+  return compareExportedProviderProfileWithContract(exported, expected);
 }
 
 /** Distinguish a checked-in static profile from drift and gateway inspection failure. */
@@ -203,16 +219,6 @@ export function inspectRegisteredStaticMessagingProfile(
   } catch {
     return { kind: "indeterminate" };
   }
-}
-
-/** Compare a registered static profile with its checked-in credential boundary. */
-export function matchesRegisteredStaticMessagingProfile(
-  providerType: string,
-  deps: MatchRegisteredStaticMessagingProfileDeps,
-): boolean | null {
-  const inspection = inspectRegisteredStaticMessagingProfile(providerType, deps);
-  if (inspection.kind === "not-static") return null;
-  return inspection.kind === "exact";
 }
 
 function isSafeChannelId(value: string): boolean {
@@ -454,12 +460,41 @@ export function ensureMessagingBridgeProfiles(
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
   const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
 
-  const rejectMismatchedStaticProfile = (profile: MessagingBridgeProfile): void => {
+  const rejectUnusableProfile = (
+    profile: MessagingBridgeProfile,
+    reason: "indeterminate" | "mismatch",
+  ): void => {
     errorLog(
-      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's endpointless ${profile.channelId} credential contract.`,
+      reason === "mismatch"
+        ? `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's checked-in ${profile.channelId} credential contract.`
+        : `\n  ✗ OpenShell provider profile '${profile.profileId}' could not be read for exact validation.`,
     );
-    errorLog("    Remove the conflicting profile and re-run onboarding.");
+    errorLog(
+      reason === "mismatch"
+        ? "    Remove the conflicting profile and re-run onboarding."
+        : "    Confirm OpenShell is available and authorized, then re-run onboarding.",
+    );
     exit(1);
+  };
+
+  const validateRegisteredProfile = (
+    profile: MessagingBridgeProfile,
+    result: ReturnType<RunOpenshell>,
+  ): boolean => {
+    if (result.status !== 0) {
+      rejectUnusableProfile(profile, "indeterminate");
+      return false;
+    }
+    const matches = profileMatchesCheckedInBoundary(
+      profile,
+      bufferOrStringToText(result.stdout),
+      readFileSync,
+    );
+    if (matches !== true) {
+      rejectUnusableProfile(profile, matches === false ? "mismatch" : "indeterminate");
+      return false;
+    }
+    return true;
   };
 
   for (const profile of active) {
@@ -474,17 +509,7 @@ export function ensureMessagingBridgeProfiles(
       { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
     );
     if (alreadyRegistered.status === 0) {
-      if (
-        profile.strategy === null &&
-        !staticProfileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(alreadyRegistered.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
-        return;
-      }
+      if (!validateRegisteredProfile(profile, alreadyRegistered)) return;
       continue;
     }
     // Probe failed for something other than "not found" (gateway down, auth, …):
@@ -492,10 +517,12 @@ export function ensureMessagingBridgeProfiles(
     const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
       alreadyRegistered.stdout,
     )}`;
-    if (probeDiagnostic.trim() && !/not found/i.test(probeDiagnostic)) {
+    if (!/not found/i.test(probeDiagnostic)) {
       errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} provider profile:`);
       const probeText = compactText(deps.redact(probeDiagnostic));
       if (probeText) errorLog(`    ${probeText.slice(0, 500)}`);
+      rejectUnusableProfile(profile, "indeterminate");
+      return;
     }
 
     const result = deps.runOpenshell(
@@ -507,22 +534,11 @@ export function ensureMessagingBridgeProfiles(
     // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
     const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
     if (/already exists/i.test(rawDiagnostic)) {
-      if (profile.strategy !== null) continue;
       const racedProfile = deps.runOpenshell(
         ["provider", "profile", "export", profile.profileId, "--output", "json"],
         { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
       );
-      if (
-        racedProfile.status !== 0 ||
-        !staticProfileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(racedProfile.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
-        return;
-      }
+      if (!validateRegisteredProfile(profile, racedProfile)) return;
       continue;
     }
 

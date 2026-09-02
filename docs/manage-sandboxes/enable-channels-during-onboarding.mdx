@@ -89,7 +89,7 @@ Credential bindings remain OpenShell credential placeholders, so raw messaging c
 
 ## Remove a Channel
 
-Clearing a channel's host environment variables and rerunning onboarding does not remove an active host-backed channel when every recorded credential binding still matches its OpenShell gateway provider or its gateway-minted bridge provider remains exact.
+Clearing a channel's host environment variables does not remove an active host-backed channel when its recorded OpenShell gateway provider still matches the channel's credential contract.
 Onboarding preserves the channel selection and matching network policy preset because interactive inputs normally disappear between runs.
 If a required gateway provider is missing or no longer matches the expected credential contract, onboarding disables the channel and drops the matching policy preset.
 
