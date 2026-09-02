@@ -61,7 +61,9 @@ Choose the selection from the source owner:
   every default-enabled E2E. Any supported job or target selector is allowed.
 - An external PR keeps the credential-free controller selection. Empty selectors run the trusted
   default PR selection. The controller also permits `jobs=inference-routing`,
-  `jobs=managed-image-protected-runtime`, or the documented credential-free target selectors.
+  `jobs=managed-image-protected-runtime`, `targets=ubuntu-repo-cloud-langchain-deepagents-code`, or
+  `targets=ubuntu-repo-docker-post-reboot-recovery`. The two target selectors may be combined in
+  that order as a comma-separated value.
 
 `jobs=native-runtime-qualification-producer` requires an NVIDIA-owned branch in
 `NVIDIA/NemoClaw`; it is not available for external PRs.

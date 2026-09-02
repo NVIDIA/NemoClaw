@@ -4,10 +4,14 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
-import { resolveReviewedMcporterPackage } from "../../scripts/lib/reviewed-mcporter-package.mts";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  type ReviewedNpmArchiveRequest,
+  verifyReviewedNpmLock,
+} from "../../scripts/lib/reviewed-npm-archive.mts";
 import { type DependencyNode, findDependency } from "../fixtures/dependency-graph.ts";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -25,19 +29,62 @@ const expectedFastUriVersion = "3.1.6";
 const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
-const reviewedAuditConfig = JSON.parse(
-  fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
-) as {
-  lockedGraphs: Array<{
-    directory: string;
-    id: string;
-    integrity: string;
-    lockSha256: string;
-    replacementLockSha256?: string;
-    packageSpec: string;
-    tarballUrl: string;
-  }>;
+const temporaryRoots: string[] = [];
+
+type SyntheticMcporterLock = {
+  lockfileVersion: number;
+  packages: Record<
+    string,
+    {
+      dependencies?: Record<string, string>;
+      integrity?: string;
+      resolved?: string;
+      version?: string;
+    }
+  >;
 };
+
+function writeSyntheticLock(mutate: (lock: SyntheticMcporterLock) => void = () => undefined): {
+  expectedLockSha256: string;
+  lockfilePath: string;
+} {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcporter-lock-test-"));
+  temporaryRoots.push(root);
+  const lockfilePath = path.join(root, "package-lock.json");
+  const lock: SyntheticMcporterLock = {
+    lockfileVersion: 3,
+    packages: {
+      "": { dependencies: { mcporter: expectedVersion } },
+      "node_modules/fast-uri": {
+        integrity: `sha512-${"B".repeat(88)}`,
+        resolved: expectedFastUriTarball,
+        version: expectedFastUriVersion,
+      },
+      "node_modules/mcporter": {
+        dependencies: { "fast-uri": expectedFastUriVersion },
+        integrity: expectedIntegrity,
+        resolved: expectedTarball,
+        version: expectedVersion,
+      },
+    },
+  };
+  mutate(lock);
+  fs.writeFileSync(lockfilePath, `${JSON.stringify(lock, null, 2)}\n`);
+  return {
+    expectedLockSha256: createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex"),
+    lockfilePath,
+  };
+}
+
+function reviewedMetadata(args: readonly string[], request: ReviewedNpmArchiveRequest): string {
+  return args[2] === "dist.integrity" ? request.expectedIntegrity : request.tarballUrl;
+}
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
 
 describe("mcporter image supply-chain controls", () => {
   it("resolves the committed production graph through npm's lockfile boundary", () => {
@@ -80,36 +127,67 @@ describe("mcporter image supply-chain controls", () => {
     );
   });
 
-  it("fails closed before install when the selected package identity is unreviewed", () => {
-    expect(
-      resolveReviewedMcporterPackage(expectedVersion, expectedIntegrity, expectedTarball),
-    ).toEqual({
-      integrity: expectedIntegrity,
-      tarballUrl: expectedTarball,
-      version: expectedVersion,
-    });
-    expect(() =>
-      resolveReviewedMcporterPackage("9.9.9-unreviewed", expectedIntegrity, expectedTarball),
-    ).toThrow("mcporter 9.9.9-unreviewed has no committed npm integrity pin");
-    expect(() =>
-      resolveReviewedMcporterPackage(expectedVersion, "sha512-unreviewed", expectedTarball),
-    ).toThrow("does not match the committed npm package identity");
+  it("binds the selected package identity to every locked dependency", () => {
+    const lock = writeSyntheticLock();
+    const verified = verifyReviewedNpmLock(
+      {
+        expectedIntegrity,
+        label: `mcporter ${expectedVersion}`,
+        packageSpec: `mcporter@${expectedVersion}`,
+        registryOrigin: "https://registry.npmjs.org/",
+        tarballUrl: expectedTarball,
+        ...lock,
+      },
+      reviewedMetadata,
+    );
+    expect(verified).toHaveLength(2);
+    expect(verified).toEqual(
+      expect.arrayContaining([`mcporter@${expectedVersion}`, `fast-uri@${expectedFastUriVersion}`]),
+    );
   });
 
-  it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {
-    const graph = reviewedAuditConfig.lockedGraphs.find(
-      (candidate) => candidate.id === "mcporter-runtime",
-    );
-    expect(graph).toMatchObject({
-      directory: "agents/openclaw/mcporter-runtime",
-      integrity: expectedIntegrity,
-      packageSpec: `mcporter@${expectedVersion}`,
-      tarballUrl: expectedTarball,
+  it("rejects lock byte drift before consulting registry metadata", () => {
+    const lock = writeSyntheticLock();
+    fs.appendFileSync(lock.lockfilePath, " ");
+    let npmCalled = false;
+
+    expect(() =>
+      verifyReviewedNpmLock(
+        {
+          expectedIntegrity,
+          label: `mcporter ${expectedVersion}`,
+          packageSpec: `mcporter@${expectedVersion}`,
+          registryOrigin: "https://registry.npmjs.org/",
+          tarballUrl: expectedTarball,
+          ...lock,
+        },
+        () => {
+          npmCalled = true;
+          return "";
+        },
+      ),
+    ).toThrow("lock SHA-256 mismatch");
+    expect(npmCalled).toBe(false);
+  });
+
+  it("rejects a transitive package from an unreviewed registry", () => {
+    const lock = writeSyntheticLock((candidate) => {
+      candidate.packages["node_modules/fast-uri"].resolved =
+        "https://packages.invalid/fast-uri-3.1.6.tgz";
     });
 
-    const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
-    expect(createHash("sha256").update(lockfile).digest("hex")).toBe(
-      graph?.replacementLockSha256,
-    );
+    expect(() =>
+      verifyReviewedNpmLock(
+        {
+          expectedIntegrity,
+          label: `mcporter ${expectedVersion}`,
+          packageSpec: `mcporter@${expectedVersion}`,
+          registryOrigin: "https://registry.npmjs.org/",
+          tarballUrl: expectedTarball,
+          ...lock,
+        },
+        reviewedMetadata,
+      ),
+    ).toThrow("reviewed npm lock package must use the reviewed registry");
   });
 });

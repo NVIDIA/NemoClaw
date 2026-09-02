@@ -30,14 +30,6 @@ const REVIEWED_NPM_AUDIT_HELPER = path.join(
   "lib",
   "reviewed-npm-audit.mts",
 );
-const REVIEWED_MCPORTER_PACKAGE_HELPER = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "scripts",
-  "lib",
-  "reviewed-mcporter-package.mts",
-);
 const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
   "2026.4.24",
   "2026.5.18",
@@ -215,10 +207,6 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
       'from "/scripts/lib/reviewed-npm-audit.mts"',
       `from ${JSON.stringify(REVIEWED_NPM_AUDIT_HELPER)}`,
     )
-    .replaceAll(
-      "/scripts/lib/reviewed-mcporter-package.mts",
-      JSON.stringify(REVIEWED_MCPORTER_PACKAGE_HELPER),
-    )
     .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptions);
   const script = [
     "#!/usr/bin/env bash",
@@ -249,13 +237,6 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "  fi",
     '  if [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ]; then',
     '    if [ "${3:-}" = "--verify-lock" ] || [ "${3:-}" = "--verify-installed-lock" ]; then return 0; fi',
-    '    if [ "${3:-}" = "--verify-only" ]; then',
-    '      [ "$#" -eq 11 ] && [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 91;',
-    '      [ "${6:-}" = "--integrity" ] && [ "${7:-}" = "$MCPORTER_0_7_3_INTEGRITY" ] || return 92;',
-    '      [ "${8:-}" = "--tarball-url" ] && [ "${9:-}" = "$MCPORTER_0_7_3_TARBALL" ] || return 93;',
-    '      [ "${10:-}" = "--label" ] && [ "${11:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 94;',
-    "      return 0;",
-    "    fi",
     '    [ "$#" -eq 10 ] && [ "${3:-}" = "--package-spec" ] && [ "${4:-}" = "openclaw@${OPENCLAW_VERSION}" ] || return 95;',
     '    [ "${5:-}" = "--integrity" ] && [ "${6:-}" = "$OPENCLAW_2026_7_1_INTEGRITY" ] || return 96;',
     '    [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = "$OPENCLAW_2026_7_1_TARBALL" ] || return 97;',

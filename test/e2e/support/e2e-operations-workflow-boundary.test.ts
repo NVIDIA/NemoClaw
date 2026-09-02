@@ -319,6 +319,17 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
   it("keeps manual PR head and base replay selectors identical", () => {
     const reference = readFileSync(MANUAL_PR_REFERENCE_PATH, "utf8");
+    const workflow = readE2eOperationsWorkflow();
+    const controller = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Build trusted controller target matrix",
+    )!;
+    const documentedExternalTargets = [...reference.matchAll(/`targets=([^`,]+)`/gu)].map(
+      (match) => match[1],
+    );
+    const approvedExternalTargets = [
+      "ubuntu-repo-cloud-langchain-deepagents-code",
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ];
     const gatewayRuntimeDispatches = reference.match(
       /-f "gateway_runtimes=\$\{E2E_GATEWAY_RUNTIMES\}"/gu,
     );
@@ -331,6 +342,10 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(gatewayRuntimeDispatches).toHaveLength(2);
     expect(trustedMainDispatches).toHaveLength(2);
     expect(externalPrGuidance?.[0]).toContain("it is not available for external PRs");
+    expect(documentedExternalTargets).toEqual(approvedExternalTargets);
+    expect(controller.run).toContain(":ubuntu-repo-cloud-langchain-deepagents-code)");
+    expect(controller.run).toContain(":ubuntu-repo-docker-post-reboot-recovery)");
+    expect(controller.run).toContain(`:${approvedExternalTargets.join(",")})`);
   });
 
   it("pins the trusted planner checkout to the workflow repository", () => {

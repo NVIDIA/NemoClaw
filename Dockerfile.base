@@ -426,7 +426,6 @@ COPY agents/openclaw/mcporter-runtime/package.json \
 COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
-    scripts/lib/reviewed-mcporter-package.mts \
     scripts/lib/reviewed-npm-audit.mts \
     scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
@@ -561,11 +560,13 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && case "$OPENCLAW_VERSION" in \
         2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
     esac \
-    && MCPORTER_REVIEWED_PACKAGE="$(node --experimental-strip-types /scripts/lib/reviewed-mcporter-package.mts \
-        "$MCPORTER_VERSION" "$MCPORTER_0_7_3_INTEGRITY" "$MCPORTER_0_7_3_TARBALL")" \
-    && MCPORTER_EXPECTED_INTEGRITY="${MCPORTER_REVIEWED_PACKAGE%% *}" \
-    && MCPORTER_EXPECTED_TARBALL="${MCPORTER_REVIEWED_PACKAGE#* }" \
-    && node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
+    && MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY" \
+    && MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL" \
+    && MCPORTER_LOCK_SHA256=720c0e3ec2efcccd2c820ce2a39d733f7bd5bf9d3e6fb95310e7f6cd369db83c \
+    && node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+        --lock-sha256 "$MCPORTER_LOCK_SHA256" \
+        --lockfile /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+        --registry-origin https://registry.npmjs.org/ \
         --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
         --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}" \
     && rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter \
@@ -585,8 +586,6 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && MCPORTER_AUDIT_EXCEPTIONS="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').acceptedAdvisories.join(',') || 'none'")" \
     && MCPORTER_AUDIT_POLICY_SHA256="$(node -p "require('/tmp/mcporter-npm-audit-policy.json').exceptionPolicySha256")" \
     && test -n "$MCPORTER_AUDIT_STATUS" -a -n "$MCPORTER_AUDIT_EXCEPTIONS" -a -n "$MCPORTER_AUDIT_POLICY_SHA256" \
-    && MCPORTER_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json | awk '{print $1}')" \
-    && test -n "$MCPORTER_LOCK_SHA256" \
     && OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1 \
     && OPENCLAW_PROVENANCE_DIR="$(dirname "$OPENCLAW_PROVENANCE_PATH")" \
     && mkdir -p "$OPENCLAW_PROVENANCE_DIR" \

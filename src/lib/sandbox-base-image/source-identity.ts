@@ -17,7 +17,6 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/reviewed-npm-archive.mts",
-  "scripts/lib/reviewed-mcporter-package.mts",
   "scripts/lib/bundled-npm-package.mts",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/lib/patch-bundled-npm-ip-address.mts",

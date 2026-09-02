@@ -543,7 +543,6 @@ COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/we
 COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
-COPY scripts/lib/reviewed-mcporter-package.mts /scripts/lib/reviewed-mcporter-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
@@ -884,13 +883,9 @@ RUN --network=default set -eu; \
     elif [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
         OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; \
     fi; \
-    MCPORTER_REVIEWED_PACKAGE="$(node --experimental-strip-types /scripts/lib/reviewed-mcporter-package.mts \
-        "$MCPORTER_VERSION" "$MCPORTER_0_7_3_INTEGRITY" "$MCPORTER_0_7_3_TARBALL")"; \
-    MCPORTER_EXPECTED_INTEGRITY="${MCPORTER_REVIEWED_PACKAGE%% *}"; \
-    MCPORTER_EXPECTED_TARBALL="${MCPORTER_REVIEWED_PACKAGE#* }"; \
-    MCPORTER_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json | awk '{print $1}')"; \
-    [ -n "$MCPORTER_LOCK_SHA256" ] \
-        || { echo "ERROR: Could not hash the committed mcporter lockfile" >&2; exit 1; }; \
+    MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; \
+    MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; \
+    MCPORTER_LOCK_SHA256=720c0e3ec2efcccd2c820ce2a39d733f7bd5bf9d3e6fb95310e7f6cd369db83c; \
     MCPORTER_AUDIT_POLICY_SHA256="$(sha256sum /scripts/npm-audit-exceptions.json | awk '{print $1}')"; \
     MCPORTER_EXPECTED_AUDIT_EXCEPTIONS="$(node --experimental-strip-types --input-type=module -e \
         'import fs from "node:fs"; import { parseAuditExceptionRegistry } from "/scripts/lib/reviewed-npm-audit.mts"; const policy=parseAuditExceptionRegistry(fs.readFileSync("/scripts/npm-audit-exceptions.json", "utf-8")); const ids=policy.exceptions.filter((entry)=>entry.graph==="mcporter-runtime").map((entry)=>entry.advisory).sort(); process.stdout.write(ids.join(",") || "none");')"; \
@@ -993,7 +988,10 @@ RUN --network=default set -eu; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
         echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with matching lock provenance"; \
     else \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+            --lock-sha256 "$MCPORTER_LOCK_SHA256" \
+            --lockfile /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+            --registry-origin https://registry.npmjs.org/ \
             --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
             --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}"; \
         # Reinstall from the committed lock when matching protected base provenance

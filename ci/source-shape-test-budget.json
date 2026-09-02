@@ -257,11 +257,6 @@
       "category": "security"
     },
     {
-      "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins the reviewed image runtime artifacts exactly",
-      "category": "security"
-    },
-    {
       "file": "test/runtime/gateway/gateway-health-honest.test.ts",
       "test": "reports a crashed Docker-driver gateway instead of reporting it healthy (#3111)",
       "category": "compatibility"

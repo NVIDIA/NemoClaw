@@ -120,38 +120,81 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
     },
   );
 
-  it("revalidates the exact PR base and original head after checkout", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const validation = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Validate manual PR checkout",
-    )!;
-    const headSha = "a".repeat(40);
-    const baseSha = "b".repeat(40);
-    const prefix = [
-      "git() { printf '%s\\n' \"$CHECKOUT_SHA\"; }",
-      "curl() {",
-      `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${headSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}'`,
-      "}",
-    ].join("\n");
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${validation.run}`],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          BASE_SHA: baseSha,
-          CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
-          CHECKOUT_SHA: baseSha,
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          NVIDIA_OWNED: "true",
-          PR_HEAD_SHA: headSha,
-          PR_NUMBER: "42",
-          REVISION: "base",
+  it.each([
+    {
+      caseName: "the unchanged exact base and original head",
+      checkoutCharacter: "b",
+      currentBaseCharacter: "b",
+      currentHeadCharacter: "a",
+      expectedError: "",
+      expectedStatus: 0,
+    },
+    {
+      caseName: "a mismatched checkout",
+      checkoutCharacter: "d",
+      currentBaseCharacter: "b",
+      currentHeadCharacter: "a",
+      expectedError: "::error::checked-out commit does not match checkout_sha\n",
+      expectedStatus: 1,
+    },
+    {
+      caseName: "a changed PR base",
+      checkoutCharacter: "b",
+      currentBaseCharacter: "d",
+      currentHeadCharacter: "a",
+      expectedError: "::error::base_sha changed before execution\n",
+      expectedStatus: 1,
+    },
+    {
+      caseName: "a changed PR head",
+      checkoutCharacter: "b",
+      currentBaseCharacter: "b",
+      currentHeadCharacter: "d",
+      expectedError: "::error::PR head changed before execution\n",
+      expectedStatus: 1,
+    },
+  ])(
+    "revalidates $caseName after checkout",
+    ({
+      checkoutCharacter,
+      currentBaseCharacter,
+      currentHeadCharacter,
+      expectedError,
+      expectedStatus,
+    }) => {
+      const workflow = readE2eOperationsWorkflow();
+      const validation = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Validate manual PR checkout",
+      )!;
+      const headSha = "a".repeat(40);
+      const baseSha = "b".repeat(40);
+      const prefix = [
+        `git() { printf '%s\\n' '${checkoutCharacter.repeat(40)}'; }`,
+        "curl() {",
+        `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${currentHeadCharacter.repeat(40)}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${currentBaseCharacter.repeat(40)}"}}'`,
+        "}",
+      ].join("\n");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${validation.run}`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            BASE_SHA: baseSha,
+            CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
+            CHECKOUT_SHA: baseSha,
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            NVIDIA_OWNED: "true",
+            PR_HEAD_SHA: headSha,
+            PR_NUMBER: "42",
+            REVISION: "base",
+          },
         },
-      },
-    );
+      );
 
-    expect(result.status, result.stderr).toBe(0);
-  });
+      expect(result.status).toBe(expectedStatus);
+      expect(result.stderr).toBe(expectedError);
+    },
+  );
 });
