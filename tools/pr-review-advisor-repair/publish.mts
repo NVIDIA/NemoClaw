@@ -516,45 +516,6 @@ export async function assertAdvisorArtifactsCurrent(
   });
 }
 
-export async function dispatchGeneratedHeadValidation(
-  receipt: ValidationReceipt,
-  commitSha: string,
-  token: string,
-  request: GitHubRequest = githubApi,
-): Promise<string[]> {
-  const common = {
-    pr_number: String(receipt.prNumber),
-    source_head_sha: commitSha,
-    base_sha: receipt.baseSha,
-    repair_attempt_key: receipt.attemptKey,
-  };
-  for (const workflow of GENERATED_HEAD_WORKFLOWS) {
-    await request(`repos/${CANONICAL_REPOSITORY}/actions/workflows/${workflow}/dispatches`, token, {
-      method: "POST",
-      body: { ref: receipt.headRef, inputs: common },
-    });
-  }
-  await request(
-    `repos/${CANONICAL_REPOSITORY}/actions/workflows/pr-review-advisor.yaml/dispatches`,
-    token,
-    {
-      method: "POST",
-      body: {
-        ref: receipt.headRef,
-        inputs: {
-          target_repo: CANONICAL_REPOSITORY,
-          target_pr: String(receipt.prNumber),
-          target_base: "main",
-          source_head_sha: commitSha,
-          base_sha: receipt.baseSha,
-          repair_attempt_key: receipt.attemptKey,
-        },
-      },
-    },
-  );
-  return [...GENERATED_HEAD_WORKFLOWS, "pr-review-advisor.yaml"];
-}
-
 export async function ensureGeneratedHeadValidation(
   receipt: ValidationReceipt,
   commitSha: string,

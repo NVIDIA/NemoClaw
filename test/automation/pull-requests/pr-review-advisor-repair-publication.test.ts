@@ -26,7 +26,6 @@ import {
 import {
   assertPublicationPullRequest,
   atomicUpdate,
-  dispatchGeneratedHeadValidation,
   ensureVerifiedRepairCommit,
   ensureGeneratedHeadValidation,
   publicationHeadAction,
@@ -507,26 +506,6 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         ],
       },
     });
-
-    const request = vi.fn().mockResolvedValue({});
-    await dispatchGeneratedHeadValidation(
-      validationReceipt(bundle, Buffer.from("validated patch")),
-      afterOid,
-      "token",
-      request,
-    );
-    expect(request).toHaveBeenCalledTimes(6);
-    expect(request.mock.calls.at(-1)?.[2]).toEqual(
-      expect.objectContaining({
-        body: expect.objectContaining({
-          inputs: expect.objectContaining({
-            source_head_sha: afterOid,
-            base_sha: bundle.input.baseSha,
-            repair_attempt_key: bundle.attemptKey,
-          }),
-        }),
-      }),
-    );
   });
 
   it("reconciliation dispatches only missing exact-head validation workflows (#10791)", async () => {
@@ -569,6 +548,27 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
           String(apiPath).endsWith("/dispatches") && options?.method === "POST",
       ),
     ).toHaveLength(5);
+    const dispatches = request.mock.calls.filter(
+      ([apiPath, , options]) =>
+        String(apiPath).endsWith("/dispatches") && options?.method === "POST",
+    );
+    const expectedDispatch = expect.objectContaining({
+      body: expect.objectContaining({
+        ref: receipt.headRef,
+        inputs: expect.objectContaining({
+          source_head_sha: commitSha,
+          base_sha: bundle.input.baseSha,
+          repair_attempt_key: bundle.attemptKey,
+        }),
+      }),
+    });
+    expect(dispatches.map(([, , options]) => options)).toEqual([
+      expectedDispatch,
+      expectedDispatch,
+      expectedDispatch,
+      expectedDispatch,
+      expectedDispatch,
+    ]);
     expect(
       request.mock.calls.some(
         ([apiPath, , options]) =>
