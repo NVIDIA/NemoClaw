@@ -124,14 +124,23 @@ if ($authoringText -match '<\s*CustomAction\b' -or
     Fail-WindowsPackageBuild 'WiX authoring contains a prohibited custom-action or non-native execution path.'
 }
 $exePackages = @([regex]::Matches($authoringText, '<\s*ExePackage\b[^>]*/>', 'IgnoreCase, Singleline'))
-if ($exePackages.Count -ne 1 -or
-    $exePackages[0].Value -notmatch 'Id="MxcNullDevicePreparation"' -or
-    $exePackages[0].Value -notmatch 'SourceFile="\$\(var\.WxcHostPrepPath\)"' -or
-    $exePackages[0].Value -notmatch 'InstallArguments="prepare-null-device"' -or
-    $exePackages[0].Value -notmatch 'PerMachine="yes"' -or
-    $exePackages[0].Value -notmatch 'Permanent="yes"' -or
-    $exePackages[0].Value -notmatch 'Vital="yes"') {
-    Fail-WindowsPackageBuild 'WiX Burn authoring must contain only the exact pinned MXC null-device prerequisite.'
+$systemDrivePreparation = @($exePackages | Where-Object {
+    $_.Value -match 'Id="MxcSystemDrivePreparation"' -and
+    $_.Value -match 'InstallArguments="prepare-system-drive"'
+})
+$nullDevicePreparation = @($exePackages | Where-Object {
+    $_.Value -match 'Id="MxcNullDevicePreparation"' -and
+    $_.Value -match 'InstallArguments="prepare-null-device"'
+})
+$invalidPrerequisite = @($exePackages | Where-Object {
+    $_.Value -notmatch 'SourceFile="\$\(var\.WxcHostPrepPath\)"' -or
+    $_.Value -notmatch 'PerMachine="yes"' -or
+    $_.Value -notmatch 'Permanent="yes"' -or
+    $_.Value -notmatch 'Vital="yes"'
+})
+if ($exePackages.Count -ne 2 -or $systemDrivePreparation.Count -ne 1 -or
+    $nullDevicePreparation.Count -ne 1 -or $invalidPrerequisite.Count -ne 0) {
+    Fail-WindowsPackageBuild 'WiX Burn authoring must contain only the exact pinned MXC host prerequisites.'
 }
 
 [IO.Directory]::CreateDirectory($output) | Out-Null

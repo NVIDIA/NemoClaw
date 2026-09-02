@@ -19,6 +19,14 @@
     </BootstrapperApplication>
     <Chain>
       <ExePackage
+        Id="MxcSystemDrivePreparation"
+        SourceFile="$(var.WxcHostPrepPath)"
+        InstallArguments="prepare-system-drive"
+        PerMachine="yes"
+        Permanent="yes"
+        Compressed="yes"
+        Vital="yes" />
+      <ExePackage
         Id="MxcNullDevicePreparation"
         SourceFile="$(var.WxcHostPrepPath)"
         InstallArguments="prepare-null-device"

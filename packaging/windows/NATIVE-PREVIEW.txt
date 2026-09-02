@@ -5,9 +5,10 @@ native Windows ARM64 builds of openshell.exe and openshell-gateway.exe from
 NVIDIA/OpenShell#2721 merge commit bcd517bbe08cc80860c9be57699390cd32e8445f,
 and the pinned Microsoft MXC 0.8.0 ARM64 runtime tools.
 
-The setup executable applies Microsoft MXC's elevated prepare-null-device host
-prerequisite before installing the MSI. Windows resets that prerequisite at
-reboot; persistent production lifecycle ownership remains deferred.
+The setup executable applies Microsoft MXC's elevated prepare-system-drive and
+prepare-null-device host prerequisites before installing the MSI. Windows
+resets the null-device prerequisite at reboot; persistent production lifecycle
+ownership remains deferred.
 
 This is a qualification candidate, not a production support claim. Native MXC
 execution remains limited by the Windows host build and capabilities. Gateway
