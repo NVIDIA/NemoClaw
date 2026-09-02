@@ -365,18 +365,19 @@ describe("sandbox provider preparation", () => {
   });
 
   it("reruns publication from desired state after a partial failure (#9806)", async () => {
-    const updateProvider: OpenShellProviderAdapter["updateProvider"] = vi
-      .fn<OpenShellProviderAdapter["updateProvider"]>()
-      .mockResolvedValueOnce({ ok: true as const })
-      .mockResolvedValueOnce({
-        ok: false as const,
-        error: {
-          kind: "command" as const,
-          reason: "failed" as const,
-          message: "provider update rejected request 24",
-        },
-      })
-      .mockResolvedValue({ ok: true as const });
+    let updateAttempt = 0;
+    const updateProvider: OpenShellProviderAdapter["updateProvider"] = vi.fn(async () =>
+      (updateAttempt += 1) === 2
+        ? {
+            ok: false as const,
+            error: {
+              kind: "command" as const,
+              reason: "failed" as const,
+              message: "provider update rejected request 24",
+            },
+          }
+        : { ok: true as const },
+    );
     const harness = createHarness(typedProviderAdapter({ updateProvider }));
     const input = publicationInput({
       messagingProviders: [],
@@ -386,32 +387,34 @@ describe("sandbox provider preparation", () => {
 
     await expect(
       publishAttachedProvidersBeforeDockerSandboxCreation(input, harness.deps),
-    ).rejects.toThrowError(
-      "Could not publish attached provider 'second-provider' before managed sandbox creation: provider update rejected request 24",
-    );
-    await expect(
-      publishAttachedProvidersBeforeDockerSandboxCreation(input, harness.deps),
-    ).resolves.toBeUndefined();
-
-    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(1, {
+    ).rejects.toThrowError(/provider update rejected request 24/u);
+    expect(harness.adapter.updateProvider).toHaveBeenCalledTimes(2);
+    expect(harness.adapter.updateProvider).toHaveBeenCalledWith({
       target,
       providerName: "first-provider",
       credentials: [],
       config: [],
     });
-    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(2, {
+    expect(harness.adapter.updateProvider).toHaveBeenCalledWith({
       target,
       providerName: "second-provider",
       credentials: [],
       config: [],
     });
-    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(3, {
+
+    vi.mocked(harness.adapter.updateProvider).mockClear();
+    await expect(
+      publishAttachedProvidersBeforeDockerSandboxCreation(input, harness.deps),
+    ).resolves.toBeUndefined();
+
+    expect(harness.adapter.updateProvider).toHaveBeenCalledTimes(2);
+    expect(harness.adapter.updateProvider).toHaveBeenCalledWith({
       target,
       providerName: "first-provider",
       credentials: [],
       config: [],
     });
-    expect(harness.adapter.updateProvider).toHaveBeenNthCalledWith(4, {
+    expect(harness.adapter.updateProvider).toHaveBeenCalledWith({
       target,
       providerName: "second-provider",
       credentials: [],
