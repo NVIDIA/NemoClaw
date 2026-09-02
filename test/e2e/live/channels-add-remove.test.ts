@@ -18,7 +18,6 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openClawHasConfiguredTelegram,
-  TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE,
   type OpenClawTelegramState,
 } from "./channels-add-remove-helpers.ts";
 
@@ -36,6 +35,8 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "test-fake-telegram-tok
 const TELEGRAM_ALLOWED_IDS = process.env.TELEGRAM_ALLOWED_IDS ?? "123456789";
 const TELEGRAM_REQUIRE_MENTION = process.env.TELEGRAM_REQUIRE_MENTION ?? "0";
 const PROVIDER_NAME = `${SANDBOX_NAME}-telegram-bridge`;
+const TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE =
+  "^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$";
 const BASELINE_API_KEY = "channels-add-remove-baseline-credential";
 const BASELINE_MODEL = "channels-add-remove-baseline-model";
 const ONBOARD_ARGS = [
@@ -404,6 +405,7 @@ async function telegramEgressProbe(
   const result = await sandbox.exec(SANDBOX_NAME, ["node", "-e", source], {
     artifactName,
     env: sandboxAccessEnv(),
+    redactionValues: [TELEGRAM_TOKEN],
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   assertExitZero(result, "telegram egress probe");

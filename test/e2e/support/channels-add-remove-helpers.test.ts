@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   openClawHasConfiguredTelegram,
-  telegramRuntimeCredentialState,
   type OpenClawTelegramState,
 } from "../live/channels-add-remove-helpers.ts";
 
@@ -42,15 +41,5 @@ describe("channels-add-remove Telegram configuration predicate", () => {
         accountPresent: true,
       }),
     ).toBe(true);
-  });
-
-  it.each([
-    ["", "missing"],
-    ["openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN", "revision-scoped"],
-    ["openshell:resolve:env:TELEGRAM_BOT_TOKEN", "unexpected"],
-    ["openshell:resolve:env:vx_TELEGRAM_BOT_TOKEN", "unexpected"],
-    ["raw-value-must-not-be-rendered", "unexpected"],
-  ] as const)("classifies the redacted Telegram runtime credential state", (value, expected) => {
-    expect(telegramRuntimeCredentialState(value)).toBe(expected);
   });
 });

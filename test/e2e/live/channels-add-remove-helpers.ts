@@ -15,18 +15,6 @@ export interface OpenClawTelegramState {
   pluginPresent: boolean;
 }
 
-export const TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE =
-  "^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$";
-
-export function telegramRuntimeCredentialState(
-  value: string,
-): "missing" | "revision-scoped" | "unexpected" {
-  if (!value) return "missing";
-  return new RegExp(TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE, "u").test(value)
-    ? "revision-scoped"
-    : "unexpected";
-}
-
 export function openClawHasConfiguredTelegram(state: OpenClawTelegramState): boolean {
   return (
     state.accountPresent ||
