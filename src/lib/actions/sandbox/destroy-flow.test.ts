@@ -549,18 +549,21 @@ describe("destroySandbox flow", () => {
         agent: "hermes",
         openshellDriver: "docker",
         workload: managedHermesWorkload,
-        managedHermesStateVolumeCleanupResult: { status: "removed" },
+        managedAgentStateVolumeCleanupResults: [{ status: "removed" }],
       });
 
       await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-      expect(harness.removeManagedHermesStateVolumeSpy).toHaveBeenCalledWith({
-        agentName: "hermes",
-        runtimeProviderId: "docker",
-        sandboxName: "alpha",
-        workloadKind: "managed-image",
-      });
-      expect(harness.removeManagedHermesStateVolumeSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(harness.removeManagedAgentStateVolumesSpy).toHaveBeenCalledWith(
+        {
+          agentName: "hermes",
+          runtimeProviderId: "docker",
+          sandboxName: "alpha",
+          workloadKind: "managed-image",
+        },
+        { runtimeProviders: expect.any(Object) },
+      );
+      expect(harness.removeManagedAgentStateVolumesSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.removeSandboxSpy.mock.invocationCallOrder[0],
       );
     },
@@ -571,11 +574,13 @@ describe("destroySandbox flow", () => {
       agent: "hermes",
       openshellDriver: "docker",
       workload: managedHermesWorkload,
-      managedHermesStateVolumeCleanupResult: {
-        status: "failed",
-        detail: "volume is still in use",
-        volumeName: "nemoclaw-hermes-state-v1-alpha",
-      },
+      managedAgentStateVolumeCleanupResults: [
+        {
+          status: "failed",
+          detail: "volume is still in use",
+          volumeName: "nemoclaw-hermes-state-v1-alpha",
+        },
+      ],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -591,17 +596,19 @@ describe("destroySandbox flow", () => {
       agent: "hermes",
       openshellDriver: "docker",
       workload: managedHermesWorkload,
-      managedHermesStateVolumeCleanupResult: {
-        status: "not-owned",
-        detail: "the exact NemoClaw ownership labels are absent or changed",
-        volumeName: "nemoclaw-hermes-state-v1-alpha",
-      },
+      managedAgentStateVolumeCleanupResults: [
+        {
+          status: "not-owned",
+          detail: "the exact NemoClaw ownership labels are absent or changed",
+          volumeName: "nemoclaw-hermes-state-v1-alpha",
+        },
+      ],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "Left Docker volume 'nemoclaw-hermes-state-v1-alpha' untouched",
+      "Left managed state volume 'nemoclaw-hermes-state-v1-alpha' untouched",
     );
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });

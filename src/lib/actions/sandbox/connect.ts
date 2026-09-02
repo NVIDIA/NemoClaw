@@ -69,6 +69,7 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceSetArgs,
+  sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
   buildSandboxInferenceRouteProbeArgs,
@@ -108,7 +109,11 @@ import {
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
-import type { HermesPortableLifecycleRecoveryTimingEvidence } from "../../onboard/experimental/hermes-portable-lifecycle";
+import type {
+  HermesPortableCurrentnessTimingEvidence,
+  HermesPortableLifecycleRecoveryTimingEvidence,
+} from "../../onboard/experimental/hermes-portable-lifecycle";
+import type { HermesPortableContainerInspectionTimingEvidence } from "../../onboard/experimental/hermes-portable-container";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
@@ -729,6 +734,22 @@ function writeHermesPortableForwardRecoveryTiming(
   );
 }
 
+function writeHermesPortableCurrentnessTiming(
+  evidence: HermesPortableCurrentnessTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable currentness timing: receiptRead=${String(evidence.receiptReadMs)}ms receiptReadCount=${String(evidence.receiptReadCount)} socketAuthority=${String(evidence.socketAuthorityMs)}ms socketAuthorityCount=${String(evidence.socketAuthorityCount)} openshellExecutable=${String(evidence.openshellExecutableMs)}ms openshellExecutableCount=${String(evidence.openshellExecutableCount)} podmanExecutable=${String(evidence.podmanExecutableMs)}ms podmanExecutableCount=${String(evidence.podmanExecutableCount)} containerInspect=${String(evidence.containerInspectMs)}ms containerInspectCount=${String(evidence.containerInspectCount)} transactionCompare=${String(evidence.transactionCompareMs)}ms transactionCompareCount=${String(evidence.transactionCompareCount)}`,
+  );
+}
+
+function writeHermesPortableInspectionTiming(
+  evidence: HermesPortableContainerInspectionTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable inspection timing: preGuard=${String(evidence.preGuardMs)}ms preGuardCount=${String(evidence.preGuardCount)} podmanCapture=${String(evidence.podmanCaptureMs)}ms podmanCaptureCount=${String(evidence.podmanCaptureCount)} postGuard=${String(evidence.postGuardMs)}ms postGuardCount=${String(evidence.postGuardCount)} jsonParse=${String(evidence.jsonParseMs)}ms jsonParseCount=${String(evidence.jsonParseCount)} identityCompare=${String(evidence.identityCompareMs)}ms identityCompareCount=${String(evidence.identityCompareCount)}`,
+  );
+}
+
 function writeHermesPortableLifecycleRecoveryTiming(
   evidence: HermesPortableLifecycleRecoveryTimingEvidence,
 ): void {
@@ -1148,10 +1169,8 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // runs the gateway as `nemoclaw-openshell-gateway` with host networking, and
   // the vm driver has no cluster container either, so both recover the route via
   // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
-  // usesGatewayMetadataProbe (snapshot.ts) and the `!== "docker"` guard on the
-  // snapshot DNS-proxy step. (#3403)
-  const driver = sb?.openshellDriver;
-  return driver !== "vm" && driver !== "docker";
+  // usesGatewayMetadataProbe (snapshot.ts). (#3403)
+  return sandboxUsesLegacyClusterGateway(sb);
 }
 
 function reapplyVmInferenceRoute(
@@ -2346,6 +2365,8 @@ async function prepareConnectSandboxWithinLifecycleFence(
               resolveSandboxGatewayName(registered),
               undefined,
               { onComplete: writeHermesPortableLifecycleRecoveryTiming },
+              { onComplete: writeHermesPortableCurrentnessTiming },
+              { onComplete: writeHermesPortableInspectionTiming },
             ),
           );
           if (recovery.kind === "not-installed") {
@@ -2679,6 +2700,16 @@ async function prepareConnectSandboxWithinLifecycleFence(
               probeOnly: true,
               probeTiming,
             });
+            if (!hermesPortable) {
+              probeTiming!.measure("gateway", () =>
+                waitForSandboxReadyOrExit(sandboxName, {
+                  allowInitialErrorAfterStart: true,
+                  allowDockerRuntimeInspection: false,
+                  defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+                  retryCommand: "connect --probe-only",
+                }),
+              );
+            }
             requalify();
           },
         });
@@ -2797,11 +2828,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
     console.log("");
     // Same resolver `launch` uses, so the hint cannot drift from the command
     // that `nemoclaw launch <name>` actually runs (#6006).
-    const agentCmd = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+    void agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
-    console.log(
-      `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
-    );
+    console.log(`  ${D}Inside the sandbox, run the configured command to start chatting.${R}`);
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );

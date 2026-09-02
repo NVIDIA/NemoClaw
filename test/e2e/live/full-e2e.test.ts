@@ -31,6 +31,7 @@ import {
 } from "../fixtures/onboard-performance.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
+import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
@@ -425,15 +426,12 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+  await ensureConfiguredRuntimeProviderAvailable({
+    artifactName: "phase-0-runtime-provider-info",
+    host,
+    scenarioLabel: FULL_E2E_TARGET_ID,
+    skip,
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   cleanupRegistry.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway-destroy",

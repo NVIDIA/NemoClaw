@@ -94,8 +94,7 @@ const recreateJournal: RebuildRecreateJournal = {
   gatewayAuthority: GATEWAY_AUTHORITY,
   targetGeneration: "22222222-2222-4222-8222-222222222222",
   targetIntentFingerprint: "rebuild-reasoning-target",
-  markDeleting: vi.fn(),
-  observeSourceForDelete: vi.fn((): "missing" => "missing"),
+  beginDelete: vi.fn((): "missing" => "missing"),
   confirmDeleted: vi.fn(),
   completeAcceptedTarget: vi.fn(),
 };
