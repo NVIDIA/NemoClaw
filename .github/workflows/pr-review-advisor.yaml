@@ -39,10 +39,6 @@ on:
 # credential or the untrusted PR worktree.
 permissions: {}
 
-concurrency:
-  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}
-  cancel-in-progress: true
-
 jobs:
   discover-specialists:
     name: Discover review specialists and collect GitHub context

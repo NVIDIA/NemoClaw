@@ -202,13 +202,14 @@ export function advisorInferenceBaseUrl(env: NodeJS.ProcessEnv = process.env): s
 export function openAiAdvisorProviderConfig(
   credentialEnv: string,
   baseUrl = ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
+  modelId = DEFAULT_ADVISOR_MODEL,
 ): AdvisorProviderConfig {
   return {
     api: "openai-completions",
     baseUrl,
     models: [
       advisorModel(
-        DEFAULT_ADVISOR_MODEL,
+        modelId,
         "GPT-5.6 Terra",
         256000,
         32768,
@@ -336,6 +337,7 @@ export async function runReadOnlyAdvisor(
     provider,
     options.credentialEnv,
     baseUrl,
+    modelId,
   );
   const model = modelRegistry.find(provider, modelId);
   if (!model || !modelRegistry.hasConfiguredAuth(model)) {
@@ -902,6 +904,7 @@ function prepareAdvisorConfig(
   provider: string,
   credentialEnv: string,
   baseUrl: string,
+  modelId: string,
 ): { authStorage: AuthStorage; modelRegistry: ModelRegistry } {
   const authStorage = AuthStorage.inMemory();
   const modelRegistry = ModelRegistry.inMemory(authStorage);
@@ -909,7 +912,10 @@ function prepareAdvisorConfig(
   if (credential) {
     try {
       authStorage.setRuntimeApiKey(provider, credential);
-      modelRegistry.registerProvider(provider, openAiAdvisorProviderConfig(credentialEnv, baseUrl));
+      modelRegistry.registerProvider(
+        provider,
+        openAiAdvisorProviderConfig(credentialEnv, baseUrl, modelId),
+      );
     } finally {
       delete process.env[credentialEnv];
     }

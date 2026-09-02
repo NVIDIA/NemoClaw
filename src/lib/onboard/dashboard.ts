@@ -767,7 +767,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     );
     console.log(`    Policies:    ${deps.cliName()} ${sandboxName} policy add`);
     console.log(
-      `    Credentials: ${deps.cliName()} credentials reset <KEY> && ${deps.cliName()} onboard`,
+      `    Credentials: ${deps.cliName()} credentials reset <PROVIDER> && ${deps.cliName()} onboard`,
     );
     console.log(`  ${"─".repeat(50)}`);
     console.log("");
