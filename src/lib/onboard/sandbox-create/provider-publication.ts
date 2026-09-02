@@ -34,12 +34,6 @@ type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpens
   readonly providerAdapter?: OpenShellProviderAdapter;
 };
 
-type DeferredProviderAttachmentInput = {
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly providerNames: readonly string[];
-};
-
 function expectedMessagingBindings(input: ProviderPreparationInput) {
   return new Map(
     input.messagingProviderRequests
@@ -206,13 +200,4 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
       deps,
     );
   }
-}
-
-/** Attach the planned providers only after the created sandbox passed its exact identity gate. */
-export function attachProvidersAfterSandboxCreation(input: DeferredProviderAttachmentInput): void {
-  if (input.providerNames.length === 0) return;
-  throw new Error(
-    `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
-      `The sandbox remains incomplete on gateway '${input.gatewayName}'; preserve its verified create checkpoint for administrator recovery.`,
-  );
 }

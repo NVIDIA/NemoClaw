@@ -552,6 +552,53 @@ describe("deferred provider effect authority", () => {
       "attaching deferred providers to sandbox 'alpha'",
     );
   });
+
+  it("completes deferred provider effects when no attachment remains (#9833)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const boundary = createProviderEffectBoundary({
+      deferred: true,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: {
+        openshellDriver: "docker",
+        inferenceProvider: null,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: "nemoclaw",
+      },
+      preparationDeps: {
+        runOpenshell: runOpenshell as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: () => [],
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+    const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
+    expect(runAfterVerifiedCreate).toBeTypeOf("function");
+
+    await expect(
+      runAfterVerifiedCreate?.({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 18790,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        route: "direct" as never,
+        revalidateSandboxIdentity,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "provider", "attach"]),
+      expect.anything(),
+    );
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+      "attaching deferred providers to sandbox 'alpha'",
+    );
+  });
 });
 
 describe("managed MCP rebuild handoff", () => {

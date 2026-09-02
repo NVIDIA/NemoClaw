@@ -10,7 +10,6 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
 import {
-  attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
@@ -96,26 +95,6 @@ async function prepareProviders(
 }
 
 describe("sandbox provider preparation", () => {
-  it("refuses name-addressed deferred provider attachment before mutation (#9833)", () => {
-    expect(() =>
-      attachProvidersAfterSandboxCreation({
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        providerNames: ["inference", "alpha-telegram"],
-      }),
-    ).toThrow("OpenShell cannot attach providers to the immutable identity of sandbox 'alpha'");
-  });
-
-  it("allows an empty deferred attachment set without a mutable-name operation (#9833)", () => {
-    expect(() =>
-      attachProvidersAfterSandboxCreation({
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        providerNames: [],
-      }),
-    ).not.toThrow();
-  });
-
   it("prepares and verifies a messaging provider through exact adapter calls (#9806)", async () => {
     const harness = createHarness();
 
@@ -140,6 +119,32 @@ describe("sandbox provider preparation", () => {
       providerName,
     });
     expect(harness.adapter.createProvider).not.toHaveBeenCalled();
+    expect(harness.runOpenshell).not.toHaveBeenCalled();
+    expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
+  });
+
+  it("accepts canonical and namespaced messaging credentials through exact adapter calls (#9806)", async () => {
+    const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async (request) => ({
+      ok: true as const,
+      value: {
+        ...exactMetadata,
+        name: request.providerName,
+        credentialKeys: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_WORKSPACE"],
+      },
+    }));
+    const harness = createHarness(typedProviderAdapter({ getProvider }));
+
+    await validateAttachedMessagingProvidersBeforeSandboxCreation(publicationInput(), harness.deps);
+
+    expect(harness.adapter.importProviderProfile).toHaveBeenCalledExactlyOnceWith({
+      target,
+      profilePath: messagingCredentialProviderProfilePath(REPOSITORY_ROOT),
+    });
+    expect(harness.adapter.getProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      providerName,
+    });
+    expect(harness.adapter.updateProvider).not.toHaveBeenCalled();
     expect(harness.runOpenshell).not.toHaveBeenCalled();
     expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
   });

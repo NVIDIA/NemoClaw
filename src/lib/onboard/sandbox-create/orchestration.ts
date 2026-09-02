@@ -68,7 +68,6 @@ import {
   sandboxCreateBoundaryFromPendingIdentity,
 } from "./identity-boundary";
 import {
-  attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
@@ -1046,11 +1045,11 @@ export function createProviderEffectBoundary(input: {
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );
-      attachProvidersAfterSandboxCreation({
-        sandboxName: input.sandboxName,
-        gatewayName: input.gatewayName,
-        providerNames,
-      });
+      if (providerNames.length === 0) return;
+      throw new Error(
+        `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
+          `The sandbox remains incomplete on gateway '${input.gatewayName}'; preserve its verified create checkpoint for administrator recovery.`,
+      );
     },
   };
 }
