@@ -135,6 +135,91 @@ describe("Launchable evidence inspection", () => {
       ),
     ).toThrow("workspace=nclaw-e2e-10-2 id=ws-1 status=PRESENT");
   });
+  it.each([
+    ["candidate", { candidateSha: IMAGE_SHA }, {}, "selected candidate run attempt"],
+    ["run", { runId: "11" }, {}, "selected candidate run attempt"],
+    ["attempt", { runAttempt: "3" }, {}, "selected candidate run attempt"],
+    ["name", { workspace: { name: "other", id: "ws-1" } }, {}, "selected candidate run attempt"],
+    ["cleanup name", {}, { workspaceName: "other" }, "cleanup identity"],
+    ["cleanup ID", {}, { workspaceId: "other" }, "cleanup identity"],
+  ])(
+    "rejects mismatched early recovery %s binding (#10798)",
+    (_label, recoveryChange, cleanupChange, error) => {
+      const recovery = {
+          schemaVersion: 1,
+          candidateSha: SHA,
+          runId: "10",
+          runAttempt: "2",
+          workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
+          ...recoveryChange,
+        },
+        cleanup = {
+          workspaceName: "nclaw-e2e-10-2",
+          workspaceId: "ws-1",
+          status: "PRESENT",
+          checkedAt: "2026-06-01T01:00:00Z",
+          ...cleanupChange,
+        };
+      expect(() =>
+        inspectLaunchableEvidence(
+          { candidate: SHA },
+          reader(
+            [run()],
+            { "10:2": [job()] },
+            {
+              "workspace-recovery.json": JSON.stringify(recovery),
+              "cleanup.json": JSON.stringify(cleanup),
+            },
+          ),
+        ),
+      ).toThrow(error);
+    },
+  );
+  it.each([undefined, "not json"])(
+    "reports early identity when cleanup is %s (#10798)",
+    (cleanup) => {
+      expect(() =>
+        inspectLaunchableEvidence(
+          { candidate: SHA },
+          reader(
+            [run()],
+            { "10:2": [job()] },
+            {
+              "workspace-recovery.json": JSON.stringify({
+                schemaVersion: 1,
+                candidateSha: SHA,
+                runId: "10",
+                runAttempt: "2",
+                workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
+              }),
+              "cleanup.json": cleanup,
+            },
+          ),
+        ),
+      ).toThrow("workspace=nclaw-e2e-10-2 id=ws-1 status=<missing> checkedAt=<missing>");
+    },
+  );
+  it("reports early identity when full evidence is partial (#10798)", () => {
+    const artifact: ArtifactFiles = {
+      "workspace-recovery.json": JSON.stringify({
+        schemaVersion: 1,
+        candidateSha: SHA,
+        runId: "10",
+        runAttempt: "2",
+        workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
+      }),
+      "launchable-e2e.json": "{}",
+      "cleanup.json": JSON.stringify({
+        workspaceName: "nclaw-e2e-10-2",
+        workspaceId: "ws-1",
+        status: "PRESENT",
+        checkedAt: "2026-06-01T01:00:00Z",
+      }),
+    };
+    expect(() =>
+      inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact)),
+    ).toThrow("workspace=nclaw-e2e-10-2 id=ws-1 status=PRESENT");
+  });
   it("returns recovery identity from a failed cleanup job (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({

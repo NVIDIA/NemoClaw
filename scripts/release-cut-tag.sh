@@ -134,8 +134,11 @@ IFS= read -r first_brief_line <"$brief_snapshot" \
   || fail "Could not read the release brief heading"
 [[ "$first_brief_line" == "$expected_heading" ]] \
   || fail "Release brief heading does not match planned tag $tag"
-candidate_count="$(awk -v expected="$expected_candidate" '$0 == expected { count++ } END { print count + 0 }' "$brief_snapshot")" \
-  || fail "Could not validate the release brief candidate"
+candidate_count="$(awk -v expected="$expected_candidate" '
+  /^## / { exit }
+  $0 == expected { count++ }
+  END { print count + 0 }
+' "$brief_snapshot")" || fail "Could not validate the release brief candidate"
 [[ "$candidate_count" == "1" ]] \
   || fail "Release brief candidate does not match planned commit $target"
 
@@ -152,6 +155,17 @@ expected_docs_decision="- Maintainer decision: Proceed with the candidate as sho
 printf -v expected_base_candidate -- "- Base-image candidate: \`%s\`" "$target"
 require_brief_line_once "$expected_docs_decision" "documentation proceed decision"
 require_brief_line_once "$expected_base_candidate" "plan-bound base-image candidate"
+printf -v expected_launchable_candidate -- "- Candidate: \`%s\`" "$target"
+launchable_section="$(awk '
+  $0 == "## Canonical Launchable evidence" { sections++; inside=1; next }
+  /^## / { inside=0 }
+  inside { print }
+  END { if (sections != 1) exit 1 }
+' "$brief_snapshot")" || fail "Release brief must contain exactly one Canonical Launchable evidence section"
+launchable_candidate_count="$(grep -Fxc -- "$expected_launchable_candidate" <<<"$launchable_section" || true)"
+[[ "$launchable_candidate_count" == "1" ]] || fail "Release brief must contain exactly one plan-bound Launchable candidate"
+launchable_receipt_count="$(grep -Ec '^- Receipt: \{.+\}$' <<<"$launchable_section" || true)"
+[[ "$launchable_receipt_count" == "1" ]] || fail "Release brief must contain exactly one completed canonical Launchable receipt"
 if [[ "$candidate_selection" == "historical" ]]; then
   # JavaScript owns $1 in the replacement string.
   # shellcheck disable=SC2016

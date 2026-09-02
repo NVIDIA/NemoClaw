@@ -262,9 +262,22 @@ function earlyRecovery(
     name !== `nclaw-e2e-${selection.run.id}-${selection.run.run_attempt}`
   )
     fail("workspace recovery receipt does not match the selected candidate run attempt");
-  const cleanup = json(files["cleanup.json"], "cleanup.json"),
-    status = text(cleanup.status, "cleanup.status"),
-    checkedAt = text(cleanup.checkedAt, "cleanup.checkedAt");
+  let cleanup: JsonRecord;
+  try {
+    cleanup = json(files["cleanup.json"], "cleanup.json");
+  } catch {
+    fail(
+      `cleanup record missing before full evidence: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName} workspace=${name} id=${id} status=<missing> checkedAt=<missing>`,
+    );
+  }
+  const status =
+      typeof cleanup.status === "string" && cleanup.status.length > 0
+        ? cleanup.status
+        : "<missing>",
+    checkedAt =
+      typeof cleanup.checkedAt === "string" && cleanup.checkedAt.length > 0
+        ? cleanup.checkedAt
+        : "<missing>";
   if (cleanup.workspaceName !== name || cleanup.workspaceId !== id)
     fail("workspace recovery cleanup identity does not match the early receipt");
   fail(
@@ -279,9 +292,21 @@ export function inspectLaunchableEvidence(options: Options, reader: EvidenceRead
   if (!selection) fail("no successful staging Brev Launchable job is bound to the candidate");
   const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
     files = reader.readArtifact(selection.run.id, artifactName);
-  if (files["launchable-e2e.json"] === undefined)
+  if (
+    files["workspace-recovery.json"] !== undefined &&
+    (files["launchable-e2e.json"] === undefined ||
+      files["full-e2e.log"] === undefined ||
+      files["cleanup.json"] === undefined)
+  )
     return earlyRecovery(options.candidate, selection, artifactName, files);
-  const receipt = validateLaunchableEvidence(options.candidate, selection, artifactName, files);
+  let receipt: Receipt;
+  try {
+    receipt = validateLaunchableEvidence(options.candidate, selection, artifactName, files);
+  } catch (error) {
+    if (files["workspace-recovery.json"] !== undefined)
+      return earlyRecovery(options.candidate, selection, artifactName, files);
+    throw error;
+  }
   if (selection.job.conclusion !== "success")
     fail(
       `staging Brev Launchable job conclusion ${selection.job.conclusion ?? "<missing>"} cannot provide release evidence: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName}`,

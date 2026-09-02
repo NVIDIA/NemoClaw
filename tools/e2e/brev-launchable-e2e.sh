@@ -29,6 +29,20 @@ require() {
   [ -n "${!name:-}" ] || die "$name is required"
 }
 
+write_workspace_recovery() {
+  local workspace_id="$1" receipt="$WORK_DIR/workspace-recovery.json" temporary
+  [ -n "$workspace_id" ] || return 0
+  [ ! -e "$receipt" ] || return 0
+  temporary="${receipt}.tmp"
+  jq -n --arg candidateSha "$CANDIDATE_SHA" --arg runId "${GITHUB_RUN_ID:-}" \
+    --arg runAttempt "${GITHUB_RUN_ATTEMPT:-}" --arg workspaceName "$INSTANCE_NAME" \
+    --arg workspaceId "$workspace_id" \
+    '{schemaVersion:1,candidateSha:$candidateSha,runId:$runId,runAttempt:$runAttempt,workspace:{name:$workspaceName,id:$workspaceId}}' \
+    >"$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$receipt"
+}
+
 write_workspace_ownership() {
   local create_state="$1" delete_attempts="${2:-}" temporary
   case "$create_state" in
@@ -808,6 +822,7 @@ deadline=$((SECONDS + ${BREV_READY_TIMEOUT_SECONDS:-1200}))
 ready=""
 while [ "$SECONDS" -lt "$deadline" ]; do
   ready="$(workspace || true)"
+  write_workspace_recovery "$(jq -r '.id // ""' <<<"${ready:-null}")"
   if jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
     (.build_status // .buildStatus) == "COMPLETED"' <<<"${ready:-null}" >/dev/null; then break; fi
   state="$(jq -r '(.status // "") + ":" + (.build_status // .buildStatus // "")' <<<"${ready:-null}")"
@@ -819,15 +834,7 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
   <<<"${ready:-null}" >/dev/null || die "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 [ -n "$workspace_id" ] || die "ready workspace ID is missing"
-recovery_receipt="$WORK_DIR/workspace-recovery.json"
-recovery_temporary="${recovery_receipt}.tmp"
-jq -n --arg candidateSha "$CANDIDATE_SHA" --arg runId "${GITHUB_RUN_ID:-}" \
-  --arg runAttempt "${GITHUB_RUN_ATTEMPT:-}" --arg workspaceName "$INSTANCE_NAME" \
-  --arg workspaceId "$workspace_id" \
-  '{schemaVersion:1,candidateSha:$candidateSha,runId:$runId,runAttempt:$runAttempt,workspace:{name:$workspaceName,id:$workspaceId}}' \
-  >"$recovery_temporary"
-chmod 600 "$recovery_temporary"
-mv "$recovery_temporary" "$recovery_receipt"
+write_workspace_recovery "$workspace_id"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
 wait_for_workspace_ssh
 
