@@ -172,8 +172,9 @@ function Invoke-NodeCliVersionProbe {
     Write-Host "PS> $Label :: node.exe $(Split-Path -Leaf $EntryPath) --version"
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $NodePath
-    $startInfo.ArgumentList.Add($EntryPath)
-    $startInfo.ArgumentList.Add('--version')
+    $startInfo.Arguments = (@($EntryPath, '--version') | ForEach-Object {
+        ConvertTo-NativeArgument -Value $_
+    }) -join ' '
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
@@ -487,6 +488,11 @@ try {
         -FilePath $wxcHostPrepPath `
         -Arguments @('prepare-system-drive') `
         -Label 'Prepare ephemeral runner for native MXC qualification' `
+        -AllowedExitCodes @(0) | Out-Null
+    Invoke-BoundedProcess `
+        -FilePath $wxcHostPrepPath `
+        -Arguments @('prepare-null-device') `
+        -Label 'Prepare the ephemeral runner null device for native MXC qualification' `
         -AllowedExitCodes @(0) | Out-Null
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
     Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
