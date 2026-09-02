@@ -711,6 +711,88 @@ describe("CI failure classifier process", () => {
         : [],
     ).toEqual([]);
   });
+  test.each([
+    {
+      name: "nonzero exit code",
+      artifactResult: { exitCode: 23 },
+      category: "process-exit-code",
+      nextAction: "Inspect the captured command and its producing step",
+    },
+    {
+      name: "timeout",
+      artifactResult: { exitCode: null, timedOut: true },
+      category: "process-timeout",
+      nextAction: "Inspect the captured command and surrounding resource evidence",
+    },
+    {
+      name: "reported error",
+      artifactResult: { exitCode: null, error: "runner could not start" },
+      category: "artifact-reported-error",
+      nextAction: "Inspect the reported command error and its producing step",
+    },
+  ])(
+    "classifies an artifact-reported $name without a known log signature",
+    ({ artifactResult, category, nextAction }) => {
+      const item = fixture("ordinary output", artifactResult);
+      const result = run(item.env, ["--artifact-name", "results"]);
+      expect(result.status, result.stderr).toBe(0);
+      const value = JSON.parse(result.stdout);
+      expect(value.result).toBe("classified");
+      expect(value.categories).toContain(category);
+      expect(value.nextActions).toContainEqual(expect.stringContaining(nextAction));
+    },
+  );
+
+  test.each([
+    {
+      name: "signal",
+      artifactResult: { exitCode: 137, signal: "SIGKILL" },
+      category: "process-signal",
+      diagnostic: "ended with SIGKILL",
+    },
+    {
+      name: "timeout",
+      artifactResult: { timedOut: true },
+      category: "process-timeout",
+      diagnostic: "exceeded its time limit",
+    },
+    {
+      name: "reported error",
+      artifactResult: { error: "runner could not start" },
+      category: "artifact-reported-error",
+      diagnostic: "reported: runner could not start",
+    },
+  ])(
+    "selects a later $name beyond capped failure evidence",
+    ({ artifactResult, category, diagnostic }) => {
+      const secret = "winner-path-secret";
+      const earlier = Array.from({ length: 20 }, (_, index) => ({
+        name: `earlier-${index}.result.json`,
+        contents: JSON.stringify(index % 2 === 0 ? { exitCode: 23 } : { command: "npm test" }),
+      }));
+      const winnerPath = `BUILD_TOKEN=${secret} ${"x".repeat(1100)}.result.json`;
+      const archive = artifactZip([
+        ...earlier,
+        { name: winnerPath, contents: JSON.stringify(artifactResult) },
+      ]);
+      const item = fixture("ordinary output", undefined, archive);
+      const result = run(item.env, ["--artifact-name", "results"]);
+      expect(result.status, result.stderr).toBe(0);
+      const value = JSON.parse(result.stdout);
+      const finding = value.findings.find((entry: { type: string }) => entry.type === category);
+      expect(value.categories).toEqual([category]);
+      expect(value.artifact.failures).toHaveLength(20);
+      expect(value.artifact.failuresTruncated).toBe(true);
+      expect(value.artifact.failures).not.toContainEqual(
+        expect.objectContaining({ path: expect.stringContaining("[REDACTED]") }),
+      );
+      expect(finding.detail).toContain("BUILD_TOKEN=[REDACTED]");
+      expect(finding.detail).toContain(diagnostic);
+      expect(finding.detail.length).toBeLessThanOrEqual(1100);
+      expect(result.stdout).not.toContain(secret);
+    },
+  );
+
   test("reports bounded malformed result evidence while retaining valid artifact failures", () => {
     const pathSecret = "malformed-path-secret";
     const malformed = Array.from({ length: 25 }, (_, index) => ({

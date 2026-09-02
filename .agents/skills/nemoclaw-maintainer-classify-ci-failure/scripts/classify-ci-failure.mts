@@ -34,6 +34,55 @@ type ProcessResult = {
   stdout: { text: string };
   stderr: { text: string };
 };
+type ArtifactResult = {
+  path: string;
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  error: string | null;
+  command: string | null;
+};
+const artifactResultRank = (result: ArtifactResult): number => {
+  if (result.signal) return 4;
+  if (result.timedOut) return 3;
+  if (result.error) return 2;
+  if (result.exitCode !== null) return 1;
+  return 0;
+};
+const selectArtifactWinner = (
+  current: ArtifactResult | null,
+  candidate: ArtifactResult,
+): ArtifactResult =>
+  current && artifactResultRank(current) >= artifactResultRank(candidate) ? current : candidate;
+const addArtifactFinding = (
+  failure: ArtifactResult | null,
+  add: (type: string, detail: string, suggestion: string) => void,
+): void => {
+  if (failure?.signal)
+    add(
+      "process-signal",
+      `Captured command ${failure.path} ended with ${failure.signal}.`,
+      "Inspect timeout and resource evidence before changing behavior or retrying the same commit.",
+    );
+  else if (failure?.timedOut)
+    add(
+      "process-timeout",
+      `Captured command ${failure.path} exceeded its time limit.`,
+      "Inspect the captured command and surrounding resource evidence before changing its timeout or retrying.",
+    );
+  else if (failure?.error)
+    add(
+      "artifact-reported-error",
+      `Captured command ${failure.path} reported: ${failure.error}`,
+      "Inspect the reported command error and its producing step before retrying the same commit.",
+    );
+  else if (failure?.exitCode !== null && failure?.exitCode !== undefined && failure.exitCode !== 0)
+    add(
+      "process-exit-code",
+      `Captured command ${failure.path} exited with code ${failure.exitCode}.`,
+      "Inspect the captured command and its producing step for the first actionable diagnostic.",
+    );
+};
 export type ClassifierExecutablePaths = {
   bash: string;
   dd: string;
@@ -764,6 +813,7 @@ async function classifyCiFailureWithRuntime(
     stderr: logStderr,
   };
   let artifact = null;
+  let artifactWinner: ArtifactResult | null = null;
   if (artifactName) {
     try {
       const artifacts: Record<string, unknown>[] = [];
@@ -851,7 +901,8 @@ async function classifyCiFailureWithRuntime(
         });
         if (entries === null) throw new Error("Artifact ZIP is malformed or unsafe");
         const resultEntries = entries.filter(({ name }) => name.endsWith(".result.json"));
-        const fileResults = [];
+        const fileResults: ArtifactResult[] = [];
+        let fileResultCount = 0;
         const malformedResultPaths: string[] = [];
         let malformedResultCount = 0;
         let filesRead = 0;
@@ -880,7 +931,10 @@ async function classifyCiFailureWithRuntime(
             continue;
           }
           const result = value as Record<string, unknown>;
-          const exitCode = Number.isInteger(result.exitCode) ? result.exitCode : null;
+          const exitCode =
+            typeof result.exitCode === "number" && Number.isInteger(result.exitCode)
+              ? result.exitCode
+              : null;
           const signal =
             typeof result.signal === "string" && Object.hasOwn(osConstants.signals, result.signal)
               ? result.signal
@@ -895,14 +949,17 @@ async function classifyCiFailureWithRuntime(
               : project(String(result.command), 2000, 1000).text || null;
           if (exitCode === 0 && !signal && !error && !timedOut) continue;
           if (exitCode === null && !signal && !error && !timedOut && !result.command) continue;
-          fileResults.push({
+          const projectedResult: ArtifactResult = {
             path: redact(relativePath).slice(0, 1000),
             exitCode,
             signal,
             timedOut,
             error,
             command,
-          });
+          };
+          artifactWinner = selectArtifactWinner(artifactWinner, projectedResult);
+          fileResultCount += 1;
+          if (fileResults.length < 20) fileResults.push(projectedResult);
         }
         artifact = {
           name: artifactName,
@@ -914,8 +971,8 @@ async function classifyCiFailureWithRuntime(
           malformedResultCount,
           malformedResultPaths,
           malformedResultPathsTruncated: malformedResultCount > malformedResultPaths.length,
-          failures: fileResults.slice(0, 20),
-          failuresTruncated: fileResults.length > 20,
+          failures: fileResults,
+          failuresTruncated: fileResultCount > fileResults.length,
         };
       } catch (error) {
         artifactFailure = error;
@@ -945,13 +1002,7 @@ async function classifyCiFailureWithRuntime(
   const add = (type: string, detail: string, suggestion: string): void => {
     findings.push({ type, detail: detail.slice(0, 4000), suggestion: suggestion.slice(0, 1000) });
   };
-  const signalled = (artifact?.failures ?? []).filter((failure) => failure.signal);
-  if (signalled.length)
-    add(
-      "process-signal",
-      `A captured command ended with ${signalled[0].signal}.`,
-      "Inspect timeout and resource evidence before changing behavior or retrying the same commit.",
-    );
+  addArtifactFinding(artifactWinner, add);
   if (/AssertionError|Test timed out|Failed Tests|Vitest|Tests?\s+\d+\s+failed/i.test(text))
     add(
       "test-failure",
