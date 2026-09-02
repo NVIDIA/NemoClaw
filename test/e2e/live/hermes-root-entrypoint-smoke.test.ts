@@ -420,7 +420,8 @@ printf "legacy dashboard memory\n" >/sandbox/.hermes/dashboard-home/MEMORY.md
 chown sandbox:sandbox /sandbox/.hermes/dashboard-home/MEMORY.md
 chmod 600 /sandbox/.hermes/dashboard-home/MEMORY.md
 chmod 750 /sandbox/.hermes
-chmod 750 /sandbox/.hermes/sessions
+chown sandbox:sandbox /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
+chmod 750 /sandbox/.hermes/sessions /sandbox/.hermes/gateway /sandbox/.hermes/runtime
 rm -rf /sandbox/.hermes/hooks /sandbox/.hermes/image_cache /sandbox/.hermes/audio_cache /sandbox/.hermes/logs/curator
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
@@ -434,8 +435,13 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   await expectContainerSh(
     probe,
     container,
-    "restored sessions directory was not repaired for cross-UID writes",
-    `[ "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = "gateway:sandbox 2770" ] && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc ': > /sandbox/.hermes/sessions/.nemoclaw-write-test && rm -f /sandbox/.hermes/sessions/.nemoclaw-write-test'`,
+    "restored state directories were not repaired for cross-UID writes",
+    String.raw`set -eu
+for dir in sessions gateway runtime; do
+  test "$(stat -c '%U:%G %a' "/sandbox/.hermes/$dir")" = "gateway:sandbox 2770"
+  /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc ": > /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test && rm -f /sandbox/.hermes/$dir/.nemoclaw-gateway-write-test"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc ": > /sandbox/.hermes/$dir/.nemoclaw-sandbox-write-test && rm -f /sandbox/.hermes/$dir/.nemoclaw-sandbox-write-test"
+done`,
   );
   await assertGatewayProcess(probe, container);
   await assertGatewayLogClean(probe, container);
@@ -488,7 +494,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
       "dashboard profile is sandbox-owned, and its .env allowlist excludes API_SERVER_KEY",
       "legacy gateway.pid symlink/state shape is repaired and booted",
-      "restored sessions directory permits gateway-user writes",
+      "restored state directories permit gateway-user and sandbox-user writes",
       "legacy dashboard profile state is moved into profiles/dashboard-home",
     ],
   });
@@ -532,7 +538,7 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       bearerAuthVerified: true,
       dashboardHomeVerified: true,
       legacyPidSymlinkMigrationVerified: true,
-      restoredSessionsPermissionsVerified: true,
+      restoredStatePermissionsVerified: true,
       legacyDashboardProfileMigrationVerified: true,
     },
   });

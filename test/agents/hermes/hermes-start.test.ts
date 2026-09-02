@@ -487,10 +487,10 @@ function runHermesGatewayRuntimeCleanup(opts: {
   const agentLogPath = path.join(hermesHome, "logs", "agent.log");
   const configYamlPath = path.join(hermesHome, "config.yaml");
   const envFilePath = path.join(hermesHome, ".env");
-
   fs.mkdirSync(runtimeDir, { recursive: true });
   fs.mkdirSync(cronDir);
   fs.mkdirSync(path.join(hermesHome, "sessions"), { mode: 0o750 });
+  fs.chmodSync(path.join(hermesHome, "sessions"), 0o750);
   fs.chmodSync(runtimeDir, 0o2770);
   fs.chmodSync(cronDir, 0o2770);
   fs.mkdirSync(procRoot, { recursive: true });
