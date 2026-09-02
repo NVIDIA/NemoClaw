@@ -255,11 +255,29 @@ export function stripCredentials(obj: unknown): unknown {
 
 const DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;
 const DIAGNOSTIC_ASSIGNMENT_PATTERN =
-  /\b([A-Za-z][A-Za-z0-9._-]{0,127})([ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/gu;
+  /\b([A-Za-z][A-Za-z0-9._-]{0,127})([ \t]*[:=][ \t]*)("(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/gu;
+const DIAGNOSTIC_AUTHORIZATION_PATTERN =
+  /\b((?:Proxy-)?Authorization)([ \t]*[:=][ \t]*)([A-Za-z][A-Za-z0-9._-]{0,31})[ \t]+(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/giu;
 
 function redactDiagnosticAssignments(value: string): string {
-  return value.replace(DIAGNOSTIC_ASSIGNMENT_PATTERN, (match, key: string, separator: string) =>
-    isCredentialField(key) ? `${key}${separator}<REDACTED>` : match,
+  return value.replace(
+    DIAGNOSTIC_ASSIGNMENT_PATTERN,
+    (match, key: string, separator: string, assignmentValue: string) =>
+      isCredentialField(key)
+        ? /^(?:proxy-)?authorization$/iu.test(key) && /^Bearer$/iu.test(assignmentValue)
+          ? match
+          : `${key}${separator}<REDACTED>`
+        : match,
+  );
+}
+
+function redactDiagnosticAuthorization(value: string): string {
+  return value.replace(
+    DIAGNOSTIC_AUTHORIZATION_PATTERN,
+    (_match, key: string, separator: string, scheme: string) =>
+      /^Bearer$/iu.test(scheme)
+        ? `${key}${separator}Bearer <REDACTED>`
+        : `${key}${separator}<REDACTED>`,
   );
 }
 
@@ -291,7 +309,8 @@ export function redactCredentialText(value: string): string {
     pattern.lastIndex = 0;
     result = result.replace(pattern, "<REDACTED>");
   }
-  return redactDiagnosticAssignments(result).replace(/\b(Bearer)\s+\S+/giu, "$1 <REDACTED>");
+  result = result.replace(/\b(Bearer)\s+\S+/giu, "$1 <REDACTED>");
+  return redactDiagnosticAssignments(redactDiagnosticAuthorization(result));
 }
 
 export function sanitizeEnvFileContent(content: string): string {

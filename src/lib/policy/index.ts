@@ -41,7 +41,7 @@ import {
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
-import { ROOT, run, runCapture } from "../runner";
+import { ROOT } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import { redact } from "../security/redact";
 import * as registry from "../state/registry";
@@ -312,9 +312,7 @@ function namespaceCustomPresetContent(presetName: string, content: string): stri
   return YAML.stringify(parsed);
 }
 
-function liveCustomPresetContent(sandboxName: string, presetName: string): string | null {
-  const current = readCurrentSandboxPolicy(sandboxName);
-  if (!current) return null;
+function liveCustomPresetContentFromPolicy(current: string, presetName: string): string | null {
   const parsed = YAML.parse(current);
   if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) return null;
   const entries = Object.fromEntries(
@@ -325,6 +323,11 @@ function liveCustomPresetContent(sandboxName: string, presetName: string): strin
   return Object.keys(entries).length > 0
     ? YAML.stringify({ preset: { name: presetName }, network_policies: entries })
     : null;
+}
+
+function liveCustomPresetContent(sandboxName: string, presetName: string): string | null {
+  const current = readCurrentSandboxPolicy(sandboxName);
+  return current ? liveCustomPresetContentFromPolicy(current, presetName) : null;
 }
 
 const AGENT_PRESET_KEY_ALIASES: Readonly<Record<string, readonly string[]>> =
@@ -635,12 +638,6 @@ function policyObservationError(error: unknown): string {
 export interface PolicyMutationContext {
   readonly gatewayName: string;
   readonly inspection: OpenShellPolicyInspection;
-  readonly basePolicyDocument?: string;
-}
-
-interface LivePolicyBoundary {
-  readonly gatewayName: string;
-  readonly inspection: OpenShellPolicyInspection;
   readonly basePolicyDocument: string;
 }
 
@@ -687,7 +684,7 @@ function inspectLivePolicyBoundary(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
-): LivePolicyBoundary {
+): PolicyMutationContext {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
     sandbox = registry.getSandbox(sandboxName);
@@ -765,8 +762,7 @@ export function recheckPolicyMutationContext(
   const current = inspectPolicyMutationContext(sandboxName, operation, previous.gatewayName);
   if (
     !isDeepStrictEqual(current.inspection.effectivePolicy, previous.inspection.effectivePolicy) ||
-    (previous.basePolicyDocument !== undefined &&
-      !policyDocumentsMatch(current.basePolicyDocument ?? "", previous.basePolicyDocument))
+    !policyDocumentsMatch(current.basePolicyDocument, previous.basePolicyDocument)
   ) {
     throw new PolicyObservationError(
       `Refusing to ${operation}: the current OpenShell policy changed while NemoClaw prepared the requested update. Rerun the command against the current policy.`,
@@ -815,19 +811,6 @@ function inspectLivePolicyForMutation(
   } catch (error) {
     reportPolicyObservationFailure(error);
     return null;
-  }
-}
-
-function recheckLivePolicyForMutation(
-  sandboxName: string,
-  operation: string,
-  context: PolicyMutationContext,
-): boolean {
-  try {
-    recheckPolicyMutationContext(sandboxName, operation, context);
-    return true;
-  } catch (error) {
-    return reportPolicyObservationFailure(error);
   }
 }
 
@@ -1040,9 +1023,7 @@ export function setPolicyDocument(
       }
     }
 
-    const originalDocument =
-      context.basePolicyDocument ??
-      readLivePolicyDocument(sandboxName, context.gatewayName, "base");
+    const originalDocument = context.basePolicyDocument;
     const originalVersion = context.inspection.policyIdentity.activeVersion;
     const { outcome, status } = submitComposedPolicy(
       sandboxName,
@@ -1070,9 +1051,7 @@ export function setPolicyDocument(
       if (options.nonFatal) return false;
       process.exit(1);
     }
-    const observedDocument =
-      observed.basePolicyDocument ??
-      readLivePolicyDocument(sandboxName, observed.gatewayName, "base");
+    const observedDocument = observed.basePolicyDocument;
     const observedVersion = observed.inspection.policyIdentity.activeVersion;
     const requestedIsCurrent = policyDocumentsMatch(observedDocument, requestedDocument);
     const concurrentRevision = observedVersion > originalVersion + 1;
@@ -1865,8 +1844,19 @@ function removePreset(
     return false;
   }
 
-  const isCustom = listCustomPresets(sandboxName).some((entry) => entry.name === presetName);
-  const presetContent = options.presetContent ?? loadPresetForSandbox(sandboxName, presetName);
+  const operation = `remove policy preset '${presetName}'`;
+  const context = inspectLivePolicyForMutation(sandboxName, operation);
+  if (!context) return false;
+
+  const currentPolicy = currentPolicyFromMutationContext(context);
+  if (!currentPolicy) {
+    console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
+    return false;
+  }
+  const customPresetContent = liveCustomPresetContentFromPolicy(currentPolicy, presetName);
+  const isCustom = customPresetContent !== null;
+  const presetContent =
+    options.presetContent ?? customPresetContent ?? loadPresetForSandbox(sandboxName, presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -1875,16 +1865,6 @@ function removePreset(
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
-    return false;
-  }
-
-  const operation = `remove policy preset '${presetName}'`;
-  const context = inspectLivePolicyForMutation(sandboxName, operation);
-  if (!context) return false;
-
-  const currentPolicy = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
-  if (!currentPolicy) {
-    console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
     return false;
   }
 
@@ -1952,8 +1932,6 @@ function removePreset(
   // Run before submitting so a missing-binary exit doesn't orphan files in
   // $TMPDIR (the cleanup doesn't run on process.exit).
   if (!assertOpenshellResolvable(options)) return false;
-  if (!recheckLivePolicyForMutation(sandboxName, operation, context)) return false;
-
   if (
     !setPolicyDocument(sandboxName, updated, {
       nonFatal: options.nonFatal,
@@ -1964,6 +1942,11 @@ function removePreset(
   }
   console.log(`  Removed preset: ${presetName}`);
   return true;
+}
+
+/** Parse the round-trippable base policy already captured with a mutation context. */
+function currentPolicyFromMutationContext(context: PolicyMutationContext): string | null {
+  return parseCurrentPolicyOrEmpty(context.basePolicyDocument) || null;
 }
 
 /** Round-trippable live policy body from `--base`, or null when unreadable. */
@@ -2052,7 +2035,7 @@ function excludeBaselineEntry(
     const operation = `exclude baseline policy entry '${key}'`;
     const context = inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
     if (!context) return false;
-    const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+    const currentPolicy = currentPolicyFromMutationContext(context);
     if (!currentPolicy) {
       console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
       return false;
@@ -2107,7 +2090,7 @@ function restoreBaselineEntry(
     const operation = `restore baseline policy entry '${key}'`;
     const context = inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
     if (!context) return false;
-    const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+    const currentPolicy = currentPolicyFromMutationContext(context);
     if (!currentPolicy) {
       console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
       return false;
@@ -2350,7 +2333,7 @@ function applyPresetContent(
     return reportPolicyObservationFailure(error);
   }
 
-  const currentPolicy = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
+  const currentPolicy = currentPolicyFromMutationContext(context);
   // A live mutation requires a usable policy; empty is an invalid read, not a
   // fresh sandbox whose unknown policy may be replaced with a scaffold.
   if (!currentPolicy) {
@@ -2451,7 +2434,6 @@ function applyPresetContent(
   if (policyChanged && !assertOpenshellResolvable(options)) return false;
 
   if (policyChanged) {
-    if (!recheckLivePolicyForMutation(sandboxName, operation, context)) return false;
     if (
       !setPolicyDocument(sandboxName, merged, {
         nonFatal: options.nonFatal,
@@ -2543,7 +2525,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     return reportPolicyObservationFailure(error);
   }
 
-  let merged = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
+  let merged = currentPolicyFromMutationContext(context);
   // Keep the batch entrypoint on the same fail-closed source boundary as
   // applyPresetContent: an unusable successful read is still a failed read.
   if (!merged) {
@@ -2624,7 +2606,6 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     // The shared fatal path preserves OpenShell's status after it removes the
     // temporary policy. Onboarding defers that exit until its recovery state
     // and outer cleanup have finished.
-    if (!recheckLivePolicyForMutation(sandboxName, operation, context)) return false;
     setPolicyDocument(sandboxName, merged, {
       context,
     });

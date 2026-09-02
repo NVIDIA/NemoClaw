@@ -122,6 +122,17 @@ describe("shared credential filter", () => {
     expect(redacted).toContain("<REDACTED>");
   });
 
+  it("preserves the Bearer scheme while redacting authorization credentials", () => {
+    const redacted = redactCredentialText(
+      "Authorization: Bearer opaque-bearer-token Proxy-Authorization: Basic dXNlcjpwYXNz",
+    );
+
+    expect(redacted).toContain("Authorization: Bearer <REDACTED>");
+    expect(redacted).toContain("Proxy-Authorization: <REDACTED>");
+    expect(redacted).not.toContain("opaque-bearer-token");
+    expect(redacted).not.toContain("dXNlcjpwYXNz");
+  });
+
   it.each([
     ["token prefix", TOKEN_PREFIX_PATTERNS],
     ["structured token", STRUCTURED_TOKEN_PATTERNS],
