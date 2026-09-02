@@ -4,7 +4,7 @@
 //
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
-const { redact, ROOT } = require("../runner");
+const { redact, redactFullWithUrls, ROOT } = require("../runner");
 const { normalizeCredentialValue, getCredential } = require("../credentials/store");
 const {
   DEFAULT_CLOUD_MODEL,
@@ -969,7 +969,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   try {
     refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
       runOpenshell: runMessagingBridgeOpenshell,
-      redact,
+      redactFull: redactFullWithUrls,
       getCredential,
       env: process.env,
       normalizeCredentialValue,

@@ -70,7 +70,7 @@ import {
 } from "../../policy/baseline-exclusion";
 import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 import type { PolicyObject } from "../../policy/preset-parsing";
-import { shellQuote } from "../../runner";
+import { redactFullWithUrls, shellQuote } from "../../runner";
 import {
   type ChannelDef,
   channelUsesInSandboxQrPairing,
@@ -943,7 +943,7 @@ async function applyChannelAddToGatewayAndRegistry(
               {
                 providerName,
                 diagnostic:
-                  policyChannelDependencies.redactProviderDiagnostic(output).replace(/\s+/gu, " ") ||
+                  redactFullWithUrls(output).replace(/\s+/gu, " ").trim() ||
                   `provider delete exited with status ${result.status ?? "unknown"}`,
               },
             ];
@@ -955,9 +955,11 @@ async function applyChannelAddToGatewayAndRegistry(
         console.error(`  ${YW}⚠${R} Updated provider state remains; resolve it and retry.`);
       }
       if (cleanupFailures.length > 0) {
-        const originalFailure = policyChannelDependencies
-          .redactProviderDiagnostic(err instanceof Error ? err.message : String(err))
-          .replace(/\s+/gu, " ");
+        const originalFailure = redactFullWithUrls(
+          err instanceof Error ? err.message : String(err),
+        )
+          .replace(/\s+/gu, " ")
+          .trim();
         if (originalFailure) console.error(`  ${originalFailure}`);
         for (const { providerName, diagnostic } of cleanupFailures) {
           console.error(

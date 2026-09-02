@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
+import { redactFullWithUrls } from "../../security/redact";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   parseCliOpenShellProviderNames,
@@ -20,7 +21,6 @@ import {
   type OpenShellProviderRequest,
   type OpenShellProviderResult,
 } from "./provider-adapter";
-import { redactProviderDiagnostic } from "./provider-diagnostic";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 import {
   assertNoOpenShellGatewayEndpointOverride,
@@ -130,6 +130,14 @@ function commandStdout(result: CapturedProviderCommandResult): string {
   return Array.isArray(result.output)
     ? bufferOrStringToText(result.output[1] as string | Buffer | null | undefined)
     : bufferOrStringToText(result.output as string | Buffer | null | undefined);
+}
+
+function redactProviderDiagnostic(output: string, secrets: readonly string[]): string {
+  let safe = output;
+  for (const secret of secrets) {
+    if (secret) safe = safe.replaceAll(secret, "<REDACTED>");
+  }
+  return redactFullWithUrls(safe).trim();
 }
 
 function attachedSandboxNames(output: string): string[] | null {
