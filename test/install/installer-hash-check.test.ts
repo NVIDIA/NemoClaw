@@ -38,7 +38,7 @@ const CURRENT_INSTALLER_ASSETS = [
   "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
   "openshell.rb",
 ] as const;
-const ASSET_DIGESTS = new Map(
+const ASSET_DIGESTS: ReadonlyMap<string, string> = new Map(
   CURRENT_INSTALLER_ASSETS.map((asset) => [asset, V00116_ASSET_DIGESTS.get(asset)!] as const),
 );
 const FORMULA_ASSET = "openshell.rb";
@@ -375,7 +375,9 @@ const CHECKSUM_MANIFESTS = V00116_CHECKSUM_MANIFESTS;
 const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
   [CURRENT_OPENSHELL_VERSION, V00116_CHECKSUM_MANIFESTS],
 ]);
-const ASSET_DIGESTS_BY_VERSION = new Map([[CURRENT_OPENSHELL_VERSION, ASSET_DIGESTS]]);
+const ASSET_DIGESTS_BY_VERSION: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map([
+  [CURRENT_OPENSHELL_VERSION, ASSET_DIGESTS],
+]);
 const trustAlternateRelease = (source: string): string => {
   const digests = SYNTHETIC_SANDBOX_BUILD_DIGESTS;
   const manifests = [...CHECKSUM_MANIFESTS.entries()]
@@ -608,7 +610,7 @@ function createFixture(
   const checksumManifests =
     CHECKSUM_MANIFESTS_BY_VERSION.get(openshellVersion) ?? CHECKSUM_MANIFESTS;
   const assetDigests = ASSET_DIGESTS_BY_VERSION.get(openshellVersion) ?? ASSET_DIGESTS;
-  const installerPinDigests = new Map([
+  const installerPinDigests = new Map<string, string>([
     ...[...checksumManifests].map(
       ([asset, contents]) => [asset, createHash("sha256").update(contents).digest("hex")] as const,
     ),
