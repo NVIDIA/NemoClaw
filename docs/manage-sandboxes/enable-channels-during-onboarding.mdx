@@ -4,7 +4,7 @@
 title: "Enable Channels During Onboarding"
 sidebar-title: "Enable Channels During Onboarding"
 description: "Select messaging channels and supply their credentials or pairing inputs during NemoClaw onboarding."
-description-agent: "Explains the interactive and scripted onboarding flows for selecting messaging channels, creating OpenShell bridge providers, and removing a channel by clearing its host inputs. Use when enabling or disabling channels during onboarding."
+description-agent: "Explains the interactive and scripted onboarding flows for selecting messaging channels, creating OpenShell bridge providers, preserving reusable channels, and explicitly removing a channel. Use when enabling or disabling channels during onboarding."
 keywords: ["nemoclaw onboard messaging", "messaging channel picker", "channel environment variables", "disable messaging channel"]
 content:
   type: "how_to"
@@ -87,27 +87,21 @@ NemoClaw compiles the selected channel configuration into `NEMOCLAW_MESSAGING_PL
 The build applies the selected agent configuration, writes reduced runtime metadata to `/usr/local/share/nemoclaw/messaging-runtime-plan.json`, and removes the full build plan from the runtime environment.
 Credential bindings remain OpenShell credential placeholders, so raw messaging credentials do not enter the sandbox image or agent configuration.
 
-## Stop Configuring a Channel
+## Remove a Channel
 
-Onboarding reads the host inputs on every run, so clearing a channel's inputs and re-onboarding removes it.
-Unset the channel's environment variables.
-Run onboarding again.
+Clearing a channel's host environment variables and rerunning onboarding does not remove an active host-backed channel when every recorded credential binding still matches its OpenShell gateway provider.
+Onboarding preserves the channel selection and matching network policy preset because interactive inputs normally disappear between runs.
+If a recorded binding is missing or no longer matches the expected provider, onboarding disables the channel and drops the matching policy preset.
 
-NemoClaw reports the removal and drops the channel's network policy preset with it, so the sandbox does not keep the wider egress of a channel it no longer serves.
+Use `channels remove` for an explicit, durable removal:
 
-Expected output:
-
-```text
-  No host inputs configure discord; disabling the channel and its network egress.
-  [non-interactive] Applying policy presets: npm, pypi
+```bash
+$$nemoclaw my-assistant channels remove discord
 ```
 
-Onboarding uses the current host inputs to determine whether a token-based channel remains configured.
-`$$nemoclaw credentials reset` takes an OpenShell provider name and does not change those host inputs.
-
-A QR-paired channel such as WhatsApp is exempt.
-The host holds no value that reports whether the pairing is still live, so an absent host input is not evidence that you removed the channel.
-Use [`channels remove`](manage-messaging-channels) for those.
+The command removes the durable channel selection, stored credentials, gateway provider, and matching network policy preset, then prompts you to rebuild the sandbox.
+For an in-sandbox QR-paired channel, the command also clears its session state before teardown.
+Refer to [Manage Messaging Channels](manage-messaging-channels) for channel-specific teardown effects and recovery guidance.
 
 ## Verify the Result
 
