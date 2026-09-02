@@ -97,15 +97,6 @@ jobs:
           tools/e2e/managed-runtime-comparison.mts
           publish-status pending
 
-      - name: Preserve authenticated source selection
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-runtime-source-selection-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-source/selection.json
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0
-
   package-openshell-sdk:
     name: Resolve reviewed OpenShell SDK from the authenticated producer
     needs: authenticate-source
@@ -115,43 +106,71 @@ jobs:
     permissions:
       actions: read
       contents: read
+    outputs:
+      required: ${{ steps.package.outputs.required }}
     steps:
-      - name: Check out trusted SDK receipt resolver
+      - name: Check out candidate lockfiles as package inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authenticate-source.outputs.candidate_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            package-lock.json
+            nemoclaw/package-lock.json
+          sparse-checkout-cone-mode: false
+
+      - name: Check out exact base package decision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authenticate-source.outputs.base_sha }}
+          path: .trusted-sdk-package-decision
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/openshell-sdk-package-pr.yaml
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/prepare-ci-npm-install.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Check out trusted SDK producer selector
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
+          path: .trusted-sdk-package-selector
           persist-credentials: false
-          sparse-checkout: |
-            scripts/scorecard/read-artifact-zip.mts
-            tools/e2e/base-image-publication.mts
-            tools/e2e/exact-artifact-download.mts
-            tools/e2e/openshell-sdk-package-receipt.mts
+          sparse-checkout: scripts/checks/locate-openshell-sdk-package-for-pr.sh
           sparse-checkout-cone-mode: false
 
-      - name: Set up Node for authenticated package resolution
+      - name: Set up Node for the base-controlled package decision
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.23.1
 
       - id: package
-        name: Resolve and verify the authenticated OpenShell SDK producer
+        name: Locate the authenticated OpenShell SDK producer
         env:
           BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
-          CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
           PR_NUMBER: ${{ needs.authenticate-source.outputs.pr_number }}
-        run: |
-          set -euo pipefail
-          artifact_name="$(
-            node --experimental-strip-types --no-warnings \
-              tools/e2e/openshell-sdk-package-receipt.mts resolve \
-              "$RUNNER_TEMP/openshell-sdk" \
-              "$RUNNER_TEMP/openshell-sdk-selection/selection.json"
-          )"
-          [[ "$artifact_name" =~ ^[a-z0-9][a-z0-9._-]*\.tgz$ ]]
-          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+        run: bash .trusted-sdk-package-selector/scripts/checks/locate-openshell-sdk-package-for-pr.sh
+
+      - name: Download the authenticated OpenShell SDK archive
+        if: steps.package.outputs.required == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.package.outputs.run_id }}
+          name: openshell-sdk-${{ needs.authenticate-source.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/openshell-sdk
 
       - name: Upload reviewed OpenShell SDK archive
+        if: steps.package.outputs.required == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
@@ -230,6 +249,7 @@ jobs:
           merge-multiple: false
 
       - name: Download reviewed OpenShell SDK archive
+        if: needs.package-openshell-sdk.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
@@ -522,6 +542,7 @@ jobs:
           "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
 
       - name: Download reviewed OpenShell SDK archive
+        if: needs.package-openshell-sdk.outputs.required == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}
