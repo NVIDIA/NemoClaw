@@ -624,7 +624,8 @@
       "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
-        "test/e2e/live/openclaw-pairing-helpers.ts"
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
@@ -668,7 +669,8 @@
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
-        "test/e2e/live/openclaw-pairing-helpers.ts"
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
         "src/lib/onboard/sandbox-create-plan.test.ts",
