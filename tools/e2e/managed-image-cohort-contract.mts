@@ -51,12 +51,12 @@ function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
 }
 
-function boundedRunAttempt(
+function boundedCohortIdentity(
   value: unknown,
-  prefix: string,
-  maximumAttempt: number,
-  label: string,
-): number {
+  expected: { readonly runAttempt: number; readonly runId: number },
+): { readonly attempt: number; readonly identity: string } {
+  const label = "managed-image cohort identity";
+  const prefix = `ghrun-${expected.runId}-`;
   if (typeof value !== "string" || !value.startsWith(prefix)) {
     throw new Error(`${label} must bind the selected publication run`);
   }
@@ -65,23 +65,10 @@ function boundedRunAttempt(
     throw new Error(`${label} must bind a positive producer attempt`);
   }
   const producerAttempt = positiveInteger(Number(attemptText), `${label} producer attempt`);
-  if (producerAttempt > maximumAttempt) {
+  if (producerAttempt > expected.runAttempt) {
     throw new Error(`${label} producer attempt must not exceed the selected publication attempt`);
   }
-  return producerAttempt;
-}
-
-function boundedCohortIdentity(
-  value: unknown,
-  expected: { readonly runAttempt: number; readonly runId: number },
-): { readonly attempt: number; readonly identity: string } {
-  const attempt = boundedRunAttempt(
-    value,
-    `ghrun-${expected.runId}-`,
-    expected.runAttempt,
-    "managed-image cohort identity",
-  );
-  return { attempt, identity: String(value) };
+  return { attempt: producerAttempt, identity: value };
 }
 
 function digest(value: unknown, label: string): string {
