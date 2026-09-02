@@ -18,6 +18,7 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openClawHasConfiguredTelegram,
+  TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE,
   type OpenClawTelegramState,
 } from "./channels-add-remove-helpers.ts";
 
@@ -330,7 +331,7 @@ async function expectRevisionScopedTelegramCredential(
       "-e",
       [
         'const value = process.env.TELEGRAM_BOT_TOKEN || ""',
-        'const ready = /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(value)',
+        `const ready = new RegExp(${JSON.stringify(TELEGRAM_REVISION_PLACEHOLDER_PATTERN_SOURCE)}, "u").test(value)`,
         'console.log(ready ? "revision-scoped" : value ? "unexpected" : "missing")',
         "process.exit(ready ? 0 : 1)",
       ].join("; "),
