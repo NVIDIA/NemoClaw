@@ -113,7 +113,19 @@ function stopManagedFixtureProcess(process: ManagedFixtureProcess): number {
     throw new Error("managed fixture process did not stop");
   }
   process.child.kill("SIGTERM");
-  const result = Number.parseInt(fs.readFileSync(process.resultPath, "utf-8"), 10);
+  const descriptor = fs.openSync(
+    process.resultPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  let result: number;
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error("managed fixture process result is not a regular file");
+    }
+    result = Number.parseInt(fs.readFileSync(descriptor, "utf-8"), 10);
+  } finally {
+    fs.closeSync(descriptor);
+  }
   return Number.isFinite(result) ? result : 0;
 }
 
