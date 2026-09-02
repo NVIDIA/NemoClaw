@@ -554,7 +554,7 @@ describe("messaging provider installed-runtime proofs", () => {
   });
 
   it("publishes the isolated proxy through rootless Podman without binding its bridge gateway", async () => {
-    const { calls, host } = fakeDockerHost();
+    const { calls, host } = fakeDockerHost({ networkInspect: "[]" });
     const cleanup: CleanupAction[] = [];
 
     try {
@@ -570,6 +570,7 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(publications.some((entry) => entry.startsWith(`${OPENSHELL_BRIDGE_ADDRESS}::`))).toBe(
         false,
       );
+      expect(calls).not.toContainEqual(["network", "inspect", "openshell-docker"]);
       expect(api.port).toBe("32100");
     } finally {
       await runCleanup(cleanup);
