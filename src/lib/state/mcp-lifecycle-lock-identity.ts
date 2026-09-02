@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-
 import {
   processIsAlive as hostProcessIsAlive,
+  readHostIdentity,
+  readPidNamespaceIdentity,
   readProcessIdentity,
+} from "../adapters/process/identity";
+
+export {
+  readHostIdentity as readMcpLockHostIdentity,
+  readPidNamespaceIdentity as readMcpLockPidNamespaceIdentity,
 } from "../adapters/process/identity";
 
 const LOCK_SCHEMA_VERSION = 1;
@@ -115,33 +119,8 @@ export function readMcpLockProcessIdentity(pid: number, fresh = false): string |
   return readProcessIdentity(pid, fresh, true);
 }
 
-/** Stable enough to distinguish independent hosts sharing a state directory. */
-export function readMcpLockHostIdentity(): string {
-  if (process.platform === "linux") {
-    for (const candidate of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
-      try {
-        const machineId = fs.readFileSync(candidate, "utf8").trim();
-        if (machineId) return `linux:${machineId}`;
-      } catch {
-        // Fall through to the hostname identity.
-      }
-    }
-  }
-  return `${process.platform}:${os.hostname() || "unknown-host"}`;
-}
-
-/** A shared state directory does not make local PID checks safe across namespaces. */
-export function readMcpLockPidNamespaceIdentity(): string | null {
-  if (process.platform !== "linux") return null;
-  try {
-    return fs.readlinkSync("/proc/self/ns/pid");
-  } catch {
-    return null;
-  }
-}
-
-const LOCAL_HOST_IDENTITY = readMcpLockHostIdentity();
-const LOCAL_PID_NAMESPACE_IDENTITY = readMcpLockPidNamespaceIdentity();
+const LOCAL_HOST_IDENTITY = readHostIdentity();
+const LOCAL_PID_NAMESPACE_IDENTITY = readPidNamespaceIdentity();
 
 const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
   localHostIdentity: LOCAL_HOST_IDENTITY,

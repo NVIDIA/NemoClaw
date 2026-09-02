@@ -8,6 +8,11 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
+  readHostIdentity,
+  readPidNamespaceIdentity,
+} from "../adapters/process/identity";
+
+import {
   isShieldsTimerDeadlineAbandoned,
   isShieldsTimerDeadlineExpired,
   readShieldsTimerMarker,
@@ -25,8 +30,6 @@ import {
   createMcpLifecycleLockOwner,
   type LockObservation,
   type McpLifecycleLockOwner,
-  readMcpLockHostIdentity,
-  readMcpLockPidNamespaceIdentity,
   readMcpLockProcessIdentity,
 } from "./mcp-lifecycle-lock-identity";
 import {
@@ -339,8 +342,8 @@ function isExactStaleCompletedAutoRestoreOwner(
     owner?.sandboxName === sandboxName &&
     (ownerPid === undefined || owner.pid === ownerPid) &&
     Boolean(owner.processIdentity) &&
-    owner.hostIdentity === readMcpLockHostIdentity() &&
-    owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity() &&
+    owner.hostIdentity === readHostIdentity() &&
+    owner.pidNamespaceIdentity === readPidNamespaceIdentity() &&
     owner.shieldsTakeoverToken === takeoverToken &&
     classifyMcpLifecycleLock(observation, sandboxName, observation.mtimeMs, 0) === "stale"
   );
@@ -1185,8 +1188,8 @@ function selfOwnedDeadlineMainToken(
     owner.pid === process.pid &&
     Boolean(processIdentity) &&
     owner.processIdentity === processIdentity &&
-    owner.hostIdentity === readMcpLockHostIdentity() &&
-    owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity() &&
+    owner.hostIdentity === readHostIdentity() &&
+    owner.pidNamespaceIdentity === readPidNamespaceIdentity() &&
     owner.shieldsTakeoverToken === takeoverToken &&
     owner.token === expectedToken
     ? owner.token
@@ -1631,8 +1634,8 @@ async function clearDeadlineProtectedPath(
     const exactLocalOwner =
       owner?.sandboxName === sandboxName &&
       Boolean(owner.processIdentity) &&
-      owner.hostIdentity === readMcpLockHostIdentity() &&
-      owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity();
+      owner.hostIdentity === readHostIdentity() &&
+      owner.pidNamespaceIdentity === readPidNamespaceIdentity();
     const exactCurrentOrdinaryOwner =
       !targetPath.endsWith(".reaper") &&
       decision.kind === "wait" &&
@@ -1744,8 +1747,8 @@ function clearDeadlineProtectedPathSync(
     const exactLocalOwner =
       owner?.sandboxName === sandboxName &&
       Boolean(owner.processIdentity) &&
-      owner.hostIdentity === readMcpLockHostIdentity() &&
-      owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity();
+      owner.hostIdentity === readHostIdentity() &&
+      owner.pidNamespaceIdentity === readPidNamespaceIdentity();
     const currentProcessIdentity =
       exactLocalOwner && owner?.pid === process.pid
         ? readMcpLockProcessIdentity(process.pid, true)

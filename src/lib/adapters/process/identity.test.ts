@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,7 +13,13 @@ const childProcessMocks = vi.hoisted(() => ({
 
 vi.mock("node:child_process", () => childProcessMocks);
 
-import { processIsAlive, readProcessIdentity, readProcessStartIdentity } from "./identity";
+import {
+  processIsAlive,
+  readHostIdentity,
+  readPidNamespaceIdentity,
+  readProcessIdentity,
+  readProcessStartIdentity,
+} from "./identity";
 
 function linuxProcessStat(pid: number, state: string, startTicks: string): string {
   const fieldsAfterComm = Array.from({ length: 24 }, (_, index) =>
@@ -37,6 +44,31 @@ afterEach(() => {
 });
 
 describe("process identity adapter", () => {
+  it("uses stable Linux machine and PID namespace evidence", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const fakeReads = new Map([["/etc/machine-id", "test-machine-id\n"]]);
+    vi.spyOn(fs, "readFileSync").mockImplementation(((file) =>
+      requiredFakeRead(fakeReads, file)) as typeof fs.readFileSync);
+    vi.spyOn(fs, "readlinkSync").mockReturnValue("pid:[4026531836]");
+
+    expect(readHostIdentity()).toBe("linux:test-machine-id");
+    expect(readPidNamespaceIdentity()).toBe("pid:[4026531836]");
+  });
+
+  it("falls back to hostname identity and reports unavailable namespace evidence", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+      throw new Error("machine identity unavailable");
+    });
+    vi.spyOn(fs, "readlinkSync").mockImplementation(() => {
+      throw new Error("PID namespace unavailable");
+    });
+    vi.spyOn(os, "hostname").mockReturnValue("test-host");
+
+    expect(readHostIdentity()).toBe("linux:test-host");
+    expect(readPidNamespaceIdentity()).toBeNull();
+  });
+
   it("combines Linux boot identity and process start ticks", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const fakeReads = new Map<string, string>([

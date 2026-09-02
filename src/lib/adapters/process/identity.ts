@@ -3,6 +3,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import { performance } from "node:perf_hooks";
 
 import { isErrnoException } from "../../core/errno";
@@ -72,6 +73,31 @@ export function processIsAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return isErrnoException(error) && error.code === "EPERM";
+  }
+}
+
+/** Stable machine evidence for lock records shared across host boundaries. */
+export function readHostIdentity(): string {
+  if (process.platform === "linux") {
+    for (const candidate of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+      try {
+        const machineId = fs.readFileSync(candidate, "utf8").trim();
+        if (machineId) return `linux:${machineId}`;
+      } catch {
+        // Fall through to the next machine identity source.
+      }
+    }
+  }
+  return `${process.platform}:${os.hostname() || "unknown-host"}`;
+}
+
+/** Linux PID namespace evidence, or null when the host cannot provide it. */
+export function readPidNamespaceIdentity(): string | null {
+  if (process.platform !== "linux") return null;
+  try {
+    return fs.readlinkSync("/proc/self/ns/pid");
+  } catch {
+    return null;
   }
 }
 

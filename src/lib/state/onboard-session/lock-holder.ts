@@ -3,12 +3,10 @@
 
 import {
   hostProcessIdentityProbes,
+  readHostIdentity,
+  readPidNamespaceIdentity,
   type ProcessIdentityProbes,
 } from "../../adapters/process/identity";
-import {
-  readMcpLockHostIdentity,
-  readMcpLockPidNamespaceIdentity,
-} from "../mcp-lifecycle-lock-identity";
 
 export interface OnboardLockIdentityProbes extends ProcessIdentityProbes {
   readonly localHostIdentity: string;
@@ -42,8 +40,8 @@ export const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
 
 const hostOnboardLockIdentityProbes: OnboardLockIdentityProbes = {
   ...hostProcessIdentityProbes,
-  localHostIdentity: readMcpLockHostIdentity(),
-  localPidNamespaceIdentity: readMcpLockPidNamespaceIdentity(),
+  localHostIdentity: readHostIdentity(),
+  localPidNamespaceIdentity: readPidNamespaceIdentity(),
 };
 
 function onboardLockHolderProvenance(
