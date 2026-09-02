@@ -1082,7 +1082,7 @@ export function recoverHermesPortableSandboxLifecycle(
               "python3",
               "-I",
               STARTUP_READY_GUARD,
-              "observe-startup-ready",
+              STARTUP_READY_ACTION,
               "--hermes-dir",
               HERMES_DIR,
             ]),
