@@ -641,7 +641,10 @@ export function ollamaInventoryContainsModel(inventory: string[], model: string)
 }
 
 function sanitizeModelNameForDisplay(value: string): string {
-  const sanitized = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  const sanitized = value.replace(
+    /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu,
+    "",
+  );
   return sanitized.length > 120 ? `${sanitized.slice(0, 117)}...` : sanitized;
 }
 
@@ -1388,10 +1391,7 @@ export function probeOllamaEndpointInventory(
     Number.isFinite(timeoutMilliseconds) && timeoutMilliseconds > 0
       ? Math.floor(timeoutMilliseconds)
       : 5_000;
-  const boundedTimeoutMilliseconds = Math.max(
-    1,
-    Math.min(5_000, normalizedTimeoutMilliseconds),
-  );
+  const boundedTimeoutMilliseconds = Math.max(1, Math.min(5_000, normalizedTimeoutMilliseconds));
   const body = capture(
     [
       "curl",

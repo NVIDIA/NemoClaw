@@ -347,6 +347,30 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     });
   });
 
+  it("keeps the warm-up error when the inventory probe throws", () => {
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          probeModelInventory: () => {
+            throw new Error("inventory unavailable");
+          },
+          runCaptureExImpl: () => ({
+            stdout: JSON.stringify({ error: "runner stopped unexpectedly" }),
+            exitCode: 0,
+            timedOut: false,
+          }),
+        },
+      ),
+    ).toMatchObject({
+      kind: "warmed",
+      ok: false,
+      reason: "ollama-error",
+      detail: expect.stringContaining("runner stopped unexpectedly"),
+    });
+  });
+
   it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", () => {
     const probeModelInventory = vi.fn(() => ["llama3.2:1b"]);
 

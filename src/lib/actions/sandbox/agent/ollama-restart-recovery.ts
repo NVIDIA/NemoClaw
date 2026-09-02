@@ -332,14 +332,19 @@ export function maybeWarmOllamaAfterDaemonRestart(
       const inventoryBudgetMilliseconds = remainingRecoveryMilliseconds(recoveryDeadline, now);
       if (inventoryBudgetMilliseconds > 0) {
         const probeInventory = deps.probeModelInventory ?? probeOllamaEndpointInventory;
-        const inventory = probeInventory(
-          rawHost,
-          rawCapture,
-          Math.min(
-            OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS,
-            inventoryBudgetMilliseconds,
-          ),
-        );
+        let inventory: string[] | null = null;
+        try {
+          inventory = probeInventory(
+            rawHost,
+            rawCapture,
+            Math.min(
+              OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS,
+              inventoryBudgetMilliseconds,
+            ),
+          );
+        } catch {
+          // Inventory only refines the original warm-up error.
+        }
         if (inventory && !ollamaInventoryContainsModel(inventory, model)) {
           return {
             kind: "skipped",
