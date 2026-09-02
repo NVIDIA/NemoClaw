@@ -577,6 +577,67 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     ).toBe(false);
   });
 
+  it("closes an exact dispatch claim left in progress after GitHub accepted the run (#10791)", async () => {
+    const bundle = selection();
+    const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
+    const commitSha = "d".repeat(40);
+    const existingRun = {
+      event: "workflow_dispatch",
+      head_sha: commitSha,
+      display_title: `Generated-head ${bundle.attemptKey}`,
+    };
+    let claimId = 1000;
+    const request = vi.fn(
+      async (apiPath: string, _token: string, options?: { method?: string }) => {
+        return apiPath.includes(`/commits/${commitSha}/check-runs`)
+          ? {
+              total_count: 1,
+              check_runs: [
+                {
+                  id: 42,
+                  name: "Advisor repair validation dispatch",
+                  external_id: `${bundle.attemptKey}:pr.yaml`,
+                  status: "in_progress",
+                  conclusion: null,
+                },
+              ],
+            }
+          : apiPath === "repos/NVIDIA/NemoClaw/check-runs" && options?.method === "POST"
+            ? { id: (claimId += 1) }
+            : apiPath.includes("/check-runs/") && options?.method === "PATCH"
+              ? {}
+              : options?.method === "POST"
+                ? {}
+                : apiPath.includes("pr.yaml/runs")
+                  ? { total_count: 1, workflow_runs: [existingRun] }
+                  : { total_count: 0, workflow_runs: [] };
+      },
+    );
+
+    await expect(
+      ensureGeneratedHeadValidation(
+        receipt,
+        commitSha,
+        "token",
+        request as unknown as NonNullable<Parameters<typeof ensureGeneratedHeadValidation>[3]>,
+      ),
+    ).resolves.toHaveLength(6);
+    expect(request).toHaveBeenCalledWith(
+      "repos/NVIDIA/NemoClaw/check-runs/42",
+      "token",
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.objectContaining({ status: "completed", conclusion: "neutral" }),
+      }),
+    );
+    expect(
+      request.mock.calls.some(
+        ([apiPath, , options]) =>
+          apiPath.includes("pr.yaml/dispatches") && options?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
   it("fails closed when a durable dispatch claim exists before its run is visible (#10791)", async () => {
     const bundle = selection();
     const receipt = validationReceipt(bundle, Buffer.from("validated patch"));

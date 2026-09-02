@@ -581,6 +581,29 @@ export async function ensureGeneratedHeadValidation(
     if (matches.length > 1) {
       throw new RepairContractError(`${workflow} has duplicate generated-head dispatches`);
     }
+    if (matches.length === 1 && claims.length === 1) {
+      const claim = claims[0]!;
+      if (claim.status === "completed" && claim.conclusion === "neutral") continue;
+      if (
+        claim.status !== "in_progress" ||
+        !Number.isSafeInteger(claim.id) ||
+        Number(claim.id) < 1
+      ) {
+        throw new RepairContractError(`${workflow} generated-head dispatch claim is malformed`);
+      }
+      await request(`repos/${CANONICAL_REPOSITORY}/check-runs/${Number(claim.id)}`, token, {
+        method: "PATCH",
+        body: {
+          status: "completed",
+          conclusion: "neutral",
+          output: {
+            title: `${workflow} generated-head dispatch accepted`,
+            summary: `Attempt: ${receipt.attemptKey}`,
+          },
+        },
+      });
+      continue;
+    }
     if (matches.length === 0) {
       if (claims.length === 1) {
         throw new RepairContractError(
