@@ -449,7 +449,15 @@ async function main() {
     ];
     for (const [name, value] of Object.entries(sandboxEnvironment))
       createArgs.push("--env", `${name}=${value}`);
-    await run(openshell, createArgs, cliEnvironment, "Creating native MXC OpenClaw sandbox");
+    try {
+      await run(openshell, createArgs, cliEnvironment, "Creating native MXC OpenClaw sandbox");
+    } catch (error) {
+      if (fs.existsSync(resultPath)) {
+        const failedProbe = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+        console.error(`NEMOCLAW> Failed sandbox probe result ${JSON.stringify(failedProbe)}`);
+      }
+      throw error;
+    }
     console.log("NEMOCLAW> Waiting for the installed OpenClaw agent turn");
     const deadline = Date.now() + TIMEOUT_MS;
     while (!fs.existsSync(resultPath) && Date.now() < deadline && gateway.exitCode === null)
