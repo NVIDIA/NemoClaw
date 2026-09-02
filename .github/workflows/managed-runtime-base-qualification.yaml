@@ -197,7 +197,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/trusted/e2e-artifacts/live/managed-image-activation
       E2E_JOB: "1"
       E2E_TARGET_ID: managed-image-activation
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/candidate/bin/nemoclaw.js
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/base/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
       NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/managed-runtime-candidate/catalog.json
@@ -214,11 +214,11 @@ jobs:
           path: trusted
           persist-credentials: false
 
-      - name: Check out candidate only as the product input
+      - name: Check out exact comparison base as the host CLI input
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.authenticate-source.outputs.candidate_sha }}
-          path: candidate
+          ref: ${{ needs.authenticate-source.outputs.base_sha }}
+          path: base
           fetch-depth: 0
           persist-credentials: false
 
@@ -227,7 +227,7 @@ jobs:
         with:
           node-version: 22.23.1
 
-      - name: Verify candidate and controller identities
+      - name: Verify exact-base CLI and controller identities
         env:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
@@ -235,7 +235,7 @@ jobs:
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+          test "$(git -C base rev-parse --verify HEAD)" = "$BASE_SHA"
           test "$(git -C trusted rev-parse --verify HEAD)" = "$WORKFLOW_SHA"
 
       - name: Download exact candidate image contracts from the authenticated attempt
@@ -268,7 +268,7 @@ jobs:
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
             "${contracts[@]}"
 
-      - name: Install trusted controller and candidate dependencies without credentials
+      - name: Install trusted controller and exact-base CLI dependencies without credentials
         run: |
           set -euo pipefail
           (
@@ -278,14 +278,14 @@ jobs:
               bash .github/actions/ci-install-dependencies.sh
           )
           (
-            cd candidate
+            cd base
             env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN \
               GITHUB_EVENT_NAME=pull_request \
               bash ../trusted/.github/actions/ci-install-dependencies.sh
           )
 
-      - name: Build exact candidate CLI
-        working-directory: candidate
+      - name: Build exact-base host CLI
+        working-directory: base
         run: npm run build:cli
 
       - name: Install trusted OpenShell CLI
@@ -311,11 +311,11 @@ jobs:
           printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >> "$GITHUB_ENV"
 
       - id: activation
-        name: Run the trusted scenario against candidate inputs
+        name: Run the trusted scenario against candidate managed images
         working-directory: trusted
         run: |
           set -euo pipefail
-          test "$(git -C ../candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+          test "$(git -C ../base rev-parse --verify HEAD)" = "$BASE_SHA"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \

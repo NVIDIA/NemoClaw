@@ -137,8 +137,10 @@ authority for the comparison.
 
 The managed-image PR workflow only builds candidate inputs. A fresh trusted job downloads the
 exact image contracts from the authenticated source attempt, validates and assembles them with
-base-controlled code, builds the candidate CLI as a product input, and executes the checked-in
-trusted scenario controller. The PR-controlled workflow cannot author the qualification receipt.
+base-controlled code, and executes the checked-in trusted scenario controller with the exact-base
+host CLI. Candidate code runs only inside the candidate managed images behind the OpenShell
+sandbox boundary; it is never checked out or executed in the evidence-producing host workspace.
+The PR-controlled workflow cannot author the qualification receipt.
 After activation, a separate fresh post-processing runner that never checks out or executes the
 candidate records the candidate and base SHAs, source and qualification attempts, trusted workflow
 revision, OpenShell version, complete immutable image identity, scenario path, evidence file
@@ -163,7 +165,7 @@ candidate before either live scenario starts, then replaces it with success, fai
 the comparison receipt. A cancelled workflow leaves the status pending, which fails closed when
 the context is required. For recovery, rerun the exact failed qualification attempt. To dispatch
 the workflow manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
-its current head SHA, `base_sha` to its current base SHA, and `candidate_run_id` plus
+the latest PR commit SHA, `base_sha` to the PR base SHA, and `candidate_run_id` plus
 `candidate_run_attempt` to the failed managed-image workflow run ID and attempt. That source run
 must belong to the same open PR and current candidate SHA. If the comparison reports
 `base evidence validation failed`, use the retained receipt and evidence artifact IDs plus the
