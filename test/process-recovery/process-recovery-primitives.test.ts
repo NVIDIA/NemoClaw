@@ -288,12 +288,11 @@ describe("waitForManagedGatewaySupervisor", () => {
 });
 
 describe("executeGatewaySupervisorAction", () => {
-  const controlPath = "/usr/local/bin/nemoclaw-gateway-control";
   const targetContainerId = "a".repeat(64);
 
   it("sanitizes a temporarily unavailable direct container into the retry marker", () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
       throw new Error("temporary direct-container discovery detail");
     });
     vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(true);
@@ -307,7 +306,7 @@ describe("executeGatewaySupervisorAction", () => {
 
   it("keeps other privileged-control refusals terminal and classified", () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
       throw new Error(
         "OpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
       );
@@ -324,7 +323,7 @@ describe("executeGatewaySupervisorAction", () => {
 
   it("emits the managed-control identity marker for a pinned container refusal (#9364)", () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
       throw new Error(
         "OpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
       );
@@ -341,21 +340,17 @@ describe("executeGatewaySupervisorAction", () => {
   });
 
   it("binds an exact Docker restart transition to the selected container (#8726)", () => {
-    const dockerExec = requireSource("../../src/lib/adapters/docker/exec.ts");
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockReturnValue([
-      "exec",
-      "--user",
-      "root",
-      targetContainerId,
-      controlPath,
-      "probe",
-      "b".repeat(64),
-    ]);
-    vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+    vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockReturnValue({
+      resourceHandle: targetContainerId,
+    });
+    vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand").mockReturnValue({
       status: 1,
-      stdout: "",
-      stderr: `Error response from daemon: Container ${targetContainerId} is restarting, wait until the container is running`,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from(
+        `Error response from daemon: Container ${targetContainerId} is restarting, wait until the container is running`,
+      ),
     } as never);
 
     expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
@@ -374,21 +369,17 @@ describe("executeGatewaySupervisorAction", () => {
   ])(
     "does not bind %s as a Docker restart transition (#8726)",
     (_case, status, stdout, id, suffix) => {
-      const dockerExec = requireSource("../../src/lib/adapters/docker/exec.ts");
       const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-      vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockReturnValue([
-        "exec",
-        "--user",
-        "root",
-        targetContainerId,
-        controlPath,
-        "probe",
-        "b".repeat(64),
-      ]);
-      vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+      vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockReturnValue({
+        resourceHandle: targetContainerId,
+      });
+      vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand").mockReturnValue({
         status,
-        stdout,
-        stderr: `Error response from daemon: Container ${id} is restarting, wait until the container is running${suffix}`,
+        signal: null,
+        stdout: Buffer.from(stdout),
+        stderr: Buffer.from(
+          `Error response from daemon: Container ${id} is restarting, wait until the container is running${suffix}`,
+        ),
       } as never);
 
       expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
@@ -733,7 +724,6 @@ describe("executeSandboxExecCommand", () => {
 
   it("honors the sandbox-exec timeout without falling back to SSH", () => {
     const childProcess = requireSource("node:child_process");
-    const dockerExec = requireSource("../../src/lib/adapters/docker/exec.ts");
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     const timeoutError = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
     const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
@@ -742,21 +732,15 @@ describe("executeSandboxExecCommand", () => {
       stderr: "",
       error: timeoutError,
     } as never);
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockReturnValue([
-      "exec",
-      "--user",
-      "root",
-      "openshell-alpha",
-      "sh",
-      "-c",
-      "marked-command",
-    ]);
-    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
-      status: null,
-      stdout: "",
-      stderr: "",
-      error: timeoutError,
-    } as never);
+    const executePrivileged = vi
+      .spyOn(privilegedExec, "executePrivilegedSandboxCommand")
+      .mockReturnValue({
+        status: null,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        error: timeoutError,
+      } as never);
     const previousTimeout = process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS;
     process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS = "50";
 
@@ -768,7 +752,9 @@ describe("executeSandboxExecCommand", () => {
       expect(result).toBeNull();
       expect(spawn.mock.calls.some(([command]) => command === "ssh")).toBe(false);
       expect(spawn.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ timeout: 50 }));
-      expect(dockerSpawnSync.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 50 }));
+      expect(executePrivileged.mock.calls[0]?.[2]).toEqual(
+        expect.objectContaining({ sanitizeEnvironment: true, timeout: 50 }),
+      );
     } finally {
       previousTimeout === undefined
         ? delete process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS
@@ -797,7 +783,6 @@ describe("executeSandboxExecCommand", () => {
 
   it("rejects a non-frame preamble and surfaces a missing trusted fallback identity", () => {
     const childProcess = requireSource("node:child_process");
-    const dockerExec = requireSource("../../src/lib/adapters/docker/exec.ts");
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -807,14 +792,12 @@ describe("executeSandboxExecCommand", () => {
       ].join("\n"),
       stderr: "",
     } as never);
-    const privilegedArgv = vi.spyOn(privilegedExec, "privilegedSandboxExecArgv");
-    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync");
+    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
 
     expect(() =>
       withFakeOpenshellBinary(() => executeSandboxExecCommand("hermes-box", "echo RUNNING")),
     ).toThrow(/No NemoClaw registry entry found.*refusing privileged exec/);
-    expect(privilegedArgv).toHaveBeenCalledTimes(1);
-    expect(dockerSpawnSync).not.toHaveBeenCalled();
+    expect(executePrivileged).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the Hermes validator source out of the host shell payload", () => {
@@ -842,29 +825,20 @@ describe("executeSandboxExecCommand", () => {
 
   it("falls back to local Docker root exec when OpenShell exec output has no marker", () => {
     const childProcess = requireSource("node:child_process");
-    const dockerExec = requireSource("../../src/lib/adapters/docker/exec.ts");
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "OpenShell transport preamble\n",
       stderr: "",
     } as never);
-    const privilegedArgv = vi
-      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-      .mockReturnValue([
-        "exec",
-        "--user",
-        "root",
-        "openshell-hermes-box-generated",
-        "sh",
-        "-c",
-        "marked-command",
-      ]);
-    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
-      stderr: "",
-    } as never);
+    const executePrivileged = vi
+      .spyOn(privilegedExec, "executePrivilegedSandboxCommand")
+      .mockReturnValue({
+        status: 0,
+        signal: null,
+        stdout: Buffer.from("__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n"),
+        stderr: Buffer.alloc(0),
+      } as never);
 
     const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
     const priorGateway = process.env.OPENSHELL_GATEWAY;
@@ -881,37 +855,22 @@ describe("executeSandboxExecCommand", () => {
       : (process.env.OPENSHELL_GATEWAY = priorGateway);
 
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
-    expect(privilegedArgv).toHaveBeenCalledWith("hermes-box", [
-      "sh",
-      "-c",
-      expect.stringContaining("echo SECRET_BOUNDARY_OK"),
-    ]);
-    expect(dockerSpawnSync.mock.calls[0]?.[0]).toEqual([
-      "exec",
-      "--user",
-      "root",
-      "openshell-hermes-box-generated",
-      "sh",
-      "-c",
-      "marked-command",
-    ]);
-    const dockerOptions = dockerSpawnSync.mock.calls[0]?.[1] as { env?: NodeJS.ProcessEnv };
-    expect(dockerOptions.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
-    expect(dockerOptions.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
-    expect(dockerOptions.env?.PATH).toBe(process.env.PATH);
+    expect(executePrivileged).toHaveBeenCalledWith(
+      "hermes-box",
+      ["sh", "-c", expect.stringContaining("echo SECRET_BOUNDARY_OK")],
+      expect.objectContaining({ sanitizeEnvironment: true }),
+    );
   });
 
   it("does not let Docker fallback satisfy a strict provider credential proof", () => {
     const childProcess = requireSource("node:child_process");
-    const dockerExec = requireSource("../../src/lib/adapters/docker/exec.ts");
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 1,
       stdout: "OpenShell transport failed before the child marker\n",
       stderr: "gateway unavailable\n",
     } as never);
-    const privilegedArgv = vi.spyOn(privilegedExec, "privilegedSandboxExecArgv");
-    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync");
+    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
 
     const result = withFakeOpenshellBinary(() =>
       executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]', undefined, {
@@ -920,8 +879,7 @@ describe("executeSandboxExecCommand", () => {
     );
 
     expect(result).toBeNull();
-    expect(privilegedArgv).not.toHaveBeenCalled();
-    expect(dockerSpawnSync).not.toHaveBeenCalled();
+    expect(executePrivileged).not.toHaveBeenCalled();
     const args = spawn.mock.calls[0]?.[1] as string[];
     const shellPayload = args.at(-1) ?? "";
     expect(shellPayload).not.toMatch(/[\r\n]/);

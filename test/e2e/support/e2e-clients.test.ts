@@ -484,7 +484,7 @@ describe("E2E fixture clients", () => {
     const containerGateway = new GatewayClient(containerHost, new SandboxClient(containerRunner));
     const runtime = containerGateway.resolveHostRuntime();
     containerRunner.exitCode = 0;
-    containerRunner.stdout = "abc123\n";
+    containerRunner.stdout = "abc123\topenshell-cluster-nemoclaw\n";
     await expect(runtime).resolves.toEqual({ kind: "container", id: "abc123" });
 
     const statusRunner = new FakeRunner();

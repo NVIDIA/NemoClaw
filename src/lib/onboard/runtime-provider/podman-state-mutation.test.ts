@@ -16,6 +16,7 @@ import {
   type HermesRuntimeStateMutationConfigTarget,
 } from "../../shields/hermes-runtime-state-mutation";
 import { createPodmanRuntimeProviderBundle } from "./podman";
+import { createPodmanStateMutationSurface } from "./podman-state-mutation";
 import { createRuntimeProviderBundleRegistry } from "./registry";
 
 function companionEngine(
@@ -55,6 +56,36 @@ function hermesConfigTarget(): HermesRuntimeStateMutationConfigTarget {
 afterEach(() => cleanupDockerStateMutationRoots());
 
 describe("Podman runtime-provider state mutation", () => {
+  it("treats a materialized image bind as one logical Podman mount", () => {
+    const runtime = harness({ podmanMaterializedImageMount: true });
+    const surface = createPodmanStateMutationSurface({
+      engine: runtime.authority.engine as PodmanBoundContainerEngine,
+      resolveStateDir: () => runtime.root,
+    });
+
+    expect(surface.acquire({ ...runtime.context, plan: plan() })).toMatchObject({
+      providerId: "podman",
+      phase: "fenced",
+    });
+    expect(
+      runtime.capture.mock.calls.some(([, args]) =>
+        (args as readonly string[]).includes("label=openshell.managed=true"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects unrelated Podman mounts with the same destination", () => {
+    const runtime = harness({ podmanAmbiguousMounts: true });
+    const surface = createPodmanStateMutationSurface({
+      engine: runtime.authority.engine as PodmanBoundContainerEngine,
+      resolveStateDir: () => runtime.root,
+    });
+
+    expect(() => surface.acquire({ ...runtime.context, plan: plan() })).toThrow(
+      "Podman container has ambiguous mount destinations",
+    );
+  });
+
   it("holds one exact Podman fence through rollback, activation, and durable release", () => {
     const runtime = harness();
     const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
@@ -79,6 +110,9 @@ describe("Podman runtime-provider state mutation", () => {
     runtime.owner.release(runtime.context, fence, proof, "e".repeat(64));
 
     expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.transportCopySourceModes.length).toBeGreaterThan(0);
+    expect(runtime.transportCopySourceModes.every((mode) => mode === 0o644)).toBe(true);
     expect(runtime.helperActions).toEqual([
       "acquire",
       "rollback",
@@ -86,13 +120,32 @@ describe("Podman runtime-provider state mutation", () => {
       "activate",
       "release",
     ]);
+    const inspectCommands = runtime.capture.mock.calls
+      .map(([, args]) => args as readonly string[])
+      .filter((args) => args.includes("inspect"));
+    expect(inspectCommands.length).toBeGreaterThan(0);
     expect(
-      runtime.capture.mock.calls.every(([, args]) =>
-        (args as readonly string[])
-          .slice(0, 2)
-          .every((value, index) =>
-            index === 0 ? value === "--url" : value === "unix:///run/user/1000/podman/podman.sock",
-          ),
+      inspectCommands.every((args) => args.some((value) => value.includes("{{json .ID}}"))),
+    ).toBe(true);
+    expect(
+      inspectCommands.every((args) => args.every((value) => !value.includes("{{json .Id}}"))),
+    ).toBe(true);
+    expect(
+      runtime.capture.mock.calls
+        .filter(([, args]) => !(args as readonly string[]).includes("--nemoclaw-broker"))
+        .every(([, args]) =>
+          (args as readonly string[])
+            .slice(0, 2)
+            .every((value, index) =>
+              index === 0
+                ? value === "--url"
+                : value === "unix:///run/user/1000/podman/podman.sock",
+            ),
+        ),
+    ).toBe(true);
+    expect(
+      runtime.capture.mock.calls.some(([, args]) =>
+        (args as readonly string[]).includes("--detach"),
       ),
     ).toBe(true);
   });
