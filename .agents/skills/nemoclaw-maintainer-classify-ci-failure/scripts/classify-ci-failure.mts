@@ -1,79 +1,151 @@
-/**
- * Classify a NemoClaw GitHub Actions failure with bounded logs and optional artifact inspection. Requires Bash, GNU dd and find, Info-ZIP zipinfo and unzip, awk, base64, mktemp, stat, and wc on Linux.
- */
-export default async function triage_nemoclaw_ci_failure(input: {
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+type ClipMode = "head" | "tail";
+type Input = {
   workdir: string;
-  jobId: Integer | string;
+  jobId: number | string;
   repo?: string;
-  artifactName?: string /** Maximum matched log and context lines to return; defaults to 120 and is capped at 500. */;
-  maxLines?: Integer /** Which end of matched log output to retain when clipping; defaults to tail. */;
-  clipMode?: "head" | "tail";
-}): Promise<{
-  jobId: string;
-  repo: string;
-  job: {
-    id: Integer;
-    runId: Integer;
-    name: string;
-    status: string;
-    conclusion: string | null;
-    url: string;
+  artifactName?: string;
+  maxLines?: number;
+  clipMode?: ClipMode;
+};
+type ProcessResult = {
+  kind: "foreground";
+  exitCode: number;
+  stdout: { text: string };
+  stderr: { text: string };
+};
+const SECRET_ASSIGNMENT =
+  /(\b(?:AWS_ACCESS_KEY_ID|[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY)[A-Za-z0-9_]*)\s*[=:]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/giu;
+const JSON_SECRET_FIELD =
+  /("[^"\r\n]*(?:secret|token|password|api[_-]?key|authorization)[^"\r\n]*"\s*:\s*)"(?:\\.|[^"\\\r\n])*"/giu;
+const STANDALONE_SECRET =
+  /\b(?:(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|nv(?:api|cf)-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{20,})\b/gu;
+const redact = (value: string): string =>
+  value
+    .replace(JSON_SECRET_FIELD, '$1"[REDACTED]"')
+    .replace(/(\bauthorization\s*:\s*)[^\r\n]*/giu, "$1[REDACTED]")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/giu, "$1[REDACTED]@")
+    .replace(SECRET_ASSIGNMENT, "$1[REDACTED]")
+    .replace(STANDALONE_SECRET, "[REDACTED]")
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED]");
+const projectText = (input: {
+  lines: string[];
+  clipMode?: ClipMode;
+  lineClipMode?: ClipMode;
+  maxLines?: number;
+  maxCharacters: number;
+  maxLineCharacters: number;
+  sourceTruncated?: boolean;
+}) => {
+  let lineCharacterClipped = false;
+  const safe = input.lines.map((line) => {
+    const value = redact(line);
+    if (value.length <= input.maxLineCharacters) return value;
+    lineCharacterClipped = true;
+    return (input.lineClipMode ?? input.clipMode) === "head"
+      ? value.slice(0, input.maxLineCharacters)
+      : value.slice(-input.maxLineCharacters);
+  });
+  const maxLines = input.maxLines ?? safe.length;
+  const lineClipped = safe.length > maxLines;
+  const selected = lineClipped
+    ? input.clipMode === "head"
+      ? safe.slice(0, maxLines)
+      : safe.slice(-maxLines)
+    : safe;
+  let text = selected.join("\n");
+  const textClipped = text.length > input.maxCharacters;
+  if (textClipped)
+    text =
+      input.clipMode === "head"
+        ? text.slice(0, input.maxCharacters)
+        : text.slice(-input.maxCharacters);
+  return {
+    text,
+    sourceTruncated: Boolean(input.sourceTruncated),
+    lineClipped,
+    lineCharacterClipped,
+    textClipped,
   };
-  result: "classified" | "unclassified" | "log-error";
-  categories: string[];
-  findings: { type: string; detail: string; suggestion: string }[];
-  nextActions: string[];
-  artifact: {
-    name: string;
-    sizeBytes: Integer;
-    inventoryTruncated: boolean;
-    filesRead: Integer;
-    filesTruncated: boolean;
-    failures: {
-      path: string;
-      exitCode: Integer | null;
-      signal: string | null;
-      timedOut: boolean;
-      error: string | null;
-      command: string | null;
-    }[];
-    failuresTruncated: boolean;
-  } | null;
-  log: {
-    jobId: string;
-    repo: string;
-    code: Integer;
-    truncated: boolean;
-    matchedLines: Integer;
-    stdout: string;
-    stderr: string;
-    pattern: string | null;
-    truncationNotice: string | null;
-    truncationReasons: string[];
-    clipMode: "head" | "tail";
-    maxLines: Integer;
-    selectedLines: Integer;
-    returnedLines: Integer;
-    omittedLines: Integer;
+};
+const execute = (
+  command: string,
+  args: string[],
+  workdir: string,
+  timeoutMs: number,
+): ProcessResult => {
+  const result = spawnSync(command, args, {
+    cwd: workdir,
+    encoding: "utf8",
+    timeout: timeoutMs,
+    maxBuffer: 8_000_000,
+  });
+  return {
+    kind: "foreground",
+    exitCode: result.status ?? 1,
+    stdout: { text: String(result.stdout ?? "") },
+    stderr: { text: String(result.stderr ?? result.error?.message ?? "") },
   };
-}> {
+};
+const normalizeArtifactName = (value: string | undefined): string => {
+  const artifactName = value?.trim() ?? "";
+  if (
+    value !== undefined &&
+    (artifactName !== value || !/^[A-Za-z0-9_. -]{1,200}$/.test(artifactName))
+  )
+    throw new Error("artifactName must be a trimmed GitHub Actions artifact name");
+  return artifactName;
+};
+
+const runtime = {
+  project_diagnostic_text: async (input: Parameters<typeof projectText>[0]) => projectText(input),
+  run_github_cli: async (input: { workdir: string; args: string[]; timeoutMs: number }) => {
+    const result = execute("gh", input.args, input.workdir, input.timeoutMs);
+    if (result.exitCode !== 0) throw new Error(result.stderr.text || result.stdout.text);
+    return { stdout: result.stdout.text, stderr: result.stderr.text };
+  },
+  bash: async (input: {
+    command: string;
+    workdir: string;
+    description?: string;
+    timeoutMs: number;
+  }) => execute("bash", ["-c", input.command], input.workdir, input.timeoutMs),
+  read: async (input: { file_path: string; limit: number }) => {
+    const lines = readFileSync(input.file_path, "utf8").split(/\r?\n/u);
+    if (lines.at(-1) === "") lines.pop();
+    return {
+      lines: lines.slice(0, input.limit).map((text, index) => ({ number: index + 1, text })),
+      totalLines: lines.length,
+    };
+  },
+};
+
+export async function classifyCiFailure(input: Input): Promise<Record<string, unknown>> {
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   const jobId = String(input.jobId);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
   if (!/^\d+$/.test(jobId) || jobId === "0")
     throw new Error("jobId must be a positive numeric GitHub Actions job ID");
-  const maxLines = Math.max(1, Math.min(500, input.maxLines ?? 120));
+  const maxLines = input.maxLines ?? 120;
+  if (!Number.isSafeInteger(maxLines) || maxLines < 1 || maxLines > 500)
+    throw new Error("maxLines must be an integer from 1 through 500");
   const clipMode = input.clipMode ?? "tail";
   if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
-  const artifactName = input.artifactName?.trim() ?? "";
-  if (
-    input.artifactName !== undefined &&
-    (artifactName !== input.artifactName || !/^[A-Za-z0-9_. -]{1,200}$/.test(artifactName))
-  )
-    throw new Error("artifactName must be a trimmed GitHub Actions artifact name");
-  const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const project = async (value, maxCharacters, maxLineCharacters = maxCharacters) =>
-    tools.project_diagnostic_text({
+  const artifactName = normalizeArtifactName(input.artifactName);
+  const q = (value: unknown): string => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  const project = async (
+    value: unknown,
+    maxCharacters: number,
+    maxLineCharacters: number = maxCharacters,
+  ) =>
+    runtime.project_diagnostic_text({
       lines: [String(value)],
       clipMode: "tail",
       lineClipMode: "tail",
@@ -81,19 +153,19 @@ export default async function triage_nemoclaw_ci_failure(input: {
       maxCharacters,
       maxLineCharacters,
     });
-  const diagnosticError = async (message) => {
-    const projected = await project(message, 2000, 1000);
-    return new Error(projected.text || "Diagnostic unavailable");
+  const diagnosticError = async (message: unknown): Promise<Error> => {
+    const safe = redact(String(message));
+    return new Error(safe.slice(0, 2000) || "Diagnostic unavailable");
   };
-  const github = async (args, timeoutMs = 30000) => {
+  const github = async (args: string[], timeoutMs = 30000) => {
     try {
-      return await tools.run_github_cli({ workdir: input.workdir, args, timeoutMs });
+      return await runtime.run_github_cli({ workdir: input.workdir, args, timeoutMs });
     } catch (error) {
       throw await diagnosticError(error instanceof Error ? error.message : String(error));
     }
   };
-  const run = async (command, description, timeoutMs = 30000) => {
-    const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
+  const run = async (command: string, description: string, timeoutMs = 30000) => {
+    const result = await runtime.bash({ command, workdir: input.workdir, description, timeoutMs });
     if (result.kind !== "foreground") throw new Error("Unexpected background result");
     const detail = (result.stderr.text + "\n" + result.stdout.text).toLowerCase();
     if (
@@ -137,39 +209,52 @@ export default async function triage_nemoclaw_ci_failure(input: {
   let logCode = -1;
   let logStderr = "";
   let sourceTruncated = false;
-  let logLines = [];
+  let logLines: string[] = [];
   try {
     const rawPath = logDir + "/job.log";
     const boundedPath = logDir + "/job.tail.log";
     const downloaded = await run(
-      `gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} > ${q(rawPath)}`,
-      "Download GitHub Actions job log",
+      `set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} | tail -c 4000000 > ${q(rawPath)}; statuses=("\${PIPESTATUS[@]}"); bytes=$(stat -c %s -- ${q(rawPath)}) || exit 1; printf '%s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$bytes"`,
+      "Stream bounded GitHub Actions job log",
       60000,
     );
-    logCode = downloaded.exitCode ?? -1;
+    const [githubStatus, captureStatus, byteText] = downloaded.stdout.text.trim().split(/\s+/, 3);
+    const byteCount = Number(byteText);
+    logCode =
+      downloaded.exitCode === 0 &&
+      githubStatus === "0" &&
+      captureStatus === "0" &&
+      Number.isSafeInteger(byteCount)
+        ? 0
+        : Number(githubStatus) || Number(captureStatus) || downloaded.exitCode || 1;
     logStderr = (await project(downloaded.stderr.text, 4000, 1000)).text;
     if (logCode === 0) {
       const bounded = await run(
-        `bytes=$(wc -c < ${q(rawPath)}); lines=$(wc -l < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s %s' "$bytes" "$lines"`,
-        "Bound GitHub Actions job log",
+        `tail -n 20000 -- ${q(rawPath)} > ${q(boundedPath)}; lines=$(wc -l < ${q(rawPath)}); printf '%s' "$lines"`,
+        "Bound GitHub Actions job log lines",
       );
-      if (bounded.exitCode !== 0) throw new Error("Could not bound GitHub Actions job log");
-      const [byteText, lineText] = bounded.stdout.text.trim().split(/\s+/, 2);
-      const byteCount = Number(byteText);
-      const lineCount = Number(lineText);
+      if (bounded.exitCode !== 0)
+        throw await diagnosticError(
+          bounded.stderr.text || "Could not bound GitHub Actions job log",
+        );
+      const lineCount = Number(bounded.stdout.text.trim());
       sourceTruncated =
-        (Number.isFinite(byteCount) && byteCount > 4000000) ||
+        (Number.isFinite(byteCount) && byteCount >= 4000000) ||
         (Number.isFinite(lineCount) && lineCount > 20000);
-      const content = await tools.read({ file_path: boundedPath, limit: 20000 });
+      const content = await runtime.read({ file_path: boundedPath, limit: 20000 });
       logLines = content.lines.map((line) => line.text);
       sourceTruncated ||= content.totalLines > content.lines.length;
     }
   } finally {
-    await run(`rm -rf -- ${q(logDir)}`, "Remove temporary CI log directory");
+    const cleanup = await run(`rm -rf -- ${q(logDir)}`, "Remove temporary CI log directory");
+    if (cleanup.exitCode !== 0)
+      throw await diagnosticError(
+        cleanup.stderr.text || cleanup.stdout.text || "Could not remove temporary CI log directory",
+      );
   }
   const logPattern =
     /FAIL|Failed Tests|AssertionError|Test timed out|Process completed|SIGKILL|timed out|Source-shape|Source architecture|grew by|adds JavaScript|NEMOCLAW_|npm audit report|docs-review|Documentation writer|Fern validation|check-docs|hadolint|shellcheck|Nemotron/i;
-  const selectedIndexes = new Set();
+  const selectedIndexes = new Set<number>();
   let matchedLines = 0;
   for (let index = 0; index < logLines.length; index += 1) {
     if (!logPattern.test(logLines[index])) continue;
@@ -182,7 +267,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
   const selectedLines = [...selectedIndexes]
     .sort((left, right) => left - right)
     .map((index) => logLines[index]);
-  const projected = await tools.project_diagnostic_text({
+  const projected = await runtime.project_diagnostic_text({
     lines: selectedLines,
     clipMode,
     maxLines,
@@ -228,7 +313,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
   let artifact = null;
   if (artifactName) {
     try {
-      const artifacts = [];
+      const artifacts: Record<string, unknown>[] = [];
       let artifactTotal = null;
       for (let page = 1; page <= 20; page += 1) {
         const inventoryResult = await github([
@@ -251,7 +336,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
           inventory.total_count < 0 ||
           !Array.isArray(inventory.artifacts) ||
           inventory.artifacts.some(
-            (entry) => entry === null || typeof entry !== "object" || Array.isArray(entry),
+            (entry: unknown) => entry === null || typeof entry !== "object" || Array.isArray(entry),
           )
         )
           throw new Error("Artifact inventory page is malformed");
@@ -281,7 +366,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
           `Artifact ${artifactName} has an invalid size or is too large for bounded inspection`,
         );
       const temp = await run(
-        'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-triage.XXXXXX"',
+        'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-classify.XXXXXX"',
         "Create temporary artifact directory",
       );
       if (temp.exitCode !== 0) throw new Error("Could not create temporary artifact directory");
@@ -312,13 +397,13 @@ export default async function triage_nemoclaw_ci_failure(input: {
         )
           throw new Error("Could not download selected artifact");
         const checked = await run(
-          `archive=${q(archive)}; expected=${q(sizeBytes)}; measured=$(stat -c %s -- "$archive") || { printf 'malformed\n'; exit 0; }; if [ "$measured" -gt 25000000 ] || [ "$measured" -ne "$expected" ]; then printf 'compressed-size\n'; exit 0; fi; summary=$(LC_ALL=C zipinfo -t "$archive" 2>/dev/null) || { printf 'malformed\n'; exit 0; }; if [[ "$summary" == *$'\n'* ]] || [[ ! "$summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]]; then printf 'malformed\n'; exit 0; fi; entries=\${BASH_REMATCH[1]}; expanded=\${BASH_REMATCH[2]}; if [ "$entries" -gt 100 ]; then printf 'entries\n'; exit 0; fi; if [ "$expanded" -gt 100000000 ]; then printf 'expanded\n'; exit 0; fi; listing=$(umask 077; mktemp "${dir}/zip-listing.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; names=$(umask 077; mktemp "${dir}/zip-names.XXXXXXXXXX") || { rm -f -- "$listing"; printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names"' EXIT; LC_ALL=C zipinfo -l "$archive" > "$listing" 2>/dev/null || { printf 'malformed\n'; exit 0; }; LC_ALL=C zipinfo -1 "$archive" > "$names" 2>/dev/null || { printf 'malformed\n'; exit 0; }; listing_bytes=$(wc -c < "$listing") || { printf 'malformed\n'; exit 0; }; if [ "$listing_bytes" -gt 7000000 ]; then printf 'listing\n'; exit 0; fi; state=$(awk -v expected="$entries" 'NR==FNR { exact[FNR]=$0; next } BEGIN { count=0; state="ok" } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=9;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=exact[count]; if (line != name || name ~ /^[[:space:]]/ || name ~ /[[:space:]]$/) state="path"; if (mode != "-" && mode != "d") state="type"; if (size !~ /^[0-9]+$/) state="parser"; if (name == "" || name ~ /^[-\/]/ || name ~ /\\/ || name ~ /[[:cntrl:]]/ || name ~ /\\^[A-Z@[]/ || name ~ /[*?[[]/) state="path"; parts=split(name, component, "/"); last=parts; if (mode == "d" && component[parts] == "") last--; else if (component[parts] == "") state="path"; for (i=1;i<=last;i++) if (component[i] == "" || component[i] == "." || component[i] == "..") state="path"; output=name; sub(/\/$/, "", output); if (output == "" || seen[output]++) state="duplicate"; next } /^[0-9]+ files?, [0-9]+ bytes uncompressed, / { summaries++; next } { state="parser" } END { if (count != expected || summaries != 1) state="parser"; print state }' "$names" "$listing"); if [ "$state" != ok ]; then printf '%s\n' "$state"; exit 0; fi; unzip -tqq "$archive" >/dev/null 2>&1 || { printf 'malformed\n'; exit 0; }; selected=$(umask 077; mktemp "${dir}/selected.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; unsorted=$(umask 077; mktemp "${dir}/unsorted.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names" "$selected" "$unsorted"' EXIT; count=$(awk -v selected="$unsorted" 'NR==FNR { exact[FNR]=$0; next } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { entry++; name=exact[entry]; if (substr($0, 1, 1) == "-" && name ~ /[.]result[.]json$/) { printf "%s\t%s%c", name, $4, 0 > selected; count++ } } END { print count+0 }' "$names" "$listing") || { printf 'parser\n'; exit 0; }; LC_ALL=C sort -z "$unsorted" > "$selected" || { printf 'parser\n'; exit 0; }; encoded=$(base64 -w0 < "$selected") || { printf 'parser\n'; exit 0; }; printf 'ok %s %s\n' "$count" "$encoded"`,
+          `archive=${q(archive)}; expected=${q(sizeBytes)}; measured=$(stat -c %s -- "$archive") || { printf 'malformed\n'; exit 0; }; if [ "$measured" -gt 25000000 ] || [ "$measured" -ne "$expected" ]; then printf 'compressed-size\n'; exit 0; fi; summary=$(LC_ALL=C zipinfo -t "$archive" 2>/dev/null) || { printf 'malformed\n'; exit 0; }; if [[ "$summary" == *$'\n'* ]] || [[ ! "$summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]]; then printf 'malformed\n'; exit 0; fi; entries=\${BASH_REMATCH[1]}; expanded=\${BASH_REMATCH[2]}; if [ "$entries" -gt 100 ]; then printf 'entries\n'; exit 0; fi; if [ "$expanded" -gt 100000000 ]; then printf 'expanded\n'; exit 0; fi; listing=$(umask 077; mktemp "${dir}/zip-listing.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; names=$(umask 077; mktemp "${dir}/zip-names.XXXXXXXXXX") || { rm -f -- "$listing"; printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names"' EXIT; LC_ALL=C zipinfo -l "$archive" > "$listing" 2>/dev/null || { printf 'malformed\n'; exit 0; }; LC_ALL=C zipinfo -1 "$archive" > "$names" 2>/dev/null || { printf 'malformed\n'; exit 0; }; listing_bytes=$(wc -c < "$listing") || { printf 'malformed\n'; exit 0; }; if [ "$listing_bytes" -gt 7000000 ]; then printf 'listing\n'; exit 0; fi; state=$(awk -v expected="$entries" 'NR==FNR { exact[FNR]=$0; next } BEGIN { count=0; state="ok" } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=9;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=exact[count]; if (line != name || name ~ /^[[:space:]]/ || name ~ /[[:space:]]$/) state="path"; if (mode != "-" && mode != "d") state="type"; if (size !~ /^[0-9]+$/) state="parser"; if (name == "" || name ~ /^[-\/]/ || index(name, "\\\\") || name ~ /[[:cntrl:]]/ || index(name, "*") || index(name, "?") || index(name, "[")) state="path"; parts=split(name, component, "/"); last=parts; if (mode == "d" && component[parts] == "") last--; else if (component[parts] == "") state="path"; for (i=1;i<=last;i++) if (component[i] == "" || component[i] == "." || component[i] == "..") state="path"; output=name; if (substr(output, length(output), 1) == "/") output=substr(output, 1, length(output)-1); if (output == "" || seen[output]++) state="duplicate"; next } /^[0-9]+ files?, [0-9]+ bytes uncompressed, / { summaries++; next } { state="parser" } END { if (count != expected || summaries != 1) state="parser"; print state }' "$names" "$listing"); if [ "$state" != ok ]; then printf '%s\n' "$state"; exit 0; fi; unzip -tqq "$archive" >/dev/null 2>&1 || { printf 'malformed\n'; exit 0; }; selected=$(umask 077; mktemp "${dir}/selected.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; unsorted=$(umask 077; mktemp "${dir}/unsorted.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names" "$selected" "$unsorted"' EXIT; count=$(awk -v selected="$unsorted" 'NR==FNR { exact[FNR]=$0; next } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { entry++; name=exact[entry]; if (substr($0, 1, 1) == "-" && name ~ /[.]result[.]json$/) { printf "%s\t%s%c", name, $4, 0 > selected; count++ } } END { print count+0 }' "$names" "$listing") || { printf 'parser\n'; exit 0; }; LC_ALL=C sort -z "$unsorted" > "$selected" || { printf 'parser\n'; exit 0; }; encoded=$(base64 -w0 < "$selected") || { printf 'parser\n'; exit 0; }; printf 'ok %s %s\n' "$count" "$encoded"`,
           "Inspect selected artifact ZIP",
         );
         const parts = checked.stdout.text.trim().split(/\s+/, 3);
         const archiveState = parts[0];
         if (checked.exitCode !== 0 || archiveState !== "ok") {
-          const details = {
+          const details: Record<string, string> = {
             "compressed-size": "Artifact compressed size is invalid or differs from its metadata",
             entries: "Artifact contains more than 100 entries",
             expanded: "Artifact declares more than 100,000,000 expanded bytes",
@@ -329,7 +414,10 @@ export default async function triage_nemoclaw_ci_failure(input: {
             parser: "Artifact entry listing is ambiguous",
             malformed: "Artifact ZIP is malformed",
           };
-          throw new Error(details[archiveState] ?? "Could not inspect artifact ZIP");
+          throw new Error(
+            details[archiveState] ??
+              `Could not inspect artifact ZIP (state ${archiveState || "empty"}, exit ${checked.exitCode}): ${redact(checked.stderr.text).slice(-1000)}`,
+          );
         }
         const selectedCount = Number(parts[1]);
         const resultEntries = Buffer.from(parts[2] ?? "", "base64")
@@ -390,7 +478,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
             cumulativeLimitExceeded = true;
             break;
           }
-          const file = await tools.read({ file_path: resultPath, limit: 2000 });
+          const file = await runtime.read({ file_path: resultPath, limit: 2000 });
           if (file.totalLines > 2000)
             throw new Error(
               `Artifact result entry ${relativePath} exceeds the 2,000-line read limit`,
@@ -432,7 +520,13 @@ export default async function triage_nemoclaw_ci_failure(input: {
           failuresTruncated: failures.length > 20,
         };
       } finally {
-        await run(`rm -rf -- ${q(dir)}`, "Remove temporary artifact directory");
+        const cleanup = await run(`rm -rf -- ${q(dir)}`, "Remove temporary artifact directory");
+        if (cleanup.exitCode !== 0)
+          throw await diagnosticError(
+            cleanup.stderr.text ||
+              cleanup.stdout.text ||
+              "Could not remove temporary artifact directory",
+          );
       }
     } catch (error) {
       throw await diagnosticError(error instanceof Error ? error.message : String(error));
@@ -451,9 +545,10 @@ export default async function triage_nemoclaw_ci_failure(input: {
       log,
     };
   const text = `${job.name}\n${log.stdout}\n${log.stderr}`;
-  const findings = [];
-  const add = (type, detail, suggestion) =>
+  const findings: { type: string; detail: string; suggestion: string }[] = [];
+  const add = (type: string, detail: string, suggestion: string): void => {
     findings.push({ type, detail: detail.slice(0, 4000), suggestion: suggestion.slice(0, 1000) });
+  };
   const signalled = (artifact?.failures ?? []).filter((failure) => failure.signal);
   if (signalled.length)
     add(
@@ -550,3 +645,42 @@ export default async function triage_nemoclaw_ci_failure(input: {
     log,
   };
 }
+
+function parseArguments(args: string[]): Input {
+  const values: Record<string, string> = {};
+  const allowed = new Set(["workdir", "job-id", "repo", "artifact-name", "max-lines", "clip-mode"]);
+  for (let index = 0; index < args.length; index += 2) {
+    const key = args[index];
+    const value = args[index + 1];
+    if (!key?.startsWith("--") || value === undefined)
+      throw new Error("Arguments must use --name value pairs");
+    const name = key.slice(2);
+    if (!allowed.has(name)) throw new Error(`Unknown option --${name}`);
+    if (Object.hasOwn(values, name)) throw new Error(`Duplicate option --${name}`);
+    values[name] = value;
+  }
+  if (!values["job-id"]) throw new Error("--job-id is required");
+  if (
+    values["max-lines"] !== undefined &&
+    !/^(?:[1-9]|[1-9]\d|[1-4]\d{2}|500)$/u.test(values["max-lines"])
+  )
+    throw new Error("--max-lines must be an integer from 1 through 500");
+  return {
+    workdir: values.workdir ?? process.cwd(),
+    jobId: values["job-id"],
+    repo: values.repo,
+    artifactName: values["artifact-name"],
+    maxLines: values["max-lines"] ? Number(values["max-lines"]) : undefined,
+    clipMode: values["clip-mode"] as ClipMode | undefined,
+  };
+}
+async function main(): Promise<void> {
+  console.log(
+    JSON.stringify(await classifyCiFailure(parseArguments(process.argv.slice(2))), null, 2),
+  );
+}
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
+  void main().catch((error: unknown) => {
+    console.error(redact(error instanceof Error ? error.message : String(error)));
+    process.exitCode = 1;
+  });
