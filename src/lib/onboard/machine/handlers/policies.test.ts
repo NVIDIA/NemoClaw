@@ -94,9 +94,15 @@ describe("policy state handler", () => {
         },
       ],
     });
+    const providerMatcher = vi.fn(
+      (name: string, type: string, credentialEnv: string) =>
+        name === "my-assistant-discord-bridge" &&
+        type === "discord-hermes-static-v1" &&
+        credentialEnv === "DISCORD_BOT_TOKEN",
+    );
     const { deps, calls } = createPolicyHandlerDeps({
       getActiveSandbox: vi.fn(() => ({ messaging: { plan: discordPlan } })),
-      providerMatchesGatewayCredential: vi.fn(() => true),
+      providerMatchesGatewayCredential: providerMatcher,
     });
     calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
       configuredChannels.includes("discord") ? [] : ["discord"],
@@ -111,6 +117,11 @@ describe("policy state handler", () => {
     expect(calls.unconfiguredChannels).toHaveBeenCalledWith(["discord"], ["discord"], {
       name: "hermes",
     });
+    expect(providerMatcher).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+    );
     expect(calls.mergeChannels).toHaveBeenCalledWith([], [], ["discord"], []);
     expect(calls.setupPolicies).toHaveBeenCalledWith(
       "my-assistant",

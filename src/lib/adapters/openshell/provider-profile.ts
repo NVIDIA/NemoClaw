@@ -127,16 +127,24 @@ export function parseCheckedInProviderProfileContract(
 }
 
 /** Compare an exported gateway profile with its checked-in credential boundary. */
+export function compareExportedProviderProfileWithContract(
+  exported: string,
+  expected: CheckedInProviderProfileContract,
+): boolean | null {
+  try {
+    const actual = providerProfileBoundary(JSON.parse(exported) as unknown);
+    return actual === null ? null : isDeepStrictEqual(actual, expected.boundary);
+  } catch {
+    return null;
+  }
+}
+
+/** Compare an exported gateway profile with its checked-in credential boundary. */
 export function exportedProviderProfileMatchesContract(
   exported: string,
   expected: CheckedInProviderProfileContract,
 ): boolean {
-  try {
-    const actual = providerProfileBoundary(JSON.parse(exported) as unknown);
-    return actual !== null && isDeepStrictEqual(actual, expected.boundary);
-  } catch {
-    return false;
-  }
+  return compareExportedProviderProfileWithContract(exported, expected) === true;
 }
 
 function isMissingProviderProfile(output: string, profileId: string): boolean {

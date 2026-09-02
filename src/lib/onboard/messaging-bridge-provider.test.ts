@@ -695,6 +695,18 @@ describe("matchesRegisteredStaticMessagingProfile", () => {
     expect(
       inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
         ...deps,
+        runOpenshell: () => ({ status: 0, stdout: "" }),
+      }),
+    ).toEqual({ kind: "indeterminate" });
+    expect(
+      inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        ...deps,
+        runOpenshell: () => ({ status: 0, stdout: "not-json" }),
+      }),
+    ).toEqual({ kind: "indeterminate" });
+    expect(
+      inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        ...deps,
         runOpenshell: () => ({
           status: 0,
           stdout: JSON.stringify({ ...DISCORD_PROFILE_DOC, binaries: ["/usr/bin/curl"] }),
@@ -717,7 +729,19 @@ describe("matchesRegisteredStaticMessagingProfile", () => {
           stdout: JSON.stringify(DISCORD_PROFILE_DOC),
         }),
       }),
-    ).toEqual({ kind: "collision" });
+    ).toEqual({ kind: "indeterminate" });
+    expect(
+      inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        ...deps,
+        readFileSync: () => {
+          throw new Error("profile unreadable");
+        },
+        runOpenshell: () => ({
+          status: 0,
+          stdout: JSON.stringify(DISCORD_PROFILE_DOC),
+        }),
+      }),
+    ).toEqual({ kind: "indeterminate" });
   });
 });
 

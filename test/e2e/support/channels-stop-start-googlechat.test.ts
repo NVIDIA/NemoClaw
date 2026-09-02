@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { credentialProviderRegistrationDependencies } from "../../../src/lib/onboard/credential-provider-registration.ts";
+import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
 import {
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
   GOOGLECHAT_E2E_ACCESS_TOKEN,
@@ -29,6 +30,10 @@ type FixtureChannelDependencies = Pick<
   (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"],
   "runGatewayOpenshell" | "upsertMessagingProviders"
 >;
+
+const legacyProviderDependencies = (
+  "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
+) as FixtureProviderDependencies;
 
 describe("channels stop/start Google Chat live composition", () => {
   it("intercepts the live policy-channel boundary before gateway refresh minting", () => {
@@ -91,6 +96,7 @@ describe("channels stop/start Google Chat live composition", () => {
     }));
     const run = runMock as unknown as FixtureRunner;
     const originalUpsert = credentialProviderRegistrationDependencies.upsertMessagingProviders;
+    const originalLegacyUpsert = legacyProviderDependencies.upsertMessagingProviders;
     const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
       ensureProfiles: vi.fn(),
       root: "/repo",
@@ -119,6 +125,7 @@ describe("channels stop/start Google Chat live composition", () => {
     expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).toBe(
       originalUpsert,
     );
+    expect(legacyProviderDependencies.upsertMessagingProviders).toBe(originalLegacyUpsert);
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {

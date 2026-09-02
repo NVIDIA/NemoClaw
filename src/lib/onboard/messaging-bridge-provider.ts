@@ -20,7 +20,7 @@ import path from "node:path";
 import YAML from "yaml";
 
 import {
-  exportedProviderProfileMatchesContract,
+  compareExportedProviderProfileWithContract,
   parseCheckedInProviderProfileContract,
 } from "../adapters/openshell/provider-profile";
 import { compactText } from "../core/url-utils";
@@ -158,19 +158,21 @@ function staticProfileMatchesCheckedInBoundary(
   profile: MessagingBridgeProfile,
   exported: string,
   readFileSync: (file: string) => string,
-): boolean {
+): boolean | null {
   try {
     const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
-    return (
-      expected !== null &&
-      expected.profileId === profile.profileId &&
-      expected.boundary.endpoints.length === 0 &&
-      expected.boundary.binaries.length === 0 &&
-      expected.boundary.inference_capable === false &&
-      exportedProviderProfileMatchesContract(exported, expected)
-    );
+    if (
+      expected === null ||
+      expected.profileId !== profile.profileId ||
+      expected.boundary.endpoints.length !== 0 ||
+      expected.boundary.binaries.length !== 0 ||
+      expected.boundary.inference_capable !== false
+    ) {
+      return null;
+    }
+    return compareExportedProviderProfileWithContract(exported, expected);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -189,14 +191,14 @@ export function inspectRegisteredStaticMessagingProfile(
       { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
     );
     if (exported.status !== 0) return { kind: "indeterminate" };
+    const matches = staticProfileMatchesCheckedInBoundary(
+      profile,
+      bufferOrStringToText(exported.stdout),
+      deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
+    );
+    if (matches === null) return { kind: "indeterminate" };
     return {
-      kind: staticProfileMatchesCheckedInBoundary(
-        profile,
-        bufferOrStringToText(exported.stdout),
-        deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
-      )
-        ? "exact"
-        : "collision",
+      kind: matches ? "exact" : "collision",
     };
   } catch {
     return { kind: "indeterminate" };
