@@ -38,8 +38,10 @@ function runInstallerHostAdmissionTest(
   forcedRejection?: { findingIds: string[]; capabilityIds: string[] },
   options: {
     experimentalProfile?: string;
+    gatewayRuntime?: string;
     gatewayManagementMode?: string;
     portableProfileArtifact?: "present" | "missing";
+    providerPreparationFailure?: string;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
@@ -48,10 +50,12 @@ function runInstallerHostAdmissionTest(
   const onboardDir = path.join(sourceRoot, "dist", "lib", "onboard");
   const experimentalDir = path.join(onboardDir, "experimental");
   const readinessDir = path.join(sourceRoot, "dist", "lib", "readiness");
+  const runtimeProviderDir = path.join(onboardDir, "runtime-provider");
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(onboardDir, { recursive: true });
   fs.mkdirSync(experimentalDir, { recursive: true });
   fs.mkdirSync(readinessDir, { recursive: true });
+  fs.mkdirSync(runtimeProviderDir, { recursive: true });
 
   fs.writeFileSync(
     path.join(onboardDir, "preflight.js"),
@@ -87,6 +91,22 @@ exports.loadGatewayManagementDeclaration = () => ({
   for (const [artifactPath, contents] of portableProfileArtifacts) {
     fs.writeFileSync(artifactPath, contents);
   }
+  fs.writeFileSync(
+    path.join(runtimeProviderDir, "selection.js"),
+    `const preparationFailure = ${JSON.stringify(options.providerPreparationFailure ?? null)};
+exports.resolveConfiguredRuntimeProvider = () => ({
+  gateway: {
+    supported: true,
+    prepareHostRuntime: () => {
+      if (preparationFailure) throw new Error(preparationFailure);
+      return {
+        sandboxHostAddress:
+          process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "169.254.2.2" : null,
+      };
+    },
+  },
+});\n`,
+  );
   fs.writeFileSync(
     path.join(readinessDir, "host.js"),
     `exports.createHostReadinessReport = (_options, collection) => {
@@ -155,6 +175,7 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
 
   const {
     NEMOCLAW_EXPERIMENTAL_PROFILE: _experimentalProfile,
+    NEMOCLAW_GATEWAY_RUNTIME: _gatewayRuntime,
     TEST_GATEWAY_MANAGEMENT_MODE: _gatewayManagementMode,
     ...inheritedEnv
   } = process.env;
@@ -167,6 +188,7 @@ exports.evaluateOnboardReadinessAdmission = (report, options) => {
     ...(options.experimentalProfile
       ? { NEMOCLAW_EXPERIMENTAL_PROFILE: options.experimentalProfile }
       : {}),
+    ...(options.gatewayRuntime ? { NEMOCLAW_GATEWAY_RUNTIME: options.gatewayRuntime } : {}),
     TEST_GATEWAY_MANAGEMENT_MODE: options.gatewayManagementMode ?? "",
   };
 
@@ -224,6 +246,34 @@ describe("installer host preflight package contract", () => {
     expect(result.status).toBe(1);
     expect(output).toMatch(/Host preflight found issues/);
     expect(output).toMatch(/The detected container runtime is unsupported\./);
+  });
+
+  it("admits the unsupported host classifier through the selected managed runtime provider", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      {
+        runtime: "podman",
+        isUnsupportedRuntime: true,
+      },
+      undefined,
+      { gatewayRuntime: "podman" },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).not.toMatch(/Host preflight found issues/);
+  });
+
+  it("fails closed when selected provider host preparation throws", () => {
+    const { output, result } = runInstallerHostAdmissionTest(
+      { runtime: "podman", isUnsupportedRuntime: true },
+      undefined,
+      {
+        gatewayRuntime: "podman",
+        providerPreparationFailure: "native Podman address preparation failed",
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("native Podman address preparation failed");
   });
 
   it("keeps an unsupported runtime blocked without the portable classifier artifact (#9007)", () => {

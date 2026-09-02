@@ -7,6 +7,7 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
+import type {} from "vitest";
 import { createVitest } from "vitest/node";
 
 import { REPO_ROOT } from "../../test/e2e/fixtures/paths.ts";
@@ -21,7 +22,7 @@ import {
 } from "./workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "./workflow-plan.mts";
 
-declare module "@vitest/runner" {
+declare module "vitest" {
   interface TaskMeta {
     e2ePhases?: readonly string[];
   }

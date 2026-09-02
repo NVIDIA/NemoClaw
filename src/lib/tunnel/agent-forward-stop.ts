@@ -139,7 +139,7 @@ function makeRunCaptureOpenshell(openshell: string): ForwardListRunner {
   };
 }
 
-export function stopAgentForwardPortsForStop(
+function stopAndConfirmAgentForwardPorts(
   sandboxName: string | undefined,
   deps: StopAgentForwardPortsDeps = {},
 ): boolean {
@@ -230,8 +230,7 @@ export function stopAgentForwardPortsForStop(
   }
   const ports = getAgentForwardPorts(agent, sandbox, sandboxName, occupied);
   if (ports.length === 0) return true;
-  let stopped = true;
-
+  let released = true;
   for (const port of ports) {
     const result = bestEffortForwardStopForSandbox(
       scopedRunOpenshell,
@@ -243,7 +242,7 @@ export function stopAgentForwardPortsForStop(
       warn(
         `Keeping ${displayName} host port forward ${String(port)}; it belongs to another sandbox.`,
       );
-      stopped = false;
+      released = false;
       continue;
     }
     if (result === "list-failed") {
@@ -252,7 +251,7 @@ export function stopAgentForwardPortsForStop(
           port,
         )} cleanup.`,
       );
-      stopped = false;
+      released = false;
       continue;
     }
 
@@ -262,12 +261,26 @@ export function stopAgentForwardPortsForStop(
           `within ${String(FORWARD_RELEASE_TIMEOUT_MS / 1000)} seconds; ` +
           "the listener may still be running.",
       );
-      stopped = false;
+      released = false;
     } else if (result === "stopped") {
       info(
         `Stopped ${displayName} host port forward ${String(port)} for sandbox '${sandboxName}'.`,
       );
     }
   }
-  return stopped;
+  return released;
+}
+
+export function stopAgentForwardPortsForStop(
+  sandboxName: string | undefined,
+  deps: StopAgentForwardPortsDeps = {},
+): void {
+  stopAndConfirmAgentForwardPorts(sandboxName, deps);
+}
+
+export function settleAgentForwardPortsForRebuild(
+  sandboxName: string | undefined,
+  deps: StopAgentForwardPortsDeps = {},
+): boolean {
+  return stopAndConfirmAgentForwardPorts(sandboxName, deps);
 }

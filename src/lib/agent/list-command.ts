@@ -42,6 +42,6 @@ export function renderAgentRuntimeList(
     .join("\n");
 }
 
-export function printAgentRuntimeList(log: (message: string) => void = console.log): void {
+export function printAgentRuntimeList(log: (message: string) => void): void {
   log(renderAgentRuntimeList());
 }

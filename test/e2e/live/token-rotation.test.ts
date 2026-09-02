@@ -285,14 +285,14 @@ test(
     ...testTimeoutOptions(PHASE_TIMEOUT_MS),
     meta: {
       e2ePhases: [
-        "confirm Docker and start hermetic inference",
+        "confirm the selected runtime and start hermetic inference",
         "install the sandbox and confirm provider hashes",
         "rotate only the Telegram provider",
         "reuse the sandbox and record rotation evidence",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -300,17 +300,10 @@ test(
 
     assertTokenPairsDiffer();
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-token-rotation",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info-token-rotation",
+      scenarioLabel: "token rotation",
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for token rotation live E2E: ${resultText(docker)}`);
-      }
-      skip("Docker is required for token rotation live E2E");
-    }
 
     const fakeOpenAI = await startFakeOpenAiCompatibleServer({
       chatContent: "OK",
@@ -439,8 +432,7 @@ test(
     // OpenClaw/plugin layers for the retained rotation; token values remain in
     // gateway providers and are never baked into this image.
     const cacheImageTag = `nemoclaw-token-rotation-cache:${process.pid}`;
-    const retainBuildCache = await host.command(
-      "docker",
+    const retainBuildCache = await runtimeProvider.command(
       ["image", "tag", sandboxImageTag(), cacheImageTag],
       {
         artifactName: "phase-1-retain-build-cache",
@@ -450,7 +442,7 @@ test(
     );
     expect(retainBuildCache.exitCode, resultText(retainBuildCache)).toBe(0);
     cleanup.trackDisposable("remove token-rotation build cache tag", async () => {
-      const remove = await host.command("docker", ["image", "rm", cacheImageTag], {
+      const remove = await runtimeProvider.command(["image", "rm", cacheImageTag], {
         artifactName: "cleanup-token-rotation-build-cache",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,

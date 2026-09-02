@@ -104,9 +104,9 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
       expect(message).not.toContain(secret);
     }
 
-    expect(() => assertHermesMcpHttpResponse(httpResult(200), [])).toThrowError(
-      /fixture result token/u,
-    );
+    expect(() =>
+      assertHermesMcpHttpResponse(httpResult(200, `missing ${secret}`), [secret]),
+    ).toThrowError(/fixture result token.*redacted response body: missing \[REDACTED\]/u);
     expect(() =>
       assertHermesMcpHttpResponse(httpResult(200, "", `${HERMES_MCP_HTTP_STATUS_MARKER}500\n`), []),
     ).toThrowError(/exactly one HTTP status marker/u);

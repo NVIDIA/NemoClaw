@@ -6,7 +6,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { findLayerImportBoundaryViolations } from "../../scripts/checks/layer-import-boundaries.mts";
+import {
+  findLayerImportBoundaryViolations,
+  findManagedRuntimeBoundaryViolations,
+} from "../../scripts/checks/layer-import-boundaries.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 let fixtureCounter = 0;
@@ -41,6 +44,10 @@ function scanFixture(fixture: string, source: string) {
 describe("CLI layer import boundaries (#6245)", () => {
   it("keeps domain, adapter, action, and command layers separated (#6245)", () => {
     expect(findLayerImportBoundaryViolations()).toEqual([]);
+  });
+
+  it("keeps managed runtime orchestration provider-neutral (#9145)", () => {
+    expect(findManagedRuntimeBoundaryViolations()).toEqual([]);
   });
 
   it("collects TypeScript import-equals references (#6245)", () => {
@@ -187,6 +194,7 @@ describe("CLI layer import boundaries (#6245)", () => {
   });
 
   it.each(["Command", "NemoClawCommand", "NemoClawSandboxCommand"])(
+
     "rejects an unrelated local %s class as a command base (#6245)",
     (baseName) => {
       const violations = scanFixture(
