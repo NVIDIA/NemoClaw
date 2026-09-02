@@ -116,7 +116,7 @@ whose amd64 config reports Node `22.23.1`.
   - `https://registry.npmjs.org/hono/-/hono-4.12.34.tgz`
   - `MIT`; no dependencies; Node.js `>=16.9.0`
 - `mcporter@0.7.3` committed runtime lock
-  - SHA-256: `17f2372a0a6949df928333a2f98862ae563013a7682b19a8ce63825c4696a064`
+  - SHA-256: `720c0e3ec2efcccd2c820ce2a39d733f7bd5bf9d3e6fb95310e7f6cd369db83c`
 
 `fast-uri@3.1.6` has a valid npm registry signature and no registry attestation.
 `undici@8.10.0` has a valid npm registry signature and SLSA provenance.
