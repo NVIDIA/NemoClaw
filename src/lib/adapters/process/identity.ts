@@ -13,7 +13,8 @@ const PROCESS_IDENTITY_CACHE_MS = 1_000;
 export interface ProcessIdentityProbes {
   readonly currentPid: number;
   isAlive(pid: number): boolean;
-  readStartIdentity(pid: number): string | null;
+  /** Linux boot identity plus start ticks, or null when strong evidence is unavailable. */
+  readStrongIdentity(pid: number): string | null;
 }
 
 interface LinuxProcessStat {
@@ -149,5 +150,5 @@ export const hostProcessIdentityProbes: ProcessIdentityProbes = {
   // Onboarding never compares second-precision ps timestamps because two
   // generations can begin within the same second. Unavailable strong identity
   // evidence therefore stays fail-closed on non-Linux hosts.
-  readStartIdentity: (pid) => readProcessIdentity(pid, true, false),
+  readStrongIdentity: (pid) => readProcessIdentity(pid, true, false),
 };

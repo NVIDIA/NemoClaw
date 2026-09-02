@@ -176,4 +176,48 @@ describe("onboard lock ownership", () => {
         `is obsolete before removing only '${guardFile}', then retry.`,
     });
   });
+
+  it.each(["candidate", "reclaim"] as const)(
+    "reconciles an interrupted stale reclamation-guard %s artifact (#10779)",
+    (kind) => {
+      const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+      const token = "11111111-1111-4111-8111-111111111111";
+      const departedOwner = {
+        ...createMcpLifecycleLockOwner("onboard-lock-reclamation", token),
+        pid: 2_147_483_647,
+        processIdentity: "departed-process",
+      };
+      const artifactFile =
+        kind === "candidate"
+          ? `${guardFile}.candidate-${String(departedOwner.pid)}-${token}`
+          : `${guardFile}.reclaim-${String(process.pid)}-22222222-2222-4222-8222-222222222222`;
+      fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+      fs.writeFileSync(artifactFile, JSON.stringify(departedOwner), { mode: 0o600 });
+
+      expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
+      expect(fs.existsSync(artifactFile)).toBe(false);
+    },
+  );
+
+  it("reports an unverifiable reclamation-guard artifact without removing it (#10779)", () => {
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    const token = "33333333-3333-4333-8333-333333333333";
+    const foreignOwner = {
+      ...createMcpLifecycleLockOwner("onboard-lock-reclamation", token),
+      pid: 4242,
+      processIdentity: "foreign-process",
+      hostIdentity: "foreign-host",
+    };
+    const artifactFile = `${guardFile}.candidate-${String(foreignOwner.pid)}-${token}`;
+    fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+    fs.writeFileSync(artifactFile, JSON.stringify(foreignOwner), { mode: 0o600 });
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      reclamationGuard: { guardFile: artifactFile, owner: { hostIdentity: "foreign-host" } },
+    });
+    expect(fs.existsSync(artifactFile)).toBe(true);
+  });
 });

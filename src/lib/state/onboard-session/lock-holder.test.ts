@@ -9,7 +9,7 @@ import { classifyOnboardLockContents } from "./lock-holder";
 const liveProbes: ProcessIdentityProbes = {
   currentPid: 101,
   isAlive: () => true,
-  readStartIdentity: () => null,
+  readStrongIdentity: () => null,
 };
 
 const departedProbes: ProcessIdentityProbes = {
@@ -67,6 +67,7 @@ describe("onboarding lock classification", () => {
   it.each([
     ["matching", "proc:100", "proc:100", "held", true],
     ["reused", "proc:100", "proc:101", "stale", null],
+    ["rebooted", "linux:boot-a:100", "linux:boot-b:100", "stale", null],
     ["reused current PID", "proc:100", "proc:101", "stale", null],
     ["unverifiable", "proc:100", null, "held", false],
   ] as const)(
@@ -75,7 +76,7 @@ describe("onboarding lock classification", () => {
       const probes: ProcessIdentityProbes = {
         currentPid: 101,
         isAlive: () => true,
-        readStartIdentity: () => observedIdentity,
+        readStrongIdentity: () => observedIdentity,
       };
       const contents = JSON.stringify({
         pid: _case === "reused current PID" ? probes.currentPid : 202,

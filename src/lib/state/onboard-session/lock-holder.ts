@@ -39,7 +39,7 @@ function onboardLockHolderIdentity(
 ): "departed" | "verified" | "unavailable" {
   if (!probes.isAlive(lock.pid)) return "departed";
   if (lock.processStartIdentity === null) return "unavailable";
-  const currentIdentity = probes.readStartIdentity(lock.pid);
+  const currentIdentity = probes.readStrongIdentity(lock.pid);
   if (currentIdentity === null) return "unavailable";
   return currentIdentity === lock.processStartIdentity ? "verified" : "departed";
 }
@@ -67,7 +67,7 @@ export function createOnboardLockRecord(
 ): OnboardLockRecord {
   return {
     pid: probes.currentPid,
-    processStartIdentity: probes.readStartIdentity(probes.currentPid),
+    processStartIdentity: probes.readStrongIdentity(probes.currentPid),
     startedAt,
     command,
   };
