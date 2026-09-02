@@ -24,6 +24,7 @@ import {
   exportedProviderProfileMatchesContract,
   parseCheckedInProviderProfileContract,
 } from "../adapters/openshell/provider-profile";
+import { redactProviderDiagnostic } from "../adapters/openshell/provider-diagnostic";
 import { registerCheckedInProviderProfile } from "../adapters/openshell/provider-profile-registration";
 import { compactText } from "../core/url-utils";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels";
@@ -685,9 +686,13 @@ export function configureMessagingBridgeRefreshes(
       return minted;
     }
 
-    // Redact before logging — never echo secret material.
+    // Fully redact both recognized secret shapes and every exact source/material
+    // value before logging a child-process diagnostic.
     const diagnostic = compactText(
-      deps.redact(`${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`),
+      redactProviderDiagnostic(
+        `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`,
+        [secret, ...built.material.map(({ value }) => value)],
+      ),
     );
     warn(
       `\n  ✗ ${profile.channelId} bridge: failed to configure gateway token minting for '${bridge.name}'.`,

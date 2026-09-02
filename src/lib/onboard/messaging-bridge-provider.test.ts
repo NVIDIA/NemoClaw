@@ -373,6 +373,36 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(result.reason).toBeTruthy();
   });
 
+  it("fully redacts reflected source and generated refresh material", () => {
+    const clientEmail = "reflected-bot@example.invalid";
+    const privateKey = "unique-private-key-material-for-redaction";
+    const sourceSecret = JSON.stringify({ client_email: clientEmail, private_key: privateKey });
+    const scope = GC_PROFILE.scopes.join(" ");
+    const log = vi.fn();
+    const runOpenshell = vi.fn(() => ({
+      status: 1,
+      stderr: `source=${sourceSecret} private_key=${privateKey}`,
+      stdout: `client_email=${clientEmail} scope=${scope}`,
+    }));
+
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => sourceSecret,
+      log,
+      profiles: [GC_PROFILE],
+    });
+
+    const diagnostic = `${log.mock.calls.flat().join("\n")} ${result.reason ?? ""}`;
+    expect(result.ok).toBe(false);
+    expect(diagnostic).not.toContain(sourceSecret);
+    expect(diagnostic).not.toContain(clientEmail);
+    expect(diagnostic).not.toContain(privateKey);
+    expect(diagnostic).not.toContain(scope);
+    expect(diagnostic).not.toContain(privateKey.slice(0, 4));
+    expect(diagnostic).toContain("<REDACTED>");
+  });
+
   it("resolves the secret from the injected env too (parity)", () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: MINTED_STATUS_TABLE }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {

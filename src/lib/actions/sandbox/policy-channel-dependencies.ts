@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
+import { redactProviderDiagnostic } from "../../adapters/openshell/provider-diagnostic";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
@@ -66,6 +67,7 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  redactProviderDiagnostic,
   /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
   clearStoppedSandboxStateRoots(
     sandboxName: string,

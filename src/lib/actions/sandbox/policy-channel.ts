@@ -930,14 +930,23 @@ async function applyChannelAddToGatewayAndRegistry(
     ) {
       const createdProviderNames = [...(err.createdProviderNames ?? [])];
       const createdProviders = new Set(createdProviderNames);
-      const cleanupFailures = createdProviderNames.filter((providerName) => {
+      const cleanupFailures = createdProviderNames.flatMap((providerName) => {
         const result = policyChannelDependencies.runGatewayOpenshell(
           gatewayName,
           ["provider", "delete", providerName],
           { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
         );
         const output = `${result.stdout || ""}${result.stderr || ""}`;
-        return result.status !== 0 && !/\bNotFound\b|not found/i.test(output);
+        return result.status === 0 || /\bNotFound\b|not found/i.test(output)
+          ? []
+          : [
+              {
+                providerName,
+                diagnostic:
+                  policyChannelDependencies.redactProviderDiagnostic(output).replace(/\s+/gu, " ") ||
+                  `provider delete exited with status ${result.status ?? "unknown"}`,
+              },
+            ];
       });
       const updatedProviderNames = err.mutatedProviderNames.filter(
         (providerName) => !createdProviders.has(providerName),
@@ -946,7 +955,18 @@ async function applyChannelAddToGatewayAndRegistry(
         console.error(`  ${YW}⚠${R} Updated provider state remains; resolve it and retry.`);
       }
       if (cleanupFailures.length > 0) {
-        console.error(`  ${YW}⚠${R} Could not remove newly created providers; retry cleanup.`);
+        const originalFailure = policyChannelDependencies
+          .redactProviderDiagnostic(err instanceof Error ? err.message : String(err))
+          .replace(/\s+/gu, " ");
+        if (originalFailure) console.error(`  ${originalFailure}`);
+        for (const { providerName, diagnostic } of cleanupFailures) {
+          console.error(
+            `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`,
+          );
+          console.error(
+            `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`,
+          );
+        }
       }
       cleanupCredentialFreePolicy?.();
       process.exit(1);

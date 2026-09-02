@@ -946,106 +946,110 @@ describe("credential provider registration", () => {
     expect(session.stagedCredentialProviders).toEqual([]);
   });
 
-  it.each([
-    { cleanup: "succeeds", deleteStatus: 0, deleteError: "", recovery: false },
-    { cleanup: "fails", deleteStatus: 1, deleteError: "gateway unavailable", recovery: true },
-  ])(
-    "cleans up a newly created bridge provider when refresh $cleanup",
-    async ({ deleteStatus, deleteError, recovery }) => {
-      const session = { stagedCredentialProviders: [] } as unknown as Session;
-      let providerExists = false;
-      const commandHandlers = new Map<string, () => ReturnType<typeof providerMetadata>>([
-        [
-          "get",
-          () =>
-            providerExists
-              ? providerMetadata(
-                  "alpha-googlechat-bridge",
-                  "google-chat-bridge",
-                  "GOOGLE_CHAT_ACCESS_TOKEN",
-                )
-              : {
-                  status: 1,
-                  stdout: "",
-                  stderr:
-                    'Error: code: \'Some requested entity was not found\', message: "provider not found"',
-                },
-        ],
-        [
-          "create",
-          () => {
-            providerExists = true;
-            return { status: 0, stdout: "", stderr: "" };
-          },
-        ],
-        [
-          "delete",
-          () => {
-            providerExists = deleteStatus !== 0;
-            return { status: deleteStatus, stdout: "", stderr: deleteError };
-          },
-        ],
-      ]);
-      const runOpenshell = vi.fn(
-        (args: string[]) =>
-          commandHandlers.get(args[1] ?? "")?.() ?? { status: 0, stdout: "", stderr: "" },
+  async function exerciseBridgeRefreshCleanup(deleteResult: {
+    status: number;
+    stderr: string;
+  }): Promise<{ diagnostics: string; providerExists: boolean }> {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    let providerExists = false;
+    const commandHandlers = new Map<string, () => ReturnType<typeof providerMetadata>>([
+      [
+        "get",
+        () =>
+          providerExists
+            ? providerMetadata(
+                "alpha-googlechat-bridge",
+                "google-chat-bridge",
+                "GOOGLE_CHAT_ACCESS_TOKEN",
+              )
+            : {
+                status: 1,
+                stdout: "",
+                stderr:
+                  'Error: code: \'Some requested entity was not found\', message: "provider not found"',
+              },
+      ],
+      [
+        "create",
+        () => {
+          providerExists = true;
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      ],
+      [
+        "delete",
+        () => {
+          providerExists = deleteResult.status !== 0;
+          return { status: deleteResult.status, stdout: "", stderr: deleteResult.stderr };
+        },
+      ],
+    ]);
+    const runOpenshell = vi.fn(
+      (args: string[]) =>
+        commandHandlers.get(args[1] ?? "")?.() ?? { status: 0, stdout: "", stderr: "" },
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDef: MessagingTokenDef = {
+      name: "alpha-googlechat-bridge",
+      envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+      token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
+      providerType: "google-chat-bridge",
+    };
+    const ensureProfiles = vi
+      .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
+      .mockImplementation(() => undefined);
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockReturnValue({ ok: false, reason: "token minting failed" });
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await expect(
+        registration.stageSandboxCredentialProviders(
+          sandboxInput(requiredBindings([tokenDef])),
+          async () => ({ messagingTokenDefs: [tokenDef] }),
+        ),
+      ).rejects.toThrow("exit:1");
+      expect(runOpenshell).toHaveBeenCalledWith(
+        ["provider", "delete", "-g", "test-gateway", "alpha-googlechat-bridge"],
+        expect.objectContaining({ ignoreError: true }),
       );
-      const deps = registrationDeps(runOpenshell, session);
-      const registration = createCredentialProviderRegistration(deps);
-      const tokenDef: MessagingTokenDef = {
-        name: "alpha-googlechat-bridge",
-        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
-        providerType: "google-chat-bridge",
-      };
-      const ensureProfiles = vi
-        .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
-        .mockImplementation(() => undefined);
-      const configureRefreshes = vi
-        .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
-        .mockReturnValue({ ok: false, reason: "token minting failed" });
-      const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
-        throw new Error(`exit:${code ?? 0}`);
-      });
-      const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(session.stagedCredentialProviders).toEqual([]);
+      return { diagnostics: errorLog.mock.calls.flat().join("\n"), providerExists };
+    } finally {
+      errorLog.mockRestore();
+      exit.mockRestore();
+      configureRefreshes.mockRestore();
+      ensureProfiles.mockRestore();
+    }
+  }
 
-      try {
-        await expect(
-          registration.stageSandboxCredentialProviders(
-            sandboxInput(requiredBindings([tokenDef])),
-            async () => ({ messagingTokenDefs: [tokenDef] }),
-          ),
-        ).rejects.toThrow("exit:1");
+  it("removes a newly created bridge provider when refresh fails", async () => {
+    const outcome = await exerciseBridgeRefreshCleanup({ status: 0, stderr: "" });
 
-        expect(runOpenshell).toHaveBeenCalledWith(
-          [
-            "provider",
-            "delete",
-            "-g",
-            "test-gateway",
-            "alpha-googlechat-bridge",
-          ],
-          expect.objectContaining({ ignoreError: true }),
-        );
-        expect(session.stagedCredentialProviders).toEqual([]);
-        expect(providerExists).toBe(recovery);
-        const diagnostics = errorLog.mock.calls.flat().join("\n");
-        expect(diagnostics.includes("Automatic cleanup could not remove")).toBe(recovery);
-        expect(diagnostics.includes("alpha-googlechat-bridge")).toBe(recovery);
-        expect(diagnostics.includes("gateway unavailable")).toBe(recovery);
-        expect(
-          diagnostics.includes(
-            'openshell provider delete -g "test-gateway" "alpha-googlechat-bridge"',
-          ),
-        ).toBe(recovery);
-      } finally {
-        errorLog.mockRestore();
-        exit.mockRestore();
-        configureRefreshes.mockRestore();
-        ensureProfiles.mockRestore();
-      }
-    },
-  );
+    expect(outcome.providerExists).toBe(false);
+    expect(outcome.diagnostics).not.toContain("Automatic cleanup could not remove");
+    expect(outcome.diagnostics).not.toContain("openshell provider delete");
+  });
+
+  it("reports the residual provider and recovery command when refresh cleanup fails", async () => {
+    const outcome = await exerciseBridgeRefreshCleanup({
+      status: 1,
+      stderr: "gateway unavailable",
+    });
+
+    expect(outcome.providerExists).toBe(true);
+    expect(outcome.diagnostics).toContain("Automatic cleanup could not remove");
+    expect(outcome.diagnostics).toContain("alpha-googlechat-bridge");
+    expect(outcome.diagnostics).toContain("gateway unavailable");
+    expect(outcome.diagnostics).toContain(
+      'openshell provider delete -g "test-gateway" "alpha-googlechat-bridge"',
+    );
+  });
 
   it("rechecks before persisting migrated messaging credentials (#9833)", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;

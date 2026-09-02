@@ -139,6 +139,8 @@ let bridgeProfileWasImported: boolean;
 let detachedProviders: Set<string>;
 let deletedProviders: Set<string>;
 let registeredProviders: Set<string>;
+let bridgeRefreshError: string | null;
+let providerDeleteError: string | null;
 
 function printedText(): string {
   return [...logSpy.mock.calls, ...errorSpy.mock.calls]
@@ -251,6 +253,8 @@ beforeEach(() => {
   detachedProviders = new Set();
   deletedProviders = new Set();
   registeredProviders = new Set();
+  bridgeRefreshError = null;
+  providerDeleteError = null;
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args, options) => {
     gatewayCallCount += 1;
     const command = withoutGateway(args);
@@ -273,12 +277,15 @@ beforeEach(() => {
       command[0] === "provider" && command[1] === "create"
         ? command[command.indexOf("--name") + 1]
         : null;
-    detachedProvider ? detachedProviders.add(detachedProvider) : undefined;
-    deletedProvider ? deletedProviders.add(deletedProvider) : undefined;
-    deletedProvider ? registeredProviders.delete(deletedProvider) : undefined;
-    createdProvider ? registeredProviders.add(createdProvider) : undefined;
     const configuringRefresh =
       command[0] === "provider" && command[1] === "refresh" && command[2] === "configure";
+    const refreshFailure = configuringRefresh ? bridgeRefreshError : null;
+    const deleteFailure = deletedProvider ? providerDeleteError : null;
+    const commandFailure = refreshFailure ?? deleteFailure ?? "";
+    detachedProvider ? detachedProviders.add(detachedProvider) : undefined;
+    deletedProvider ? deletedProviders.add(deletedProvider) : undefined;
+    deletedProvider && !deleteFailure ? registeredProviders.delete(deletedProvider) : undefined;
+    createdProvider ? registeredProviders.add(createdProvider) : undefined;
     const runEnv = options?.env as Record<string, string> | undefined;
     bridgeRefreshWasSecure = configuringRefresh
       ? command.includes("--secret-material-env") &&
@@ -299,12 +306,17 @@ beforeEach(() => {
           : "",
       stderr: invalidRefresh
         ? "invalid secret handoff"
+        : commandFailure
+          ? commandFailure
         : profileMissing
           ? "provider profile 'google-chat-bridge' not found"
           : providerMissing
             ? `provider '${args[args.length - 1]}' not found`
             : "",
-      status: invalidRefresh || profileMissing || providerMissing ? 1 : 0,
+      status:
+        invalidRefresh || refreshFailure || deleteFailure || profileMissing || providerMissing
+          ? 1
+          : 0,
       signal: null,
     };
   });
@@ -401,6 +413,22 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(printedText()).toContain("Failed to register channel providers with the gateway.");
     expect(detachedProviders.has("test-sb-googlechat-bridge")).toBe(true);
     expect(deletedProviders.has("test-sb-googlechat-bridge")).toBe(true);
+  });
+
+  it("reports scoped recovery when refresh cleanup leaves a bridge provider", async () => {
+    bridgeRefreshError = "refresh unavailable";
+    providerDeleteError = "gateway unavailable";
+
+    await expect(addSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
+      code: 1,
+    });
+
+    const diagnostics = printedText();
+    expect(diagnostics).toContain("test-sb-googlechat-bridge");
+    expect(diagnostics).toContain("gateway unavailable");
+    expect(diagnostics).toContain(
+      'openshell provider delete -g "nemoclaw" "test-sb-googlechat-bridge"',
+    );
   });
 
   it("removes the bridge provider, policy, and durable plan through the channel action", async () => {
