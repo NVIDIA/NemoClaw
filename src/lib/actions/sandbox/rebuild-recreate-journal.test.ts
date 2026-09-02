@@ -260,6 +260,9 @@ describe("rebuild replacement journal", () => {
       session = mutator(session) ?? session;
       return session;
     });
+    vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+      return matches(session) ? ((session = mutator(session) ?? session), "updated") : "mismatch";
+    });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
@@ -366,16 +369,6 @@ describe("rebuild replacement journal", () => {
   });
 
   it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
-    mocks.captureOpenshell.mockReturnValue(absentProbe());
-    const stranded = open();
-    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
-      id: stranded.id,
-      phase: "deleted",
-    });
-
-    // The source was never deleted: OpenShell reports it again, and the
-    // preserved registry row still identifies that same live sandbox.
-    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
@@ -384,6 +377,22 @@ describe("rebuild replacement journal", () => {
       lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
       lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(SANDBOX_ID),
     } as registry.SandboxEntry);
+    const stranded = open();
+    onboardSession.updateSession((current) => {
+      const checkpoint = current.checkpoint as NonNullable<Session["checkpoint"]>;
+      const transaction = checkpoint.sandboxRecreate as NonNullable<
+        typeof checkpoint.sandboxRecreate
+      >;
+      current.checkpoint = {
+        ...checkpoint,
+        sandboxRecreate: { ...transaction, phase: "deleted" },
+      };
+      return current;
+    });
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      phase: "deleted",
+    });
 
     const restarted = open();
 
@@ -421,7 +430,7 @@ describe("rebuild replacement journal", () => {
 
     expect(() =>
       open({ sandboxName: "alpha", gatewayName: "nemoclaw-7070", gatewayPort: 7070 }),
-    ).toThrow(/Cannot resume sandbox 'alpha' replacement/);
+    ).toThrow(/different recreate transaction in progress/);
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({
       id: stranded.id,
       gatewayName: "nemoclaw-9090",
@@ -432,7 +441,7 @@ describe("rebuild replacement journal", () => {
   it("records the delete boundary before and after the destructive command", () => {
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleting");
 
     mocks.captureOpenshell.mockReturnValue(absentProbe());
@@ -444,14 +453,14 @@ describe("rebuild replacement journal", () => {
     mocks.captureOpenshell.mockReturnValue(absentProbe());
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
   });
 
   it("stops before the next mutation when the source outlives its delete", () => {
     const journal = open();
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(() => journal.confirmDeleted()).toThrow(
       /OpenShell still reports the journaled source after delete/,

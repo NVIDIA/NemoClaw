@@ -13,12 +13,11 @@ import type {
 import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import {
-  advanceSandboxRecreateTransaction,
+  beginSandboxRecreateDelete,
   beginSandboxRecreateTransaction,
-  createSandboxRecreateRuntime,
-  discardVoidSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
   fingerprintSandboxRegistryEntry,
+  ownSandboxRecreateTransaction,
   planSandboxRecreateRecovery,
   type SandboxRecreateObservation,
 } from "./sandbox-recreate-transaction";
@@ -31,16 +30,6 @@ const SOURCE_ID = fingerprintSandboxRecreateValue("openshell-source-id");
 const TARGET_ID = fingerprintSandboxRecreateValue("target-id");
 const FOREIGN_ID = fingerprintSandboxRecreateValue("foreign-openshell-id");
 const TARGET_INTENT = fingerprintSandboxRecreateValue({ agent: "openclaw", provider: "nvidia" });
-const EVERY_PHASE = [
-  "planned",
-  "deleting",
-  "deleted",
-  "creating",
-  "created",
-  "registry_committing",
-  "completed",
-] as const;
-
 const SOURCE_ENTRY: SandboxEntry = {
   name: "alpha",
   agent: "openclaw",
@@ -98,8 +87,8 @@ function transactionAt(
 }
 
 describe("sandbox recreate recovery from a void journal", () => {
-  it.each(EVERY_PHASE)(
-    "restarts from %s when the registered source outlived a journal it can no longer resume (#10473)",
+  it.each(["deleted", "creating"] as const)(
+    "keeps refusing durable source-row drift from %s (#10473)",
     (phase) => {
       expect(
         planSandboxRecreateRecovery(
@@ -111,7 +100,10 @@ describe("sandbox recreate recovery from a void journal", () => {
           },
           JOURNAL_GATEWAY,
         ),
-      ).toEqual({ action: "restart_from_source" });
+      ).toMatchObject({
+        action: "reject",
+        reason: expect.stringMatching(/preserved source registry row changed/),
+      });
     },
   );
 
@@ -349,134 +341,236 @@ describe("sandbox recreate recovery from a void journal", () => {
   });
 });
 
-describe("discarding a void recreate journal", () => {
-  function strandedSession() {
+describe("atomic recreate journal ownership", () => {
+  function sessionWithTransaction() {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     beginSandboxRecreateTransaction(session, {
       sandboxName: "alpha",
-      gatewayName: "nemoclaw-31818",
-      gatewayPort: 31818,
+      gatewayName: JOURNAL_GATEWAY.gatewayName,
+      gatewayPort: JOURNAL_GATEWAY.gatewayPort,
       sourceEntry: REGISTERED_SOURCE_ENTRY,
-      observation: ABSENT_SOURCE,
+      observation: LIVE_SOURCE,
       targetIntentFingerprint: TARGET_INTENT,
-      now: ISO,
       id: TX_ID,
       targetGeneration: TARGET_GENERATION,
+      now: ISO,
     });
-    advanceSandboxRecreateTransaction(session, TX_ID, "creating");
     return session;
   }
 
-  it("clears a journal whose registered source is still live (#10473)", () => {
-    const session = strandedSession();
+  function storeFor(session: ReturnType<typeof sessionWithTransaction>) {
+    return {
+      loadSession: () => session,
+      updateSession: (mutator: (current: typeof session) => typeof session | void) => {
+        mutator(session);
+        return session;
+      },
+      compareAndSwapSession: (
+        matches: (current: typeof session) => boolean,
+        mutator: (current: typeof session) => typeof session | void,
+      ) => {
+        return matches(session) ? (mutator(session), "updated" as const) : ("mismatch" as const);
+      },
+    };
+  }
 
-    discardVoidSandboxRecreateTransaction(
-      session,
-      TX_ID,
-      LIVE_SOURCE,
-      REGISTERED_SOURCE_ENTRY,
-      JOURNAL_GATEWAY,
-    );
+  it("replaces a void journal without exposing an empty journal (#10473)", () => {
+    const session = sessionWithTransaction();
+    session.checkpoint = {
+      ...session.checkpoint!,
+      sandboxRecreate: { ...session.checkpoint!.sandboxRecreate!, phase: "deleted" },
+    };
+    const seen: Array<string | null> = [];
+    const baseStore = storeFor(session);
+    const owned = ownSandboxRecreateTransaction({
+      sessionStore: {
+        ...baseStore,
+        compareAndSwapSession: (matches, mutator) => {
+          return matches(session)
+            ? (seen.push(session.checkpoint?.sandboxRecreate?.id ?? null),
+              mutator(session),
+              seen.push(session.checkpoint?.sandboxRecreate?.id ?? null),
+              "updated")
+            : "mismatch";
+        },
+      },
+      sandboxName: "alpha",
+      ...JOURNAL_GATEWAY,
+      targetIntentFingerprint: TARGET_INTENT,
+      readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+      observe: () => LIVE_SOURCE,
+      decorateCheckpoint: (_current, checkpoint) => checkpoint,
+    });
 
-    expect(session.checkpoint?.sandboxRecreate).toBeNull();
+    expect(owned.transaction.id).not.toBe(TX_ID);
+    expect(seen).toEqual([TX_ID, owned.transaction.id]);
+    expect(seen).not.toContain(null);
   });
 
-  it("refuses to discard a journal whose replacement is not disproven (#10473)", () => {
-    const session = strandedSession();
-
+  it("fails closed when the opening session changes before journal ownership (#10473)", () => {
+    const session = sessionWithTransaction();
+    const openingId = session.sessionId;
+    const baseStore = storeFor(session);
     expect(() =>
-      discardVoidSandboxRecreateTransaction(
-        session,
-        TX_ID,
-        ABSENT_SOURCE,
-        REGISTERED_SOURCE_ENTRY,
-        JOURNAL_GATEWAY,
-      ),
-    ).toThrow(/still owns a replacement/);
-    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
+      ownSandboxRecreateTransaction({
+        sessionStore: {
+          ...baseStore,
+          compareAndSwapSession: (matches, mutator) => {
+            session.sessionId = "replacement-session";
+            return matches(session) ? (mutator(session), "updated") : "mismatch";
+          },
+        },
+        sandboxName: "alpha",
+        ...JOURNAL_GATEWAY,
+        targetIntentFingerprint: TARGET_INTENT,
+        readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+        observe: () => LIVE_SOURCE,
+        decorateCheckpoint: (_current, checkpoint) => checkpoint,
+      }),
+    ).toThrow(/session or recreate transaction changed/);
+    expect(openingId).not.toBe(session.sessionId);
+    expect(session.checkpoint?.sandboxRecreate?.id).toBe(TX_ID);
   });
 
-  it("refuses to resume a handed-off runtime whose journal is void (#10473)", () => {
-    const session = strandedSession();
-
+  it("fails closed when journal readback differs from the transaction written (#10473)", () => {
+    const session = sessionWithTransaction();
+    const baseStore = storeFor(session);
+    let loads = 0;
     expect(() =>
-      createSandboxRecreateRuntime(
-        { loadSession: () => session, updateSession: () => session },
-        {
-          id: TX_ID,
-          targetGeneration: TARGET_GENERATION,
+      ownSandboxRecreateTransaction({
+        sessionStore: {
+          ...baseStore,
+          loadSession: () => {
+            loads += 1;
+            const transaction = session.checkpoint!.sandboxRecreate!;
+            return loads < 2
+              ? session
+              : {
+                  ...session,
+                  checkpoint: {
+                    ...session.checkpoint!,
+                    sandboxRecreate: { ...transaction, revision: transaction.revision + 1 },
+                  },
+                };
+          },
+        },
+        sandboxName: "alpha",
+        ...JOURNAL_GATEWAY,
+        targetIntentFingerprint: TARGET_INTENT,
+        readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+        observe: () => LIVE_SOURCE,
+        decorateCheckpoint: (_current, checkpoint) => checkpoint,
+      }),
+    ).toThrow(/Cannot verify sandbox 'alpha' recreate transaction after the write/);
+  });
+
+  it.each(["busy", "mismatch"] as const)(
+    "fails closed when the journal owner CAS returns %s (#10473)",
+    (result) => {
+      const session = sessionWithTransaction();
+      expect(() =>
+        ownSandboxRecreateTransaction({
+          sessionStore: { ...storeFor(session), compareAndSwapSession: () => result },
+          sandboxName: "alpha",
+          ...JOURNAL_GATEWAY,
           targetIntentFingerprint: TARGET_INTENT,
-        },
-        "alpha",
-        "nemoclaw-31818",
-        REGISTERED_SOURCE_ENTRY,
-        () => LIVE_SOURCE,
-        () => undefined,
-      ),
-    ).toThrow(/no longer owns a replacement/);
-    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
+          readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+          observe: () => LIVE_SOURCE,
+          decorateCheckpoint: (_current, checkpoint) => checkpoint,
+        }),
+      ).toThrow(
+        result === "busy" ? /owns the session lock/ : /session or recreate transaction changed/,
+      );
+      expect(session.checkpoint?.sandboxRecreate?.id).toBe(TX_ID);
+    },
+  );
+
+  it("rejects journal replacement when the requested target intent changed (#10473)", () => {
+    const session = sessionWithTransaction();
+    session.checkpoint = {
+      ...session.checkpoint!,
+      sandboxRecreate: { ...session.checkpoint!.sandboxRecreate!, phase: "deleted" },
+    };
+    expect(() =>
+      ownSandboxRecreateTransaction({
+        sessionStore: storeFor(session),
+        sandboxName: "alpha",
+        ...JOURNAL_GATEWAY,
+        targetIntentFingerprint: fingerprintSandboxRecreateValue("changed-intent"),
+        readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+        observe: () => LIVE_SOURCE,
+        decorateCheckpoint: (_current, checkpoint) => checkpoint,
+      }),
+    ).toThrow(/different recreate transaction in progress/);
+    expect(session.checkpoint?.sandboxRecreate?.id).toBe(TX_ID);
   });
 
-  it("refuses to discard a journal against another sandbox's row (#10473)", () => {
-    const session = strandedSession();
+  it("rejects delete when the full transaction changes before CAS (#10473)", () => {
+    const session = sessionWithTransaction();
+    const expected = structuredClone(session.checkpoint!.sandboxRecreate!);
+    session.checkpoint = {
+      ...session.checkpoint!,
+      sandboxRecreate: {
+        ...session.checkpoint!.sandboxRecreate!,
+        revision: session.checkpoint!.sandboxRecreate!.revision + 1,
+      },
+    };
 
     expect(() =>
-      discardVoidSandboxRecreateTransaction(
-        session,
-        TX_ID,
-        LIVE_SOURCE,
-        {
-          ...REGISTERED_SOURCE_ENTRY,
-          name: "beta",
-        },
-        JOURNAL_GATEWAY,
-      ),
-    ).toThrow(/still owns a replacement/);
-    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
+      beginSandboxRecreateDelete({
+        sessionStore: storeFor(session),
+        openingSessionId: session.sessionId,
+        expectedTransaction: expected,
+        targetIntentFingerprint: TARGET_INTENT,
+        readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+        observe: () => LIVE_SOURCE,
+      }),
+    ).toThrow(/session or recreate transaction changed/);
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("planned");
   });
 
-  it("refuses to discard a journal against another gateway's row (#10473)", () => {
-    const session = strandedSession();
-
+  it("rejects delete when the target intent differs from the current journal (#10473)", () => {
+    const session = sessionWithTransaction();
+    const expected = structuredClone(session.checkpoint!.sandboxRecreate!);
     expect(() =>
-      discardVoidSandboxRecreateTransaction(
-        session,
-        TX_ID,
-        LIVE_SOURCE,
-        { ...REGISTERED_SOURCE_ENTRY, ...FOREIGN_GATEWAY },
-        FOREIGN_GATEWAY,
-      ),
-    ).toThrow(/still owns a replacement/);
-    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
+      beginSandboxRecreateDelete({
+        sessionStore: storeFor(session),
+        openingSessionId: session.sessionId,
+        expectedTransaction: expected,
+        targetIntentFingerprint: fingerprintSandboxRecreateValue("changed-intent"),
+        readRegistryEntry: () => REGISTERED_SOURCE_ENTRY,
+        observe: () => LIVE_SOURCE,
+      }),
+    ).toThrow(/session or recreate transaction changed/);
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("planned");
   });
 
-  it("refuses to discard a journal from another gateway's probe (#10473)", () => {
-    const session = strandedSession();
-
+  it.each([
+    ["registry row", { ...REGISTERED_SOURCE_ENTRY, imageTag: "foreign" }, LIVE_SOURCE],
+    [
+      "registry gateway",
+      { ...REGISTERED_SOURCE_ENTRY, gatewayName: "foreign", gatewayPort: 9090 },
+      LIVE_SOURCE,
+    ],
+    [
+      "live identity",
+      REGISTERED_SOURCE_ENTRY,
+      { state: "ready", liveIdentityFingerprint: FOREIGN_ID },
+    ],
+  ] as const)("rejects delete after fresh %s drift (#10473)", (_label, row, observation) => {
+    const session = sessionWithTransaction();
+    const expected = structuredClone(session.checkpoint!.sandboxRecreate!);
     expect(() =>
-      discardVoidSandboxRecreateTransaction(
-        session,
-        TX_ID,
-        LIVE_SOURCE,
-        REGISTERED_SOURCE_ENTRY,
-        FOREIGN_GATEWAY,
-      ),
-    ).toThrow(/still owns a replacement/);
-    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
-  });
-
-  it("refuses to discard a journal owned by another transaction (#10473)", () => {
-    const session = strandedSession();
-
-    expect(() =>
-      discardVoidSandboxRecreateTransaction(
-        session,
-        "33333333-3333-4333-8333-333333333333",
-        LIVE_SOURCE,
-        REGISTERED_SOURCE_ENTRY,
-        JOURNAL_GATEWAY,
-      ),
-    ).toThrow(/ownership changed/);
+      beginSandboxRecreateDelete({
+        sessionStore: storeFor(session),
+        openingSessionId: session.sessionId,
+        expectedTransaction: expected,
+        targetIntentFingerprint: TARGET_INTENT,
+        readRegistryEntry: () => row as SandboxEntry,
+        observe: () => observation,
+      }),
+    ).toThrow(/registry row changed|gateway authority changed|not the journaled source/);
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("planned");
   });
 });
 

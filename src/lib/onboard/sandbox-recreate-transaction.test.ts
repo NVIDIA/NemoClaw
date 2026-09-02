@@ -453,6 +453,9 @@ describe("sandbox recreate journal", () => {
           mutator(session);
           return session;
         },
+        compareAndSwapSession: (matches, mutator) => {
+          return matches(session) ? (mutator(session), "updated") : "mismatch";
+        },
       },
       {
         id: TX_ID,
@@ -505,6 +508,9 @@ describe("sandbox recreate journal", () => {
           mutator(session);
           return session;
         },
+        compareAndSwapSession: (matches, mutator) => {
+          return matches(session) ? (mutator(session), "updated") : "mismatch";
+        },
       },
       {
         id: TX_ID,
@@ -551,6 +557,9 @@ describe("sandbox recreate journal", () => {
         updateSession: (mutator) => {
           mutator(session);
           return session;
+        },
+        compareAndSwapSession: (matches, mutator) => {
+          return matches(session) ? (mutator(session), "updated") : "mismatch";
         },
       },
       {
@@ -612,6 +621,12 @@ describe("sandbox recreate journal", () => {
       updateSession: (mutator: (current: typeof session) => void) => {
         mutator(session);
         return session;
+      },
+      compareAndSwapSession: (
+        matches: (current: typeof session) => boolean,
+        mutator: (current: typeof session) => typeof session | void,
+      ) => {
+        return matches(session) ? (mutator(session), "updated" as const) : ("mismatch" as const);
       },
     };
     const request = {

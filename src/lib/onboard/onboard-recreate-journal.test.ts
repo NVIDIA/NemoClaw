@@ -110,6 +110,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       session = mutator(session) ?? session;
       return session;
     });
+    vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+      return matches(session) ? ((session = mutator(session) ?? session), "updated") : "mismatch";
+    });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "openclaw",
@@ -352,13 +355,6 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
   });
 
   it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
-    mocks.captureOpenshell.mockReturnValue(absentProbe());
-    const stranded = open();
-    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
-
-    // The source was never deleted: OpenShell reports it again, and the
-    // preserved registry row still identifies that same live sandbox.
-    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "openclaw",
@@ -367,6 +363,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
       lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
     } as registry.SandboxEntry);
+    const stranded = open();
+    stranded.advance("deleted");
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
 
     const restarted = open();
 
@@ -404,7 +403,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
         gatewayName: "nemoclaw-7070",
         gatewayPort: 7070,
       }),
-    ).toThrow(/Cannot resume sandbox 'alpha' replacement/);
+    ).toThrow(/different recreate transaction in progress/);
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({
       id: stranded?.id,
       gatewayName: "nemoclaw-9090",
