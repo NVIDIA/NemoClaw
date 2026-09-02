@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
@@ -11,7 +10,6 @@ import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts"
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -25,6 +23,7 @@ import {
   type FakeDockerApi,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
+import { applyFakePolicy } from "./openclaw-pairing-helpers.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   expectExitZero,
@@ -135,79 +134,6 @@ async function startHermesFakeDiscordGateway(
     env,
     redactionValues,
   });
-}
-
-async function applyHermesFakeDiscordPolicy(options: {
-  host: HostCliClient;
-  sandboxName: string;
-  api: FakeDockerApi;
-  env: NodeJS.ProcessEnv;
-  redactions: string[];
-}): Promise<void> {
-  const result = await options.host.command(
-    options.host.openshellCommandPath,
-    [
-      "policy",
-      "update",
-      options.sandboxName,
-      "--add-endpoint",
-      `${FAKE_DISCORD_HOST}:${options.api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `${FAKE_DISCORD_HOST}:${options.api.port}:GET:/**`,
-      "--add-allow",
-      `${FAKE_DISCORD_HOST}:${options.api.port}:WEBSOCKET_TEXT:/**`,
-      "--binary",
-      "/opt/hermes/.venv/bin/python",
-      "--wait",
-    ],
-    {
-      artifactName: "apply-hermes-fake-discord-gateway-policy",
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(result, "apply Hermes fake Discord Gateway policy");
-
-  const providerName = `${options.sandboxName}-discord-bridge`;
-  await rebindFixtureProviderPolicyEndpoint(options.host, options.sandboxName, {
-    artifactName: "bind-hermes-fake-discord-gateway-credential",
-    credentialEnv: "DISCORD_BOT_TOKEN",
-    endpoint: {
-      host: FAKE_DISCORD_HOST,
-      port: options.api.port,
-      protocol: "websocket",
-    },
-    env: options.env,
-    providerName,
-    redactionValues: options.redactions,
-  });
-
-  const binaryAssertion = await options.host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$5" --assert-binaries "$policy_file" "$3" "$4" websocket /opt/hermes/.venv/bin/python`,
-      "assert-hermes-fake-discord-policy-binaries",
-      options.host.openshellCommandPath,
-      options.sandboxName,
-      FAKE_DISCORD_HOST,
-      String(options.api.port),
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
-    ],
-    {
-      artifactName: "assert-hermes-fake-discord-gateway-binaries",
-      cwd: REPO_ROOT,
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binaryAssertion, "assert Hermes fake Discord Gateway binary restriction");
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
@@ -657,12 +583,22 @@ PY`,
       DISCORD_TOKEN,
       redactionValues,
     );
-    await applyHermesFakeDiscordPolicy({
+    await applyFakePolicy({
       host,
       sandboxName: SANDBOX_NAME,
       api: fakeGateway,
+      protocol: "websocket",
+      rewrite: "websocket-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-discord-bridge`,
       env,
       redactions: redactionValues,
+      artifactName: "apply-hermes-fake-discord-gateway-policy",
+      allowedBinaries: [
+        "/opt/hermes/.venv/bin/python3",
+        "/opt/hermes/.venv/bin/python",
+        "/usr/bin/python3",
+        "/usr/bin/python3.13",
+      ],
     });
 
     const deniedNodeGateway = await runHermesNodeDiscordDenial(

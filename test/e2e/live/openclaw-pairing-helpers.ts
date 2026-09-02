@@ -193,9 +193,11 @@ export async function applyFakePolicy(options: {
   env: NodeJS.ProcessEnv;
   redactions: string[];
   artifactName: string;
+  allowedBinaries?: readonly string[];
 }): Promise<void> {
   const policyHost = "host.openshell.internal";
   const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
+  const allowedBinaries = options.allowedBinaries ?? ["/usr/local/bin/node", "/usr/bin/node"];
   const args = [
     "policy",
     "update",
@@ -205,7 +207,7 @@ export async function applyFakePolicy(options: {
   ];
   for (const method of methods)
     args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
-  args.push("--binary", "/usr/local/bin/node", "--binary", "/usr/bin/node", "--wait");
+  args.push(...allowedBinaries.flatMap((binary) => ["--binary", binary]), "--wait");
   const result = await options.host.command("openshell", args, {
     artifactName: options.artifactName,
     env: options.env,
@@ -221,9 +223,18 @@ export async function applyFakePolicy(options: {
       String.raw`set -eu
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
-"$1" policy set --policy "$policy_file" --wait "$2"`,
+openshell="$1"
+sandbox_name="$2"
+provider_name="$3"
+policy_host="$4"
+policy_port="$5"
+policy_protocol="$6"
+policy_helper="$7"
+shift 7
+"$openshell" policy get --base "$sandbox_name" >"$policy_file"
+node --import tsx "$policy_helper" "$policy_file" "$provider_name" "$policy_host" "$policy_port" "$policy_protocol"
+node --import tsx "$policy_helper" --assert-binaries "$policy_file" "$policy_host" "$policy_port" "$policy_protocol" "$@"
+"$openshell" policy set --policy "$policy_file" --wait "$sandbox_name"`,
       `bind-fake-${options.protocol}-policy`,
       options.host.openshellCommandPath,
       options.sandboxName,
@@ -232,6 +243,7 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
       String(options.api.port),
       options.protocol,
       path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      ...allowedBinaries,
     ],
     {
       artifactName: `${options.artifactName}-credential-binding`,
@@ -606,11 +618,7 @@ export async function issuePairingRequest(options: {
   const script = options.channel === "slack" ? SLACK_PAIRING_SCRIPT : DISCORD_PAIRING_SCRIPT;
   const args =
     options.channel === "slack"
-      ? [
-          options.fakeSlackPort ?? "",
-          options.fakeSlackWebSocketPort ?? "",
-          PAIRING_USER.slack,
-        ]
+      ? [options.fakeSlackPort ?? "", options.fakeSlackWebSocketPort ?? "", PAIRING_USER.slack]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
   return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
