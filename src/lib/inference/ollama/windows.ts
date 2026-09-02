@@ -103,17 +103,14 @@ function captureWindowsOllamaHostSnapshot(): WindowsOllamaHostSnapshot | null {
   }
 }
 
-function psUtf8Expression(value: string): string {
-  const encoded = Buffer.from(value, "utf8").toString("base64");
-  return `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`;
-}
+const WINDOWS_OLLAMA_RESTORE_HOST_ENV = "NEMOCLAW_OLLAMA_RESTORE_HOST";
+const WINDOWS_OLLAMA_RESTORE_HOST_PRESENT_ENV = "NEMOCLAW_OLLAMA_RESTORE_HOST_PRESENT";
+const WINDOWS_OLLAMA_RESTORE_WATCHER_ENV = "NEMOCLAW_OLLAMA_RESTORE_WATCHER";
+const WINDOWS_OLLAMA_RESTORE_DAEMON_ENV = "NEMOCLAW_OLLAMA_RESTORE_DAEMON";
 
-function psNullableUtf8Expression(value: string | null): string {
-  return value === null ? "$null" : psUtf8Expression(value);
-}
-
-function runWindowsOllamaStateScript(script: string): boolean {
+function runWindowsOllamaStateScript(script: string, env?: NodeJS.ProcessEnv): boolean {
   const result = run(["powershell.exe", "-Command", `$ErrorActionPreference='Stop'; ${script}`], {
+    env,
     ignoreError: true,
     suppressOutput: true,
   });
@@ -128,31 +125,33 @@ function persistOllamaHostEnvVar(): boolean {
   );
 }
 
-function buildWindowsOllamaRestoreScript(snapshot: WindowsOllamaHostSnapshot): string {
-  const script = [
+function buildWindowsOllamaRestoreScript(): string {
+  return [
+    `$previousHostPresent = $env:${WINDOWS_OLLAMA_RESTORE_HOST_PRESENT_ENV}`,
+    `$previousHost = $env:${WINDOWS_OLLAMA_RESTORE_HOST_ENV}`,
+    `$previousWatcher = $env:${WINDOWS_OLLAMA_RESTORE_WATCHER_ENV}`,
+    `$previousDaemon = $env:${WINDOWS_OLLAMA_RESTORE_DAEMON_ENV}`,
+    `Remove-Item Env:${WINDOWS_OLLAMA_RESTORE_HOST_PRESENT_ENV} -EA SilentlyContinue`,
+    `Remove-Item Env:${WINDOWS_OLLAMA_RESTORE_HOST_ENV} -EA SilentlyContinue`,
+    `Remove-Item Env:${WINDOWS_OLLAMA_RESTORE_WATCHER_ENV} -EA SilentlyContinue`,
+    `Remove-Item Env:${WINDOWS_OLLAMA_RESTORE_DAEMON_ENV} -EA SilentlyContinue`,
+    "if ($previousHostPresent -ne '1') { $previousHost = $null }",
     "Get-Process 'ollama app' -EA SilentlyContinue | Stop-Process -Force",
     "Get-Process ollama -EA SilentlyContinue | Stop-Process -Force",
-    `$previousHost = ${psNullableUtf8Expression(snapshot.userHost)}`,
     "[Environment]::SetEnvironmentVariable('OLLAMA_HOST',$previousHost,'User')",
     "$env:OLLAMA_HOST = $previousHost",
-  ];
-  if (snapshot.watcherPath) {
-    script.push(
-      `$previousWatcher = ${psUtf8Expression(snapshot.watcherPath)}`,
-      "Start-Process -FilePath $previousWatcher -WindowStyle Hidden -ErrorAction Stop",
-    );
-  } else if (snapshot.daemonPath) {
-    script.push(
-      `$previousDaemon = ${psUtf8Expression(snapshot.daemonPath)}`,
-      "Start-Process -FilePath $previousDaemon -ArgumentList 'serve' -WindowStyle Hidden -ErrorAction Stop",
-    );
-  }
-  return script.join("; ");
+    "if ($previousWatcher) { Start-Process -FilePath $previousWatcher -WindowStyle Hidden -ErrorAction Stop } " +
+      "elseif ($previousDaemon) { Start-Process -FilePath $previousDaemon -ArgumentList 'serve' -WindowStyle Hidden -ErrorAction Stop }",
+  ].join("; ");
 }
 
 function rollbackWindowsOllamaHostSnapshot(snapshot: WindowsOllamaHostSnapshot): boolean {
-  const script = buildWindowsOllamaRestoreScript(snapshot);
-  return runWindowsOllamaStateScript(script);
+  return runWindowsOllamaStateScript(buildWindowsOllamaRestoreScript(), {
+    [WINDOWS_OLLAMA_RESTORE_HOST_PRESENT_ENV]: snapshot.userHost === null ? "0" : "1",
+    [WINDOWS_OLLAMA_RESTORE_HOST_ENV]: snapshot.userHost ?? "",
+    [WINDOWS_OLLAMA_RESTORE_WATCHER_ENV]: snapshot.watcherPath ?? "",
+    [WINDOWS_OLLAMA_RESTORE_DAEMON_ENV]: snapshot.daemonPath ?? "",
+  });
 }
 
 function reportWindowsOllamaRollbackFailure(): void {

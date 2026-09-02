@@ -176,6 +176,40 @@ function loadWindowsOllamaWithMocks(
   };
 }
 
+function captureDefaultWindowsRollbackInvocation(userHost: string | null) {
+  const watcherPath = "C:\\Users\\tester\\Ollama\\ollama app.exe";
+  const daemonPath = "C:\\Users\\tester\\Ollama\\ollama.exe";
+  const launchFailure = { status: 1, stdout: "", stderr: "launch unavailable" };
+  const runResults = [
+    hostSnapshotRun(userHost, watcherPath, daemonPath),
+    successfulRun(),
+    launchFailure,
+    launchFailure,
+    launchFailure,
+    successfulRun(),
+  ];
+  const run = vi.fn(
+    (_command: string | string[], _options?: { env?: NodeJS.ProcessEnv }) =>
+      runResults.shift() ?? successfulRun(),
+  );
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { windows, restore } = loadWindowsOllamaWithMocks(
+    run,
+    vi.fn(() => ""),
+  );
+
+  try {
+    expect(windows.setupWindowsOllamaWith0000Binding({ installedPath: daemonPath })).toBe(false);
+  } finally {
+    restore();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  }
+
+  return { daemonPath, run, watcherPath };
+}
+
 describe("Windows Ollama helper", () => {
   it("continues probing after a nonempty invalid Docker readiness response (#10100)", () => {
     const run = vi.fn();
@@ -319,6 +353,44 @@ describe("Windows Ollama helper", () => {
     expect(diagnostic).not.toContain(priorHost);
     expect(diagnostic).not.toContain("private-token");
     expect(diagnostic).not.toContain(Buffer.from(priorHost, "utf8").toString("base64"));
+  });
+
+  it("keeps a credential-bearing prior binding out of Windows rollback argv", () => {
+    const priorHost = "https://operator:private-token@ollama.example:11434";
+    const { daemonPath, run, watcherPath } = captureDefaultWindowsRollbackInvocation(priorHost);
+    expect(run).toHaveBeenCalledTimes(6);
+    const rollbackCall = run.mock.calls.at(-1);
+    expect(rollbackCall).toBeDefined();
+    const [rollbackCommand, rollbackOptions] = rollbackCall!;
+    const argv = commandText(rollbackCommand);
+
+    expect(argv).toContain("$env:NEMOCLAW_OLLAMA_RESTORE_HOST");
+    expect(argv).toContain("Remove-Item Env:NEMOCLAW_OLLAMA_RESTORE_HOST");
+    expect(argv).not.toContain(priorHost);
+    expect(argv).not.toContain(Buffer.from(priorHost, "utf8").toString("base64"));
+    expect(argv).not.toContain(watcherPath);
+    expect(argv).not.toContain(daemonPath);
+    expect(rollbackOptions?.env).toMatchObject({
+      NEMOCLAW_OLLAMA_RESTORE_HOST: priorHost,
+      NEMOCLAW_OLLAMA_RESTORE_HOST_PRESENT: "1",
+      NEMOCLAW_OLLAMA_RESTORE_WATCHER: watcherPath,
+      NEMOCLAW_OLLAMA_RESTORE_DAEMON: daemonPath,
+    });
+  });
+
+  it("preserves a missing prior binding distinctly during Windows rollback", () => {
+    const { run } = captureDefaultWindowsRollbackInvocation(null);
+    const rollbackCall = run.mock.calls.at(-1);
+    expect(rollbackCall).toBeDefined();
+    const [rollbackCommand, rollbackOptions] = rollbackCall!;
+
+    expect(commandText(rollbackCommand)).toContain(
+      "if ($previousHostPresent -ne '1') { $previousHost = $null }",
+    );
+    expect(rollbackOptions?.env).toMatchObject({
+      NEMOCLAW_OLLAMA_RESTORE_HOST: "",
+      NEMOCLAW_OLLAMA_RESTORE_HOST_PRESENT: "0",
+    });
   });
 
   it("stops a final unready replacement before restoring the prior Windows state", () => {
