@@ -421,6 +421,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     brevTemplateSha256: [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+      "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
     ],
     formula: {
       asset: "openshell.rb",
@@ -448,6 +449,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "293f45ea1d54e1531c3a070123c04b47f972f29504bd8902a44ab71acdfe6cca",
       "ee3db19d06d34a625bff9e0ab021f095ce97eadf5f7a98fc60def62af87577ad",
       "4b45161017a5936331300e982168160575701632711328cbbb97480eb087fb51",
+      "c184083103f14247ea1c81e3a35aba3771cefdd46cf6c24d1fe6a145e0854117",
     ],
     manifests: [
       {
@@ -496,10 +498,16 @@ const EXPECTED_INSTALLER_ASSETS = [
   "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
   "openshell.rb",
 ] as const;
+const EXPECTED_INSTALLER_MANIFESTS = [
+  "openshell-checksums-sha256.txt",
+  "openshell-gateway-checksums-sha256.txt",
+  "openshell-sandbox-checksums-sha256.txt",
+] as const;
 const EXPECTED_BREV_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-aarch64-unknown-linux-musl.tar.gz",
 ] as const;
+const EXPECTED_BREV_MANIFESTS = ["openshell-checksums-sha256.txt"] as const;
 
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
@@ -657,6 +665,23 @@ function assertExactAssetSet(
       `${label} must contain the exact consumed asset set; ` +
         `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
     );
+  }
+}
+
+function assertTrustedManifestPins(
+  pins: InstallerPin[],
+  release: OpenShellReleaseTrust,
+  expectedAssets: readonly string[],
+  sourceLabel: string,
+): void {
+  assertExactAssetSet(pins, expectedAssets, sourceLabel);
+  const trusted = new Map(release.manifests.map((manifest) => [manifest.asset, manifest.sha256]));
+  for (const pin of pins) {
+    if (trusted.get(pin.asset) !== pin.sha256) {
+      fail(
+        `${sourceLabel} ${pin.asset} must match the base-trusted v${release.version} manifest digest`,
+      );
+    }
   }
 }
 
@@ -1587,16 +1612,35 @@ function runCli(): void {
   const installerReleaseVersions = [
     ...new Set(installerPins.map((pin) => pin.releaseVersion)),
   ].sort();
+  const installerManifestNames = new Set<string>(EXPECTED_INSTALLER_MANIFESTS);
+  const installerManifestPins = installerPins.filter((pin) =>
+    installerManifestNames.has(pin.asset),
+  );
+  const installerAssetPins = installerPins.filter((pin) => !installerManifestNames.has(pin.asset));
   for (const version of installerReleaseVersions) {
     assertExactAssetSet(
-      installerPins.filter((pin) => pin.releaseVersion === version),
+      installerAssetPins.filter((pin) => pin.releaseVersion === version),
       EXPECTED_INSTALLER_ASSETS,
       installerReleaseVersions.length === 1
         ? "installer pin table"
         : `installer pin table for ${version}`,
     );
   }
-  assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
+  const installerReleases = installerReleaseVersions.map(trustedRelease);
+  for (const release of installerReleases) {
+    assertTrustedManifestPins(
+      installerManifestPins.filter((pin) => pin.releaseVersion === release.version),
+      release,
+      EXPECTED_INSTALLER_MANIFESTS,
+      installerReleaseVersions.length === 1
+        ? "installer manifest pin table"
+        : `installer manifest pin table for ${release.version}`,
+    );
+  }
+  const brevManifestNames = new Set<string>(EXPECTED_BREV_MANIFESTS);
+  const brevManifestPins = brevPins.filter((pin) => brevManifestNames.has(pin.asset));
+  const brevAssetPins = brevPins.filter((pin) => !brevManifestNames.has(pin.asset));
+  assertExactAssetSet(brevAssetPins, EXPECTED_BREV_ASSETS, "Brev pin table");
   const brevReleaseVersions = [...new Set(brevPins.map((pin) => pin.releaseVersion))].sort();
   if (brevReleaseVersions.length !== 1) {
     fail(
@@ -1607,9 +1651,14 @@ function runCli(): void {
   if (!installerReleaseVersions.includes(releaseVersion)) {
     fail(`installer pin table has no assets for selected release ${releaseVersion}`);
   }
-  const pins = [...installerPins, ...brevPins];
+  const pins = [...installerAssetPins, ...brevAssetPins];
   const release = trustedRelease(releaseVersion);
-  const installerReleases = installerReleaseVersions.map(trustedRelease);
+  assertTrustedManifestPins(
+    brevManifestPins,
+    release,
+    EXPECTED_BREV_MANIFESTS,
+    "Brev manifest pin table",
+  );
   const sandboxBuildPins = extractSandboxBuildPins(installerSource);
   assertTrustedSandboxBuildPins(sandboxBuildPins, release);
   const supervisor =

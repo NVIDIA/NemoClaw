@@ -81,15 +81,16 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
       "}",
     ].join("\n");
 
-    expect(classifyPolicyReadCalls(source, "/repo/nemoclaw/src/blueprint/runner.ts", "/repo"))
-      .toEqual([
-        { site: "actionApply", view: "base", failureHandling: "error-preserving" },
-        {
-          site: "inspectAuthority",
-          view: "full",
-          failureHandling: "error-preserving",
-        },
-      ]);
+    expect(
+      classifyPolicyReadCalls(source, "/repo/nemoclaw/src/blueprint/runner.ts", "/repo"),
+    ).toEqual([
+      { site: "actionApply", view: "base", failureHandling: "error-preserving" },
+      {
+        site: "inspectAuthority",
+        view: "full",
+        failureHandling: "error-preserving",
+      },
+    ]);
   });
 
   it("ignores direct policy reads with ambiguous view flags (#9833)", () => {

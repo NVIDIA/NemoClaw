@@ -148,7 +148,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/runtime-state-mutation-startup-gate.py", mode: "100755" },
   { path: "scripts/state-dir-guard.py", mode: "100755" },
   {
-    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
+    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
     mode: "100644",
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },

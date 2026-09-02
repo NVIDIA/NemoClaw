@@ -84,7 +84,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/runtime-state-mutation-startup-gate.py",
   "scripts/runtime_state_mutation_hermes_publisher.py",
   "scripts/state-dir-guard.py",
-  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
+  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
   "src/lib/hermes-managed-route.ts",
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",

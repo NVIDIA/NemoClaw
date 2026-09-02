@@ -13,9 +13,9 @@ import {
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
-import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
+import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
 import {
@@ -42,6 +42,12 @@ import {
   TRANSPORT_CLASSIFICATION_PATTERN,
   writeFakeOpenShellForBlueprintFailClosed,
 } from "./inference-routing-helpers.ts";
+import {
+  RUNTIME_IDENTITY_E2E_OPTIONS,
+  RUNTIME_IDENTITY_E2E_SCENARIOS,
+  type RuntimeIdentityE2EContext,
+  type RuntimeIdentityE2EScenario,
+} from "./inference-routing-runtime-identity-fixtures.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
 // This is the PR-required inference-routing lane. Credential-backed provider
@@ -249,85 +255,6 @@ await main(["apply"]);
   expect(raw).toMatch(/DNS-backed HTTPS endpoint/);
   expect(openshellLog).toBe("");
 });
-
-interface RuntimeIdentityE2EScenario {
-  readonly testId: "TC-INF-12" | "TC-INF-13";
-  readonly providerType: string;
-  readonly credentialKey: string;
-  readonly clientIdEnvironmentName: string;
-  readonly refreshTokenEnvironmentName: string;
-  readonly clientSecretEnvironmentName: string;
-  readonly tokenPath: string;
-  readonly resourcePath: string;
-  readonly reviewedResourcePath: string;
-  readonly deniedMethod: "GET" | "POST";
-  readonly deniedPath: string;
-  readonly targetId: string;
-}
-
-const RUNTIME_IDENTITY_E2E_SCENARIOS = [
-  [
-    "12",
-    "",
-    {
-      testId: "TC-INF-12",
-      providerType: "oauth2-runtime-conformance-v1",
-      credentialKey: "E2E_ACCESS_TOKEN",
-      clientIdEnvironmentName: "E2E_CLIENT_ID",
-      refreshTokenEnvironmentName: "E2E_REFRESH_TOKEN",
-      clientSecretEnvironmentName: "E2E_CLIENT_SECRET",
-      tokenPath: "/oauth/token",
-      resourcePath: "/resource",
-      reviewedResourcePath: "/**",
-      deniedMethod: "POST",
-      deniedPath: "/resource",
-      targetId: "runtime-identity-reference-real-oauth-lifecycle",
-    },
-  ],
-  [
-    "13",
-    "Entra Graph ",
-    {
-      testId: "TC-INF-13",
-      providerType: "entra-runtime-v1",
-      credentialKey: "ENTRA_ACCESS_TOKEN",
-      clientIdEnvironmentName: "ENTRA_CLIENT_ID",
-      refreshTokenEnvironmentName: "ENTRA_REFRESH_TOKEN",
-      clientSecretEnvironmentName: "ENTRA_CLIENT_SECRET",
-      tokenPath: "/organizations/oauth2/v2.0/token",
-      resourcePath: "/v1.0/me",
-      reviewedResourcePath: "/v1.0/me",
-      deniedMethod: "GET",
-      deniedPath: "/v1.0/users",
-      targetId: "entra-runtime-identity-real-oauth-lifecycle",
-    },
-  ],
-] as const satisfies readonly (readonly [string, string, RuntimeIdentityE2EScenario])[];
-
-type RuntimeIdentityE2EContext = Pick<
-  E2ETargetFixtures,
-  "artifacts" | "cleanup" | "host" | "progress" | "sandbox"
-> & {
-  skip: (note?: string) => never;
-};
-
-const RUNTIME_IDENTITY_E2E_OPTIONS = {
-  timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "confirm live runtime identity prerequisites",
-      "onboard a real OpenShell sandbox",
-      "start the public OAuth issuer and protected resource",
-      "plan the non-secret runtime identity reference",
-      "apply and attach the runtime identity through OpenShell",
-      "prove inference remains live after identity attachment",
-      "call the protected resource with the injected bearer",
-      "reject unreviewed credential delivery before bearer substitution",
-      "rotate the credential and relaunch with its new placeholder",
-      "verify secret-safe status and deterministic rollback",
-    ],
-  },
-} as const;
 
 async function runRuntimeIdentityE2EScenario(
   _testNumber: string,
@@ -986,8 +913,8 @@ async function runRuntimeIdentityE2EScenario(
   expect(deleteProfile.exitCode, resultText(deleteProfile)).toBe(0);
 }
 
-// OpenShell 0.0.106 does not project provider-refresh credentials into Docker sandboxes.
-test.skipIf(!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProjection).for(
+// The OpenShell 0.0.116 release has not qualified provider-refresh projection into Docker sandboxes.
+test.skipIf(!OPENSHELL_V0116_QUALIFICATION.supportsRuntimeIdentityRefreshProjection).for(
   RUNTIME_IDENTITY_E2E_SCENARIOS,
 )(
   "TC-INF-%s %sruntime identity refreshes and injects a delegated bearer through real OpenShell",

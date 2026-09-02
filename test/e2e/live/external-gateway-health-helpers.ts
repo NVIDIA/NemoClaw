@@ -15,7 +15,7 @@ import {
   externalGatewayHealthProcessStopped,
   stopExternalGatewayHealthGateway,
 } from "../fixtures/external-gateway-health-process.ts";
-import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
+import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { runBoundedRetry } from "../fixtures/retry-policy.ts";
@@ -194,7 +194,7 @@ export async function startPreparedExternalTlsGateway({
   skip,
 }: ScenarioFixtures): Promise<PreparedExternalGatewayHealthScenario> {
   const gatewayBin = resolveGatewayBin();
-  if (!gatewayBin) skip("openshell-gateway 0.0.106 is required");
+  if (!gatewayBin) skip("openshell-gateway 0.0.116 is required");
 
   progress.phase("confirm the exact OpenShell gateway and SDK prerequisites");
   const version = await shellProbe.run(
@@ -211,7 +211,7 @@ export async function startPreparedExternalTlsGateway({
     },
   );
   requireProbeSuccess(version, "OpenShell gateway version check");
-  if (!`${version.stdout}\n${version.stderr}`.includes(OPENSHELL_V0106_QUALIFICATION.version)) {
+  if (!`${version.stdout}\n${version.stderr}`.includes(OPENSHELL_V0116_QUALIFICATION.version)) {
     throw new Error("The OpenShell gateway release does not match the required release.");
   }
 
@@ -295,12 +295,12 @@ export async function startPreparedExternalTlsGateway({
     path.join(blueprintRoot, "blueprint.yaml"),
     YAML.stringify({
       version: "1.0.0",
-      min_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
-      max_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
+      min_openshell_version: OPENSHELL_V0116_QUALIFICATION.version,
+      max_openshell_version: OPENSHELL_V0116_QUALIFICATION.version,
       openshell_target: {
         endpoint: `https://${address}:${String(port)}`,
         workspace: "default",
-        expected_release: OPENSHELL_V0106_QUALIFICATION.version,
+        expected_release: OPENSHELL_V0116_QUALIFICATION.version,
         lifecycle: "external",
         trust: { ca_file: tls.caPath },
         authentication: { credential_file: authenticationPath },
@@ -313,7 +313,7 @@ export async function startPreparedExternalTlsGateway({
   return {
     authenticationPath,
     blueprintRoot,
-    expectedRelease: OPENSHELL_V0106_QUALIFICATION.version,
+    expectedRelease: OPENSHELL_V0116_QUALIFICATION.version,
     privateStateRoot: stateDir,
   };
 }

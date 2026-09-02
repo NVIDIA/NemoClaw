@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
+import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const TLS_SERVER_NAME_REMOVE = "remove(openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME);";
@@ -20,10 +20,10 @@ export type OpenShellTlsServerNameSource = {
   readonly path: string;
 };
 
-export const OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+export const OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
   Object.freeze([
     {
-      blobSha: "c92f05ceac0700ae753902d237d44582e4084af9",
+      blobSha: "b1859f54cc1a5505d18af5ff86c70569d288fe73",
       checks: [
         {
           category: "driver",
@@ -37,7 +37,7 @@ export const OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServe
       path: "crates/openshell-driver-docker/src/lib.rs",
     },
     {
-      blobSha: "845def5524d6b4f96fce085d99de7fbf9f409464",
+      blobSha: "b52cb87836999de3970da9fbfdc97a2fbc73e908",
       checks: [
         {
           category: "regression",
@@ -52,7 +52,7 @@ export const OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServe
       path: "crates/openshell-driver-docker/src/tests.rs",
     },
     {
-      blobSha: "df61a13e2d25678f8795f68174d975a144eab304",
+      blobSha: "abb9d69dd21d6e06e243ba92ddb1e7be2c9ed4f5",
       checks: [
         {
           category: "driver",
@@ -72,7 +72,7 @@ export const OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServe
       path: "crates/openshell-driver-podman/src/container.rs",
     },
     {
-      blobSha: "af914ec467b3300145db8d6e1b6a4d4fc20d9337",
+      blobSha: "13e57f546d0a9a9fc2904b906264994d4087c94b",
       checks: [
         {
           category: "driver",
@@ -153,7 +153,7 @@ type VerificationResult = {
 
 export async function verifyOpenShellTlsServerNameSourceBoundary(
   fetchSource: typeof fetch = fetch,
-  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES,
+  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES,
 ): Promise<{
   drivers: VerificationResult[];
   regressions: VerificationResult[];
@@ -165,7 +165,7 @@ export async function verifyOpenShellTlsServerNameSourceBoundary(
   for (const reviewedSource of reviewedSources) {
     const url =
       `https://raw.githubusercontent.com/NVIDIA/OpenShell/` +
-      `${OPENSHELL_V0106_QUALIFICATION.sourceRevision}/${reviewedSource.path}`;
+      `${OPENSHELL_V0116_QUALIFICATION.sourceRevision}/${reviewedSource.path}`;
     const response = await fetchSource(url, {
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
@@ -190,7 +190,7 @@ export async function verifyOpenShellTlsServerNameSourceBoundary(
   return {
     drivers,
     regressions,
-    sourceRevision: OPENSHELL_V0106_QUALIFICATION.sourceRevision,
-    version: OPENSHELL_V0106_QUALIFICATION.version,
+    sourceRevision: OPENSHELL_V0116_QUALIFICATION.sourceRevision,
+    version: OPENSHELL_V0116_QUALIFICATION.version,
   };
 }
