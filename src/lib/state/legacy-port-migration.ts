@@ -803,7 +803,11 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
     if (isErrnoException(error) && error.code === "ENOENT") return { state: "clear" };
     throw error;
   }
-  let record: OnboardLockRecord | null;
+  let record: OnboardLockRecord | null = null;
+  // Aging the owner-less case has to read the inode that was opened, not the
+  // one the stat above saw. A writer that replaces a settled lock between the
+  // two calls leaves a fresh body behind a stale timestamp.
+  let writtenAtMs = stat.mtimeMs;
   try {
     const opened = fs.fstatSync(fd);
     if (!opened.isFile()) throw migrationError(`${activeLock} is not a regular file`);
@@ -812,16 +816,16 @@ function classifyOnboardLock(home: string, activeLock: string): OnboardLockDispo
         `${activeLock} exceeds the ${String(MAX_ONBOARD_LOCK_BYTES)} byte onboarding lock limit`,
       );
     }
+    writtenAtMs = opened.mtimeMs;
     record = parseOnboardLockRecord(JSON.parse(fs.readFileSync(fd, "utf8")));
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
-    record = null;
   } finally {
     fs.closeSync(fd);
   }
 
   if (record === null) {
-    return Date.now() - stat.mtimeMs > ONBOARD_LOCK_SETTLING_MS
+    return Date.now() - writtenAtMs > ONBOARD_LOCK_SETTLING_MS
       ? { state: "clear" }
       : { state: "settling" };
   }
