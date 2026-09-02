@@ -47,20 +47,18 @@ Select review evidence for the publication state before every agent-managed push
 - Before updating an open PR:
 
   1. Follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
-  2. Preserve the original PR objective, accepted scope, deferred scope, and complete disposition record.
-  3. Group valid code-changing findings by root cause and set the repair scope.
-  4. Route only in-scope groups to `nemoclaw-contributor-implement-issue` with the scope record and complete root-cause group.
-  5. Inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
-  6. Create one local repair commit and record it as the expected publication SHA.
-  7. Mark each accepted repair group resolved by the inspected local repair, subject to trusted validation.
-  8. Reread `headRefOid` before the canonical base fetch and restart collection only when it differs from the reviewed remote SHA.
-  9. Do not push while the original collection is pending, a finding is unclassified, an accepted group lacks an inspected repair, or validation is unresolved.
-  10. Immediately before publication, require the remote `headRefOid` to equal the reviewed remote SHA.
-  11. Require the push tool's expected commit to equal the local publication SHA.
+  2. Route only returned in-scope root-cause groups to `nemoclaw-contributor-implement-issue` with their returned scope records.
+  3. Inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
+  4. Create one local repair commit and record it as the expected publication SHA.
+  5. Mark each accepted repair group resolved by the inspected local repair, subject to trusted validation.
+  6. Reread `headRefOid` before the canonical base fetch and restart collection only when it differs from the reviewed remote SHA.
+  7. Do not push while the original collection is pending, a finding is unclassified, an accepted group lacks an inspected repair, or validation is unresolved.
+  8. Immediately before publication, require the remote `headRefOid` to equal the reviewed remote SHA.
+  9. Require the push tool's expected commit to equal the local publication SHA.
 
-  Do not repeat classification of the unchanged remote candidate after a local repair. The reviewed
-  remote SHA is now only the competing-update guard. A local repair commit does not violate that
-  guard. An unrelated remote update does.
+  Do not repeat collection or classification of the unchanged remote candidate after an inspected
+  implementation repair. The reviewed remote SHA is now only the competing-update guard. A local
+  repair commit does not violate that guard. An unrelated remote update does.
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 
@@ -73,7 +71,7 @@ Confirm that the complete validation execution surface is byte-for-byte identica
 
 Do not infer executable identity from a package name or version. Do not use a branch-defined validator as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute the candidate validator or publish. Report the path or executable and canonical base SHA.
 
-Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, commit the change, repeat the applicable review step, refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
+Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, inspect and commit the validator-created local diff as new pre-publication review evidence. Record the new commit as the expected publication SHA. Do not reuse implementation evidence for that later change. For an open PR, preserve the completed remote disposition record and do not recollect the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
 A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
 

@@ -32,7 +32,7 @@
       "Uses the shared contract only for candidate stabilization, evidence collection, classification, and permitted base integration, not as a second repair or publication owner.",
       "Inspects the returned repair, creates one local repair commit, and records its SHA as the expected publication commit before trusted validation, while retaining the reviewed remote `headRefOid` as the competing-update guard.",
       "After final review collection, binds `refs/remotes/origin/main` to the canonical GitHub base SHA, verifies the trusted validation surface, and runs `npm run validate:pr` before the push.",
-      "If direct validation applies an autofix, commits it, repeats the complete review collection and stable-`headRefOid` check, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
+      "If direct validation changes a tracked file, commits and inspects the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate, then rechecks `headRefOid`, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
     ]
   },
   {
@@ -92,6 +92,7 @@
       "Uses `nemoclaw-contributor-create-pr` and preserves the completed collection and disposition record.",
       "Marks the accepted group resolved by the inspected local repair, subject to trusted validation.",
       "Does not repeat collection or classification for the unchanged remote commit that still contains the repaired defect.",
+      "Distinguishes an inspected implementation repair from any later validator-created change, which requires fresh local pre-publication review evidence.",
       "Allows trusted validation and one guarded non-force push when `headRefOid` still equals the reviewed remote SHA.",
       "Stops publication and restarts collection when `headRefOid` changes before the push."
     ]
