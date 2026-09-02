@@ -9,7 +9,6 @@ import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/san
 import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandbox/policy-channel-dependencies.ts";
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
-import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
 import { clearStoppedSandboxStateRoots } from "../../../src/lib/sandbox/privileged-exec.ts";
@@ -57,8 +56,6 @@ type PolicyChannelModule = typeof import("../../../src/lib/actions/sandbox/polic
 type PolicyChannelDependenciesModule =
   typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts");
 type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell/runtime.ts");
-type CredentialProviderRegistrationModule =
-  typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
 type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
@@ -94,13 +91,6 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
-const credentialProviderRegistration = (
-  "default" in credentialProviderRegistrationModule
-    ? credentialProviderRegistrationModule.default
-    : credentialProviderRegistrationModule
-) as CredentialProviderRegistrationModule;
-const credentialProviderRegistrationDependencies =
-  credentialProviderRegistration.credentialProviderRegistrationDependencies as ProviderDependencies;
 const legacyProviderDependencies = (
   "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
 ) as ProviderDependencies;
@@ -234,12 +224,9 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-  const providerDependencies =
-    dependencies.providerDependencies ?? credentialProviderRegistrationDependencies;
-  const injectedProviderDependencies = dependencies.providerDependencies !== undefined;
+  const providerDependencies = dependencies.providerDependencies ?? legacyProviderDependencies;
   const effectiveLegacyProviderDependencies =
-    dependencies.legacyProviderDependencies ??
-    (injectedProviderDependencies ? providerDependencies : legacyProviderDependencies);
+    dependencies.legacyProviderDependencies ?? providerDependencies;
   const root = dependencies.root ?? ROOT;
   const run = dependencies.run ?? runOpenshell;
   const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;

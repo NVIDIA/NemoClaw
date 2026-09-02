@@ -7,7 +7,6 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
-  credentialProviderRegistrationDependencies,
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
 } from "./credential-provider-registration";
@@ -93,26 +92,6 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
-  it("resolves the provider upsert dependency when registration executes", () => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn();
-    const deps = registrationDeps(runOpenshell, session);
-    const registration = createCredentialProviderRegistration(deps);
-    const tokenDefs: MessagingTokenDef[] = [
-      { name: "alpha-googlechat-bridge", envKey: "GOOGLE_CHAT_ACCESS_TOKEN", token: null },
-    ];
-    const upsert = vi
-      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
-      .mockReturnValue(["alpha-googlechat-bridge"]);
-
-    try {
-      expect(registration.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-googlechat-bridge"]);
-      expect(upsert).toHaveBeenCalledExactlyOnceWith(tokenDefs, deps.runOpenshell, {});
-    } finally {
-      upsert.mockRestore();
-    }
-  });
-
   it.each([
     { condition: "matches", endpoints: [], expected: true },
     {

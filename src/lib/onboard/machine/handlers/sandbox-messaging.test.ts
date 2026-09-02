@@ -358,7 +358,6 @@ describe("reconcileReusedSandboxMessaging", () => {
 
   it("keeps a bridge channel whose gateway credential outlived the onboarding process (#10660)", () => {
     const plan = googlechatPlan();
-    // The pasted secret dies with its process, so a later rebuild sees empty env.
     vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "");
     const inspectGatewayCredential = vi.fn(() => ({ kind: "exact" as const }));
     const note = vi.fn();
@@ -531,8 +530,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       plan,
     );
 
-    // The host environment holds no value that reports whether an in-sandbox
-    // QR channel is still paired, so reuse must keep it selected.
+    // QR pairing state lives in the sandbox, not the host environment.
     expect(result.selectedChannels).toEqual(["whatsapp"]);
   });
 
@@ -672,53 +670,61 @@ describe("reconcileSandboxMessaging plan authority", () => {
     expect(deps.note).not.toHaveBeenCalledWith(expect.stringContaining("disabling the channel"));
   });
 
-  it("migrates legacy Slack bindings before start/rebuild gateway probes", async () => {
-    const currentPlan = {
-      ...slackPlan(
-        hashCredential("previous-slack-bot-token") ?? "",
-        hashCredential("previous-slack-app-token") ?? "",
-      ),
-      workflow: "start-channel" as const,
-    };
-    const legacyPlan = {
-      ...currentPlan,
-      credentialBindings: currentPlan.credentialBindings.map((binding) =>
-        binding.providerEnvKey === "SLACK_APP_TOKEN"
-          ? { ...binding, providerName: "alpha-slack-bridge" }
-          : binding,
-      ),
-    };
-    const deps = registryDeps(legacyPlan);
-    deps.inspectGatewayCredential.mockReturnValue({ kind: "exact" });
-    vi.stubEnv("SLACK_BOT_TOKEN", "");
-    vi.stubEnv("SLACK_APP_TOKEN", "");
+  it.each([false, true])(
+    "normalizes legacy Slack bindings before gateway probes (resume: %s)",
+    async (resume) => {
+      const currentPlan = {
+        ...slackPlan("previous-slack-bot-hash", "previous-slack-app-hash"),
+        workflow: "start-channel" as const,
+      };
+      const legacyPlan = {
+        ...currentPlan,
+        credentialBindings: currentPlan.credentialBindings.map((binding) =>
+          binding.providerEnvKey === "SLACK_APP_TOKEN"
+            ? { ...binding, providerName: "alpha-slack-bridge" }
+            : binding,
+        ),
+      };
+      const deps = resume ? reconcileDeps([null]) : registryDeps(legacyPlan);
+      deps.inspectGatewayCredential.mockReturnValue({ kind: "exact" });
+      deps.providerMatchesGatewayCredential.mockReturnValue(true);
+      const probe = resume ? deps.providerMatchesGatewayCredential : deps.inspectGatewayCredential;
+      vi.stubEnv("SLACK_BOT_TOKEN", "");
+      vi.stubEnv("SLACK_APP_TOKEN", "");
 
-    const result = await reconcileSandboxMessaging({
-      resume: false,
-      session: null,
-      sandboxName: "alpha",
-      agent: { name: "openclaw" },
-      deps,
-    });
+      const result = await reconcileSandboxMessaging({
+        resume,
+        session: resume
+          ? withMessagingCheckpoint(
+              completedCheckpointSession(legacyPlan, ["alpha-slack-bridge", "alpha-slack-app"]),
+              ["slack"],
+            )
+          : null,
+        sandboxName: "alpha",
+        agent: { name: "openclaw" },
+        deps,
+      });
 
-    expect(result).toEqual({ plan: currentPlan, selectedChannels: ["slack"] });
-    expect(deps.inspectGatewayCredential).toHaveBeenCalledWith(
-      "alpha-slack-bridge",
-      MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-      "SLACK_BOT_TOKEN",
-    );
-    expect(deps.inspectGatewayCredential).toHaveBeenCalledWith(
-      "alpha-slack-app",
-      MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-      "SLACK_APP_TOKEN",
-    );
-    expect(deps.inspectGatewayCredential).not.toHaveBeenCalledWith(
-      "alpha-slack-bridge",
-      MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-      "SLACK_APP_TOKEN",
-    );
-    expect(deps.writePlanToEnv).toHaveBeenLastCalledWith(currentPlan);
-  });
+      expect(result).toEqual({ plan: currentPlan, selectedChannels: ["slack"] });
+      expect(probe).toHaveBeenCalledWith(
+        "alpha-slack-bridge",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        "SLACK_BOT_TOKEN",
+      );
+      expect(probe).toHaveBeenCalledWith(
+        "alpha-slack-app",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        "SLACK_APP_TOKEN",
+      );
+      expect(probe).not.toHaveBeenCalledWith(
+        "alpha-slack-bridge",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        "SLACK_APP_TOKEN",
+      );
+      expect(deps.writePlanToEnv).toHaveBeenLastCalledWith(currentPlan);
+      expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses the registry plan before a staged plan for an existing sandbox", async () => {
     const registryToken = "123456:registry-token";
@@ -937,9 +943,6 @@ describe("reconcileSandboxMessaging plan authority", () => {
       deps,
     });
 
-    // A recorded selection is the previous run's choice, not the current host
-    // input; a channel the environment no longer configures must not re-enter
-    // the selection, or its egress preset is re-applied.
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(deps.note).toHaveBeenCalledWith(
       expect.stringContaining("No host inputs configure discord"),
