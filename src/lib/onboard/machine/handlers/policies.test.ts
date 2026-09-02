@@ -185,6 +185,45 @@ describe("policy state handler", () => {
     },
   );
 
+  it.each([
+    ["openclaw", "google-chat-bridge"],
+    ["hermes", "google-chat-hermes-bridge"],
+  ] as const)(
+    "keeps Google Chat in %s policy requirements when its gateway-minted bridge provider matches",
+    async (agent, providerType) => {
+      const googlechatPlan = makeMessagingPlan({ channels: ["googlechat"], agent });
+      const providerMatcher = vi.fn(
+        (name: string, type: string, credentialEnv: string) =>
+          name === "my-assistant-googlechat-bridge" &&
+          type === providerType &&
+          credentialEnv === "GOOGLE_CHAT_ACCESS_TOKEN",
+      );
+      const { deps, calls } = createPolicyHandlerDeps({
+        getActiveSandbox: vi.fn(() => ({ messaging: { plan: googlechatPlan } })),
+        providerMatchesGatewayCredential: providerMatcher,
+      });
+      calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
+        configuredChannels.includes("googlechat") ? [] : ["googlechat"],
+      );
+
+      await handlePoliciesState({
+        ...basePolicyHandlerOptions(deps),
+        selectedMessagingChannels: [],
+        agent: { name: agent },
+      });
+
+      expect(providerMatcher).toHaveBeenCalledExactlyOnceWith(
+        "my-assistant-googlechat-bridge",
+        providerType,
+        "GOOGLE_CHAT_ACCESS_TOKEN",
+      );
+      expect(calls.setupPolicies).toHaveBeenCalledWith(
+        "my-assistant",
+        expect.objectContaining({ enabledChannels: ["googlechat"], disabledChannels: [] }),
+      );
+    },
+  );
+
   it("merges live messaging channels into policy requirements", async () => {
     const { deps, calls } = createPolicyHandlerDeps();
     await handlePoliciesState({

@@ -59,9 +59,6 @@ type PolicyChannelDependenciesModule =
 type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell/runtime.ts");
 type CredentialProviderRegistrationModule =
   typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
-type LiveE2eCredentialProviderOverrideInput = Parameters<
-  CredentialProviderRegistrationModule["installLiveE2eCredentialProviderRegistrationOverride"]
->[0];
 type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
@@ -320,21 +317,12 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-  let restore: () => void;
-  if (injectedProviderDependencies) {
-    providerDependencies.upsertMessagingProviders = fixtureUpsert;
-    effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
-    restore = () => {
-      providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
-      effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
-    };
-  } else {
-    restore = credentialProviderRegistration.installLiveE2eCredentialProviderRegistrationOverride({
-      expectedName,
-      expectedType,
-      upsert: fixtureUpsert as LiveE2eCredentialProviderOverrideInput["upsert"],
-    });
-  }
+  providerDependencies.upsertMessagingProviders = fixtureUpsert;
+  effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
+  const restore = () => {
+    providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
+    effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
+  };
   return Object.assign(restore, { upsertMessagingProviders: directUpsert });
 }
 

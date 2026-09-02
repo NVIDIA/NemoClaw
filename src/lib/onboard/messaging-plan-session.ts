@@ -7,7 +7,11 @@ import {
   getActiveChannelIdsFromPlan,
   getConfiguredChannelIdsFromPlan,
 } from "../messaging/plan-validation";
-import { staticMessagingProviderTypeForChannel } from "./messaging-bridge-provider";
+import {
+  bridgeProviderNamesForChannel,
+  messagingBridgeProfilesForAgent,
+  staticMessagingProviderTypeForChannel,
+} from "./messaging-bridge-provider";
 
 export {
   getActiveChannelIdsFromPlan as getActiveChannelsFromPlan,
@@ -22,23 +26,39 @@ export type MessagingGatewayCredentialMatcher = (
   credentialEnv: string,
 ) => boolean;
 
-/** Keep active channels only when every recorded gateway credential binding still matches. */
+/** Keep active channels only while every gateway credential provider still matches. */
 export function messagingChannelsWithReusableGatewayCredentials(
   plan: SandboxMessagingPlan | null | undefined,
   providerMatchesGatewayCredential: MessagingGatewayCredentialMatcher,
 ): string[] {
   if (!plan) return [];
+  const bridgeProfiles = messagingBridgeProfilesForAgent(plan.agent);
   return getActiveChannelIdsFromPlan(plan).filter((channelId) => {
     const bindings = plan.credentialBindings.filter((binding) => binding.channelId === channelId);
-    return (
-      bindings.length > 0 &&
-      bindings.every((binding) =>
+    if (bindings.length > 0) {
+      return bindings.every((binding) =>
         providerMatchesGatewayCredential(
           binding.providerName,
           staticMessagingProviderTypeForChannel(binding.channelId, plan.agent) ??
             MESSAGING_CREDENTIAL_PROVIDER_TYPE,
           binding.providerEnvKey,
         ),
+      );
+    }
+
+    const gatewayBridgeProviders = bridgeProfiles
+      .filter((profile) => profile.channelId === channelId && profile.strategy !== null)
+      .flatMap((profile) =>
+        bridgeProviderNamesForChannel(plan.sandboxName, channelId, [profile]).map((name) => ({
+          name,
+          type: profile.profileId,
+          credentialEnv: profile.credentialKey,
+        })),
+      );
+    return (
+      gatewayBridgeProviders.length > 0 &&
+      gatewayBridgeProviders.every(({ name, type, credentialEnv }) =>
+        providerMatchesGatewayCredential(name, type, credentialEnv),
       )
     );
   });

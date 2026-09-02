@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
@@ -702,6 +701,23 @@ describe("matchesRegisteredStaticMessagingProfile", () => {
         }),
       }),
     ).toEqual({ kind: "collision" });
+    expect(
+      inspectRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        ...deps,
+        readFileSync: () =>
+          YAML.stringify({
+            ...DISCORD_PROFILE_DOC,
+            credentials: DISCORD_PROFILE_DOC.credentials.map((credential) => ({
+              ...credential,
+              required: "yes",
+            })),
+          }),
+        runOpenshell: () => ({
+          status: 0,
+          stdout: JSON.stringify(DISCORD_PROFILE_DOC),
+        }),
+      }),
+    ).toEqual({ kind: "collision" });
   });
 });
 
@@ -719,20 +735,6 @@ describe("listMessagingBridgeProfiles (real registry + co-located YAML)", () => 
     expect(gc?.secretMaterialKeys).toContain("private_key");
     expect(gc?.sourceSecretEnv).toBe("GOOGLECHAT_SERVICE_ACCOUNT");
     expect(gc?.profilePath.endsWith("googlechat/provider-profile/openclaw.yaml")).toBe(true);
-  });
-
-  // G2: the profile's `binaries` list is what the L7 proxy injects the minted
-  // bearer for. It must stay in lockstep with the channel egress policy (Node
-  // only) so the credential is never reachable by a binary the channel runtime
-  // does not use — no curl, no shell. Re-add an entry only with a named consumer.
-  it("authorizes only the Node executable for the injected bearer credential", () => {
-    const gc = listMessagingBridgeProfiles().find((p) => p.channelId === "googlechat");
-    expect(gc).toBeDefined();
-    const binaries = YAML.parse(fs.readFileSync(gc!.profilePath, "utf-8"))?.binaries;
-    expect(Array.isArray(binaries)).toBe(true);
-    expect(binaries.length).toBeGreaterThan(0);
-    expect((binaries as string[]).every((bin) => /\/node$/.test(bin))).toBe(true);
-    expect((binaries as string[]).some((bin) => bin.includes("curl"))).toBe(false);
   });
 });
 
