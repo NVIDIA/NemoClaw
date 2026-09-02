@@ -133,7 +133,7 @@ describe("OpenClaw shields top-config transaction", () => {
   let homeDir: string;
   let shields: ShieldsModule;
   let spies: MockInstance[];
-  let privilegedExecSpy: MockInstance;
+  let privilegedCaptureSpy: MockInstance;
   let dockerExecSpy: MockInstance;
   let guardSpy: MockInstance;
   let applyStateSpy: MockInstance;
@@ -190,9 +190,11 @@ describe("OpenClaw shields top-config transaction", () => {
         events.push(`state:restore:${locked ? "locked" : "mutable"}`);
         return [];
       });
-    privilegedExecSpy = vi
-      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-      .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
+    privilegedCaptureSpy = vi
+      .spyOn(privilegedExec, "capturePrivilegedSandboxCommand")
+      .mockImplementation((_sandboxName: unknown, cmd: unknown) =>
+        Buffer.from(dockerExec.dockerExecFileSync(cmd as string[])),
+      );
     compatibilitySpy = vi
       .spyOn(stateDirLock, "stateLockPlanCompatibilityIssues")
       .mockReturnValue([]);
@@ -201,7 +203,7 @@ describe("OpenClaw shields top-config transaction", () => {
       vi.spyOn(runner, "run").mockReturnValue({ status: 0 }),
       vi.spyOn(runner, "runCapture").mockReturnValue(""),
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => openClawTarget()),
-      privilegedExecSpy,
+      privilegedCaptureSpy,
       dockerExecSpy,
       compatibilitySpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
@@ -436,7 +438,7 @@ describe("OpenClaw shields top-config transaction", () => {
   });
 
   it("reports a failed mutable top-config transition without falling back to recursive unlock", () => {
-    privilegedExecSpy.mockImplementationOnce(() => {
+    privilegedCaptureSpy.mockImplementationOnce(() => {
       throw new Error("top-config permission repair failed");
     });
 

@@ -81,7 +81,10 @@ import {
 } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { HermesPortableLifecycleRecoveryTiming } from "../../onboard/experimental/hermes-portable-lifecycle";
 import type { PortableDemoLifecycleRecoveryResult } from "../../onboard/experimental/portable-demo-lifecycle";
-import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
+import {
+  compareAndSetLegacySandboxLifecycleGeneration,
+  usesLegacyRuntimeLifecycleCompatibility,
+} from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
@@ -111,6 +114,8 @@ export type SandboxGatewayState = {
    */
   recoverySandboxVia?: string | null;
 };
+
+export { usesLegacyRuntimeLifecycleCompatibility };
 
 export type {
   HermesPortableActiveLifecycleAuthority,

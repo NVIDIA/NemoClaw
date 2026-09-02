@@ -10,6 +10,7 @@ import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
+import { withGatewayRouteMutationLockSync } from "../inference/gateway-route-mutation-lock";
 import { runCapture as defaultRunCapture } from "../runner";
 import {
   ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent,
@@ -20,9 +21,15 @@ import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixe
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
 import {
+  captureLiveSiblingDashboardForwards,
   createSandboxForwardStopper,
   type DashboardForwardOptions,
+  mergePreservedDashboardForwards,
   normalizeDashboardForwardOptions,
+  type PreservedDashboardForward,
+  reconcileSiblingDashboardForwards,
+  revalidatePreservedDashboardForward,
+  revalidatePreservedDashboardOwner,
 } from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
@@ -332,8 +339,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: DashboardForwardOptions = {},
   ): number {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
-      normalizeDashboardForwardOptions(options);
+    const {
+      rollbackSandboxOnFailure,
+      preservedPorts,
+      preservedSiblingForwards: preCreateSiblingForwards,
+      allowPortReallocation,
+    } = normalizeDashboardForwardOptions(options);
     const { revalidateSandboxIdentity } = options;
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
@@ -347,6 +358,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       });
     const stopForwardForSandbox = makeStopForwardForSandbox();
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+    const preservedSiblingForwards = mergePreservedDashboardForwards(
+      preCreateSiblingForwards,
+      captureLiveSiblingDashboardForwards(existingForwards, sandboxName),
+    );
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
       preferredEntry &&
@@ -458,6 +473,85 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         console.warn(
           `  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`,
         );
+      }
+    }
+    if (fwdOk && preservedSiblingForwards.length > 0) {
+      const targetForward = {
+        sandboxName,
+        bind: actualTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1",
+        port: String(actualPort),
+      };
+      const siblingResult = reconcileSiblingDashboardForwards({
+        preserved: preservedSiblingForwards,
+        target: targetForward,
+        fetch: () =>
+          deps.runCaptureOpenshell(["forward", "list"], {
+            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+          }),
+        revalidateLive: (forward, snapshot) =>
+          revalidatePreservedDashboardForward(forward, snapshot, deps.getSandbox as never),
+        restore: (forward) => {
+          return withGatewayRouteMutationLockSync(forward.gatewayName, () => {
+            const ownership = deps.runCaptureOpenshell(["forward", "list"], {
+              timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+            });
+            if (
+              !revalidatePreservedDashboardForward(forward, ownership, deps.getSandbox as never)
+            ) {
+              return { ok: false, diagnostic: "recorded forward ownership changed" };
+            }
+            const port = Number(forward.port);
+            const makeSiblingStopper = () =>
+              createSandboxForwardStopper({
+                runOpenshell: deps.runOpenshell,
+                runCaptureOpenshell: deps.runCaptureOpenshell,
+                sandboxName: forward.sandboxName,
+              });
+            const stopResult = makeSiblingStopper()(port);
+            if (stopResult === "list-failed" || stopResult === "owned-other") {
+              return { ok: false, diagnostic: `forward stop returned ${stopResult}` };
+            }
+            waitForStoppedForwardPortRelease(port, deps.isPortBoundOnHost ?? isPortBoundOnHost, {
+              sleep: (milliseconds) => deps.sleep(milliseconds / 1_000),
+            });
+            if (!revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)) {
+              return { ok: false, diagnostic: "sandbox owner changed before forward restart" };
+            }
+            const forwardTarget =
+              forward.bind === "0.0.0.0" ? `0.0.0.0:${forward.port}` : forward.port;
+            const restarted = runDetachedForwardStartWithRetries(
+              buildDetachedForwardStartSpawn(
+                deps.openshellArgv([
+                  "forward",
+                  "start",
+                  "--background",
+                  forwardTarget,
+                  forward.sandboxName,
+                ]),
+              ),
+              () =>
+                deps.runCaptureOpenshell(["forward", "list"], {
+                  timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+                }),
+              { port, sandboxName: forward.sandboxName },
+              () => {
+                deps.sleep(1);
+                makeSiblingStopper()(port);
+              },
+              { onProgress: buildForwardStartProgressLogger(port) },
+            );
+            return revalidatePreservedDashboardOwner(forward, deps.getSandbox as never)
+              ? restarted
+              : { ok: false, diagnostic: "sandbox owner changed after forward restart" };
+          });
+        },
+      });
+      if (!siblingResult.ok) {
+        const error = new Error(
+          `Starting the dashboard forward for '${sandboxName}' disrupted a live sibling: ${siblingResult.diagnostic}`,
+        );
+        if (rollbackSandboxOnFailure) rollbackSandboxAndExit(sandboxName, error);
+        throw error;
       }
     }
     if (fwdOk) options.onForwardStarted?.(actualPort);
@@ -658,7 +752,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     console.log("");
     console.log(`${indent}  Or open a sandbox shell first:`);
     console.log(`${indent}    ${deps.cliName()} ${sandboxName} connect`);
-    console.log(`${indent}    then run: ${getInteractiveAgentCommand(agent, agent?.name)}`);
+    void getInteractiveAgentCommand(agent, agent?.name);
+    console.log(`${indent}    then run the configured interactive agent command`);
   }
 
   function printDashboard(

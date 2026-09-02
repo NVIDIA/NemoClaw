@@ -8,6 +8,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
+  executeSandboxExecCommand: vi.fn(),
   executeGatewaySupervisorAction: vi.fn(),
   getSandbox: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./process-recovery", () => ({
   executeSandboxCommand: mocks.executeSandboxCommand,
+  executeSandboxExecCommand: mocks.executeSandboxExecCommand,
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
 }));
 
@@ -161,6 +163,7 @@ const reconciliationCases: ReconciliationCase[] = [
 describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
   beforeEach(() => {
     mocks.executeSandboxCommand.mockReset();
+    mocks.executeSandboxExecCommand.mockReset();
     mocks.executeGatewaySupervisorAction.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset();
@@ -267,6 +270,7 @@ describe("Deep Agents MCP adapter credential revision", () => {
 describe("Hermes MCP adapter credential revision", () => {
   beforeEach(() => {
     mocks.executeSandboxCommand.mockReset();
+    mocks.executeSandboxExecCommand.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset();
   });
@@ -274,6 +278,11 @@ describe("Hermes MCP adapter credential revision", () => {
   it("writes and verifies the readiness-proven revision", () => {
     mocks.runOpenshellProviderCommand.mockReturnValue(lifecycleSuccess);
     mocks.executeSandboxCommand.mockReturnValue(registered);
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: "v12\n",
+      stderr: "",
+    });
 
     expect(() =>
       registerAgentAdapter(

@@ -61,7 +61,11 @@ function writeRuntimeIdentity(
   fs.writeFileSync(configPath, config, { mode: 0o600 });
   const marker = buildDockerDriverGatewayRuntimeMarker({
     pid: process.pid,
-    desiredEnv: { OPENSHELL_DRIVERS: driver, OPENSHELL_GATEWAY_CONFIG: configPath },
+    desiredEnv: {
+      NEMOCLAW_RUNTIME_PROVIDER_ID: driver,
+      OPENSHELL_DRIVERS: driver,
+      OPENSHELL_GATEWAY_CONFIG: configPath,
+    },
     endpoint: "https://127.0.0.1:8080",
   });
   mutateMarker(marker);
@@ -98,7 +102,7 @@ describe("managed MCP gateway proxy DNS boundary", () => {
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
       expect(processProofs.standaloneOwnershipFailure).toHaveBeenCalledWith(
         {},
-        expect.objectContaining({ driver: "podman", stateDir }),
+        expect.objectContaining({ stateDir }),
       );
       const marker = JSON.parse(fs.readFileSync(path.join(stateDir, "runtime.json"), "utf-8")) as {
         driver: string;

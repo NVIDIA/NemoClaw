@@ -40,7 +40,11 @@ describe("docker-driver gateway runtime marker", () => {
   it("records the selected portable Podman driver and rejects driver drift", () => {
     const podmanExpected = {
       ...expected,
-      desiredEnv: { ...expected.desiredEnv, OPENSHELL_DRIVERS: "podman" },
+      desiredEnv: {
+        ...expected.desiredEnv,
+        NEMOCLAW_RUNTIME_PROVIDER_ID: "podman",
+        OPENSHELL_DRIVERS: "podman",
+      },
     };
     const marker = buildDockerDriverGatewayRuntimeMarker(podmanExpected);
 

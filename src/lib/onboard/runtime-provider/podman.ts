@@ -2,18 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
+import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_PLATFORMS,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
+  type RuntimeProviderManagedImageBootstrapSurface,
+  type RuntimeProviderCleanupInput,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
+  type RuntimeProviderMutationOperation,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceRouteAuthorityStore,
 } from "./host-local-inference";
-import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
+import {
+  createFilePersistedEngineAuthorityStore,
+  type PersistedEngineAuthorityStore,
+} from "./persisted-engine-authority";
 import {
   createPodmanHostLocalInferenceOperation,
   type PodmanExternalInferenceNetworkAuthority,
@@ -26,7 +36,13 @@ import type {
   PodmanInferenceAuthorityReceipt,
   PodmanInferenceQualificationOptions,
 } from "./podman-preflight";
-import { startPodmanSandbox, stopPodmanSandbox } from "./podman-lifecycle";
+import {
+  PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
+  recoverPodmanSandbox,
+  startPodmanSandbox,
+  stopPodmanSandbox,
+} from "./podman-lifecycle";
+import { createPodmanPrivilegedSandboxControl } from "./podman-privileged-sandbox-control";
 import {
   inspectPodmanHost,
   type PodmanHostPreflightOptions,
@@ -34,12 +50,28 @@ import {
 } from "./podman-preflight";
 import { createPodmanStateMutationSurface } from "./podman-state-mutation";
 import type { PodmanStateMutationSurfaceOptions } from "./podman-state-mutation";
+import {
+  createCurrentPodmanOperationEngine,
+  capturePodmanDestroyIdentity,
+  capturePodmanDestroyIdentityByName,
+  createFilePodmanRouteAuthorityStore,
+  createPodmanRuntimeProviderSnapshotSurface,
+  type NativePodmanGatewayHostPreparationDeps,
+  planOwnedPodmanWorkloadCleanup,
+  prepareNativePodmanGatewayHostRuntime,
+  removeOwnedPodmanWorkload,
+  resolveNativePodmanSocketPath,
+} from "./podman-runtime-surfaces";
+import { resolvePodmanStateRoot } from "./podman-state-root";
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
+  readonly gatewayInspection?: PodmanBoundContainerEngine;
   readonly hostLocalInference?: PodmanContainerEngine;
+  readonly managedBootstrap?: PodmanBoundContainerEngine;
   readonly sandboxLifecycle: PodmanContainerEngine;
   readonly stateMutation?: PodmanBoundContainerEngine;
+  readonly workloadCleanup?: PodmanBoundContainerEngine;
 }
 
 export interface PodmanHostLocalInferenceOptions {
@@ -60,17 +92,37 @@ export interface PodmanHostLocalInferenceOptions {
 
 export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly gatewaySocketPath?: string;
+  readonly gatewayHostPreparation?: NativePodmanGatewayHostPreparationDeps;
   readonly hostLocalInference?: PodmanHostLocalInferenceOptions;
   readonly preflight?: PodmanHostPreflightOptions;
   readonly stateMutation?: Omit<PodmanStateMutationSurfaceOptions, "engine">;
 }
 
-const DORMANT_WORKLOAD_PROFILE = {
-  support: null,
-  hostArchitectures: [],
+const QUALIFIED_MANAGED_WORKLOAD_PROFILE = {
+  support: {
+    exactDigestReferences: true,
+    platforms: MANAGED_IMAGE_PLATFORMS,
+    startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
+    capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
+  },
+  hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: false,
 } as const satisfies RuntimeProviderWorkloadProfile;
+
+function acceptsManagedWorkloadReceipt(
+  receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
+): boolean {
+  if (receipt?.kind !== "managed-image" || receipt.platform === undefined) return false;
+  const support = QUALIFIED_MANAGED_WORKLOAD_PROFILE.support;
+  return (
+    support.platforms.includes(receipt.platform) &&
+    support.capabilityContractVersions.includes(receipt.capabilityContractVersion) &&
+    support.startupProfileContractVersions.includes(receipt.startupProfileContractVersion)
+  );
+}
 
 export const PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON =
   "Read-only host mounts are not qualified for the Podman runtime provider.";
@@ -79,9 +131,40 @@ function unsupported(providerId: string, reason: string) {
   return { providerId, supported: false as const, reason };
 }
 
+function createLazyPodmanManagedBootstrapSurface(
+  engine: PodmanBoundContainerEngine,
+): RuntimeProviderManagedImageBootstrapSurface {
+  const surface = (): RuntimeProviderManagedImageBootstrapSurface => {
+    const { createPodmanManagedBootstrapSurface } =
+      require("../managed-bootstrap/podman-runtime") as typeof import("../managed-bootstrap/podman-runtime");
+    return createPodmanManagedBootstrapSurface(engine);
+  };
+  return Object.freeze({
+    providerId: "podman",
+    supported: true,
+    bootstrapKind: "managed-image",
+    createAuthorityStore: (
+      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createAuthorityStore"]>[0],
+    ) => surface().createAuthorityStore(input),
+    createLifecycle: (
+      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createLifecycle"]>[0],
+    ) => surface().createLifecycle(input),
+    createOnboardRouting: (
+      input: Parameters<RuntimeProviderManagedImageBootstrapSurface["createOnboardRouting"]>[0],
+    ) => surface().createOnboardRouting(input),
+  });
+}
+
 function requireEngine(
   engine: PodmanContainerEngine,
-  operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle" | "state-mutation",
+  operation:
+    | "host-doctor"
+    | "gateway-inspection"
+    | "host-local-inference"
+    | "managed-bootstrap"
+    | "sandbox-lifecycle"
+    | "state-mutation"
+    | "workload-cleanup",
 ): void {
   if (engine.engineId !== "podman" || engine.operation !== operation) {
     throw new Error(`Podman provider requires a '${operation}' Podman engine.`);
@@ -104,25 +187,31 @@ function preflightLifecycle(
   }
 }
 
-/**
- * Construct an inert Podman provider candidate from explicitly scoped engine
- * dependencies. This factory is intentionally absent from the production
- * provider registry until managed startup, recovery, GPU, local inference,
- * installer, and protected E2E qualification land in later slices.
- */
+/** Construct the Podman provider from explicitly scoped operation authorities. */
 export function createPodmanRuntimeProviderBundle(
   options: PodmanRuntimeProviderOptions,
 ): RuntimeProviderBundle {
   const providerId = "podman";
   const {
     hostDoctor,
+    gatewayInspection,
     hostLocalInference: inferenceEngine,
+    managedBootstrap,
     sandboxLifecycle,
     stateMutation: stateMutationEngine,
+    workloadCleanup,
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
   const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
   const stateMutationOptions = options.stateMutation;
+  const containerEngineOperations = new Map([
+    ["host-doctor", hostDoctor],
+    ...(gatewayInspection ? ([["gateway-inspection", gatewayInspection]] as const) : []),
+    ...(inferenceEngine ? ([["host-local-inference", inferenceEngine]] as const) : []),
+    ["sandbox-lifecycle", sandboxLifecycle],
+    ...(stateMutationEngine ? ([["state-mutation", stateMutationEngine]] as const) : []),
+    ...(workloadCleanup ? ([["workload-cleanup", workloadCleanup]] as const) : []),
+  ] as const);
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");
   const providerEndpointAuthority = hostDoctor.endpointAuthorityId;
@@ -159,7 +248,19 @@ export function createPodmanRuntimeProviderBundle(
   if (stateMutationEngine === undefined && stateMutationOptions !== undefined) {
     throw new Error("Podman provider requires its state-mutation engine with its options.");
   }
+  for (const [engine, operation] of [
+    [gatewayInspection, "gateway-inspection"],
+    [managedBootstrap, "managed-bootstrap"],
+    [workloadCleanup, "workload-cleanup"],
+  ] as const) {
+    if (!engine) continue;
+    requireEngine(engine, operation);
+    if (engine.endpointAuthorityId !== providerEndpointAuthority) {
+      throw new Error("Podman provider engines must bind the same endpoint authority.");
+    }
+  }
   const preflight = options.preflight ?? {};
+  const environment = Object.freeze({ ...(options.environment ?? process.env) });
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
 
   return {
@@ -175,7 +276,7 @@ export function createPodmanRuntimeProviderBundle(
       hostLocalInference: inferenceEngine !== undefined,
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
-      workloadImageCleanup: false,
+      workloadImageCleanup: workloadCleanup !== undefined,
       readOnlyHostMounts: {
         supported: false,
         reason: PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON,
@@ -185,6 +286,8 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       inspectHost: () => inspectPodmanHost(hostDoctor, preflight),
+      validateSandboxGpu: (config, exitProcess) =>
+        validatePodmanSandboxGpuPreflight(config, {}, exitProcess),
       preflightLifecycle: (_action, input) => preflightLifecycle(input, hostDoctor, preflight),
     },
     gateway: {
@@ -192,12 +295,31 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      prepareHostRuntime: (input) => {
+        if (
+          options.gatewaySocketPath !== undefined &&
+          input.socketPath !== undefined &&
+          resolveNativePodmanSocketPath(input.environment, input.socketPath) !==
+            options.gatewaySocketPath
+        ) {
+          throw new Error("Native Podman gateway socket differs from its bundle authority.");
+        }
+        return prepareNativePodmanGatewayHostRuntime(
+          {
+            ...input,
+            socketPath: options.gatewaySocketPath ?? input.socketPath,
+          },
+          gatewayInspection,
+          options.gatewayHostPreparation,
+        );
+      },
     },
     workload: {
       providerId,
       supported: true,
-      profile: DORMANT_WORKLOAD_PROFILE,
-      acceptsReceipt: () => false,
+      profile: QUALIFIED_MANAGED_WORKLOAD_PROFILE,
+      managedStateMountDriverId: "podman",
+      acceptsReceipt: acceptsManagedWorkloadReceipt,
     },
     hostLocalInference:
       inferenceEngine !== undefined && inferenceOptions !== undefined
@@ -251,6 +373,11 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "openshell",
+      containerMutationTimeoutMs: PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
+      privilegedSandboxControl: createPodmanPrivilegedSandboxControl(
+        sandboxLifecycle,
+        workloadCleanup,
+      ),
       start: (input) => startPodmanSandbox(input, sandboxLifecycle),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
       stop: (input, hooks) => stopPodmanSandbox(input, hooks, sandboxLifecycle),
@@ -270,10 +397,46 @@ export function createPodmanRuntimeProviderBundle(
             engine: stateMutationEngine,
             ...(stateMutationOptions ?? {}),
           }),
-    bootstrap: unsupported(providerId, deferred),
-    snapshot: unsupported(providerId, deferred),
-    recovery: unsupported(providerId, deferred),
-    cleanup: unsupported(providerId, deferred),
+    bootstrap:
+      managedBootstrap === undefined
+        ? unsupported(providerId, deferred)
+        : createLazyPodmanManagedBootstrapSurface(managedBootstrap),
+    snapshot:
+      gatewayInspection === undefined
+        ? unsupported(providerId, deferred)
+        : createPodmanRuntimeProviderSnapshotSurface(gatewayInspection),
+    recovery: {
+      providerId,
+      supported: true,
+      recover: (sandbox) =>
+        recoverPodmanSandbox(
+          {
+            environment,
+            log: () => undefined,
+            sandbox,
+            sandboxName: sandbox.name,
+          },
+          sandboxLifecycle,
+        ),
+    },
+    cleanup:
+      workloadCleanup === undefined
+        ? unsupported(providerId, deferred)
+        : {
+            providerId,
+            supported: true,
+            ...(gatewayInspection
+              ? {
+                  captureDestroyIdentity: (input: RuntimeProviderCleanupInput) =>
+                    capturePodmanDestroyIdentity(input, gatewayInspection),
+                  captureDestroyIdentityByName: (sandboxName: string) =>
+                    capturePodmanDestroyIdentityByName(sandboxName, gatewayInspection),
+                }
+              : {}),
+            prepareDestroy: (_input, operations) => operations.detachProviders(),
+            planOwnedWorkloadCleanup: planOwnedPodmanWorkloadCleanup,
+            removeOwnedWorkload: (input) => removeOwnedPodmanWorkload(input, workloadCleanup),
+          },
     containerEngine: {
       providerId,
       supported: true,
@@ -283,6 +446,15 @@ export function createPodmanRuntimeProviderBundle(
           engineId: hostDoctor.engineId,
           displayName: hostDoctor.displayName,
         },
+        ...(gatewayInspection
+          ? [
+              {
+                operation: "gateway-inspection" as const,
+                engineId: gatewayInspection.engineId,
+                displayName: gatewayInspection.displayName,
+              },
+            ]
+          : []),
         ...(inferenceEngine
           ? [
               {
@@ -306,7 +478,94 @@ export function createPodmanRuntimeProviderBundle(
               },
             ]
           : []),
+        ...(workloadCleanup
+          ? [
+              {
+                operation: "workload-cleanup" as const,
+                engineId: workloadCleanup.engineId,
+                displayName: workloadCleanup.displayName,
+              },
+            ]
+          : []),
       ],
+      capture: (operation, args, timeoutMs) => {
+        const engine = containerEngineOperations.get(operation);
+        if (!engine) {
+          throw new Error(`Podman provider does not register the '${operation}' engine operation.`);
+        }
+        return engine.capture(args, timeoutMs);
+      },
     },
   };
+}
+
+function redactPodmanFailure(environment: NodeJS.ProcessEnv, value: string): string {
+  let redacted = value;
+  for (const key of ["NGC_API_KEY", "NIM_NGC_API_KEY"] as const) {
+    const secret = environment[key];
+    if (secret) redacted = redacted.replaceAll(secret, "[REDACTED]");
+  }
+  return redacted;
+}
+
+function createLazyPersistedEngineAuthorityStore(stateRoot: string): PersistedEngineAuthorityStore {
+  let store: PersistedEngineAuthorityStore | null = null;
+  const resolve = () => (store ??= createFilePersistedEngineAuthorityStore(stateRoot));
+  return Object.freeze({
+    load: (operation: Parameters<PersistedEngineAuthorityStore["load"]>[0]) =>
+      resolve().load(operation),
+    record: (authority: Parameters<PersistedEngineAuthorityStore["record"]>[0]) =>
+      resolve().record(authority),
+  });
+}
+
+/** Production Podman bundle selected only at the managed registration boundary. */
+export function createCurrentPodmanRuntimeProviderBundle(
+  environment: NodeJS.ProcessEnv = process.env,
+): RuntimeProviderBundle {
+  const stateRoot = resolvePodmanStateRoot(environment.HOME);
+  const engines = {
+    hostDoctor: createCurrentPodmanOperationEngine("host-doctor", environment),
+    gatewayInspection: createCurrentPodmanOperationEngine("gateway-inspection", environment),
+    hostLocalInference: createCurrentPodmanOperationEngine("host-local-inference", environment),
+    managedBootstrap: createCurrentPodmanOperationEngine("managed-bootstrap", environment),
+    sandboxLifecycle: createCurrentPodmanOperationEngine("sandbox-lifecycle", environment),
+    stateMutation: createCurrentPodmanOperationEngine("state-mutation", environment),
+    workloadCleanup: createCurrentPodmanOperationEngine("workload-cleanup", environment),
+  } as const;
+  const bundle = createPodmanRuntimeProviderBundle({
+    engines,
+    environment,
+    gatewaySocketPath: resolveNativePodmanSocketPath(environment),
+    gatewayHostPreparation: {},
+    hostLocalInference: {
+      authorityStore: createLazyPersistedEngineAuthorityStore(stateRoot),
+      routeAuthorityStore: createFilePodmanRouteAuthorityStore(stateRoot),
+      onFailureEvidence: (evidence) => {
+        console.error(
+          redactPodmanFailure(environment, `Podman ${evidence.phase}: ${evidence.message}`),
+        );
+      },
+      redactSensitive: (value) => redactPodmanFailure(environment, value),
+    },
+    stateMutation: {},
+  });
+  return Object.freeze({
+    ...bundle,
+    mutationAuthority: Object.freeze({
+      providerId: "podman",
+      supported: true,
+      operations: Object.freeze([
+        "registration",
+        "start",
+        "stop",
+        "inference-set",
+        "rebuild",
+        "clone",
+        "provider-cleanup",
+        "destroy",
+        "workload-cleanup",
+      ] satisfies readonly RuntimeProviderMutationOperation[]),
+    }),
+  });
 }
