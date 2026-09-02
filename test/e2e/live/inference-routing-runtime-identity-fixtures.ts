@@ -60,7 +60,7 @@ export const RUNTIME_IDENTITY_E2E_SCENARIOS = [
 
 export type RuntimeIdentityE2EContext = Pick<
   E2ETargetFixtures,
-  "artifacts" | "cleanup" | "host" | "progress" | "sandbox"
+  "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "sandbox"
 > & {
   skip: (note?: string) => never;
 };
