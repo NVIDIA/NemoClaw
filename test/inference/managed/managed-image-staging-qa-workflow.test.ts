@@ -105,6 +105,7 @@ describe("managed-image staging QA workflow", () => {
     expect(finalSource).toMatch(/-t "\$final_reference"\s+\\\n\s+\./u);
 
     const contractSource = required(contract.run, "staging QA final contract is missing");
+    expect(contract["working-directory"]).toBe("candidate");
     expect(contractSource).toMatch(
       /if ! jq -n -e \\\n\s+--argjson base "\$base_layers" \\\n\s+--argjson final "\$final_layers"/u,
     );

@@ -279,6 +279,7 @@ jobs:
 
       - name: Validate staging QA final image contract
         shell: bash
+        working-directory: candidate
         env:
           BASE_ID: ${{ steps.staging-base.outputs.id }}
           FINAL_ID: ${{ steps.staging-final.outputs.id }}
