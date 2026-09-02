@@ -9,6 +9,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import { reclaimLockFileGeneration, reclaimLockFileGenerationSync } from "./storage";
 
+function readFileSnapshot(filePath: string): string {
+  const descriptor = fs.openSync(filePath, "r");
+  try {
+    return fs.readFileSync(descriptor, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 describe("lock file generation storage", () => {
   it("restores a replacement raced into an exact generation claim", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lock-generation-"));
@@ -24,7 +33,7 @@ describe("lock file generation storage", () => {
     }) as typeof fs.renameSync);
     try {
       expect(reclaimLockFileGenerationSync(lockPath, expected)).toBe(false);
-      expect(fs.readFileSync(lockPath, "utf8")).toBe("replacement");
+      expect(readFileSnapshot(lockPath)).toBe("replacement");
       expect(fs.readdirSync(stateDir).filter((name) => name.includes(".reclaim-"))).toEqual([]);
     } finally {
       rename.mockRestore();
@@ -46,7 +55,7 @@ describe("lock file generation storage", () => {
           },
         }),
       ).rejects.toThrow("abort reclaim");
-      expect(fs.readFileSync(lockPath, "utf8")).toBe("replacement");
+      expect(readFileSnapshot(lockPath)).toBe("replacement");
       expect(fs.readdirSync(stateDir).filter((name) => name.includes(".reclaim-"))).toEqual([]);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -67,7 +76,7 @@ describe("lock file generation storage", () => {
           },
         }),
       ).toThrow("abort reclaim");
-      expect(fs.readFileSync(lockPath, "utf8")).toBe("replacement");
+      expect(readFileSnapshot(lockPath)).toBe("replacement");
       expect(fs.readdirSync(stateDir).filter((name) => name.includes(".reclaim-"))).toEqual([]);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
