@@ -34,6 +34,10 @@ const MIGRATION_LOCK_STALE_MS = 10_000;
 const STALE_MIGRATION_INTENT_PATTERN =
   /^\.gateway-state-migration\.(?:preparing|completed)\.[1-9][0-9]*\.[1-9][0-9]*$/;
 const MAX_MIGRATABLE_JSON_BYTES = 16 * 1024 * 1024;
+const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
+// Mirrors MALFORMED_STALE_SECONDS in ./onboard-session so both readers of
+// onboard.lock age an owner-less body out on the same schedule.
+const ONBOARD_LOCK_SETTLING_MS = 30_000;
 const LEGACY_BUNDLE_ENTRIES = [
   "backups",
   "blueprints",
@@ -742,12 +746,111 @@ function acquireDirectoryLock(home: string, lock: string): string {
   throw migrationError(`could not acquire ${lock}`);
 }
 
+interface OnboardLockRecord {
+  readonly pid: number;
+  readonly startedAt: string | null;
+  readonly command: string | null;
+}
+
+type OnboardLockDisposition =
+  | { readonly state: "clear" }
+  | { readonly state: "held"; readonly record: OnboardLockRecord }
+  | { readonly state: "settling" };
+
+/**
+ * Read the owner record an onboard writer serializes into onboard.lock. A pid
+ * that is not a positive integer leaves no usable owner, because isProcessAlive
+ * forwards it to process.kill, where 0 signals the whole process group.
+ */
+function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
+  if (!isObjectRecord(value)) return null;
+  const { pid, startedAt, command } = value;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+  return {
+    pid,
+    startedAt: typeof startedAt === "string" ? startedAt : null,
+    command: typeof command === "string" ? command : null,
+  };
+}
+
+/**
+ * Decide what a leftover onboard.lock proves about the run that wrote it.
+ *
+ * An interrupted onboarding run cannot release its own lock, so the file
+ * outliving its owner says nothing about whether a run is still going (#10779).
+ * The recorded holder decides that instead. A body carrying no usable owner is
+ * either a concurrent mid-write or debris from the window between the writer's
+ * atomic create and its payload write, so it stays authoritative only while it
+ * is still changing; acquireOnboardLock ages the same debris out after the same
+ * grace.
+ *
+ * Every state that refuses here is a state the previous presence-only check
+ * also refused, and every state that clears is one acquireOnboardLock would
+ * itself reclaim. The lock is never unlinked from this side: the onboard writer
+ * reclaims it under an inode check, and unlinking a foreign path here would
+ * reopen the race that check closes.
+ */
+function classifyOnboardLock(home: string, activeLock: string): OnboardLockDisposition {
+  const stat = lstatNoFollow(home, activeLock);
+  if (!stat) return { state: "clear" };
+  if (!stat.isFile()) throw migrationError(`${activeLock} is not a regular file`);
+
+  let fd: number;
+  try {
+    fd = fs.openSync(activeLock, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    // The writer released the lock between the stat above and this open.
+    if (isErrnoException(error) && error.code === "ENOENT") return { state: "clear" };
+    throw error;
+  }
+  let record: OnboardLockRecord | null;
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile()) throw migrationError(`${activeLock} is not a regular file`);
+    if (opened.size > MAX_ONBOARD_LOCK_BYTES) {
+      throw migrationError(
+        `${activeLock} exceeds the ${String(MAX_ONBOARD_LOCK_BYTES)} byte onboarding lock limit`,
+      );
+    }
+    record = parseOnboardLockRecord(JSON.parse(fs.readFileSync(fd, "utf8")));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    record = null;
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  if (record === null) {
+    return Date.now() - stat.mtimeMs > ONBOARD_LOCK_SETTLING_MS
+      ? { state: "clear" }
+      : { state: "settling" };
+  }
+  return isProcessAlive(record.pid) ? { state: "held", record } : { state: "clear" };
+}
+
+function describeOnboardLockHolder(record: OnboardLockRecord): string {
+  const details = [
+    record.command === null ? "" : `command ${JSON.stringify(record.command)}`,
+    record.startedAt === null ? "" : `started ${record.startedAt}`,
+  ].filter((detail) => detail !== "");
+  return details.length === 0 ? "" : ` (${details.join(", ")})`;
+}
+
 function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[]): void {
   for (const stateRoot of stateRoots) {
     const activeLock = path.join(stateRoot, "onboard.lock");
-    if (lstatNoFollow(home, activeLock)) {
+    const disposition = classifyOnboardLock(home, activeLock);
+    if (disposition.state === "held") {
       throw migrationError(
-        `onboarding lock ${activeLock} is present; finish or stop that run before migrating state`,
+        `onboarding lock ${activeLock} is held by running process ` +
+          `${String(disposition.record.pid)}${describeOnboardLockHolder(disposition.record)}; ` +
+          "wait for that run to finish or stop that process, then retry",
+      );
+    }
+    if (disposition.state === "settling") {
+      throw migrationError(
+        `onboarding lock ${activeLock} records no owner yet and is still changing; ` +
+          "retry once the run writing it settles",
       );
     }
   }

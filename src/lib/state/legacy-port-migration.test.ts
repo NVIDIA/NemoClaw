@@ -25,6 +25,29 @@ function makeHome(): string {
   return home;
 }
 
+// Above every supported pid_max, so process.kill reports ESRCH for it.
+const DEPARTED_PID = 2_147_483_647;
+
+const ONBOARD_LOCK_ROOTS: readonly [string, (shared: string, selected: string) => string][] = [
+  ["shared", (shared: string, _selected: string) => shared],
+  ["selected", (_shared: string, selected: string) => selected],
+];
+
+function onboardLockBody(pid: number): string {
+  return JSON.stringify({
+    pid,
+    startedAt: "2026-09-01T00:00:00.000Z",
+    command: "onboard",
+  });
+}
+
+function writeOnboardLock(stateRoot: string, body: string): string {
+  fs.mkdirSync(stateRoot, { recursive: true });
+  const lockFile = path.join(stateRoot, "onboard.lock");
+  fs.writeFileSync(lockFile, body);
+  return lockFile;
+}
+
 function writeJson(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(value));
@@ -415,24 +438,103 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
   });
 
-  it.each([
-    ["shared", (shared: string, _selected: string) => shared],
-    ["selected", (_shared: string, selected: string) => selected],
-  ])("refuses recovery-only migration while the %s onboarding lock is present", (_scope, root) => {
+  it.each(ONBOARD_LOCK_ROOTS)(
+    "refuses recovery-only migration while a live run holds the %s onboarding lock",
+    (_scope, root) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+      recordRecovery(recoveryFile, "port-box", 9123, "d");
+      const before = fs.readFileSync(recoveryFile, "utf8");
+      writeOnboardLock(root(shared, selected), onboardLockBody(process.pid));
+
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+        /onboarding lock .* is held by running process/u,
+      );
+      expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+      expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
+    },
+  );
+
+  it("names the process and command recorded in a held onboarding lock", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    writeOnboardLock(shared, onboardLockBody(process.pid));
+    const migrate = (): unknown => migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(migrate).toThrow(`is held by running process ${String(process.pid)}`);
+    expect(migrate).toThrow('(command "onboard", started 2026-09-01T00:00:00.000Z)');
+  });
+
+  it.each(ONBOARD_LOCK_ROOTS)(
+    "reclaims the %s onboarding lock left behind by a run that is gone",
+    (_scope, root) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+      writeOnboardLock(root(shared, selected), onboardLockBody(DEPARTED_PID));
+
+      const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+      expect(result.warnings).toEqual([]);
+      expect(fs.existsSync(path.join(shared, "retained-sandbox-recovery.json"))).toBe(false);
+      expect(
+        listRetainedSandboxRecoveryRecords(
+          path.join(selected, "retained-sandbox-recovery.json"),
+        ).map((record) => record.sandboxName),
+      ).toEqual(["port-box"]);
+    },
+  );
+
+  it.each(ONBOARD_LOCK_ROOTS)(
+    "refuses recovery-only migration while the %s onboarding lock is still being written",
+    (_scope, root) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+      recordRecovery(recoveryFile, "port-box", 9123, "d");
+      const before = fs.readFileSync(recoveryFile, "utf8");
+      writeOnboardLock(root(shared, selected), "active writer");
+
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+        /onboarding lock .* records no owner yet and is still changing/u,
+      );
+      expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+      expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
+    },
+  );
+
+  it("reclaims an onboarding lock whose owner record never landed and stopped changing", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
-    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
-    recordRecovery(recoveryFile, "port-box", 9123, "d");
-    const before = fs.readFileSync(recoveryFile, "utf8");
-    fs.mkdirSync(root(shared, selected), { recursive: true });
-    fs.writeFileSync(path.join(root(shared, selected), "onboard.lock"), "active writer");
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    const settled = new Date("2026-08-01T00:00:00.000Z");
+    fs.utimesSync(writeOnboardLock(shared, "active writer"), settled, settled);
+
+    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(result.warnings).toEqual([]);
+    expect(
+      listRetainedSandboxRecoveryRecords(
+        path.join(selected, "retained-sandbox-recovery.json"),
+      ).map((record) => record.sandboxName),
+    ).toEqual(["port-box"]);
+  });
+
+  it("reports an onboarding lock that is not a regular file", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
+    fs.mkdirSync(path.join(shared, "onboard.lock"), { recursive: true });
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      /onboarding lock .* is present/u,
+      /onboard\.lock is not a regular file/u,
     );
-    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
-    expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
   });
 
   it.each(
