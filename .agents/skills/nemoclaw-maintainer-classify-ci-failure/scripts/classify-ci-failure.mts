@@ -202,8 +202,6 @@ const productionExecutables = (): ClassifierExecutablePaths => ({
 });
 const PRESERVED_ENVIRONMENT = [
   "GH_CONFIG_DIR",
-  "GH_ENTERPRISE_TOKEN",
-  "GH_HOST",
   "GH_TOKEN",
   "GITHUB_TOKEN",
   "HOME",
@@ -217,6 +215,8 @@ const PRESERVED_ENVIRONMENT = [
 const UNSAFE_SUBPROCESS_ENVIRONMENT = new Set([
   "BASH_ENV",
   "ENV",
+  "GH_ENTERPRISE_TOKEN",
+  "GH_HOST",
   "NODE_OPTIONS",
   "NODE_PATH",
   "NPM_CONFIG_NODE_OPTIONS",
@@ -638,7 +638,7 @@ async function classifyCiFailureWithRuntime(
   const github = async (args: string[], timeoutMs = 30000) => {
     const result = await execute(
       executables.gh,
-      args,
+      args[0] === "api" ? ["api", "--hostname", "github.com", ...args.slice(1)] : args,
       input.workdir,
       timeoutMs,
       subprocessEnvironment,
@@ -712,7 +712,7 @@ async function classifyCiFailureWithRuntime(
     const rawPath = logDir + "/job.log";
     const boundedPath = logDir + "/job.tail.log";
     const downloaded = await run(
-      `set +e; set -o pipefail; ${q(executables.gh)} api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} | ${q(executables.tail)} -c 4000000 > ${q(rawPath)}; statuses=("\${PIPESTATUS[@]}"); bytes=$(${q(executables.stat)} -c %s -- ${q(rawPath)}) || exit 1; printf '%s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$bytes"`,
+      `set +e; set -o pipefail; ${q(executables.gh)} api --hostname github.com ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} | ${q(executables.tail)} -c 4000000 > ${q(rawPath)}; statuses=("\${PIPESTATUS[@]}"); bytes=$(${q(executables.stat)} -c %s -- ${q(rawPath)}) || exit 1; printf '%s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$bytes"`,
       60000,
     );
     const [githubStatus, captureStatus, byteText] = downloaded.stdout.text.trim().split(/\s+/, 3);
@@ -875,7 +875,7 @@ async function classifyCiFailureWithRuntime(
       try {
         const archive = dir + "/artifact.zip";
         const download = await run(
-          `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; ${q(executables.gh)} api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; ${q(executables.dd)} bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; ${q(executables.dd)} bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(${q(executables.dd)} bs=1 count=1 iflag=fullblock status=none | ${q(executables.wc)} -c); extra_status=$?; bytes=$(${q(executables.stat)} -c %s -- "$output") || exit 1; state=ok; if [ "$extra_status" -ne 0 ]; then state=reader; elif [ "$extra" -ne 0 ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
+          `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; ${q(executables.gh)} api --hostname github.com ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; ${q(executables.dd)} bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; ${q(executables.dd)} bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(${q(executables.dd)} bs=1 count=1 iflag=fullblock status=none | ${q(executables.wc)} -c); extra_status=$?; bytes=$(${q(executables.stat)} -c %s -- "$output") || exit 1; state=ok; if [ "$extra_status" -ne 0 ]; then state=reader; elif [ "$extra" -ne 0 ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
           60000,
         );
         const [downloadStatus, readerStatus, downloadState, downloadBytesText] =

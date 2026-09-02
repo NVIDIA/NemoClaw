@@ -6,10 +6,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  listValidatedArtifactZipEntries,
-  readValidatedArtifactZipEntryBytes,
-} from "../../scripts/scorecard/read-artifact-zip.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/scorecard/read-artifact-zip.mts";
 import { githubRequest } from "./base-image-publication.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
@@ -285,15 +282,14 @@ export function materializeExactJsonArchive(
   outputDirectory: string,
   fileName: typeof CONTRACT_FILE | typeof COHORT_FILE,
 ): string {
-  const entries = listValidatedArtifactZipEntries(archive, { maxEntries: 2 });
-  if (JSON.stringify(entries) !== JSON.stringify([fileName])) {
+  const entries = readValidatedArtifactZipEntries(archive, {
+    maxEntries: 2,
+    maxTotalUncompressedBytes: MAX_CONTRACT_BYTES,
+  });
+  if (entries?.length !== 1 || entries[0]?.name !== fileName) {
     throw new Error(`artifact archive must contain exactly one ${fileName} regular file`);
   }
-  const contract = readValidatedArtifactZipEntryBytes(archive, fileName, {
-    maxBytes: MAX_CONTRACT_BYTES,
-    maxEntries: 2,
-  });
-  if (!contract) throw new Error("artifact contract archive is malformed");
+  const contract = entries[0].bytes;
   const resolvedDirectory = path.resolve(outputDirectory);
   mkdirSync(resolvedDirectory, { mode: 0o700, recursive: true });
   const contractPath = path.join(resolvedDirectory, fileName);

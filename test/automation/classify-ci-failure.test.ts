@@ -92,13 +92,14 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
     `#!${process.execPath}`,
     "const fs=require('fs');",
     "const {spawn}=require('node:child_process');",
-    "const block=()=>{ if(process.env.BLOCK_DESCENDANT_MARKER) { process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); } if(process.env.BLOCK_GROUP_MARKER) fs.writeFileSync(process.env.BLOCK_GROUP_MARKER,String(process.pid)); if(process.env.BLOCK_DESCENDANT_MARKER) { const child=spawn(process.execPath,['-e',\"process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:process.env.EXIT_GROUP_LEADER ? ['ignore',process.stdout,process.stderr] : 'ignore'}); fs.writeFileSync(process.env.BLOCK_DESCENDANT_MARKER,String(child.pid)); if(process.env.EXIT_GROUP_LEADER) { fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); process.exit(0); } } fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); setInterval(()=>{},1000); };",
+    "const block=()=>{ if(process.env.EXIT_PROMPTLY_ON_TERM) { fs.writeFileSync(process.env.BLOCK_WRAPPER_MARKER,String(process.ppid)); fs.writeFileSync(process.env.BLOCK_COMMAND_MARKER,String(process.pid)); process.once('SIGTERM',()=>{ fs.appendFileSync(process.env.SIGNAL_LOG,'SIGTERM\\n'); process.exit(0); }); } if(process.env.BLOCK_DESCENDANT_MARKER) { process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); } if(process.env.BLOCK_GROUP_MARKER) fs.writeFileSync(process.env.BLOCK_GROUP_MARKER,String(process.pid)); if(process.env.BLOCK_DESCENDANT_MARKER) { const child=spawn(process.execPath,['-e',\"process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:process.env.EXIT_GROUP_LEADER ? ['ignore',process.stdout,process.stderr] : 'ignore'}); fs.writeFileSync(process.env.BLOCK_DESCENDANT_MARKER,String(child.pid)); if(process.env.EXIT_GROUP_LEADER) { fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); process.exit(0); } } fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); setInterval(()=>{},1000); };",
     "const a=process.argv.slice(2).join(' ');",
     "fs.appendFileSync(process.env.GH_CALLS,a+'\\n');",
-    "if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123') { if(process.env.BLOCK_METADATA) { block(); } else if(process.env.FAIL_METADATA) { console.error(process.env.FAIL_METADATA); process.exit(8); } else console.log(JSON.stringify({id:123,run_id:456,name:process.env.JOB_NAME||'CLI tests',status:'completed',conclusion:'failure',html_url:process.env.JOB_URL||'https://example.test/job'})); }",
-    "else if(a==='api repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.BLOCK_LOG) { block(); } else if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } else process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
-    "else if(a==='api --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') { if(process.env.FAIL_INVENTORY) { console.error(process.env.FAIL_INVENTORY); process.exit(8); } const artifacts=process.env.DUPLICATE_ARTIFACTS ? [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)},{id:790,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}] : [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]; process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:artifacts.length,artifacts})); }",
-    "else if(a==='api repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') { if(process.env.BLOCK_ARTIFACT) { block(); } else if(process.env.STREAM_BYTES) process.stdout.write(Buffer.alloc(Number(process.env.STREAM_BYTES))); else process.stdout.write(fs.readFileSync(process.env.ZIP_PATH)); }",
+    "fs.appendFileSync(process.env.GH_ENV,JSON.stringify({GH_HOST:process.env.GH_HOST,GH_ENTERPRISE_TOKEN:process.env.GH_ENTERPRISE_TOKEN,GH_TOKEN:process.env.GH_TOKEN,GITHUB_TOKEN:process.env.GITHUB_TOKEN})+'\\n');",
+    "if(a==='api --hostname github.com repos/NVIDIA/NemoClaw/actions/jobs/123') { if(process.env.BLOCK_METADATA) { block(); } else if(process.env.FAIL_METADATA) { console.error(process.env.FAIL_METADATA); process.exit(8); } else console.log(JSON.stringify({id:123,run_id:456,name:process.env.JOB_NAME||'CLI tests',status:'completed',conclusion:'failure',html_url:process.env.JOB_URL||'https://example.test/job'})); }",
+    "else if(a==='api --hostname github.com repos/NVIDIA/NemoClaw/actions/jobs/123/logs') { if(process.env.BLOCK_LOG) { block(); } else if(process.env.FAIL_LOG) { console.error(process.env.FAIL_LOG); process.exit(8); } else process.stdout.write('discarded\\n'.repeat(Number(process.env.LOG_PREFIX_LINES||0))+process.env.TEST_LOG); }",
+    "else if(a==='api --hostname github.com --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1') { if(process.env.FAIL_INVENTORY) { console.error(process.env.FAIL_INVENTORY); process.exit(8); } const artifacts=process.env.DUPLICATE_ARTIFACTS ? [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)},{id:790,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}] : [{id:789,name:'results',size_in_bytes:Number(process.env.ZIP_SIZE)}]; process.stdout.write('HTTP/2 200\\r\\n\\r\\n'+JSON.stringify({total_count:artifacts.length,artifacts})); }",
+    "else if(a==='api --hostname github.com repos/NVIDIA/NemoClaw/actions/artifacts/789/zip') { if(process.env.BLOCK_ARTIFACT) { block(); } else if(process.env.STREAM_BYTES) process.stdout.write(Buffer.alloc(Number(process.env.STREAM_BYTES))); else process.stdout.write(fs.readFileSync(process.env.ZIP_PATH)); }",
     "else { console.error('unexpected '+a); process.exit(9); }",
   ].join("\n");
   writeFileSync(gh, fake);
@@ -132,6 +133,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
     PATH: bin + ":" + process.env.PATH,
     TMPDIR: root,
     GH_CALLS: join(root, "calls"),
+    GH_ENV: join(root, "environment"),
     TEST_DD: dd,
     TEST_GH: gh,
     TEST_WC: wc,
@@ -380,6 +382,32 @@ describe("CI failure classifier process", () => {
     expect(existsSync(executableMarker)).toBe(false);
     expect(existsSync(bashMarker)).toBe(false);
     expect(readFileSync(nodeMarker, "utf8").trim().split("\n")).toEqual(["loaded"]);
+  });
+
+  test("binds GitHub API reads to github.com without forwarding enterprise host credentials", () => {
+    const item = fixture("AssertionError: expected true");
+    item.env.GH_HOST = "attacker.invalid";
+    item.env.GH_ENTERPRISE_TOKEN = "enterprise-secret";
+    item.env.GH_TOKEN = "github-token";
+    item.env.GITHUB_TOKEN = "github-actions-token";
+
+    const result = run(item.env, ["--artifact-name", "results"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(item.env.GH_CALLS!, "utf8").trim().split("\n")).toEqual([
+      "api --hostname github.com repos/NVIDIA/NemoClaw/actions/jobs/123",
+      "api --hostname github.com repos/NVIDIA/NemoClaw/actions/jobs/123/logs",
+      "api --hostname github.com --include repos/NVIDIA/NemoClaw/actions/runs/456/artifacts?per_page=100&page=1",
+      "api --hostname github.com repos/NVIDIA/NemoClaw/actions/artifacts/789/zip",
+    ]);
+    const environments = readFileSync(item.env.GH_ENV!, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(environments).toHaveLength(4);
+    expect(environments).toEqual(
+      environments.map(() => ({ GH_TOKEN: "github-token", GITHUB_TOKEN: "github-actions-token" })),
+    );
   });
 
   test("classifies an AssertionError as a test failure", () => {
@@ -908,31 +936,29 @@ describe("CI failure classifier process", () => {
     expect(() => process.kill(descendantPid, 0)).toThrow();
   });
 
-  test("does not escalate after a child exits promptly on SIGTERM", async () => {
+  test("drains a process group whose command exits promptly on SIGTERM", async () => {
     const item = fixture("AssertionError: retained tail");
     const marker = join(item.root, "blocked");
     const signals = join(item.root, "process-group-signals");
-    const instrument = join(item.root, "instrument-process-kill.mjs");
-    writeFileSync(
-      instrument,
-      [
-        'import { appendFileSync } from "node:fs";',
-        "const realKill = process.kill.bind(process);",
-        "process.kill = (pid, signal) => {",
-        "  if (pid < 0 && signal) appendFileSync(process.env.KILL_SIGNAL_LOG, String(signal) + '\\n');",
-        "  return realKill(pid, signal);",
-        "};",
-      ].join("\n"),
-    );
+    const wrapperMarker = join(item.root, "wrapper-pid");
+    const commandMarker = join(item.root, "command-pid");
     item.env.BLOCK_LOG = "1";
     item.env.BLOCK_MARKER = marker;
-    item.env.KILL_SIGNAL_LOG = signals;
-    item.env.NODE_OPTIONS = `--import=${instrument}`;
+    item.env.EXIT_PROMPTLY_ON_TERM = "1";
+    item.env.SIGNAL_LOG = signals;
+    item.env.BLOCK_WRAPPER_MARKER = wrapperMarker;
+    item.env.BLOCK_COMMAND_MARKER = commandMarker;
     const child = spawn(process.execPath, importedClassifierArgs(item.env, []), {
       env: item.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    await waitForFile(marker);
+    await Promise.all([
+      waitForFile(marker),
+      waitForFile(wrapperMarker),
+      waitForFile(commandMarker),
+    ]);
+    const wrapperPid = Number(readFileSync(wrapperMarker, "utf8"));
+    const commandPid = Number(readFileSync(commandMarker, "utf8"));
     child.kill("SIGTERM");
     const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
       (resolve) =>
@@ -940,7 +966,12 @@ describe("CI failure classifier process", () => {
     );
     expect(result).toEqual({ code: 143, signal: null });
     expect(readFileSync(signals, "utf8").trim().split("\n")).toEqual(["SIGTERM"]);
+    expect(() => process.kill(wrapperPid, 0)).toThrow();
+    expect(() => process.kill(commandPid, 0)).toThrow();
+    expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
+    expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
   });
+
   test("reports a redacted fixed-root removal command when cancellation cleanup fails", async () => {
     const item = fixture("AssertionError: retained tail");
     const marker = join(item.root, "blocked");

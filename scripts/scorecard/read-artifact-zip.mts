@@ -211,25 +211,8 @@ export function readValidatedArtifactZipEntries(
   return entries?.map(({ name, contents }) => ({ name, bytes: contents! })) ?? null;
 }
 
-/** Lists structurally validated regular-file entries from an artifact ZIP. */
-export function listValidatedArtifactZipEntries(
-  archive: Buffer,
-  options: {
-    maxEntries?: number;
-    maxTotalUncompressedBytes?: number;
-    validateAllEntries?: boolean;
-  },
-): string[] | null {
-  const entries = parseValidatedArtifactZip(archive, {
-    maxEntries: options.maxEntries ?? 1000,
-    maxTotalUncompressedBytes: options.maxTotalUncompressedBytes ?? Number.MAX_SAFE_INTEGER,
-    inflate: options.validateAllEntries ? "all" : null,
-  });
-  return entries?.map(({ name }) => name).sort() ?? null;
-}
-
 /** Reads the exact validated bytes of one safe relative regular-file entry. */
-export function readValidatedArtifactZipEntryBytes(
+function readValidatedArtifactZipEntryBytes(
   archive: Buffer,
   expectedFile: string,
   options: { maxBytes: number; maxEntries?: number },

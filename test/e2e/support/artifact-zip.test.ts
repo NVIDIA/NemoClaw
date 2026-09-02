@@ -4,10 +4,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  listValidatedArtifactZipEntries,
   readValidatedArtifactZipEntries,
   readValidatedArtifactZipEntry,
-  readValidatedArtifactZipEntryBytes,
 } from "../../../scripts/scorecard/read-artifact-zip.mts";
 import { artifactZip, artifactZipEntryDataOffset } from "../../helpers/artifact-zip";
 
@@ -24,37 +22,50 @@ const structuralMutations: Array<[string, (archive: Buffer, centralOffset: numbe
 ];
 
 describe("validated GitHub artifact ZIP reader", () => {
-  it("lists only structurally valid regular files", () => {
+  it("reads only structurally valid regular files", () => {
     const archive = artifactZip([
       { name: "e2e/runner-pressure-classification.jsonl", contents: "safe" },
       { name: "e2e/retry/provider.json", contents: "{}" },
     ]);
 
-    expect(listValidatedArtifactZipEntries(archive, { maxEntries: 10 })).toEqual([
-      "e2e/retry/provider.json",
-      "e2e/runner-pressure-classification.jsonl",
-    ]);
-    expect(listValidatedArtifactZipEntries(archive, { maxEntries: 1 })).toBeNull();
-    expect(listValidatedArtifactZipEntries(archive, { maxTotalUncompressedBytes: 5 })).toBeNull();
+    expect(
+      readValidatedArtifactZipEntries(archive, {
+        maxEntries: 10,
+        maxTotalUncompressedBytes: 10,
+      })?.map(({ name }) => name),
+    ).toEqual(["e2e/runner-pressure-classification.jsonl", "e2e/retry/provider.json"]);
+    expect(
+      readValidatedArtifactZipEntries(archive, {
+        maxEntries: 1,
+        maxTotalUncompressedBytes: 10,
+      }),
+    ).toBeNull();
+    expect(
+      readValidatedArtifactZipEntries(archive, { maxTotalUncompressedBytes: 5 }),
+    ).toBeNull();
   });
 
-  it("rejects duplicate, linked, and invalid UTF-8 names while listing", () => {
+  it("rejects duplicate, linked, and invalid UTF-8 names", () => {
     expect(
-      listValidatedArtifactZipEntries(
+      readValidatedArtifactZipEntries(
         artifactZip([
           { name: "same.json", contents: "one" },
           { name: "same.json", contents: "two" },
         ]),
-        {},
+        { maxTotalUncompressedBytes: 1_024 },
       ),
     ).toBeNull();
     const linked = artifactZip([{ name: "summary.json", contents: "{}" }]);
     linked.writeUInt32LE(0xa0000000, linked.readUInt32LE(linked.length - 6) + 38);
-    expect(listValidatedArtifactZipEntries(linked, {})).toBeNull();
+    expect(
+      readValidatedArtifactZipEntries(linked, { maxTotalUncompressedBytes: 1_024 }),
+    ).toBeNull();
     const invalidUtf8 = artifactZip([{ name: "x.json", contents: "{}" }]);
     invalidUtf8[30] = 0xff;
     invalidUtf8[invalidUtf8.readUInt32LE(invalidUtf8.length - 6) + 46] = 0xff;
-    expect(listValidatedArtifactZipEntries(invalidUtf8, {})).toBeNull();
+    expect(
+      readValidatedArtifactZipEntries(invalidUtf8, { maxTotalUncompressedBytes: 1_024 }),
+    ).toBeNull();
   });
 
   it("reads only the exact safe relative entry from a multi-entry archive", () => {
@@ -75,10 +86,10 @@ describe("validated GitHub artifact ZIP reader", () => {
       }),
     ).toBe('{"utf8":true}');
     expect(
-      readValidatedArtifactZipEntryBytes(archive, "diagnostics/log.txt", {
+      readValidatedArtifactZipEntry(archive, "diagnostics/log.txt", {
         maxBytes: 1_024,
       }),
-    ).toEqual(Buffer.from("ignored"));
+    ).toBe("ignored");
     expect(readValidatedArtifactZipEntry(archive, "log.txt", { maxBytes: 1_024 })).toBeNull();
   });
 
@@ -96,7 +107,7 @@ describe("validated GitHub artifact ZIP reader", () => {
     const archive = artifactZip([{ name: "summary.json", contents: '{"safe":true}' }]);
 
     expect(
-      readValidatedArtifactZipEntryBytes(archive, requestedPath, {
+      readValidatedArtifactZipEntry(archive, requestedPath, {
         maxBytes: 1_024,
       }),
     ).toBeNull();
@@ -134,16 +145,9 @@ describe("validated GitHub artifact ZIP reader", () => {
     corruptArchive[artifactZipEntryDataOffset(corruptArchive, 1)] ^= 0xff;
 
     expect(
-      listValidatedArtifactZipEntries(corruptArchive, {
+      readValidatedArtifactZipEntries(corruptArchive, {
         maxEntries: 10,
         maxTotalUncompressedBytes: 1_024,
-      }),
-    ).toEqual(["diagnostics/unrelated.txt", "summary.json"]);
-    expect(
-      listValidatedArtifactZipEntries(corruptArchive, {
-        maxEntries: 10,
-        maxTotalUncompressedBytes: 1_024,
-        validateAllEntries: true,
       }),
     ).toBeNull();
   });
@@ -169,26 +173,32 @@ describe("validated GitHub artifact ZIP reader", () => {
   });
 
   it.each([
-    ["zero max entries", { maxEntries: 0 }],
-    ["fractional max entries", { maxEntries: 1.5 }],
-    ["NaN max entries", { maxEntries: Number.NaN }],
-    ["infinite max entries", { maxEntries: Number.POSITIVE_INFINITY }],
-    ["unsafe max entries", { maxEntries: Number.MAX_SAFE_INTEGER + 1 }],
+    ["zero max entries", { maxEntries: 0, maxTotalUncompressedBytes: 1_024 }],
+    ["fractional max entries", { maxEntries: 1.5, maxTotalUncompressedBytes: 1_024 }],
+    ["NaN max entries", { maxEntries: Number.NaN, maxTotalUncompressedBytes: 1_024 }],
+    [
+      "infinite max entries",
+      { maxEntries: Number.POSITIVE_INFINITY, maxTotalUncompressedBytes: 1_024 },
+    ],
+    [
+      "unsafe max entries",
+      { maxEntries: Number.MAX_SAFE_INTEGER + 1, maxTotalUncompressedBytes: 1_024 },
+    ],
     ["negative total bytes", { maxTotalUncompressedBytes: -1 }],
     ["fractional total bytes", { maxTotalUncompressedBytes: 1.5 }],
     ["NaN total bytes", { maxTotalUncompressedBytes: Number.NaN }],
     ["infinite total bytes", { maxTotalUncompressedBytes: Number.POSITIVE_INFINITY }],
     ["unsafe total bytes", { maxTotalUncompressedBytes: Number.MAX_SAFE_INTEGER + 1 }],
-  ])("rejects invalid list limit: %s", (_name, options) => {
+  ])("rejects invalid whole-archive limit: %s", (_name, options) => {
     const archive = artifactZip([{ name: "summary.json", contents: "{}" }]);
-    expect(listValidatedArtifactZipEntries(archive, options)).toBeNull();
+    expect(readValidatedArtifactZipEntries(archive, options)).toBeNull();
   });
 
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
     "rejects invalid exact-entry byte limit: %s",
     (maxBytes) => {
       const archive = artifactZip([{ name: "summary.json", contents: "{}" }]);
-      expect(readValidatedArtifactZipEntryBytes(archive, "summary.json", { maxBytes })).toBeNull();
+      expect(readValidatedArtifactZipEntry(archive, "summary.json", { maxBytes })).toBeNull();
     },
   );
 
@@ -197,7 +207,7 @@ describe("validated GitHub artifact ZIP reader", () => {
     (maxEntries) => {
       const archive = artifactZip([{ name: "summary.json", contents: "{}" }]);
       expect(
-        readValidatedArtifactZipEntryBytes(archive, "summary.json", {
+        readValidatedArtifactZipEntry(archive, "summary.json", {
           maxBytes: 1_024,
           maxEntries,
         }),

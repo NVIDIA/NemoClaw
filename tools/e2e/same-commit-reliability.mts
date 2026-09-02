@@ -6,7 +6,7 @@
 import { pathToFileURL } from "node:url";
 
 import {
-  listValidatedArtifactZipEntries,
+  readValidatedArtifactZipEntries,
   readValidatedArtifactZipEntry,
 } from "../../scripts/scorecard/read-artifact-zip.mts";
 import type { RetryEvidence, RetryFailureClass } from "../../test/e2e/fixtures/retry-policy.ts";
@@ -389,10 +389,12 @@ async function collectRunEvidence(
       break;
     }
     const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
-    const entries = listValidatedArtifactZipEntries(archive, {
+    const validatedEntries = readValidatedArtifactZipEntries(archive, {
       maxEntries: 1000,
+      maxTotalUncompressedBytes: MAX_ARTIFACT_BYTES,
     });
-    if (entries === null) {
+    const entries = validatedEntries?.map(({ name }) => name);
+    if (entries === undefined) {
       terminalMalformed = true;
       failureClassMalformed = true;
       continue;
