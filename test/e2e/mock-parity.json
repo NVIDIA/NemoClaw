@@ -274,7 +274,10 @@
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts"],
-      "fast": ["test/e2e/support/dashboard-connect-handoff.test.ts"]
+      "fast": [
+        "test/e2e/support/dashboard-connect-handoff.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
