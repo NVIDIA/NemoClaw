@@ -243,6 +243,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+  const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
   // The outer rebuild already made its sole backup before the destroy phase deleted
   // the sandbox without tearing down the gateway/session needed by onboard --resume.
@@ -250,6 +251,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   // where a second backup is impossible after deletion. Keep the bypass scoped to
   // this call; remove it when onboard accepts an explicit outer-backup handoff.
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  // The outer rebuild owns and has already validated this backup. Inner onboard
+  // must publish the replacement before the outer restore phase applies it.
+  delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   if (rebuildMessagingPlan) MessagingSetupApplier.writePlanToEnv(rebuildMessagingPlan);
   // Isolation removed the ambient reasoning inputs so an unrelated onboard
   // cannot steer this recreate (#5735). The recreate still has to reapply the
@@ -313,6 +317,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       delete process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
     } else {
       process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = previousRecreateWithoutBackup;
+    }
+    if (previousRestoreLatestBackup === undefined) {
+      delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+    } else {
+      process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = previousRestoreLatestBackup;
     }
   }
 

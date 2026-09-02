@@ -383,6 +383,29 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
+  it("keeps the outer prepared-backup restore sentinel out of inner onboarding", async () => {
+    const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    try {
+      let observedRestoreSentinel: string | undefined;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedRestoreSentinel = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+      });
+
+      await expect(
+        runRebuildRecreatePhase(makeInput({ preparedBackupRecovery: true })),
+      ).resolves.toBe(true);
+
+      expect(observedRestoreSentinel).toBeUndefined();
+      expect(process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE).toBe("1");
+    } finally {
+      restoreEnv(
+        "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
+        previousRestoreLatestBackup,
+      );
+    }
+  });
+
   it("carries preserved Hermes home channels to the Dockerfile patch boundary (#7803)", async () => {
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
       expect(options.rebuildPreservedEnv).toEqual([
