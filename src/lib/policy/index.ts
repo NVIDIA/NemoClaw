@@ -413,11 +413,16 @@ function loadPresetForSandbox(
   if (options.includeMessagingCredentialBindings && channelId) {
     configuredMessagingChannels = [...new Set([...configuredMessagingChannels, channelId])];
   }
-  const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
-    agent: sandboxAgent,
-    sandboxName,
-    messagingConfig,
-  });
+  let channelPresetContent: string | null;
+  try {
+    channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
+      agent: sandboxAgent,
+      sandboxName,
+      messagingConfig,
+    });
+  } catch {
+    return null;
+  }
   if (channelPresetContent) {
     return channelId && !configuredMessagingChannels.includes(channelId)
       ? stripMessagingCredentialBindings(channelPresetContent)
@@ -732,10 +737,7 @@ export function inspectPolicyMutationContext(
  * Read the round-trippable base policy through the sandbox's recorded gateway.
  * Destructive lifecycle callers use this instead of the ambient CLI gateway.
  */
-export function captureRecordedSandboxBasePolicy(
-  sandboxName: string,
-  operation: string,
-): string {
+export function captureRecordedSandboxBasePolicy(sandboxName: string, operation: string): string {
   return inspectLivePolicyBoundary(sandboxName, operation).basePolicyDocument;
 }
 
@@ -953,15 +955,11 @@ function mergeConcurrentPolicyValue(
     ]);
     for (const key of keys) {
       const value = mergeConcurrentPolicyValue(
-        Object.prototype.hasOwnProperty.call(original, key)
-          ? original[key]
-          : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(original, key) ? original[key] : MISSING_POLICY_VALUE,
         Object.prototype.hasOwnProperty.call(requested, key)
           ? requested[key]
           : MISSING_POLICY_VALUE,
-        Object.prototype.hasOwnProperty.call(external, key)
-          ? external[key]
-          : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(external, key) ? external[key] : MISSING_POLICY_VALUE,
         [...pathSegments, key],
         conflicts,
       );
@@ -982,11 +980,7 @@ function rebasePolicyDocumentOntoConcurrentEdit(
   const original = YAML.parse(originalDocument) as PolicyValue;
   const requested = YAML.parse(requestedDocument) as PolicyValue;
   const external = YAML.parse(externalDocument) as PolicyValue;
-  if (
-    !isPolicyDocument(original) ||
-    !isPolicyDocument(requested) ||
-    !isPolicyDocument(external)
-  ) {
+  if (!isPolicyDocument(original) || !isPolicyDocument(requested) || !isPolicyDocument(external)) {
     throw new PolicyObservationError(
       "OpenShell returned an invalid policy revision while NemoClaw reconciled a concurrent policy edit.",
     );
@@ -1100,11 +1094,7 @@ export function setPolicyDocument(
     let externalDocument: string;
     try {
       externalDocument = requestedIsCurrent
-        ? captureSandboxBasePolicyRevision(
-            sandboxName,
-            context.gatewayName,
-            observedVersion - 1,
-          )
+        ? captureSandboxBasePolicyRevision(sandboxName, context.gatewayName, observedVersion - 1)
         : observedDocument;
       const rebased = rebasePolicyDocumentOntoConcurrentEdit(
         originalDocument,

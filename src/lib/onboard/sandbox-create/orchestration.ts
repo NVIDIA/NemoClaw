@@ -10,7 +10,10 @@ import { createCliOpenShellSandboxObserverFromRunner } from "../../adapters/open
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
-import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
+import {
+  getMessagingPolicyKeysByChannel,
+  listMessagingPolicyPresetMetadata,
+} from "../../messaging/channels/metadata";
 import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
 import { normalizeWechatIlinkBaseUrl } from "../../messaging/channels/wechat/ilink-base-url";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
@@ -131,22 +134,52 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   return [...providers];
 }
 
+function asMessagingAgentId(
+  agent: string | null | undefined,
+): SandboxMessagingPlan["agent"] | null {
+  return agent === "openclaw" || agent === "hermes" ? agent : null;
+}
+
 export function resolveRebuildMessagingPolicyDeltas(
   plan:
     | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
     | null
     | undefined,
-  fallbackMessagingConfig?: MessagingChannelConfig | null,
+  fallback?: {
+    readonly agent?: SandboxMessagingPlan["agent"] | null;
+    readonly messagingConfig?: MessagingChannelConfig | null;
+  },
 ): {
   readonly requiredNetworkPolicyKeys: readonly string[];
   readonly requiredNetworkPolicyPresetNames: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
-    const wechatIlinkOrigin = normalizeWechatIlinkBaseUrl(fallbackMessagingConfig?.WECHAT_BASE_URL);
+    const wechatIlinkOrigin = normalizeWechatIlinkBaseUrl(
+      fallback?.messagingConfig?.WECHAT_BASE_URL,
+    );
+    if (!wechatIlinkOrigin) {
+      return {
+        requiredNetworkPolicyKeys: [],
+        requiredNetworkPolicyPresetNames: [],
+        removedNetworkPolicyKeys: [],
+      };
+    }
+    const fallbackAgent = fallback?.agent;
+    const wechatPolicy = fallbackAgent
+      ? listMessagingPolicyPresetMetadata({ agent: fallbackAgent }).find(
+          ({ channelId }) => channelId === "wechat",
+        )
+      : undefined;
+    if (!fallbackAgent || !wechatPolicy) {
+      throw new Error(
+        "Cannot prepare a legacy WeChat rebuild policy without manifest metadata for the effective agent.",
+      );
+    }
     return {
-      requiredNetworkPolicyKeys: wechatIlinkOrigin ? ["wechat_bridge"] : [],
-      requiredNetworkPolicyPresetNames: wechatIlinkOrigin ? ["wechat"] : [],
+      requiredNetworkPolicyKeys:
+        wechatPolicy.agentPolicyKeys[fallbackAgent] ?? wechatPolicy.policyKeys,
+      requiredNetworkPolicyPresetNames: [wechatPolicy.presetName],
       removedNetworkPolicyKeys: [],
     };
   }
@@ -2178,7 +2211,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     } = preparedOnboardLaunch;
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
-      effectiveMessagingConfig,
+      {
+        agent: asMessagingAgentId(effectiveMessagingAgent),
+        messagingConfig: effectiveMessagingConfig,
+      },
     );
     const rebuildObservabilityPolicyDelta = resolveRebuildObservabilityPolicyDelta({
       agent: agent?.name,
