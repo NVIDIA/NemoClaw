@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { scopeGatewayOpenshellArgs } from "../adapters/openshell/gateway-scope";
 import { createInferenceRouteHelpers } from "./inference-route";
 import {
   bindGatewayUpsertProvider,
   createRoutedResumeProviderUpsert,
   createGatewayScopedOpenshellRunner,
-  scopeGatewayOpenshellArgs,
   selectGatewayForFollowupOrExit,
 } from "./setup-inference";
 
@@ -146,6 +146,17 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
         stderr: "Error: status: 'NotFound', message: \"provider profile not found\"",
       },
       { status: 0, stdout: "", stderr: "" },
+      {
+        status: 0,
+        stdout: JSON.stringify({
+          id: "openai",
+          credentials: [],
+          endpoints: [],
+          binaries: [],
+          inference_capable: true,
+        }),
+        stderr: "",
+      },
     ];
     const run = vi.fn((args: string[]) => {
       events.push(args.join(" "));
@@ -183,7 +194,8 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     expect(events[1]).toMatch(
       new RegExp(`^provider profile -g ${GATEWAY} import --file .*openai\\.yaml$`, "u"),
     );
-    expect(events[2]).toBe("provider mutation");
+    expect(events[2]).toBe(`provider profile -g ${GATEWAY} export openai --output json`);
+    expect(events[3]).toBe("provider mutation");
     expect(upsert).toHaveBeenCalledWith(
       "nvidia-router",
       "openai",
