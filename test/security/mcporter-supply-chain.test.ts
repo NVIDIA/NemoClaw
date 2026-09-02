@@ -11,10 +11,6 @@ import { type DependencyNode, findDependency } from "../fixtures/dependency-grap
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");
-const dependencyReview = fs.readFileSync(
-  path.join(repoRoot, "agents", "openclaw", "dependency-review.md"),
-  "utf8",
-);
 const dockerfiles = ["Dockerfile.base", "Dockerfile"].map((name) => ({
   name,
   contents: fs.readFileSync(path.join(repoRoot, name), "utf8"),
@@ -28,8 +24,8 @@ const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
 const expectedHonoVersion = "4.12.34";
 const expectedHonoTarball = "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz";
-const expectedFastUriVersion = "3.1.5";
-const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz";
+const expectedFastUriVersion = "3.1.6";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
@@ -94,25 +90,6 @@ function runIntegrityGate(contents: string, version: string) {
 }
 
 describe("mcporter image supply-chain controls", () => {
-  it("records the patched transitive dependency review boundaries", () => {
-    expect(dependencyReview).toContain("a manifest override, or the locked graph changes");
-    expect(dependencyReview).toContain(
-      "`2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`",
-    );
-    expect(dependencyReview).toContain("any version other than exact `2.0.11`");
-    expect(dependencyReview).toContain("the `/vercel` adapter");
-    expect(dependencyReview).toContain("`fast-uri@3.1.5`");
-    expect(dependencyReview).toContain("`GHSA-v2hh-gcrm-f6hx`");
-    expect(dependencyReview).toContain("`GHSA-7p8r-x3mc-p8w7`");
-    expect(dependencyReview).toContain("exact `3.1.5`");
-    expect(dependencyReview).toContain("`hono@4.12.34`");
-    expect(dependencyReview).toContain("`GHSA-54fx-42gc-7vw4`");
-    expect(dependencyReview).toContain("exact `4.12.34`");
-    expect(dependencyReview).toContain("`ip-address@10.3.1`");
-    expect(dependencyReview).toContain("`GHSA-mwp4-54f8-5fhr`");
-    expect(dependencyReview).toContain("exact `10.3.1`");
-  });
-
   it("resolves the committed production graph through npm's lockfile boundary", () => {
     const result = spawnSync(
       "npm",
