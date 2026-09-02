@@ -155,6 +155,8 @@ export interface DockerStateMutationHarnessOptions {
   readonly loseReleaseResponseOnce?: boolean;
   readonly signalHelperOnce?: boolean;
   readonly stateMountType?: "bind" | "volume";
+  readonly podmanAmbiguousMounts?: boolean;
+  readonly podmanMaterializedImageMount?: boolean;
   readonly timeoutResponseCopyOnce?: boolean;
 }
 
@@ -169,6 +171,66 @@ export interface DockerStateMutationHarnessState {
   privileged: boolean;
   overlayProc: boolean;
   supervisorStopped: boolean;
+}
+
+function additionalInspectionMounts(
+  options: DockerStateMutationHarnessOptions,
+  state: DockerStateMutationHarnessState,
+): Record<string, unknown>[] {
+  const mounts: Record<string, unknown>[] = [];
+  if (options.podmanMaterializedImageMount) {
+    mounts.push(
+      {
+        Type: "image",
+        Source: "ghcr.io/nvidia/openshell/supervisor:0.0.106",
+        Destination: "/opt/openshell/bin",
+        Mode: "",
+        RW: false,
+        Propagation: "rprivate",
+      },
+      {
+        Type: "bind",
+        Source:
+          "/run/user/1000/containers/storage/overlay-containers/" +
+          `${DOCKER_STATE_MUTATION_RUNTIME_ID}/userdata/overlay/example/merge`,
+        Destination: "/opt/openshell/bin",
+        Mode: "",
+        RW: true,
+        Propagation: "rprivate",
+      },
+    );
+  }
+  if (options.podmanAmbiguousMounts) {
+    mounts.push(
+      {
+        Type: "bind",
+        Source: "/srv/first",
+        Destination: "/sandbox/ambiguous",
+        Mode: "",
+        RW: true,
+        Propagation: "rprivate",
+      },
+      {
+        Type: "bind",
+        Source: "/srv/second",
+        Destination: "/sandbox/ambiguous",
+        Mode: "",
+        RW: true,
+        Propagation: "rprivate",
+      },
+    );
+  }
+  if (state.overlayProc) {
+    mounts.push({
+      Type: "bind",
+      Source: "/proc",
+      Destination: "/proc",
+      Mode: "",
+      RW: true,
+      Propagation: "rprivate",
+    });
+  }
+  return mounts;
 }
 
 function createContainerStateMutationHarness(
@@ -188,7 +250,7 @@ function createContainerStateMutationHarness(
       : "/var/lib/openshell/alpha/hermes",
     mountType: stateMountType,
     sandboxId: SANDBOX_ID,
-    pidMode: "",
+    pidMode: providerId === "podman" ? "private" : "",
     privileged: false,
     overlayProc: false,
     supervisorStopped: false,
@@ -257,8 +319,17 @@ function createContainerStateMutationHarness(
   };
 
   const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args, _timeout, input) => {
-    const commandStart = args.findIndex((value) => value === "ps" || value === "container");
+    const commandStart = args.findIndex(
+      (value) => value === "ps" || value === "container" || value === "info",
+    );
     const command = commandStart < 0 ? [] : args.slice(commandStart);
+    if (command[0] === "info") {
+      return {
+        status: 0,
+        stdout: "/run/user/1000/containers/storage\n",
+        stderr: "",
+      };
+    }
     if (command[0] === "ps") {
       return { status: 0, stdout: `${DOCKER_STATE_MUTATION_RUNTIME_ID}\n`, stderr: "" };
     }
@@ -273,7 +344,7 @@ function createContainerStateMutationHarness(
           false,
           false,
           state.runtimePid,
-          "openshell",
+          providerId === "podman" ? "true" : "openshell",
           "alpha",
           state.sandboxId,
           state.pidMode,
@@ -297,18 +368,7 @@ function createContainerStateMutationHarness(
               RW: true,
               Propagation: "rprivate",
             },
-            ...(state.overlayProc
-              ? [
-                  {
-                    Type: "bind",
-                    Source: "/proc",
-                    Destination: "/proc",
-                    Mode: "",
-                    RW: true,
-                    Propagation: "rprivate",
-                  },
-                ]
-              : []),
+            ...additionalInspectionMounts(options, state),
           ],
         ]),
         stderr: "",
@@ -653,6 +713,10 @@ function createContainerStateMutationHarness(
           providerId,
           providerDisplayName: "Podman",
           engineOperation: "state-mutation",
+          runtimeIdInspectField: "ID",
+          privatePidMode: "private",
+          managedLabelKey: "openshell.managed",
+          managedLabelValue: "true",
         });
   const sandbox: SandboxEntry = {
     name: "alpha",

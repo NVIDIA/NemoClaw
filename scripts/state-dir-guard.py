@@ -84,7 +84,15 @@ FS_APPEND_FL = 0x00000020
 FS_IOC_GETFLAGS = 0x80086601
 FS_IOC_SETFLAGS = 0x40086602
 
-Action = Literal["preflight", "lock", "unlock", "verify-mutable", "startup"]
+Action = Literal[
+    "preflight",
+    "lock",
+    "unlock",
+    "verify-lock",
+    "verify-unlock",
+    "verify-mutable",
+    "startup",
+]
 Policy = Literal["high-risk", "confidentiality"]
 
 
@@ -1833,7 +1841,59 @@ def _verify_metadata(
     identity: Identity,
     is_confidentiality_root: bool = False,
     allow_openclaw_native_mutable: bool = False,
+    mutable_service_uids: frozenset[int] = frozenset(),
 ) -> Issue | None:
+    if action == "unlock" and policy == "confidentiality" and mutable_service_uids:
+        if st.st_uid != identity.sandbox_uid or st.st_gid != identity.sandbox_gid:
+            return Issue(
+                "verification-owner-mismatch",
+                path,
+                f"owner is {st.st_uid}:{st.st_gid}, "
+                f"expected {identity.sandbox_uid}:{identity.sandbox_gid}",
+            )
+        if entry_type == "symlink":
+            return None
+        mode = stat.S_IMODE(st.st_mode)
+        accepted_modes = (0o700, 0o2770) if entry_type == "directory" else (0o600, 0o660)
+        if mode not in accepted_modes:
+            expected = " or ".join(f"{accepted:04o}" for accepted in accepted_modes)
+            return Issue(
+                "verification-mode-mismatch",
+                path,
+                f"confidential service-mutable {entry_type} mode is {mode:04o}, "
+                f"expected {expected}",
+            )
+        return None
+    if action == "unlock" and policy == "high-risk" and mutable_service_uids:
+        allowed_uids = frozenset((identity.sandbox_uid, *mutable_service_uids))
+        if st.st_uid not in allowed_uids or st.st_gid != identity.sandbox_gid:
+            expected_uids = " or ".join(str(uid) for uid in sorted(allowed_uids))
+            return Issue(
+                "verification-owner-mismatch",
+                path,
+                f"owner is {st.st_uid}:{st.st_gid}, expected uid {expected_uids} "
+                f"with gid {identity.sandbox_gid}",
+            )
+        if entry_type == "symlink":
+            return None
+        mode = stat.S_IMODE(st.st_mode)
+        if entry_type == "directory":
+            if mode & 0o4000 or mode & 0o002 or mode & 0o700 != 0o700:
+                return Issue(
+                    "verification-mode-mismatch",
+                    path,
+                    f"service-mutable directory must be owner-accessible and not "
+                    f"world-writable: {mode:04o}",
+                )
+            return None
+        if mode & 0o7000 or mode & 0o002 or mode & 0o400 != 0o400:
+            return Issue(
+                "verification-mode-mismatch",
+                path,
+                f"service-mutable file must be owner-readable, free of special bits, "
+                f"and not world-writable: {mode:04o}",
+            )
+        return None
     expected_uid, expected_gid = _expected_ids(
         policy, action, identity, is_confidentiality_root
     )
@@ -2133,6 +2193,7 @@ def _verify_dir(
     depth: int,
     is_root: bool = False,
     verify_mutation_flags: bool = False,
+    mutable_service_uids: frozenset[int] = frozenset(),
 ) -> None:
     if depth > MAX_TRAVERSAL_DEPTH:
         issues.append(
@@ -2165,6 +2226,7 @@ def _verify_dir(
         action == "unlock"
         and policy == "high-risk"
         and context.is_openclaw_native_mutable_path(relative_dir),
+        mutable_service_uids,
     )
     if dir_issue is not None:
         issues.append(dir_issue)
@@ -2242,6 +2304,7 @@ def _verify_dir(
                         issues,
                         depth + 1,
                         verify_mutation_flags=verify_mutation_flags,
+                        mutable_service_uids=mutable_service_uids,
                     )
                 if verify_mutation_flags:
                     after = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
@@ -2276,6 +2339,7 @@ def _verify_dir(
                     and policy == "high-risk"
                     and context.is_openclaw_native_mutable_path(relative_path)
                 ),
+                mutable_service_uids=mutable_service_uids,
             )
             if metadata_issue is not None:
                 issues.append(metadata_issue)
@@ -2461,6 +2525,7 @@ def _run_guard_unserialized(
     identity: Identity,
     plan: AgentStateLockPlan,
     mutable_top_level_files: tuple[str, ...] = (),
+    mutable_service_uids: frozenset[int] = frozenset(),
 ) -> GuardResult:
     """Run one guard action.  ``identity`` is explicit for focused tests."""
 
@@ -2478,6 +2543,14 @@ def _run_guard_unserialized(
         return _restore_empty_credentials_startup_access(
             normalized_config, identity, deadline, plan
         )
+    posture_action: Action = (
+        "lock"
+        if action == "verify-lock"
+        else "unlock"
+        if action in ("verify-unlock", "verify-mutable")
+        else action
+    )
+    verify_only = action in ("verify-lock", "verify-unlock", "verify-mutable")
     fail_closed_config_root = action == "lock" and (
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
@@ -2520,7 +2593,7 @@ def _run_guard_unserialized(
             normalized_config,
             config_st.st_dev,
             deadline,
-            action,
+            posture_action,
             plan,
         )
         result.roots = len(roots)
@@ -2555,13 +2628,11 @@ def _run_guard_unserialized(
             plan.writable_subpaths,
         )
         replaced_inodes: dict[str, int] = {}
-        if action != "verify-mutable":
+        if not verify_only:
             for root in roots:
                 path = context.display(root.name)
                 try:
-                    root_lstat = os.stat(
-                        root.name, dir_fd=config_fd, follow_symlinks=False
-                    )
+                    root_lstat = os.stat(root.name, dir_fd=config_fd, follow_symlinks=False)
                     context.budget.observe_entry(path, root_lstat)
                     if root_lstat.st_dev != root.dev or root_lstat.st_ino != root.ino:
                         raise GuardOperationError(
@@ -2578,7 +2649,7 @@ def _run_guard_unserialized(
                             root_fd,
                             root.name,
                             root.policy,
-                            action,
+                            posture_action,
                             identity,
                             result,
                             replaced_inodes,
@@ -2614,9 +2685,6 @@ def _run_guard_unserialized(
             )
             return result
         context.budget = WorkBudget(deadline)
-        verification_action: Action = (
-            "unlock" if action == "verify-mutable" else action
-        )
         for root in verify_roots:
             path = context.display(root.name)
             try:
@@ -2637,13 +2705,14 @@ def _run_guard_unserialized(
                     root_fd,
                     root.name,
                     root.policy,
-                    verification_action,
+                    posture_action,
                     identity,
                     replaced_inodes,
                     result.issues,
                     1,
                     is_root=True,
                     verify_mutation_flags=action == "verify-mutable",
+                    mutable_service_uids=mutable_service_uids,
                 )
                 if action == "verify-mutable":
                     root_after = os.stat(
@@ -2839,10 +2908,34 @@ def run_guard(
     *,
     transition_lock_fd: int | None = None,
     mutable_top_level_files: tuple[str, ...] = (),
+    mutable_service_uids: tuple[int, ...] = (),
 ) -> GuardResult:
     """Serialize production OpenClaw recursive transitions with its top guard."""
 
     normalized_config = posixpath.normpath(config_dir)
+    normalized_service_uids = frozenset(mutable_service_uids)
+    if len(normalized_service_uids) != len(mutable_service_uids) or any(
+        type(uid) is not int or uid <= 0 for uid in normalized_service_uids
+    ):
+        result = GuardResult(action=action)
+        result.issues.append(
+            Issue(
+                "invalid-mutable-service-owner",
+                normalized_config,
+                "mutable service owner UIDs must be distinct positive integers",
+            )
+        )
+        return result
+    if normalized_service_uids and action != "verify-mutable":
+        result = GuardResult(action=action)
+        result.issues.append(
+            Issue(
+                "invalid-mutable-service-owner",
+                normalized_config,
+                "mutable service owners are valid only for verify-mutable",
+            )
+        )
+        return result
     if action == "verify-mutable":
         return _run_guard_unserialized(
             action,
@@ -2850,6 +2943,7 @@ def run_guard(
             identity,
             plan,
             mutable_top_level_files,
+            normalized_service_uids,
         )
     lock_path = _transition_lock_path(normalized_config)
     if transition_lock_fd is not None:
@@ -2925,7 +3019,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "action",
-        choices=("preflight", "lock", "unlock", "verify-mutable", "startup"),
+        choices=(
+            "preflight",
+            "lock",
+            "unlock",
+            "verify-lock",
+            "verify-unlock",
+            "verify-mutable",
+            "startup",
+        ),
     )
     parser.add_argument("--config-dir", required=True)
     plan_source = parser.add_mutually_exclusive_group()
@@ -2933,6 +3035,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     plan_source.add_argument("--plan-file")
     parser.add_argument("--transition-lock-fd", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--mutable-top-level-file", action="append", default=[])
+    parser.add_argument("--mutable-service-user", action="append", default=[])
     return parser.parse_args(argv)
 
 
@@ -2998,14 +3101,30 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             else:
-                result = run_guard(
-                    args.action,
-                    args.config_dir,
-                    identity,
-                    plan,
-                    transition_lock_fd=args.transition_lock_fd,
-                    mutable_top_level_files=tuple(args.mutable_top_level_file),
-                )
+                mutable_service_uids: tuple[int, ...] = ()
+                try:
+                    mutable_service_uids = tuple(
+                        pwd.getpwnam(name).pw_uid for name in args.mutable_service_user
+                    )
+                except KeyError as exc:
+                    result = GuardResult(action=args.action)
+                    result.issues.append(
+                        Issue(
+                            "identity-unavailable",
+                            args.config_dir,
+                            f"mutable service account is unavailable: {exc}",
+                        )
+                    )
+                else:
+                    result = run_guard(
+                        args.action,
+                        args.config_dir,
+                        identity,
+                        plan,
+                        transition_lock_fd=args.transition_lock_fd,
+                        mutable_top_level_files=tuple(args.mutable_top_level_file),
+                        mutable_service_uids=mutable_service_uids,
+                    )
 
     for issue in result.issues:
         print(json.dumps(issue.as_json(), sort_keys=True, separators=(",", ":")))

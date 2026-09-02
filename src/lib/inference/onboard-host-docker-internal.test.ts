@@ -106,7 +106,12 @@ describe("host.docker.internal onboarding inference policy", () => {
       expect(seenCommands).toHaveLength(1);
       seenCommands.forEach(({ command, args }) => {
         expect(command).toBe("docker");
-        expect(args).toContain("curlimages/curl:8.10.1");
+        expect(args.slice(0, 3)).toEqual([
+          "run",
+          "--rm",
+          "docker.io/curlimages/curl@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b",
+        ]);
+        expect(args).not.toContain("curlimages/curl:8.10.1");
         expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
         expect(args).not.toContain("--volume");
       });

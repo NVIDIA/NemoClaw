@@ -976,6 +976,20 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/not valid JSON/u);
   });
 
+  it("omits authorization for public GitHub metadata requests", async () => {
+    let authorization: string | null = "unobserved";
+    await expect(
+      githubRequest("/repos/NVIDIA/NemoClaw/pulls/9923", "unused-token", {
+        authenticated: false,
+        fetchImpl: async (_input, init) => {
+          authorization = new Headers(init.headers).get("authorization");
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(authorization).toBeNull();
+  });
+
   it("loads directly with the Node strip-types runtime used by Actions (#7372)", () => {
     const modulePath = path.resolve(
       import.meta.dirname,

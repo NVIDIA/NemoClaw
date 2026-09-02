@@ -11,6 +11,7 @@ import { help } from "../../src/lib/actions/root-help.js";
 import { normalizeArgv } from "../../src/lib/cli/argv-normalizer.js";
 import { globalCommandTokens } from "../../src/lib/cli/command-registry.js";
 import { withDirectPublicDispatch } from "../support/public-dispatch-test-harness.js";
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "../helpers/launch-readiness-fixture";
 
 import {
   CLI,
@@ -427,7 +428,7 @@ describe("CLI dispatch", () => {
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "sandbox list"*) echo "liost Ready"; exit 0 ;;',
         '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
-        '  "policy get --full liost") exit 1 ;;',
+        `  "policy get"*) printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
         '  "inference get") exit 1 ;;',
         '  "sandbox connect liost") echo "CONNECTED_LIOST"; exit 0 ;;',
         "  *) exit 0 ;;",
