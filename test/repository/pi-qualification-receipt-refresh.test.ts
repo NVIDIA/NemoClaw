@@ -101,16 +101,23 @@ describe("Pi qualification receipt refresh", () => {
     expect(() => run(["protected/base/config.json", RECEIPTS[0].path])).toThrow(RECEIPTS[1].path);
   });
 
-  it("rejects deletion of both qualification receipts", () => {
+  it("rejects deletion of the AMD64 qualification receipt", () => {
     fs.unlinkSync(path.join(rootDir, RECEIPTS[0].path));
-    fs.unlinkSync(path.join(rootDir, RECEIPTS[1].path));
 
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
     ).toThrow(`Pi image inputs changed but qualification receipt is missing: ${RECEIPTS[0].path}`);
   });
 
-  it("accepts one authority-bound cohort when protected sources are unchanged", () => {
+  it("rejects deletion of the ARM64 qualification receipt", () => {
+    fs.unlinkSync(path.join(rootDir, RECEIPTS[1].path));
+
+    expect(() =>
+      run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
+    ).toThrow(`Pi image inputs changed but qualification receipt is missing: ${RECEIPTS[1].path}`);
+  });
+
+  it("accepts refreshed receipts when image sources match the receipt revision", () => {
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
     ).not.toThrow();
