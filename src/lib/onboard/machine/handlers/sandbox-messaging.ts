@@ -557,18 +557,6 @@ async function selectionFromRegistryPlan<Agent>(
   registryPlan: SandboxMessagingPlan,
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
-  if (registryPlanRecordsLifecycleSelection(registryPlan)) {
-    // A lifecycle command owns which channels the operator asked for, but not
-    // whether the host still configures them. Onboarding re-reads the host
-    // either way, so the same removal check applies here.
-    return selectionFromReconciledReusablePlan(
-      registryPlan,
-      options.agent,
-      true,
-      options.env as NodeJS.ProcessEnv,
-      options.deps,
-    );
-  }
   const activeChannels = filterChannelNamesForCurrentAgent(
     getActiveChannelsFromPlan(registryPlan),
     options.agent,
@@ -587,6 +575,18 @@ async function selectionFromRegistryPlan<Agent>(
       { ...options, forceCredentialValidation: true },
       true,
       registryPlan,
+    );
+  }
+  if (registryPlanRecordsLifecycleSelection(registryPlan)) {
+    // A lifecycle command owns which channels the operator asked for, but not
+    // whether the host still configures them. Onboarding re-reads the host
+    // either way, so the same removal check applies here.
+    return selectionFromReconciledReusablePlan(
+      registryPlan,
+      options.agent,
+      true,
+      options.env as NodeJS.ProcessEnv,
+      options.deps,
     );
   }
   const detectedChannels = channelsForRegistryPlanRefresh(registryPlan, options.agent);

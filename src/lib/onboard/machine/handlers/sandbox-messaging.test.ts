@@ -7,31 +7,261 @@ import type { AgentDefinition } from "../../../agent/defs";
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../../messaging/applier/types";
 import { wechatManifest } from "../../../messaging/channels/built-ins";
-import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import type {
+  MessagingAgentId,
+  MessagingChannelId,
+  SandboxMessagingCredentialBindingPlan,
+  SandboxMessagingPlan,
+} from "../../../messaging/manifest";
+import type { RegistryMessagingAuthority } from "../../../messaging/plan-authority";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../../messaging/provider-profile";
 import { hashCredential } from "../../../security/credential-hash";
+import { decisionSelected } from "../../../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
+import { createSession, type Session } from "../../../state/onboard-session";
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 import { setupMessagingChannels } from "../../messaging-channel-setup";
+import type { GatewayCredentialOnlyProviderInspection } from "../../gateway-provider-metadata";
 import { getActiveChannelsFromPlan } from "../../messaging-plan-session";
 import {
   hasMessagingCredentialDrift,
   reconcileReusedSandboxMessaging,
   reconcileSandboxMessaging,
 } from "./sandbox-messaging";
-import {
-  channelIdsFrom,
-  completedCheckpointSession,
-  discordPlan,
-  googlechatPlan,
-  mixedChannelPlan,
-  reconcileDeps,
-  recordedResumeDeps,
-  registryDeps,
-  slackPlan,
-  telegramPlan,
-  whatsappPlan,
-  withChannelDisabled,
-  withMessagingCheckpoint,
-} from "../../../../../test/helpers/sandbox-messaging-test-fixtures";
+
+const mixedChannelIds: MessagingChannelId[] = ["telegram", "unsupported"];
+
+function channelIdsFrom<T extends { readonly channelId: string }>(entries: readonly T[]): string[] {
+  return entries.map(({ channelId }) => channelId);
+}
+
+const credentialSpecs = {
+  telegram: ["telegram", "botToken", "botToken", "alpha-telegram-bridge", "TELEGRAM_BOT_TOKEN"],
+  discord: ["discord", "discordBotToken", "botToken", "alpha-discord-bridge", "DISCORD_BOT_TOKEN"],
+  slackBot: ["slack", "slackBotToken", "botToken", "alpha-slack-bridge", "SLACK_BOT_TOKEN"],
+  slackApp: ["slack", "slackAppToken", "appToken", "alpha-slack-app", "SLACK_APP_TOKEN"],
+} as const;
+
+function credentialBinding(
+  kind: keyof typeof credentialSpecs,
+  credentialHash: string,
+): SandboxMessagingCredentialBindingPlan {
+  const [channelId, credentialId, sourceInput, providerName, providerEnvKey] =
+    credentialSpecs[kind];
+  const placeholderPrefix = kind === "slackBot" ? "xoxb-" : kind === "slackApp" ? "xapp-" : "";
+  return {
+    channelId,
+    credentialId,
+    sourceInput,
+    providerName,
+    providerEnvKey,
+    placeholder: placeholderPrefix
+      ? `${placeholderPrefix}OPENSHELL-RESOLVE-ENV-${providerEnvKey}`
+      : `openshell:resolve:env:${providerEnvKey}`,
+    credentialAvailable: true,
+    credentialHash,
+  };
+}
+
+function messagingPlan(
+  channelId: MessagingChannelId,
+  credentialBindings: readonly SandboxMessagingCredentialBindingPlan[] = [],
+  agent: MessagingAgentId = "openclaw",
+): SandboxMessagingPlan {
+  return makeMessagingPlan({
+    sandboxName: "alpha",
+    agent,
+    channels: [channelId],
+    credentialBindings,
+  });
+}
+
+function telegramPlan(credentialHash: string): SandboxMessagingPlan {
+  return messagingPlan("telegram", [credentialBinding("telegram", credentialHash)]);
+}
+
+function discordPlan(credentialHash: string, agent: MessagingAgentId = "openclaw") {
+  return messagingPlan("discord", [credentialBinding("discord", credentialHash)], agent);
+}
+
+function slackPlan(
+  botCredentialHash: string,
+  appCredentialHash?: string,
+  agent: MessagingAgentId = "openclaw",
+) {
+  const bindings = [
+    credentialBinding("slackBot", botCredentialHash),
+    ...(appCredentialHash ? [credentialBinding("slackApp", appCredentialHash)] : []),
+  ];
+  return messagingPlan("slack", bindings, agent);
+}
+
+function googlechatPlan() {
+  return messagingPlan("googlechat");
+}
+
+function whatsappPlan() {
+  return makeMessagingPlan({
+    sandboxName: "alpha",
+    channels: ["whatsapp"],
+    authMode: "in-sandbox-qr",
+  });
+}
+
+function withChannelDisabled(plan: SandboxMessagingPlan, channelId: string) {
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) =>
+      channel.channelId === channelId
+        ? { ...channel, active: false, selected: false, disabled: true }
+        : channel,
+    ),
+    disabledChannels: [...new Set([...plan.disabledChannels, channelId])],
+  };
+}
+
+function mixedChannelPlan(): SandboxMessagingPlan {
+  const plan = makeMessagingPlan({
+    sandboxName: "alpha",
+    channels: mixedChannelIds,
+    disabledChannels: ["unsupported"],
+  });
+  return {
+    ...plan,
+    credentialBindings: mixedChannelIds.map((channelId) => ({
+      channelId,
+      credentialId: "token",
+      sourceInput: "token",
+      providerName: `alpha-${channelId}`,
+      providerEnvKey: `${channelId.toUpperCase()}_TOKEN`,
+      placeholder: `openshell:resolve:env:${channelId.toUpperCase()}_TOKEN`,
+      credentialAvailable: true,
+      credentialHash: "",
+    })),
+    networkPolicy: {
+      presets: [...mixedChannelIds],
+      entries: mixedChannelIds.map((channelId) => ({
+        channelId,
+        presetName: channelId,
+        policyKeys: [`${channelId}_api`],
+        source: "manifest",
+      })),
+    },
+    agentRender: mixedChannelIds.map((channelId) => ({
+      channelId,
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      path: `channels.${channelId}`,
+      value: { enabled: true },
+      templateRefs: [],
+    })),
+    buildSteps: mixedChannelIds.map((channelId) => ({
+      channelId,
+      kind: "build-arg",
+      outputId: `${channelId}-arg`,
+      required: true,
+      value: "enabled",
+    })),
+    runtimeSetup: {
+      nodePreloads: mixedChannelIds.map((channelId) => ({
+        channelId,
+        module: `${channelId}-preload`,
+        source: "manifest",
+        target: "agent",
+      })),
+      envAliases: mixedChannelIds.map((channelId) => ({
+        channelId,
+        envKey: `${channelId.toUpperCase()}_TOKEN`,
+        match: "source",
+        value: "target",
+      })),
+      secretScans: mixedChannelIds.map((channelId) => ({
+        channelId,
+        path: `/sandbox/${channelId}`,
+        pattern: "secret",
+        message: "secret found",
+      })),
+    },
+    stateUpdates: mixedChannelIds.map((channelId) => ({
+      channelId,
+      kind: "persist-inputs",
+      stateKey: `${channelId}Config`,
+      inputIds: ["token"],
+    })),
+    healthChecks: mixedChannelIds.map((channelId) => ({
+      channelId,
+      phase: "health-check",
+      requiredBefore: "lifecycle-success",
+      hookIds: [`${channelId}-health`],
+    })),
+  };
+}
+
+function completedCheckpointSession(
+  plan: SandboxMessagingPlan,
+  stagedCredentialProviders: string[] = [],
+) {
+  const session = createSession({ sandboxName: plan.sandboxName, messagingPlan: plan });
+  session.stagedCredentialProviders = stagedCredentialProviders;
+  session.sandboxPromptProgress.sandboxName = true;
+  session.sandboxPromptProgress.messaging = true;
+  return session;
+}
+
+function withMessagingCheckpoint(
+  session: Session,
+  selectedChannels: string[],
+  disabledChannels: string[] = [],
+) {
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    messaging: decisionSelected({ selectedChannels, disabledChannels }),
+  };
+  return session;
+}
+
+function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
+  return {
+    note: vi.fn(),
+    showMessagingStage: vi.fn(),
+    getRecordedMessagingChannelsForResume: vi.fn((): string[] | null => null),
+    setupMessagingChannels: vi.fn(
+      async (
+        _agent: unknown,
+        _existingChannels: string[] | null,
+        _sandboxName: string,
+        _options?: { readonly selectionCompleted?: boolean },
+      ) => ["telegram"],
+    ),
+    readMessagingPlanFromEnv: vi
+      .fn()
+      .mockReturnValueOnce(plans[0] ?? null)
+      .mockReturnValue(plans[1] ?? plans[0] ?? null),
+    writePlanToEnv: vi.fn(),
+    clearPlanEnv: vi.fn(),
+    getRegistrySandboxMessagingAuthority: vi.fn<() => RegistryMessagingAuthority>(() => ({
+      authoritative: false,
+      plan: null,
+    })),
+    inspectGatewayCredential: vi.fn<
+      (name: string, type: string, credentialEnv: string) => GatewayCredentialOnlyProviderInspection
+    >(() => ({ kind: "missing" })),
+    providerMatchesGatewayCredential: vi.fn(() => false),
+  };
+}
+
+function registryDeps(plan: SandboxMessagingPlan) {
+  const deps = reconcileDeps([]);
+  deps.getRegistrySandboxMessagingAuthority.mockReturnValue({ authoritative: true, plan });
+  return deps;
+}
+
+function recordedResumeDeps(plan: SandboxMessagingPlan) {
+  const deps = reconcileDeps([plan]);
+  deps.getRecordedMessagingChannelsForResume.mockReturnValue(["discord", "googlechat"]);
+  return deps;
+}
 
 describe("hasMessagingCredentialDrift", () => {
   const oldToken = "123456:old-telegram-token";
@@ -354,30 +584,30 @@ describe("reconcileReusedSandboxMessaging", () => {
 });
 
 describe("reconcileSandboxMessaging plan authority", () => {
-  it("refreshes credential hashes from the caller environment instead of ambient process state", async () => {
-    const callerToken = "caller-telegram-token";
-    const ambientToken = "ambient-telegram-token";
+  it("validates a changed lifecycle credential before persisting its hash", async () => {
+    const previousToken = "previous-telegram-token";
     const plan = {
-      ...telegramPlan(hashCredential("previous-telegram-token") ?? ""),
+      ...telegramPlan(hashCredential(previousToken) ?? ""),
       workflow: "start-channel" as const,
     };
     const deps = registryDeps(plan);
-    vi.stubEnv("TELEGRAM_BOT_TOKEN", ambientToken);
+    deps.setupMessagingChannels.mockRejectedValue(new Error("invalid Telegram token"));
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", previousToken);
 
-    const result = await reconcileSandboxMessaging({
-      resume: false,
-      session: null,
-      sandboxName: "alpha",
-      agent: { name: "openclaw" },
-      env: { TELEGRAM_BOT_TOKEN: callerToken },
-      deps,
-    });
+    await expect(
+      reconcileSandboxMessaging({
+        resume: false,
+        session: null,
+        sandboxName: "alpha",
+        agent: { name: "openclaw" },
+        env: { TELEGRAM_BOT_TOKEN: "invalid-replacement-token" },
+        deps,
+      }),
+    ).rejects.toThrow("invalid Telegram token");
 
-    expect(result.plan?.credentialBindings[0]?.credentialHash).toBe(hashCredential(callerToken));
-    expect(result.plan?.credentialBindings[0]?.credentialHash).not.toBe(
-      hashCredential(ambientToken),
-    );
-    expect(deps.writePlanToEnv).toHaveBeenLastCalledWith(result.plan);
+    expect(deps.setupMessagingChannels).toHaveBeenCalledOnce();
+    expect(deps.writePlanToEnv).not.toHaveBeenCalled();
+    expect(plan.credentialBindings[0]?.credentialHash).toBe(hashCredential(previousToken));
   });
 
   it("keeps WeChat selected for start/rebuild when the gateway retains its QR token (#10765)", async () => {
@@ -544,7 +774,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
     ["checkpoint resume", true, "onboard", registryDeps, completedCheckpointSession],
     ["recorded resume selection", true, "onboard", recordedResumeDeps, () => null],
   ] as const)(
-    "does not stage a refreshed %s before every gateway probe resolves (#10660)",
+    "does not stage a reused %s before every gateway probe resolves (#10660)",
     async (_, resume, workflow, depsFor, sessionFor) => {
       const discord = discordPlan(hashCredential("previous-discord-token") ?? "");
       const registryPlan: SandboxMessagingPlan = {
@@ -554,7 +784,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
       };
       const deps = depsFor(registryPlan);
       deps.inspectGatewayCredential.mockReturnValue({ kind: "indeterminate" });
-      vi.stubEnv("DISCORD_BOT_TOKEN", "replacement-discord-token");
+      vi.stubEnv("DISCORD_BOT_TOKEN", "");
       vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "");
       await expect(
         reconcileSandboxMessaging({

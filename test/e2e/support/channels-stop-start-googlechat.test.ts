@@ -315,7 +315,7 @@ describe("channels stop/start Google Chat live composition", () => {
     ["openclaw", "e2e-oc-ch-cycle", "google-chat-bridge"],
     ["hermes", "e2e-hm-ch-cycle", "google-chat-hermes-bridge"],
   ] as const)(
-    "creates the real %s provider profile without putting the fixture value in argv",
+    "passes the %s Google Chat credential through the environment without adding it to argv",
     (agent, sandboxName, providerType) => {
       const delegatedName = `${sandboxName}-slack-bridge`;
       const delegatedTokenDef = {
