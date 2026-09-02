@@ -1135,6 +1135,56 @@ describe("onboard provider helpers", () => {
     }
   });
 
+  it("reuses the named bridge provider when onboarding retries after a mint failure", () => {
+    const ensureProfiles = vi
+      .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
+      .mockImplementation(() => undefined);
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockReturnValueOnce({ ok: false, reason: "mint timed out" })
+      .mockReturnValueOnce({ ok: true });
+    const commands: string[] = [];
+    let providerExists = false;
+    const run = (command: string[]) => {
+      commands.push(command.join(" "));
+      if (command[1] === "get") {
+        return providerExists
+          ? {
+              status: 0,
+              stdout:
+                "Name: alpha-googlechat-bridge\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 1, stderr: "provider not found" };
+      }
+      if (command[1] === "create") providerExists = true;
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    const tokenDefs = [
+      {
+        name: "alpha-googlechat-bridge",
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: "openshell-managed-pending-mint",
+        providerType: "google-chat-bridge",
+      },
+    ];
+
+    try {
+      expect(() => upsertMessagingProviders(tokenDefs, run, { bestEffort: true })).toThrow(
+        /gateway token minting/u,
+      );
+      expect(upsertMessagingProviders(tokenDefs, run, { bestEffort: true })).toEqual([
+        "alpha-googlechat-bridge",
+      ]);
+
+      expect(commands.filter((command) => command.includes("provider create"))).toHaveLength(1);
+      expect(ensureProfiles).toHaveBeenCalledTimes(2);
+      expect(configureRefreshes).toHaveBeenCalledTimes(2);
+    } finally {
+      ensureProfiles.mockRestore();
+      configureRefreshes.mockRestore();
+    }
+  });
+
   it("classifies an exact-binding conflict without mutating the existing provider", () => {
     const commands: string[] = [];
 

@@ -217,6 +217,59 @@ function namedGatewayEndpointOverrideError(
   }
 }
 
+/** Import and validate one checked-in profile through the synchronous CLI boundary. */
+export function importCliOpenShellProviderProfile(
+  request: ImportOpenShellProviderProfileRequest,
+  deps: CliOpenShellProviderAdapterDeps = {},
+): OpenShellProviderMutationResult {
+  const run = deps.run ?? runOpenshellProviderCommand;
+  const environment = deps.environment ?? process.env;
+  const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+  if (targetError) return failure(targetError);
+  const readProfileFile = deps.readProfileFile ?? ((file: string) => fs.readFileSync(file, "utf8"));
+  const contract = (() => {
+    try {
+      return parseCheckedInProviderProfileContract(readProfileFile(request.profilePath));
+    } catch {
+      return null;
+    }
+  })();
+  if (!contract) {
+    return failure({
+      kind: "validation",
+      message: "The checked-in OpenShell provider profile is invalid or unreadable.",
+    });
+  }
+  const timeout = request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_OPERATION_TIMEOUT_MS;
+  const invoke = (args: string[], gatewayFlagIndex = 2, suppressOutput = false) =>
+    run(scopedArgs(args, request.target, gatewayFlagIndex), {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(suppressOutput ? { suppressOutput: true } : {}),
+      timeout,
+    });
+  const result = invoke(["provider", "profile", "import", "--file", request.profilePath]);
+  const error = commandError(result);
+  const alreadyPresent = error?.kind === "command" && error.reason === "already_exists";
+  if (error && !alreadyPresent) return failure(error);
+
+  const exported = invoke(
+    ["provider", "profile", "export", contract.profileId, "--output", "json"],
+    2,
+    true,
+  );
+  const exportError = commandError(exported);
+  if (exportError) return failure(exportError);
+  if (!exportedProviderProfileMatchesContract(bufferOrStringToText(exported.stdout), contract)) {
+    return failure({
+      kind: "command",
+      reason: "profile_incompatible",
+      message: "The OpenShell provider profile does not match the checked-in credential boundary.",
+    });
+  }
+  return mutationSuccess();
+}
+
 function parseProfileCredentialKeys(output: string, expectedProfileId: string): string[] | null {
   let profile: unknown;
   try {
@@ -320,52 +373,12 @@ export function createCliOpenShellProviderAdapter(
 
   const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async (
     request: ImportOpenShellProviderProfileRequest,
-  ) => {
-    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
-    if (targetError) return failure(targetError);
-    const readProfileFile =
-      deps.readProfileFile ?? ((file: string) => fs.readFileSync(file, "utf8"));
-    const contract = (() => {
-      try {
-        return parseCheckedInProviderProfileContract(readProfileFile(request.profilePath));
-      } catch {
-        // Report a fixed validation error below; never return host filesystem diagnostics.
-        return null;
-      }
-    })();
-    if (!contract) {
-      return failure({
-        kind: "validation",
-        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
-      });
-    }
-    const result = invoke(
-      ["provider", "profile", "import", "--file", request.profilePath],
-      request,
-    );
-    const error = commandError(result);
-    const alreadyPresent = error?.kind === "command" && error.reason === "already_exists";
-    if (error && !alreadyPresent) return failure(error);
-
-    const exported = invoke(
-      ["provider", "profile", "export", contract.profileId, "--output", "json"],
-      request,
-      undefined,
-      2,
-      true,
-    );
-    const exportError = commandError(exported);
-    if (exportError) return failure(exportError);
-    if (!exportedProviderProfileMatchesContract(bufferOrStringToText(exported.stdout), contract)) {
-      return failure({
-        kind: "command",
-        reason: "profile_incompatible",
-        message:
-          "The OpenShell provider profile does not match the checked-in credential boundary.",
-      });
-    }
-    return mutationSuccess();
-  };
+  ) =>
+    importCliOpenShellProviderProfile(request, {
+      ...deps,
+      run,
+      environment,
+    });
 
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (
     request: InspectOpenShellProviderProfileRequest,

@@ -449,45 +449,17 @@ describe("channels stop/start Google Chat live composition", () => {
   });
 
   it.each([
-    [
-      {},
-      [
-        ["provider", "get", "e2e-oc-ch-cycle-googlechat-bridge"],
-        [
-          "provider",
-          "update",
-          "e2e-oc-ch-cycle-googlechat-bridge",
-          "--credential",
-          "GOOGLE_CHAT_ACCESS_TOKEN",
-        ],
-      ],
-    ],
-    [
-      { replaceExisting: true },
-      [
-        ["provider", "get", "e2e-oc-ch-cycle-googlechat-bridge"],
-        ["provider", "delete", "e2e-oc-ch-cycle-googlechat-bridge"],
-        [
-          "provider",
-          "create",
-          "--name",
-          "e2e-oc-ch-cycle-googlechat-bridge",
-          "--type",
-          "google-chat-bridge",
-          "--credential",
-          "GOOGLE_CHAT_ACCESS_TOKEN",
-        ],
-      ],
-    ],
+    [{}, "update"],
+    [{ replaceExisting: true }, "create"],
   ] as const)(
     "reconciles an existing fixture provider with options %o",
-    (options, expectedCalls) => {
+    (options, expectedMutation) => {
       const providerDependencies: FixtureProviderDependencies = {
         upsertMessagingProviders: vi.fn(() => []),
       };
-      const calls: string[][] = [];
-      const run = ((args: string[]) => {
-        calls.push(args);
+      const calls: Array<{ args: string[]; env?: Record<string, string | undefined> }> = [];
+      const run = ((args: string[], runOptions?: { env?: Record<string, string | undefined> }) => {
+        calls.push({ args, env: runOptions?.env });
         return { status: 0 };
       }) as unknown as FixtureRunner;
       const restore = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
@@ -510,7 +482,23 @@ describe("channels stop/start Google Chat live composition", () => {
         options,
       );
 
-      expect(calls).toEqual(expectedCalls);
+      const mutation = calls.find(({ args }) => args[1] === expectedMutation);
+      expect(mutation?.args).toEqual(
+        expect.arrayContaining([
+          "e2e-oc-ch-cycle-googlechat-bridge",
+          "--credential",
+          "GOOGLE_CHAT_ACCESS_TOKEN",
+        ]),
+      );
+      if (expectedMutation === "create") {
+        expect(mutation?.args).toEqual(
+          expect.arrayContaining(["--type", "google-chat-bridge"]),
+        );
+      }
+      expect(mutation?.env).toEqual({
+        GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN,
+      });
+      expect(calls.flatMap(({ args }) => args)).not.toContain(GOOGLECHAT_E2E_ACCESS_TOKEN);
       restore();
     },
   );

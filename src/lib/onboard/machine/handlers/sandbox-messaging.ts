@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDeepStrictEqual } from "node:util";
 
 import { getCredential } from "../../../credentials/store";
 import {
@@ -476,29 +475,6 @@ async function selectionFromRegistryPlan<Agent>(
     getChannelsFromPlan(registryPlan) ?? getChannelsFromPlan(options.session?.messagingPlan),
     options,
   );
-}
-
-export function reconcileReusedSandboxMessaging<Agent>(
-  plan: SandboxMessagingPlan | null,
-  agent: Agent,
-  deps: Pick<
-    SandboxMessagingDeps<Agent>,
-    "clearPlanEnv" | "note" | "providerMatchesGatewayCredential" | "writePlanToEnv"
-  >,
-  recordedPlan: SandboxMessagingPlan | null = plan,
-): SandboxMessagingSelection & { readonly changed: boolean } {
-  const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;
-  const selection = filterUnconfiguredHostChannelsFromSelection(
-    { plan: filtered, selectedChannels: getActiveChannelsFromPlan(filtered) },
-    agent,
-    deps,
-  );
-  const changed = !isDeepStrictEqual(selection.plan, recordedPlan);
-  if (changed && isDeepStrictEqual(selection.plan, filtered)) deps.clearPlanEnv();
-  return {
-    ...selection,
-    changed,
-  };
 }
 
 function divergedCheckpointChannels(

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import type { ChannelManifest } from "../messaging/manifest";
 import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
@@ -519,6 +520,15 @@ describe("ensureMessagingBridgeProfiles", () => {
     profiles: [GC_PROFILE],
     readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
   });
+  const importAndExport = (
+    exported: Record<string, unknown>,
+    importResult: { status: number; stderr?: string } = { status: 0 },
+  ) =>
+    vi.fn((args: string[]) =>
+      args.includes("import")
+        ? importResult
+        : { status: 0, stdout: JSON.stringify(exported) },
+    );
 
   it("does nothing when there is no bridge token def", () => {
     const runOpenshell = vi.fn();
@@ -526,108 +536,78 @@ describe("ensureMessagingBridgeProfiles", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("imports the profile from its co-located path when not yet registered", () => {
-    const runOpenshell = vi.fn((args: string[], _opts: unknown) =>
-      args.includes("export")
-        ? { status: 1, stderr: "provider profile not found" }
-        : { status: 0 },
-    );
+  it("imports and validates the profile from its co-located path", () => {
+    const runOpenshell = importAndExport(GC_PROFILE_DOC);
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
-    const importCall = runOpenshell.mock.calls.find((call) => call[0].includes("import"));
-    expect(importCall?.[0].slice(0, 4)).toEqual(["provider", "profile", "import", "--file"]);
-    expect(importCall?.[0]).toContain(GC_PROFILE.profilePath);
-    expect(exit).not.toHaveBeenCalled();
-  });
 
-  it("skips the import when the profile is already registered", () => {
-    // A fresh onboard registers bridge providers twice; the second pass must not
-    // re-import and trigger OpenShell's "already exists / import failed" output.
-    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
-      status: 0,
-      stdout: JSON.stringify(GC_PROFILE_DOC),
-    }));
-    const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
-    expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
-    const exportCall = runOpenshell.mock.calls.find((call) => call[0].includes("export"));
-    expect(exportCall?.[0]).toEqual([
-      "provider",
-      "profile",
-      "export",
-      GC_PROFILE.profileId,
-      "--output",
-      "json",
+
+    expect(runOpenshell.mock.calls.map((call) => call[0].slice(0, 3))).toEqual([
+      ["provider", "profile", "import"],
+      ["provider", "profile", "export"],
     ]);
+    expect(runOpenshell.mock.calls[0]?.[0]).toContain(GC_PROFILE.profilePath);
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it("accepts an existing static profile only when its credential boundary matches", () => {
-    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
-      status: 0,
-      stdout: JSON.stringify(DISCORD_PROFILE_DOC),
-    }));
-    const exit = vi.fn(() => undefined as never);
-
-    ensureMessagingBridgeProfiles([STATIC_DEF], {
-      ...baseDeps(),
-      profiles: [DISCORD_PROFILE],
-      readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
-      runOpenshell,
-      exit,
+  it("validates an exact profile returned after an already-exists import race", () => {
+    const runOpenshell = importAndExport(GC_PROFILE_DOC, {
+      status: 1,
+      stderr: "profile already exists",
     });
+    const exit = vi.fn(() => undefined as never);
 
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
-    expect(runOpenshell.mock.calls[0]?.[0]).toEqual([
-      "provider",
-      "profile",
-      "export",
-      DISCORD_PROFILE.profileId,
-      "--output",
-      "json",
-    ]);
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(exit).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["endpoint authority", { endpoints: [{ host: "gateway.discord.gg", port: 443 }] }],
-    ["binary authority", { binaries: ["/usr/bin/curl"] }],
     [
-      "credential configuration",
+      "static endpoint authority",
+      STATIC_DEF,
+      DISCORD_PROFILE,
+      DISCORD_PROFILE_DOC,
+      { endpoints: [{ host: "gateway.discord.gg", port: 443 }] },
+    ],
+    [
+      "static binary authority",
+      STATIC_DEF,
+      DISCORD_PROFILE,
+      DISCORD_PROFILE_DOC,
+      { binaries: ["/usr/bin/curl"] },
+    ],
+    [
+      "static credential configuration",
+      STATIC_DEF,
+      DISCORD_PROFILE,
+      DISCORD_PROFILE_DOC,
       {
         credentials: [
-          {
-            ...DISCORD_PROFILE_DOC.credentials[0],
-            header_name: "X-Discord-Token",
-          },
+          { ...DISCORD_PROFILE_DOC.credentials[0], header_name: "X-Discord-Token" },
         ],
       },
     ],
-  ])("rejects an existing static profile with different %s", (_label, override) => {
-    const exported = { ...DISCORD_PROFILE_DOC, ...override };
-    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
-      status: 0,
-      stdout: JSON.stringify(exported),
-    }));
-    const exit = vi.fn(() => undefined as never);
-
-    ensureMessagingBridgeProfiles([STATIC_DEF], {
-      ...baseDeps(),
-      profiles: [DISCORD_PROFILE],
-      readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
-      runOpenshell,
-      exit,
-    });
-
-    expect(exit).toHaveBeenCalledWith(1);
-    expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
-  });
-
-  const alteredGoogleChatBoundaries = [
-    ["endpoint authority", { endpoints: [{ ...GC_PROFILE_DOC.endpoints[0], host: "evil.invalid" }] }],
-    ["binary authority", { binaries: ["/tmp/untrusted-node"] }],
     [
-      "credential configuration",
+      "refresh-enabled endpoint authority",
+      BRIDGE_DEF,
+      GC_PROFILE,
+      GC_PROFILE_DOC,
+      { endpoints: [{ ...GC_PROFILE_DOC.endpoints[0], host: "evil.invalid" }] },
+    ],
+    [
+      "refresh-enabled binary authority",
+      BRIDGE_DEF,
+      GC_PROFILE,
+      GC_PROFILE_DOC,
+      { binaries: ["/tmp/untrusted-node"] },
+    ],
+    [
+      "refresh-enabled credential configuration",
+      BRIDGE_DEF,
+      GC_PROFILE,
+      GC_PROFILE_DOC,
       {
         credentials: [
           { ...GC_PROFILE_DOC.credentials[0], header_name: "X-Google-Chat-Token" },
@@ -635,7 +615,10 @@ describe("ensureMessagingBridgeProfiles", () => {
       },
     ],
     [
-      "refresh material",
+      "refresh-enabled refresh material",
+      BRIDGE_DEF,
+      GC_PROFILE,
+      GC_PROFILE_DOC,
       {
         credentials: [
           {
@@ -648,87 +631,61 @@ describe("ensureMessagingBridgeProfiles", () => {
         ],
       },
     ],
-  ] as const;
-
-  it.each(alteredGoogleChatBoundaries)(
-    "rejects an existing refresh-enabled profile with different %s",
-    (_label, override) => {
-      const runOpenshell = vi.fn(() => ({
-        status: 0,
-        stdout: JSON.stringify({ ...GC_PROFILE_DOC, ...override }),
-      }));
+  ] as const)(
+    "rejects an already-registered profile with different %s",
+    (_label, tokenDef, profile, checkedIn, override) => {
+      const runOpenshell = importAndExport(
+        { ...checkedIn, ...override },
+        { status: 1, stderr: "profile already exists" },
+      );
       const exit = vi.fn(() => undefined as never);
 
-      ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
-
-      expect(exit).toHaveBeenCalledWith(1);
-      expect(runOpenshell).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(alteredGoogleChatBoundaries)(
-    "rejects a raced refresh-enabled profile with different %s",
-    (_label, override) => {
-      const runOpenshell = vi
-        .fn()
-        .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
-        .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-        .mockReturnValueOnce({
-          status: 0,
-          stdout: JSON.stringify({ ...GC_PROFILE_DOC, ...override }),
-        });
-      const exit = vi.fn(() => undefined as never);
-
-      ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
-
-      expect(exit).toHaveBeenCalledWith(1);
-      expect(runOpenshell).toHaveBeenCalledTimes(3);
-    },
-  );
-
-  it("rejects a mismatched static profile that wins an import race", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
-      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: JSON.stringify({ ...DISCORD_PROFILE_DOC, binaries: ["/usr/bin/curl"] }),
+      ensureMessagingBridgeProfiles([tokenDef], {
+        ...baseDeps(),
+        profiles: [profile],
+        readFileSync: () => YAML.stringify(checkedIn),
+        runOpenshell,
+        exit,
       });
+
+      expect(runOpenshell).toHaveBeenCalledTimes(2);
+      expect(exit).toHaveBeenCalledWith(1);
+    },
+  );
+
+  it("rejects a changed boundary after a successful import", () => {
+    const runOpenshell = importAndExport({
+      ...GC_PROFILE_DOC,
+      endpoints: [{ ...GC_PROFILE_DOC.endpoints[0], host: "evil.invalid" }],
+    });
     const exit = vi.fn(() => undefined as never);
 
-    ensureMessagingBridgeProfiles([STATIC_DEF], {
-      ...baseDeps(),
-      profiles: [DISCORD_PROFILE],
-      readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
-      runOpenshell,
-      exit,
-    });
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("fails closed when post-import export is unavailable", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1, stderr: "gateway unavailable" });
+    const exit = vi.fn(() => undefined as never);
+
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
 
     expect(exit).toHaveBeenCalledWith(1);
-    expect(runOpenshell).toHaveBeenCalledTimes(3);
   });
 
-  it("validates a matching refresh-enabled profile that wins an import race", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
-      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(GC_PROFILE_DOC) });
+  it("exits when profile import fails", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "connection refused" }));
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
-    expect(exit).not.toHaveBeenCalled();
-    expect(runOpenshell).toHaveBeenCalledTimes(3);
-  });
 
-  it("exits when profile import fails for another reason", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
-      .mockReturnValueOnce({ status: 1, stderr: "connection refused" });
-    const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
-    expect(exit).toHaveBeenCalled();
+
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });
 
@@ -807,20 +764,54 @@ describe("inspectRegisteredStaticMessagingProfile", () => {
   });
 });
 
-describe("listMessagingBridgeProfiles (real registry + co-located YAML)", () => {
-  it("discovers the Google Chat bridge and keeps the credential key in lockstep", () => {
-    const profiles = listMessagingBridgeProfiles();
-    const gc = profiles.find((p) => p.channelId === "googlechat");
-    expect(gc).toBeDefined();
-    expect(gc?.agent).toBe("openclaw");
-    expect(gc?.profileId).toBe("google-chat-bridge");
-    // Invariant: must equal the env var the googlechat-outbound-auth runtime
-    // preload reads, or outbound replies never authenticate.
-    expect(gc?.credentialKey).toBe("GOOGLE_CHAT_ACCESS_TOKEN");
-    expect(gc?.strategy).toBe("google-service-account-jwt");
-    expect(gc?.secretMaterialKeys).toContain("private_key");
-    expect(gc?.sourceSecretEnv).toBe("GOOGLECHAT_SERVICE_ACCOUNT");
-    expect(gc?.profilePath.endsWith("googlechat/provider-profile/openclaw.yaml")).toBe(true);
+describe("listMessagingBridgeProfiles", () => {
+  const manifest = {
+    id: "fixture-chat",
+    supportedAgents: ["openclaw"],
+    inputs: [{ kind: "secret", required: true, envKey: "FIXTURE_SERVICE_ACCOUNT" }],
+  } as unknown as ChannelManifest;
+  const profileDoc = {
+    ...GC_PROFILE_DOC,
+    id: "fixture-chat-bridge",
+    credentials: [
+      {
+        ...GC_PROFILE_DOC.credentials[0],
+        env_vars: ["FIXTURE_ACCESS_TOKEN"],
+      },
+    ],
+  };
+
+  it("discovers a valid synthetic channel profile", () => {
+    const profiles = listMessagingBridgeProfiles({
+      root: "/synthetic",
+      manifests: [manifest],
+      existsSync: () => true,
+      readFileSync: () => YAML.stringify(profileDoc),
+    });
+
+    expect(profiles).toEqual([
+      expect.objectContaining({
+        channelId: "fixture-chat",
+        agent: "openclaw",
+        profileId: "fixture-chat-bridge",
+        credentialKey: "FIXTURE_ACCESS_TOKEN",
+        strategy: "google-service-account-jwt",
+        sourceSecretEnv: "FIXTURE_SERVICE_ACCOUNT",
+      }),
+    ]);
+    expect(profiles[0]?.secretMaterialKeys).toContain("private_key");
+  });
+
+  it("ignores absent and malformed synthetic profiles", () => {
+    const dependencies = { root: "/synthetic", manifests: [manifest] };
+    expect(listMessagingBridgeProfiles({ ...dependencies, existsSync: () => false })).toEqual([]);
+    expect(
+      listMessagingBridgeProfiles({
+        ...dependencies,
+        existsSync: () => true,
+        readFileSync: () => "id: malformed",
+      }),
+    ).toEqual([]);
   });
 });
 

@@ -19,7 +19,6 @@ import { setupMessagingChannels } from "../../messaging-channel-setup";
 import { getActiveChannelsFromPlan } from "../../messaging-plan-session";
 import {
   hasMessagingCredentialDrift,
-  reconcileReusedSandboxMessaging,
   reconcileSandboxMessaging,
 } from "./sandbox-messaging";
 
@@ -404,189 +403,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-});
-
-describe("reconcileReusedSandboxMessaging", () => {
-  const unavailableProvider = vi.fn(() => false);
-
-  it("does not clear an equal recorded plan from a different authority", () => {
-    const plan = telegramPlan(hashCredential("123456:registry-token") ?? "");
-    const clearPlanEnv = vi.fn();
-    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:registry-token");
-
-    const result = reconcileReusedSandboxMessaging(
-      structuredClone(plan),
-      { name: "openclaw" },
-      {
-        clearPlanEnv,
-        note: vi.fn(),
-        providerMatchesGatewayCredential: unavailableProvider,
-        writePlanToEnv: vi.fn(),
-      },
-      plan,
-    );
-
-    expect(result).toEqual({ plan, selectedChannels: ["telegram"], changed: false });
-    expect(clearPlanEnv).not.toHaveBeenCalled();
-  });
-
-  it("omits a retired host-backed channel from a reused sandbox selection (#9283)", () => {
-    const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
-    const deps = {
-      clearPlanEnv: vi.fn(),
-      note: vi.fn(),
-      providerMatchesGatewayCredential: unavailableProvider,
-      writePlanToEnv: vi.fn(),
-    };
-    vi.stubEnv("DISCORD_BOT_TOKEN", "");
-
-    const result = reconcileReusedSandboxMessaging(
-      structuredClone(plan),
-      { name: "openclaw" },
-      deps,
-      plan,
-    );
-
-    // Persist the removal so later readers cannot re-enable the channel and
-    // re-apply its egress preset.
-    expect(result).toEqual({
-      plan: withChannelDisabled(plan, "discord"),
-      selectedChannels: [],
-      changed: true,
-    });
-    expect(deps.clearPlanEnv).not.toHaveBeenCalled();
-  });
-
-  it("keeps a still-configured channel in a reused sandbox selection (#9283)", () => {
-    const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
-    vi.stubEnv("DISCORD_BOT_TOKEN", "123456:live-discord-token");
-
-    const result = reconcileReusedSandboxMessaging(
-      structuredClone(plan),
-      { name: "openclaw" },
-      {
-        clearPlanEnv: vi.fn(),
-        note: vi.fn(),
-        providerMatchesGatewayCredential: unavailableProvider,
-        writePlanToEnv: vi.fn(),
-      },
-      plan,
-    );
-
-    expect(result.selectedChannels).toEqual(["discord"]);
-  });
-
-  it("keeps a channel when every credential binding matches its gateway provider (#10667)", () => {
-    const plan = discordPlan(hashCredential("previous-discord-token") ?? "", "hermes");
-    const providerMatchesGatewayCredential = vi.fn(() => true);
-    vi.stubEnv("DISCORD_BOT_TOKEN", "");
-
-    const result = reconcileReusedSandboxMessaging(
-      structuredClone(plan),
-      { name: "hermes" },
-      {
-        clearPlanEnv: vi.fn(),
-        note: vi.fn(),
-        providerMatchesGatewayCredential,
-        writePlanToEnv: vi.fn(),
-      },
-      plan,
-    );
-
-    expect(result).toEqual({ plan, selectedChannels: ["discord"], changed: false });
-    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
-      "alpha-discord-bridge",
-      "discord-hermes-static-v1",
-      "DISCORD_BOT_TOKEN",
-    );
-  });
-
-  it("keeps an in-sandbox QR channel in a reused sandbox selection (#9283)", () => {
-    const plan = whatsappPlan();
-    vi.stubEnv("WHATSAPP_MODE", "");
-    vi.stubEnv("WHATSAPP_ALLOWED_IDS", "");
-
-    const result = reconcileReusedSandboxMessaging(
-      structuredClone(plan),
-      { name: "openclaw" },
-      {
-        clearPlanEnv: vi.fn(),
-        note: vi.fn(),
-        providerMatchesGatewayCredential: unavailableProvider,
-        writePlanToEnv: vi.fn(),
-      },
-      plan,
-    );
-
-    // The host environment holds no value that reports whether an in-sandbox
-    // QR channel is still paired, so reuse must keep it selected.
-    expect(result.selectedChannels).toEqual(["whatsapp"]);
-  });
-
-  it("removes every unsupported channel artifact from a reused plan", () => {
-    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:registry-token");
-    const result = reconcileReusedSandboxMessaging(
-      mixedChannelPlan(),
-      { name: "openclaw" },
-      {
-        clearPlanEnv() {},
-        note() {},
-        providerMatchesGatewayCredential: unavailableProvider,
-        writePlanToEnv() {},
-      },
-    );
-    const filtered = result.plan;
-
-    expect(filtered).not.toBeNull();
-    expect(result.selectedChannels).toEqual(["telegram"]);
-    expect(result.changed).toBe(true);
-    expect({
-      channels: channelIdsFrom(filtered?.channels ?? []),
-      disabledChannels: filtered?.disabledChannels,
-      credentialBindings: channelIdsFrom(filtered?.credentialBindings ?? []),
-      networkPolicyPresets: filtered?.networkPolicy.presets,
-      networkPolicyEntries: channelIdsFrom(filtered?.networkPolicy.entries ?? []),
-      agentRender: channelIdsFrom(filtered?.agentRender ?? []),
-      buildSteps: channelIdsFrom(filtered?.buildSteps ?? []),
-      nodePreloads: channelIdsFrom(filtered?.runtimeSetup?.nodePreloads ?? []),
-      envAliases: channelIdsFrom(filtered?.runtimeSetup?.envAliases ?? []),
-      secretScans: channelIdsFrom(filtered?.runtimeSetup?.secretScans ?? []),
-      stateUpdates: channelIdsFrom(filtered?.stateUpdates ?? []),
-      healthChecks: channelIdsFrom(filtered?.healthChecks ?? []),
-    }).toEqual({
-      channels: ["telegram"],
-      disabledChannels: [],
-      credentialBindings: ["telegram"],
-      networkPolicyPresets: ["telegram"],
-      networkPolicyEntries: ["telegram"],
-      agentRender: ["telegram"],
-      buildSteps: ["telegram"],
-      nodePreloads: ["telegram"],
-      envAliases: ["telegram"],
-      secretScans: ["telegram"],
-      stateUpdates: ["telegram"],
-      healthChecks: ["telegram"],
-    });
-  });
-
-  it("disables and stages an unconfigured host-backed channel for Ready sandbox reuse (#9283)", () => {
-    const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
-    const deps = reconcileDeps([]);
-    vi.stubEnv("DISCORD_BOT_TOKEN", "");
-
-    const result = reconcileReusedSandboxMessaging(
-      plan,
-      { name: "openclaw" },
-      deps,
-      structuredClone(plan),
-    );
-    const disabledPlan = withChannelDisabled(plan, "discord");
-
-    expect(result).toEqual({ plan: disabledPlan, selectedChannels: [], changed: true });
-    expect(deps.writePlanToEnv).toHaveBeenLastCalledWith(disabledPlan);
-    expect(deps.clearPlanEnv).not.toHaveBeenCalled();
-    expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
-  });
 });
 
 describe("reconcileSandboxMessaging plan authority", () => {
@@ -1042,7 +858,6 @@ describe("reconcileSandboxMessaging plan authority", () => {
     expect(deps.clearPlanEnv).not.toHaveBeenCalled();
   });
 });
-
 describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
   it("reuses an active channel only when the process credential matches the persisted hash", async () => {
     const token = "123456:accepted-telegram-token";
