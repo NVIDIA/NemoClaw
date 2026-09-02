@@ -436,16 +436,19 @@ describe("configureMessagingBridgeRefreshes", () => {
       status: 0,
       stdout: PENDING_STATUS_TABLE,
     }));
+    const sleep = vi.fn();
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
       redact,
       getCredential: () => SA_JSON,
       log: noLog,
       profiles: [GC_PROFILE],
-      sleep: () => undefined,
+      sleep,
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toContain("configured");
+    expect(runOpenshell.mock.calls.filter((call) => call[0][2] === "status")).toHaveLength(50);
+    expect(sleep).toHaveBeenCalledTimes(49);
   });
 
   it("rejects a refreshed row printed by a failed status command", () => {
@@ -484,11 +487,9 @@ describe("configureMessagingBridgeRefreshes", () => {
       now: () => clock,
     });
     expect(result.ok).toBe(false);
-    // Six probes at a minute each cross the five-minute deadline well before
-    // the fifty-attempt cap.
-    expect(runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length).toBeLessThan(
-      10,
-    );
+    // The configure command advances the clock once. Exactly five one-minute
+    // status probes then consume the five-minute polling deadline.
+    expect(runOpenshell.mock.calls.filter((call) => call[0][2] === "status")).toHaveLength(5);
   });
 
   it("bounds each status probe with a command timeout", () => {

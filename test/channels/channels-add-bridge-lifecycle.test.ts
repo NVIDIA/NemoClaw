@@ -4,8 +4,8 @@
 // Bridge-provider lifecycle on the DIRECT `channels add` path (#6120): a
 // bridge-backed channel (googlechat) declares no manifest credentials, so the
 // add path must (1) create + refresh-configure the gateway bridge provider
-// itself, (2) fail loudly when the pasted secret is missing, and (3) tear the
-// just-created provider back down when gateway registration fails midway.
+// itself, (2) exit with an error when the pasted secret is missing, and (3)
+// detach and delete the newly created provider when gateway registration fails.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -314,7 +314,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(printedText()).toContain("Change queued.");
   });
 
-  it("fails loudly at add time when the bridge secret is not resolvable", async () => {
+  it("exits with an error at add time when the bridge secret is not resolvable", async () => {
     delete process.env.GOOGLECHAT_SERVICE_ACCOUNT;
 
     await expect(addSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
@@ -327,7 +327,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(printedText()).not.toContain("GOOGLECHAT_SERVICE_ACCOUNT");
   });
 
-  it("tears the just-created bridge provider back down when gateway registration fails", async () => {
+  it("detaches and deletes the newly created bridge provider when registration fails", async () => {
     providerSpy.mockImplementation(() => {
       throw new Error("simulated gateway failure");
     });

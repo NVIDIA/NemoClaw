@@ -32,6 +32,7 @@ import type {
   MessagingAgentId,
 } from "../messaging/manifest";
 import { ROOT } from "../state/paths";
+import { sleepMs, waitUntil } from "./readiness-wait";
 
 // Create-time credential sentinel: the real value is minted by
 // `provider refresh configure`; this only has to be non-empty so the provider is
@@ -507,7 +508,11 @@ export function ensureMessagingBridgeProfiles(
     const diagnostic = compactText(deps.redact(rawDiagnostic));
     errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
     if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
-    errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
+    errorLog("    Inspect the preceding OpenShell error.");
+    errorLog(
+      "    If OpenShell does not support this provider profile, update OpenShell with scripts/install-openshell.sh.",
+    );
+    errorLog("    Then re-run onboarding.");
     exit(result.status || 1);
     return;
   }
@@ -592,43 +597,52 @@ export function refreshStatusForCredential(text: string, credentialKey: string):
   return keyIndex < 0 ? "" : (columns[keyIndex + 2] ?? "");
 }
 
-function sleepSync(milliseconds: number): void {
-  // Vitest sets process.env.VITEST, so the poll loop costs no wall-clock in tests.
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
 function waitForMintedBridgeCredential(
   providerName: string,
   credentialKey: string,
   deps: ConfigureMessagingBridgeRefreshesDeps,
 ): MessagingBridgeRefreshResult {
-  const sleep = deps.sleep ?? sleepSync;
   const now = deps.now ?? (() => Date.now());
+  const sleep =
+    deps.sleep ??
+    (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1"
+      ? () => undefined
+      : sleepMs);
   // The mint runs on the gateway's own sweep, so this can sit for a minute.
   (deps.log ?? console.error)(`  Waiting for the gateway to mint ${credentialKey}…`);
   const deadline = now() + BRIDGE_MINT_DEADLINE_MS;
   let status = "";
-  for (let attempt = 0; attempt < BRIDGE_MINT_POLL_ATTEMPTS && now() < deadline; attempt += 1) {
-    const result = deps.runOpenshell(
-      ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
-      // suppressOutput: the runner re-emits piped child output; without it every
-      // poll reprints the whole status table into the onboarding transcript.
-      {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        suppressOutput: true,
-        timeout: BRIDGE_MINT_STATUS_TIMEOUT_MS,
-      },
-    );
-    // A nonzero probe can still print a stale table; only trust a clean read.
-    status =
-      result.status === 0
-        ? refreshStatusForCredential(bufferOrStringToText(result.stdout), credentialKey)
-        : "";
-    if (status === BRIDGE_MINT_STATUS_REFRESHED) return { ok: true };
-    sleep(BRIDGE_MINT_POLL_INTERVAL_MS);
-  }
+  const minted = waitUntil(
+    () => {
+      const result = deps.runOpenshell(
+        ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
+        // suppressOutput: the runner re-emits piped child output; without it every
+        // poll reprints the whole status table into the onboarding transcript.
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
+          timeout: BRIDGE_MINT_STATUS_TIMEOUT_MS,
+        },
+      );
+      // A nonzero probe can still print a stale table; only trust a clean read.
+      status =
+        result.status === 0
+          ? refreshStatusForCredential(bufferOrStringToText(result.stdout), credentialKey)
+          : "";
+      return status === BRIDGE_MINT_STATUS_REFRESHED;
+    },
+    {
+      deadlineMs: deadline,
+      initialIntervalMs: BRIDGE_MINT_POLL_INTERVAL_MS,
+      maxIntervalMs: BRIDGE_MINT_POLL_INTERVAL_MS,
+      backoffFactor: 1,
+      maxAttempts: BRIDGE_MINT_POLL_ATTEMPTS,
+      now,
+      sleep,
+    },
+  );
+  if (minted) return { ok: true };
   return {
     ok: false,
     reason: `gateway token minting did not complete for '${providerName}' (last status '${status || "unknown"}')`,
