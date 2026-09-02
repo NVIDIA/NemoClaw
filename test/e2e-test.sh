@@ -111,33 +111,18 @@ fi
 # -------------------------------------------------------
 info "4. Verify blueprint runner plan command"
 # -------------------------------------------------------
-cd /opt/nemoclaw-blueprint
 # Runner will fail at the OpenShell prerequisite check (expected in this image).
 # Use an independent minimal blueprint so shipped policy changes cannot mask
 # the missing-CLI behavior under test.
-run_plan_prerequisite_smoke() (
+(
   plan_blueprint=$(mktemp -d)
   trap 'rm -rf "$plan_blueprint"' EXIT
   cat >"$plan_blueprint/blueprint.yaml" <<'YAML'
-version: "1.0"
 components:
   inference:
     profiles:
-      default:
-        provider_type: openai
-        provider_name: test-provider
-        endpoint: ""
-        model: test-model
-        credential_env: TEST_API_KEY
-        dynamic_endpoint: true
-  sandbox:
-    image: test-image
-    name: test-sandbox
-    forward_ports: [18789]
-  policy:
-    additions: {}
+      default: {}
 YAML
-  cp /opt/nemoclaw-blueprint/private-networks.yaml "$plan_blueprint/"
   NEMOCLAW_BLUEPRINT_PATH="$plan_blueprint" node --input-type=module -e "
     const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
     try {
@@ -147,8 +132,7 @@ YAML
       console.log('EXPECTED_ERROR: ' + err.message);
     }
   "
-)
-run_plan_prerequisite_smoke 2>&1 | tee /tmp/plan-output.txt
+) 2>&1 | tee /tmp/plan-output.txt
 if grep -q "RUN_ID:" /tmp/plan-output.txt; then
   pass "Blueprint plan generates run ID"
 else
