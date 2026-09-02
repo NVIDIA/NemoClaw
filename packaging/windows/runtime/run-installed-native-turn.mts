@@ -307,6 +307,11 @@ async function main() {
 
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
+  const systemRoot = requiredDirectory(process.env.SystemRoot ?? "", "Windows system root");
+  const comSpec = requiredFile(
+    path.join(systemRoot, "System32", "cmd.exe"),
+    "Windows command host",
+  );
   const runId = randomBytes(5).toString("hex");
   const runRoot = path.join(`${systemDrive}\\`, `NemoClawNativeTurn-${runId}`);
   const shareRoot = path.join(`${systemDrive}\\`, `NemoClawNativeShare-${runId}`);
@@ -410,6 +415,9 @@ async function main() {
       "Selecting qualification gateway",
     );
     const sandboxEnvironment = {
+      COMSPEC: comSpec,
+      LOCALAPPDATA: home,
+      NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
       NEMOCLAW_MXC_NODE: node,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
       NEMOCLAW_MXC_HOME: home,
@@ -417,8 +425,16 @@ async function main() {
       NEMOCLAW_MXC_RESULT: resultPath,
       NEMOCLAW_MXC_MOCK_PORT: String(mockPort),
       NEMOCLAW_MXC_OPENCLAW_PORT: String(openClawPort),
+      OS: "Windows_NT",
+      PATH: `${path.join(systemRoot, "System32")};${systemRoot}`,
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      PROCESSOR_ARCHITECTURE: "ARM64",
+      SYSTEMDRIVE: systemDrive,
+      SYSTEMROOT: systemRoot,
       TEMP: temp,
       TMP: temp,
+      USERPROFILE: home,
+      WINDIR: systemRoot,
     };
     const createArgs = [
       "sandbox",
