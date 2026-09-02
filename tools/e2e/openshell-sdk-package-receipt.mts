@@ -121,15 +121,6 @@ function packageDigest(bytes: Buffer): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-function selectionArtifact(identity: BoundArtifactIdentity) {
-  return {
-    id: identity.id,
-    name: identity.name,
-    digest: identity.digest,
-    size: identity.size,
-  };
-}
-
 function producerArtifactName(candidateSha: string, runId: number, runAttempt: number): string {
   return `openshell-sdk-${candidateSha}-${runId}-${runAttempt}`;
 }
