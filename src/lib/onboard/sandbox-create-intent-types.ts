@@ -5,6 +5,7 @@ import type { SandboxHostMount } from "../state/registry/types";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { ManagedHermesStateVolumeMount } from "./managed-workload/hermes-state-volume";
+import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -97,6 +98,8 @@ export type MaterializeSandboxCreatePlanInput = {
   deferSandboxEffectsUntilIdentityVerification?: boolean;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
+  /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
+  messagingConfig?: MessagingChannelConfig | null;
   runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],

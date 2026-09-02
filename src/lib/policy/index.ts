@@ -100,10 +100,13 @@ type SelectionOptions = {
   applied?: string[];
 };
 
+type MessagingPolicyConfig = Readonly<Record<string, string>>;
+
 type PresetLoadOptions = {
   agent?: string | null;
   sandboxName?: string;
   credentialBoundMessagingChannels?: readonly string[];
+  messagingConfig?: MessagingPolicyConfig | null;
 };
 
 type PresetListOptions = {
@@ -114,10 +117,12 @@ type MergePresetNamesOptions = {
   agent?: string | null;
   sandboxName?: string;
   credentialBoundMessagingChannels?: readonly string[];
+  messagingConfig?: MessagingPolicyConfig | null;
 };
 
 type SandboxPresetLoadOptions = {
   includeMessagingCredentialBindings?: boolean;
+  messagingConfig?: MessagingPolicyConfig | null;
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -211,6 +216,7 @@ function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): stri
   const channelPreset = loadMessagingChannelPolicyPreset(name, {
     agent: options.agent,
     sandboxName: options.sandboxName,
+    messagingConfig: options.messagingConfig,
   });
   if (channelPreset) {
     const credentialBoundChannels = options.credentialBoundMessagingChannels;
@@ -396,10 +402,14 @@ function loadPresetForSandbox(
 ): string | null {
   let sandboxAgent: string | null = null;
   let configuredMessagingChannels: string[] = [];
+  let messagingConfig = options.messagingConfig;
   try {
     const sandbox = registry.getSandbox(sandboxName);
     sandboxAgent = sandbox?.agent ?? null;
     configuredMessagingChannels = getCredentialBoundMessagingChannelsFromEntry(sandbox);
+    if (messagingConfig === undefined) {
+      messagingConfig = registry.getMessagingChannelConfigFromEntry(sandbox);
+    }
   } catch {
     sandboxAgent = null;
     configuredMessagingChannels = [];
@@ -409,10 +419,16 @@ function loadPresetForSandbox(
   if (options.includeMessagingCredentialBindings && channelId) {
     configuredMessagingChannels = [...new Set([...configuredMessagingChannels, channelId])];
   }
-  const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
-    agent: sandboxAgent,
-    sandboxName,
-  });
+  let channelPresetContent: string | null;
+  try {
+    channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
+      agent: sandboxAgent,
+      sandboxName,
+      messagingConfig,
+    });
+  } catch {
+    return null;
+  }
   if (channelPresetContent) {
     return channelId && !configuredMessagingChannels.includes(channelId)
       ? stripMessagingCredentialBindings(channelPresetContent)
@@ -1346,6 +1362,16 @@ function logPresetScopeForState(
 
 const OPENCLAW_NPM_BASELINE_KEY = "npm_registry";
 const OPENCLAW_NPM_PRESET_KEY = "npm_yarn";
+const CUSTOM_PRESET_RESERVED_NETWORK_POLICY_KEYS = [
+  OPENCLAW_NPM_PRESET_KEY,
+  PERSONAL_OPEN_INTERNET_POLICY_KEY,
+] as const;
+
+function findReservedCustomNetworkPolicyKey(networkPolicies: PolicyObject): string | undefined {
+  return CUSTOM_PRESET_RESERVED_NETWORK_POLICY_KEYS.find((key) =>
+    Object.prototype.hasOwnProperty.call(networkPolicies, key),
+  );
+}
 
 function npmCompatibilityEntry(
   baselineEntry: PolicyObject,
@@ -1681,6 +1707,7 @@ function mergePresetNamesIntoPolicy(
       agent: options.agent,
       sandboxName: options.sandboxName,
       credentialBoundMessagingChannels: options.credentialBoundMessagingChannels,
+      messagingConfig: options.messagingConfig,
     });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
@@ -2253,9 +2280,7 @@ function applyPresetContent(
       console.error(`  Preset '${presetName}' has invalid or missing network_policies.`);
       return false;
     }
-    const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find((key) =>
-      Object.prototype.hasOwnProperty.call(np, key),
-    );
+    const reservedKey = findReservedCustomNetworkPolicyKey(np);
     if (reservedKey) {
       console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
       return false;
@@ -2454,6 +2479,7 @@ function applyPreset(
 ): boolean {
   const presetContent = loadPresetForSandbox(sandboxName, presetName, {
     includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
+    messagingConfig: options.messagingConfig as MessagingPolicyConfig | null | undefined,
   });
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
@@ -2717,6 +2743,11 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     return null;
   }
   const np = parsed.network_policies as PolicyObject;
+  const reservedKey = findReservedCustomNetworkPolicyKey(np);
+  if (reservedKey) {
+    console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
+    return null;
+  }
   if (networkPoliciesHasAllowedIps(np)) {
     console.error(
       `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets: ${filePath}`,
