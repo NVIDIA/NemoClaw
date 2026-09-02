@@ -7,7 +7,7 @@
 
 NemoClaw v0.0.119 adds an explicitly selected native rootless Podman runtime path and an experimental managed llama.cpp path for qualifying Windows WSL N1x hosts.
 It hardens custom network policy, WeChat redirect, Langfuse, MCP credential, and messaging-rebuild boundaries.
-It also improves local inference selection, Hermes recovery, interrupted-install guidance, and sandbox command behavior.
+It also improves local inference selection, Hermes recovery, interrupted-install guidance, and sandbox command behavior, and updates reviewed production dependency graphs to remove four high-severity `fast-uri` advisories.
 
 - Native rootless Podman can now run standard managed-image onboarding on qualified Linux hosts when you set `NEMOCLAW_GATEWAY_RUNTIME=podman`.
   The provider verifies the current-user socket, rootless service, cgroups v2, bridge networking, DNS, platform, and exact managed-image receipt before admission.
@@ -39,3 +39,6 @@ It also improves local inference selection, Hermes recovery, interrupted-install
 - Hermes onboarding now requires its tracked base image, or a repository-built local base that passes the same controls, instead of falling through to an image that final provenance checks must reject.
   Stopped-container recovery omits one known-futile prelaunch health request, keeps final authenticated health required, and reports credential-safe timing for its qualification, startup, polling, rollback, and total phases.
   Related changes: [PR #10831](https://github.com/NVIDIA/NemoClaw/pull/10831), [PR #10805](https://github.com/NVIDIA/NemoClaw/pull/10805), and [PR #10811](https://github.com/NVIDIA/NemoClaw/pull/10811).
+- NemoClaw now pins `fast-uri` 3.1.6 across its production dependency graphs and managed-image build inputs.
+  Reviewed locks, integrity metadata, runtime bundles, and image fixtures now exclude the four high-severity advisories that affect earlier 3.x releases while preserving the fail-closed audit threshold.
+  Related changes: [PR #10894](https://github.com/NVIDIA/NemoClaw/pull/10894) and [PR #10892](https://github.com/NVIDIA/NemoClaw/pull/10892).
