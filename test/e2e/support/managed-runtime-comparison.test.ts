@@ -262,7 +262,7 @@ function artifact(name: string, id: number) {
 }
 
 function runEvidence(
-  outcome: "cancelled" | "failure" | "success",
+  outcome: "cancelled" | "failure" | "skipped" | "success",
   selectedReceipt: ManagedRuntimeReceipt | null,
   role: "base" | "candidate",
 ): ManagedRuntimeRunEvidence {

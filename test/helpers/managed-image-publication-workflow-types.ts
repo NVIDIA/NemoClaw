@@ -36,6 +36,7 @@ export type MatrixEntry = {
 };
 
 export type Job = {
+  "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
   if?: string;
   needs?: string | string[];
@@ -64,6 +65,10 @@ export type Workflow = {
     pull_request?: {
       branches?: string[];
       paths?: string[];
+    };
+    pull_request_target?: {
+      paths?: string[];
+      types?: string[];
     };
     push?: {
       paths?: string[];
