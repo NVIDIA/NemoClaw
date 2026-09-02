@@ -6,7 +6,7 @@ import {
   runBoundedRetry,
   type BoundedRetryResult,
   type RetryEvidence,
-} from "../fixtures/retry-policy.ts";
+} from "../../../tools/e2e/retry-evidence.mts";
 
 const OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
 const OWNER = "openclaw-plugin-runtime-exdev";
