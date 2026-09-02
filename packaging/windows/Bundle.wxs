@@ -18,6 +18,15 @@
         SuppressRepair="no" />
     </BootstrapperApplication>
     <Chain>
+      <ExePackage
+        Id="MxcNullDevicePreparation"
+        SourceFile="$(var.WxcHostPrepPath)"
+        InstallArguments="prepare-null-device"
+        RepairArguments="prepare-null-device"
+        PerMachine="yes"
+        Permanent="yes"
+        Compressed="yes"
+        Vital="yes" />
       <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.MsiPath)" Compressed="yes" Vital="yes" />
     </Chain>
   </Bundle>

@@ -120,9 +120,18 @@ $authoringText = @(
     [IO.File]::ReadAllText((Join-Path $sourceRoot 'packaging\windows\Bundle.wxs'))
 ) -join [Environment]::NewLine
 if ($authoringText -match '<\s*CustomAction\b' -or
-    $authoringText -match '<\s*ExePackage\b' -or
     $authoringText -match '(?i)\b(powershell|pwsh|wsl|bash|ubuntu|docker)\b') {
     Fail-WindowsPackageBuild 'WiX authoring contains a prohibited custom-action or non-native execution path.'
+}
+$exePackages = @([regex]::Matches($authoringText, '<\s*ExePackage\b[^>]*/>', 'IgnoreCase, Singleline'))
+if ($exePackages.Count -ne 1 -or
+    $exePackages[0].Value -notmatch 'Id="MxcNullDevicePreparation"' -or
+    $exePackages[0].Value -notmatch 'SourceFile="\$\(var\.WxcHostPrepPath\)"' -or
+    $exePackages[0].Value -notmatch 'InstallArguments="prepare-null-device"' -or
+    $exePackages[0].Value -notmatch 'PerMachine="yes"' -or
+    $exePackages[0].Value -notmatch 'Permanent="yes"' -or
+    $exePackages[0].Value -notmatch 'Vital="yes"') {
+    Fail-WindowsPackageBuild 'WiX Burn authoring must contain only the exact pinned MXC null-device prerequisite.'
 }
 
 [IO.Directory]::CreateDirectory($output) | Out-Null

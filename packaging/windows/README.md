@@ -16,6 +16,12 @@ and gateway binaries, and pinned Microsoft MXC tools. Windows Installer
 registers normal Add/Remove Programs metadata and adds the installed `bin`
 directory to the machine PATH.
 
+The Burn setup runs the pinned Microsoft `wxc-host-prep.exe
+prepare-null-device` prerequisite through its per-machine elevated engine before
+installing the MSI. This is a native executable prerequisite rather than an MSI
+custom action; the setting is required for AppContainer process initialization
+and resets when Windows reboots.
+
 The package is a preview distribution boundary. Host qualification, supported
 onboarding, managed inference, service registration, production activation, and
 production signing remain separate gates.

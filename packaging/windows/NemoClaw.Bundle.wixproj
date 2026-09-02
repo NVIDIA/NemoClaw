@@ -8,7 +8,7 @@
     <OutputPath>$(PackageOutputRoot)</OutputPath>
     <IntermediateOutputPath>$(PackageIntermediateRoot)\bundle\</IntermediateOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath)</DefineConstants>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath);WxcHostPrepPath=$(PayloadRoot)\mxc\wxc-host-prep.exe</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <DebugType>none</DebugType>
     <BootstrapperApplicationsExtensionPath>$(RestorePackagesPath)\wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll</BootstrapperApplicationsExtensionPath>
@@ -24,6 +24,7 @@
   <Target Name="ValidateNemoClawBundleInputs" BeforeTargets="ResolveWixExtensionReferences">
     <Error Condition="'$(MsiPath)' == ''" Text="MsiPath is required." />
     <Error Condition="!Exists('$(MsiPath)')" Text="The ARM64 MSI input is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The pinned ARM64 MXC host-preparation input is missing." />
     <Error
       Condition="!Exists('$(BootstrapperApplicationsExtensionPath)')"
       Text="The pinned WiX BootstrapperApplications extension is missing." />
