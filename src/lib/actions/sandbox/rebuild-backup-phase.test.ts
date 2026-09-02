@@ -29,7 +29,6 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
 import {
   type RebuildBackupPhaseInput,
   runRebuildBackupPhase,
-  writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
