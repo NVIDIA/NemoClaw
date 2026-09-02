@@ -388,17 +388,49 @@ export function createShieldsFlowHarness(
   vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(
     Boolean(options.directSandboxUnavailable),
   );
-  vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-    (_sandboxName: unknown, cmd: unknown) =>
-      options.directSandboxUnavailable
-        ? throwHarnessError(directSandboxUnavailableError)
-        : [
-            "exec",
-            "--user",
-            "root",
-            "openshell-openclaw",
-            ...(Array.isArray(cmd) ? cmd.map(String) : []),
-          ],
+  const privilegedArgv = (cmd: unknown) =>
+    options.directSandboxUnavailable
+      ? throwHarnessError(directSandboxUnavailableError)
+      : [
+          "exec",
+          "--user",
+          "root",
+          "openshell-openclaw",
+          ...(Array.isArray(cmd) ? cmd.map(String) : []),
+        ];
+  vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockImplementation(
+    (_sandboxName: unknown, cmd: unknown, rawOptions: unknown) =>
+      Buffer.from(
+        dockerExec.dockerExecFileSync(privilegedArgv(cmd), {
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout:
+            rawOptions && typeof rawOptions === "object" && "timeout" in rawOptions
+              ? Number((rawOptions as { timeout?: unknown }).timeout)
+              : undefined,
+        }),
+      ),
+  );
+  vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand").mockImplementation(
+    (_sandboxName: unknown, cmd: unknown, rawOptions: unknown) => {
+      const result = dockerExec.dockerSpawnSync(privilegedArgv(cmd), {
+        encoding: "utf-8",
+        input:
+          rawOptions && typeof rawOptions === "object" && "input" in rawOptions
+            ? (rawOptions as { input?: unknown }).input
+            : undefined,
+        timeout:
+          rawOptions && typeof rawOptions === "object" && "timeout" in rawOptions
+            ? Number((rawOptions as { timeout?: unknown }).timeout)
+            : undefined,
+      });
+      return {
+        status: result.status,
+        signal: result.signal,
+        stdout: Buffer.from(String(result.stdout ?? "")),
+        stderr: Buffer.from(String(result.stderr ?? "")),
+        ...(result.error ? { error: result.error } : {}),
+      };
+    },
   );
   const dockerSpawnCalls: Array<{ args: string[]; timeout: number | undefined }> = [];
   vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation(

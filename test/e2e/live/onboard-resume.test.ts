@@ -84,10 +84,10 @@ interface SessionStateComplete {
   >;
 }
 
-interface SessionStatePostVerify {
-  status: "in_progress";
+interface SessionStateRetryableFailure {
+  status: "failed";
   resumable: true;
-  machine: { state: "post_verify" };
+  machine: { state: "failed" };
 }
 
 interface MutableSessionState extends Record<string, unknown> {
@@ -171,7 +171,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     const corporateCa = createCorporateCaFixture("host-anchor", "nemoclaw-resume-corporate-ca-");
     cleanup.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),
@@ -205,18 +205,10 @@ test(
       `bin/nemoclaw.js missing — ensure the workflow runs npm ci + npm run build:cli before this test`,
     ).toBe(true);
 
-    // Assertion: docker-running — `docker info` exits 0. Pass fixture allowlist
-    // env (includes PATH, HOME, etc.) so spawn can locate `docker`.
-    // The shell-probe boundary defaults to no env inheritance; fixture spawns
-    // must opt in via buildAvailabilityProbeEnv() to keep secret-passthrough
-    // explicit (NVIDIA_INFERENCE_API_KEY is NOT in the allowlist; we layer it explicitly
-    // in Phase 2 below).
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-info",
+      scenarioLabel: "onboard resume",
     });
-    expect(dockerInfo.exitCode, dockerInfo.stderr).toBe(0);
 
     // Assertion: openshell-installed — openshell CLI is on PATH (installed by
     // the live validation setup before this test runs).
@@ -558,7 +550,9 @@ test(
     await artifacts.writeJson("phase-3-session-summary.json", completeSessionSummary(complete));
     expect(complete.status).toBe("complete");
     expect(complete.provider).toBe("compatible-endpoint");
-    expect(([
+    expect(
+      (
+        [
           "preflight",
           "gateway",
           "sandbox",
@@ -567,7 +561,9 @@ test(
           "openclaw",
           "policies",
           "agent_setup",
-        ] as const).every((step) => ["complete", "skipped"].includes(complete.steps[step]?.status))).toBe(true);
+        ] as const
+      ).every((step) => ["complete", "skipped"].includes(complete.steps[step]?.status)),
+    ).toBe(true);
 
     // Assertion: registry-has-sandbox.
     expect(fs.existsSync(REGISTRY_FILE)).toBe(true);
@@ -602,7 +598,7 @@ test(
     );
     expect(unavailableResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
-    const paused = readSession<SessionStatePostVerify>(SESSION_FILE);
+    const paused = readSession<SessionStateRetryableFailure>(SESSION_FILE);
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
       status: paused.status,
       resumable: paused.resumable,
@@ -637,9 +633,7 @@ test(
     const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
     expect(repairedResumeRun.exitCode, repairedResumeText).toBe(0);
     expect(repairedResumeText).toContain("is ready");
-    expect(repairedResumeText).not.toContain(
-      `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
-    );
+    expect(repairedResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
     expect(repairedResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
     const repaired = readSession<SessionStateComplete>(SESSION_FILE);
     expect(repaired.status).toBe("complete");
@@ -673,9 +667,7 @@ test(
         implicitResumeText.includes("[reuse] Skipping"),
       implicitResumeText,
     ).toBe(true);
-    expect(implicitResumeText).not.toContain(
-      `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
-    );
+    expect(implicitResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
     expect(implicitResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
     markSessionInProgress(SESSION_FILE);

@@ -982,6 +982,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
         "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         "DISCORD_BOT_TOKEN='openshell:resolve:env:DISCORD_BOT_TOKEN'",
         "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        "SLACK_BOT_TOKEN_ROTATED=xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN_ROTATED",
         'SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"',
         "API_SERVER_PORT=18642",
         "API_SERVER_HOST=127.0.0.1",

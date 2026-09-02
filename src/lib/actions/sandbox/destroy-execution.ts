@@ -16,7 +16,9 @@ import {
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
+import type { RuntimeProviderDestroyIdentityReceipt } from "../../onboard/runtime-provider/contract";
 import {
   type HostLocalInferenceLifecycleOptions,
   type PreparedHostLocalInferenceAuthority,
@@ -75,6 +77,7 @@ type SandboxDestroyExecutionInput = {
   // Docker IDs qualified before destroy preparation.
   expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
   expectedContainerIdentityFingerprint?: string;
+  expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -307,6 +310,7 @@ export async function executeSandboxDestroy({
   sandboxName,
   expectedContainerIdentities,
   expectedContainerIdentityFingerprint,
+  expectedRuntimeProviderIdentity,
   portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -318,9 +322,16 @@ export async function executeSandboxDestroy({
       | { status: "changed"; subject?: string }
       | { status: "ambiguous"; detail: string; subject?: string }
       | { status: "probe-failed"; detail: string; subject?: string };
+    const identityProvider = resolveRuntimeProviderBundle(
+      sandbox?.openshellDriver ?? expectedRuntimeProviderIdentity?.providerId,
+      runtimeProviders,
+    );
     const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
-    const expectedContainerProof: DestroyContainerIdentityProof =
-      expectedContainerIdentities === undefined ? {} : { identities: expectedContainerIdentities };
+    const expectedContainerProof: DestroyContainerIdentityProof = expectedRuntimeProviderIdentity
+      ? { identities: undefined, providerIdentity: expectedRuntimeProviderIdentity }
+      : expectedContainerIdentities === undefined
+        ? { identities: undefined }
+        : { identities: expectedContainerIdentities };
     const proofFromVerdict = (
       verdict: ReturnType<typeof classifyDestroyContainerIdentity>,
     ): DestroyContainerIdentityProof | null => {
@@ -385,6 +396,33 @@ export async function executeSandboxDestroy({
         try {
           portableContainerAuthority.revalidate();
           return { status: "match" };
+        } catch (error) {
+          return { status: "probe-failed", detail: redactDestroyError(error) };
+        }
+      }
+      if (expectedRuntimeProviderIdentity) {
+        if (identityProvider?.cleanup.supported !== true) {
+          return {
+            status: "probe-failed",
+            detail: "the selected runtime provider has no destroy identity observer",
+          };
+        }
+        try {
+          const actual = sandbox
+            ? identityProvider.cleanup.captureDestroyIdentity?.({ sandbox, sandboxName })
+            : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
+          if (!actual) {
+            return {
+              status: "probe-failed",
+              detail: "the selected runtime provider has no destroy identity observer",
+            };
+          }
+          return actual.schemaVersion === expectedRuntimeProviderIdentity.schemaVersion &&
+            actual.providerId === expectedRuntimeProviderIdentity.providerId &&
+            actual.resourceHandle === expectedRuntimeProviderIdentity.resourceHandle &&
+            actual.ownershipSha256 === expectedRuntimeProviderIdentity.ownershipSha256
+            ? { status: "match" }
+            : { status: "changed" };
         } catch (error) {
           return { status: "probe-failed", detail: redactDestroyError(error) };
         }

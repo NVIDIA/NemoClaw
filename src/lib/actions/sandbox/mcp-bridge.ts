@@ -326,7 +326,7 @@ export async function dispatchMcpBridgeCommand(
         const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName);
         if (json)
-          console.log(JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2));
+          process.stdout.write(`${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`);
         else renderMcpBridgeList(sandboxName, statuses, agent);
         return;
       }
@@ -348,12 +348,12 @@ export async function dispatchMcpBridgeCommand(
           discoverTools: tools,
         });
         if (json) {
-          console.log(
-            JSON.stringify(
+          process.stdout.write(
+            `${JSON.stringify(
               server ? statuses[0] : buildJsonSummary(sandboxName, agent, statuses),
               null,
               2,
-            ),
+            )}\n`,
           );
         } else renderMcpBridgeStatus(sandboxName, statuses, agent);
         return;
