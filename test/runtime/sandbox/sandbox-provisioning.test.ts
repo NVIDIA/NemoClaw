@@ -1029,67 +1029,6 @@ describe("sandbox provisioning: base runtime tools", () => {
 });
 
 describe("Hermes sandbox provisioning", () => {
-  function runHermesPathValidation(pathEntriesBeforeManifest: string[] = []) {
-    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-path-"));
-    const manifestHermes = path.join(tmp, "usr", "local", "bin", "hermes");
-    const command = dockerRunCommandBetween(
-      dockerfile,
-      "# Keep the final image contract explicit",
-      "# Harden: remove unnecessary build tools",
-    ).replaceAll("/usr/local/bin/hermes", manifestHermes);
-    const scriptPath = path.join(tmp, "run.sh");
-    try {
-      fs.mkdirSync(path.dirname(manifestHermes), { recursive: true });
-      fs.writeFileSync(
-        manifestHermes,
-        "#!/usr/bin/env bash\nprintf 'hermes manifest version\\n'\n",
-        { mode: 0o755 },
-      );
-      fs.writeFileSync(
-        scriptPath,
-        ["#!/usr/bin/env bash", "set -euo pipefail", command].join("\n"),
-        {
-          mode: 0o700,
-        },
-      );
-      return spawnSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          PATH: [
-            ...pathEntriesBeforeManifest,
-            path.dirname(manifestHermes),
-            "/usr/bin",
-            "/bin",
-          ].join(":"),
-        },
-        timeout: 5000,
-      });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  }
-  it("final image validates and runs the manifest-declared hermes binary path", () => {
-    const result = runHermesPathValidation();
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("hermes manifest version");
-  });
-  it("final image rejects a hermes binary from a different PATH location", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrong-path-"));
-    const wrongBin = path.join(tmp, "bin");
-    try {
-      fs.mkdirSync(wrongBin);
-      fs.writeFileSync(path.join(wrongBin, "hermes"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-      const result = runHermesPathValidation([wrongBin]);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("expected hermes");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
   it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-build-"));

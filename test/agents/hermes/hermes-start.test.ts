@@ -715,7 +715,19 @@ function runHermesGatewayRuntimeCleanup(opts: {
       else if (historyStat.isFile()) historyKind = "regular";
       else historyKind = "other";
       if (historyKind === "regular") {
-        historyContent = fs.readFileSync(historyPath, "utf-8");
+        const historyFd = fs.openSync(historyPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        try {
+          const openedHistoryStat = fs.fstatSync(historyFd);
+          expect(
+            openedHistoryStat.isFile() &&
+              openedHistoryStat.dev === historyStat.dev &&
+              openedHistoryStat.ino === historyStat.ino,
+            "Hermes history fixture changed during inspection",
+          ).toBe(true);
+          historyContent = fs.readFileSync(historyFd, "utf-8");
+        } finally {
+          fs.closeSync(historyFd);
+        }
       }
     }
     const symlinkTargetContent = fs.existsSync(symlinkTarget)

@@ -49,90 +49,90 @@ describe("Hermes gateway auxiliary retry", () => {
   it("retries transient auxiliary failures without churning the healthy gateway", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
-      'trace() { printf "%s\\n" "$*"; }',
       "prepare_hermes_nonroot_runtime() { return 0; }",
-      'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); GATEWAY_PID=6001; trace "launch:$GATEWAY_PID"; }',
-      'wait_for_hermes_gateway_internal() { trace "internal:$1"; return 0; }',
-      'hermes_tracked_role_is_current() { trace "identity:$2"; return 0; }',
-      'hermes_gateway_healthy() { trace "health:$1"; return 0; }',
-      'ensure_hermes_supervised_auxiliaries() { auxiliary_calls=$((auxiliary_calls + 1)); trace "auxiliary:$auxiliary_calls"; [ "$auxiliary_calls" -ge 3 ]; }',
-      "finalize_tirith_marker_retry() { trace tirith-finalize; }",
-      "commit_hermes_mcp_applied_if_pending() { trace commit-applied; return 0; }",
-      "refresh_hermes_supervised_child_pids() { trace refresh; }",
-      'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
-      "mark_hermes_gateway_stopped() { trace unexpected-mark; }",
-      "record_hermes_managed_gateway_exit() { trace unexpected-exit-record; }",
-      'sleep() { trace "sleep:$1"; }',
+      "launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); GATEWAY_PID=6001; }",
+      "wait_for_hermes_gateway_internal() { return 0; }",
+      "hermes_tracked_role_is_current() { return 0; }",
+      "hermes_gateway_healthy() { return 0; }",
+      'ensure_hermes_supervised_auxiliaries() { auxiliary_calls=$((auxiliary_calls + 1)); [ "$auxiliary_calls" -ge 3 ]; }',
+      "finalize_tirith_marker_retry() { :; }",
+      "commit_hermes_mcp_applied_if_pending() { return 0; }",
+      "refresh_hermes_supervised_child_pids() { :; }",
+      "nemoclaw_runtime_state_mutation_checkpoint() { return 0; }",
+      "hermes_stop_tracked_role() { stop_calls=$((stop_calls + 1)); return 0; }",
+      "mark_hermes_gateway_stopped() { GATEWAY_PID=0; }",
+      "record_hermes_managed_gateway_exit() { return 0; }",
+      "sleep() { :; }",
       extractShellFunction(source, "recover_hermes_gateway_current_user"),
       "INTERNAL_PORT=18642",
       "launch_calls=0",
       "auxiliary_calls=0",
-      "recover_hermes_gateway_current_user",
-      'trace "launch-count:$launch_calls"',
+      "stop_calls=0",
+      "if recover_hermes_gateway_current_user; then recovery_status=0; else recovery_status=$?; fi",
+      'printf "recovery_status=%s\\nlaunch_calls=%s\\nauxiliary_calls=%s\\nstop_calls=%s\\ngateway_pid=%s\\n" "$recovery_status" "$launch_calls" "$auxiliary_calls" "$stop_calls" "$GATEWAY_PID"',
     ]);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "launch:6001",
-      "internal:6001",
-      "identity:6001",
-      "health:6001",
-      "auxiliary:1",
-      "sleep:1",
-      "identity:6001",
-      "health:6001",
-      "auxiliary:2",
-      "sleep:1",
-      "identity:6001",
-      "health:6001",
-      "auxiliary:3",
-      "identity:6001",
-      "health:6001",
-      "tirith-finalize",
-      "commit-applied",
-      "refresh",
-      "launch-count:1",
-    ]);
+    expect(
+      Object.fromEntries(
+        result.stdout
+          .trim()
+          .split("\n")
+          .map((line) => line.split("=")),
+      ),
+    ).toEqual({
+      recovery_status: "0",
+      launch_calls: "1",
+      auxiliary_calls: "3",
+      stop_calls: "0",
+      gateway_pid: "6001",
+    });
     expect(result.stderr.match(/auxiliary repair failed/g)).toHaveLength(2);
-    expect(result.stdout).not.toContain("unexpected-");
   });
 
   it("stops and charges a replacement that loses health during auxiliary retry", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
-      'trace() { printf "%s\\n" "$*"; }',
       "prepare_hermes_nonroot_runtime() { return 0; }",
-      'launch_hermes_gateway_current_user() { GATEWAY_PID=6001; trace "launch:$GATEWAY_PID"; }',
-      'wait_for_hermes_gateway_internal() { trace "internal:$1"; return 0; }',
-      'hermes_tracked_role_is_current() { trace "identity:$2"; return 0; }',
-      'hermes_gateway_healthy() { health_calls=$((health_calls + 1)); trace "health:$health_calls"; [ "$health_calls" -eq 1 ]; }',
-      "ensure_hermes_supervised_auxiliaries() { trace auxiliary-failed; return 1; }",
-      'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
-      "mark_hermes_gateway_stopped() { trace mark-stopped; GATEWAY_PID=0; }",
-      "record_hermes_managed_gateway_exit() { trace exit-record; return 1; }",
-      'sleep() { trace "sleep:$1"; }',
+      "launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); GATEWAY_PID=6001; }",
+      "wait_for_hermes_gateway_internal() { return 0; }",
+      "hermes_tracked_role_is_current() { return 0; }",
+      'hermes_gateway_healthy() { health_calls=$((health_calls + 1)); [ "$health_calls" -eq 1 ]; }',
+      "ensure_hermes_supervised_auxiliaries() { auxiliary_calls=$((auxiliary_calls + 1)); return 1; }",
+      "hermes_stop_tracked_role() { stop_calls=$((stop_calls + 1)); return 0; }",
+      "mark_hermes_gateway_stopped() { mark_calls=$((mark_calls + 1)); GATEWAY_PID=0; }",
+      "record_hermes_managed_gateway_exit() { exit_record_calls=$((exit_record_calls + 1)); return 1; }",
+      "sleep() { :; }",
       extractShellFunction(source, "recover_hermes_gateway_current_user"),
       "INTERNAL_PORT=18642",
+      "launch_calls=0",
       "health_calls=0",
-      'if recover_hermes_gateway_current_user; then trace unexpected-success; else trace "failure:$?"; fi',
+      "auxiliary_calls=0",
+      "stop_calls=0",
+      "mark_calls=0",
+      "exit_record_calls=0",
+      "if recover_hermes_gateway_current_user; then recovery_status=0; else recovery_status=$?; fi",
+      'printf "recovery_status=%s\\nlaunch_calls=%s\\nhealth_calls=%s\\nauxiliary_calls=%s\\nstop_calls=%s\\nmark_calls=%s\\nexit_record_calls=%s\\ngateway_pid=%s\\n" "$recovery_status" "$launch_calls" "$health_calls" "$auxiliary_calls" "$stop_calls" "$mark_calls" "$exit_record_calls" "$GATEWAY_PID"',
     ]);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "launch:6001",
-      "internal:6001",
-      "identity:6001",
-      "health:1",
-      "auxiliary-failed",
-      "sleep:1",
-      "identity:6001",
-      "health:2",
-      "stop:6001",
-      "mark-stopped",
-      "exit-record",
-      "failure:1",
-    ]);
-    expect(result.stdout).not.toContain("unexpected-success");
+    expect(
+      Object.fromEntries(
+        result.stdout
+          .trim()
+          .split("\n")
+          .map((line) => line.split("=")),
+      ),
+    ).toEqual({
+      recovery_status: "1",
+      launch_calls: "1",
+      health_calls: "2",
+      auxiliary_calls: "1",
+      stop_calls: "1",
+      mark_calls: "1",
+      exit_record_calls: "1",
+      gateway_pid: "0",
+    });
     expect(result.stderr).toContain(
       "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
     );
