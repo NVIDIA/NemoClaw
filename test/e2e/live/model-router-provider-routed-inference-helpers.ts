@@ -9,6 +9,13 @@ export interface ModelRouterSecrets {
   required(name: string): string;
 }
 
+interface ChatCompletionResponse {
+  choices?: Array<{
+    message?: { content?: unknown };
+    text?: unknown;
+  }>;
+}
+
 export function requireModelRouterPublicKey(secrets: ModelRouterSecrets): string {
   const apiKey = secrets.required(MODEL_ROUTER_PUBLIC_KEY_ENV);
   if (!apiKey.startsWith("nvapi-")) {
@@ -38,4 +45,23 @@ export function buildProviderRoutedEnv(
     NEMOCLAW_POLICY_TIER: "open",
     NEMOCLAW_PROVIDER: "routed",
   };
+}
+
+export function routedCompletionReason(raw: string): "ok" | string {
+  let response: ChatCompletionResponse;
+  try {
+    response = JSON.parse(raw) as ChatCompletionResponse;
+  } catch {
+    return "response was not JSON";
+  }
+
+  const content = (response.choices ?? [])
+    .map((choice) => {
+      if (typeof choice.message?.content === "string") return choice.message.content;
+      if (typeof choice.text === "string") return choice.text;
+      return "";
+    })
+    .join("\n")
+    .trim();
+  return content ? "ok" : "response had no completion content";
 }

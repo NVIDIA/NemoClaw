@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildProviderRoutedEnv,
   requireModelRouterPublicKey,
+  routedCompletionReason,
 } from "../live/model-router-provider-routed-inference-helpers.ts";
 
 describe("Model Router provider-routed live support", () => {
@@ -33,5 +34,16 @@ describe("Model Router provider-routed live support", () => {
       NEMOCLAW_PROVIDER: "routed",
       NEMOCLAW_SANDBOX_NAME: "e2e-router",
     });
+  });
+
+  it("accepts only a JSON chat completion with nonempty content", () => {
+    expect(
+      routedCompletionReason(JSON.stringify({ choices: [{ message: { content: "hello" } }] })),
+    ).toBe("ok");
+    expect(routedCompletionReason(JSON.stringify({ choices: [{ text: "hello" }] }))).toBe("ok");
+    expect(routedCompletionReason("not json")).toBe("response was not JSON");
+    expect(
+      routedCompletionReason(JSON.stringify({ choices: [{ message: { content: " " } }] })),
+    ).toBe("response had no completion content");
   });
 });
