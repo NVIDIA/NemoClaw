@@ -227,10 +227,39 @@ describe("onboard lock ownership", () => {
     });
   });
 
+  it("restores a replacement raced into atomic lock release", () => {
+    expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
+    const replacement = lockHolder.createOnboardLockRecord(
+      "replacement onboarding owner",
+      "2026-09-02T00:00:00.000Z",
+    );
+    const replacementContents = JSON.stringify(replacement);
+    const displacedOriginal = `${session.LOCK_FILE}.release-original`;
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementationOnce(((from, to) => {
+      originalRenameSync(from, displacedOriginal);
+      fs.writeFileSync(from, replacementContents, { mode: 0o600 });
+      originalRenameSync(from, to);
+    }) as typeof fs.renameSync);
+
+    try {
+      session.releaseOnboardLock();
+
+      expect(renameSpy).toHaveBeenCalledOnce();
+      expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(replacementContents);
+      expect(session.acquireOnboardLock("nemoclaw onboard --resume")).toMatchObject({
+        acquired: false,
+        holderPid: process.pid,
+      });
+    } finally {
+      renameSpy.mockRestore();
+    }
+  });
+
   it("warns without masking the result when owned-lock release fails", () => {
     expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
     const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
-    vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
       throw new Error("release denied");
     });
 

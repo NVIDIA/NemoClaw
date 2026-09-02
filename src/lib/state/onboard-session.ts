@@ -1669,40 +1669,34 @@ function acquireOnboardLockGeneration(command: string | null): LockResult {
 
 export function releaseOnboardLock(): void {
   // Preferred path: we hold the fd from a successful acquireOnboardLock.
-  // Verify the descriptor and canonical path still name the same single-link
-  // regular file before unlinking. A replacement or added hard link removes
-  // cleanup authority, so retain the canonical lock for stale-owner recovery.
+  // Atomically claim the canonical path, then verify that exact generation
+  // against the held descriptor before deletion. A replacement or added hard
+  // link removes cleanup authority and is restored for stale-owner recovery.
   if (heldLockFd !== null) {
     const fd = heldLockFd;
     const directory = heldLockDirectory;
     heldLockFd = null;
     heldLockDirectory = null;
     try {
-      const fdStat = fs.fstatSync(fd, { bigint: true });
-      let pathStat: fs.BigIntStats | null = null;
-      try {
-        pathStat = fs.lstatSync(LOCK_FILE, { bigint: true });
-      } catch (error) {
-        if (!(isErrnoException(error) && error.code === "ENOENT")) {
-          // Unexpected — fall through to closing the fd.
-        }
-      }
-      if (
-        pathStat !== null &&
-        fdStat.isFile() &&
-        fdStat.nlink === 1n &&
-        !pathStat.isSymbolicLink() &&
-        pathStat.isFile() &&
-        pathStat.nlink === 1n &&
-        pathStat.dev === fdStat.dev &&
-        pathStat.ino === fdStat.ino
-      ) {
+      const fdStat = fs.fstatSync(fd);
+      if (directory !== null && fdStat.isFile() && fdStat.nlink === 1) {
+        revalidatePinnedSessionDirectory(directory);
+        assertSessionDirectoryHasNoSymlinks();
         try {
-          fs.unlinkSync(LOCK_FILE);
-        } catch (unlinkError) {
-          if (!(isErrnoException(unlinkError) && unlinkError.code === "ENOENT")) {
-            warnOnboardLockReleaseFailure(unlinkError);
-          }
+          reclaimLockFileGenerationSync(
+            LOCK_FILE,
+            { dev: fdStat.dev, ino: fdStat.ino, reclaimable: true },
+            {
+              inspectClaimed: (claimedPath) => {
+                const claimed = fs.lstatSync(claimedPath);
+                return claimed.isFile() && claimed.nlink === 1
+                  ? { dev: claimed.dev, ino: claimed.ino, reclaimable: true }
+                  : null;
+              },
+            },
+          );
+        } catch (releaseError) {
+          warnOnboardLockReleaseFailure(releaseError);
         }
       }
     } catch {
