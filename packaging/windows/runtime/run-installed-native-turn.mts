@@ -310,7 +310,7 @@ async function main() {
   const gatewayPort = await freePort();
   const mockPort = await freePort();
   const openClawPort = await freePort();
-  const sandboxName = `nemoclaw-turn-${runId}`;
+  const sandboxName = `nc-${runId}`;
   const gatewayName = `nemoclaw-gateway-${runId}`;
   const stateRoot = path.join(runRoot, "state");
   const configRoot = path.join(runRoot, "config");

@@ -314,20 +314,28 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/nemoclaw-native-runtime-payload
-          key: windows-native-runtime-v1-${{ runner.os }}-${{ runner.arch }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/runtime/**') }}
+          key: windows-native-runtime-v1-${{ runner.os }}-${{ runner.arch }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt') }}
+          restore-keys: |
+            windows-native-runtime-v1-${{ runner.os }}-${{ runner.arch }}-openshell-bcd517bbe08c-
 
       - name: Assemble the native NemoClaw runtime payload
-        if: ${{ steps.windows-runtime-payload-cache.outputs.cache-hit != 'true' }}
         shell: powershell
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
           $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
           $openshell = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\openshell")
-          & "$candidate\scripts\checks\prepare-windows-native-package-payload.ps1" `
-            -CandidateCheckout $candidate `
-            -OpenShellPayloadRoot "$openshell\target\aarch64-pc-windows-msvc\release" `
-            -OutputDirectory "$env:RUNNER_TEMP\nemoclaw-native-runtime-payload"
+          $payloadRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-native-runtime-payload")
+          if (-not (Test-Path -LiteralPath "$payloadRoot\runtime-payload-receipt.json" -PathType Leaf)) {
+            & "$candidate\scripts\checks\prepare-windows-native-package-payload.ps1" `
+              -CandidateCheckout $candidate `
+              -OpenShellPayloadRoot "$openshell\target\aarch64-pc-windows-msvc\release" `
+              -OutputDirectory $payloadRoot
+          }
+          Copy-Item `
+            -LiteralPath "$candidate\packaging\windows\runtime\run-installed-native-turn.mts" `
+            -Destination "$payloadRoot\qualification\run-installed-native-turn.mts" `
+            -Force
 
       - name: Cache the assembled native NemoClaw runtime payload
         if: ${{ steps.windows-runtime-payload-cache.outputs.cache-hit != 'true' }}
