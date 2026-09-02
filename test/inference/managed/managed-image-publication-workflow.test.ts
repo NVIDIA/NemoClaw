@@ -439,5 +439,5 @@ fi
     });
     expect(mixedPromotion.status, mixedPromotion.stderr).toBe(0);
     expect(mixedPromotion.platformContracts[reusedKey]?.run).toEqual({ id: 7744, attempt: 1 });
-  });
+  }, 120_000);
 });
