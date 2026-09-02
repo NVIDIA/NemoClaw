@@ -9,6 +9,7 @@
     "openclaw": "2026.7.1"
   },
   "overrides": {
+    "fast-uri": "3.1.6",
     "hono": "4.12.34",
     "tar": "7.5.21"
   },

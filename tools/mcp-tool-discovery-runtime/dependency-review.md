@@ -15,12 +15,12 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
 - Security overrides:
   - `@hono/node-server@2.0.12`: `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`
-  - `fast-uri@3.1.5`: `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
+  - `fast-uri@3.1.6`: `sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==`
   - `hono@4.12.34`: `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
   - `ip-address@10.3.1`: `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
 
 OpenClaw's `mcporter` dependency graph also resolves the official SDK but remains separately locked. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
-The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter or its `hono` and `ip-address` dependencies, but those packages remain part of the installed production graph that the reviewed npm audit CI check evaluates. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the installed graph outside the affected ranges for `GHSA-7p8r-x3mc-p8w7`, `GHSA-8j4g-w8fx-2239`, `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` without changing the SDK client pin.
+The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter or its `hono` and `ip-address` dependencies, but those packages remain part of the installed production graph that the reviewed npm audit CI check evaluates. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the installed graph outside the affected ranges for `GHSA-7p8r-x3mc-p8w7`, `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, `GHSA-jqff-g426-hqxp`, `GHSA-8j4g-w8fx-2239`, `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` without changing the SDK client pin.
 
 ## 2026-08-03 security refresh
 
@@ -104,6 +104,13 @@ Security refresh evidence on 2026-08-03:
 - `npm test` and `npm run typecheck`: passed
 - `npm run bundle`: emitted the same 11-package client bundle with `fast-uri@3.1.5`; `hono` and `ip-address` remain outside the executable bundle
 - `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
+
+`fast-uri` security refresh evidence on 2026-09-02:
+
+- The exact `3.1.6` archive keeps the zero-dependency BSD-3-Clause package contract and remains within Ajv's declared `^3.0.1` range.
+- `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp` affect the prior `3.1.5` pin and are fixed in `3.1.6`.
+- `npm test`, `npm run typecheck`, `npm run bundle`, and `npm run bundle:reviewed:check` passed.
+- The reviewed production audit reported `1` moderate, `0` high, and `0` critical findings, and npm registry signature verification succeeded.
 
 ## Updating
 
