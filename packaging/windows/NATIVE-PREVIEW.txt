@@ -11,6 +11,10 @@ That compatibility change emits ui.disable=false so the contained Node.js
 process can initialize. The qualification turn runs OpenClaw in a worker inside
 that same process; MXC filesystem containment remains active.
 
+The pinned OpenShell create watcher does not return after the one-shot workload
+completes. NemoClaw stops that client-side watcher after receiving the exact
+workload result, then deletes the sandbox through OpenShell.
+
 The setup executable applies Microsoft MXC's elevated prepare-system-drive and
 prepare-null-device host prerequisites before installing the MSI. Windows
 resets the null-device prerequisite at reboot; persistent production lifecycle

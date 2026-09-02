@@ -23,7 +23,10 @@ product; it sets `ui.disable=false` so the contained Node process can initialize
 The qualification turn executes OpenClaw in a worker inside that same contained
 Node process, avoiding an unsupported nested-process assumption while retaining
 MXC filesystem containment. The package does not bypass OpenShell or call MXC
-directly from NemoClaw.
+directly from NemoClaw. The pinned OpenShell CLI watch does not return after the
+one-shot MXC workload completes, so the qualification command stops that
+client-side watcher after receiving the exact workload result and then deletes
+the sandbox through OpenShell.
 
 The Burn setup runs the pinned Microsoft `wxc-host-prep.exe` system-drive and
 null-device prerequisites through its per-machine elevated engine before

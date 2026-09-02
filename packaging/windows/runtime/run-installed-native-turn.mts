@@ -397,6 +397,9 @@ async function main() {
   let passed = false;
   let result = null;
   let cliEnvironment = gatewayEnvironment;
+  let create = null;
+  let createExit = null;
+  let createWatcherDetached = false;
   try {
     console.log("NEMOCLAW> Starting installed OpenShell MXC gateway");
     await waitForPort(gatewayPort, gateway);
@@ -448,29 +451,62 @@ async function main() {
     ];
     for (const [name, value] of Object.entries(sandboxEnvironment))
       createArgs.push("--env", `${name}=${value}`);
-    try {
-      await run(openshell, createArgs, cliEnvironment, "Creating native MXC OpenClaw sandbox");
-    } catch (error) {
-      if (fs.existsSync(resultPath)) {
-        const failedProbe = JSON.parse(fs.readFileSync(resultPath, "utf8"));
-        console.error(`NEMOCLAW> Failed sandbox probe result ${JSON.stringify(failedProbe)}`);
-      }
-      throw error;
-    }
+    console.log("NEMOCLAW> Creating native MXC OpenClaw sandbox");
+    let createSpawnError = null;
+    let createClosed = false;
+    create = spawn(openshell, createArgs, {
+      env: cliEnvironment,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    create.once("error", (error) => {
+      createSpawnError = error;
+    });
+    createExit = new Promise((resolve) =>
+      create.once("close", (code) => {
+        createClosed = true;
+        resolve(code);
+      }),
+    );
     console.log("NEMOCLAW> Waiting for the installed OpenClaw agent turn");
     const deadline = Date.now() + TIMEOUT_MS;
-    while (!fs.existsSync(resultPath) && Date.now() < deadline && gateway.exitCode === null)
+    while (
+      !fs.existsSync(resultPath) &&
+      Date.now() < deadline &&
+      gateway.exitCode === null &&
+      !createClosed &&
+      createSpawnError === null
+    )
       await sleep(500);
-    if (!fs.existsSync(resultPath)) fail("installed OpenClaw turn did not publish a result");
+    if (!fs.existsSync(resultPath)) {
+      if (createSpawnError !== null) throw createSpawnError;
+      if (createClosed)
+        fail(
+          `OpenShell sandbox request exited ${create.exitCode ?? create.signalCode ?? "unknown"} before publishing a result`,
+        );
+      fail("installed OpenClaw turn did not publish a result");
+    }
+    createWatcherDetached = create.exitCode === null;
+    if (createWatcherDetached) create.kill();
+    await Promise.race([createExit, sleep(5000)]);
     result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
-    passed =
+    const turnPassed =
       result.executionMode === "embedded-worker" &&
       result.version === "2026.7.1" &&
       result.versionExitCode === 0 &&
       result.chatExitCode === 0 &&
       result.exactReply === true &&
       result.reply === "CHAT_OK";
-    if (!passed) fail("installed OpenClaw turn result was not exact");
+    if (!turnPassed) {
+      const failedProbe = sanitizedDiagnostic(JSON.stringify(result), [
+        [installRoot, "<install-root>"],
+        [runtimeRoot, "<runtime-root>"],
+        [shareRoot, "<share-root>"],
+        [runRoot, "<run-root>"],
+      ]);
+      console.error(`NEMOCLAW> Failed sandbox probe result ${failedProbe}`);
+      fail("installed OpenClaw turn result was not exact");
+    }
     console.log("AGENT> CHAT_OK");
     await run(
       openshell,
@@ -478,13 +514,16 @@ async function main() {
       cliEnvironment,
       "Deleting native MXC sandbox",
     );
+    passed = true;
     fs.writeFileSync(
       receiptPath,
-      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawExecutionMode: result.executionMode, artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, verdict: "pass" }, null, 2)}\n`,
+      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawExecutionMode: result.executionMode, openShellCreateWatcherDetached: createWatcherDetached, artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, verdict: "pass" }, null, 2)}\n`,
       "utf8",
     );
     console.log(`NEMOCLAW> PASS receipt=${receiptPath}`);
   } finally {
+    if (create?.exitCode === null) create.kill();
+    if (createExit !== null) await Promise.race([createExit, sleep(5000)]);
     if (!passed) {
       try {
         await run(
