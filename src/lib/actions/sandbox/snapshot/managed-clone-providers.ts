@@ -6,7 +6,6 @@ import { isDeepStrictEqual } from "node:util";
 
 import { cloneAndDeepFreeze } from "../../../core/immutable";
 import { REPOSITORY_ROOT } from "../../../core/repository-root";
-import { normalizeCredentialValue } from "../../../credentials/store";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import {
   ensureMessagingCredentialProviderProfile,
@@ -30,7 +29,6 @@ import {
 } from "../../../onboard/messaging-bridge-provider";
 import { normalizeRuntimeProviderIdentity } from "../../../onboard/runtime-provider/registry";
 import { deleteProviderWithRecovery } from "../../../onboard/sandbox-provider-cleanup";
-import { redactFullWithUrls } from "../../../security/redact";
 import type { PreparedManagedWorkloadCloneHandoff } from "../../../onboard/workload/clone";
 import {
   captureSandboxRebuildAuthority,
@@ -351,8 +349,11 @@ function sameBinding(
 }
 
 function hasCredential(environment: NodeJS.ProcessEnv, envKey: string): boolean {
-  const value = environment[envKey];
-  return typeof value === "string" && value.replace(/\r/gu, "").trim().length > 0;
+  return normalizeManagedCloneCredential(environment[envKey]).length > 0;
+}
+
+function normalizeManagedCloneCredential(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\r/gu, "").trim() : "";
 }
 
 function requireTransactionId(value: string | undefined): string {
@@ -569,11 +570,12 @@ function configureCreatedMessagingRefreshes(
   if (tokenDefs.length === 0) return;
   const result = configureMessagingBridgeRefreshes(tokenDefs, {
     runOpenshell,
-    redact: redactFullWithUrls,
-    getCredential: (envKey) => normalizeCredentialValue(environment[envKey]) || null,
+    // Refresh material is passed through the child environment. Suppress any
+    // unexpected command diagnostic here rather than risk echoing it.
+    redact: () => "",
+    getCredential: (envKey) => normalizeManagedCloneCredential(environment[envKey]) || null,
     env: environment,
-    normalizeCredentialValue: (value) =>
-      normalizeCredentialValue(typeof value === "string" ? value : null),
+    normalizeCredentialValue: normalizeManagedCloneCredential,
     profiles,
   });
   if (!result.ok) fail("could not configure gateway token minting for a messaging bridge");
@@ -648,7 +650,7 @@ export function provisionManagedCloneProviderTransaction(
         : input.resolveCredential?.(provider.binding, environment);
       const credential = sourceCredential
         ? MESSAGING_BRIDGE_PENDING_VALUE
-        : normalizeCredentialValue(
+        : normalizeManagedCloneCredential(
             resolved === undefined ? environment[provider.binding.providerEnvKey] : resolved,
           );
       if (!credential) {
