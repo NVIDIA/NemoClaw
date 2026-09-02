@@ -250,13 +250,36 @@ describe("onboard lock ownership", () => {
     );
   });
 
-  it("refuses cleanup authority after the acquired lock gains a hard link (#9833)", () => {
+  it("retains a hard-linked canonical lock until its owner departs (#9833)", () => {
     expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
     const linkedLock = `${session.LOCK_FILE}.linked`;
     fs.linkSync(session.LOCK_FILE, linkedLock);
 
     expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
     expect(() => session.assertOnboardLockOwned()).toThrow(/onboarding lock ownership changed/u);
+    session.releaseOnboardLock();
+
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+    expect(() => session.acquireOnboardLock("nemoclaw onboard --resume")).toThrow(
+      /regular file changed during validation/u,
+    );
+
+    fs.rmSync(linkedLock);
+    expect(session.acquireOnboardLock("nemoclaw onboard --resume")).toMatchObject({
+      acquired: false,
+      holderPid: process.pid,
+    });
+    const departed = Object.assign(new Error("process departed"), { code: "ESRCH" });
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw departed;
+    });
+    try {
+      expect(session.acquireOnboardLock("nemoclaw onboard --resume")).toMatchObject({
+        acquired: true,
+      });
+    } finally {
+      kill.mockRestore();
+    }
   });
 
   it.each([

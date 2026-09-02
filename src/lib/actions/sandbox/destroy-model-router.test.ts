@@ -257,7 +257,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
   it("identifies foreign lock contention before preserving router recovery", async () => {
     const lockFile = "/tmp/onboard.lock";
-    const { deps } = createDeps({
+    const { deps, session } = createDeps({
       acquireOnboardLock: vi.fn(() => ({
         acquired: false,
         lockFile,
@@ -274,7 +274,11 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining(lockFile));
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("different host"));
+    expect(session.routerPid).toBe(4242);
+    expect(session.routerCredentialHash).toBe("hash");
+    expect(session.sandboxName).toBe("alpha");
     expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(deps.compareAndSwapSession).not.toHaveBeenCalled();
   });
 
   it("clears a stale recorded PID when no router process is found", async () => {

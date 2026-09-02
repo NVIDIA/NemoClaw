@@ -208,6 +208,10 @@ describe("MCP lifecycle lock storage", () => {
         ),
         { code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED" },
       );
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(`canonical lock path '${lockPath}'`),
+        { code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED" },
+      );
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -236,6 +240,10 @@ describe("MCP lifecycle lock storage", () => {
         expect.stringContaining(
           `exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
         ),
+        { code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED" },
+      );
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(`canonical lock path '${lockPath}'`),
         { code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED" },
       );
     } finally {

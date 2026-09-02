@@ -1118,51 +1118,52 @@ describe("onboard session", () => {
     expect(written.pid).toBe(process.pid);
   });
 
-  it("replaces a stale onboard lock when the recorded PID was reused by another process", () => {
-    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
-    const reusedPid = 424242;
-    fs.writeFileSync(
-      session.LOCK_FILE,
-      JSON.stringify({
-        pid: reusedPid,
-        processStartIdentity: "linux:test-boot:12000",
-        ...LOCAL_ONBOARD_LOCK_PROVENANCE,
-        startedAt: "2026-09-01T00:00:00.100Z",
-        command: "nemoclaw onboard",
-      }),
-      { mode: 0o600 },
-    );
+  it.runIf(process.platform === "linux")(
+    "replaces a stale onboard lock when the recorded PID was reused by another process",
+    () => {
+      fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+      const reusedPid = 424242;
+      fs.writeFileSync(
+        session.LOCK_FILE,
+        JSON.stringify({
+          pid: reusedPid,
+          processStartIdentity: "linux:test-boot:12000",
+          ...LOCAL_ONBOARD_LOCK_PROVENANCE,
+          startedAt: "2026-09-01T00:00:00.100Z",
+          command: "nemoclaw onboard",
+        }),
+        { mode: 0o600 },
+      );
 
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
-    const originalReadFileSync = fs.readFileSync;
-    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
-      const fileName = String(file);
-      if (fileName === `/proc/${reusedPid}/stat`) {
-        const fieldsAfterComm = Array.from({ length: 50 }, (_, index) => {
-          if (index === 0) return "S";
-          if (index === 19) return "23000";
-          return "0";
-        }).join(" ");
-        return `${reusedPid} (node) ${fieldsAfterComm}`;
+      const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+      const originalReadFileSync = fs.readFileSync;
+      const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
+        const fileName = String(file);
+        if (fileName === `/proc/${reusedPid}/stat`) {
+          const fieldsAfterComm = Array.from({ length: 50 }, (_, index) => {
+            if (index === 0) return "S";
+            if (index === 19) return "23000";
+            return "0";
+          }).join(" ");
+          return `${reusedPid} (node) ${fieldsAfterComm}`;
+        }
+        if (fileName === "/proc/sys/kernel/random/boot_id") return "test-boot\n";
+        return originalReadFileSync(file, options);
+      }) as typeof fs.readFileSync);
+
+      try {
+        const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+        expect(acquired.acquired).toBe(true);
+
+        const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
+        expect(written.pid).toBe(process.pid);
+      } finally {
+        readSpy.mockRestore();
+        killSpy.mockRestore();
+        session.releaseOnboardLock();
       }
-      if (fileName === "/proc/sys/kernel/random/boot_id") return "test-boot\n";
-      return originalReadFileSync(file, options);
-    }) as typeof fs.readFileSync);
-
-    try {
-      const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
-      expect(acquired.acquired).toBe(true);
-
-      const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
-      expect(written.pid).toBe(process.pid);
-    } finally {
-      readSpy.mockRestore();
-      killSpy.mockRestore();
-      platformSpy.mockRestore();
-      session.releaseOnboardLock();
-    }
-  });
+    },
+  );
 
   it("treats recent malformed lock as transient and does not remove it", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });

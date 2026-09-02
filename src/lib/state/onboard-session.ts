@@ -1669,9 +1669,9 @@ function acquireOnboardLockGeneration(command: string | null): LockResult {
 
 export function releaseOnboardLock(): void {
   // Preferred path: we hold the fd from a successful acquireOnboardLock.
-  // Verify the on-disk path still resolves to the same file (fstat ino
-  // == stat ino) before unlinking. If they disagree, another process
-  // has already replaced the lock and we must NOT touch their file.
+  // Verify the descriptor and canonical path still name the same single-link
+  // regular file before unlinking. A replacement or added hard link removes
+  // cleanup authority, so retain the canonical lock for stale-owner recovery.
   if (heldLockFd !== null) {
     const fd = heldLockFd;
     const directory = heldLockDirectory;
@@ -1679,16 +1679,24 @@ export function releaseOnboardLock(): void {
     heldLockDirectory = null;
     try {
       const fdStat = fs.fstatSync(fd, { bigint: true });
-      let pathInode: bigint | null = null;
+      let pathStat: fs.BigIntStats | null = null;
       try {
-        const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
-        pathInode = pathStat.ino;
+        pathStat = fs.lstatSync(LOCK_FILE, { bigint: true });
       } catch (error) {
         if (!(isErrnoException(error) && error.code === "ENOENT")) {
           // Unexpected — fall through to closing the fd.
         }
       }
-      if (pathInode !== null && pathInode === fdStat.ino) {
+      if (
+        pathStat !== null &&
+        fdStat.isFile() &&
+        fdStat.nlink === 1n &&
+        !pathStat.isSymbolicLink() &&
+        pathStat.isFile() &&
+        pathStat.nlink === 1n &&
+        pathStat.dev === fdStat.dev &&
+        pathStat.ino === fdStat.ino
+      ) {
         try {
           fs.unlinkSync(LOCK_FILE);
         } catch (unlinkError) {

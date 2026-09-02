@@ -55,11 +55,16 @@ function lifecycleLockCandidatePath(lockPath: string, pid: number, token: string
   return `${lockPath}.candidate-${String(pid)}-${token}`;
 }
 
-function reportRetainedLifecycleLockCandidate(candidatePath: string, error: unknown): void {
+function reportRetainedLifecycleLockCandidate(
+  lockPath: string,
+  candidatePath: string,
+  error: unknown,
+): void {
   const detail = error instanceof Error ? error.message : String(error);
   process.emitWarning(
-    `Lifecycle lock candidate '${candidatePath}' could not be removed and was retained for generation-verified recovery: ${detail}. ` +
-      "If no lifecycle operation owns it, retry the operation; remove only this candidate after verifying it is unlinked from the canonical lock.",
+    `Could not remove lifecycle lock candidate '${candidatePath}': ${detail}. ` +
+      `Retry the lifecycle operation. Do not remove '${candidatePath}' while a lifecycle operation runs. ` +
+      `Remove only '${candidatePath}' after confirming the canonical lock path '${lockPath}' does not refer to the same file.`,
     { code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED" },
   );
 }
@@ -357,6 +362,7 @@ async function reclaimStaleMcpLifecycleLockGenerationInternal(
     }
     if (!recovered) {
       reportRetainedLifecycleLockCandidate(
+        targetPath,
         lifecycleLockCandidatePath(targetPath, expected.owner.pid, expected.owner.token),
         recoveryError,
       );
@@ -415,6 +421,7 @@ function reclaimStaleMcpLifecycleLockGenerationSyncInternal(
     }
     if (!recovered) {
       reportRetainedLifecycleLockCandidate(
+        targetPath,
         lifecycleLockCandidatePath(targetPath, expected.owner.pid, expected.owner.token),
         recoveryError,
       );
@@ -446,12 +453,13 @@ async function recoverRetainedMcpLifecycleLockCandidates(
     names = await retainedCandidateNames(lockPath);
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return;
-    reportRetainedLifecycleLockCandidate(`${lockPath}.candidate-*`, error);
+    reportRetainedLifecycleLockCandidate(lockPath, `${lockPath}.candidate-*`, error);
     return;
   }
   if (names.length > MAX_RETAINED_CANDIDATES_PER_LOCK) {
     const firstUninspected = names[MAX_RETAINED_CANDIDATES_PER_LOCK] ?? "candidate-overflow";
     reportRetainedLifecycleLockCandidate(
+      lockPath,
       path.join(path.dirname(lockPath), firstUninspected),
       new Error(`candidate discovery is limited to ${String(MAX_RETAINED_CANDIDATES_PER_LOCK)}`),
     );
@@ -467,6 +475,7 @@ async function recoverRetainedMcpLifecycleLockCandidates(
         !candidateMatchesOwnerPath(candidatePath, lockPath, candidate.owner)
       ) {
         reportRetainedLifecycleLockCandidate(
+          lockPath,
           candidatePath,
           new Error("candidate ownership could not be verified"),
         );
@@ -484,12 +493,13 @@ async function recoverRetainedMcpLifecycleLockCandidates(
       );
       if (!recovered) {
         reportRetainedLifecycleLockCandidate(
+          lockPath,
           candidatePath,
           new Error("candidate generation changed during recovery"),
         );
       }
     } catch (error) {
-      reportRetainedLifecycleLockCandidate(candidatePath, error);
+      reportRetainedLifecycleLockCandidate(lockPath, candidatePath, error);
     }
   }
 }
@@ -503,12 +513,13 @@ function recoverRetainedMcpLifecycleLockCandidatesSync(
     names = retainedCandidateNamesSync(lockPath);
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return;
-    reportRetainedLifecycleLockCandidate(`${lockPath}.candidate-*`, error);
+    reportRetainedLifecycleLockCandidate(lockPath, `${lockPath}.candidate-*`, error);
     return;
   }
   if (names.length > MAX_RETAINED_CANDIDATES_PER_LOCK) {
     const firstUninspected = names[MAX_RETAINED_CANDIDATES_PER_LOCK] ?? "candidate-overflow";
     reportRetainedLifecycleLockCandidate(
+      lockPath,
       path.join(path.dirname(lockPath), firstUninspected),
       new Error(`candidate discovery is limited to ${String(MAX_RETAINED_CANDIDATES_PER_LOCK)}`),
     );
@@ -524,6 +535,7 @@ function recoverRetainedMcpLifecycleLockCandidatesSync(
         !candidateMatchesOwnerPath(candidatePath, lockPath, candidate.owner)
       ) {
         reportRetainedLifecycleLockCandidate(
+          lockPath,
           candidatePath,
           new Error("candidate ownership could not be verified"),
         );
@@ -541,12 +553,13 @@ function recoverRetainedMcpLifecycleLockCandidatesSync(
       );
       if (!recovered) {
         reportRetainedLifecycleLockCandidate(
+          lockPath,
           candidatePath,
           new Error("candidate generation changed during recovery"),
         );
       }
     } catch (error) {
-      reportRetainedLifecycleLockCandidate(candidatePath, error);
+      reportRetainedLifecycleLockCandidate(lockPath, candidatePath, error);
     }
   }
 }
@@ -597,7 +610,9 @@ export async function writeMcpLifecycleLockCandidateAndLink(
       } catch (recoveryError) {
         cleanupError = recoveryError;
       }
-      if (!recovered) reportRetainedLifecycleLockCandidate(candidatePath, cleanupError);
+      if (!recovered) {
+        reportRetainedLifecycleLockCandidate(lockPath, candidatePath, cleanupError);
+      }
     }
   }
 }
@@ -643,7 +658,9 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
       } catch (recoveryError) {
         cleanupError = recoveryError;
       }
-      if (!recovered) reportRetainedLifecycleLockCandidate(candidatePath, cleanupError);
+      if (!recovered) {
+        reportRetainedLifecycleLockCandidate(lockPath, candidatePath, cleanupError);
+      }
     }
   }
 }
