@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { readValidatedArtifactZipEntries } from "./read-artifact-zip.mts";
@@ -532,21 +531,6 @@ function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
   return entries?.find(({ name }) => name === TRACE_SUMMARY_FILE)?.bytes.toString("utf8") ?? null;
 }
 
-function readValidatedTraceSummaryZip(
-  zipPath: string,
-  warn?: (message: string) => void,
-): string | null {
-  let summary: string | null = null;
-  try {
-    summary = readValidatedTraceSummaryArchive(fs.readFileSync(zipPath));
-  } catch {
-    // Treat parser and filesystem failures identically so untrusted archive
-    // details never cross into the workflow log.
-  }
-  if (summary === null) warn?.(TRACE_ARCHIVE_REJECTION_WARNING);
-  return summary;
-}
-
 async function readTraceSummaryFromRun(
   { github, context, core }: GitHubDeps,
   runId: number,
@@ -568,18 +552,14 @@ async function readTraceSummaryFromRun(
     artifact_id: artifact.id,
     archive_format: "zip",
   });
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-artifact-"));
+  let summaryText: string | null = null;
   try {
-    const zipPath = path.join(tempDir, `${TRACE_ARTIFACT_NAME}.zip`);
-    fs.writeFileSync(zipPath, Buffer.from(download.data), { mode: 0o600 });
-
-    const summaryText = readValidatedTraceSummaryZip(zipPath, (message) =>
-      core?.warning?.(message),
-    );
-    return summaryText === null ? null : selectOnboardTrace([summaryText]);
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    summaryText = readValidatedTraceSummaryArchive(Buffer.from(download.data));
+  } catch {
+    // Keep untrusted archive details out of the workflow log.
   }
+  if (summaryText === null) core?.warning?.(TRACE_ARCHIVE_REJECTION_WARNING);
+  return summaryText === null ? null : selectOnboardTrace([summaryText]);
 }
 
 async function buildTraceTimingResult(
@@ -707,7 +687,7 @@ export {
   ONBOARD_PHASE_ORDER,
   readOnboardPerformanceBudget,
   readTraceSummaryFromRun,
-  readValidatedTraceSummaryZip,
+  readValidatedTraceSummaryArchive,
   redactSensitiveTraceText,
   resolvePriorReleaseTag,
   sanitizeTraceTimingError,
