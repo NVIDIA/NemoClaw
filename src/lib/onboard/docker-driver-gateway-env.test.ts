@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -54,28 +55,37 @@ describe("buildDockerDriverGatewayEnv", () => {
   });
 
   it("sets Docker-driver gateway networking from NemoClaw configuration", () => {
-    const env = buildDockerDriverGatewayEnv({
-      platform: "linux",
-      stateDir: "/tmp/nemoclaw-gateway",
-      getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
-      resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
-    });
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-digest-"));
+    try {
+      const env = buildDockerDriverGatewayEnv({
+        platform: "linux",
+        stateDir,
+        getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      });
 
-    expect(env).toMatchObject({
-      OPENSHELL_DRIVERS: "docker",
-      OPENSHELL_BIND_ADDRESS: "127.0.0.1",
-      OPENSHELL_SERVER_PORT: "8080",
-      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
-      OPENSHELL_LOCAL_TLS_DIR: "/tmp/nemoclaw-gateway/tls",
-      OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
-      OPENSHELL_SSH_GATEWAY_PORT: "8080",
-      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.37",
-      OPENSHELL_DOCKER_SUPERVISOR_BIN: "/usr/bin/openshell-sandbox",
-      OPENSHELL_GATEWAY_CONFIG: "/tmp/nemoclaw-gateway/openshell-gateway.toml",
-    });
-    expect(env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
-    expect(env[NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV]).toMatch(/^[0-9a-f]{64}$/u);
+      expect(env).toMatchObject({
+        OPENSHELL_DRIVERS: "docker",
+        OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        OPENSHELL_SERVER_PORT: "8080",
+        OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+        OPENSHELL_SSH_GATEWAY_PORT: "8080",
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.37",
+        OPENSHELL_DOCKER_SUPERVISOR_BIN: "/usr/bin/openshell-sandbox",
+        OPENSHELL_GATEWAY_CONFIG: path.join(stateDir, "openshell-gateway.toml"),
+      });
+      expect(env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+      const configSha256 = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG))
+        .digest("hex");
+      expect(env[NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV]).toBe(configSha256);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("uses the Docker driver on macOS without VM helper state", () => {
@@ -201,9 +211,7 @@ describe("buildDockerDriverGatewayEnv", () => {
   });
 });
 
-
 describe("writeDockerGatewayDebEnvOverride", () => {
-
   it("rejects an env file swapped to a symlink after opening without writing its target", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const envDir = path.join(tempHome, ".config", "openshell");
@@ -245,7 +253,6 @@ describe("writeDockerGatewayDebEnvOverride", () => {
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
-
 
   it("uses the provided HOME as the config root fallback when XDG_CONFIG_HOME is unset", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-home-"));

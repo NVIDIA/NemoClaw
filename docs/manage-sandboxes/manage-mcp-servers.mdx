@@ -108,6 +108,7 @@ unset GITHUB_MCP_TOKEN
 For a trusted-private entry, restart replays the exact address pins recorded by `mcp add`.
 It does not resolve that endpoint again or widen its policy from ambient DNS.
 For a public entry, restart resolves the hostname again and refreshes the generated policy with the current validated public addresses.
+When DNS returns one address that is already in a multi-address recorded set, restart retains the complete recorded set instead of widening or shrinking the policy from an incomplete response. The success message reports that choice.
 After a successful public restart, NemoClaw records the activated address set as the server's current pins.
 
 The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after restart succeeds.
@@ -126,7 +127,7 @@ Running restart without a server name refreshes every managed server. Export onl
 
 ### Recover a Legacy Public Single-Pin Registration
 
-After upgrading, restart or rebuild restoration rejects an existing public MCP server when its current DNS response contains only one public address. The command stops before policy, provider, or adapter mutation because it cannot distinguish a stable singleton from one member of a rotating answer set.
+After upgrading, restart or rebuild restoration rejects a legacy public MCP server with only one recorded pin when its current DNS response also contains one public address. The command stops before policy, provider, or adapter mutation because it cannot establish a complete recorded answer set. A server with at least two valid recorded public pins can instead retain that set when the singleton response is one of those pins.
 
 Record the server URL and credential-variable name. Remove the affected server, then add it again after the endpoint returns at least two public addresses in one DNS response:
 

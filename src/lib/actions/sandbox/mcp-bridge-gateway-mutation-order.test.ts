@@ -8,9 +8,13 @@ import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 const mocks = vi.hoisted(() => ({
   applyGeneratedPolicy: vi.fn(),
   attachProvider: vi.fn(),
+  detachProvider: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn(),
+  preflightMcpEntryTargets: vi.fn(),
+  removeGeneratedPolicy: vi.fn(),
   registerAgentAdapter: vi.fn(),
   registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
+  scrubManagedMcpAdapter: vi.fn(),
   upsertMcpProvider: vi.fn(),
   writeBridgeEntry: vi.fn(),
 }));
@@ -21,7 +25,7 @@ const entry: McpBridgeEntry = {
   adapter: "mcporter",
   url: "https://api.github.com/mcp/",
   env: ["GITHUB_TOKEN"],
-  allowedIps: ["8.8.8.8", "8.8.4.4"],
+  allowedIps: ["8.8.4.4", "8.8.8.8"],
   providerName: "alpha-mcp-github",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-github",
@@ -46,7 +50,8 @@ vi.mock("../../security/trusted-private-endpoint", () => ({
   parseTrustedPrivateHosts: () => [],
   replayTrustedPrivateEndpoint: vi.fn(),
 }));
-vi.mock("../../onboard/experimental/portable-agent-lifecycle", () => ({
+vi.mock("../../onboard/experimental/portable-agent-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/experimental/portable-agent-lifecycle")>()),
   assertHermesPortableCommandUnavailable: vi.fn(),
 }));
 vi.mock("./mcp-bridge-adapters", () => ({
@@ -58,29 +63,46 @@ vi.mock("./mcp-bridge-adapters", () => ({
     mocks.registerAgentAdapterAtCurrentCredentialRevision,
   unregisterAgentAdapter: vi.fn(),
 }));
+vi.mock("./mcp-bridge-adapter-teardown", () => ({
+  rollbackScrubbedMcpAdapters: vi.fn(() => []),
+  scrubManagedMcpAdapterOrThrow: mocks.scrubManagedMcpAdapter,
+}));
+vi.mock("./mcp-bridge-destroy", () => ({
+  cloneMcpBridgeEntry: (candidate: McpBridgeEntry) => ({
+    ...candidate,
+    env: [...candidate.env],
+    ...(candidate.allowedIps ? { allowedIps: [...candidate.allowedIps] } : {}),
+  }),
+  discardSafeIncompleteMcpAdds: vi.fn(
+    async (_sandboxName: string, candidate: SandboxEntry) => candidate,
+  ),
+  inspectExactMcpDestroyProvider: vi.fn(),
+}));
 vi.mock("./mcp-bridge-hermes-reconciliation", () => ({
   assertHermesMcpRuntimeIntent: vi.fn(),
 }));
 vi.mock("./mcp-bridge-policy", () => ({
   applyGeneratedPolicy: mocks.applyGeneratedPolicy,
   assertGeneratedPolicyMutationSafe: vi.fn(),
+  assertGeneratedPolicyRegistrationMutationSafe: vi.fn(),
   buildMcpBridgePolicyKey: vi.fn(() => "mcp_bridge_github"),
   buildMcpBridgePolicyName: vi.fn(() => "mcp-bridge-github"),
   buildMcpBridgePolicyYaml: vi.fn(() => "version: 1\nnetwork_policies: {}\n"),
-  removeGeneratedPolicy: vi.fn(),
+  removeGeneratedPolicy: mocks.removeGeneratedPolicy,
 }));
 vi.mock("./mcp-bridge-provider", () => ({
   assertMcpProviderRecoverable: vi.fn(() => ({ exists: true, id: entry.providerId })),
   assertNoAttachedProviderCredentialCollisions: vi.fn(),
   assertNoProviderCredentialCollisions: vi.fn(),
+  assertNoRegisteredProviderCredentialCollisions: vi.fn(),
   attachProvider: mocks.attachProvider,
   deleteProvider: vi.fn(),
   detachMissingProviderReference: vi.fn(),
-  detachProvider: vi.fn(),
+  detachProvider: mocks.detachProvider,
   ensureMcpBridgeProviderProfile: vi.fn(),
   inspectMcpProvider: vi.fn(() => ({ exists: false })),
   observeMcpCredentialRevision: vi.fn(),
-  preflightMcpEntryTargets: vi.fn(
+  preflightMcpEntryTargets: mocks.preflightMcpEntryTargets.mockImplementation(
     async (entries: readonly McpBridgeEntry[]) =>
       new Map(entries.map((candidate) => [candidate.server, { addresses: ["8.8.8.8"] }])),
   ),
@@ -105,6 +127,7 @@ vi.mock("./mcp-bridge-state", () => ({
   getSandboxAgent: vi.fn(() => ({ name: "openclaw" })),
   getSandboxOrThrow: vi.fn(() => sandbox),
   nowIso: vi.fn(() => "2026-09-01T00:00:00.000Z"),
+  setBridgeState: vi.fn(),
   writeBridgeEntry: mocks.writeBridgeEntry,
 }));
 vi.mock("./mcp-bridge-validation", () => ({
@@ -125,6 +148,11 @@ vi.mock("./mcp-bridge-validation", () => ({
 }));
 
 import { addMcpBridge } from "./mcp-bridge-add-restart";
+import {
+  prepareMcpBridgesForAbsentSandboxRebuild,
+  prepareMcpBridgesForRebuild,
+  reattachMcpProvidersAfterRebuildAbort,
+} from "./mcp-bridge-rebuild";
 import { restartMcpBridge, restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
 
 describe("managed MCP proxy DNS mutation ordering", () => {
@@ -147,6 +175,9 @@ describe("managed MCP proxy DNS mutation ordering", () => {
     ],
     ["restart", () => restartMcpBridge("alpha", "github")],
     ["rebuild restoration", () => restoreExistingMcpBridgeRuntime("alpha", [entry])],
+    ["rebuild preparation", () => prepareMcpBridgesForRebuild("alpha")],
+    ["absent-sandbox rebuild preparation", () => prepareMcpBridgesForAbsentSandboxRebuild("alpha")],
+    ["rebuild-abort reattachment", () => reattachMcpProvidersAfterRebuildAbort("alpha", [entry])],
   ] as const)(
     "stops %s before policy, provider, registry, or adapter mutation",
     async (_name, run) => {
@@ -156,11 +187,53 @@ describe("managed MCP proxy DNS mutation ordering", () => {
         requireMcpProxyDnsDisabled: true,
       });
       expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
       expect(mocks.upsertMcpProvider).not.toHaveBeenCalled();
       expect(mocks.attachProvider).not.toHaveBeenCalled();
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+      expect(mocks.scrubManagedMcpAdapter).not.toHaveBeenCalled();
       expect(mocks.writeBridgeEntry).not.toHaveBeenCalled();
       expect(mocks.registerAgentAdapter).not.toHaveBeenCalled();
       expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["restart", () => restartMcpBridge("alpha", "github")],
+    ["rebuild restoration", () => restoreExistingMcpBridgeRuntime("alpha", [entry])],
+  ] as const)(
+    "retains recorded public pins during %s after one known DNS answer",
+    async (name, run) => {
+      const target = {
+        addresses: ["8.8.4.4", "8.8.8.8"],
+        retainedRecordedPublicPins: true,
+      };
+      mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
+      mocks.preflightMcpEntryTargets.mockResolvedValue(new Map([[entry.server, target]]));
+      mocks.upsertMcpProvider.mockReturnValue({
+        action: "reused",
+        inspection: { id: entry.providerId },
+      });
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        await run();
+        expect(log.mock.calls).toEqual(
+          name === "restart"
+            ? [
+                [
+                  "  Refreshed MCP server 'github' and retained its recorded public address pins because DNS returned one known address.",
+                ],
+              ]
+            : [],
+        );
+      } finally {
+        log.mockRestore();
+      }
+
+      expect(mocks.applyGeneratedPolicy.mock.calls.at(-1)?.[2]).toEqual(target);
+      expect(mocks.writeBridgeEntry.mock.calls.at(-1)?.[1]).toMatchObject({
+        allowedIps: ["8.8.4.4", "8.8.8.8"],
+      });
     },
   );
 });

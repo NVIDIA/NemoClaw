@@ -164,6 +164,9 @@ Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenS
 Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
+Managed MCP also verifies that the selected host OpenShell gateway was launched from the current private configuration with `proxy_connect_by_hostname = false`.
+An older running gateway without launch-bound configuration identity is refused before MCP mutation.
+Rerun `$$nemoclaw onboard` to replace a NemoClaw-owned host gateway, or restart an externally managed gateway through its declared supervisor, then retry the MCP command.
 For a public DNS hostname, preflight must return at least two public addresses.
 NemoClaw pins the addresses from that response.
 NemoClaw rejects a singleton public DNS response because it cannot distinguish a stable singleton from one member of a rotating answer set.
@@ -178,7 +181,7 @@ OpenShell re-resolves the hostname for each new connection, requires every curre
 
 A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
 
-Until a successful `mcp restart` refreshes the public pins, any later DNS answer outside the addresses returned during public preflight remains unpinned and fails closed.
+Until a successful `mcp restart` or rebuild restoration refreshes the public pins, any later DNS answer outside the addresses returned during public preflight remains unpinned and fails closed.
 Cloudflare Quick Tunnels and other endpoints that return only one rotating address or later change beyond that set are not durable managed MCP deployments.
 A named tunnel can stabilize the hostname without stabilizing its address set.
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.

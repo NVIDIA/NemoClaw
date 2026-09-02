@@ -239,7 +239,11 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       allowedIps: entry.trustedPrivateHost ? [...(entry.allowedIps ?? [])] : [...target.addresses],
       updatedAt: nowIso(),
     });
-    console.log(`  Refreshed MCP server '${name}'.`);
+    console.log(
+      target.retainedRecordedPublicPins
+        ? `  Refreshed MCP server '${name}' and retained its recorded public address pins because DNS returned one known address.`
+        : `  Refreshed MCP server '${name}'.`,
+    );
   }
   if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
 }

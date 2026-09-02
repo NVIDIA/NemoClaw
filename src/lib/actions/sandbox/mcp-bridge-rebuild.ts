@@ -143,7 +143,7 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
     };
   }
   await preflightMcpEntryTargets(entries);
-  await ensureSandboxGatewaySelected(sandboxName);
+  await ensureSandboxGatewaySelected(sandboxName, { requireMcpProxyDnsDisabled: true });
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   }
@@ -169,7 +169,7 @@ export async function prepareMcpBridgesForRebuild(
     };
   }
   await preflightMcpEntryTargets(entries);
-  await ensureSandboxGatewaySelected(sandboxName);
+  await ensureSandboxGatewaySelected(sandboxName, { requireMcpProxyDnsDisabled: true });
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
@@ -264,7 +264,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
-  await ensureSandboxGatewaySelected(sandboxName);
+  await ensureSandboxGatewaySelected(sandboxName, { requireMcpProxyDnsDisabled: true });
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, [
     ...entries,

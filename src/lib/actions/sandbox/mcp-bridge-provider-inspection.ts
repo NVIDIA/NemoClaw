@@ -396,7 +396,9 @@ export async function preflightMcpEntryTargets(
         };
         return [entry.server, target] as const;
       }
-      const target = await preflightMcpServerUrlResolvedTarget(new URL(normalized));
+      const target = await preflightMcpServerUrlResolvedTarget(new URL(normalized), {
+        recordedPublicPins: entry.allowedIps,
+      });
       return [entry.server, target] as const;
     }),
   );

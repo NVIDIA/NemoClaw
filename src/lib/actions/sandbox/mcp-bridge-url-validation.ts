@@ -99,11 +99,13 @@ export interface NormalizeMcpServerUrlOptions {
 
 export interface McpBridgeTargetValidation {
   addresses: string[];
+  retainedRecordedPublicPins?: boolean;
   trustedPrivateCapability?: TrustedPrivateEndpointCapability;
   trustedPrivateHost?: string;
 }
 
 export interface McpBridgeTargetPreflightOptions {
+  recordedPublicPins?: readonly string[];
   trustedPrivateHosts?: readonly string[];
   requireTrustedPrivateEndpoint?: boolean;
 }
@@ -319,6 +321,36 @@ export async function preflightMcpServerUrlResolvedTarget(
     );
   }
   if (isIP(parsed.hostname) === 0 && addresses.length === 1) {
+    const recordedPublicPins = options.recordedPublicPins;
+    if (recordedPublicPins && recordedPublicPins.length >= 2) {
+      const canonicalPins = [...recordedPublicPins];
+      const sortedPins = [...canonicalPins].sort();
+      const pinsAreCanonical =
+        new Set(canonicalPins).size === canonicalPins.length &&
+        canonicalPins.every(
+          (address, index) =>
+            isIP(address) !== 0 &&
+            address === address.toLowerCase() &&
+            !address.includes("%") &&
+            !isBlockedMcpUrlTargetHost(address) &&
+            address === sortedPins[index],
+        );
+      if (!pinsAreCanonical) {
+        throw new McpBridgeError(
+          `MCP server URL host '${parsed.hostname}' has invalid recorded public address pins. Remove the server with --force and add it again before lifecycle operations.`,
+          2,
+          "rejected",
+        );
+      }
+      if (canonicalPins.includes(addresses[0])) {
+        return { addresses: canonicalPins, retainedRecordedPublicPins: true };
+      }
+      throw new McpBridgeError(
+        `MCP server URL host '${parsed.hostname}' returned only public address '${addresses[0]}', which is outside its recorded address pins. Refusing to widen allowed_ips from an incomplete DNS response.`,
+        2,
+        "rejected",
+      );
+    }
     throw new McpBridgeError(
       `MCP server URL host '${parsed.hostname}' returned only one public address. NemoClaw cannot prove whether that address is a stable singleton or one member of a rotating answer set, so it refuses to register incomplete allowed_ips. Use an endpoint whose DNS lookup returns at least two public addresses in one response. For an existing managed server, record its URL and credential-variable name, remove the server, and add it again after the endpoint meets that requirement. Sandbox destroy remains available if you need to retire the sandbox instead.`,
       2,

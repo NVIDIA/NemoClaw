@@ -47,6 +47,39 @@ describe("MCP URL target validation", () => {
     }
   });
 
+  it("retains a canonical multi-address recorded set when DNS returns one known public pin", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
+    try {
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp"), {
+          recordedPublicPins: ["1.1.1.1", "8.8.8.8"],
+        }),
+      ).resolves.toEqual({
+        addresses: ["1.1.1.1", "8.8.8.8"],
+        retainedRecordedPublicPins: true,
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("refuses to widen recorded public pins from an unknown singleton response", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "9.9.9.9", family: 4 }] as never);
+    try {
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp"), {
+          recordedPublicPins: ["1.1.1.1", "8.8.8.8"],
+        }),
+      ).rejects.toThrow(/outside its recorded address pins/);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   it("does not treat configured private trust as authority for a singleton public answer (#10755)", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")

@@ -89,7 +89,7 @@ describe("managed MCP gateway proxy DNS boundary", () => {
     }
   });
 
-  it("accepts the false-by-default setting and its canonical rewrite for a legacy marker", () => {
+  it("rejects a legacy marker without launch-bound config identity", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
     try {
       const makeLegacy = (marker: ReturnType<typeof buildDockerDriverGatewayRuntimeMarker>) => {
@@ -97,10 +97,14 @@ describe("managed MCP gateway proxy DNS boundary", () => {
         delete marker.gatewayConfigSha256;
       };
       writeRuntimeIdentity(stateDir, gatewayConfig(), makeLegacy);
-      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /launch marker does not record a gateway config identity/,
+      );
 
       writeRuntimeIdentity(stateDir, gatewayConfig(false), makeLegacy);
-      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /launch marker does not record a gateway config identity/,
+      );
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -186,6 +190,25 @@ describe("managed MCP gateway proxy DNS boundary", () => {
 
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
         /managed service config differs from its launch environment/,
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a package-managed process without a launch-bound config digest", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-"));
+    try {
+      const configPath = writeRuntimeIdentity(stateDir, gatewayConfig(false));
+      processProofs.standaloneOwnershipFailure.mockReturnValue("standalone PID file is absent");
+      processProofs.serviceIdentity.mockReturnValue({
+        pid: process.pid,
+        executablePath: "/usr/bin/openshell-gateway",
+      });
+      processProofs.processEnvironment.mockReturnValue({ OPENSHELL_GATEWAY_CONFIG: configPath });
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /managed service launch does not record a gateway config digest/,
       );
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });

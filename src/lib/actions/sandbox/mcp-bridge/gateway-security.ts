@@ -72,8 +72,8 @@ function refusal(detail: string): Error {
  * Bind MCP address pins to the selected running gateway. The ordinary gateway
  * ownership proof ties the PID, runtime marker, process environment, command
  * line, state directory, and canonical config together. This additional proof
- * requires proxy hostname resolution to be disabled and, for new launches,
- * binds the exact config bytes to the launch marker.
+ * requires proxy hostname resolution to be disabled and binds the exact
+ * config bytes to the launch marker or managed-service environment.
  */
 export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPort: number): void {
   const stateDir = resolveGatewayStateDirForPort({
@@ -127,14 +127,8 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
     }
     const launchedConfigSha256 = serviceEnvironment?.[NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV];
     if (launchedConfigSha256 === configSha256) return;
-    // Older package-managed launches predate the digest environment field.
-    // Their generated config omitted this option, whose pinned default is
-    // false; canonical preparation may since have rendered the same value.
-    if (
-      launchedConfigSha256 === undefined &&
-      (proxyHostnameMode === undefined || proxyHostnameMode === false)
-    ) {
-      return;
+    if (launchedConfigSha256 === undefined) {
+      throw refusal("the managed service launch does not record a gateway config digest");
     }
     throw refusal("the managed service config differs from its launch environment");
   }
@@ -152,12 +146,7 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
   const legacyMarker =
     marker.gatewayConfigPath === undefined && marker.gatewayConfigSha256 === undefined;
   if (legacyMarker) {
-    // Before the launch marker recorded a config digest, NemoClaw generated no
-    // proxy_connect_by_hostname key. The pinned OpenShell default is false. A
-    // later canonical config preparation may rewrite that same safe value as
-    // explicit false without restarting the already-safe process.
-    if (proxyHostnameMode === undefined || proxyHostnameMode === false) return;
-    throw refusal("the legacy launch does not prove a disabled proxy hostname setting");
+    throw refusal("the gateway launch marker does not record a gateway config identity");
   }
 
   if (
