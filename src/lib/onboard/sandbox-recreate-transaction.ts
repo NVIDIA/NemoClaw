@@ -1253,8 +1253,9 @@ export function beginSandboxRecreateDelete(input: BeginSandboxRecreateDeleteInpu
     },
     (current) => {
       const transaction = activeTransaction(current) as CheckpointSandboxRecreateTransaction;
-      nextTransaction =
-        transaction.phase === "deleting"
+      nextTransaction = sandboxRecreatePhaseReached(transaction.phase, "deleted")
+        ? transaction
+        : transaction.phase === "deleting"
           ? transaction
           : advanceSandboxRecreateTransaction(current, transaction.id, "deleting");
       return current;
