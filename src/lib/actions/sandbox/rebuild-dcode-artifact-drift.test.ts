@@ -10,7 +10,8 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+  snapshotEnv,
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 
 describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });

@@ -9,7 +9,6 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-  policyGet,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
@@ -230,15 +229,13 @@ describe("rebuildSandbox flow: recovery", () => {
   }
 
   it("retains the exact policy handoff across a failed recreate and consumes it on retry", async () => {
-    const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+    const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}";
     const interrupted = createRebuildFlowHarness({
       captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
       onboard: () => {
         throw new Error("replacement create failed");
       },
     });
-    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: policyDocument });
-
     await expect(
       interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Recreate failed");
@@ -263,8 +260,6 @@ describe("rebuildSandbox flow: recovery", () => {
       },
     });
     restarted.session.checkpoint = interrupted.session.checkpoint;
-    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: "" });
-
     await expect(
       restarted.rebuildSandbox("alpha", ["--yes"], {
         throwOnError: true,

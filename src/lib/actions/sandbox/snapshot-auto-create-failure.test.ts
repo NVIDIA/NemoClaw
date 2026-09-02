@@ -29,6 +29,13 @@ const captureOpenshellMock = vi.fn((args: string[]) => ({
       ? "version: 1\nnetwork_policies: {}\n"
       : "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
 }));
+const readSandboxPolicyMock = vi.fn(() => ({
+  ok: true as const,
+  value: {
+    document: "version: 1\nnetwork_policies: {}\n",
+    appliedRevision: null,
+  },
+}));
 const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
 const registerSandboxMock = vi.fn(
   (
@@ -143,9 +150,19 @@ vi.mock("../../adapters/docker", () => ({
   dockerRunDetached: vi.fn(),
 }));
 vi.mock("../../adapters/openshell/runtime", () => ({
+  buildOpenShellSubprocessEnv: vi.fn(() => ({})),
   captureOpenshell: captureOpenshellMock,
+  captureResolvedOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+}));
+vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
+  syncCliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy: vi.fn(),
+    readSandboxPolicy: readSandboxPolicyMock,
+    readSandboxPolicyRevision: vi.fn(),
+  },
 }));
 vi.mock("../../credentials/store", () => ({
   deleteCredential: vi.fn(),
