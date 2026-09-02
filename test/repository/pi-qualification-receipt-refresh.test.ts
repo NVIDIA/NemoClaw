@@ -91,8 +91,13 @@ describe("Pi qualification receipt refresh", () => {
     });
   }
 
-  it("requires both architecture receipts after a copied image input changes", () => {
-    expect(() => run(["protected/app/config.json"])).toThrow(
+  it.each([
+    ["copied source", "protected/app/config.json"],
+    ["Pi Dockerfile", "agents/pi/Dockerfile"],
+    ["Pi base Dockerfile", "agents/pi/Dockerfile.base"],
+    ["Docker ignore rules", ".dockerignore"],
+  ])("requires both architecture receipts after a %s change", (_kind, changedPath) => {
+    expect(() => run([changedPath])).toThrow(
       "Pi image inputs changed without refreshing both qualification receipts",
     );
   });
@@ -101,20 +106,12 @@ describe("Pi qualification receipt refresh", () => {
     expect(() => run(["protected/base/config.json", RECEIPTS[0].path])).toThrow(RECEIPTS[1].path);
   });
 
-  it("rejects deletion of the AMD64 qualification receipt", () => {
-    fs.unlinkSync(path.join(rootDir, RECEIPTS[0].path));
+  it.each(RECEIPTS)("rejects deletion of the $platform qualification receipt", (candidate) => {
+    fs.unlinkSync(path.join(rootDir, candidate.path));
 
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
-    ).toThrow(`Pi image inputs changed but qualification receipt is missing: ${RECEIPTS[0].path}`);
-  });
-
-  it("rejects deletion of the ARM64 qualification receipt", () => {
-    fs.unlinkSync(path.join(rootDir, RECEIPTS[1].path));
-
-    expect(() =>
-      run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
-    ).toThrow(`Pi image inputs changed but qualification receipt is missing: ${RECEIPTS[1].path}`);
+    ).toThrow(`Pi image inputs changed but qualification receipt is missing: ${candidate.path}`);
   });
 
   it("accepts refreshed receipts when image sources match the receipt revision", () => {

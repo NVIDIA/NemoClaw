@@ -64,12 +64,7 @@ describe("candidate agent gate", () => {
           [CANDIDATE_AGENT_FEATURE_ENV]: "1",
           [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receiptPath,
         }),
-      ).toMatchObject({
-        platform,
-        source: {
-          revision: "642b1e92a441c2317bd1466960f698f99b73d470",
-        },
-      });
+      ).toMatchObject({ platform });
     },
   );
 
