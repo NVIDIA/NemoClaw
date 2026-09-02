@@ -117,7 +117,7 @@ export function ensureWebSearchProviderProfiles(
         "--file",
         webSearchProviderProfilePath(deps.root, provider),
       ],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], suppressOutput: true },
     );
     if (result.status === 0) continue;
 

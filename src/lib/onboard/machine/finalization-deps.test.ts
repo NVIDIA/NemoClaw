@@ -139,44 +139,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
-  it("stops before the request producer when authority changes during pairing observation (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
-    const scope = ordinaryPairingDeps({
-      observePairing: vi.fn(() => {
-        revalidatePolicyRequirements = () => {
-          throw new Error("policy authority changed");
-        };
-        return PAIRING_ONLY;
-      }),
-      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
-    });
-
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-  });
-
-  it("does not publish settled pairing when authority changes during observation (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
-    const scope = ordinaryPairingDeps({
-      observePairing: vi.fn(() => {
-        revalidatePolicyRequirements = () => {
-          throw new Error("policy authority changed");
-        };
-        return SETTLED;
-      }),
-      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
-    });
-
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-  });
-
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {
     const events: string[] = [];
     const scope = ordinaryPairingDeps({

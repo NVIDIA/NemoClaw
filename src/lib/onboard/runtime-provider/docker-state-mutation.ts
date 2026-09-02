@@ -4,7 +4,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { deflateRawSync } from "node:zlib";
 
 import type {
   ContainerEngine,
@@ -53,323 +52,56 @@ import { prepareRuntimeProviderStateMutationPlan } from "./state-mutation";
 const DOCKER_PROVIDER_ID = "docker";
 const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
-const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
+const HELPER_TRANSPORT_BROKER_PATH =
+  "/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
+const HELPER_ACTIVATION_RETRY_ACK_TIMEOUT_MS = 5_000;
+const HELPER_ACTIVATION_CHECKPOINT_TIMEOUT_MS = 150_000;
+const HELPER_ACTIVATION_HEALTH_TIMEOUT_MS = 150_000;
+const HELPER_ACTIVATION_REPLAY_TIMEOUT_MS = 150_000;
+const HELPER_ACTIVATION_COMPLETION_ALLOWANCE_MS = 30_000;
+/** Covers retry acknowledgement, both readiness passes, replay, and completion. */
+export const DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS =
+  HELPER_ACTIVATION_RETRY_ACK_TIMEOUT_MS +
+  HELPER_ACTIVATION_CHECKPOINT_TIMEOUT_MS +
+  HELPER_ACTIVATION_HEALTH_TIMEOUT_MS +
+  HELPER_ACTIVATION_REPLAY_TIMEOUT_MS +
+  HELPER_ACTIVATION_COMPLETION_ALLOWANCE_MS;
 export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
-export const DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS = 6 * 60_000;
 const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
+const HELPER_TRANSPORT_RESPONSE_ALLOWANCE_MS = 30_000;
 const HELPER_TRANSPORT_POLL_MS = 250;
 const HELPER_TRANSPORT_ROOT = "/run/nemoclaw/runtime-state-mutation";
-export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP =
-  "import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))";
+const HELPER_TRANSPORT_SESSION_PRESENT_STATUS = 75;
+const HELPER_TRANSPORT_SESSION_INSPECTION_FAILED_STATUS = 76;
+const HELPER_TRANSPORT_SESSION_ABSENT_SCRIPT = `import os,sys
+try:
+ os.lstat(sys.argv[1])
+except FileNotFoundError:
+ raise SystemExit(0)
+except Exception:
+ raise SystemExit(${HELPER_TRANSPORT_SESSION_INSPECTION_FAILED_STATUS})
+raise SystemExit(${HELPER_TRANSPORT_SESSION_PRESENT_STATUS})`;
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
 const RUNTIME_QUERY_FORMAT = "{{.ID}}";
-const INSPECT_FORMAT =
-  '[{{json .Id}},{{json .State.Running}},{{json .State.Status}},{{json .State.Paused}},{{json .State.Restarting}},{{json .State.Dead}},{{json .State.Pid}},{{json (index .Config.Labels "openshell.ai/managed-by")}},{{json (index .Config.Labels "openshell.ai/sandbox-name")}},{{json (index .Config.Labels "openshell.ai/sandbox-id")}},{{json .HostConfig.PidMode}},{{json .HostConfig.Privileged}},{{json .Mounts}}]';
+const DEFAULT_MANAGED_LABEL_KEY = "openshell.ai/managed-by";
+const DEFAULT_MANAGED_LABEL_VALUE = "openshell";
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CONTAINER_ID = /^[a-f0-9]{64}$/u;
 const PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const SAFE_LABEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u;
+const SAFE_LABEL_VALUE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u;
 const LIFECYCLE_GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const MOUNT_NAMESPACE = /^mnt:\[[1-9][0-9]*\]$/u;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const helperTransportPoll = new Int32Array(new SharedArrayBuffer(4));
-
-export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE = String.raw`
-import fcntl
-import hashlib
-import json
-import os
-import re
-import signal
-import stat
-import subprocess
-import sys
-import time
-
-ROOT = "/run/nemoclaw/runtime-state-mutation"
-MAXIMUM = 128 * 1024
-TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000}, "release": ${HELPER_RELEASE_TIMEOUT_MS / 1000}}
-IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
-INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
-PUBLICATION_SETTLE_SECONDS = 5
-
-def fail(code):
-    raise RuntimeError(code)
-
-def directory(path):
-    metadata = os.lstat(path)
-    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
-        stat.S_IMODE(metadata.st_mode) != 0o700):
-        fail("transport-directory-invalid")
-
-def atomic(path, payload):
-    temporary = path + ".tmp-" + str(os.getpid())
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
-    try:
-        offset = 0
-        while offset < len(payload):
-            written = os.write(descriptor, payload[offset:])
-            if written <= 0:
-                fail("transport-write-failed")
-            offset += written
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.replace(temporary, path)
-
-def private_file(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-    try:
-        before = os.fstat(descriptor)
-        payload = os.read(descriptor, MAXIMUM + 1)
-        after = os.fstat(descriptor)
-        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0 or
-            stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1 or
-            len(payload) > MAXIMUM or os.read(descriptor, 1) or
-            (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_uid,
-             before.st_gid, before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
-            (after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid,
-             after.st_gid, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
-            fail("transport-file-invalid")
-        return payload
-    finally:
-        os.close(descriptor)
-
-def copied_file(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-    try:
-        before = os.fstat(descriptor)
-        payload = bytearray()
-        while len(payload) <= MAXIMUM:
-            chunk = os.read(descriptor, min(64 * 1024, MAXIMUM + 1 - len(payload)))
-            if not chunk:
-                break
-            payload.extend(chunk)
-        after = os.fstat(descriptor)
-        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or len(payload) > MAXIMUM or
-            (before.st_dev, before.st_ino, before.st_nlink, before.st_uid, before.st_gid,
-             before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
-            (after.st_dev, after.st_ino, after.st_nlink, after.st_uid, after.st_gid,
-             after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
-            fail("transport-copied-file-invalid")
-        return bytes(payload)
-    finally:
-        os.close(descriptor)
-
-def response_payload(action, identity, status, stdout, stderr):
-    return json.dumps({"schemaVersion": 1, "action": action, "identity": identity,
-        "status": status, "stdout": stdout, "stderr": stderr},
-        ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
-
-def failure_stderr(action, code):
-    return json.dumps({"schemaVersion": 1, "action": action, "status": "failed", "code": code},
-        ensure_ascii=True, separators=(",", ":")) + "\n"
-
-def post_validation_failure_code(error):
-    if isinstance(error, RuntimeError):
-        code = str(error)
-        if code in ("helper-file-missing", "helper-file-invalid", "transport-response-too-large"):
-            return code
-        return "transport-runtime-failed"
-    if isinstance(error, UnicodeError):
-        return "transport-response-encoding-invalid"
-    if isinstance(error, FileNotFoundError):
-        return "transport-resource-missing"
-    if isinstance(error, PermissionError):
-        return "transport-permission-denied"
-    if isinstance(error, OSError):
-        return "transport-io-failed"
-    return "transport-response-invalid"
-
-def normalize_helper_stderr(action, status, stderr):
-    if not stderr:
-        return stderr
-    try:
-        failure = json.loads(stderr.decode("utf-8", "strict"))
-        if (isinstance(failure, dict) and failure.get("schemaVersion") == 1 and
-            failure.get("action") == action and failure.get("status") == "failed" and
-            isinstance(failure.get("code"), str) and
-            re.fullmatch(r"[a-z][a-z0-9-]{0,127}", failure["code"]) is not None):
-            return stderr
-    except (UnicodeError, ValueError):
-        pass
-    code = "helper-process-failed" if status != 0 else "helper-protocol-stderr"
-    return failure_stderr(action, code).encode("utf-8")
-
-def publisher_phase_failure(action, stderr):
-    if action != "publish":
-        return stderr
-    try:
-        failure = json.loads(stderr.decode("utf-8", "strict"))
-        if (not isinstance(failure, dict) or failure.get("schemaVersion") != 1 or
-            failure.get("action") != "publish" or failure.get("status") != "failed" or
-            failure.get("code") != "publisher-guard-failed"):
-            return stderr
-        journal = json.loads(private_file(
-            "/var/lib/nemoclaw/runtime-state-mutation/hermes-publisher.json"
-        ).decode("utf-8", "strict"))
-        operation = journal.get("operation") if isinstance(journal, dict) else None
-        phase = operation.get("phase") if isinstance(operation, dict) else None
-        if phase not in ("intent", "begun", "state-applied", "top-applied"):
-            return stderr
-        failure["code"] = "publisher-guard-" + phase + "-failed"
-        return (json.dumps(failure, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
-    except (OSError, RuntimeError, UnicodeError, ValueError):
-        return stderr
-
-def run_helper(action, request):
-    try:
-        metadata = os.lstat(helper)
-    except FileNotFoundError:
-        fail("helper-file-missing")
-    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
-        stat.S_IMODE(metadata.st_mode) & 0o022):
-        fail("helper-file-invalid")
-    completed = None
-    for attempt in range(2):
-        process = subprocess.Popen([sys.executable, "-I", helper, action], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-        try:
-            stdout, stderr = process.communicate(request, timeout=TIMEOUTS[action])
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-            try:
-                process.communicate(timeout=5)
-            except (subprocess.TimeoutExpired, OSError):
-                pass
-            raise
-        completed = subprocess.CompletedProcess(
-            process.args, process.returncode, stdout=stdout, stderr=stderr)
-        if completed.returncode >= 0:
-            return completed
-        # Every helper action is transaction-bound and idempotent. Replay only
-        # a signal-terminated invocation once; ordinary nonzero exits remain
-        # authoritative and are never retried.
-    return completed
-
-helper = sys.argv[1]
-transaction = sys.argv[2]
-if IDENTITY.fullmatch(transaction) is None:
-    fail("transport-transaction-invalid")
-os.makedirs(ROOT, mode=0o700, exist_ok=True)
-directory(ROOT)
-session = os.path.join(ROOT, transaction)
-os.makedirs(session, mode=0o700, exist_ok=True)
-directory(session)
-lock = os.open(os.path.join(session, "broker.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
-try:
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    raise SystemExit(0)
-atomic(os.path.join(session, "ready"), (transaction + "\n").encode("ascii"))
-pending = {}
-
-while True:
-    names = sorted(os.listdir(session))
-    if "released" in names and "resumed" in names:
-        try:
-            expected = (transaction + "\n").encode("ascii")
-            if (private_file(os.path.join(session, "released")) == expected and
-                copied_file(os.path.join(session, "resumed")) == expected):
-                for name in ("released", "resumed", "ready", "broker.lock"):
-                    try:
-                        os.unlink(os.path.join(session, name))
-                    except FileNotFoundError:
-                        pass
-                try:
-                    os.rmdir(session)
-                except OSError:
-                    pass
-                raise SystemExit(0)
-        except (OSError, RuntimeError, UnicodeError, ValueError):
-            pass
-    for name in names:
-        incoming = INCOMING.fullmatch(name)
-        if incoming is None:
-            continue
-        identity, action = incoming.groups()
-        request_path = os.path.join(session, name)
-        response_path = os.path.join(session, identity + ".response")
-        if os.path.exists(response_path):
-            continue
-        validated = False
-        try:
-            request = copied_file(request_path)
-            if not request.endswith(b"\n") or hashlib.sha256(request).hexdigest() != identity:
-                fail("transport-request-invalid")
-            envelope = json.loads(request.decode("utf-8", "strict"))
-            if (not isinstance(envelope, dict) or envelope.get("action") != action or
-                envelope.get("transactionId") != transaction):
-                fail("transport-request-invalid")
-            validated = True
-            pending.pop(name, None)
-            os.unlink(request_path)
-            completed = run_helper(action, request)
-            if len(completed.stdout) > MAXIMUM or len(completed.stderr) > MAXIMUM:
-                fail("transport-response-too-large")
-            status = completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
-            stderr = publisher_phase_failure(action, completed.stderr)
-            stderr = normalize_helper_stderr(action, status, stderr)
-            response = response_payload(action, identity, status,
-                completed.stdout.decode("utf-8", "strict"), stderr.decode("utf-8", "strict"))
-        except subprocess.TimeoutExpired:
-            response = response_payload(action, identity, 1, "", failure_stderr(action, "helper-timeout"))
-        except (OSError, RuntimeError, UnicodeError, ValueError) as error:
-            if not validated:
-                first_observed = pending.setdefault(name, time.monotonic())
-                if time.monotonic() - first_observed < PUBLICATION_SETTLE_SECONDS:
-                    continue
-                pending.pop(name, None)
-                try:
-                    os.unlink(request_path)
-                except FileNotFoundError:
-                    pass
-                response = response_payload(action, identity, 1, "",
-                    failure_stderr(action, "transport-request-invalid"))
-            else:
-                # Preserve a safe, actionable failure class without returning
-                # exception text, host paths, or request contents to the caller.
-                response = response_payload(action, identity, 1, "",
-                    failure_stderr(action, post_validation_failure_code(error)))
-        atomic(response_path, response)
-    for name in names:
-        if not name.endswith(".ack"):
-            continue
-        identity = name[:-4]
-        if IDENTITY.fullmatch(identity) is None:
-            continue
-        response_path = os.path.join(session, identity + ".response")
-        if not os.path.exists(response_path):
-            continue
-        try:
-            response = json.loads(private_file(response_path).decode("utf-8", "strict"))
-            if copied_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
-                fail("transport-ack-invalid")
-            successful_release = response.get("action") == "release" and response.get("status") == 0
-            for suffix in (".response", ".ack"):
-                try:
-                    os.unlink(os.path.join(session, identity + suffix))
-                except FileNotFoundError:
-                    pass
-            if successful_release:
-                atomic(os.path.join(session, "released"), (transaction + "\n").encode("ascii"))
-        except (OSError, RuntimeError, UnicodeError, ValueError):
-            pass
-    time.sleep(0.05)
-`;
 
 type HelperAction =
   | "acquire"
@@ -412,7 +144,7 @@ interface DockerRuntimeObservation {
   readonly providerDisplayName: string;
   readonly runtimeId: string;
   readonly runtimePid: number;
-  readonly pidMode: "";
+  readonly pidMode: string;
   readonly privileged: false;
   readonly sandboxIdentitySha256: string;
   readonly containerMountsSha256: string;
@@ -472,6 +204,18 @@ export interface ContainerStateMutationOwnerOptions {
   readonly authority: ContainerStateMutationAuthority;
   readonly engineAuthorityStore: PersistedEngineAuthorityStore;
   readonly lifecycleStore: PersistedEngineLifecycleStore;
+  /** Provider-native Go-template field for the full immutable runtime ID. */
+  readonly runtimeIdInspectField?: "Id" | "ID";
+  /** Provider-native inspect value proving a private PID namespace. */
+  readonly privatePidMode?: string;
+  /** Provider-owned label proving that the runtime belongs to OpenShell. */
+  readonly managedLabelKey?: string;
+  readonly managedLabelValue?: string;
+  /** Provider-owned normalization for one logical mount reported as multiple inspect rows. */
+  readonly normalizeInspectionMounts?: (
+    mounts: readonly unknown[],
+    runtimeId: string,
+  ) => readonly unknown[];
 }
 
 export type DockerStateMutationOwnerOptions = Omit<
@@ -500,6 +244,14 @@ export interface ContainerStateMutationSurfaceOptions {
   readonly createAuthority: (
     input: RuntimeProviderStateMutationContext,
   ) => ContainerStateMutationAuthority;
+  readonly runtimeIdInspectField?: "Id" | "ID";
+  readonly privatePidMode?: string;
+  readonly managedLabelKey?: string;
+  readonly managedLabelValue?: string;
+  readonly normalizeInspectionMounts?: (
+    mounts: readonly unknown[],
+    runtimeId: string,
+  ) => readonly unknown[];
   readonly resolveStateDir?: (environment: NodeJS.ProcessEnv) => string;
   readonly withDirectSandboxExecutionExclusion?: <T>(
     sandboxName: string,
@@ -747,6 +499,9 @@ function parseInspection(
   expectedRuntimeId: string,
   expectedSandboxName: string,
   providerDisplayName: string,
+  expectedPrivatePidMode: string,
+  expectedManagedLabelValue: string,
+  normalizeMounts: (mounts: readonly unknown[], runtimeId: string) => readonly unknown[],
 ): DockerRuntimeObservation {
   if (
     output.length === 0 ||
@@ -796,10 +551,10 @@ function parseInspection(
   ) {
     fail(`${providerDisplayName} container is not one stable running runtime`);
   }
-  if (managedBy !== "openshell" || sandboxName !== expectedSandboxName) {
+  if (managedBy !== expectedManagedLabelValue || sandboxName !== expectedSandboxName) {
     fail(`${providerDisplayName} container does not belong to the exact OpenShell sandbox`);
   }
-  if (pidMode !== "" || privileged !== false) {
+  if (pidMode !== expectedPrivatePidMode || privileged !== false) {
     fail(`${providerDisplayName} container does not have one private unprivileged PID namespace`);
   }
   const sandboxId = exactText(sandboxIdInput, "OpenShell sandbox identity", 512);
@@ -807,7 +562,7 @@ function parseInspection(
   if (!Array.isArray(mountsInput) || mountsInput.length > MAX_MOUNTS) {
     fail(`${providerDisplayName} container mounts are malformed`);
   }
-  const mounts = mountsInput
+  const mounts = normalizeMounts(mountsInput, runtimeId)
     .map(parseMount)
     .sort((left, right) =>
       left.destination < right.destination
@@ -834,7 +589,7 @@ function parseInspection(
     providerDisplayName,
     runtimeId,
     runtimePid: runtimePid as number,
-    pidMode: "",
+    pidMode: expectedPrivatePidMode,
     privileged: false,
     sandboxIdentitySha256,
     containerMountsSha256: mountsSha256(mounts),
@@ -1294,28 +1049,22 @@ function requireCurrentEngineAuthority(
   );
 }
 
-function inspectCommand(runtimeId: string) {
+function inspectCommand(
+  runtimeId: string,
+  runtimeIdField: "Id" | "ID" = "Id",
+  managedLabelKey = DEFAULT_MANAGED_LABEL_KEY,
+) {
+  boundedString(managedLabelKey, SAFE_LABEL_KEY, "managed runtime label key");
+  const format =
+    `[{{json .${runtimeIdField}}},{{json .State.Running}},{{json .State.Status}},` +
+    `{{json .State.Paused}},{{json .State.Restarting}},{{json .State.Dead}},` +
+    `{{json .State.Pid}},{{json (index .Config.Labels "${managedLabelKey}")}},` +
+    '{{json (index .Config.Labels "openshell.ai/sandbox-name")}},' +
+    '{{json (index .Config.Labels "openshell.ai/sandbox-id")}},' +
+    "{{json .HostConfig.PidMode}},{{json .HostConfig.Privileged}},{{json .Mounts}}]";
   return Object.freeze({
-    args: Object.freeze(["container", "inspect", "--format", INSPECT_FORMAT, runtimeId]),
+    args: Object.freeze(["container", "inspect", "--format", format, runtimeId]),
     targetIndex: 4,
-  });
-}
-
-function helperCommand(runtimeId: string, action: HelperAction) {
-  return Object.freeze({
-    args: Object.freeze([
-      "container",
-      "exec",
-      "--interactive",
-      "--user",
-      "root",
-      runtimeId,
-      HELPER_PYTHON_PATH,
-      "-I",
-      HELPER_PATH,
-      action,
-    ]),
-    targetIndex: 5,
   });
 }
 
@@ -1342,15 +1091,31 @@ function helperTransportBrokerCommand(
       runtimeId,
       HELPER_PYTHON_PATH,
       "-I",
-      "-c",
-      DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
-      deflateRawSync(Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8"), {
-        level: 9,
-      }).toString("base64"),
-      HELPER_PATH,
+      HELPER_TRANSPORT_BROKER_PATH,
       transactionId,
     ]),
     targetIndex: 5,
+  });
+}
+
+function helperTransportSessionAbsentCommand(
+  runtimeId: string,
+  transactionId: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze([
+      "container",
+      "exec",
+      "--user",
+      "root",
+      runtimeId,
+      HELPER_PYTHON_PATH,
+      "-I",
+      "-c",
+      HELPER_TRANSPORT_SESSION_ABSENT_SCRIPT,
+      helperTransportSessionPath(transactionId),
+    ]),
+    targetIndex: 4,
   });
 }
 
@@ -1417,37 +1182,41 @@ function writePrivateTransportFile(filePath: string, value: Buffer): void {
   }
 }
 
-function copyHelperTransportFile(
-  capture: HelperTransportCapture,
-  command: PersistedEngineLifecycleExactCommand,
-): ContainerEngineCommandResult {
-  return capture(command, HELPER_TRANSPORT_COMMAND_TIMEOUT_MS);
-}
-
 function readHelperTransportFile(
   capture: HelperTransportCapture,
   runtimeId: string,
   containerPath: string,
   hostRoot: string,
   timeoutMs: number,
+  action: HelperAction | "startup",
 ): Buffer {
   return withHelperTransportHostDirectory(hostRoot, (temporary) => {
     const destination = path.join(temporary, "response");
     const deadline = Date.now() + timeoutMs;
     while (true) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) fail(`root helper ${action} transport response did not arrive`);
       fs.rmSync(destination, { force: true });
-      const result = copyHelperTransportFile(
-        capture,
+      const result = capture(
         helperTransportCopyFromCommand(runtimeId, containerPath, destination),
+        Math.min(HELPER_TRANSPORT_COMMAND_TIMEOUT_MS, remainingMs),
       );
       if (!result.error && result.status === 0 && result.stderr.length === 0) {
         const value = fs.readFileSync(destination);
         if (value.byteLength > MAX_HELPER_TRANSPORT_BYTES) {
-          fail("root helper transport response exceeds its byte bound");
+          fail(`root helper ${action} transport response exceeds its byte bound`);
         }
         return value;
       }
-      if (Date.now() >= deadline) fail("root helper transport response did not arrive");
+      const copyTimedOut =
+        (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+      if (Date.now() >= deadline) {
+        fail(
+          copyTimedOut
+            ? `root helper ${action} transport response copy timed out`
+            : `root helper ${action} transport response did not arrive`,
+        );
+      }
       Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
     }
   });
@@ -1460,13 +1229,13 @@ function probeHelperTransport(
 ): boolean {
   return withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
     const destination = path.join(temporary, "ready");
-    const result = copyHelperTransportFile(
-      capture,
+    const result = capture(
       helperTransportCopyFromCommand(
         options.runtimeId,
         `${helperTransportSessionPath(transactionId)}/ready`,
         destination,
       ),
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
     );
     if (result.error || result.status !== 0 || result.stderr.length !== 0) return false;
     const ready = fs.readFileSync(destination);
@@ -1500,6 +1269,7 @@ function ensureHelperTransportAuthorized(
       `${helperTransportSessionPath(transactionId)}/ready`,
       options.hostTransportRoot,
       HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+      "startup",
     );
   } catch {
     fail("root helper transport did not become available");
@@ -1514,29 +1284,50 @@ function finishReleasedHelperTransport(
   bindingSha256: string,
   transactionId: string,
 ): void {
-  if (options.providerId !== DOCKER_PROVIDER_ID) return;
   const capture: HelperTransportCapture = (command, timeoutMs) => {
     requireCurrentEngineAuthority(options, bindingSha256);
     const result = options.authority.engine.capture(command.args, timeoutMs);
     requireCurrentEngineAuthority(options, bindingSha256);
     return result;
   };
-  if (!probeHelperTransport(capture, options, transactionId)) return;
+  const sessionAbsent = (): boolean => {
+    const result = capture(
+      helperTransportSessionAbsentCommand(options.runtimeId, transactionId),
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    );
+    if (result.error || result.stderr.length !== 0) {
+      fail("root helper transport release cleanup verification failed");
+    }
+    if (result.status === 0) return true;
+    if (result.status === HELPER_TRANSPORT_SESSION_PRESENT_STATUS) return false;
+    fail("root helper transport release cleanup verification failed");
+  };
+  if (sessionAbsent()) return;
+  if (!probeHelperTransport(capture, options, transactionId)) {
+    fail("root helper transport release cleanup remains incomplete");
+  }
   withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
     const resumed = path.join(temporary, "resumed");
     writePrivateTransportFile(resumed, Buffer.from(`${transactionId}\n`, "ascii"));
     requireCommandSuccess(
-      copyHelperTransportFile(
-        capture,
+      capture(
         helperTransportCopyToCommand(
           options.runtimeId,
           resumed,
           `${helperTransportSessionPath(transactionId)}/resumed`,
         ),
+        HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
       ),
       "root helper transport release finalization",
     );
   });
+  const deadline = Date.now() + HELPER_TRANSPORT_COMMAND_TIMEOUT_MS;
+  while (!sessionAbsent()) {
+    if (Date.now() >= deadline) {
+      fail("root helper transport release cleanup remains incomplete");
+    }
+    Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
+  }
 }
 
 function parseHelperTransportResult(
@@ -1615,13 +1406,13 @@ function invokeHelperTransport(
     const request = path.join(temporary, "request");
     writePrivateTransportFile(request, input);
     requireCommandSuccess(
-      copyHelperTransportFile(
-        capture,
+      capture(
         helperTransportCopyToCommand(
           options.runtimeId,
           request,
           `${sessionPath}/${identity}.${action}.incoming`,
         ),
+        HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
       ),
       "root helper transport request publication",
     );
@@ -1630,19 +1421,20 @@ function invokeHelperTransport(
       options.runtimeId,
       `${sessionPath}/${identity}.response`,
       options.hostTransportRoot,
-      helperTimeoutMs(action) + HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+      helperTimeoutMs(action) + HELPER_TRANSPORT_RESPONSE_ALLOWANCE_MS,
+      action,
     );
     const parsed = parseHelperTransportResult(response, action, identity);
     const acknowledgement = path.join(temporary, "ack");
     writePrivateTransportFile(acknowledgement, Buffer.from(`${identity}\n`, "ascii"));
     requireCommandSuccess(
-      copyHelperTransportFile(
-        capture,
+      capture(
         helperTransportCopyToCommand(
           options.runtimeId,
           acknowledgement,
           `${sessionPath}/${identity}.ack`,
         ),
+        HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
       ),
       "root helper transport response acknowledgement",
     );
@@ -1698,7 +1490,11 @@ function inspectDirect(
 ): DockerRuntimeObservation {
   requireCurrentEngineAuthority(options, bindingSha256);
   const result = options.authority.engine.capture(
-    inspectCommand(options.runtimeId).args,
+    inspectCommand(
+      options.runtimeId,
+      options.runtimeIdInspectField,
+      options.managedLabelKey ?? DEFAULT_MANAGED_LABEL_KEY,
+    ).args,
     INSPECT_TIMEOUT_MS,
   );
   requireCurrentEngineAuthority(options, bindingSha256);
@@ -1707,6 +1503,9 @@ function inspectDirect(
     options.runtimeId,
     options.sandboxName,
     options.providerDisplayName,
+    options.privatePidMode ?? "",
+    options.managedLabelValue ?? DEFAULT_MANAGED_LABEL_VALUE,
+    options.normalizeInspectionMounts ?? ((mounts) => mounts),
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -1716,12 +1515,24 @@ function inspectAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
   options: ContainerStateMutationOwnerOptions,
 ): DockerRuntimeObservation {
-  const result = scope.captureExact("target", inspectCommand, INSPECT_TIMEOUT_MS);
+  const result = scope.captureExact(
+    "target",
+    (runtimeId) =>
+      inspectCommand(
+        runtimeId,
+        options.runtimeIdInspectField,
+        options.managedLabelKey ?? DEFAULT_MANAGED_LABEL_KEY,
+      ),
+    INSPECT_TIMEOUT_MS,
+  );
   const observation = parseInspection(
     requireCommandSuccess(result, `${options.providerDisplayName} container inspection`),
     options.runtimeId,
     options.sandboxName,
     options.providerDisplayName,
+    options.privatePidMode ?? "",
+    options.managedLabelValue ?? DEFAULT_MANAGED_LABEL_VALUE,
+    options.normalizeInspectionMounts ?? ((mounts) => mounts),
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -1759,21 +1570,9 @@ function invokeHelperAuthorized(
   action: HelperAction,
   input: Buffer,
 ): DockerStateMutationHelperReceipt {
-  if (options.providerId === DOCKER_PROVIDER_ID) {
-    const capture: HelperTransportCapture = (command, timeoutMs) =>
-      scope.captureExact("target", () => command, timeoutMs);
-    return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
-  }
-  const result = scope.captureExact(
-    "target",
-    (runtimeId) => helperCommand(runtimeId, action),
-    helperTimeoutMs(action),
-    input,
-  );
-  return parseHelperReceipt(
-    requireCommandSuccess(result, `root helper ${action}`),
-    options.providerId,
-  );
+  const capture: HelperTransportCapture = (command, timeoutMs) =>
+    scope.captureExact("target", () => command, timeoutMs);
+  return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
 }
 
 function lifecycleInput(
@@ -2176,9 +1975,7 @@ function acquireAuthorizedReceipt(
   ) {
     fail("persisted state mutation intent does not match the lifecycle transaction");
   }
-  if (options.providerId === DOCKER_PROVIDER_ID) {
-    ensureHelperTransportAuthorized(scope, options, exactTransactionId);
-  }
+  ensureHelperTransportAuthorized(scope, options, exactTransactionId);
   signalSupervisorAuthorized(scope, options, "SIGSTOP");
   const receipt = invokeHelperAuthorized(
     scope,
@@ -2232,31 +2029,18 @@ function queryEstablishedReceipt(
       execution.transactionId,
       expectedFence?.providerHandle,
     );
-    const result =
-      options.providerId === DOCKER_PROVIDER_ID
-        ? invokeHelperTransport(
-            (command, timeoutMs) => {
-              guard();
-              const captured = options.authority.engine.capture(command.args, timeoutMs);
-              guard();
-              return captured;
-            },
-            options,
-            execution.transactionId,
-            action,
-            request,
-          )
-        : parseHelperReceipt(
-            requireCommandSuccess(
-              options.authority.engine.capture(
-                helperCommand(options.runtimeId, action).args,
-                helperTimeoutMs(action),
-                request,
-              ),
-              `root helper ${action}`,
-            ),
-            options.providerId,
-          );
+    const result = invokeHelperTransport(
+      (command, timeoutMs) => {
+        guard();
+        const captured = options.authority.engine.capture(command.args, timeoutMs);
+        guard();
+        return captured;
+      },
+      options,
+      execution.transactionId,
+      action,
+      request,
+    );
     guard();
     const receipt = result;
     validateReceipt(receipt, options, bindingSha256, before, currentRecord);
@@ -2359,7 +2143,11 @@ function releaseAuthorizedFence(
 export function createContainerStateMutationOwner(
   optionsInput: ContainerStateMutationOwnerOptions,
 ): ContainerStateMutationOwner {
-  const options = Object.freeze({ ...optionsInput });
+  const options = Object.freeze({
+    privatePidMode: "",
+    runtimeIdInspectField: "Id" as const,
+    ...optionsInput,
+  });
   boundedString(options.providerId, PROVIDER_ID, "provider identity");
   boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   boundedString(options.sandboxName, SAFE_NAME, "sandbox name");
@@ -2554,8 +2342,8 @@ export function createContainerStateMutationOwner(
             proof,
             completedLedgerSha256,
           );
+          finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         });
-        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
         return;
       }
@@ -2601,9 +2389,9 @@ export function createContainerStateMutationOwner(
             activatedProof,
             completedLedgerSha256,
           );
+          finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         },
       );
-      finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
       options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
     },
 
@@ -2642,8 +2430,8 @@ export function createContainerStateMutationOwner(
             recoveredProof,
             completed.resultSha256 as string,
           );
+          finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         });
-        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, record.resultSha256);
         return null;
       }
@@ -2711,14 +2499,18 @@ function resolveExactLabeledRuntimeId(
   authority: ContainerStateMutationAuthority,
   sandboxName: string,
   providerDisplayName: string,
+  managedLabelKey = DEFAULT_MANAGED_LABEL_KEY,
+  managedLabelValue = DEFAULT_MANAGED_LABEL_VALUE,
 ): string {
+  boundedString(managedLabelKey, SAFE_LABEL_KEY, "managed runtime label key");
+  boundedString(managedLabelValue, SAFE_LABEL_VALUE, "managed runtime label value");
   const result = authority.engine.capture(
     [
       "ps",
       "-a",
       "--no-trunc",
       "--filter",
-      "label=openshell.ai/managed-by=openshell",
+      `label=${managedLabelKey}=${managedLabelValue}`,
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
       "--format",
@@ -2759,11 +2551,11 @@ function requireExistingSurfaceAuthority(
   );
 }
 
-function createSurfaceOwner(
+function createSurfaceOwnerOptions(
   input: RuntimeProviderStateMutationContext,
   options: ContainerStateMutationSurfaceOptions,
   phase: "acquire" | "existing",
-): ContainerStateMutationOwner {
+): ContainerStateMutationOwnerOptions {
   requireSurfaceContext(input, options.providerId);
 
   const authority = options.createAuthority(input);
@@ -2778,8 +2570,10 @@ function createSurfaceOwner(
     authority,
     input.sandboxName,
     options.providerDisplayName,
+    options.managedLabelKey,
+    options.managedLabelValue,
   );
-  return createContainerStateMutationOwner({
+  return {
     providerId: options.providerId,
     providerDisplayName: options.providerDisplayName,
     engineOperation: options.engineOperation,
@@ -2795,6 +2589,62 @@ function createSurfaceOwner(
     authority,
     engineAuthorityStore,
     lifecycleStore: createFilePersistedEngineLifecycleStore(stateDir),
+    ...(options.runtimeIdInspectField
+      ? { runtimeIdInspectField: options.runtimeIdInspectField }
+      : {}),
+    ...(options.privatePidMode === undefined ? {} : { privatePidMode: options.privatePidMode }),
+    ...(options.managedLabelKey === undefined
+      ? {}
+      : { managedLabelKey: options.managedLabelKey }),
+    ...(options.managedLabelValue === undefined
+      ? {}
+      : { managedLabelValue: options.managedLabelValue }),
+    ...(options.normalizeInspectionMounts === undefined
+      ? {}
+      : { normalizeInspectionMounts: options.normalizeInspectionMounts }),
+  };
+}
+
+function createSurfaceOwner(
+  input: RuntimeProviderStateMutationContext,
+  options: ContainerStateMutationSurfaceOptions,
+  phase: "acquire" | "existing",
+): ContainerStateMutationOwner {
+  return createContainerStateMutationOwner(createSurfaceOwnerOptions(input, options, phase));
+}
+
+function retireReleasedSurfaceStateMutations(
+  input: RuntimeProviderStateMutationContext,
+  options: ContainerStateMutationSurfaceOptions,
+  lifecycleStore: PersistedEngineLifecycleStore,
+): void {
+  let cleanup:
+    | {
+        readonly ownerOptions: ContainerStateMutationOwnerOptions;
+        readonly bindingSha256: string;
+      }
+    | undefined;
+  lifecycleStore.retireReleasedStateMutations(input.sandboxName, (record) => {
+    if (!cleanup) {
+      const ownerOptions = createSurfaceOwnerOptions(input, options, "existing");
+      cleanup = {
+        ownerOptions,
+        bindingSha256: operationBindingSha256(ownerOptions.authority.engine),
+      };
+    }
+    const targetRuntime = record.resources.find(
+      (resource) => resource.role === "target",
+    )?.runtimeId;
+    if (targetRuntime !== cleanup.ownerOptions.runtimeId) {
+      fail(
+        `released state mutation target does not match the exact labeled ${options.providerDisplayName} runtime`,
+      );
+    }
+    finishReleasedHelperTransport(
+      cleanup.ownerOptions,
+      cleanup.bindingSha256,
+      record.transactionId,
+    );
   });
 }
 
@@ -2807,7 +2657,7 @@ function recoverSurface(
     input.environment,
   );
   const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-  lifecycleStore.retireReleasedStateMutations(input.sandboxName);
+  retireReleasedSurfaceStateMutations(input, options, lifecycleStore);
   if (!hasActivePersistedEngineStateMutationTarget(lifecycleStore, input.sandboxName)) {
     return null;
   }
@@ -2858,7 +2708,7 @@ export function createContainerStateMutationSurface(
       input.environment,
     );
     const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-    lifecycleStore.retireReleasedStateMutations(input.sandboxName);
+    retireReleasedSurfaceStateMutations(input, options, lifecycleStore);
     if (hasActivePersistedEngineStateMutationTarget(lifecycleStore, input.sandboxName)) {
       fail("OpenShell sandbox already has one unfinished state mutation");
     }

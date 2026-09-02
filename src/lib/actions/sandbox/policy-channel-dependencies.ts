@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
@@ -34,6 +34,7 @@ type LegacyOnboardProvidersModule = {
 };
 
 type RebuildModule = typeof import("./rebuild");
+type PrivilegedExecModule = typeof import("../../sandbox/privileged-exec");
 type SetupInferenceModule = typeof import("../../onboard/setup-inference");
 type SandboxProviderCleanupModule = typeof import("../../onboard/sandbox-provider-cleanup");
 type PolicyModule = typeof import("../../policy");
@@ -64,6 +65,14 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
+  clearStoppedSandboxStateRoots(
+    sandboxName: string,
+    paths: readonly string[],
+  ): ReturnType<PrivilegedExecModule["clearStoppedSandboxStateRoots"]> {
+    const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
+    return cleanup.clearStoppedSandboxStateRoots(sandboxName, paths);
+  },
   deleteMessagingProviderWithRecovery(
     providerName: string,
     sandboxName: string,
@@ -76,12 +85,11 @@ export const policyChannelDependencies = {
       runOpenshell: gatewayRunner(gatewayName),
     });
   },
-  revalidateChannelProviderPolicyAuthority(sandboxName: string, gatewayName: string): void {
+  revalidateChannelProviderPolicy(sandboxName: string, gatewayName: string): void {
     const policy = require("../../policy") as PolicyModule;
     const operation = `change messaging providers for sandbox '${sandboxName}'`;
-    const authority = policy.inspectPolicyMutationAuthority(sandboxName, operation, gatewayName);
-    policy.assertNemoClawManagedPolicy(authority, operation);
-    policy.recheckPolicyMutationAuthority(sandboxName, operation, authority);
+    const context = policy.inspectPolicyMutationContext(sandboxName, operation, gatewayName);
+    policy.recheckPolicyMutationContext(sandboxName, operation, context);
   },
   runGatewayOpenshell(
     gatewayName: string,

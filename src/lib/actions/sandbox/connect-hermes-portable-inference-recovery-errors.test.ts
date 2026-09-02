@@ -55,12 +55,15 @@ describe("Hermes Portable connect recovery errors", () => {
     expect(output).not.toContain("Hermes Portable inference recovery for 'alpha' failed");
   });
 
-  it("verifies a compatible-endpoint route without Ollama recovery", async () => {
+  it("carries current schema-6 authority through compatible-endpoint recovery", async () => {
     const entry = {
       name: "alpha",
       agent: "hermes",
       provider: "compatible-endpoint",
       model: "descriptor/model",
+      endpointUrl: "https://example.test/v1/chat/completions",
+      preferredInferenceApi: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
       policies: [],
       openshellDriver: "docker",
       gatewayName: "nemoclaw",
@@ -75,17 +78,12 @@ describe("Hermes Portable connect recovery errors", () => {
       inferenceProbeResponses: ["OK 200"],
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
-      readinessDecision: {
-        kind: "accepted",
-        category: "accepted",
-        agent: { name: "hermes" },
-        sb: entry,
-      },
     });
-
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.registryEntries[0]?.hostLocalInferenceReceipt).toBeUndefined();
+    expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
       ["inference", "get", "-g", "nemoclaw"],
@@ -96,7 +94,7 @@ describe("Hermes Portable connect recovery errors", () => {
         ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "exec",
       ),
     ).toBe(true);
-    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 
   it.each([

@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
+import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -26,6 +25,7 @@ import {
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   assessPersonalPublicFetchToolEvidence,
   classifyHermesAgentAssertion,
@@ -239,25 +239,18 @@ function cleanupAttempt(result: ShellProbeResult): CleanupAttempt {
 
 async function assertPrerequisites(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   secrets: SecretStore,
-  skip: SkipFn,
 ): Promise<HostedInferenceConfig> {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-common-egress",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+  await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-common-egress",
+    scenarioLabel: "common-egress agent",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for common-egress agent E2E: ${text(docker)}`);
-    }
-    skip("Docker is required for common-egress agent E2E");
-  }
 
   const openshell = await host.command("openshell", ["--version"], {
     artifactName: "prereq-openshell-version-common-egress",
@@ -614,8 +607,8 @@ describe.sequential("common-egress agent live targets", () => {
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       const braveApiKey = secrets.required("BRAVE_API_KEY");
       await artifacts.target.declare({
@@ -646,12 +639,12 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
       ).toEqual([
-        { name: "brave", provenance: "from balanced tier" },
-        { name: "brew", provenance: "from balanced tier" },
-        { name: "huggingface", provenance: "from balanced tier" },
-        { name: "npm", provenance: "from balanced tier" },
+        { name: "brave", provenance: "from openclaw agent" },
+        { name: "brew", provenance: "user-added" },
+        { name: "huggingface", provenance: "user-added" },
+        { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },
-        { name: "pypi", provenance: "from balanced tier" },
+        { name: "pypi", provenance: "user-added" },
       ]);
       await assertPolicyAbsent(
         sandbox,
@@ -665,12 +658,12 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-after-weather-add"),
       ).toEqual([
-        { name: "brave", provenance: "from balanced tier" },
-        { name: "brew", provenance: "from balanced tier" },
-        { name: "huggingface", provenance: "from balanced tier" },
-        { name: "npm", provenance: "from balanced tier" },
+        { name: "brave", provenance: "from openclaw agent" },
+        { name: "brew", provenance: "user-added" },
+        { name: "huggingface", provenance: "user-added" },
+        { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },
-        { name: "pypi", provenance: "from balanced tier" },
+        { name: "pypi", provenance: "user-added" },
         { name: "weather", provenance: "user-added" },
       ]);
       await assertPolicyContains(sandbox, OPENCLAW_BALANCED_SANDBOX, "c1-policy", [
@@ -756,8 +749,8 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
@@ -815,9 +808,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
-      const apiKey = hosted.apiKey;
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       await artifacts.target.declare({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
@@ -880,8 +872,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
@@ -917,7 +909,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       progress.phase("verify Personal policy and absent Brave Search or Tavily Search API keys");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),
-      ).toContainEqual({ name: "personal-open-internet", provenance: "from personal tier" });
+      ).toContainEqual({ name: "personal-open-internet", provenance: "user-added" });
       await assertPersonalRuntimeEgress(sandbox, OPENCLAW_PERSONAL_SANDBOX, "c4-personal", {
         beforeDeniedTargets: () => progress.phase("deny loopback and link-local targets"),
         beforePublicFetch: () => progress.phase("fetch a public website with curl"),

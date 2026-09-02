@@ -450,7 +450,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
   });
 
-  it("rechecks policy authority after verification and before GPU commit (#9833)", async () => {
+  it("rechecks sandbox identity after verification and before GPU commit (#9833)", async () => {
     const runtimePatch = {
       commitAfterReady: vi.fn(),
       rollbackManagedStartupAfterCreateFailure: vi.fn(),
@@ -468,10 +468,10 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
         },
         runtimePatch,
         () => {
-          throw new Error("policy authority changed");
+          throw new Error("sandbox identity changed");
         },
       ),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();

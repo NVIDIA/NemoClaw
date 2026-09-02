@@ -58,40 +58,22 @@ function prepareVerifiedCreate(
     authority,
     registry.getSandbox(name),
   );
-  const policyCreationReceipt = {
-    schemaVersion: 1 as const,
-    origin: "sandbox-create" as const,
-    gatewayName: route.gatewayName,
-    gatewayPort: route.gatewayPort,
-    sandboxName: name,
-    lifecycleGeneration: LIFECYCLE_GENERATION,
-    sandboxIdentityFingerprint: SANDBOX_IDENTITY_FINGERPRINT,
-    policyHash: "sha256:host-local-fixture",
-    policyVersion: 1,
-  };
   const checkpoint = {
     schemaVersion: 1 as const,
     state: "verified-create" as const,
-    policyAuthority: "nemoclaw-managed" as const,
-    observedPolicyAuthority: "owner-unknown" as const,
     gatewayName: route.gatewayName,
     gatewayPort: route.gatewayPort,
     sandboxName: name,
     lifecycleGeneration: LIFECYCLE_GENERATION,
     sandboxIdentityFingerprint: SANDBOX_IDENTITY_FINGERPRINT,
     route: "none" as const,
-    policyHash: policyCreationReceipt.policyHash,
-    policyVersion: policyCreationReceipt.policyVersion,
-    policyCreationReceipt,
   };
-  registry.recordPendingSandboxPolicyVerification(reservation, checkpoint);
+  registry.recordPendingSandboxCreateIdentity(reservation, checkpoint);
   return {
     checkpoint,
     registration: {
       lifecycleGeneration: LIFECYCLE_GENERATION,
       lifecycleLiveIdentityFingerprint: SANDBOX_IDENTITY_FINGERPRINT,
-      policyAuthority: "nemoclaw-managed" as const,
-      policyCreationReceipt,
     },
     reservation,
   };
@@ -212,7 +194,7 @@ describe("registry host-local inference authority", () => {
         { verifiedCreate: verified },
       ),
     ).toThrow(
-      label === "gateway port" ? /policy creation receipt does not match/u : /reservation changed/u,
+      label === "gateway port" ? /Cannot publish a sandbox registration/u : /reservation changed/u,
     );
   });
 
@@ -305,7 +287,6 @@ describe("registry host-local inference authority", () => {
         hostLocalInferenceProvenance: undefined,
       }),
     ).toBe(false);
-    expect(registry.updateSandbox("llama-stable", { policies: ["baseline"] })).toBe(true);
     expect(registry.getSandbox("llama-stable")).toMatchObject(route);
   });
 

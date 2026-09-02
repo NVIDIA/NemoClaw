@@ -458,6 +458,10 @@ runner.run = (command, options = {}) => {
   }
   return createdSandbox.run(command) ?? { status: 0, stdout: "", stderr: "" };
 };
+const doctorHostCommand = require(${source("src/lib/actions/sandbox/doctor-host-command.ts")});
+replace(doctorHostCommand, "captureHostCommand", (command, args) =>
+  runner.run([command, ...args]),
+);
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
@@ -517,7 +521,7 @@ runner.runCaptureEx = (command) => {
 };
 
 const registry = require(${source("src/lib/state/registry.ts")});
-const sourceEntry = recreate ? fixtureMocks.managedSandboxPolicyReceiptFixture({
+const sourceEntry = recreate ? fixtureMocks.sandboxLifecycleFixture({
   name: sandboxName,
   agent: "hermes",
   gpuEnabled: false,
@@ -839,12 +843,14 @@ function assertManagedLaunch(
   } else {
     expect(
       result.payload.runnerCommands.some((command) =>
-        command.includes(`sandbox get ${bootstrapRequest?.sandboxName}`),
+        command.includes(`sandbox get -g nemoclaw ${bootstrapRequest?.sandboxName}`),
       ),
     ).toBe(true);
     expect(
       result.payload.runnerCommands.some((command) =>
-        command.includes(`sandbox exec --name ${bootstrapRequest?.sandboxName} -- true`),
+        command.includes(
+          `sandbox exec -g nemoclaw --name ${bootstrapRequest?.sandboxName} -- true`,
+        ),
       ),
     ).toBe(true);
   }

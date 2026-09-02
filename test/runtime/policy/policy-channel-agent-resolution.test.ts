@@ -30,7 +30,6 @@ registry.registerSandbox({ name: "egress-only", agent: "openclaw", policies: [] 
 registry.registerSandbox({
   name: "slack-configured",
   agent: "openclaw",
-  policies: [],
   messaging: {
     schemaVersion: 1,
     plan: makeMessagingPlan({ sandboxName: "slack-configured", channels: ["slack"] }),
@@ -80,7 +79,6 @@ const policies = require(${POLICIES_PATH});
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 const channelPreset = policies.loadPresetForSandbox("deepagents-sandbox", "telegram");
 const centralPreset = policies.loadPresetForSandbox("deepagents-sandbox", "npm");
@@ -101,6 +99,32 @@ process.stdout.write("__RESULT__" + JSON.stringify({
     expect(payload.channelPreset).toBeNull();
     expect(payload.centralPresetHasNpmPolicy).toBe(true);
     expect(result.stderr).not.toContain("Preset not found");
+  });
+
+  it("loadPresetForSandbox fails closed when WeChat policy input is invalid (#10606)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-policy-input-"));
+    const script = String.raw`
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({
+  name: "wechat-invalid",
+  agent: "openclaw",
+});
+process.stdout.write("__RESULT__" + JSON.stringify({
+  preset: policies.loadPresetForSandbox("wechat-invalid", "wechat", {
+    messagingConfig: { WECHAT_BASE_URL: "https://idc-3.weixin.qq.com.evil.example" },
+  }),
+}));
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.split("__RESULT__")[1].trim())).toEqual({ preset: null });
   });
 
   it("gateway preset matching skips unsupported Deep Agents messaging policies without lookup noise (#6185)", () => {
@@ -128,7 +152,6 @@ const policies = require(${POLICIES_PATH});
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 const gatewayPresets = policies.getGatewayPresets("deepagents-sandbox");
 process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
@@ -153,7 +176,6 @@ const policies = require(${POLICIES_PATH});
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 const names = policies.listSetupPolicyPresets("deepagents-sandbox").map((preset) => preset.name);
 process.stdout.write("__RESULT__" + JSON.stringify({ names }));
@@ -189,7 +211,6 @@ process.exit = (code) => { throw new Error("EXIT:" + String(code)); };
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 (async () => {
   let exitCode = null;

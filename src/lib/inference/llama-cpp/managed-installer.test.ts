@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
-import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { ContainerEngine } from "../../adapters/container-engine";
 import type { PodmanContainerEngine } from "../../adapters/podman";
 import type { RuntimeProviderWorkloadProfile } from "../../onboard/runtime-provider/contract";
@@ -447,7 +446,7 @@ describe("managed llama.cpp Docker authority", () => {
 });
 
 describe("managed llama.cpp installer", () => {
-  it("stops after acquisition when policy authority refuses activation (#9833)", async () => {
+  it("stops after acquisition when sandbox identity refuses activation (#9833)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
     const paths = managedLlamaCppStatePaths(homeDir);
@@ -455,32 +454,33 @@ describe("managed llama.cpp installer", () => {
     harness.images.add(selected.recipe.spec.runtime.image);
     harness.images.add(selected.recipe.spec.readiness.probeImage);
     const lifecycle = dormantManagedLifecycle();
-    const revalidatePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new PolicyAuthorityRefusalError(
-          "External policy authority must supply the managed llama.cpp entry.",
-        );
+        throw new Error("Sandbox identity changed before the managed llama.cpp entry.");
       });
 
-    await expect(
-      installManagedLlamaCpp(selected, {
-        sandboxName: "spark-agent",
-        homeDir,
-        runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
-        verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
-        checkPort: vi.fn(async () => ({ ok: true })),
-        log: vi.fn(),
-        revalidatePolicyRequirements,
-      }),
-    ).rejects.toBeInstanceOf(PolicyAuthorityRefusalError);
+    const result = await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
+      verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log: vi.fn(),
+      revalidateSandboxIdentity,
+    });
 
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(result).toEqual({
+      ok: false,
+      reason: "Sandbox identity changed before the managed llama.cpp entry.",
+    });
+
+    expect(revalidateSandboxIdentity).toHaveBeenNthCalledWith(
       1,
       "reserve the managed llama.cpp runtime",
     );
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(revalidateSandboxIdentity).toHaveBeenNthCalledWith(
       2,
       "activate the managed llama.cpp runtime",
     );
@@ -510,13 +510,11 @@ describe("managed llama.cpp installer", () => {
     harness.images.add(selected.recipe.spec.runtime.image);
     harness.images.add(selected.recipe.spec.readiness.probeImage);
     const lifecycle = dormantManagedLifecycle();
-    const revalidatePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new PolicyAuthorityRefusalError(
-          "External policy authority must supply the managed llama.cpp entry.",
-        );
+        throw new Error("Sandbox identity changed before the managed llama.cpp entry.");
       });
 
     await expect(
@@ -525,15 +523,15 @@ describe("managed llama.cpp installer", () => {
         runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
         verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
         checkPort: vi.fn(async () => ({ ok: true })),
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toBeInstanceOf(PolicyAuthorityRefusalError);
+    ).rejects.toThrow("Sandbox identity changed before the managed llama.cpp entry.");
 
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(revalidateSandboxIdentity).toHaveBeenNthCalledWith(
       1,
       "inspect the managed llama.cpp runtime",
     );
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(revalidateSandboxIdentity).toHaveBeenNthCalledWith(
       2,
       "recover the managed llama.cpp runtime",
     );

@@ -12,6 +12,7 @@ import {
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -19,6 +20,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { test as e2eTest, expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import { redactString } from "../fixtures/redaction.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   type McpBridgeShard,
@@ -57,14 +59,15 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
+  readConcurrentMcpStatusAndConfirmHermesRegistration,
   restartBridgeWithoutHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
 import {
+  applyMcpHostPolicyEdit,
   buildMcpDnsRebindingProbeScript,
-  captureManagedMcpPolicy,
   expectExitNonZero,
   hostAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
@@ -89,7 +92,6 @@ import {
 } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
-
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
 const DEEPAGENTS_SANDBOX_NAME = process.env.NEMOCLAW_MCP_DEEPAGENTS_SANDBOX_NAME ?? "e2e-mcp-dcode";
@@ -109,7 +111,6 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 }
 const test = mcpBridgeShardTest("openclaw");
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
-
 function expectManagedImageQualificationReceipt(sandboxName: string, agent: McpAgent): void {
   const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
     sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
@@ -119,7 +120,6 @@ function expectManagedImageQualificationReceipt(sandboxName: string, agent: McpA
     workload: registry.sandboxes?.[sandboxName]?.workload,
   });
 }
-
 async function onboardAgent(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -185,6 +185,7 @@ async function assertSecretAbsentFromSandbox(
 }
 async function addBridgeAndReadStatus(
   host: HostCliClient,
+  sandbox: SandboxClient,
   options: {
     sandboxName: string;
     mcpUrl: string;
@@ -192,6 +193,7 @@ async function addBridgeAndReadStatus(
     artifactPrefix: string;
   },
 ): Promise<string> {
+  await applyMcpHostPolicyEdit(sandbox, options);
   const add = await host.nemoclaw(
     [
       options.sandboxName,
@@ -265,6 +267,7 @@ async function addBridgeAndReadStatus(
 async function assertConcurrentAddSerialized(
   host: HostCliClient,
   cleanup: CleanupRegistry,
+  artifacts: ArtifactSink, sandbox: SandboxClient,
   options: {
     sandboxName: string;
     mcpUrl: string;
@@ -305,19 +308,20 @@ async function assertConcurrentAddSerialized(
   const rejected = attempts.filter((result) => result.exitCode !== 0);
   expect(successful).toHaveLength(1);
   expect(rejected).toHaveLength(1);
-  const status = await host.nemoclaw(
-    [options.sandboxName, "mcp", "status", CONCURRENT_SERVER_NAME, "--json"],
-    {
-      artifactName: `${options.artifactPrefix}-mcp-concurrent-add-coherent-status`,
-      env,
-      redactionValues: [HOST_SECRET],
-      timeoutMs: 60_000,
-    },
-  );
+  const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
+    clients: { artifacts, host, sandbox },
+    committedAddResult: successful[0]!,
+    credentialEnvName: "FAKE_MCP_SECRET",
+    env,
+    redactionValues: [HOST_SECRET],
+    scenario: options,
+    server: CONCURRENT_SERVER_NAME,
+  });
+  const status = statusObservation.result;
   expectExitZero(status, `${options.artifactPrefix} concurrent add leaves one coherent bridge`);
   expect(JSON.parse(status.stdout)).toMatchObject({
     server: CONCURRENT_SERVER_NAME,
-    url: options.mcpUrl,
+    url: redactString(options.mcpUrl, [HOST_SECRET]),
     support: { adapter: options.expectedAdapter },
     env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
     provider: {
@@ -327,8 +331,8 @@ async function assertConcurrentAddSerialized(
       credentialReady: true,
     },
     policy: { registryPresent: true, gatewayPresent: true },
-    adapter: { registered: true },
   });
+  expect(statusObservation.registered).toBe(true);
   const duplicateRejection = await retryAfterHermesRestartTransportFailure({
     adapter: options.expectedAdapter,
     committedBridgeVerified: true,
@@ -473,6 +477,7 @@ async function removeBridgeAndAssertEmpty(
   });
   expectExitZero(policy, `${options.artifactPrefix} policy after remove`);
   expect(resultText(policy)).not.toMatch(/mcp[-_]bridge[-_]fake/);
+  expect(resultText(policy)).toContain("mcp_host_edit_e2e");
   const entry: McpBridgeEntry = {
     server: SERVER_NAME,
     agent: options.agent,
@@ -799,14 +804,14 @@ test("mcp-bridge", {
   );
 
   progress.phase("configure bridge and enforce endpoint boundaries");
-  await assertConcurrentAddSerialized(host, cleanup, {
+  await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
     mcpUrl,
     expectedAdapter: "mcporter",
     artifactPrefix: "openclaw",
   });
 
-  const providerName = await addBridgeAndReadStatus(host, {
+  const providerName = await addBridgeAndReadStatus(host, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
     mcpUrl,
     expectedAdapter: "mcporter",
@@ -1121,13 +1126,13 @@ mcpBridgeShardTest("hermes")(
       cleanupMcpBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
     );
     progress.phase("configure and inspect the Hermes MCP bridge");
-    await assertConcurrentAddSerialized(host, cleanup, {
+    await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    const providerName = await addBridgeAndReadStatus(host, {
+    const providerName = await addBridgeAndReadStatus(host, sandbox, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "hermes-config",
@@ -1377,14 +1382,14 @@ mcpBridgeShardTest("deepagents")(
     );
 
     progress.phase("configure and inspect the Deep Agents MCP bridge");
-    await assertConcurrentAddSerialized(host, cleanup, {
+    await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "deepagents-config",
       artifactPrefix: "deepagents",
     });
 
-    const providerName = await addBridgeAndReadStatus(host, {
+    const providerName = await addBridgeAndReadStatus(host, sandbox, {
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "deepagents-config",

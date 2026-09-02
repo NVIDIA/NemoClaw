@@ -13,7 +13,6 @@ import {
 
 const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
-  "test/e2e/support/cli-artifact-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -262,13 +261,11 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
-      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
       "test/inference/managed/managed-base-image-contract.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
-      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ]);
@@ -293,7 +290,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/install/perl-critical-cve-remediation.test.ts",
-      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/inference/managed/validate-managed-base-index.test.ts",
@@ -354,10 +350,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/generation/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
+      "test/e2e/support/e2e-operations-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-openshell.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",

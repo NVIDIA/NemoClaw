@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -8,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   resolveGatewayRebuildAuthority: vi.fn(),
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell: mocks.captureOpenshell,
   runOpenshell: vi.fn(),
 }));
@@ -22,11 +28,18 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
+import type { RebuildManifest } from "../../state/sandbox";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
+  clearRebuildRecoveryBackup,
+  findRebuildRecoveryBackup,
   fingerprintRebuildRecreateTargetIntent,
+  isRebuildRecoveryCleanupOnly,
+  markRebuildRecoveryCleanupOnly,
   observeRebuildSandbox,
   openRebuildRecreateJournal,
+  recordRebuildRecoveryBackup,
+  retireRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 
 const SANDBOX_ID = "sbx-0d6f4c2a91";
@@ -37,7 +50,7 @@ const HOST_MOUNT = {
   sourceIdentity: { device: "66306", inode: "12345" },
 } as const;
 const PRE_HOST_MOUNT_FINGERPRINT =
-  "99603c8bf987561b783e2f38a1dcf260703537e5a680cae2198605ab13e181fe";
+  "831bd40537ec3112f056079c89476ef2d62ce30664d0d11573c98301de81139e";
 
 const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
@@ -61,6 +74,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   nonInteractive: true,
   recreateSandbox: true,
   authoritativeResumeConfig: true,
+  rebuildPolicySourcePath: "/tmp/current-policy.yaml",
   acceptThirdPartySoftware: true,
   agent: "langchain-deepagents-code",
   recreateProvider: "nvidia",
@@ -74,13 +88,13 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   targetGatewayName: "nemoclaw-9090",
   targetGatewayPort: 9090,
   onboardLockAlreadyHeld: true,
+  deferProcessExit: true,
   autoYes: true,
   toolDisclosure: "progressive",
   dcodeAutoApprovalMode: "disabled",
   dcodeAutoApprovalRequestedExplicitly: false,
   observabilityEnabled: true,
   observabilityRequestedExplicitly: true,
-  policyTier: "restricted",
   baseImageResolutionHint: null,
 };
 
@@ -122,7 +136,6 @@ describe("rebuild replacement target fingerprint", () => {
   it.each([
     { dcodeAutoApprovalMode: "thread-opt-in" },
     { endpointSource: "onboard" },
-    { policyTier: "balanced" },
     { recreateProvider: "compatible-endpoint" },
     { recreateModel: "model-b" },
     { recreatePreferredInferenceApi: "anthropic" },
@@ -539,4 +552,207 @@ describe("rebuild replacement journal", () => {
     );
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("planned");
   });
+});
+
+describe("rebuild replacement recovery backup", () => {
+  const transactionId = "11111111-1111-4111-8111-111111111111";
+  const otherTransactionId = "22222222-2222-4222-8222-222222222222";
+  let backupPath: string;
+  let manifest: RebuildManifest;
+
+  const identity = (selectedTransactionId = transactionId) => ({
+    sandboxName: "alpha",
+    agentName: "openclaw",
+    transactionId: selectedTransactionId,
+  });
+  const recordedIdentity = (selectedTransactionId = transactionId) => ({
+    ...identity(selectedTransactionId),
+    gatewayName: "nemoclaw-18080",
+    gatewayPort: 18_080,
+  });
+
+  beforeEach(() => {
+    backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-recovery-test-"));
+    manifest = {
+      version: 1,
+      sandboxName: "alpha",
+      timestamp: "2026-08-28T00-00-00-000Z",
+      agentType: "openclaw",
+      agentVersion: null,
+      expectedVersion: null,
+      stateDirs: [],
+      dir: "/sandbox/.openclaw",
+      backupPath,
+      blueprintDigest: null,
+    };
+  });
+
+  afterEach(() => {
+    fs.rmSync(backupPath, { recursive: true, force: true });
+  });
+
+  const deps = () => ({
+    listBackups: () => [{ ...manifest, snapshotVersion: 1 }],
+    validateManifest: (_name: string, _agent: string | null | undefined, value: RebuildManifest) =>
+      ({ ok: true, manifest: value }) as const,
+  });
+
+  const prepareUnsafeRecovery = () => {
+    const policy = [
+      "version: 1",
+      "process:",
+      "  environment:",
+      "    SERVICE_API_KEY: opaque-retained-credential",
+      "",
+    ].join("\n");
+    const sha256 = createHash("sha256").update(policy).digest("hex");
+    const file = `rebuild-policy-handoff.${sha256}.yaml`;
+    fs.writeFileSync(path.join(backupPath, file), policy, { mode: 0o600 });
+    manifest = { ...manifest, rebuildPolicyHandoff: { file, sha256 } };
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
+    return {
+      handoffPath: path.join(backupPath, file),
+      recordPath: path.join(backupPath, ".nemoclaw-rebuild-recovery.json"),
+    };
+  };
+
+  const corruptRecoveryRecord = {
+    "malformed JSON": (recordPath: string) => fs.writeFileSync(recordPath, "{", "utf8"),
+    "invalid schema": (recordPath: string) =>
+      fs.writeFileSync(recordPath, '{"schemaVersion":99}\n', "utf8"),
+    "invalid permissions": (recordPath: string) => fs.chmodSync(recordPath, 0o644),
+    "invalid ownership": () => {
+      const currentUid = process.getuid?.();
+      expect(currentUid).toBeTypeOf("number");
+      vi.spyOn(process, "getuid").mockReturnValue(Number(currentUid) + 1);
+    },
+  } satisfies Record<string, (recordPath: string) => void>;
+
+  it("binds, resolves, and clears one transaction backup", () => {
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
+
+    const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
+    expect(fs.statSync(recordPath).mode & 0o777).toBe(0o600);
+    expect(findRebuildRecoveryBackup(identity(), deps())).toEqual(
+      expect.objectContaining({ backupPath, timestamp: manifest.timestamp }),
+    );
+    expect(
+      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
+    ).toBe(false);
+
+    markRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps());
+    expect(
+      isRebuildRecoveryCleanupOnly({ ...identity(), backupManifest: manifest }, deps()),
+    ).toBe(true);
+
+    clearRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+    expect(fs.existsSync(recordPath)).toBe(false);
+  });
+
+  it("rejects another transaction and preserves the original binding", () => {
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
+
+    expect(() =>
+      recordRebuildRecoveryBackup(
+        { ...recordedIdentity(otherTransactionId), backupManifest: manifest },
+        deps(),
+      ),
+    ).toThrow("already belongs to another transaction");
+    expect(findRebuildRecoveryBackup(identity(), deps())).not.toBeNull();
+    expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
+  });
+
+  it("binds and retires a legacy unsafe handoff with no active journal (#10150)", () => {
+    const { handoffPath, recordPath } = prepareUnsafeRecovery();
+    const observePresence = vi.fn(() => "missing" as const);
+
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        {
+          sandboxName: "alpha",
+          transactionId: otherTransactionId,
+          confirmDataRecovered: true,
+        },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("No exact rebuild recovery record");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "beta", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("does not match sandbox 'beta'");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: false },
+        { ...deps(), observePresence },
+      ),
+    ).toThrow("requires --yes");
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence: () => "present" },
+      ),
+    ).toThrow(`Recovery remains at '${backupPath}'`);
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence, clearPolicyHandoff: () => false },
+      ),
+    ).toThrow(`Recovery remains at '${backupPath}'`);
+    expect(fs.existsSync(handoffPath)).toBe(true);
+    expect(fs.existsSync(recordPath)).toBe(true);
+
+    expect(
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), observePresence },
+      ),
+    ).toEqual({
+      backupPath,
+      gatewayName: "nemoclaw-18080",
+      transactionId,
+    });
+    expect(observePresence).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-18080",
+    });
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(fs.existsSync(recordPath)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).not.toHaveProperty("rebuildPolicyHandoff");
+  });
+
+  it.each(Object.entries(corruptRecoveryRecord))(
+    "reports and preserves the exact unsafe backup when its recovery marker has %s",
+    (_condition, corrupt) => {
+      const { handoffPath, recordPath } = prepareUnsafeRecovery();
+      corrupt(recordPath);
+      const observePresence = vi.fn(() => "missing" as const);
+      const clearPolicyHandoff = vi.fn(() => true);
+
+      expect(() =>
+        retireRebuildRecoveryBackup(
+          { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+          { ...deps(), observePresence, clearPolicyHandoff },
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          message: expect.stringContaining(`Recovery remains at '${backupPath}'`),
+        }),
+      );
+
+      expect(() =>
+        retireRebuildRecoveryBackup(
+          { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+          { ...deps(), observePresence, clearPolicyHandoff },
+        ),
+      ).toThrow(/Do not edit or remove the marker or retained policy handoff/);
+      expect(fs.existsSync(handoffPath)).toBe(true);
+      expect(fs.existsSync(recordPath)).toBe(true);
+      expect(observePresence).not.toHaveBeenCalled();
+      expect(clearPolicyHandoff).not.toHaveBeenCalled();
+    },
+  );
 });

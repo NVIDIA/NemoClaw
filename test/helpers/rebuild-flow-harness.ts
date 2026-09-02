@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, vi } from "vitest";
+import { cleanupPreparedRecoveryManifests } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import { type RebuildSandbox, snapshotEnv } from "./rebuild-flow-test-support";
 
 export * from "./rebuild-flow-test-support";
@@ -25,6 +26,7 @@ delete require.cache[requireDist.resolve(rebuildModulePath)];
 export const agentDefs = requireDist("../../agent/defs.js");
 export const agentOnboard = requireDist("../../agent/onboard.js");
 export const agentRuntime = requireDist("../../agent/runtime.js");
+export const agentForwardStop = requireDist("../../tunnel/agent-forward-stop.js");
 export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );
@@ -46,6 +48,8 @@ export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 export const policies = requireDist("../../policy/index.js");
+export const policyState = requireDist("../../adapters/openshell/policy-state.js");
+export const policyGet = requireDist("./policy-get.js");
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );
@@ -68,6 +72,7 @@ export const sandboxSession = requireDist("../../state/sandbox-session.js");
 export const sandboxState = requireDist("../../state/sandbox.js");
 export const sandboxVersion = requireDist("../../sandbox/version.js");
 export const shields = requireDist("../../shields/index.js");
+export const tempFiles = requireDist("../../onboard/temp-files.js");
 
 export function purgeRebuildModule(): void {
   delete require.cache[requireDist.resolve(rebuildModulePath)];
@@ -84,7 +89,54 @@ export function sourceSandboxGateway(argv: string[], verb: string): string | nul
     : null;
 }
 
+export function captureResolvedRebuildFixture(
+  argv: string[],
+  deletedSourceGateways: ReadonlySet<string>,
+) {
+  const livePolicy = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+  if (argv[0] === "policy" && argv.includes("--output")) {
+    const output = JSON.stringify({
+      scope: "sandbox",
+      sandbox: "alpha",
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "sha256:rebuild-policy",
+      active_version: 1,
+      policy: { version: 1, network_policies: { host_preserved: {} } },
+    });
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  if (argv[0] === "policy") {
+    const output = `Version: 1\nActive: 1\n---\n${livePolicy}`;
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  const probedGateway = sourceSandboxGateway(argv, "get");
+  const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+  return probedGateway && !deletedSourceGateways.has(probedGateway)
+    ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
+    : {
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "Error: sandbox alpha not found",
+      };
+}
+
 const harnessTempDirs: string[] = [];
+type HarnessRebuildBackup = ReturnType<typeof sandboxState.listBackups>[number];
+const harnessRebuildBackups: HarnessRebuildBackup[] = [];
+
+export function registerHarnessRebuildBackup(backup: HarnessRebuildBackup): void {
+  const existing = harnessRebuildBackups.findIndex(
+    (entry) => entry.backupPath === backup.backupPath,
+  );
+  if (existing >= 0) harnessRebuildBackups.splice(existing, 1);
+  harnessRebuildBackups.push(structuredClone(backup));
+}
+
+export function listHarnessRebuildBackups(): HarnessRebuildBackup[] {
+  return structuredClone(harnessRebuildBackups);
+}
 
 export function createHarnessTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -102,6 +154,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
     "NEMOCLAW_SANDBOX_NAME",
   ]);
   beforeEach(() => {
+    harnessRebuildBackups.splice(0);
     delete process.env.NEMOCLAW_SANDBOX_NAME;
     if (options.acceptThirdPartySoftware) {
       process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
@@ -115,6 +168,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
     for (const dir of harnessTempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+    cleanupPreparedRecoveryManifests();
     restoreRebuildFlowEnv();
   });
 }

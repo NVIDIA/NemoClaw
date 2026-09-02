@@ -141,11 +141,17 @@ function executeGenerateMatrixWithPlannerOutput(
 const DEFAULT_TEST_MATRIX: CredentialFreeTestMatrixRow[] = [
   {
     id: "alpha",
+    execution_id: "alpha-docker",
+    runtime_provider: "docker",
+    coverage_variant: "docker",
     file: "test/e2e/live/alpha.test.ts",
     project: "e2e-live",
   },
   {
     id: "beta",
+    execution_id: "beta-docker",
+    runtime_provider: "docker",
+    coverage_variant: "docker",
     file: "test/e2e/live/beta.test.ts",
     project: "e2e-live",
   },
@@ -183,6 +189,7 @@ async function executeReport(options: {
   apiJobs?: ReportApiJob[];
   testMatrix?: CredentialFreeTestMatrixRow[];
   jobs?: string;
+  targets?: string;
   needs?: ReportNeeds;
   paginateError?: Error;
 }): Promise<{
@@ -194,6 +201,7 @@ async function executeReport(options: {
     apiJobs = [],
     testMatrix = DEFAULT_TEST_MATRIX,
     jobs = testMatrix.map(({ id }) => id).join(","),
+    targets = "",
     needs = {
       "generate-matrix": { result: "success" },
       "shared-e2e": { result: "failure" },
@@ -213,7 +221,7 @@ async function executeReport(options: {
     EXPLICIT_ONLY_JOBS: "",
     TEST_MATRIX: JSON.stringify(testMatrix),
     JOB_PR_NUMBER: "42",
-    JOB_TARGETS: "",
+    JOB_TARGETS: targets,
     JOBS: jobs,
   };
 
@@ -442,32 +450,32 @@ it.each([
     label: "target",
     requestedLine: "**Requested targets:** `hermes-e2e`",
   },
-])("reports the canonical Hermes result for a retired dashboard $label selector", ({
-  env,
-  requestedLine,
-}) => {
-  const report = renderE2eReport({
-    needs: {
-      "generate-matrix": { result: "success" },
-      "hermes-e2e": { result: "success" },
-    },
-    env: {
-      EXPLICIT_ONLY_JOBS: "",
-      TEST_MATRIX: "[]",
-      JOB_PR_NUMBER: "42",
-      ...env,
-    },
-    apiJobs: [{ conclusion: "success", name: "hermes-e2e", status: "completed" }],
-    apiJobsLoaded: true,
-    context: REPORT_CONTEXT,
-  });
+])(
+  "reports the canonical Hermes result for a retired dashboard $label selector",
+  ({ env, requestedLine }) => {
+    const report = renderE2eReport({
+      needs: {
+        "generate-matrix": { result: "success" },
+        "hermes-e2e": { result: "success" },
+      },
+      env: {
+        EXPLICIT_ONLY_JOBS: "",
+        TEST_MATRIX: "[]",
+        JOB_PR_NUMBER: "42",
+        ...env,
+      },
+      apiJobs: [{ conclusion: "success", name: "hermes-e2e", status: "completed" }],
+      apiJobsLoaded: true,
+      context: REPORT_CONTEXT,
+    });
 
-  expect(report.fatal).toBeUndefined();
-  expect(report.body).toContain(requestedLine);
-  expect(report.body).toContain("| hermes-e2e | ✅ success | — |");
-  expect(report.body).not.toContain("| hermes-dashboard |");
-  expect(report.body).not.toContain("not reported");
-});
+    expect(report.fatal).toBeUndefined();
+    expect(report.body).toContain(requestedLine);
+    expect(report.body).toContain("| hermes-e2e | ✅ success | — |");
+    expect(report.body).not.toContain("| hermes-dashboard |");
+    expect(report.body).not.toContain("not reported");
+  },
+);
 
 it("fails closed on an invalid test matrix without rendering a comment", () => {
   const report = renderE2eReport({
@@ -608,26 +616,54 @@ it("reports cancelled tests alongside passing tests as a partial pass", () => {
   expect(report.body).toContain("⚠️ Some tests cancelled — partial pass");
 });
 
-it("reports empty selectors without claiming an E2E was omitted", () => {
-  const report = renderE2eReport({
+it("warns when empty selectors produce no E2E results", async () => {
+  const { body, setFailed, warning } = await executeReport({
+    testMatrix: [],
+    jobs: "",
+    targets: "mcp-bridge-dev",
     needs: {
       "generate-matrix": { result: "success" },
     },
-    env: {
-      EXPLICIT_ONLY_JOBS: "mcp-bridge-dev",
-      TEST_MATRIX: "[]",
-      JOB_PR_NUMBER: "42",
-      JOB_TARGETS: "",
-      JOBS: "",
-    },
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(warning).toHaveBeenCalledWith(
+    "No E2E target reported a result. The check remains successful but provides no affirmative E2E qualification evidence.",
+  );
+  expect(body).not.toContain("jobs skipped");
+  expect(body).not.toContain("All tests selected by empty selectors passed");
+  expect(body).toContain("⚠️ No E2E results reported");
+  expect(body).toContain("**Requested targets:** `mcp-bridge-dev`");
+});
+
+it("preserves a matrix-planning failure in a selective report", () => {
+  const report = renderE2eReport({
+    needs: { "generate-matrix": { result: "failure" } },
+    env: { TEST_MATRIX: "[]", JOB_TARGETS: "mcp-bridge-dev" },
     apiJobs: [],
     apiJobsLoaded: true,
     context: REPORT_CONTEXT,
   });
 
-  expect(report.body).not.toContain("jobs skipped");
-  expect(report.body).toContain("✅ All tests selected by empty selectors passed");
-  expect(report.body).toContain("**Requested targets:** _(no target selector)_");
+  expect(report.body).toContain(`| [generate-matrix](${RUN_URL}) | ❌ failure | — |`);
+  expect(report.body).toContain("❌ Some tests failed");
+  expect(report.body).not.toContain("No E2E results reported");
+});
+
+it("distinguishes unavailable job data from no reported results", async () => {
+  const { body, warning } = await executeReport({
+    testMatrix: [],
+    jobs: "",
+    targets: "mcp-bridge-dev",
+    needs: { "generate-matrix": { result: "success" } },
+    paginateError: new Error("API unavailable"),
+  });
+
+  expect(warning).toHaveBeenCalledWith(
+    "Could not load per-test results; reporting them as unknown: API unavailable",
+  );
+  expect(body).toContain("⚠️ E2E results unavailable");
+  expect(body).not.toContain("No E2E results reported");
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
@@ -862,7 +898,14 @@ it(
       expect(generated.status, generated.stderr || generated.stdout).toBe(0);
       const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
       const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
-      expect(testMatrix).toEqual([selected]);
+      expect(testMatrix).toEqual([
+        {
+          ...selected,
+          execution_id: `${selected.id}-docker`,
+          runtime_provider: "docker",
+          coverage_variant: "docker",
+        },
+      ]);
 
       const { body, setFailed } = await executeReport({
         apiJobs: [

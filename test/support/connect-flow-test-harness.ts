@@ -46,9 +46,11 @@ export type ConnectHarness = {
   errorSpy: MockInstance;
   logSpy: MockInstance;
   inspectLaunchReadinessSpy: MockInstance;
+  inspectHermesPortableOllamaReadinessRuntimeSpy: MockInstance;
   launchReadinessMutationGateSpy: MockInstance;
   publishLaunchReadinessSpy: MockInstance;
   recoverHermesPortableOllamaInferenceSpy: MockInstance;
+  verifyHermesPortableLaunchForwardsSpy: MockInstance;
   settlePortablePairingSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
@@ -56,6 +58,7 @@ export type ConnectHarness = {
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
   requalifyPortableAgentAuthoritySpy: MockInstance;
+  qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
@@ -83,6 +86,7 @@ export type ConnectHarnessOptions = {
     | "runtime-restoration-unproved"
     | "registry-restoration-unproved"
     | "recovery-failed";
+  hermesReadinessRuntimeDisposition?: "running-current" | "stopped";
   hermesInferenceRecoveryPhase?:
     | "REGISTRY_PREPARATION_AUTHORITY"
     | "REGISTRY_PREPARATION_START_DISPATCH"
@@ -245,6 +249,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const assertHermesPortableOperatingCommandCurrentSpy = vi.fn();
   vi.spyOn(gatewayState, "qualifyHermesPortableOperatingCommandAuthority").mockReturnValue({
     assertCurrent: assertHermesPortableOperatingCommandCurrentSpy,
+    assertTransactionCurrent: assertHermesPortableOperatingCommandCurrentSpy,
+    receipt: {} as never,
     env: {
       HOME: "/home/test",
       XDG_CONFIG_HOME: "/home/test/.config",
@@ -252,6 +258,22 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     },
     executablePath: "/usr/bin/openshell",
   });
+  const qualifyHermesPortableAcceptedReadinessAuthoritySpy = vi
+    .spyOn(gatewayState, "qualifyHermesPortableAcceptedReadinessAuthority")
+    .mockReturnValue({
+      kind: "current",
+      commandAuthority: {
+        assertCurrent: assertHermesPortableOperatingCommandCurrentSpy,
+        assertTransactionCurrent: assertHermesPortableOperatingCommandCurrentSpy,
+        receipt: {} as never,
+        env: {
+          HOME: "/home/test",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+        },
+        executablePath: "/usr/bin/openshell",
+      },
+    });
   vi.spyOn(gatewayState, "assertHermesPortableLifecycleForConnect").mockImplementation(
     () => undefined,
   );
@@ -321,6 +343,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       input.prepareProbeDependency?.().release();
       return "reused";
     }) as never);
+  const hermesReadinessRuntimeCurrentSpy = vi.fn();
+  const inspectHermesPortableOllamaReadinessRuntimeSpy = vi
+    .spyOn(hermesInferenceRecovery, "inspectHermesPortableInferenceReadinessRuntimeForConnectProbe")
+    .mockReturnValue({
+      kind: options.hermesReadinessRuntimeDisposition ?? "stopped",
+      assertCurrent: hermesReadinessRuntimeCurrentSpy,
+    });
   const requalifyPortableAgentAuthoritySpy = vi
     .spyOn(gatewayState, "requalifyPortableAgentSandboxAuthority")
     .mockReturnValue({ kind: "not-hermes" });
@@ -441,6 +470,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
+  const verifyHermesPortableLaunchForwardsSpy = vi
+    .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
+    .mockReturnValue({ kind: "healthy" });
   const recoverPortableDemoLifecycleSpy = vi
     .spyOn(gatewayState, "recoverPortableDemoSandboxLifecycleForConnect")
     .mockReturnValue(options.portableRecoveryResult ?? { kind: "not-installed" });
@@ -477,7 +509,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         ? portableDisposition.liveIdentityFingerprint
         : undefined,
     gpuEnabled: false,
-    policies: [],
     ...(portableDisposition.kind === "hermes"
       ? {
           openshellDriver: "docker",
@@ -497,7 +528,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
               provider: null,
               model: null,
               gpuEnabled: false,
-              policies: [],
               ...candidate,
             },
       )
@@ -562,15 +592,18 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     errorSpy,
     logSpy,
     inspectLaunchReadinessSpy,
+    inspectHermesPortableOllamaReadinessRuntimeSpy,
     launchReadinessMutationGateSpy,
     publishLaunchReadinessSpy,
     recoverHermesPortableOllamaInferenceSpy,
+    verifyHermesPortableLaunchForwardsSpy,
     preflightVllmSpy,
     probeLocalProviderHealthSpy,
     probeOllamaAuthProxyHealthSpy,
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
     requalifyPortableAgentAuthoritySpy,
+    qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
     registryEntries,
     resolveAgentConfigSpy,

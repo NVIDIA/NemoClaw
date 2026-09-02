@@ -208,6 +208,37 @@ describe("networkPoliciesHasAllowedIps prototype-chain guard (#6072)", () => {
   });
 });
 
+describe("applyPresetContent private endpoint guard", () => {
+  it.each(["127.0.0.1", "169.254.169.254", "metadata.google.internal"])(
+    "rejects an untrusted private or special-use endpoint host %s before side effects",
+    (host) => {
+      const content = `preset:
+  name: private-host
+network_policies:
+  service:
+    endpoints:
+      - host: "${host}"
+        port: 80
+        protocol: rest
+`;
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      expect(
+        applyPresetContent("test-sandbox", "private-host", content, {
+          custom: { sourcePath: "private-host.yaml" },
+        }),
+      ).toBe(false);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+        ),
+      );
+
+      error.mockRestore();
+    },
+  );
+});
+
 describe("applyPresetContent allowed_ips guard (#6073)", () => {
   it("rejects a custom preset when the full YAML document is invalid (#9406)", () => {
     const content = `preset: corp
@@ -251,7 +282,7 @@ network_policies:
     ).toBe(false);
   });
 
-  it("rejects a forged content-digest receipt before any side effects (#8176)", () => {
+  it("rejects a forged process-local pin capability before any side effects (#8176)", () => {
     const content = `preset:
   name: forged-private
 network_policies:

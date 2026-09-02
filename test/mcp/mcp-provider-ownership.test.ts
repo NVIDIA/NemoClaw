@@ -88,11 +88,6 @@ registry.registerSandbox({
   agent: "legacy-disabled",
   mcp: { bridges: { fake: entry } },
 });
-registry.addCustomPolicy("alpha", {
-  name: entry.policyName,
-  content: "network_policies: {}\\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("alpha", "fake").then(
   () => process.exit(9),
@@ -189,11 +184,6 @@ registry.registerSandbox({
   name: "alpha",
   agent: "legacy-disabled",
   mcp: { bridges: { fake: entry } },
-});
-registry.addCustomPolicy("alpha", {
-  name: entry.policyName,
-  content: "network_policies: {}\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("alpha", "fake").then(
@@ -618,7 +608,8 @@ bridge.removeMcpBridge("alpha", "fake", { force: true }).then(
       bridgePresent: boolean;
     };
     expect(payload.message).toContain("registry entry was preserved");
-    expect(result.stderr).toContain("Expected stable provider ID");
+    expect(result.stderr).toContain("MCP force cleanup reported");
+    expect(result.stderr).not.toContain("Expected stable provider ID");
     expect(payload.calls.some((call) => call === "provider get alpha-mcp-fake")).toBe(true);
     expect(payload.bridgePresent).toBe(true);
   });

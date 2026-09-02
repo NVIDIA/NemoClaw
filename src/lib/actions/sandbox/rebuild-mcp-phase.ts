@@ -157,10 +157,8 @@ export async function restoreMcpAfterRebuild(
     await restoreMcpBridgesAfterRebuild(sandboxName, entries);
     console.log(`  ${G}✓${R} MCP bridges restored`);
     return true;
-  } catch (error) {
-    console.error(
-      `  ${YW}⚠${R} MCP bridge restore incomplete: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  } catch {
+    console.error(`  ${YW}⚠${R} MCP bridge restore incomplete; inspect redacted diagnostics.`);
     return false;
   }
 }
@@ -171,7 +169,6 @@ export function postRestoreCompleted(status: {
   mcpBridgeRestoreUnverified: boolean;
   mutableConfigHashRefreshUnverified: boolean;
   mutablePermsRepairUnverified: boolean;
-  policyPresetRestoreIncomplete: boolean;
   restoreSucceeded: boolean;
 }): boolean {
   return (
@@ -180,8 +177,7 @@ export function postRestoreCompleted(status: {
     !status.mutablePermsRepairUnverified &&
     !status.mutableConfigHashRefreshUnverified &&
     !status.messagingHostForwardUnverified &&
-    !status.mcpBridgeRestoreUnverified &&
-    !status.policyPresetRestoreIncomplete
+    !status.mcpBridgeRestoreUnverified
   );
 }
 
