@@ -51,6 +51,7 @@ import {
   type StationExpressResumeIntent,
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
+import type { LockFileGeneration } from "./lock-generation/storage";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
@@ -65,7 +66,6 @@ import {
   retainedSandboxRecoveryFile,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
-  type LockObservation,
   type OnboardLockDisposition,
   type OnboardLockRecord,
   type RetainedSandboxRecoveryRecord,
@@ -1402,7 +1402,7 @@ export function clearSession(): void {
 
 interface LockFileSnapshot {
   disposition: OnboardLockDisposition;
-  observation: LockObservation;
+  observation: LockFileGeneration;
 }
 
 function readLockFileSnapshot(): LockFileSnapshot {
@@ -1421,8 +1421,6 @@ function readLockFileSnapshot(): LockFileSnapshot {
         return {
           disposition: { state: "settling" },
           observation: {
-            owner: null,
-            mtimeMs: stat.mtimeMs,
             dev: stat.dev,
             ino: stat.ino,
             reclaimable: true,
@@ -1434,8 +1432,6 @@ function readLockFileSnapshot(): LockFileSnapshot {
     return {
       disposition: classifyOnboardLockContents(contents, stat.mtimeMs),
       observation: {
-        owner: null,
-        mtimeMs: stat.mtimeMs,
         dev: stat.dev,
         ino: stat.ino,
         reclaimable: true,
@@ -1524,12 +1520,10 @@ function writeCompleteOnboardLockPayload(fd: number, payload: string): void {
 }
 
 function closeAndDiscardIncompleteOnboardLockGeneration(fd: number): void {
-  let observation: LockObservation | null = null;
+  let observation: LockFileGeneration | null = null;
   try {
     const stat = fs.fstatSync(fd);
     observation = {
-      owner: null,
-      mtimeMs: stat.mtimeMs,
       dev: stat.dev,
       ino: stat.ino,
       reclaimable: true,
@@ -1545,10 +1539,7 @@ function closeAndDiscardIncompleteOnboardLockGeneration(fd: number): void {
   }
   if (observation === null) return;
   try {
-    reclaimLockFileGenerationSync(
-      LOCK_FILE,
-      observation,
-    );
+    reclaimLockFileGenerationSync(LOCK_FILE, observation);
   } catch (cleanupError) {
     process.emitWarning(
       `Failed to retire incomplete onboarding lock '${LOCK_FILE}': ${String(cleanupError)}`,

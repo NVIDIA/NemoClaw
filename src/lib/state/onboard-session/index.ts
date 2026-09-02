@@ -3,7 +3,6 @@
 
 export { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 export { reclaimLockFileGenerationSync } from "../lock-generation/storage";
-export type { LockObservation } from "../mcp-lifecycle-lock-identity";
 export {
   classifyOnboardLockContents,
   createOnboardLockRecord,
