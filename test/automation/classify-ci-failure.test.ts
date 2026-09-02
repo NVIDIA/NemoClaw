@@ -312,6 +312,10 @@ describe("CI failure classifier process", () => {
       "request: Api-Key: api-header-secret",
       "cOoKiE: log-cookie-secret=plain",
       "> sEt-CoOkIe: log-set-cookie-secret=prefixed; Secure",
+      "< Set-Cookie: log-response-cookie-secret=prefixed; HttpOnly",
+      "< Cookie: log-response-request-cookie-secret=prefixed",
+      "< Authorization: Bearer log-response-auth-secret",
+      "< API-Key: log-response-api-key-secret",
       "request: COOKIE: log-request-cookie-secret=prefixed",
       "unrelated diagnostic text",
       "https://user:password@example.test/path",
@@ -326,12 +330,16 @@ describe("CI failure classifier process", () => {
     const r = run(known.env);
     expect(r.status).toBe(0);
     expect(r.stdout).not.toMatch(
-      /full authorization|x-header-secret|api-header-secret|log-cookie-secret|log-set-cookie-secret|log-request-cookie-secret|user:password|AKIAEXAMPLE|token-value|secret-value|password-value|api-key-value|ghp_alpha|gho_beta|ghu_gamma|ghs_delta|ghr_epsilon|github_pat_zeta/,
+      /full authorization|x-header-secret|api-header-secret|log-cookie-secret|log-set-cookie-secret|log-response-cookie-secret|log-response-request-cookie-secret|log-response-auth-secret|log-response-api-key-secret|log-request-cookie-secret|user:password|AKIAEXAMPLE|token-value|secret-value|password-value|api-key-value|ghp_alpha|gho_beta|ghu_gamma|ghs_delta|ghr_epsilon|github_pat_zeta/,
     );
     expect(r.stdout).toContain("> X-API-Key: [REDACTED]");
     expect(r.stdout).toContain("request: Api-Key: [REDACTED]");
     expect(r.stdout).toContain("cOoKiE: [REDACTED]");
     expect(r.stdout).toContain("> sEt-CoOkIe: [REDACTED]");
+    expect(r.stdout).toContain("< Set-Cookie: [REDACTED]");
+    expect(r.stdout).toContain("< Cookie: [REDACTED]");
+    expect(r.stdout).toContain("< Authorization: [REDACTED]");
+    expect(r.stdout).toContain("< API-Key: [REDACTED]");
     expect(r.stdout).toContain("request: COOKIE: [REDACTED]");
     expect(r.stdout).toContain("unrelated diagnostic text");
     expect(r.stdout.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(13);
@@ -420,7 +428,7 @@ describe("CI failure classifier process", () => {
     const item = fixture("ordinary output", {
       exitCode: 1,
       error:
-        "> X-API-Key: artifact-error-key\nrequest: Set-Cookie: artifact-error-cookie=opaque; HttpOnly\nunrelated artifact error\ndownload failed https://storage.test/object?X-Amz-Credential=error-credential&X-Amz-Signature=error-signature&X-Amz-Security-Token=error-session&keep=error-visible",
+        "> X-API-Key: artifact-error-key\n< Set-Cookie: artifact-response-cookie-secret=opaque; HttpOnly\nrequest: Set-Cookie: artifact-error-cookie=opaque; HttpOnly\nunrelated artifact error\ndownload failed https://storage.test/object?X-Amz-Credential=error-credential&X-Amz-Signature=error-signature&X-Amz-Security-Token=error-session&keep=error-visible",
       command:
         "request: Api-Key: artifact-command-key\n> COOKIE: artifact-command-cookie=opaque\nunrelated artifact command\ncurl 'https://storage.test/object?X-Goog-Credential=command-credential&X-Goog-Signature=command-google-signature&sig=command-signature&access_token=command-access&token=command-token&keep=command-visible'",
     });
@@ -428,6 +436,7 @@ describe("CI failure classifier process", () => {
     expect(result.status, result.stderr).toBe(0);
     const failure = JSON.parse(result.stdout).artifact.failures[0];
     expect(failure.error).toContain("> X-API-Key: [REDACTED]");
+    expect(failure.error).toContain("< Set-Cookie: [REDACTED]");
     expect(failure.error).toContain("request: Set-Cookie: [REDACTED]");
     expect(failure.error).toContain("unrelated artifact error");
     expect(failure.command).toContain("request: Api-Key: [REDACTED]");
@@ -440,7 +449,7 @@ describe("CI failure classifier process", () => {
       "?X-Goog-Credential=[REDACTED]&X-Goog-Signature=[REDACTED]&sig=[REDACTED]&access_token=[REDACTED]&token=[REDACTED]&keep=command-visible",
     );
     expect(result.stdout).not.toMatch(
-      /artifact-error-key|artifact-error-cookie|artifact-command-key|artifact-command-cookie|error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
+      /artifact-error-key|artifact-response-cookie-secret|artifact-error-cookie|artifact-command-key|artifact-command-cookie|error-credential|error-signature|error-session|command-credential|command-google-signature|command-signature|command-access|command-token/,
     );
   });
   test("redacts and bounds dynamic GitHub job metadata", () => {
@@ -702,19 +711,54 @@ describe("CI failure classifier process", () => {
         : [],
     ).toEqual([]);
   });
-  test("skips malformed result JSON while retaining valid artifact failures", () => {
+  test("reports bounded malformed result evidence while retaining valid artifact failures", () => {
+    const pathSecret = "malformed-path-secret";
+    const malformed = Array.from({ length: 25 }, (_, index) => ({
+      name: `results/TOKEN=${pathSecret}-${index}.result.json`,
+      contents: '{"exitCode":',
+    }));
     const archive = artifactZip([
-      { name: "truncated.result.json", contents: '{"exitCode":' },
+      { name: `${"a".repeat(1_100)}.result.json`, contents: "null" },
+      ...malformed,
       { name: "valid.result.json", contents: JSON.stringify({ exitCode: 1 }) },
     ]);
     const item = fixture("ordinary output", undefined, archive);
     const result = run(item.env, ["--artifact-name", "results"]);
     expect(result.status, result.stderr).toBe(0);
     const value = JSON.parse(result.stdout);
-    expect(value.artifact.filesRead).toBe(2);
+    expect(value.artifact.filesRead).toBe(27);
     expect(value.artifact.filesTruncated).toBe(false);
+    expect(value.artifact.malformedResultCount).toBe(26);
+    expect(value.artifact.malformedResultPaths).toHaveLength(20);
+    expect(value.artifact.malformedResultPaths.every((path: string) => path.length <= 1_000)).toBe(
+      true,
+    );
+    expect(value.artifact.malformedResultPathsTruncated).toBe(true);
+    expect(
+      value.artifact.malformedResultPaths.some((path: string) => path.includes("[REDACTED]")),
+    ).toBe(true);
     expect(value.artifact.failures).toHaveLength(1);
     expect(value.artifact.failures[0].exitCode).toBe(1);
+    expect(result.stdout).not.toContain(pathSecret);
+  });
+
+  test("reports malformed evidence when every selected artifact result is malformed", () => {
+    const archive = artifactZip([
+      { name: "truncated.result.json", contents: '{"exitCode":' },
+      { name: "non-object.result.json", contents: JSON.stringify("invalid result") },
+    ]);
+    const item = fixture("ordinary output", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.result).toBe("unclassified");
+    expect(value.artifact).toMatchObject({
+      filesRead: 2,
+      malformedResultCount: 2,
+      malformedResultPaths: ["truncated.result.json", "non-object.result.json"],
+      malformedResultPathsTruncated: false,
+      failures: [],
+    });
   });
 
   test("ignores a string false timeout and retains a boolean true timeout", () => {

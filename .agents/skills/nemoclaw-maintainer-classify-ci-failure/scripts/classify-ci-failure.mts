@@ -210,12 +210,11 @@ const STANDALONE_SECRET =
 const SECRET_QUERY_FIELD =
   /([?&](?:X-Amz-(?:Credential|Signature|Security-Token)|X-Goog-(?:Credential|Signature)|sig|access_token|token)=)(?!\[REDACTED\])[^&#\s"']*/giu;
 const SECRET_HEADER =
-  /(^|[\r\n])((?:(?:>\s*|request:\s*))?(?:(?:x-)?api-key|cookie|set-cookie)\s*:\s*)(?!\[REDACTED\])[^\r\n]*/giu;
+  /(^|[\r\n])((?:(?:[<>]\s*|request:\s*))?(?:authorization|(?:x-)?api-key|cookie|set-cookie)\s*:\s*)(?!\[REDACTED\])[^\r\n]*/giu;
 const redact = (value: string): string =>
   value
     .replace(JSON_SECRET_FIELD, '$1"[REDACTED]"')
     .replace(SECRET_HEADER, "$1$2[REDACTED]")
-    .replace(/(\bauthorization\s*:\s*)[^\r\n]*/giu, "$1[REDACTED]")
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/giu, "$1[REDACTED]@")
     .replace(SECRET_QUERY_FIELD, "$1[REDACTED]")
     .replace(SECRET_ASSIGNMENT, "$1[REDACTED]")
@@ -853,6 +852,8 @@ async function classifyCiFailureWithRuntime(
         if (entries === null) throw new Error("Artifact ZIP is malformed or unsafe");
         const resultEntries = entries.filter(({ name }) => name.endsWith(".result.json"));
         const fileResults = [];
+        const malformedResultPaths: string[] = [];
+        let malformedResultCount = 0;
         let filesRead = 0;
         for (const { name: relativePath, bytes: contents } of resultEntries) {
           if (contents.length > 1_000_000)
@@ -870,9 +871,14 @@ async function classifyCiFailureWithRuntime(
           try {
             value = JSON.parse(text);
           } catch {
+            value = null;
+          }
+          if (!value || typeof value !== "object" || Array.isArray(value)) {
+            malformedResultCount += 1;
+            if (malformedResultPaths.length < 20)
+              malformedResultPaths.push(redact(relativePath).slice(0, 1000));
             continue;
           }
-          if (!value || typeof value !== "object" || Array.isArray(value)) continue;
           const result = value as Record<string, unknown>;
           const exitCode = Number.isInteger(result.exitCode) ? result.exitCode : null;
           const signal =
@@ -905,6 +911,9 @@ async function classifyCiFailureWithRuntime(
           inventoryTruncated: false,
           filesRead,
           filesTruncated: filesRead < resultEntries.length,
+          malformedResultCount,
+          malformedResultPaths,
+          malformedResultPathsTruncated: malformedResultCount > malformedResultPaths.length,
           failures: fileResults.slice(0, 20),
           failuresTruncated: fileResults.length > 20,
         };
