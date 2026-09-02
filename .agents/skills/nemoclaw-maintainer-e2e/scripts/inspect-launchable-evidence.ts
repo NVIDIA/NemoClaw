@@ -115,10 +115,9 @@ export function parseOptions(args: string[]): Options {
   if (!SHA.test(candidate)) fail("--candidate must be a lowercase 40-character SHA");
   return { candidate };
 }
-function candidateRuns(candidate: string, runs: WorkflowRun[]): WorkflowRun[] {
+function candidateRuns(runs: WorkflowRun[]): WorkflowRun[] {
   const eligible = runs.filter(
     (run) =>
-      run.head_sha === candidate &&
       run.path === WORKFLOW &&
       run.head_branch === "main" &&
       run.event === "workflow_dispatch" &&
@@ -131,16 +130,16 @@ function candidateRuns(candidate: string, runs: WorkflowRun[]): WorkflowRun[] {
     (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id,
   );
 }
-function selectNewestJob(
-  candidate: string,
+function candidateSelections(
   runs: WorkflowRun[],
   jobs: (run: WorkflowRun) => WorkflowJob[],
-): Selection | undefined {
-  for (const run of candidateRuns(candidate, runs)) {
+): Selection[] {
+  const selections: Selection[] = [];
+  for (const run of candidateRuns(runs)) {
     const job = jobs(run).find((value) => value.name === JOB && value.status === "completed");
-    if (job) return { run, job };
+    if (job) selections.push({ run, job });
   }
-  return undefined;
+  return selections;
 }
 function json(value: string | undefined, name: string): JsonRecord {
   if (value === undefined) fail(`artifact is missing ${name}`);
@@ -291,11 +290,18 @@ function earlyRecovery(
 
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
   const runs = reader.listRuns(options.candidate),
-    jobs = (run: WorkflowRun): WorkflowJob[] => reader.listJobs(run.id, run.run_attempt),
-    selection = selectNewestJob(options.candidate, runs, jobs);
-  if (!selection) fail("no successful staging Brev Launchable job is bound to the candidate");
-  const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
-    files = reader.readArtifact(selection.run.id, artifactName);
+    jobs = (run: WorkflowRun): WorkflowJob[] => reader.listJobs(run.id, run.run_attempt);
+  let selected: { selection: Selection; artifactName: string; files: ArtifactFiles } | undefined;
+  for (const selection of candidateSelections(runs, jobs)) {
+    const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
+      files = reader.readArtifact(selection.run.id, artifactName);
+    if (Object.values(files).some((value) => value !== undefined)) {
+      selected = { selection, artifactName, files };
+      break;
+    }
+  }
+  if (!selected) fail("no staging Brev Launchable artifact is bound to the candidate");
+  const { selection, artifactName, files } = selected;
   if (
     files["workspace-recovery.json"] !== undefined &&
     (files["launchable-e2e.json"] === undefined ||

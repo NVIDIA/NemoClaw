@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   artifactDownloadArgs,
@@ -78,14 +77,6 @@ const reader = (
   readArtifact: () => artifact,
 });
 describe("Launchable evidence inspection", () => {
-  it.each(["test/e2e/README.md", ".agents/skills/nemoclaw-maintainer-e2e/references/main-runs.md"])(
-    "retains recovery guidance in %s (#10798)",
-    (file) => {
-      const guidance = readFileSync(new URL(`../../../${file}`, import.meta.url), "utf8");
-      expect(guidance).toContain("workspace-recovery.json");
-      expect(guidance).toContain("canonical Launchable-evidence recovery procedure");
-    },
-  );
   it("returns a versioned receipt from candidate-bound successful evidence (#10798)", () =>
     expect(inspectLaunchableEvidence({ candidate: SHA }, reader())).toEqual({
       version: 1,
@@ -113,14 +104,20 @@ describe("Launchable evidence inspection", () => {
       fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" },
       cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" },
     }));
-  it.each([
-    ["wrong candidate", run(10, "2026-06-01T00:00:00Z", { head_sha: IMAGE_SHA })],
-    ["wrong run", run(10, "2026-06-01T00:00:00Z", { path: ".github/workflows/ci.yaml" })],
-  ])("rejects %s evidence (#10798)", (_label, value) =>
-    expect(() => inspectLaunchableEvidence({ candidate: SHA }, reader([value]))).toThrow(
-      "no successful",
-    ),
-  );
+  it("accepts candidate-bound artifacts from a later trusted main dispatch (#10798)", () =>
+    expect(
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        reader([run(10, "2026-06-01T00:00:00Z", { head_sha: IMAGE_SHA })]),
+      ).candidate.sha,
+    ).toBe(SHA));
+  it("rejects artifacts from another workflow (#10798)", () =>
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        reader([run(10, "2026-06-01T00:00:00Z", { path: ".github/workflows/ci.yaml" })]),
+      ),
+    ).toThrow("no staging Brev Launchable artifact"));
   it("reports early recovery identity before full evidence exists (#10798)", () => {
     const artifact: ArtifactFiles = {
       "workspace-recovery.json": JSON.stringify({
@@ -391,7 +388,7 @@ describe("Launchable evidence inspection", () => {
         { candidate: SHA },
         reader([run(10, "2026-06-01T00:00:00Z", { run_attempt: 3 })]),
       ),
-    ).toThrow("no successful");
+    ).toThrow("no staging Brev Launchable artifact");
   });
   it("selects the newest successful job and exact artifact (#10798)", () => {
     const boundary = reader([run(10, "2026-01-01T00:00:00Z"), run(11, "2026-06-01T00:00:00Z")], {

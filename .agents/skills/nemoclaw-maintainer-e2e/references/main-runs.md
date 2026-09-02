@@ -166,8 +166,8 @@ Require the selected run to report `head_sha` equal to `CANDIDATE_SHA` and `stat
 
 For Launchable mode, also require one completed, successful `Exact staging Brev Launchable` job.
 Preserve `workspace-recovery.json` for incomplete-cleanup recovery. Preserve links to
-`launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` as the successful-evidence set. Follow the
-canonical Launchable-evidence recovery procedure when cleanup is incomplete.
+`launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` as the successful-evidence set. Follow [Recover Incomplete Cleanup](launchable-evidence.md#recover-incomplete-cleanup) when cleanup is
+incomplete.
 
 For full mode, also require one completed, successful `Release qualification` job. A skipped, cancelled, queued, or failed aggregate is not a passing full run.
 
