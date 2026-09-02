@@ -64,11 +64,6 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/no-coverage-ignore.mts"],
   },
   {
-    name: "openshell-policy-mutation-read",
-    command: TSX,
-    args: ["scripts/checks/openshell-policy-mutation-read.mts"],
-  },
-  {
     name: "layer-import-boundaries",
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.mts"],

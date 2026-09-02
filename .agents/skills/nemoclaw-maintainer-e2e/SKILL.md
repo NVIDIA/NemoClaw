@@ -20,6 +20,7 @@ request does not authorize `Staging Brev Launchable`.
 - To dispatch ordinary, focused, staging Launchable, or full E2E on `main`, read and follow
   [Main Runs](references/main-runs.md) and the Launchable boundary below.
 - For a release decision inspection, use the section below. Do not load a dispatch reference unless the maintainer requests a new run.
+- For one failed job, load `nemoclaw-maintainer-classify-ci-failure` for bounded, redacted log and optional artifact evidence. This skill still owns dispatch and run-level reporting.
 
 ## Staging Brev Launchable Boundary
 
