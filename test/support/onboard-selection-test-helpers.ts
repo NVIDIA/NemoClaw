@@ -254,14 +254,10 @@ windows.installOllamaOnWindowsHost = async () => {
   console.error("WINDOWS_INSTALL_CALLED");
   return { ok: true, path: "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe" };
 };
-windows.setupWindowsOllamaWith0000Binding = () => {
+windows.setupWindowsOllamaLoopbackBinding = () => {
   console.error("WINDOWS_SETUP_CALLED");
   return true;
 };
-windows.switchToWindowsOllamaHost = () => {
-  console.error("WINDOWS_SWITCH_CALLED");
-};
-
 const { setupNim } = require(${onboardPath});
 
 (async () => {

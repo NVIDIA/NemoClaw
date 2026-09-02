@@ -13,6 +13,15 @@ import {
 
 const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
 const VALID_OLLAMA_TAGS_BODY = '{"models": [{"name": "llama3.2:latest"}]}';
+const REBINDING_PROBE_HOST_HEADER = "Host: rebinding.invalid";
+
+function secureWindowsOllamaDockerCapture(command: readonly string[]): string {
+  return command.includes(REBINDING_PROBE_HOST_HEADER)
+    ? "403"
+    : command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
+      ? VALID_OLLAMA_TAGS_BODY
+      : "";
+}
 
 const SUPPORTED_WINDOWS_OLLAMA = {
   supported: true,
@@ -43,6 +52,7 @@ function buildDeps(
     detectVllmProfile: vi.fn(() => null),
     getLocalProviderAvailabilityEndpoint: vi.fn(() => "http://127.0.0.1:8000/v1/models"),
     detectLocalTcpListener: vi.fn(() => null),
+    resetOllamaHostCache: vi.fn(),
     ...overrides,
   };
 }
@@ -189,9 +199,7 @@ describe("detectInferenceProviderHostState", () => {
 
   it("detects Windows-host Ollama from Docker Desktop when WSL cannot reach it (#8127)", () => {
     const logs: string[] = [];
-    const dockerCapture = vi.fn((command: string[]) =>
-      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
-    );
+    const dockerCapture = vi.fn(secureWindowsOllamaDockerCapture);
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
@@ -333,16 +341,14 @@ describe("detectInferenceProviderHostState", () => {
       detectWindowsHostOllama: vi.fn(() => ({
         installed: true,
         installedPath: "C:\\Ollama\\ollama.exe",
-        loopbackOnly: false,
+        loopbackOnly: true,
       })),
       runCapture: vi.fn((command) => {
         const joined = command.join(" ");
         if (joined.includes("wslinfo --networking-mode")) return "mirrored\n";
         return "";
       }),
-      dockerCapture: vi.fn((command) =>
-        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
-      ),
+      dockerCapture: vi.fn(secureWindowsOllamaDockerCapture),
       detectLocalTcpListener: vi.fn(() => false),
     });
 
@@ -402,6 +408,7 @@ describe("detectInferenceProviderHostState", () => {
   });
 
   it("fails closed when mirrored listener identity is unavailable (#9300)", () => {
+    const resetOllamaHostCache = vi.fn();
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
@@ -417,11 +424,15 @@ describe("detectInferenceProviderHostState", () => {
         command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : "",
       ),
       detectLocalTcpListener: vi.fn(() => null),
+      resetOllamaHostCache,
     });
 
     const state = detectWithDeps(deps);
 
     expect(state.isWindowsHostOllama).toBe(false);
+    expect(state.ollamaHost).toBeNull();
+    expect(state.ollamaRunning).toBe(false);
+    expect(resetOllamaHostCache).toHaveBeenCalledOnce();
   });
 
   it("keeps an unrecognized WSL networking mode on the Linux upgrade path (#9300)", () => {
@@ -478,8 +489,10 @@ describe("detectInferenceProviderHostState", () => {
 
     const state = detectWithDeps(deps);
 
-    expect(state.isWindowsHostOllama).toBe(true);
+    expect(state.isWindowsHostOllama).toBe(false);
     expect(state.windowsOllamaReachable).toBe(false);
+    expect(state.ollamaHost).toBeNull();
+    expect(deps.resetOllamaHostCache).toHaveBeenCalledOnce();
     expect(dockerCapture).toHaveBeenCalledWith(
       expect.arrayContaining([WINDOWS_OLLAMA_TAGS_URL]),
       { ignoreError: true },
@@ -488,7 +501,7 @@ describe("detectInferenceProviderHostState", () => {
 
   it("reuses Windows-host Ollama only after Docker reachability succeeds (#10100)", () => {
     const dockerCapture = vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(
-      (command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? VALID_OLLAMA_TAGS_BODY : ""),
+      secureWindowsOllamaDockerCapture,
     );
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
@@ -496,7 +509,7 @@ describe("detectInferenceProviderHostState", () => {
       detectWindowsHostOllama: vi.fn(() => ({
         installed: true,
         installedPath: "C:\\Ollama\\ollama.exe",
-        loopbackOnly: false,
+        loopbackOnly: true,
       })),
       dockerCapture,
     });
@@ -509,6 +522,66 @@ describe("detectInferenceProviderHostState", () => {
       expect.arrayContaining([WINDOWS_OLLAMA_TAGS_URL]),
       { ignoreError: true },
     );
+    expect(dockerCapture).toHaveBeenCalledWith(
+      expect.arrayContaining([REBINDING_PROBE_HOST_HEADER]),
+      { ignoreError: true },
+    );
+  });
+
+  it("rejects a wildcard-bound Windows-host Ollama route even when Docker can reach it", () => {
+    const resetOllamaHostCache = vi.fn();
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "host.docker.internal"),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      dockerCapture: vi.fn(secureWindowsOllamaDockerCapture),
+      resetOllamaHostCache,
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.isWindowsHostOllama).toBe(false);
+    expect(state.ollamaHost).toBeNull();
+    expect(state.ollamaRunning).toBe(false);
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    expect(resetOllamaHostCache).toHaveBeenCalledOnce();
+  });
+
+  it("rejects Windows-host Ollama when a hostile Host header is accepted", () => {
+    const resetOllamaHostCache = vi.fn();
+    const dockerCapture = vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>((command) =>
+      command.includes(REBINDING_PROBE_HOST_HEADER)
+        ? "200"
+        : command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
+          ? VALID_OLLAMA_TAGS_BODY
+          : "",
+    );
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "host.docker.internal"),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: true,
+      })),
+      dockerCapture,
+      resetOllamaHostCache,
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.isWindowsHostOllama).toBe(false);
+    expect(state.ollamaHost).toBeNull();
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    expect(dockerCapture).toHaveBeenCalledWith(
+      expect.arrayContaining([REBINDING_PROBE_HOST_HEADER]),
+      { ignoreError: true },
+    );
+    expect(resetOllamaHostCache).toHaveBeenCalledOnce();
   });
 });
 

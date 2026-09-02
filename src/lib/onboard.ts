@@ -223,15 +223,13 @@ const {
   isProxyHealthy,
   persistAndProbeOllamaProxy,
   prepareOllamaModel,
-  printOllamaExposureWarning,
   promptOllamaModel,
   unloadOllamaModels,
 } = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
-  setupWindowsOllamaWith0000Binding,
-  switchToWindowsOllamaHost,
+  setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
 const vllmInference = require("./inference/vllm");
@@ -994,11 +992,9 @@ const {
   shouldFrontOllamaWithProxy,
   getLocalProviderBaseUrl,
   selectAndValidateOllamaModel,
-  printOllamaExposureWarning,
-  switchToWindowsOllamaHost,
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
-  setupWindowsOllamaWith0000Binding,
+  setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
   resetOllamaHostCache,
   installOllamaOnMacOS,

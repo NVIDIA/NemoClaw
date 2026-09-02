@@ -144,7 +144,31 @@ export {
   OLLAMA_LOCALHOST,
 } from "./local-adapter-lifecycle";
 
-/** Build the credential-free Docker Desktop probe for Windows-host Ollama. */
+const OLLAMA_REBINDING_PROBE_HOST = "rebinding.invalid";
+
+/** Build a probe that must be rejected when Ollama validates the HTTP Host header. */
+export function getWindowsHostOllamaHostValidationCurlArgs(): string[] {
+  return [
+    "-sS",
+    "--output",
+    "/dev/null",
+    "--write-out",
+    "%{http_code}",
+    "--connect-timeout",
+    "2",
+    "--max-time",
+    "5",
+    "--header",
+    `Host: ${OLLAMA_REBINDING_PROBE_HOST}`,
+    `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
+  ];
+}
+
+export function isOllamaHostValidationEnabled(probeOutput: string): boolean {
+  return probeOutput.trim() === "403";
+}
+
+/** Build the credential-free Docker Desktop reachability probe for Windows-host Ollama. */
 export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
   return [
     "run",
@@ -156,6 +180,16 @@ export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
     "--max-time",
     "5",
     `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
+  ];
+}
+
+/** Build the credential-free Docker Desktop Host-header validation probe. */
+export function getWindowsHostOllamaDockerHostValidationArgs(): string[] {
+  return [
+    "run",
+    "--rm",
+    CONTAINER_REACHABILITY_IMAGE,
+    ...getWindowsHostOllamaHostValidationCurlArgs(),
   ];
 }
 

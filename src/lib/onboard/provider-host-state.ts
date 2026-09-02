@@ -7,11 +7,14 @@ import { dockerCapture as defaultDockerCapture } from "../adapters/docker";
 import {
   findReachableOllamaHost,
   getLocalProviderAvailabilityEndpoint,
+  getWindowsHostOllamaDockerHostValidationArgs,
   getWindowsHostOllamaDockerReachabilityArgs,
   isLocalProviderProbeOutputHealthy,
+  isOllamaHostValidationEnabled,
   isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_PORT,
+  resetOllamaHostCache as defaultResetOllamaHostCache,
 } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
 import { detectVllmProfile, type VllmProfile } from "../inference/vllm";
@@ -92,6 +95,7 @@ export interface DetectInferenceProviderHostStateDeps {
   detectVllmProfile: (gpu: InferenceProviderHostGpu | null | undefined) => VllmProfile | null;
   getLocalProviderAvailabilityEndpoint: (provider: string) => string | null;
   detectLocalTcpListener: (port: number) => boolean | null;
+  resetOllamaHostCache: () => void;
 }
 
 const LOCAL_PROVIDER_PROBE_CURL_ARGS = ["--connect-timeout", "2", "--max-time", "5"] as const;
@@ -164,6 +168,7 @@ function buildDeps(
     getLocalProviderAvailabilityEndpoint:
       overrides.getLocalProviderAvailabilityEndpoint ?? getLocalProviderAvailabilityEndpoint,
     detectLocalTcpListener: overrides.detectLocalTcpListener ?? detectLocalTcpListener,
+    resetOllamaHostCache: overrides.resetOllamaHostCache ?? defaultResetOllamaHostCache,
   };
 }
 
@@ -202,6 +207,17 @@ function probeWindowsOllamaReachable(input: {
   return isValidOllamaTagsResponseBody(body);
 }
 
+function probeWindowsOllamaHostValidation(input: {
+  reachable: boolean;
+  dockerCapture: DockerCapture;
+}): boolean {
+  if (!input.reachable) return false;
+  const status = input.dockerCapture(getWindowsHostOllamaDockerHostValidationArgs(), {
+    ignoreError: true,
+  });
+  return isOllamaHostValidationEnabled(status);
+}
+
 function maybeWarnAboutDuplicateOllamaDaemons(input: {
   isWsl: boolean;
   ollamaHost: string | null;
@@ -234,9 +250,8 @@ export function detectInferenceProviderHostState(
   const platform = input.platform ?? process.platform;
   const isWsl = deps.isWsl({ platform, env: input.env });
   const hasOllama = deps.hostCommandExists("ollama");
-  const ollamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();
-  const ollamaRunning = ollamaHost !== null;
-  const directlyResolvedWindowsHostOllama = ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
+  const discoveredOllamaHost =
+    input.probeOllama === false ? null : deps.findReachableOllamaHost();
   const vllmRunning = input.probeVllm === false ? false : probeVllmRunning(deps);
   const vllmProfile = deps.detectVllmProfile(input.gpu);
   const hasVllmImage = !!(
@@ -265,9 +280,19 @@ export function detectInferenceProviderHostState(
           dockerRequirementSupported: windowsHostOllamaDockerRequirement.supported,
           dockerCapture: deps.dockerCapture,
         });
-
+  const windowsOllamaHostValidationEnabled = probeWindowsOllamaHostValidation({
+    reachable: windowsOllamaReachable,
+    dockerCapture: deps.dockerCapture,
+  });
+  const windowsOllamaRouteProtected =
+    hasWindowsOllama &&
+    winOllamaState.loopbackOnly &&
+    windowsOllamaReachable &&
+    windowsOllamaHostValidationEnabled;
+  const directlyResolvedWindowsHostOllama =
+    discoveredOllamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
   const wslNetworkingMode =
-    isWsl && ollamaHost === "127.0.0.1" && windowsOllamaReachable
+    isWsl && discoveredOllamaHost === "127.0.0.1" && windowsOllamaReachable
       ? deps
           .runCapture(["wslinfo", "--networking-mode"], { ignoreError: true })
           .trim()
@@ -275,6 +300,23 @@ export function detectInferenceProviderHostState(
       : null;
   const hasWslLocalOllamaListener =
     wslNetworkingMode === "mirrored" ? deps.detectLocalTcpListener(OLLAMA_PORT) : null;
+  const couldBeMirroredWindowsHostOllama =
+    discoveredOllamaHost === "127.0.0.1" &&
+    wslNetworkingMode === "mirrored" &&
+    hasWindowsOllama &&
+    windowsOllamaReachable &&
+    hasWslLocalOllamaListener !== true;
+  // Never pass an unprotected Windows daemon into the generic running-Ollama
+  // path. That path assumes the selected route is already safe to reuse and
+  // would otherwise bypass the loopback repair action. Mirrored WSL can expose
+  // the same Windows daemon on 127.0.0.1, so protect that identity as well.
+  const rejectDiscoveredWindowsRoute =
+    (directlyResolvedWindowsHostOllama || couldBeMirroredWindowsHostOllama) &&
+    !windowsOllamaRouteProtected;
+  if (rejectDiscoveredWindowsRoute) deps.resetOllamaHostCache();
+  const ollamaHost = rejectDiscoveredWindowsRoute ? null : discoveredOllamaHost;
+  const ollamaRunning = ollamaHost !== null;
+
   // Under WSL mirrored networking, a live Windows daemon answers through the
   // distro's 127.0.0.1 before host.docker.internal is considered. Require
   // positive evidence that Windows Ollama is installed and Docker-reachable,
@@ -282,11 +324,10 @@ export function detectInferenceProviderHostState(
   // Ambiguous evidence and dual-daemon topologies stay on the WSL-local
   // version-upgrade/systemd path (#9300).
   const isWindowsHostOllama =
-    directlyResolvedWindowsHostOllama ||
+    (directlyResolvedWindowsHostOllama && windowsOllamaRouteProtected) ||
     (ollamaHost === "127.0.0.1" &&
       wslNetworkingMode === "mirrored" &&
-      hasWindowsOllama &&
-      windowsOllamaReachable &&
+      windowsOllamaRouteProtected &&
       hasWslLocalOllamaListener === false);
 
   maybeWarnAboutDuplicateOllamaDaemons({
@@ -311,7 +352,7 @@ export function detectInferenceProviderHostState(
     ollamaRunning,
     hasWindowsOllama,
     windowsHostOllamaSupported:
-      windowsHostOllamaDockerRequirement.supported && windowsOllamaReachable,
+      windowsHostOllamaDockerRequirement.supported && windowsOllamaRouteProtected,
     ollamaHost,
     platform,
     isWsl,

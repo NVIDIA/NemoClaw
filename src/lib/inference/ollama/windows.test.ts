@@ -9,6 +9,7 @@ const WINDOWS_DIST_PATH = require.resolve("./windows");
 const RUNNER_PATH = require.resolve("../../runner");
 const LOCAL_INFERENCE_PATH = require.resolve("../local");
 const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
+const REBINDING_PROBE_HOST_HEADER = "Host: rebinding.invalid";
 
 function commandText(command: string | string[]): string {
   return Array.isArray(command) ? command.join(" ") : String(command);
@@ -86,11 +87,45 @@ describe("Windows Ollama helper", () => {
     }
   });
 
+  it("rejects a reachable daemon that accepts a rebinding Host header", () => {
+    const run = vi.fn();
+    const localInference = require(LOCAL_INFERENCE_PATH);
+    const runCapture = vi.fn((command: string | string[]) =>
+      Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER)
+        ? "200"
+        : Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
+          ? JSON.stringify({ models: [] })
+          : "",
+    );
+    localInference.resetOllamaHostCache();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+
+    try {
+      expect(
+        windows.awaitWindowsOllamaReady({
+          delay: vi.fn(),
+          prepareDockerEnvironment: () => ({
+            env: {},
+            isolatedCredentialConfig: false,
+            cleanup: () => ({ ok: true }),
+          }),
+        }),
+      ).toBe(false);
+      expect(localInference.getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      localInference.resetOllamaHostCache();
+      restore();
+      logSpy.mockRestore();
+    }
+  });
+
   it("falls back from a stale watcher path and checks readiness from Docker Desktop (#8127)", () => {
     const watcherPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama app.exe";
     const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
     const launchScripts: string[] = [];
     const stopCommands: string[] = [];
+    const persistedHostCommands: string[] = [];
 
     const run = vi.fn((command: string[]) => {
       const script = command[2] || "";
@@ -102,20 +137,25 @@ describe("Windows Ollama helper", () => {
     });
     const runCapture = vi.fn((command: string | string[]) => {
       const cmd = commandText(command);
-      if (cmd.includes("Get-Process 'ollama app'") && cmd.includes("ExpandProperty Path")) {
-        return watcherPath;
+      switch (true) {
+        case cmd.includes("Get-Process 'ollama app'") && cmd.includes("ExpandProperty Path"):
+          return watcherPath;
+        case cmd.includes("Stop-Process"):
+          stopCommands.push(cmd);
+          return "";
+        case cmd.includes("SetEnvironmentVariable('OLLAMA_HOST'"):
+          persistedHostCommands.push(cmd);
+          return "";
+        case Array.isArray(command) && command.includes(REBINDING_PROBE_HOST_HEADER):
+          return "403";
+        case Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL:
+          return command[0] === "docker" &&
+            launchScripts.some((script) => script.includes(installedPath))
+            ? JSON.stringify({ models: [] })
+            : "";
+        default:
+          return "";
       }
-      if (cmd.includes("Stop-Process")) {
-        stopCommands.push(cmd);
-        return "";
-      }
-      if (Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL) {
-        return command[0] === "docker" &&
-          launchScripts.some((script) => script.includes(installedPath))
-          ? JSON.stringify({ models: [] })
-          : "";
-      }
-      return "";
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -123,7 +163,7 @@ describe("Windows Ollama helper", () => {
     const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
 
     try {
-      expect(windows.setupWindowsOllamaWith0000Binding({ installedPath, delay })).toBe(true);
+      expect(windows.setupWindowsOllamaLoopbackBinding({ installedPath, delay })).toBe(true);
     } finally {
       restore();
       logSpy.mockRestore();
@@ -134,11 +174,15 @@ describe("Windows Ollama helper", () => {
     expect(launchScripts[0]).toContain(watcherPath);
     expect(launchScripts[1]).toContain(installedPath);
     expect(launchScripts[1]).toContain("-ArgumentList 'serve'");
+    expect(launchScripts.every((script) => !script.includes("0.0.0.0:11434"))).toBe(true);
+    expect(launchScripts.some((script) => script.includes("127.0.0.1:11434"))).toBe(true);
     expect(
       launchScripts.some((script) => script.includes("Start-Process -FilePath ollama.exe")),
     ).toBe(false);
     expect(stopCommands[0]).toContain("Get-Process 'ollama app'");
     expect(stopCommands[1]).toContain("Get-Process ollama");
+    expect(persistedHostCommands).toEqual([expect.stringContaining("'127.0.0.1:11434'")]);
+    expect(persistedHostCommands[0]).not.toContain("0.0.0.0:11434");
     expect(runCapture).toHaveBeenCalledWith(
       [
         "docker",
@@ -164,9 +208,12 @@ describe("Windows Ollama helper", () => {
     const runCapture = vi.fn((command: string | string[], options?: { env?: NodeJS.ProcessEnv }) =>
       Array.isArray(command) &&
       command[0] === "docker" &&
-      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL &&
       options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-        ? JSON.stringify({ models: [] })
+        ? command.includes(REBINDING_PROBE_HOST_HEADER)
+          ? "403"
+          : command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
+            ? JSON.stringify({ models: [] })
+            : ""
         : "",
     );
     const localInference = require(LOCAL_INFERENCE_PATH);
@@ -192,7 +239,7 @@ describe("Windows Ollama helper", () => {
           env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
         }),
       );
-      expect(cleanup).toHaveBeenCalledOnce();
+      expect(cleanup).toHaveBeenCalledTimes(2);
     } finally {
       localInference.resetOllamaHostCache();
       restore();

@@ -47,11 +47,9 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
       model: "llama3.1:8b",
       allowToolsIncompatible: true,
     }),
-    printOllamaExposureWarning: () => {},
-    switchToWindowsOllamaHost: () => {},
     installOllamaOnWindowsHost: async () => ({ ok: true, path: "C:/Ollama/ollama.exe" }),
     awaitWindowsOllamaReady: () => true,
-    setupWindowsOllamaWith0000Binding: () => true,
+    setupWindowsOllamaLoopbackBinding: () => true,
     printWindowsOllamaTimeoutDiagnostics: () => {},
     resetOllamaHostCache: () => {},
     installOllamaOnMacOS: () => ({ ok: true }),
@@ -258,19 +256,17 @@ describe("createSetupNimOllamaHandlers", () => {
     );
   });
 
-  it("does not switch, install, or restart Windows Ollama when preflight rejects", async () => {
+  it("does not install or restart Windows Ollama when preflight rejects", async () => {
     const state = makeState();
     state.assertRouteCompatible = () => {
       throw new Error("route conflict");
     };
-    const switchHost = vi.fn();
     const install = vi.fn(async () => ({ ok: true }));
     const restart = vi.fn(() => true);
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
-        switchToWindowsOllamaHost: switchHost,
         installOllamaOnWindowsHost: install,
-        setupWindowsOllamaWith0000Binding: restart,
+        setupWindowsOllamaLoopbackBinding: restart,
       }),
     );
 
@@ -285,7 +281,6 @@ describe("createSetupNimOllamaHandlers", () => {
         state,
       ),
     ).rejects.toThrow("route conflict");
-    expect(switchHost).not.toHaveBeenCalled();
     expect(install).not.toHaveBeenCalled();
     expect(restart).not.toHaveBeenCalled();
   });
@@ -300,7 +295,7 @@ describe("createSetupNimOllamaHandlers", () => {
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
         installOllamaOnWindowsHost: install,
-        setupWindowsOllamaWith0000Binding: start,
+        setupWindowsOllamaLoopbackBinding: start,
       }),
     );
 

@@ -14,8 +14,8 @@ export interface WindowsHostOllamaState {
   // restart path does not kill a daemon we cannot relaunch.
   installedPath: string;
   // True when the running daemon is listening on 127.0.0.1 only and not
-  // on 0.0.0.0 / ::. Drives the "Restart Ollama on Windows host with
-  // 0.0.0.0 binding" menu variant (#3949).
+  // on 0.0.0.0 / ::. Windows-host reuse requires this state; wildcard
+  // listeners are routed through the loopback repair action.
   loopbackOnly: boolean;
 }
 

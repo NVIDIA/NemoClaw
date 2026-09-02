@@ -2910,7 +2910,9 @@ docker info
 
 ### Windows-host Ollama is installed but not shown during onboarding
 
-When NemoClaw runs inside WSL, it checks both the Windows-host Ollama HTTP endpoint and the Windows `ollama.exe` process. If Ollama is installed but the daemon is not reachable through `host.docker.internal:11434`, the wizard should still offer a start or restart action.
+When NemoClaw runs inside WSL, it checks the Windows-host Ollama HTTP endpoint, the Windows `ollama.exe` process, the listener address, and HTTP `Host` validation.
+It reuses the Windows route only when the listener is loopback-only, Docker Desktop can reach it, and an untrusted `Host` value receives `403`.
+If Ollama is installed but does not pass those checks, the wizard should still offer a restart action and the WSL-local install.
 
 If the Windows-host option does not appear, confirm that PowerShell interop is enabled in WSL and that Windows can locate Ollama:
 
@@ -2918,7 +2920,11 @@ If the Windows-host option does not appear, confirm that PowerShell interop is e
 powershell.exe -NoProfile -Command "Get-Process ollama -ErrorAction SilentlyContinue"
 ```
 
-If the process is missing, start Ollama from Windows and rerun onboarding. If the process exists but the endpoint is unreachable, use the restart action when the wizard offers it, or restart Ollama from Windows with `OLLAMA_HOST=0.0.0.0:11434`.
+If the process is missing, start Ollama from Windows and rerun onboarding.
+If the process exists but the endpoint is unprotected or unreachable, use the restart action when the wizard offers it.
+The action sets `OLLAMA_HOST=127.0.0.1:11434` and verifies that an untrusted `Host` value is rejected.
+If Docker Desktop cannot reach that protected route, choose WSL-local Ollama.
+Do not set `OLLAMA_HOST=0.0.0.0:11434`.
 
 ### Ollama inference fails or hangs in WSL
 

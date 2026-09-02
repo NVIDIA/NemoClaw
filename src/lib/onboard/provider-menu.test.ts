@@ -204,7 +204,7 @@ describe("buildInferenceProviderMenu", () => {
 
     expect(result.options.at(-2)).toEqual({
       key: "start-windows-ollama",
-      label: "Use Ollama on Windows host - running",
+      label: "Start Ollama on Windows host",
     });
   });
 

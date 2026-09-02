@@ -72,12 +72,11 @@ export function getWindowsHostOllamaDockerRequirement(
     return {
       supported: true,
       detectedRuntime: "not applicable",
-      installLabel: "Install Ollama on Windows host (recommended)",
+      installLabel: "Install Ollama on Windows host (loopback only)",
       startLabel(opts) {
         if (opts.reachable) return "Use Ollama on Windows host - running (suggested)";
-        if (opts.loopbackOnly)
-          return "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
-        return "Start Ollama on Windows host (suggested)";
+        if (opts.loopbackOnly) return "Restart loopback-only Ollama on Windows host";
+        return "Restart Ollama on Windows host with loopback-only binding";
       },
     };
   }
@@ -86,12 +85,11 @@ export function getWindowsHostOllamaDockerRequirement(
     return {
       supported: true,
       detectedRuntime,
-      installLabel: "Install Ollama on Windows host (recommended)",
+      installLabel: "Install Ollama on Windows host (loopback only)",
       startLabel(opts) {
         if (opts.reachable) return "Use Ollama on Windows host - running (suggested)";
-        if (opts.loopbackOnly)
-          return "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
-        return "Start Ollama on Windows host (suggested)";
+        if (opts.loopbackOnly) return "Restart loopback-only Ollama on Windows host";
+        return "Restart Ollama on Windows host with loopback-only binding";
       },
     };
   }
@@ -105,13 +103,13 @@ export function getWindowsHostOllamaDockerRequirement(
     supported: false,
     detectedRuntime,
     labelSuffix,
-    installLabel: `Install Ollama on Windows host${labelSuffix}`,
+    installLabel: `Install Ollama on Windows host with loopback-only binding${labelSuffix}`,
     startLabel(opts) {
       if (opts.reachable) return `Use Ollama on Windows host - running${labelSuffix}`;
       if (opts.loopbackOnly) {
-        return `Restart Ollama on Windows host with 0.0.0.0 binding${labelSuffix}`;
+        return `Restart loopback-only Ollama on Windows host${labelSuffix}`;
       }
-      return `Start Ollama on Windows host${labelSuffix}`;
+      return `Restart Ollama on Windows host with loopback-only binding${labelSuffix}`;
     },
     reason,
     hint,
@@ -165,8 +163,7 @@ function failOllamaResumeRepair(message: string): never {
 }
 
 // True when Ollama answers on a non-loopback host, which on WSL means the
-// Windows-host daemon reached through host.docker.internal. Mirrors the
-// loopback check the model-list path already applies in inference/local.
+// already-qualified Windows-host daemon reached through host.docker.internal.
 function respondingOllamaIsWindowsHost(): boolean {
   const host = findReachableOllamaHost();
   return host !== null && host !== OLLAMA_LOCALHOST;
