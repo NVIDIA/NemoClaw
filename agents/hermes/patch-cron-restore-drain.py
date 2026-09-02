@@ -143,6 +143,7 @@ JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetim
     not_before = _ensure_aware(not_before)
     if not_before > now:
         raise RuntimeError("NemoClaw cron restore drain time is in the future")
+    rearm_gate = not_before.isoformat()
     replacement = now + timedelta(seconds=2)
     replacement_schedule = parse_schedule(replacement.isoformat())
     replacement_next = compute_next_run(replacement_schedule)
@@ -161,6 +162,7 @@ JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetim
                     if (
                         not isinstance(schedule, dict)
                         or schedule.get("kind") != "once"
+                        or job.get("nemoclaw_restore_rearm_gate") == rearm_gate
                         or job.get("enabled", True) is not True
                         or job.get("state") not in {None, "scheduled"}
                         or job.get("last_run_at") is not None
@@ -185,6 +187,7 @@ JOBS_RELEASE_HELPER = '''def rearm_nemoclaw_drained_oneshots(not_before: datetim
                     job["schedule"] = dict(replacement_schedule)
                     job["schedule_display"] = replacement_schedule.get("display")
                     job["next_run_at"] = replacement_next
+                    job["nemoclaw_restore_rearm_gate"] = rearm_gate
                     profile_changed += 1
                 if profile_changed:
                     save_jobs(jobs)

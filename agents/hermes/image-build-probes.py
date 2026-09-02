@@ -5,11 +5,78 @@
 
 from __future__ import annotations
 
+import os
+import re
+import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 sys.path.insert(0, "/usr/local/lib/nemoclaw")
+
+
+def _run_required_build_command(
+    label: str, argv: Sequence[str], *, env: Mapping[str, str]
+) -> None:
+    result = subprocess.run(argv, env=env, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"{label} exited with status {result.returncode}")
+
+
+def prepare_generated_config(
+    *,
+    hermes: Path = Path("/usr/local/bin/hermes"),
+    node: Path = Path("/usr/local/bin/node"),
+    generator: Path = Path("/opt/nemoclaw-hermes-config/generate-config.ts"),
+    hermes_home: Path = Path("/sandbox/.hermes"),
+    env: Mapping[str, str] | None = None,
+) -> None:
+    """Run upstream repair before NemoClaw replaces its generated config."""
+    child_env = dict(os.environ if env is None else env)
+    child_env["HERMES_HOME"] = str(hermes_home)
+    _run_required_build_command(
+        "Hermes doctor", [str(hermes), "doctor", "--fix"], env=child_env
+    )
+    _run_required_build_command(
+        "Hermes config generator",
+        [str(node), "--experimental-strip-types", str(generator)],
+        env=child_env,
+    )
+
+
+def verify_compatibility_retirement(
+    *,
+    hermes: Path = Path("/usr/local/bin/hermes"),
+    adapter: Path = Path("/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json"),
+    oneshot: Path = Path("/opt/hermes/hermes_cli/oneshot.py"),
+) -> None:
+    """Reject an upgrade that retains Hermes 0.20.6 compatibility behavior."""
+    result = subprocess.run(
+        [str(hermes), "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Hermes version probe exited with status {result.returncode}")
+    version_output = result.stdout.strip()
+    match = re.search(
+        r"(?:^|[^0-9])v?([0-9]+\.[0-9]+\.[0-9]+)(?:$|[^0-9])",
+        version_output,
+    )
+    if match is None:
+        raise RuntimeError(f"could not parse Hermes semver from: {version_output}")
+    semver = match.group(1)
+    if semver != "0.20.6" and '"resumed_oneshot"' in adapter.read_text(encoding="utf-8"):
+        raise RuntimeError(
+            f"installed Hermes {semver} but Hermes v0.20.6 compatibility workarounds "
+            "are still installed; re-review the workaround set before upgrading Hermes"
+        )
+    if (
+        "process_registry.wait_for_pending_completions(oneshot_task_id)"
+        not in oneshot.read_text(encoding="utf-8")
+    ):
+        raise RuntimeError("Hermes one-shot completion wait is not scoped to the exact turn")
 
 
 def _verify_profile_config_policy(config: dict, expected: dict[str, object]) -> None:
@@ -482,6 +549,7 @@ def verify_managed_runtime_capability() -> None:
 
 
 COMMANDS: dict[str, Callable[[], None]] = {
+    "compatibility-retirement": verify_compatibility_retirement,
     "cron-backup": verify_cron_backup,
     "cron-create": verify_cron_create,
     "cron-reopen": verify_cron_reopen,
@@ -497,6 +565,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "managed-runtime-capability": verify_managed_runtime_capability,
     "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
+    "prepare-generated-config": prepare_generated_config,
     "session-delete": verify_session_delete,
     "session-preview": verify_session_preview,
 }

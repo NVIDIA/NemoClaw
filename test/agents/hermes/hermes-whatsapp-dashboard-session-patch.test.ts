@@ -33,6 +33,17 @@ it("stores Hermes dashboard pairing state in the gateway session directory (#818
       },
     );
     expect(scoped.status, scoped.stderr).toBe(0);
+    const inventory = spawnSync("git", ["apply", "--numstat", "-z", PATCH], {
+      cwd: tmp,
+      encoding: "utf8",
+    });
+    expect(inventory.status, inventory.stderr).toBe(0);
+    const changedPaths = inventory.stdout
+      .split("\0")
+      .filter(Boolean)
+      .map((entry) => entry.split("\t").at(-1));
+    expect(changedPaths).not.toContain("hermes_cli/main.py");
+    expect(changedPaths.some((entry) => entry?.startsWith("gateway/"))).toBe(false);
     const applied = spawnSync("git", ["apply", "--include=hermes_cli/web_server.py", PATCH], {
       cwd: tmp,
       encoding: "utf8",

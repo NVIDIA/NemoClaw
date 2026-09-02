@@ -416,7 +416,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=1fc80ba3b8b1f66e92fb242e48258131a5d4e0faa6d235b0f75d4cc49992b772
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=99b93a69cd853714f5d5bf65732ac3ef2abc965a162ecb1277a21da08213e361
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -574,7 +574,7 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # predicate to compose an independent root-owned marker, hydrate that predicate
 # during GatewayRunner construction, and re-arm only unclaimed one-shots held
 # overdue when the authenticated release record opens the gate.
-ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=c959cf1caaeb1cf6933842c0382779feb63685870e836b58f79328cf6dc6b1a8
+ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=ad6bf56b770519022cdff131ed08ea71d1bbf7aef581eab8c170e0f5b3ae71fb
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256=4195245d27b7b067b416b69f4728fcfcdd97c912bdb0954f14402b35601f76cc
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256=8b8def1d9cb8088d4de7dd3d920d31fb0d959f4d6ffffadf6dd8f8320da5e00b
 ARG NEMOCLAW_HERMES_CRON_JOBS_SOURCE_SHA256=dd5c7c601e23e5058e93d824b17ff426ed2cc5113c20d431ea4937274be59923
@@ -793,22 +793,8 @@ COPY --from=hermes-wrapper-payload / /
 
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
-# hadolint ignore=DL4006
-RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
-    && hermes_semver="$(printf '%s\n' "$hermes_version_output" | sed -n 's/.*v\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\).*/\1/p; s/^\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\)$/\1/p' | head -1)" \
-    && if [ -z "$hermes_semver" ]; then \
-        echo "ERROR: could not parse Hermes semver from: $hermes_version_output" >&2; \
-        exit 1; \
-    fi \
-    && if [ "$hermes_semver" != "0.20.6" ] \
-        && grep -q '"resumed_oneshot"' /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json; then \
-        echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.20.6 compatibility workarounds are still installed; re-review the workaround set before upgrading Hermes" >&2; \
-        exit 1; \
-    fi \
-    && if ! grep -Fq 'process_registry.wait_for_pending_completions(oneshot_task_id)' /opt/hermes/hermes_cli/oneshot.py; then \
-        echo "ERROR: Hermes one-shot completion wait is not scoped to the exact turn" >&2; \
-        exit 1; \
-    fi
+RUN /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py compatibility-retirement
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
@@ -950,8 +936,8 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # via `shields up`. .env holds API key placeholders for OpenShell provider pipeline.
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
-RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
-    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
+RUN /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py prepare-generated-config \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 30; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.3"'; \
     fi \

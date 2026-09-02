@@ -246,20 +246,27 @@ module.load_jobs = lambda: stores[active_home]
 module.save_jobs = lambda value: saved.append({"home": active_home, "jobs": json.loads(json.dumps(value))})
 module._jobs_lock = contextlib.nullcontext
 changed = module.rearm_nemoclaw_drained_oneshots(not_before, ["default", "named"])
-print(json.dumps({"changed": changed, "stores": stores, "saved": saved}))
+now = datetime(2026, 8, 30, 12, 0, 5, tzinfo=timezone.utc)
+replayed = module.rearm_nemoclaw_drained_oneshots(not_before, ["default", "named"])
+print(json.dumps({"changed": changed, "replayed": replayed, "stores": stores, "saved": saved}))
 `;
       const result = spawnSync(process.env.PYTHON || "python3", ["-I", "-c", probe], {
         encoding: "utf8",
       });
       const observed = JSON.parse(result.stdout) as {
         changed: number;
-        stores: Record<string, Array<{ id: string; next_run_at: string }>>;
+        replayed: number;
+        stores: Record<
+          string,
+          Array<{ id: string; next_run_at: string; nemoclaw_restore_rearm_gate?: string }>
+        >;
         saved: Array<{ home: string }>;
       };
 
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(observed.changed).toBe(2);
+      expect(observed.replayed).toBe(0);
       expect(observed.saved.map(({ home }) => home)).toEqual(["default", "named"]);
       expect(observed.stores.default.find((job) => job.id === "held")?.next_run_at).toBe(
         "2026-08-30T12:00:02+00:00",
@@ -276,6 +283,12 @@ print(json.dumps({"changed": changed, "stores": stores, "saved": saved}))
       expect(observed.stores.named.find((job) => job.id === "named-held")?.next_run_at).toBe(
         "2026-08-30T12:00:02+00:00",
       );
+      expect(
+        observed.stores.default.find((job) => job.id === "held")?.nemoclaw_restore_rearm_gate,
+      ).toBe("2026-08-30T11:50:00+00:00");
+      expect(
+        observed.stores.named.find((job) => job.id === "named-held")?.nemoclaw_restore_rearm_gate,
+      ).toBe("2026-08-30T11:50:00+00:00");
       expect(observed.stores.named.find((job) => job.id === "named-disabled")?.next_run_at).toBe(
         "2026-08-30T11:58:00+00:00",
       );

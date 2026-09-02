@@ -121,6 +121,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-image-build-probes.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/patch-cron-restore-drain\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-cron-restore-drain-patch.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/patch-session-list-preview\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-session-list-preview-patch.test.ts"),
   },

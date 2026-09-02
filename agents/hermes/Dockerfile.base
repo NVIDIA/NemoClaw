@@ -627,9 +627,9 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 
 # Hermes 0.20.6 removed agent-browser from its root dependency graph. Prove
-# that the patched source selects the exact npx fallback. Cache the exact
-# registry package through the reviewed lockfile, then prove the cached package
-# works without network access.
+# that the patched source selects the exact npx fallback. Install the reviewed
+# lockfile once to populate the sandbox-owned cache, then prove the cached
+# package works without network access.
 RUN HOME=/sandbox \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -c \
@@ -640,12 +640,6 @@ RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
     && install -o sandbox -g sandbox -m 0400 /dev/null \
         /tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
     && HOME=/sandbox npm_config_cache=/sandbox/.npm \
-        npm_config_registry=https://registry.npmjs.org/ \
-        npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
-        npm_config_globalconfig=/tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
-        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        /usr/local/bin/npm cache add agent-browser@0.26.0 \
-    && HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
         npm_config_registry=https://registry.npmjs.org/ \
         npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
         npm_config_globalconfig=/tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
