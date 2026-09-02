@@ -95,6 +95,16 @@ function recoveryPath(backupPath: string): string {
   return path.join(backupPath, REBUILD_RECOVERY_FILE);
 }
 
+function invalidRecoveryRecordError(backupPath: string, detail: string, cause?: unknown): Error {
+  return new Error(
+    `Rebuild recovery marker at '${recoveryPath(backupPath)}' is invalid or unreadable (${detail}). ` +
+      `Recovery remains at '${backupPath}'. Do not edit or remove the marker or retained policy handoff. ` +
+      "Restore the marker's mode and ownership if those are the only damaged attributes, or restore the exact marker from a trusted backup, then rerun the same retirement command. " +
+      "If no trusted marker is available, preserve the backup and ask a NemoClaw maintainer to inspect it.",
+    { cause },
+  );
+}
+
 function syncDirectory(directory: string): void {
   const descriptor = fs.openSync(directory, "r");
   try {
@@ -170,7 +180,12 @@ function readRecoveryRecord(backupPath: string): RebuildRecoveryBackupRecord | n
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    throw invalidRecoveryRecordError(
+      backupPath,
+      code ? `open failed with ${code}` : "open failed",
+      error,
+    );
   }
   try {
     const before = fs.fstatSync(descriptor, { bigint: true });
@@ -184,7 +199,7 @@ function readRecoveryRecord(backupPath: string): RebuildRecoveryBackupRecord | n
       before.size < 1n ||
       before.size > 4096n
     ) {
-      throw new Error("Rebuild recovery backup record authority is invalid.");
+      throw invalidRecoveryRecordError(backupPath, "file authority is invalid");
     }
     const raw = fs.readFileSync(descriptor, "utf8");
     const after = fs.fstatSync(descriptor, { bigint: true });
@@ -195,9 +210,13 @@ function readRecoveryRecord(backupPath: string): RebuildRecoveryBackupRecord | n
       before.mtimeNs !== after.mtimeNs ||
       before.ctimeNs !== after.ctimeNs
     ) {
-      throw new Error("Rebuild recovery backup record changed while it was read.");
+      throw invalidRecoveryRecordError(backupPath, "file changed while it was read");
     }
-    return parseRecoveryRecord(raw);
+    const record = parseRecoveryRecord(raw);
+    if (!record) {
+      throw invalidRecoveryRecordError(backupPath, "content or schema is invalid");
+    }
+    return record;
   } finally {
     fs.closeSync(descriptor);
   }
@@ -250,10 +269,7 @@ export function recordRebuildRecoveryBackup(
   };
   const descriptor = fs.openSync(
     recoveryPath(manifest.backupPath),
-    fs.constants.O_WRONLY |
-      fs.constants.O_CREAT |
-      fs.constants.O_EXCL |
-      fs.constants.O_NOFOLLOW,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
     0o600,
   );
   try {

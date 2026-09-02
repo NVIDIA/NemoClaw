@@ -1416,16 +1416,6 @@ async function runSnapshotRestoreUnlocked(
       let clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let cloneCreatedPending = false;
       try {
-        if (targetExists) {
-          if (targetEntry) {
-            verifyRestoreDestinationOnOwnGateway(targetSandbox);
-          }
-          deleteSandboxForRestore(targetSandbox);
-          requireLiveSandboxesOnSandboxGateway(
-            sandboxName,
-            "  Failed to re-select source sandbox gateway after deleting destination.",
-          );
-        }
         const refreshedClonePolicy = await prepareSnapshotClonePolicy(
           lockedSourceEntry,
           targetSandbox,
@@ -1438,6 +1428,16 @@ async function runSnapshotRestoreUnlocked(
           ]);
         }
         clonePolicy = refreshedClonePolicy;
+        if (targetExists) {
+          if (targetEntry) {
+            verifyRestoreDestinationOnOwnGateway(targetSandbox);
+          }
+          deleteSandboxForRestore(targetSandbox);
+          requireLiveSandboxesOnSandboxGateway(
+            sandboxName,
+            "  Failed to re-select source sandbox gateway after deleting destination.",
+          );
+        }
         await autoCreateSandboxFromSource(
           sandboxName,
           targetSandbox,
