@@ -429,6 +429,14 @@ foreach ($requiredPayload in @(
         Fail-PackageQualification "Package manifest is missing $requiredPayload authority."
     }
 }
+$mxcManifestFiles = @($expectedPayloadFiles | Where-Object {
+    $_.StartsWith('mxc\', [StringComparison]::OrdinalIgnoreCase)
+} | ForEach-Object {
+    $_.Substring(4)
+} | Sort-Object)
+if (@(Compare-Object @('wxc-exec.exe', 'wxc-host-prep.exe') $mxcManifestFiles).Count -ne 0) {
+    Fail-PackageQualification 'Package manifest contains an unused MXC backend or sidecar.'
+}
 
 $installRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'NVIDIA\NemoClaw'
 $installBin = Join-Path $installRoot 'bin'

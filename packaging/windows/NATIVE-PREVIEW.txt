@@ -3,7 +3,8 @@ NemoClaw Native Windows Candidate Preview
 This package contains the NemoClaw CLI, Node.js 22.22.3, OpenClaw 2026.7.1,
 native Windows ARM64 builds of openshell.exe and openshell-gateway.exe from
 NVIDIA/OpenShell#2721 merge commit bcd517bbe08cc80860c9be57699390cd32e8445f,
-and the pinned Microsoft MXC 0.8.0 ARM64 runtime tools.
+and the pinned Microsoft MXC 0.8.0 ARM64 wxc-exec.exe and wxc-host-prep.exe
+ProcessContainer tools. WSLC and other unused backend sidecars are excluded.
 
 The packaged OpenShell gateway is a source-built NVIDIA/OpenShell#2721
 derivative with the checked-in OPENSHELL-NODE-UI-COMPATIBILITY.patch applied.

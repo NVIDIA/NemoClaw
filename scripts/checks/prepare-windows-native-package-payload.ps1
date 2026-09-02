@@ -215,10 +215,13 @@ try {
     Invoke-Checked -FilePath $tar -Arguments @('-xzf', $mxcArchivePath, '-C', $mxcExtract) -Label 'Microsoft MXC SDK extraction'
     $mxcRoot = Join-Path $output 'mxc'
     [IO.Directory]::CreateDirectory($mxcRoot) | Out-Null
-    Get-ChildItem -LiteralPath (Join-Path $mxcExtract 'package\bin\arm64') -File | Where-Object {
-        $_.Extension -in @('.exe', '.dll')
-    } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $mxcRoot $_.Name)
+    $mxcDistributionRoot = Join-Path $mxcExtract 'package\bin\arm64'
+    foreach ($mxcFile in @('wxc-exec.exe', 'wxc-host-prep.exe')) {
+        $mxcSource = Join-Path $mxcDistributionRoot $mxcFile
+        if (-not (Test-Path -LiteralPath $mxcSource -PathType Leaf)) {
+            Fail-PayloadPreparation "Pinned Microsoft MXC archive is missing $mxcFile."
+        }
+        Copy-Item -LiteralPath $mxcSource -Destination (Join-Path $mxcRoot $mxcFile)
     }
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\MXC-LICENSE.txt') -Destination (Join-Path $output 'MXC-LICENSE.txt')
 
@@ -274,7 +277,12 @@ debug = false
         openClaw = [pscustomobject]@{ version = '2026.7.1' }
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }
         openShellCompatibilityPatchSha256 = (Get-FileHash -LiteralPath (Join-Path $output 'OPENSHELL-NODE-UI-COMPATIBILITY.patch') -Algorithm SHA256).Hash.ToLowerInvariant()
-        mxc = [pscustomobject]@{ npmPackage = '@microsoft/mxc-sdk'; version = $script:MxcSdkVersion; archiveSha256 = $script:MxcSdkArchiveSha256 }
+        mxc = [pscustomobject]@{
+            npmPackage = '@microsoft/mxc-sdk'
+            version = $script:MxcSdkVersion
+            archiveSha256 = $script:MxcSdkArchiveSha256
+            packagedFiles = @('wxc-exec.exe', 'wxc-host-prep.exe')
+        }
     }
     [IO.File]::WriteAllText(
         (Join-Path $output 'runtime-payload-receipt.json'),

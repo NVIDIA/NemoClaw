@@ -112,6 +112,13 @@ foreach ($requiredPayload in @(
         Fail-WindowsPackageBuild "Required NemoClaw runtime payload is missing: $requiredPayload"
     }
 }
+$mxcRoot = Join-Path $payload 'mxc'
+$mxcPayloadFiles = @(Get-ChildItem -LiteralPath $mxcRoot -Recurse -File | ForEach-Object {
+    $_.FullName.Substring($mxcRoot.Length + 1)
+} | Sort-Object)
+if (@(Compare-Object @('wxc-exec.exe', 'wxc-host-prep.exe') $mxcPayloadFiles).Count -ne 0) {
+    Fail-WindowsPackageBuild 'MXC payload must contain only the ProcessContainer executor and host-preparation utility.'
+}
 Assert-Arm64PortableExecutable -Path (Join-Path $payload 'bin\node.exe') -Label 'node.exe payload'
 Assert-Arm64PortableExecutable -Path (Join-Path $payload 'mxc\wxc-exec.exe') -Label 'wxc-exec.exe payload'
 Assert-Arm64PortableExecutable -Path (Join-Path $payload 'mxc\wxc-host-prep.exe') -Label 'wxc-host-prep.exe payload'
