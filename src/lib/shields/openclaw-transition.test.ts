@@ -1100,10 +1100,16 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       policy: "permissive",
       throwOnError: true,
     });
-    harness.runSpy.mockImplementation(() => ({ status: 1 }) as never);
+    harness.runSpy.mockImplementation(
+      () =>
+        ({
+          status: 1,
+          stderr: "Error: code: 'failed_precondition', message: 'policy restore denied'",
+        }) as never,
+    );
 
     expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      "policy restore exited with status 1",
+      /OpenShell rejected the policy change: policy restore denied/,
     );
 
     const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");

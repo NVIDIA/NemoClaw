@@ -79,22 +79,17 @@ function hermesTarget() {
   };
 }
 
-function commandFromCall(call: unknown[]): string[] {
-  return call[0] as string[];
-}
+const commandFromCall = (call: unknown[]): string[] => call[0] as string[];
 
 function isGuardAction(cmd: string[], action: string): boolean {
   const guardIndex = cmd.indexOf(HERMES_GUARD);
   return guardIndex >= 0 && cmd[guardIndex + 1] === action;
 }
 
-function isInlinePython(cmd: string[]): boolean {
-  return cmd[0] === "python3" && cmd.includes("-c");
-}
+const isInlinePython = (cmd: string[]): boolean => cmd[0] === "python3" && cmd.includes("-c");
 
-function isIsolatedInlinePython(cmd: string[]): boolean {
-  return isInlinePython(cmd) && cmd[1] === "-I" && cmd[2] === "-c";
-}
+const isIsolatedInlinePython = (cmd: string[]): boolean =>
+  isInlinePython(cmd) && cmd[1] === "-I" && cmd[2] === "-c";
 
 function isRuntimeStateMutationCapabilityProbe(cmd: string[]): boolean {
   return (
@@ -200,6 +195,7 @@ describe("legacy Hermes shields compatibility", () => {
 
     const runner = requireSource("../runner.js");
     const policy = requireSource("../policy/index.js");
+    const policyAdapter = requireSource("../adapters/openshell/sandbox-policy-cli.js");
     const agentConfig = requireSource("../sandbox/agent-config.js");
     const registry = requireSource("../state/registry.js");
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
@@ -240,20 +236,15 @@ describe("legacy Hermes shields compatibility", () => {
     spies.push(
       runSpy,
       vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n"),
-      vi
-        .spyOn(policy, "buildPolicyGetCommand")
-        .mockImplementation((name: unknown) => ["policy", "get", String(name)]),
-      vi
-        .spyOn(policy, "buildPolicySetCommand")
-        .mockImplementation((file: unknown, name: unknown) => [
-          "policy",
-          "set",
-          String(file),
-          String(name),
-        ]),
+      shieldsFlow.bindTypedPolicyWriter(
+        policyAdapter,
+        (command, options) => runner.run(command, options),
+        undefined,
+        ["policy", "set"],
+      ),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath),
-      ...shieldsFlow.bindLivePolicyMutationContext(policy),
+      ...shieldsFlow.bindLivePolicyMutationContext(policy, policyAdapter),
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),
