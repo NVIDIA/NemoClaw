@@ -47,6 +47,114 @@ function hostSnapshotRun(
   return successfulRun(JSON.stringify({ userHost, watcherPath, daemonPath }));
 }
 
+type WindowsPowerShellState = {
+  userHost: string | null;
+  watcherRunning: boolean;
+  daemonRunning: boolean;
+  events: string[];
+};
+
+function createWindowsPowerShellBoundary(options: {
+  userHost: string | null;
+  watcherPath: string | null;
+  daemonPath: string | null;
+  launchStatuses?: number[];
+  readinessResponse?: string;
+  rollbackStatus?: number;
+}) {
+  const original = {
+    userHost: options.userHost,
+    watcherPath: options.watcherPath,
+    daemonPath: options.daemonPath,
+  };
+  const state: WindowsPowerShellState = {
+    userHost: original.userHost,
+    watcherRunning: Boolean(original.watcherPath),
+    daemonRunning: Boolean(original.daemonPath),
+    events: [],
+  };
+  const launchStatuses = options.launchStatuses ?? [1, 1, 1];
+  const rollbackStatus = options.rollbackStatus ?? 0;
+  let launchIndex = 0;
+  const run = vi.fn((command: string[]) => {
+    const script = commandText(command);
+    const capturesHostSnapshot = script.includes("ConvertTo-Json -Compress");
+    const persistsNewBinding = script.includes(
+      "SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User')",
+    );
+    const restoresPriorState = script.includes("$previousHost =");
+    const launchesReplacement = !restoresPriorState && script.includes("Start-Process");
+    const rollbackStopsWatcher = restoresPriorState && script.includes("Get-Process 'ollama app'");
+    const rollbackStopsDaemon = restoresPriorState && script.includes("Get-Process ollama -EA");
+    const launchStatus = launchStatuses[launchIndex] ?? 1;
+    const launchesWatcher =
+      launchesReplacement &&
+      Boolean(original.watcherPath) &&
+      script.includes(String(original.watcherPath));
+    const event = capturesHostSnapshot
+      ? "snapshot"
+      : persistsNewBinding
+        ? "persist"
+        : restoresPriorState
+          ? "restore"
+          : launchesReplacement
+            ? "launch"
+            : "unexpected";
+    state.events.push(
+      ...(restoresPriorState
+        ? [
+            ...(rollbackStopsWatcher ? ["stop-watcher"] : []),
+            ...(rollbackStopsDaemon ? ["stop-daemon"] : []),
+            "restore",
+          ]
+        : [event]),
+    );
+    state.watcherRunning = rollbackStopsWatcher ? false : state.watcherRunning;
+    state.daemonRunning = rollbackStopsDaemon ? false : state.daemonRunning;
+    state.userHost = persistsNewBinding
+      ? "0.0.0.0:11434"
+      : restoresPriorState && rollbackStatus === 0
+        ? original.userHost
+        : state.userHost;
+    state.watcherRunning =
+      restoresPriorState && rollbackStatus === 0
+        ? Boolean(original.watcherPath)
+        : launchesWatcher && launchStatus === 0
+          ? true
+          : state.watcherRunning;
+    state.daemonRunning =
+      restoresPriorState && rollbackStatus === 0
+        ? Boolean(original.daemonPath) && !original.watcherPath
+        : launchesReplacement && launchStatus === 0 && !launchesWatcher
+          ? true
+          : state.daemonRunning;
+    launchIndex += launchesReplacement ? 1 : 0;
+    return capturesHostSnapshot
+      ? hostSnapshotRun(original.userHost, original.watcherPath, original.daemonPath)
+      : persistsNewBinding
+        ? successfulRun()
+        : restoresPriorState
+          ? rollbackStatus === 0
+            ? successfulRun()
+            : { status: rollbackStatus, stderr: "rollback denied" }
+          : launchesReplacement
+            ? launchStatus === 0
+              ? successfulRun()
+              : { status: launchStatus, stderr: "launch unavailable" }
+            : { status: 1, stderr: "unexpected PowerShell operation" };
+  });
+  const runCapture = vi.fn((command: string | string[]) => {
+    const script = commandText(command);
+    const stopsWatcher = script.includes("Get-Process 'ollama app'");
+    const stopsDaemon = script.includes("Get-Process ollama -EA");
+    state.watcherRunning = stopsWatcher ? false : state.watcherRunning;
+    state.daemonRunning = stopsDaemon ? false : state.daemonRunning;
+    state.events.push(stopsWatcher ? "stop-watcher" : stopsDaemon ? "stop-daemon" : "probe");
+    return isDockerTagsRequest(command) ? (options.readinessResponse ?? "") : "";
+  });
+  return { run, runCapture, state };
+}
+
 function loadWindowsOllamaWithMocks(
   run: ReturnType<typeof vi.fn>,
   runCapture: ReturnType<typeof vi.fn>,
@@ -175,25 +283,14 @@ describe("Windows Ollama helper", () => {
     const priorHost = "127.0.0.1:11434";
     const watcherPath = "C:\\Users\\tester\\Ollama\\ollama app.exe";
     const daemonPath = "C:\\Users\\tester\\Ollama\\ollama.exe";
-    let rollbackScript = "";
-    const run = vi.fn((command: string[]) => {
-      const script = commandText(command);
-      const capturesHostSnapshot = script.includes("ConvertTo-Json -Compress");
-      const persistsNewBinding = script.includes(
-        "SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User')",
-      );
-      const restoresPriorState = script.includes("$previousHost =");
-      rollbackScript = restoresPriorState ? script : rollbackScript;
-      return capturesHostSnapshot
-        ? hostSnapshotRun(priorHost, watcherPath, daemonPath)
-        : persistsNewBinding || restoresPriorState
-          ? successfulRun()
-          : { status: 1, stderr: "launch unavailable" };
+    const boundary = createWindowsPowerShellBoundary({
+      userHost: priorHost,
+      watcherPath,
+      daemonPath,
     });
-    const runCapture = vi.fn(() => "");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+    const { windows, restore } = loadWindowsOllamaWithMocks(boundary.run, boundary.runCapture);
 
     try {
       expect(windows.setupWindowsOllamaWith0000Binding({ installedPath: daemonPath })).toBe(false);
@@ -203,36 +300,24 @@ describe("Windows Ollama helper", () => {
       errorSpy.mockRestore();
     }
 
-    expect(rollbackScript).toContain("SetEnvironmentVariable('OLLAMA_HOST',$previousHost,'User')");
-    expect(rollbackScript).toContain("Get-Process 'ollama app'");
-    expect(rollbackScript).toContain("Get-Process ollama");
-    expect(rollbackScript).toContain(Buffer.from(priorHost, "utf8").toString("base64"));
-    expect(rollbackScript).toContain(Buffer.from(watcherPath, "utf8").toString("base64"));
-    expect(rollbackScript).toContain("Start-Process -FilePath $previousWatcher");
+    expect(boundary.state.userHost).toBe(priorHost);
+    expect(boundary.state.watcherRunning).toBe(true);
+    expect(boundary.state.daemonRunning).toBe(false);
+    expect(boundary.state.events.at(-1)).toBe("restore");
   });
 
   it("prints a direct recovery command when prior Windows state rollback fails", () => {
     const priorHost = "127.0.0.1:11434";
     const daemonPath = "C:\\Users\\tester\\Ollama\\ollama.exe";
-    const run = vi.fn((command: string[]) => {
-      const script = commandText(command);
-      const capturesHostSnapshot = script.includes("ConvertTo-Json -Compress");
-      const persistsNewBinding = script.includes(
-        "SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User')",
-      );
-      const restoresPriorState = script.includes("$previousHost =");
-      return capturesHostSnapshot
-        ? hostSnapshotRun(priorHost, null, daemonPath)
-        : persistsNewBinding
-          ? successfulRun()
-          : restoresPriorState
-            ? { status: 1, stderr: "rollback denied" }
-            : { status: 1, stderr: "launch unavailable" };
+    const boundary = createWindowsPowerShellBoundary({
+      userHost: priorHost,
+      watcherPath: null,
+      daemonPath,
+      rollbackStatus: 1,
     });
-    const runCapture = vi.fn(() => "");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+    const { windows, restore } = loadWindowsOllamaWithMocks(boundary.run, boundary.runCapture);
 
     try {
       expect(windows.setupWindowsOllamaWith0000Binding()).toBe(false);
@@ -243,13 +328,42 @@ describe("Windows Ollama helper", () => {
 
     const diagnostic = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
     errorSpy.mockRestore();
-    const encodedCommand = diagnostic.match(/-EncodedCommand ([A-Za-z0-9+/=]+)/u)?.[1] ?? "";
-    const recoveryScript = Buffer.from(encodedCommand, "base64").toString("utf16le");
     expect(diagnostic).toContain("Failed to restore the previous Windows Ollama state");
     expect(diagnostic).toContain(`Previous User-scope OLLAMA_HOST: ${JSON.stringify(priorHost)}`);
+    expect(diagnostic).toContain("Restore it and relaunch the previous Ollama process with:");
     expect(diagnostic).toContain("powershell.exe -NoProfile -EncodedCommand");
-    expect(recoveryScript).toContain("SetEnvironmentVariable('OLLAMA_HOST',$previousHost,'User')");
-    expect(recoveryScript).toContain("Start-Process -FilePath $previousDaemon");
+  });
+
+  it("stops a final unready replacement before restoring the prior Windows state", () => {
+    const priorHost = "127.0.0.1:11434";
+    const watcherPath = "C:\\Users\\tester\\Ollama\\ollama app.exe";
+    const daemonPath = "C:\\Users\\tester\\Ollama\\ollama.exe";
+    const boundary = createWindowsPowerShellBoundary({
+      userHost: priorHost,
+      watcherPath,
+      daemonPath,
+      launchStatuses: [1, 1, 0],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(boundary.run, boundary.runCapture);
+
+    try {
+      expect(windows.setupWindowsOllamaWith0000Binding({ installedPath: daemonPath })).toBe(false);
+    } finally {
+      restore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    const finalLaunch = boundary.state.events.lastIndexOf("launch");
+    const finalStop = boundary.state.events.lastIndexOf("stop-daemon");
+    const rollback = boundary.state.events.lastIndexOf("restore");
+    expect(finalLaunch).toBeLessThan(finalStop);
+    expect(finalStop).toBeLessThan(rollback);
+    expect(boundary.state.userHost).toBe(priorHost);
+    expect(boundary.state.watcherRunning).toBe(true);
+    expect(boundary.state.daemonRunning).toBe(false);
   });
 
   it("isolates Docker credentials while waiting for the Windows-host daemon", () => {
