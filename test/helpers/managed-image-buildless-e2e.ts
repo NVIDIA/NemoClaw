@@ -427,6 +427,8 @@ runner.run = (command, options = {}) => {
   const argv = Array.isArray(command) ? command.map(String) : [];
   const normalized = normalize(command);
   runnerCommands.push(normalized);
+  const providerResult = fixtureMocks.mockNvidiaProviderGetRun(command);
+  if (providerResult !== null) return providerResult;
   if (
     normalized.includes("sandbox delete") &&
     createdSandbox.state.lifecycleState === "created"

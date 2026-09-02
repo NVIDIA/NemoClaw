@@ -99,19 +99,29 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
-function mockNvidiaOrMissingProviderGetRun(command) {
+function mockNvidiaProviderGetRun(command) {
   const args = normalizeCommand(command).split(/\s+/);
   const providerIndex = args.indexOf("provider");
   if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
   const providerName = providerNameAfterAction(args, providerIndex);
-  if (providerName !== "nvidia-prod") {
-    return { status: 1, stderr: `provider '${providerName}' not found` };
-  }
+  if (providerName !== "nvidia-prod") return null;
   return {
     status: 0,
     stdout:
       "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: <none>\n",
   };
+}
+
+function mockNvidiaOrMissingProviderGetRun(command) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
+  return (
+    mockNvidiaProviderGetRun(command) ?? {
+      status: 1,
+      stderr: `provider '${providerNameAfterAction(args, providerIndex)}' not found`,
+    }
+  );
 }
 
 function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
@@ -152,6 +162,20 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   return (
     mockEndpointlessProviderProfileRun(command, "openai", true) ??
     mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
+function mockProviderPreparationRun(command, profileId, inferenceCapable) {
+  return (
+    mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) ??
+    mockNvidiaOrMissingProviderGetRun(command)
+  );
+}
+
+function mockManagedProviderPreparationRun(command) {
+  return (
+    mockManagedEndpointlessProviderProfileRun(command) ??
+    mockNvidiaOrMissingProviderGetRun(command)
   );
 }
 
@@ -1308,7 +1332,10 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 module.exports = {
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
+  mockManagedProviderPreparationRun,
+  mockNvidiaProviderGetRun,
   mockNvidiaOrMissingProviderGetRun,
+  mockProviderPreparationRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
