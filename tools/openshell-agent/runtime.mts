@@ -30,6 +30,15 @@ export interface OpenShellExecution {
   completion: Promise<void>;
 }
 
+export type OpenShellProcessExit =
+  | { code: number | null; error?: undefined; signal: NodeJS.Signals | null }
+  | { code?: undefined; error: Error; signal?: undefined };
+
+export type OpenShellStop = (() => Promise<void>) & {
+  exit?: Promise<OpenShellProcessExit>;
+  isRunning?: () => boolean;
+};
+
 export interface OpenShellTools {
   run: (command: string, args: readonly string[], options: OpenShellCommandOptions) => string;
   runAsync: (
@@ -41,7 +50,7 @@ export interface OpenShellTools {
     command: string,
     args: readonly string[],
     options: OpenShellStartOptions,
-  ) => (() => Promise<void>) | void;
+  ) => OpenShellStop | void;
   wait: (milliseconds: number) => Promise<void>;
 }
 
@@ -166,7 +175,9 @@ function processGroupExists(pid: number): boolean {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
     throw error;
   }
 }
@@ -246,7 +257,7 @@ export const defaultOpenShellTools: OpenShellTools = {
       completion,
     };
   },
-  start(command, args, options): () => Promise<void> {
+  start(command, args, options): OpenShellStop {
     const log = openSync(options.logPath, "w", 0o600);
     try {
       const { child, stop } = spawnOwnedProcessGroup(
@@ -256,9 +267,15 @@ export const defaultOpenShellTools: OpenShellTools = {
         ["ignore", log, log],
         "Failed to stop owned " + command,
       );
-      child.on("error", () => undefined);
+      const exit = new Promise<OpenShellProcessExit>((resolve) => {
+        child.once("error", (error) => resolve({ error }));
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      });
       child.unref();
-      return stop;
+      return Object.assign(stop, {
+        exit,
+        isRunning: () => child.pid !== undefined && processGroupExists(child.pid),
+      });
     } finally {
       closeSync(log);
     }
@@ -277,6 +294,28 @@ export type OwnedOpenShellGateway = {
   ready: Promise<void>;
   stop: () => Promise<void>;
 };
+
+function gatewayExitError(exit: OpenShellProcessExit): OpenShellAgentError {
+  if (exit.error) return new OpenShellAgentError(`openshell-gateway failed to start: ${exit.error.message}`);
+  return new OpenShellAgentError(
+    `openshell-gateway exited before becoming ready with ${exit.signal ?? `code ${exit.code ?? "unknown"}`}`,
+  );
+}
+
+function assertExpectedGatewayInfo(output: string, endpoint: URL): void {
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    throw new OpenShellAgentError("OpenShell gateway health response was not valid JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new OpenShellAgentError("OpenShell gateway health response was not an object");
+  const info = value as Record<string, unknown>;
+  const expected = endpoint.origin;
+  if (info.gateway !== expected || info.server !== expected || info.status !== "healthy")
+    throw new OpenShellAgentError("OpenShell gateway health response did not match the owned endpoint");
+}
 
 function startOpenShellGateway(
   env: NodeJS.ProcessEnv,
@@ -312,23 +351,40 @@ function startOpenShellGateway(
     }),
     { mode: 0o600 },
   );
-  const stopGateway =
+  const stopGateway: OpenShellStop =
     tools.start("openshell-gateway", ["--config", configurationPath], {
       env: commandEnv,
       logPath: path.join(gatewayDirectory, "gateway.log"),
     }) ?? (async () => undefined);
 
+  let exited: OpenShellProcessExit | undefined;
+  void stopGateway.exit?.then((value) => {
+    exited = value;
+  });
   const ready = (async (): Promise<void> => {
     try {
+      let lastFailure: unknown;
       for (let attempt = 0; attempt < 30; attempt += 1) {
+        if (exited) throw gatewayExitError(exited);
         try {
-          tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-          break;
-        } catch {
-          await tools.wait(1000);
+          const info = tools.run("openshell", ["gateway", "info", "-o", "json"], {
+            capture: true,
+            env: commandEnv,
+            timeout: 10_000,
+          });
+          assertExpectedGatewayInfo(info, gatewayEndpoint);
+          await tools.wait(50);
+          if (exited) throw gatewayExitError(exited);
+          if (stopGateway.isRunning && !stopGateway.isRunning())
+            throw new OpenShellAgentError("openshell-gateway exited before becoming ready");
+          return;
+        } catch (error) {
+          lastFailure = error;
+          if (exited) throw gatewayExitError(exited);
+          if (attempt < 29) await tools.wait(1000);
         }
       }
-      tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+      throw lastFailure;
     } catch (error) {
       if (input.ownGateway) {
         try {

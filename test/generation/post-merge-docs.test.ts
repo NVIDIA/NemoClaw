@@ -801,7 +801,15 @@ describe("post-merge documentation runner", () => {
     const input = runnerFixture("review");
     const responses = new Map([["which", "/trusted/bin/openshell-sandbox"]]);
     const tools: OpenShellTools = {
-      run: vi.fn((command) => responses.get(command) ?? ""),
+      run: vi.fn((command, args, options) =>
+        args.join(" ") === "gateway info -o json"
+          ? JSON.stringify({
+              gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+              server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+              status: "healthy",
+            })
+          : (responses.get(command) ?? ""),
+      ),
       runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
       start: vi.fn(),
       wait: async () => undefined,

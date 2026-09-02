@@ -92,7 +92,20 @@ function advisorTools(runImplementation?: OpenShellTools["run"]): OpenShellTools
   return {
     run: vi.fn(
       runImplementation ??
-        ((command) => (command === "which" ? "/trusted/bin/openshell-sandbox" : "")),
+        ((command, args, options) => {
+          switch (`${command} ${args.join(" ")}`) {
+            case "which openshell-sandbox":
+              return "/trusted/bin/openshell-sandbox";
+            case "openshell gateway info -o json":
+              return JSON.stringify({
+                gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+                server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+                status: "healthy",
+              });
+            default:
+              return "";
+          }
+        }),
     ),
     runAsync: vi.fn(() => ({
       cancel: vi.fn(),
@@ -1018,6 +1031,11 @@ describe("PR review advisor OpenShell wrapper", () => {
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
     });
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
+    expect(calls).toContainEqual([
+      "openshell",
+      ["gateway", "info", "-o", "json"],
+      expect.objectContaining({ capture: true, timeout: 10_000 }),
+    ]);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
     const gatewayConfig = fs.readFileSync(
       path.join(env.RUNNER_TEMP as string, "openshell-gateway", "gateway.toml"),

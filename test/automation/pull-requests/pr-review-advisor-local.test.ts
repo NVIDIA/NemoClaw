@@ -3,12 +3,14 @@
 
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  allocateLocalReviewGatewayEndpoint,
   createLocalReviewSnapshot,
   runLocalReview,
   type LocalReviewLifecycle,
@@ -159,6 +161,28 @@ afterEach(() => {
 });
 
 describe("local PR review advisor", () => {
+  it("allocates a released per-run gateway port instead of assuming port 8080 (#10791)", async () => {
+    const blocker = createServer();
+    const ownsBlockedPort = await new Promise<boolean>((resolve, reject) => {
+      blocker.once("error", (error: NodeJS.ErrnoException) =>
+        error.code === "EADDRINUSE" ? resolve(false) : reject(error),
+      );
+      blocker.listen({ exclusive: true, host: "127.0.0.1", port: 8080 }, () => resolve(true));
+    });
+    try {
+      const endpoint = new URL(await allocateLocalReviewGatewayEndpoint());
+      expect(endpoint.protocol).toBe("http:");
+      expect(endpoint.hostname).toBe("127.0.0.1");
+      expect(endpoint.port).not.toBe("8080");
+    } finally {
+      await (ownsBlockedPort
+        ? new Promise<void>((resolve, reject) =>
+            blocker.close((error) => (error ? reject(error) : resolve())),
+          )
+        : Promise.resolve());
+    }
+  });
+
   it("exports the digest-pinned advisor image for workflow consumers (#10610)", () => {
     const githubEnv = path.join(temporaryDirectory(), "github-env");
     execFileSync(
@@ -469,6 +493,7 @@ describe("local PR review advisor", () => {
     const root = temporaryDirectory();
     const before = sourceState(source);
     const calls: string[] = [];
+    const gatewayEndpoints = new Set<string>();
     const stopGateway = vi.fn(async () => undefined);
     const lifecycle: LocalReviewLifecycle = {
       prepare: async (env) => {
@@ -476,7 +501,8 @@ describe("local PR review advisor", () => {
       },
       startGateway: (env) => {
         calls.push("configure:" + env.PR_REVIEW_ADVISOR_INTEREST);
-        expect(env.OPENSHELL_GATEWAY_ENDPOINT).toBe("http://127.0.0.1:8080");
+        expect(env.OPENSHELL_GATEWAY_ENDPOINT).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
+        gatewayEndpoints.add(env.OPENSHELL_GATEWAY_ENDPOINT as string);
         expect(env.PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
         expect(env.SANDBOX_NAME).toMatch(/^pr-adv-[a-f0-9]{12}$/u);
         expect(env.SANDBOX_NAME).toHaveLength(19);
@@ -519,6 +545,7 @@ describe("local PR review advisor", () => {
     expect(calls.filter((call) => call.startsWith("configure:"))).toHaveLength(
       ADVISOR_SPECIALISTS.length,
     );
+    expect(gatewayEndpoints.size).toBe(1);
     expect(stopGateway).toHaveBeenCalledTimes(ADVISOR_SPECIALISTS.length);
     expect(calls.filter((call) => call.startsWith("remove:"))).toHaveLength(
       ADVISOR_SPECIALISTS.length,
@@ -639,8 +666,12 @@ describe("local PR review advisor", () => {
   it("owns gateway cleanup while provider configuration is pending (#10611)", async () => {
     const source = repository();
     let rejectConfiguration!: (error: Error) => void;
+    let markGatewayStarted!: () => void;
     const configuration = new Promise<void>((_resolve, reject) => {
       rejectConfiguration = reject;
+    });
+    const gatewayStarted = new Promise<void>((resolve) => {
+      markGatewayStarted = resolve;
     });
     const stopGateway = vi
       .fn<() => Promise<void>>()
@@ -648,7 +679,10 @@ describe("local PR review advisor", () => {
       .mockResolvedValueOnce();
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
-      startGateway: () => ({ configure: configuration, stop: stopGateway }),
+      startGateway: () => {
+        markGatewayStarted();
+        return { configure: configuration, stop: stopGateway };
+      },
       create: () => undefined,
       run: () => undefined,
       download: () => undefined,
@@ -662,7 +696,7 @@ describe("local PR review advisor", () => {
       lifecycle,
       temporaryRoot: temporaryDirectory(),
     });
-    await vi.waitFor(() => expect(process.listenerCount("SIGTERM")).toBeGreaterThan(0));
+    await gatewayStarted;
     process.emit("SIGTERM");
     await vi.waitFor(() => expect(stopGateway).toHaveBeenCalledOnce());
     rejectConfiguration(new Error("configuration failed"));
@@ -673,6 +707,47 @@ describe("local PR review advisor", () => {
     });
     expect(stopGateway).toHaveBeenCalledTimes(2);
     expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
+  });
+
+  it("cancels safely while allocating the gateway endpoint (#10791)", async () => {
+    const source = repository();
+    let releaseEndpoint!: (endpoint: string) => void;
+    const endpoint = new Promise<string>((resolve) => {
+      releaseEndpoint = resolve;
+    });
+    let receiveSignal!: (signal: NodeJS.Signals) => void;
+    const restore = vi.fn();
+    const prepare = vi.fn(async () => undefined);
+    const startGateway = vi.fn(() => undefined);
+    const lifecycle: LocalReviewLifecycle = {
+      ...artifactLifecycle(),
+      prepare,
+      startGateway,
+    };
+
+    const review = runLocalReview({
+      allocateGatewayEndpoint: () => endpoint,
+      lifecycle,
+      signals: {
+        listen: (callback) => {
+          receiveSignal = callback;
+          return () => undefined;
+        },
+        restore,
+      },
+      source,
+      temporaryRoot: temporaryDirectory(),
+    });
+    receiveSignal("SIGTERM");
+    releaseEndpoint("http://127.0.0.1:49152");
+
+    await expect(review).resolves.toBe(
+      path.join(fs.realpathSync(source), "artifacts", "pr-review-advisor-local"),
+    );
+    expect(prepare).not.toHaveBeenCalled();
+    expect(startGateway).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledWith("SIGTERM");
+    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 
   it("redacts lifecycle credentials while preserving actionable OpenShell context (#10611)", async () => {

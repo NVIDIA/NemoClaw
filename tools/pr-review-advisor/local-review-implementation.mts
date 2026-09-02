@@ -5,11 +5,12 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEFAULT_ADVISOR_MODEL } from "../advisors/provider-constants.mts";
-import { ADVISOR_PI_IMAGE, LOCAL_OPENSHELL_GATEWAY_ENDPOINT } from "./runtime-constants.mts";
+import { ADVISOR_PI_IMAGE } from "./runtime-constants.mts";
 import { prepareAdvisorSandboxInputs } from "./openshell.mts";
 import {
   defaultAdvisorSpecialistLifecycle,
@@ -311,8 +312,30 @@ function validateSpecialistArtifacts(root: string, interest: string): void {
   )
     throw new Error("Specialist artifact must be a regular file");
 }
+
+export async function allocateLocalReviewGatewayEndpoint(): Promise<string> {
+  const server = createServer();
+  server.unref();
+  return await new Promise<string>((resolve, reject) => {
+    const fail = (error: Error): void => reject(error);
+    server.once("error", fail);
+    server.listen({ exclusive: true, host: "127.0.0.1", port: 0 }, () => {
+      server.off("error", fail);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Local review could not allocate a loopback gateway port"));
+        return;
+      }
+      const endpoint = `http://127.0.0.1:${address.port}`;
+      server.close((error) => (error ? reject(error) : resolve(endpoint)));
+    });
+  });
+}
+
 function specialistEnvironment(
   advisorDirectory: string,
+  gatewayEndpoint: string,
   output: string,
   runnerTemp: string,
   snapshot: string,
@@ -326,7 +349,7 @@ function specialistEnvironment(
     BASE_REF: refs.baseRef,
     GITHUB_WORKSPACE: output,
     HEAD_REF: refs.headRef,
-    OPENSHELL_GATEWAY_ENDPOINT: LOCAL_OPENSHELL_GATEWAY_ENDPOINT,
+    OPENSHELL_GATEWAY_ENDPOINT: gatewayEndpoint,
     PI_IMAGE: ADVISOR_PI_IMAGE,
     OPENAI_API_KEY: process.env.PR_REVIEW_ADVISOR_API_KEY,
     PR_REVIEW_ADVISOR_ARTIFACT_DIR: "pr-review-specialist-" + specialist.interest,
@@ -344,6 +367,7 @@ export async function runLocalReview(input: {
   prepareSnapshot?: typeof createLocalReviewSnapshot;
   advisorDirectory?: string;
   publication?: LocalReviewPublication;
+  allocateGatewayEndpoint?: () => Promise<string>;
   removeTemporaryRoot?: typeof fs.rmSync;
   signals?: {
     listen: (handler: (signal: NodeJS.Signals) => void) => () => void;
@@ -389,10 +413,15 @@ export async function runLocalReview(input: {
     const base = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
     const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot, base);
     const specialists = input.specialists ?? ADVISOR_SPECIALISTS;
-    if (specialists.length > 0) {
+    const gatewayEndpoint =
+      specialists.length === 0
+        ? ""
+        : await (input.allocateGatewayEndpoint ?? allocateLocalReviewGatewayEndpoint)();
+    if (!receivedSignal && specialists.length > 0) {
       await lifecycle.prepare(
         specialistEnvironment(
           input.advisorDirectory ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+          gatewayEndpoint,
           output,
           runnerTemp,
           snapshot,
@@ -402,10 +431,12 @@ export async function runLocalReview(input: {
       );
     }
     for (const specialist of specialists) {
+      if (receivedSignal) break;
       await runAdvisorSpecialist({
         env: specialistEnvironment(
           input.advisorDirectory ??
             path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+          gatewayEndpoint,
           output,
           runnerTemp,
           snapshot,
@@ -422,12 +453,13 @@ export async function runLocalReview(input: {
       });
       if (receivedSignal) break;
     }
-    staged = stageArtifacts(
-      source,
-      path.join(output, "artifacts"),
-      destination,
-      input.publication ?? defaultLocalReviewPublication,
-    );
+    if (!receivedSignal)
+      staged = stageArtifacts(
+        source,
+        path.join(output, "artifacts"),
+        destination,
+        input.publication ?? defaultLocalReviewPublication,
+      );
   } catch (error) {
     primary = safeFailure(error);
   }

@@ -1275,7 +1275,20 @@ describe("PR Review Advisor repair Phase 1", () => {
     const root = temporaryDirectory();
     const stop = vi.fn(async () => undefined);
     const tools: OpenShellTools = {
-      run: vi.fn((command) => (command === "which" ? "/trusted/openshell-sandbox" : "")),
+      run: vi.fn((command, args, options) => {
+        switch (`${command} ${args.join(" ")}`) {
+          case "which openshell-sandbox":
+            return "/trusted/openshell-sandbox";
+          case "openshell gateway info -o json":
+            return JSON.stringify({
+              gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+              server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+              status: "healthy",
+            });
+          default:
+            return "";
+        }
+      }),
       runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
       start: vi.fn(() => stop),
       wait: vi.fn(async () => undefined),
@@ -1303,6 +1316,46 @@ describe("PR Review Advisor repair Phase 1", () => {
     expect(vi.mocked(tools.run).mock.calls.flatMap(([, args]) => args)).not.toContain("provider");
     expectCredentialFreeOpenShellCalls(vi.mocked(tools.run).mock.calls);
     await gateway.stop();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a foreign healthy listener when the owned gateway exits (#10791)", async () => {
+    const root = temporaryDirectory();
+    const stop = Object.assign(
+      vi.fn(async () => undefined),
+      {
+        exit: Promise.resolve({ code: 1, signal: null }),
+        isRunning: () => false,
+      },
+    );
+    const endpoint = "http://127.0.0.1:49152";
+    const tools: OpenShellTools = {
+      run: vi.fn((command, args) => {
+        switch (`${command} ${args.join(" ")}`) {
+          case "which openshell-sandbox":
+            return "/trusted/openshell-sandbox";
+          case "openshell gateway info -o json":
+            return JSON.stringify({ gateway: endpoint, server: endpoint, status: "healthy" });
+          default:
+            return "";
+        }
+      }),
+      runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
+      start: vi.fn(() => stop),
+      wait: vi.fn(async () => undefined),
+    };
+    const gateway = startOwnedOpenShellGateway(
+      {
+        HOME: path.join(root, "home"),
+        OPENSHELL_GATEWAY_ENDPOINT: endpoint,
+        PATH: "/usr/bin",
+        RUNNER_TEMP: root,
+      },
+      { enableBindMounts: true, gatewayId: "phase1-validation" },
+      tools,
+    );
+
+    await expect(gateway.ready).rejects.toThrow("exited before becoming ready");
     expect(stop).toHaveBeenCalledOnce();
   });
 

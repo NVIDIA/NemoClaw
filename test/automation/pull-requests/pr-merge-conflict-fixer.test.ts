@@ -82,7 +82,15 @@ function resolverEnvironment(): NodeJS.ProcessEnv {
 
 function resolverTools(outputs: string[] = []): ResolverTools {
   return {
-    run: vi.fn(() => outputs.shift() ?? ""),
+    run: vi.fn((_command, args, options) =>
+      args.join(" ") === "gateway info -o json"
+        ? JSON.stringify({
+            gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+            server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+            status: "healthy",
+          })
+        : (outputs.shift() ?? ""),
+    ),
     runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
     start: vi.fn(),
     wait: vi.fn(async () => undefined),
@@ -568,8 +576,9 @@ describe("PR merge conflict fixer", () => {
     const gatewayInfoCalls = run.mock.calls.filter(
       ([, args]) => args[0] === "gateway" && args[1] === "info",
     );
-    expect(gatewayInfoCalls).toHaveLength(2);
-    expect(gatewayInfoCalls.map(([, , options]) => options.timeout)).toEqual([10_000, 10_000]);
+    expect(gatewayInfoCalls).toHaveLength(1);
+    expect(gatewayInfoCalls[0]?.[1]).toEqual(["gateway", "info", "-o", "json"]);
+    expect(gatewayInfoCalls[0]?.[2]).toMatchObject({ capture: true, timeout: 10_000 });
     expect(
       run.mock.calls.map(([command, args]) => [command, ...args].join(" ")).join("\n"),
     ).not.toContain("provider-secret");
