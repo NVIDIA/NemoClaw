@@ -464,8 +464,13 @@ export function resolveSandboxBaseImage(
   options: ResolveBaseImageOptions,
 ): SandboxBaseImageResolution | null {
   const env = options.env || process.env;
-  const resolutionKey = createSandboxBaseImageResolutionKey(options);
   const override = options.envVar ? String(env[options.envVar] || "").trim() : "";
+  if (options.requirePinnedRemoteRef === true && !options.pinnedRemoteRef?.trim()) {
+    throw new SandboxBaseImageResolutionError(
+      `${options.label || "Sandbox base image"} requires a non-empty pinned remote reference.`,
+    );
+  }
+  const resolutionKey = createSandboxBaseImageResolutionKey(options);
 
   if (!options.forceRefresh) {
     const reused = reuseSandboxBaseImageResolutionHint(options, resolutionKey);
@@ -510,7 +515,7 @@ export function resolveSandboxBaseImage(
   } else {
     const rootDir = options.rootDir || ROOT;
     const inputPaths = [options.dockerfilePath, ...(options.inputPaths ?? [])];
-    const preferPinnedRemoteRef = options.preferPinnedRemoteRef === true;
+    const requirePinnedRemoteRef = options.requirePinnedRemoteRef === true;
     const versionTags = getVersionedBaseImageTags(options.rootDir || ROOT, env);
     const resolveVersionTags = (tags: string[]): SandboxBaseImageResolution | null => {
       for (const tag of tags) {
@@ -536,7 +541,7 @@ export function resolveSandboxBaseImage(
     };
     if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
 
-    if (preferPinnedRemoteRef && options.pinnedRemoteRef) {
+    if (requirePinnedRemoteRef && options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
         options.pinnedRemoteRef,
@@ -545,6 +550,16 @@ export function resolveSandboxBaseImage(
         { pinnedRemoteRef: options.pinnedRemoteRef },
       );
       if (resolved) return finish(resolved);
+      const local = resolveLocalCandidate(options);
+      if (local) return finish(local);
+      const validationFailure = options.validationDescription
+        ? `did not pass ${options.validationDescription}`
+        : "did not pass required compatibility checks";
+      throw new SandboxBaseImageResolutionError(
+        `${options.label || "Sandbox base image"} '${options.pinnedRemoteRef}' is required but ` +
+          `could not be pulled or ${validationFailure}. No compatible local base image could ` +
+          "be produced.",
+      );
     }
 
     const versionTagResolution = resolveVersionTags(versionTags);
@@ -558,7 +573,7 @@ export function resolveSandboxBaseImage(
 
     if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
 
-    if (!preferPinnedRemoteRef && options.pinnedRemoteRef) {
+    if (options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
         options.pinnedRemoteRef,
