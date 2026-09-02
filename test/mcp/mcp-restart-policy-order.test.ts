@@ -7,7 +7,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
+
+import { mcpPolicyAllowedIps } from "../helpers/mcp-policy-pins";
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
@@ -333,10 +334,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     expect(payload.registeredProviderGets).toBe(1);
     expect(payload.allowedIps).toEqual(["1.1.1.1", "8.8.8.8"]);
     expect(payload.registeredPolicyContent).toBe(payload.activePolicyContent);
-    const policy = YAML.parse(payload.registeredPolicyContent) as {
-      network_policies: Record<string, { endpoints: Array<{ allowed_ips: string[] }> }>;
-    };
-    expect(policy.network_policies.mcp_bridge_example.endpoints[0].allowed_ips).toEqual([
+    expect(mcpPolicyAllowedIps(payload.registeredPolicyContent, "example")).toEqual([
       "1.1.1.1",
       "8.8.8.8",
     ]);

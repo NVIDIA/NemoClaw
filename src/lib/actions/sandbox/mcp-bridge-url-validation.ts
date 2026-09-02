@@ -28,7 +28,6 @@ const MCP_PATH_CREDENTIAL_PATTERNS = TOKEN_PREFIX_PATTERNS.map(
   (pattern) => new RegExp(pattern.source.replaceAll("\\b", ""), pattern.flags.replace("g", "")),
 );
 const MCP_DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const MCP_PUBLIC_DNS_ROTATION_SNAPSHOTS = 3;
 
 function validateCanonicalMcpDnsHostname(hostname: string): void {
   if (hostname.length > 253 || hostname.split(".").some((label) => !MCP_DNS_LABEL_RE.test(label))) {
@@ -259,24 +258,7 @@ export async function preflightMcpServerUrlResolvedTarget(
       async (hostname) => resolveHostAddresses(hostname),
       { trustedPrivateHosts },
     );
-  const snapshots = [];
-  let result = await resolveSnapshot();
-  if (result.ok) {
-    snapshots.push(result);
-    // Some system resolvers return one member of a rotating public answer set
-    // even with `all: true`. Two additional snapshots capture the reported
-    // A/B rotation and confirm the wraparound without changing private-host
-    // admission or refreshing policy during a live connection.
-    if (!result.trustedPrivateEndpoint && result.addresses?.length === 1) {
-      for (let attempt = 1; attempt < MCP_PUBLIC_DNS_ROTATION_SNAPSHOTS; attempt += 1) {
-        // Once the first snapshot is public, a later private answer is DNS
-        // rebinding even when the hostname also has configured private trust.
-        result = await resolveSnapshot([]);
-        if (!result.ok) break;
-        snapshots.push(result);
-      }
-    }
-  }
+  const result = await resolveSnapshot();
   if (!result.ok) {
     if (result.reasonCode === "private-answer" && result.offendingAddress) {
       const guidance = isLoopbackHostname(result.offendingAddress)
@@ -297,7 +279,7 @@ export async function preflightMcpServerUrlResolvedTarget(
   const literalAddress = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(parsed.hostname)
     ? parsed.hostname
     : undefined;
-  const resolvedAddresses = snapshots.flatMap((snapshot) => snapshot.addresses ?? []);
+  const resolvedAddresses = result.addresses ?? [];
   const addresses = [
     ...new Set(resolvedAddresses.length > 0 ? resolvedAddresses : [literalAddress]),
   ]
@@ -335,6 +317,13 @@ export async function preflightMcpServerUrlResolvedTarget(
     throw new McpBridgeError(
       `--trusted-private-host ${normalizedHostname} is unused because the MCP endpoint did not resolve to supported routed private addresses.`,
       2,
+    );
+  }
+  if (isIP(parsed.hostname) === 0 && addresses.length === 1) {
+    throw new McpBridgeError(
+      `MCP server URL host '${parsed.hostname}' returned only one public address. NemoClaw cannot prove whether that address is a stable singleton or one member of a rotating answer set, so it refuses to register incomplete allowed_ips. Use an endpoint whose DNS lookup returns its complete public address set in one response.`,
+      2,
+      "rejected",
     );
   }
   return { addresses };

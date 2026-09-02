@@ -33,63 +33,32 @@ describe("MCP URL target validation", () => {
     }
   });
 
-  it("pins each address observed across a rotating public DNS answer (#10755)", async () => {
+  it("fails closed when a later public address can appear beyond preflight (#10755)", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")
       .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never);
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never);
     try {
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
-      ).resolves.toEqual({ addresses: ["1.1.1.1", "8.8.8.8"] });
+      ).rejects.toThrow(/cannot prove whether that address is a stable singleton/);
     } finally {
       lookup.mockRestore();
     }
   });
 
-  it("samples a public answer even when the host has configured private trust (#10755)", async () => {
+  it("does not treat configured private trust as authority for a singleton public answer (#10755)", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never);
+      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
     try {
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp"), {
           trustedPrivateHosts: ["mcp.example.test"],
         }),
-      ).resolves.toEqual({ addresses: ["1.1.1.1", "8.8.8.8"] });
-    } finally {
-      lookup.mockRestore();
-    }
-  });
-
-  it("rejects a private address discovered in a later public DNS snapshot (#10755)", async () => {
-    const lookup = vi
-      .spyOn(dns, "lookup")
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }] as never);
-    try {
-      await expect(
-        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
-      ).rejects.toThrow(/resolves to private, local, or special-use address '127\.0\.0\.1'/);
-    } finally {
-      lookup.mockRestore();
-    }
-  });
-
-  it("rejects private rotation after a public answer despite configured trust (#10755)", async () => {
-    const lookup = vi
-      .spyOn(dns, "lookup")
-      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
-      .mockResolvedValueOnce([{ address: "10.20.30.40", family: 4 }] as never);
-    try {
-      await expect(
-        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp"), {
-          trustedPrivateHosts: ["mcp.example.test"],
-        }),
-      ).rejects.toThrow(/resolves to private, local, or special-use address '10\.20\.30\.40'/);
+      ).rejects.toThrow(/cannot prove whether that address is a stable singleton/);
     } finally {
       lookup.mockRestore();
     }
