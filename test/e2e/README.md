@@ -135,19 +135,21 @@ any source-run artifacts. A manual dispatch from `main` accepts the same identit
 but authenticates them through the same path. Historical run metadata about the PR base is not
 authority for the comparison.
 
-The managed-image PR workflow only builds candidate inputs. A fresh trusted job downloads the
-exact image contracts from the authenticated source attempt, validates and assembles them with
-base-controlled code, and executes the checked-in trusted scenario controller with the exact-base
-host CLI. Candidate code runs only inside the candidate managed images behind the OpenShell
-sandbox boundary; it is never checked out or executed in the evidence-producing host workspace.
-The PR-controlled workflow cannot author the qualification receipt.
-After activation, a separate fresh post-processing runner that never checks out or executes the
-candidate records the candidate and base SHAs, source and qualification attempts, trusted workflow
-revision, OpenShell version, complete immutable image identity, scenario path, evidence file
-digests, and cleanup result. Another fresh runner checks out the exact base SHA, selects the
-nearest successful managed-image cohort on that base's first-parent history, and runs the same
-scenario. Both receipts and evidence archives are bound by artifact ID and digest before
-classification.
+The managed-image PR workflow publishes exact candidate inputs for native `linux/amd64` and
+`linux/arm64`. An isolated untrusted build job produces only a bounded candidate CLI archive. The
+trusted activation jobs download the platform-specific contracts, validate and assemble them with
+base-controlled code, make the controller and evidence boundaries non-writable, and execute the
+candidate product as an unprivileged user. A regression probe attempts candidate-user writes to
+both protected paths before either native scenario can run.
+
+Each protected controller records the candidate and base SHAs, source and qualification attempts,
+trusted workflow revision, platform, OpenShell version, complete immutable image identity,
+scenario path, evidence file digests, and cleanup result. Fresh post-processing runners that never
+execute the candidate bind both platform receipts and evidence archives by artifact ID and digest.
+Separate native runners check out the exact base SHA, select the nearest successful managed-image
+cohort on that base's first-parent history, and run the same scenarios. The final status passes
+only after both candidate/base platform pairs pass and prove cleanup. The PR-controlled workflow
+cannot author a qualification receipt.
 
 The comparison has four outcomes:
 
@@ -161,9 +163,10 @@ An infrastructure failure does not produce a product verdict. This workflow cove
 runtime activation scenario only; it does not qualify the Hermes dependency lane.
 
 The trusted workflow publishes `NemoClaw / Exact-base managed runtime` as a pending status on the
-candidate before either live scenario starts, then replaces it with success, failure, or error from
-the comparison receipt. A cancelled workflow leaves the status pending, which fails closed when
-the context is required. For recovery, rerun the exact failed qualification attempt. To dispatch
+candidate after source authentication, then replaces it with success, failure, or error from the
+comparison receipt. Cancellation after that pending update leaves the status pending; cancellation
+before source authentication publishes no status. For recovery, rerun the exact failed
+qualification attempt. To dispatch
 the workflow manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
 the latest PR commit SHA, `base_sha` to the PR base SHA, and `candidate_run_id` plus
 `candidate_run_attempt` to the failed managed-image workflow run ID and attempt. That source run

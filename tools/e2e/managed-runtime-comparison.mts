@@ -23,8 +23,7 @@ const SOURCE_WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
 const SOURCE_WORKFLOW_PATH = `.github/workflows/${SOURCE_WORKFLOW_FILE}`;
 const BASE_WORKFLOW_FILE = "managed-runtime-base-qualification.yaml";
 const BASE_WORKFLOW_PATH = ".github/workflows/managed-runtime-base-qualification.yaml";
-const CANDIDATE_JOB = "Trusted candidate all-agent managed runtime activation";
-const BASE_JOB = "Exact base all-agent managed runtime activation";
+const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 const SCENARIO_ID = "managed-runtime-activation-v1";
 const TEST_PATH = "test/e2e/live/managed-image-activation-e2e.test.ts";
 const RECEIPT_KIND = "nemoclaw-managed-runtime-activation-v1";
@@ -42,6 +41,7 @@ const STATUS_CONTEXT = "NemoClaw / Exact-base managed runtime";
 
 type JsonRecord = Record<string, unknown>;
 type Role = "base" | "candidate";
+type Platform = (typeof PLATFORMS)[number];
 type StepOutcome = "cancelled" | "failure" | "skipped" | "success";
 type ComparisonClassification =
   | "base-failure"
@@ -70,7 +70,7 @@ export interface ManagedRuntimeReceipt {
   readonly scenario: {
     readonly id: typeof SCENARIO_ID;
     readonly testPath: typeof TEST_PATH;
-    readonly platform: "linux/amd64";
+    readonly platform: Platform;
     readonly agents: typeof AGENTS;
   };
   readonly workflow: {
@@ -111,7 +111,10 @@ export interface ManagedRuntimeSourceSelection {
   readonly pullRequest: number;
   readonly candidateSha: string;
   readonly baseSha: string;
-  readonly workflow: { readonly id: number; readonly path: typeof SOURCE_WORKFLOW_PATH };
+  readonly workflow: {
+    readonly id: number;
+    readonly path: typeof SOURCE_WORKFLOW_PATH;
+  };
   readonly run: { readonly id: number; readonly attempt: number };
 }
 
@@ -120,6 +123,7 @@ export interface ManagedRuntimeCandidateSelection {
   readonly pullRequest: number;
   readonly candidateSha: string;
   readonly baseSha: string;
+  readonly platform: Platform;
   readonly workflow: {
     readonly id: number;
     readonly path: typeof BASE_WORKFLOW_PATH;
@@ -158,6 +162,7 @@ export interface ManagedRuntimeComparison {
   };
   readonly scenario: {
     readonly id: typeof SCENARIO_ID;
+    readonly platform: Platform;
     readonly candidateSha: string;
     readonly baseSha: string;
     readonly candidateSourceRunId: number;
@@ -217,8 +222,27 @@ function stepOutcome(value: unknown, label: string): StepOutcome {
   return value;
 }
 
+function platform(value: unknown, label: string): Platform {
+  if (!PLATFORMS.includes(value as Platform)) throw new Error(`${label} is invalid`);
+  return value as Platform;
+}
+
+function platformArch(value: Platform): "amd64" | "arm64" {
+  return value.slice("linux/".length) as "amd64" | "arm64";
+}
+
+function activationJob(role: Role, value: Platform): string {
+  const subject = role === "candidate" ? "Trusted candidate" : "Exact base";
+  return `${subject} all-agent managed runtime activation (${platformArch(value)})`;
+}
+
 function artifactIdentity(value: BoundArtifactIdentity): ArtifactIdentity {
-  return { id: value.id, name: value.name, digest: value.digest, size: value.size };
+  return {
+    id: value.id,
+    name: value.name,
+    digest: value.digest,
+    size: value.size,
+  };
 }
 
 function parseArtifactIdentity(value: unknown, label: string): ArtifactIdentity | null {
@@ -251,6 +275,7 @@ function readCatalog(
   imageRevision: string,
   candidateSourceRunId: number,
   candidateSourceRunAttempt: number,
+  expectedPlatform: Platform,
 ) {
   const bytes = fs.readFileSync(catalogPath);
   let document: JsonRecord;
@@ -267,7 +292,7 @@ function readCatalog(
     if (contract.contractVersion !== 1) {
       throw new Error(`${agent} managed runtime contract version must be 1`);
     }
-    exactString(contract.platform, "linux/amd64", `${agent} managed runtime platform`);
+    exactString(contract.platform, expectedPlatform, `${agent} managed runtime platform`);
     const reference = contract.reference;
     if (typeof reference !== "string" || !/@sha256:[0-9a-f]{64}$/u.test(reference)) {
       throw new Error(`${agent} managed runtime reference must use an immutable digest`);
@@ -289,7 +314,12 @@ function readCatalog(
     ) {
       throw new Error(`${agent} candidate image cohort does not match the source workflow attempt`);
     }
-    return { agent, reference, sourceRevision: imageRevision, cohort: source.cohort };
+    return {
+      agent,
+      reference,
+      sourceRevision: imageRevision,
+      cohort: source.cohort,
+    };
   });
   if (new Set(images.map(({ cohort }) => cohort)).size !== 1) {
     throw new Error("managed runtime catalog does not identify one cohort");
@@ -351,6 +381,7 @@ export function createManagedRuntimeReceipt(input: {
   readonly openshellVersion: string;
   readonly outcome: StepOutcome;
   readonly role: Role;
+  readonly platform: Platform;
   readonly candidateSourceRunAttempt: number;
   readonly candidateSourceRunId: number;
   readonly runAttempt: number;
@@ -372,7 +403,8 @@ export function createManagedRuntimeReceipt(input: {
     exactString(imageRevision, baseSha, "exact-base managed image revision");
   }
   const expectedPath = BASE_WORKFLOW_PATH;
-  const expectedJob = input.role === "candidate" ? CANDIDATE_JOB : BASE_JOB;
+  const expectedPlatform = platform(input.platform, "managed runtime platform");
+  const expectedJob = activationJob(input.role, expectedPlatform);
   exactString(input.workflowPath, expectedPath, "managed runtime workflow path");
   exactString(input.job, expectedJob, "managed runtime job");
   const workflowSha = sha(input.workflowSha, "workflow SHA");
@@ -394,6 +426,7 @@ export function createManagedRuntimeReceipt(input: {
     imageRevision,
     candidateSourceRunId,
     candidateSourceRunAttempt,
+    expectedPlatform,
   );
   const files = evidenceFiles(input.evidenceDirectory);
   return {
@@ -407,7 +440,12 @@ export function createManagedRuntimeReceipt(input: {
       runId: candidateSourceRunId,
       runAttempt: candidateSourceRunAttempt,
     },
-    scenario: { id: SCENARIO_ID, testPath: TEST_PATH, platform: "linux/amd64", agents: AGENTS },
+    scenario: {
+      id: SCENARIO_ID,
+      testPath: TEST_PATH,
+      platform: expectedPlatform,
+      agents: AGENTS,
+    },
     workflow: {
       repository: REPOSITORY,
       path: expectedPath,
@@ -421,7 +459,10 @@ export function createManagedRuntimeReceipt(input: {
       catalogDigest: catalog.digest,
       images: catalog.images,
     },
-    evidence: { files, cleanup: cleanupEvidence(path.resolve(input.evidenceDirectory), files) },
+    evidence: {
+      files,
+      cleanup: cleanupEvidence(path.resolve(input.evidenceDirectory), files),
+    },
     outcome: stepOutcome(input.outcome, "managed runtime outcome"),
   };
 }
@@ -436,6 +477,7 @@ export function parseManagedRuntimeReceipt(
     readonly runId: number;
     readonly candidateSourceRunAttempt: number;
     readonly candidateSourceRunId: number;
+    readonly platform: Platform;
     readonly workflowSha: string;
   },
 ): ManagedRuntimeReceipt {
@@ -487,7 +529,7 @@ export function parseManagedRuntimeReceipt(
   exactKeys(scenario, ["agents", "id", "platform", "testPath"], "managed runtime scenario");
   exactString(scenario.id, SCENARIO_ID, "managed runtime scenario id");
   exactString(scenario.testPath, TEST_PATH, "managed runtime scenario test");
-  exactString(scenario.platform, "linux/amd64", "managed runtime scenario platform");
+  exactString(scenario.platform, expected.platform, "managed runtime scenario platform");
   if (JSON.stringify(scenario.agents) !== JSON.stringify(AGENTS)) {
     throw new Error("managed runtime scenario agents do not match");
   }
@@ -501,7 +543,7 @@ export function parseManagedRuntimeReceipt(
   exactString(workflow.path, BASE_WORKFLOW_PATH, "managed runtime workflow path");
   exactString(
     workflow.job,
-    expected.role === "candidate" ? CANDIDATE_JOB : BASE_JOB,
+    activationJob(expected.role, expected.platform),
     "managed runtime workflow job",
   );
   exactString(workflow.sha, expected.workflowSha, "managed runtime workflow SHA");
@@ -637,7 +679,11 @@ function bindOptionalArtifact(
     return null;
   return bindNamedExactArtifact(
     value,
-    { headSha: expected.headSha, runAttempt: expected.runAttempt, runId: expected.runId },
+    {
+      headSha: expected.headSha,
+      runAttempt: expected.runAttempt,
+      runId: expected.runId,
+    },
     expected.name,
     expected.maxArchiveBytes === undefined ? {} : { maxArchiveBytes: expected.maxArchiveBytes },
   );
@@ -768,6 +814,7 @@ export async function selectManagedRuntimeCandidate(
     readonly candidateSha: string;
     readonly controllerHeadSha: string;
     readonly pullRequest: number;
+    readonly platform: Platform;
     readonly runAttempt: number;
     readonly runId: number;
     readonly sourceRunAttempt: number;
@@ -789,6 +836,8 @@ export async function selectManagedRuntimeCandidate(
   const runAttempt = positiveInteger(input.runAttempt, "qualification run attempt");
   const sourceRunId = positiveInteger(input.sourceRunId, "candidate source run id");
   const sourceRunAttempt = positiveInteger(input.sourceRunAttempt, "candidate source run attempt");
+  const expectedPlatform = platform(input.platform, "managed runtime platform");
+  const arch = platformArch(expectedPlatform);
   if (!input.token) throw new Error("GITHUB_TOKEN is required");
   const request = options.request ?? ((apiPath: string) => githubRequest(apiPath, input.token));
   const download =
@@ -834,15 +883,15 @@ export async function selectManagedRuntimeCandidate(
   if (!Array.isArray(jobs.jobs)) throw new Error("qualification workflow job listing is invalid");
   const matches = jobs.jobs
     .map((value) => record(value, "qualification workflow job"))
-    .filter((job) => job.name === CANDIDATE_JOB);
+    .filter((job) => job.name === activationJob("candidate", expectedPlatform));
   if (matches.length !== 1)
     throw new Error("candidate managed runtime job is missing or ambiguous");
   const job = matches[0]!;
   exactString(job.status, "completed", "candidate managed runtime job status");
   const conclusion = stepOutcome(job.conclusion, "candidate managed runtime job conclusion");
   const jobId = positiveInteger(job.id, "candidate managed runtime job id");
-  const receiptName = `managed-runtime-candidate-receipt-${runId}-${runAttempt}`;
-  const evidenceName = `managed-runtime-candidate-evidence-${runId}-${runAttempt}`;
+  const receiptName = `managed-runtime-candidate-receipt-${runId}-${runAttempt}-${arch}`;
+  const evidenceName = `managed-runtime-candidate-evidence-${runId}-${runAttempt}-${arch}`;
   const [receiptMetadata, evidenceMetadata] = await Promise.all([
     request(
       `/repos/${REPOSITORY}/actions/runs/${runId}/artifacts?name=${encodeURIComponent(receiptName)}&per_page=100`,
@@ -874,6 +923,7 @@ export async function selectManagedRuntimeCandidate(
         candidateSourceRunAttempt: sourceRunAttempt,
         candidateSourceRunId: sourceRunId,
         role: "candidate",
+        platform: expectedPlatform,
         runAttempt,
         runId,
         workflowSha,
@@ -894,6 +944,7 @@ export async function selectManagedRuntimeCandidate(
     pullRequest,
     candidateSha,
     baseSha,
+    platform: expectedPlatform,
     workflow: { id: workflowId, path: BASE_WORKFLOW_PATH, sha: workflowSha },
     run: { id: runId, attempt: runAttempt },
     source: { runId: sourceRunId, runAttempt: sourceRunAttempt },
@@ -942,6 +993,7 @@ export function classifyManagedRuntimeComparison(input: {
     },
     scenario: {
       id: SCENARIO_ID,
+      platform: candidate.platform,
       candidateSha: candidate.candidateSha,
       baseSha: candidate.baseSha,
       candidateSourceRunId: candidate.source.runId,
@@ -1014,7 +1066,11 @@ export function classifyManagedRuntimeComparison(input: {
   if (candidate.job.conclusion !== "success" || input.baseJobConclusion !== "success") {
     return infrastructure("scenario outcomes are not classifiable");
   }
-  return { ...common, classification: "pass", reason: "candidate and exact-base scenarios passed" };
+  return {
+    ...common,
+    classification: "pass",
+    reason: "candidate and exact-base scenarios passed",
+  };
 }
 
 function readCandidateSelection(target: string): ManagedRuntimeCandidateSelection {
@@ -1033,6 +1089,7 @@ function readCandidateSelection(target: string): ManagedRuntimeCandidateSelectio
       "job",
       "kind",
       "pullRequest",
+      "platform",
       "receipt",
       "run",
       "source",
@@ -1063,6 +1120,8 @@ function readCandidateSelection(target: string): ManagedRuntimeCandidateSelectio
   );
   const candidateSha = sha(selection.candidateSha, "managed runtime selection candidate SHA");
   const baseSha = sha(selection.baseSha, "managed runtime selection base SHA");
+  const expectedPlatform = platform(selection.platform, "managed runtime selection platform");
+  const arch = platformArch(expectedPlatform);
   const runId = positiveInteger(run.id, "managed runtime selection run id");
   const runAttempt = positiveInteger(run.attempt, "managed runtime selection run attempt");
   const receipt = selection.receipt
@@ -1072,6 +1131,7 @@ function readCandidateSelection(target: string): ManagedRuntimeCandidateSelectio
         candidateSourceRunAttempt: sourceRunAttempt,
         candidateSourceRunId: sourceRunId,
         role: "candidate",
+        platform: expectedPlatform,
         runAttempt,
         runId,
         workflowSha,
@@ -1094,13 +1154,13 @@ function readCandidateSelection(target: string): ManagedRuntimeCandidateSelectio
   );
   if (
     receiptArtifact &&
-    receiptArtifact.name !== `managed-runtime-candidate-receipt-${runId}-${runAttempt}`
+    receiptArtifact.name !== `managed-runtime-candidate-receipt-${runId}-${runAttempt}-${arch}`
   ) {
     throw new Error("managed runtime candidate receipt artifact name is invalid");
   }
   if (
     evidenceArtifact &&
-    evidenceArtifact.name !== `managed-runtime-candidate-evidence-${runId}-${runAttempt}`
+    evidenceArtifact.name !== `managed-runtime-candidate-evidence-${runId}-${runAttempt}-${arch}`
   ) {
     throw new Error("managed runtime candidate evidence artifact name is invalid");
   }
@@ -1109,6 +1169,7 @@ function readCandidateSelection(target: string): ManagedRuntimeCandidateSelectio
     pullRequest: positiveInteger(selection.pullRequest, "managed runtime selection pull request"),
     candidateSha,
     baseSha,
+    platform: expectedPlatform,
     workflow: {
       id: positiveInteger(workflow.id, "managed runtime candidate selection workflow id"),
       path: BASE_WORKFLOW_PATH,
@@ -1174,8 +1235,9 @@ export async function classifyCurrentRun(
     options.downloadArtifact ??
     ((identity: BoundArtifactIdentity) => downloadBoundArtifact(identity, input.token));
   const workflowSha = sha(input.workflowSha, "workflow SHA");
-  const receiptName = `managed-runtime-base-receipt-${input.runId}-${input.runAttempt}`;
-  const evidenceName = `managed-runtime-base-evidence-${input.runId}-${input.runAttempt}`;
+  const arch = platformArch(candidate.platform);
+  const receiptName = `managed-runtime-base-receipt-${input.runId}-${input.runAttempt}-${arch}`;
+  const evidenceName = `managed-runtime-base-evidence-${input.runId}-${input.runAttempt}-${arch}`;
   let receiptIdentity: BoundArtifactIdentity | null = null;
   let evidenceIdentity: BoundArtifactIdentity | null = null;
   let receipt: ManagedRuntimeReceipt | null = null;
@@ -1198,6 +1260,7 @@ export async function classifyCurrentRun(
         candidateSourceRunAttempt: candidate.source.runAttempt,
         candidateSourceRunId: candidate.source.runId,
         role: "base",
+        platform: candidate.platform,
         runAttempt: input.runAttempt,
         runId: input.runId,
         workflowSha,
@@ -1228,7 +1291,10 @@ export async function classifyCurrentRun(
 function writeJsonExclusive(target: string, value: unknown): void {
   const resolved = path.resolve(target);
   fs.mkdirSync(path.dirname(resolved), { mode: 0o700, recursive: true });
-  fs.writeFileSync(resolved, `${JSON.stringify(value)}\n`, { flag: "wx", mode: 0o600 });
+  fs.writeFileSync(resolved, `${JSON.stringify(value)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
 }
 
 function requiredInteger(value: string | undefined, label: string): number {
@@ -1241,49 +1307,52 @@ export function commitStatusForClassification(classification: ComparisonClassifi
   readonly description: string;
 } {
   if (classification === "pass") {
-    return { state: "success", description: "Candidate and exact-base scenarios passed" };
+    return {
+      state: "success",
+      description: "Candidate and exact-base scenarios passed",
+    };
   }
   if (classification === "candidate-failure") {
-    return { state: "failure", description: "Candidate failed after the exact base passed" };
+    return {
+      state: "failure",
+      description: "Candidate failed after the exact base passed",
+    };
   }
   if (classification === "base-failure") {
-    return { state: "failure", description: "The identical exact-base scenario failed" };
+    return {
+      state: "failure",
+      description: "The identical exact-base scenario failed",
+    };
   }
-  return { state: "error", description: "Qualification evidence was incomplete or invalid" };
+  return {
+    state: "error",
+    description: "Qualification evidence was incomplete or invalid",
+  };
 }
 
-async function publishCommitStatus(input: {
-  readonly description: string;
-  readonly runId: number;
-  readonly sha: string;
-  readonly state: "error" | "failure" | "pending" | "success";
-  readonly token: string;
-}): Promise<void> {
+export async function publishManagedRuntimeCommitStatus(
+  input: {
+    readonly description: string;
+    readonly runId: number;
+    readonly sha: string;
+    readonly state: "error" | "failure" | "pending" | "success";
+    readonly token: string;
+  },
+  request: typeof githubRequest = githubRequest,
+): Promise<void> {
   const candidateSha = sha(input.sha, "candidate SHA");
   const runId = positiveInteger(input.runId, "qualification run id");
   if (!input.token || /[\r\n]/u.test(input.token)) throw new Error("GITHUB_TOKEN is invalid");
   if (!VERSION_PATTERN.test(input.description)) throw new Error("status description is invalid");
-  const response = await fetch(
-    `https://api.github.com/repos/${REPOSITORY}/statuses/${candidateSha}`,
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${input.token}`,
-        "Content-Type": "application/json",
-        "User-Agent": "NemoClaw-exact-base-qualification",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      body: JSON.stringify({
-        state: input.state,
-        context: STATUS_CONTEXT,
-        description: input.description,
-        target_url: `https://github.com/${REPOSITORY}/actions/runs/${runId}`,
-      }),
-      signal: AbortSignal.timeout(20_000),
+  await request(`/repos/${REPOSITORY}/statuses/${candidateSha}`, input.token, {
+    method: "POST",
+    body: {
+      state: input.state,
+      context: STATUS_CONTEXT,
+      description: input.description,
+      target_url: `https://github.com/${REPOSITORY}/actions/runs/${runId}`,
     },
-  );
-  if (!response.ok) throw new Error(`commit status update failed with HTTP ${response.status}`);
+  });
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
@@ -1300,6 +1369,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
         job: env.MANAGED_RUNTIME_JOB ?? "",
         openshellVersion: env.OPENSHELL_VERSION ?? "",
         outcome: stepOutcome(env.MANAGED_RUNTIME_OUTCOME, "MANAGED_RUNTIME_OUTCOME"),
+        platform: platform(env.MANAGED_RUNTIME_PLATFORM, "MANAGED_RUNTIME_PLATFORM"),
         role:
           env.MANAGED_RUNTIME_ROLE === "base"
             ? "base"
@@ -1344,6 +1414,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       baseSha: env.BASE_SHA ?? "",
       candidateSha: env.CANDIDATE_SHA ?? "",
       controllerHeadSha: env.GITHUB_SHA ?? "",
+      platform: platform(env.MANAGED_RUNTIME_PLATFORM, "MANAGED_RUNTIME_PLATFORM"),
       pullRequest: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
       runAttempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
       runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
@@ -1389,8 +1460,14 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     if ((state === "pending" || state === "error") && argv.length === 2) {
       status =
         state === "pending"
-          ? { state: "pending", description: "Exact-base qualification is running" }
-          : { state: "error", description: "Qualification evidence could not be classified" };
+          ? {
+              state: "pending",
+              description: "Exact-base qualification is running",
+            }
+          : {
+              state: "error",
+              description: "Qualification evidence could not be classified",
+            };
     } else if (state === "result" && argv.length === 3) {
       const comparison = record(
         JSON.parse(fs.readFileSync(argv[2]!, "utf8")) as unknown,
@@ -1408,7 +1485,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     } else {
       throw new Error("expected pending or result with one comparison path");
     }
-    await publishCommitStatus({
+    await publishManagedRuntimeCommitStatus({
       ...status,
       runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
       sha: env.CANDIDATE_SHA ?? "",

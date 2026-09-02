@@ -202,6 +202,29 @@ describe("managed-image cohort publication contract", () => {
     });
   });
 
+  it("materializes the native arm64 workload identities from the same cohort", () => {
+    const identity = validateManagedImageCohort(
+      cohortContract(),
+      { revision: REVISION, runAttempt: RUN_ATTEMPT, runId: RUN_ID },
+      "linux/arm64",
+    );
+
+    expect(identity.catalog).toMatchObject({
+      openclaw: {
+        platform: "linux/arm64",
+        reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@${digest(11)}`,
+      },
+      hermes: {
+        platform: "linux/arm64",
+        reference: `${MANAGED_IMAGE_REPOSITORIES.hermes}@${digest(12)}`,
+      },
+      "langchain-deepagents-code": {
+        platform: "linux/arm64",
+        reference: `${MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"]}@${digest(13)}`,
+      },
+    });
+  });
+
   it("rejects a cohort that omits one image architecture", () => {
     const value = cohortContract();
     const agents = value.agents as Record<string, { platforms: Record<string, unknown> }>;

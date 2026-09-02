@@ -916,6 +916,7 @@ describe("pull request and main workflow contracts", () => {
     });
 
     const qualificationPackageJob = managedRuntimeWorkflow.jobs["package-openshell-sdk"];
+    const candidateBuild = managedRuntimeWorkflow.jobs["build-candidate-cli"];
     const candidateActivation = managedRuntimeWorkflow.jobs["trusted-candidate-activation"];
     const baseActivation = managedRuntimeWorkflow.jobs["exact-base-activation"];
     expect(qualificationPackageJob.permissions).toEqual({ actions: "read", contents: "read" });
@@ -924,8 +925,13 @@ describe("pull request and main workflow contracts", () => {
       required: "${{ steps.package.outputs.required }}",
     });
     expect(candidateActivation.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(candidateBuild.permissions).toEqual({ actions: "read", contents: "read" });
     expect(baseActivation.permissions).toEqual({ actions: "read", contents: "read" });
-    expect(candidateActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
+    expect(candidateActivation.needs).toEqual([
+      "authenticate-source",
+      "package-openshell-sdk",
+      "build-candidate-cli",
+    ]);
     expect(baseActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
 
     const qualificationCandidate = requiredWorkflowStep(
@@ -1018,32 +1024,12 @@ describe("pull request and main workflow contracts", () => {
 
     const candidateInstall = requiredWorkflowStep(
       candidateActivation,
-      "Install trusted controller and exact-base CLI dependencies without credentials",
+      "Install trusted controller and candidate dependencies without credentials",
     );
     expect(candidateInstall.env?.NODE_AUTH_TOKEN).toBeUndefined();
     expect(candidateInstall.run).toContain("env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN");
     expect(candidateInstall.run).toContain("ci-install-dependencies.sh");
     expect(candidateInstall.run).not.toContain("github.token");
-
-    const candidateHostCli = requiredWorkflowStep(
-      candidateActivation,
-      "Check out exact comparison base as the host CLI input",
-    );
-    expect(candidateHostCli.with).toMatchObject({
-      ref: "${{ needs.authenticate-source.outputs.base_sha }}",
-      path: "base",
-      "persist-credentials": false,
-    });
-    expect(candidateActivation.env?.NEMOCLAW_CLI_BIN).toBe(
-      "${{ github.workspace }}/base/bin/nemoclaw.js",
-    );
-    expect(
-      candidateActivation.steps?.some(
-        (candidate) =>
-          candidate.with?.ref === "${{ needs.authenticate-source.outputs.candidate_sha }}",
-      ),
-    ).toBe(false);
-    expect(JSON.stringify(candidateActivation)).not.toContain("/candidate/bin/nemoclaw.js");
 
     const evidenceAuthentication = managedRuntimeWorkflow.jobs["authenticate-candidate-evidence"];
     expect(evidenceAuthentication.if).toBe(
