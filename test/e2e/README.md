@@ -1342,8 +1342,10 @@ The job reads these credentials from repository Actions secrets:
 and processes in the same job can read that file. An always-run workflow step
 removes the temporary credential home and verifies its absence after the scenario.
 These credentials remain valid until they expire or an administrator revokes
-them in their issuing services. If cleanup fails, remove the recorded Brev
-workspace. Rotate or revoke each credential to remove later access.
+them in their issuing services. If cleanup fails, report the recorded workspace
+name and ID, do not run `brev delete`, and follow the
+[ID-bound recovery procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/launchable-evidence.md#recover-incomplete-cleanup).
+Rotate or revoke each credential to remove later access.
 For an NVIDIA-owned PR revision, the job builds and runs the candidate commit with this same credential boundary.
 The PR branch must be in `NVIDIA/NemoClaw` because the image producer does not accept a sibling-repository candidate.
 

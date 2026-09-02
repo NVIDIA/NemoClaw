@@ -532,9 +532,7 @@ describe("release-latest-tag.sh", () => {
     const secondCandidate = commit(fixture, "planned release commit");
     const secondPlanPath = path.join(fixture.root, "release-2", "plan.json");
     const { plan: secondPlan } = createPlan(fixture, secondPlanPath, secondCandidate);
-
     const result = cutFromPlan(fixture, secondPlanPath, confirmationFor(secondPlan), firstBrief);
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("candidate does not match planned commit");
     expect(localTagObject(fixture, "v0.0.2")).toBe("");
@@ -553,20 +551,26 @@ describe("release-latest-tag.sh", () => {
         `- ${field}: \`${releaseCommit}\``,
         `- ${field}: \`${earlierCandidate}\``,
       );
-
       const result = cutFromPlan(
         fixture,
         planPath,
         confirmationFor(plan),
         writeBrief(fixture, staleBrief),
       );
-
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(error);
       expect(localTagObject(fixture, "v0.0.2")).toBe("");
     },
-  );
-
+  ); it("rejects a brief that differs from inspected Launchable evidence", () => {
+    const fixture = createFixture(); pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit"),
+      planPath = path.join(fixture.root, "release", "plan.json"),
+      { plan } = createPlan(fixture, planPath, releaseCommit);
+    fs.writeFileSync(fixture.launchableInspector, 'console.log("{}")');
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+    expect([result.status, result.stderr, localTagObject(fixture, "v0.0.2")]).toEqual(
+      [1, expect.stringContaining("does not match current inspected evidence"), ""]);
+  });
   it("orders canonical semver components without numeric precision loss", () => {
     const fixture = createFixture();
     const previousTag = "v9007199254740992.0.0";
