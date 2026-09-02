@@ -9,9 +9,8 @@ export type OpenShellProviderCommandReason =
   | "failed"
   | "invalid_request"
   | "not_found"
-  | "profile_export_failed"
-  | "profile_import_failed"
-  | "profile_incompatible";
+  | "profile_incompatible"
+  | "uncertain";
 
 export type OpenShellProviderTransportReason =
   | "identity_mismatch"
@@ -37,6 +36,10 @@ export type OpenShellProviderError =
 
 export type OpenShellProviderResult<T> =
   | Readonly<{ ok: true; value: T }>
+  | Readonly<{ ok: false; error: OpenShellProviderError }>;
+
+export type OpenShellProviderMutationResult =
+  | Readonly<{ ok: true }>
   | Readonly<{ ok: false; error: OpenShellProviderError }>;
 
 export type OpenShellProviderRequest = Readonly<{
@@ -84,13 +87,6 @@ export type ImportOpenShellProviderProfileRequest = OpenShellProviderRequest &
     profilePath: string;
   }>;
 
-export type EnsureOpenShellEndpointlessProviderProfileRequest =
-  ImportOpenShellProviderProfileRequest &
-    Readonly<{
-      profileType: string;
-      inferenceCapable: boolean;
-    }>;
-
 export type InspectOpenShellProviderProfileRequest = OpenShellProviderRequest &
   Readonly<{
     profileType: string;
@@ -106,28 +102,8 @@ export type DetachOpenShellProviderRequest = DeleteOpenShellProviderRequest &
     sandboxName: string;
   }>;
 
-export type OpenShellProviderProfileImport = Readonly<{
-  state: "already_present" | "imported";
-}>;
-
-export type OpenShellEndpointlessProviderProfile = Readonly<{
-  state: "ready";
-}>;
-
-export type OpenShellProviderCreate = Readonly<{
-  state: "created";
-}>;
-
 export type OpenShellProviderUpdate = Readonly<{
   state: "updated";
-}>;
-
-export type OpenShellProviderDelete = Readonly<{
-  state: "deleted";
-}>;
-
-export type OpenShellProviderDetach = Readonly<{
-  state: "absent" | "detached";
 }>;
 
 /** Transport-neutral provider operations used by NemoClaw consumers. */
@@ -136,9 +112,7 @@ export interface OpenShellProviderAdapter {
     request: OpenShellProviderRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderInventory>>;
 
-  createProvider(
-    request: CreateOpenShellProviderRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderCreate>>;
+  createProvider(request: CreateOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 
   getProvider(
     request: GetOpenShellProviderRequest,
@@ -150,21 +124,13 @@ export interface OpenShellProviderAdapter {
 
   importProviderProfile(
     request: ImportOpenShellProviderProfileRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderProfileImport>>;
-
-  ensureEndpointlessProviderProfile(
-    request: EnsureOpenShellEndpointlessProviderProfileRequest,
-  ): Promise<OpenShellProviderResult<OpenShellEndpointlessProviderProfile>>;
+  ): Promise<OpenShellProviderMutationResult>;
 
   inspectProviderProfile(
     request: InspectOpenShellProviderProfileRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderProfileInspection>>;
 
-  deleteProvider(
-    request: DeleteOpenShellProviderRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderDelete>>;
+  deleteProvider(request: DeleteOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 
-  detachProvider(
-    request: DetachOpenShellProviderRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderDetach>>;
+  detachProvider(request: DetachOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 }

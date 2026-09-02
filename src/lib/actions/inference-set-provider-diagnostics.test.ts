@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { classifyGatewayProviderNames, isBridgeProviderName } from "../credentials/provider-list";
+import { isBridgeProviderName, parseGatewayProviderNames } from "../credentials/provider-list";
 import { queryRegisteredGatewayProviders } from "./inference-set-provider-diagnostics";
 
 const STATIC_WARNING =
@@ -29,13 +29,11 @@ describe("inference set provider diagnostics", () => {
   });
 
   it("partitions empty and messaging-only provider output", () => {
-    expect(classifyGatewayProviderNames([])).toEqual({
-      bridgeNames: [],
+    expect(parseGatewayProviderNames("")).toEqual({ bridgeNames: [], credentialNames: [] });
+    expect(parseGatewayProviderNames("alpha-telegram-bridge\nalpha-slack-app\n")).toEqual({
+      bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"],
       credentialNames: [],
     });
-    expect(
-      classifyGatewayProviderNames(["alpha-telegram-bridge", "alpha-slack-app"]),
-    ).toEqual({ bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"], credentialNames: [] });
     expect(isBridgeProviderName("alpha-discord-bridge")).toBe(true);
     expect(isBridgeProviderName("nvidia-prod")).toBe(false);
   });

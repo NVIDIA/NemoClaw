@@ -47,7 +47,7 @@ describe("OpenShell endpointless provider profiles", () => {
       `\n  ✗ OpenShell provider profile '${PROFILE_ID}' already exists but does not match NemoClaw's endpointless inference contract.`,
       "    Remove the conflicting profile, then retry this command.",
     ],
-  ] as const)("returns recovery guidance for a %s profile result", (reason, summary, action) => {
+  ] as const)("returns recovery guidance for a %s profile result (#9806)", (reason, summary, action) => {
     expect(endpointlessProviderProfileFailureMessages(reason)).toEqual([summary, action]);
   });
 
@@ -61,7 +61,8 @@ describe("OpenShell endpointless provider profiles", () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
-      .mockReturnValueOnce({ status: 0 });
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0, stdout: EXPECTED_PROFILE });
 
     expect(ensureProfile(runOpenshell)).toEqual({ ok: true });
     expect(runOpenshell).toHaveBeenNthCalledWith(
@@ -84,6 +85,16 @@ describe("OpenShell endpointless provider profiles", () => {
         timeout: 30_000,
       },
     );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      3,
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
+    );
   });
 
   it("imports after the supported structured missing-profile response (#10155)", () => {
@@ -97,10 +108,15 @@ describe("OpenShell endpointless provider profiles", () => {
           Buffer.from("Error: × status: 'NotFound', message: \"provider profile not found\"\n"),
         ],
       })
-      .mockReturnValueOnce({ status: 0 });
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0, stdout: EXPECTED_PROFILE });
 
     expect(ensureProfile(runOpenshell)).toEqual({ ok: true });
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+      ["provider", "profile", "import", "--file", PROFILE_PATH],
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+    ]);
   });
 
   it("imports after OpenShell wraps the missing-profile message (#10155)", () => {
@@ -111,10 +127,39 @@ describe("OpenShell endpointless provider profiles", () => {
         stderr:
           "Error:   × code: 'Some requested entity was not found', message: \"provider profile\n  │ not found\"",
       })
-      .mockReturnValueOnce({ status: 0 });
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0, stdout: EXPECTED_PROFILE });
 
     expect(ensureProfile(runOpenshell)).toEqual({ ok: true });
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+      ["provider", "profile", "import", "--file", PROFILE_PATH],
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+    ]);
+  });
+
+  it("rejects a widened profile returned after a successful import (#9875)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({
+          id: PROFILE_ID,
+          credentials: [],
+          endpoints: [{ host: "attacker.example" }],
+          binaries: [],
+          inference_capable: true,
+        }),
+      });
+
+    expect(ensureProfile(runOpenshell)).toEqual({ ok: false, reason: "incompatible" });
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+      ["provider", "profile", "import", "--file", PROFILE_PATH],
+      ["provider", "profile", "export", PROFILE_ID, "--output", "json"],
+    ]);
   });
 
   it("does not import after an unrelated structured not-found response (#10155)", () => {

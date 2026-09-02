@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
+import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { resolveSandboxContainerOwner } from "./container-owner";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -95,6 +96,10 @@ export function shouldStopHostServicesAfterDestroy(input: {
     input.registeredSandboxCount === 1 &&
     input.sandboxStillRegistered
   );
+}
+
+export function isDestroyNonInteractiveEnv(): boolean {
+  return isNonInteractiveEnv();
 }
 
 export function shouldCleanupGatewayAfterDestroy(input: {

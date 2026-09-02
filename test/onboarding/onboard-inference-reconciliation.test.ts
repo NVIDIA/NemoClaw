@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { createLocalInferenceRouteApplier } from "../../src/lib/onboard/local-inference-route.js";
-import type { SetupInference } from "../../src/lib/onboard/setup-inference.js";
+import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import {
   bedrockRuntimeOnboard,
@@ -1011,13 +1011,31 @@ console.log(JSON.stringify({
 });
 
 describe("re-onboard Ollama GPU release (#9110)", () => {
-  const priorEntry = { name: "test-box", provider: "ollama-local", model: "llama3" };
+  type ReleaseEntry = {
+    name: string;
+    provider: string;
+    model: string;
+    endpointUrl?: string | null;
+  };
+  const priorEntry: ReleaseEntry = {
+    name: "test-box",
+    provider: "ollama-local",
+    model: "llama3",
+  };
 
   function releaseHarness(options: {
-    getSandbox: () => typeof priorEntry | null;
-    sandboxes: (typeof priorEntry)[];
-    unloadOllamaModels: (onlyModels: readonly string[]) => void;
+    getSandbox: () => ReleaseEntry | null;
+    sandboxes: ReleaseEntry[] | (() => ReleaseEntry[]);
+    unloadOllamaModels: NonNullable<SetupInferenceDeps["unloadOllamaModels"]>;
     applyLocalInferenceRoute?: () => Promise<boolean>;
+    loadPersistedOllamaHost?: () => "127.0.0.1" | "host.docker.internal" | null;
+    clearPersistedOllamaHostIfUnused?: SetupInferenceDeps["localInference"]["clearPersistedOllamaHostIfUnused"];
+    loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
+    persistPendingOllamaModelCleanup?: (sandboxName: string, models: readonly string[]) => void;
+    clearPendingOllamaModelCleanup?: (
+      sandboxName: string,
+      releasedModels?: readonly string[],
+    ) => void;
   }) {
     return createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
@@ -1032,8 +1050,23 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         persistAndProbeOllamaProxy: async () => {},
         applyLocalInferenceRoute: options.applyLocalInferenceRoute,
         getSandbox: options.getSandbox,
-        listSandboxes: () => ({ sandboxes: options.sandboxes, defaultSandbox: null }),
+        listSandboxes: () => ({
+          sandboxes:
+            typeof options.sandboxes === "function" ? options.sandboxes() : options.sandboxes,
+          defaultSandbox: null,
+        }),
         unloadOllamaModels: options.unloadOllamaModels,
+        localInference: {
+          validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+          validateSandboxFacingOllamaModel: () => ({ ok: true }),
+          runOllamaWarmup: () => {},
+          persistResolvedOllamaHost: () => () => {},
+          loadPersistedOllamaHost: options.loadPersistedOllamaHost,
+          clearPersistedOllamaHostIfUnused: options.clearPersistedOllamaHostIfUnused,
+          loadPendingOllamaModelCleanup: options.loadPendingOllamaModelCleanup ?? (() => []),
+          persistPendingOllamaModelCleanup: options.persistPendingOllamaModelCleanup ?? (() => {}),
+          clearPendingOllamaModelCleanup: options.clearPendingOllamaModelCleanup ?? (() => {}),
+        },
       },
     });
   }
@@ -1054,6 +1087,24 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
   });
 
+  it("retires the final Ollama route receipt after switching providers", async () => {
+    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }],
+      unloadOllamaModels: vi.fn(),
+      clearPersistedOllamaHostIfUnused,
+    });
+
+    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(clearPersistedOllamaHostIfUnused).toHaveBeenCalledWith([
+      { ...priorEntry, provider: "vllm-local", model: "vllm-model" },
+    ]);
+  });
+
   it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
       throw new Error("synthetic unload failure");
@@ -1067,11 +1118,129 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     let result: Awaited<ReturnType<SetupInference>>;
     try {
       result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("synthetic unload failure"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("retry only the recorded models"));
     } finally {
       warn.mockRestore();
     }
     expect(result).toEqual({ ok: true });
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
+  it("reports structured cleanup failure after a successful provider switch", async () => {
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<SetupInference>>;
+    try {
+      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("http://host.docker.internal:11434"),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("unload-request-failed"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Allow the model unload request"));
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Re-run onboarding or destroy 'test-box'");
+      expect(warning).not.toContain("stop, or destroy");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("persists a failed superseded cleanup and retries only that model on re-onboard", async () => {
+    let current = priorEntry;
+    let pending: readonly string[] = [];
+    const persistPendingOllamaModelCleanup = vi.fn((_sandboxName, models: readonly string[]) => {
+      pending = models;
+    });
+    const clearPendingOllamaModelCleanup = vi.fn(
+      (_sandboxName, releasedModels?: readonly string[]) => {
+        pending = releasedModels ? pending.filter((model) => !releasedModels.includes(model)) : [];
+      },
+    );
+    const unloadOllamaModels = vi
+      .fn<NonNullable<SetupInferenceDeps["unloadOllamaModels"]>>()
+      .mockReturnValueOnce({
+        ok: false,
+        outcome: "unload-request-failed",
+        endpoint: "http://host.docker.internal:11434",
+        selectedModels: ["llama3"],
+        discoveries: [],
+        requests: [],
+        message: "connection refused",
+      })
+      .mockReturnValueOnce(undefined);
+    const harness = releaseHarness({
+      getSandbox: () => current,
+      sandboxes: () => [current],
+      unloadOllamaModels,
+      loadPendingOllamaModelCleanup: () => pending,
+      persistPendingOllamaModelCleanup,
+      clearPendingOllamaModelCleanup,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(pending).toEqual(["llama3"]);
+      current = { ...priorEntry, model: "qwen3.5:9b" };
+
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(unloadOllamaModels).toHaveBeenNthCalledWith(1, ["llama3"]);
+    expect(unloadOllamaModels).toHaveBeenNthCalledWith(2, ["llama3"]);
+    expect(clearPendingOllamaModelCleanup).toHaveBeenCalledWith("test-box", ["llama3"]);
+    expect(pending).toEqual([]);
+  });
+
+  it("names manual cleanup when a superseded-model retry record cannot be written", async () => {
+    const persistPendingOllamaModelCleanup = vi.fn(() => {
+      throw new Error("state directory is unavailable");
+    });
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+      persistPendingOllamaModelCleanup,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Manually release only llama3");
+      expect(warning).toContain("http://host.docker.internal:11434");
+      expect(warning).not.toContain("Re-run onboarding, stop, or destroy");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(persistPendingOllamaModelCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+      unloadOllamaModels.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("keeps the model when the re-onboard selects the same one (#9110)", async () => {
@@ -1106,6 +1275,31 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
       warn.mockRestore();
     }
     expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("keeps the route and shared model for a compatible local Ollama peer", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const peer: ReleaseEntry = {
+      name: "peer",
+      provider: "compatible-endpoint",
+      model: "llama3:latest",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+    };
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
+      unloadOllamaModels,
+      loadPersistedOllamaHost: () => "127.0.0.1",
+      clearPersistedOllamaHostIfUnused,
+    });
+
+    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPersistedOllamaHostIfUnused).not.toHaveBeenCalled();
   });
 
   it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {

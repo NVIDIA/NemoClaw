@@ -21,9 +21,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import YAML from "yaml";
 
 import { CLI_NAME } from "../../cli/branding";
 import * as store from "../../credentials/store";
+import { loadMessagingChannelPolicyPreset } from "../../messaging/channels";
 import * as policies from "../../policy";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -46,6 +48,7 @@ let logSpy: MockInstance;
 let errSpy: MockInstance;
 let promptSpy: MockInstance;
 let applyPresetMock: MockInstance;
+let loadPresetForSandboxMock: MockInstance;
 let gatewayStateMock: MockInstance;
 let npmCompatibilityStateMock: MockInstance;
 let refreshSpy: MockInstance;
@@ -85,7 +88,7 @@ beforeEach(() => {
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
   vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["pypi"]);
-  vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
+  loadPresetForSandboxMock = vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
     (_sandboxName: unknown, name: unknown) =>
       `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`,
   );
@@ -129,6 +132,83 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi", { suppressDisclosure: true });
     expect(refreshSpy).toHaveBeenCalledTimes(1);
     expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("preserves the stored exact WeChat IDC endpoint during a named drift reapply (#10606)", async () => {
+    const idcBaseUrl = "https://idc-37.weixin.qq.com";
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      messaging: {
+        schemaVersion: 1,
+        plan: {
+          schemaVersion: 1,
+          sandboxName: "alpha",
+          agent: "openclaw",
+          workflow: "rebuild",
+          channels: [
+            {
+              channelId: "wechat",
+              active: true,
+              configured: true,
+              disabled: false,
+              inputs: [
+                { inputId: "botToken", credentialAvailable: true },
+                { inputId: "accountId", value: "wechat-account" },
+                { inputId: "baseUrl", value: idcBaseUrl },
+                { inputId: "userId", value: "wechat-user" },
+              ],
+            },
+          ],
+          disabledChannels: [],
+          credentialBindings: [
+            {
+              channelId: "wechat",
+              providerEnvKey: "WECHAT_BOT_TOKEN",
+              credentialAvailable: true,
+            },
+          ],
+        } as never,
+      },
+    });
+    vi.spyOn(policies, "listPresets").mockReturnValue([
+      { file: "wechat/policy/openclaw.yaml", name: "wechat", description: "WeChat" },
+    ]);
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["wechat"]);
+    loadPresetForSandboxMock.mockRestore();
+    let appliedPolicy: string | null = null;
+    applyPresetMock.mockImplementation(
+      (_sandboxName: unknown, presetName: unknown, options: unknown) => {
+        appliedPolicy = loadMessagingChannelPolicyPreset(String(presetName), {
+          agent: "openclaw",
+          sandboxName: "alpha",
+          messagingConfig: (
+            options as { messagingConfig?: Readonly<Record<string, string>> }
+          ).messagingConfig,
+        });
+        return appliedPolicy !== null;
+      },
+    );
+
+    await addSandboxPolicy("alpha", { preset: "wechat", yes: true });
+
+    const endpoints = YAML.parse(appliedPolicy ?? "").network_policies.wechat_bridge.endpoints;
+    expect(
+      endpoints.find((endpoint: { host: string }) => endpoint.host === "idc-37.weixin.qq.com"),
+    ).toEqual({
+      host: "idc-37.weixin.qq.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      credential_binding: { provider: "alpha-wechat-bridge" },
+      rules: [
+        { allow: { method: "GET", path: "/**" } },
+        { allow: { method: "POST", path: "/**" } },
+      ],
+    });
+    expect(endpoints.map((endpoint: { host: string }) => endpoint.host)).not.toContain(
+      "*.weixin.qq.com",
+    );
   });
 
   it("treats a matching named re-add as a successful no-op instead of a failure", async () => {

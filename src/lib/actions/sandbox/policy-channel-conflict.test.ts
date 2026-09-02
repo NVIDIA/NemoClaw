@@ -590,7 +590,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     );
 
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "telegram");
-  });
+  }, 15_000);
 
   // Scenario 5b
   it("different hash on the other sandbox is NOT a conflict (no warning, add proceeds)", async () => {

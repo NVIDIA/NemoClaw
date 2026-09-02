@@ -6,7 +6,7 @@ import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
 } from "../../adapters/openshell/provider-adapter";
-import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
   NAME_MAX_LENGTH,
@@ -16,7 +16,7 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import {
   isBridgeProviderName,
-  recoverGatewayForCredentialMutationOrExit,
+  recoverCredentialGatewayTargetOrExit,
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
 import { forgetExtraProvider } from "../global";
@@ -39,6 +39,7 @@ export type CredentialsResetDeps = Readonly<{
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
   ok: boolean;
   error?: OpenShellProviderError;
+  detachedSandboxes: readonly string[];
   recoveryFailures: readonly Readonly<{
     sandbox: string;
     error: OpenShellProviderError;
@@ -72,6 +73,18 @@ function fail(failureLines: readonly string[]): CredentialsResetResult {
   return { exitCode: 1, outputLines: [], failureLines };
 }
 
+function detachedSandboxGuidance(key: string, sandboxes: readonly string[]): string[] {
+  const detachedSandboxes = [...new Set(sandboxes)];
+  return detachedSandboxes.length === 0
+    ? []
+    : [
+        "",
+        `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")} during removal.`,
+        "  After registering the replacement provider, rebuild each detached sandbox:",
+        ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
+      ];
+}
+
 export async function runCredentialsResetAction(
   input: CredentialsResetInput,
   deps: CredentialsResetDeps = {},
@@ -101,13 +114,13 @@ export async function runCredentialsResetAction(
   }
 
   const recoveryFailureLines: string[] = [];
-  const recovered = await recoverGatewayForCredentialMutationOrExit((lines) => {
+  const target = await recoverCredentialGatewayTargetOrExit("mutation", (lines) => {
     recoveryFailureLines.push(...lines);
   });
-  if (!recovered) return fail(recoveryFailureLines);
+  if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(key, providerAdapter);
+  const recovery = await deleteProviderWithRecovery(key, target, providerAdapter);
 
   if (
     !recovery.ok &&
@@ -120,11 +133,12 @@ export async function runCredentialsResetAction(
       removedLocal
         ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
         : `  Provider '${key}' is already absent from the OpenShell gateway.`,
-      `  Re-run '${CLI_NAME} onboard' to enter a new value.`,
+      `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
+      ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
     ]);
   }
 
-  const outcome = formatResetOutcome(key, recovery);
+  const outcome = formatResetOutcome(key, recovery, target.gatewayName);
   if (!outcome.ok) return fail(outcome.lines);
 
   forgetExtraProvider(key);
@@ -135,12 +149,17 @@ export async function runCredentialsResetAction(
 export function formatResetOutcome(
   key: string,
   recovery: CredentialsProviderDeleteWithRecoveryResult,
+  gatewayName: string,
 ): { ok: boolean; lines: string[] } {
-  const onboardHint = `  Re-run '${CLI_NAME} onboard' to enter a new value.`;
+  const onboardHint = `  Rerun '${CLI_NAME} onboard' to enter a new value.`;
   if (recovery.ok) {
     return {
       ok: true,
-      lines: [`  Removed provider '${key}' from the OpenShell gateway.`, onboardHint],
+      lines: [
+        `  Removed provider '${key}' from the OpenShell gateway.`,
+        onboardHint,
+        ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
+      ],
     };
   }
 
@@ -169,8 +188,21 @@ export function formatResetOutcome(
         (failure) =>
           `  Could not detach provider '${key}' from sandbox '${failure.sandbox}': ${failure.error.message}`,
       ),
-      `  Detach it with 'openshell sandbox provider detach <sandbox> ${key}'`,
-      `  for each, then re-run '${CLI_NAME} credentials reset ${key}'.`,
+      "  Detach the provider from each remaining sandbox:",
+      ...stuckSandboxes.map(
+        (sandbox) => `    openshell sandbox provider detach -g ${gatewayName} ${sandbox} ${key}`,
+      ),
+      `  Then rerun '${CLI_NAME} credentials reset ${key}'.`,
+    );
+  }
+  const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
+  if (detachedSandboxes.length > 0) {
+    lines.push(
+      "",
+      `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")}, but provider removal was not confirmed.`,
+      `  Rerun '${CLI_NAME} credentials reset ${key}' to complete provider removal.`,
+      "  If the provider remains registered, restore it by rebuilding the detached sandbox(es):",
+      ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
     );
   }
   if (recovery.error?.message) lines.push(`  ${recovery.error.message}`);
@@ -179,32 +211,35 @@ export function formatResetOutcome(
 
 async function deleteProviderWithRecovery(
   providerName: string,
+  target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
 ): Promise<CredentialsProviderDeleteWithRecoveryResult> {
   const request = {
-    target: selectedOpenShellGateway(),
+    target,
     providerName,
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   } as const;
   let result = await providerAdapter.deleteProvider(request);
+  const detachedSandboxes: string[] = [];
   const recoveryFailures: Array<{ sandbox: string; error: OpenShellProviderError }> = [];
   if (result.ok || result.error.kind !== "command" || result.error.reason !== "attached") {
     return result.ok
-      ? { ok: true, recoveryFailures }
-      : { ok: false, error: result.error, recoveryFailures };
+      ? { ok: true, detachedSandboxes, recoveryFailures }
+      : { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 
   const attachedSandboxes = validatedAttachedSandboxes(result.error);
   if (attachedSandboxes.length === 0) {
-    return { ok: false, error: result.error, recoveryFailures };
+    return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 
   for (const sandbox of attachedSandboxes) {
     const detach = await providerAdapter.detachProvider({ ...request, sandboxName: sandbox });
-    if (!detach.ok) recoveryFailures.push({ sandbox, error: detach.error });
+    if (detach.ok) detachedSandboxes.push(sandbox);
+    else recoveryFailures.push({ sandbox, error: detach.error });
   }
   result = await providerAdapter.deleteProvider(request);
   return result.ok
-    ? { ok: true, recoveryFailures }
-    : { ok: false, error: result.error, recoveryFailures };
+    ? { ok: true, detachedSandboxes: attachedSandboxes, recoveryFailures }
+    : { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
 }

@@ -12,6 +12,7 @@ import {
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
 import { matchesGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
+import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
 type ProviderPreparationInput = {
@@ -115,7 +116,13 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
 ): Promise<void> {
-  if (input.openshellDriver !== "docker") return;
+  const runtimeProvider = resolveRegisteredRuntimeProvider(input.openshellDriver);
+  if (
+    !runtimeProvider ||
+    runtimeProvider.gateway.launcher !== "nemoclaw" ||
+    runtimeProvider.bootstrap.supported !== true
+  )
+    return;
 
   const expectedBindings = expectedMessagingBindings(input);
   const providersRequiringExistenceProbe = new Set(
@@ -148,7 +155,7 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
     if (!refreshed.ok) {
       deps.cleanupCreateSources();
       throw new Error(
-        `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
+        `OpenShell did not publish attached provider '${attachedProvider}' before managed sandbox creation.`,
       );
     }
     if (await inspectExpectedMessagingBinding(input, deps, attachedProvider, expectedBindings)) {

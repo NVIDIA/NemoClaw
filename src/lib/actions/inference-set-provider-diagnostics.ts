@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
-import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-command";
-import { classifyGatewayProviderNames } from "../credentials/provider-list";
+import { parseGatewayProviderNames } from "../credentials/provider-list";
 import {
   buildOpenshellInferenceSetFailureMessage,
   OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
@@ -20,9 +19,7 @@ interface ProviderDiagnosticDeps {
   log: (message: string) => void;
 }
 
-export function queryRegisteredGatewayProviders(
-  deps: ProviderDiagnosticDeps,
-): string[] | undefined {
+export function queryRegisteredGatewayProviders(deps: ProviderDiagnosticDeps): string[] | undefined {
   try {
     const result = deps.captureOpenshell(["provider", "list", "--names"], {
       ignoreError: true,
@@ -30,8 +27,7 @@ export function queryRegisteredGatewayProviders(
       timeout: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
     });
     if (result.status === 0) {
-      return classifyGatewayProviderNames(parseCliOpenShellProviderNames(result.output))
-        .credentialNames;
+      return parseGatewayProviderNames(result.output).credentialNames;
     }
   } catch (_error: unknown) {
     // #5924: intentionally treat every thrown query or parsing error identically.

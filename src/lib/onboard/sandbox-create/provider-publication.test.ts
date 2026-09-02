@@ -40,10 +40,7 @@ function typedProviderAdapter(
 ): OpenShellProviderAdapter {
   const adapter: OpenShellProviderAdapter = {
     listProviders: vi.fn(async () => ({ ok: true as const, value: { names: [] } })),
-    createProvider: vi.fn(async () => ({
-      ok: true as const,
-      value: { state: "created" as const },
-    })),
+    createProvider: vi.fn(async () => ({ ok: true as const })),
     getProvider: vi.fn(async (request: Parameters<OpenShellProviderAdapter["getProvider"]>[0]) => ({
       ok: true as const,
       value: { name: request.providerName, type: "openai", credentialKeys: [], configKeys: [] },
@@ -52,26 +49,13 @@ function typedProviderAdapter(
       ok: true as const,
       value: { state: "updated" as const },
     })),
-    importProviderProfile: vi.fn(async () => ({
-      ok: true as const,
-      value: { state: "imported" as const },
-    })),
-    ensureEndpointlessProviderProfile: vi.fn(async () => ({
-      ok: true as const,
-      value: { state: "ready" as const },
-    })),
+    importProviderProfile: vi.fn(async () => ({ ok: true as const })),
     inspectProviderProfile: vi.fn(async () => ({
       ok: true as const,
       value: { credentialKeys: [] },
     })),
-    deleteProvider: vi.fn(async () => ({
-      ok: true as const,
-      value: { state: "deleted" as const },
-    })),
-    detachProvider: vi.fn(async () => ({
-      ok: true as const,
-      value: { state: "detached" as const },
-    })),
+    deleteProvider: vi.fn(async () => ({ ok: true as const })),
+    detachProvider: vi.fn(async () => ({ ok: true as const })),
   };
   return { ...adapter, ...overrides };
 }
@@ -325,7 +309,7 @@ describe("sandbox provider preparation", () => {
         },
       ),
     ).rejects.toThrowError(
-      "OpenShell did not publish attached provider 'inference' before Docker sandbox creation.",
+      "OpenShell did not publish attached provider 'inference' before managed sandbox creation.",
     );
     expect(cleanupCreateSources).toHaveBeenCalledOnce();
   });
