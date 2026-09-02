@@ -2,9 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  accessSync,
+  constants as fsConstants,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { constants as osConstants } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +33,177 @@ type ProcessResult = {
   exitCode: number;
   stdout: { text: string };
   stderr: { text: string };
+};
+export type ClassifierExecutablePaths = {
+  bash: string;
+  base64: string;
+  dd: string;
+  gh: string;
+  rm: string;
+  stat: string;
+  tail: string;
+  wc: string;
+};
+export type ClassifierRuntime = {
+  executables: ClassifierExecutablePaths;
+  environment: NodeJS.ProcessEnv;
+};
+const SYSTEM_EXECUTABLES = {
+  bash: "/usr/bin/bash",
+  base64: "/usr/bin/base64",
+  dd: "/usr/bin/dd",
+  rm: "/usr/bin/rm",
+  stat: "/usr/bin/stat",
+  tail: "/usr/bin/tail",
+  wc: "/usr/bin/wc",
+} as const;
+
+type TrustedExecutableStat = {
+  isFile: () => boolean;
+  isDirectory: () => boolean;
+  isSymbolicLink: () => boolean;
+  mode: number;
+  uid: number;
+};
+export type GhResolverFilesystem = {
+  lstat: (path: string) => TrustedExecutableStat;
+  realpath: (path: string) => string;
+  access: (path: string, mode: number) => void;
+};
+const PRODUCTION_GH_FILESYSTEM: GhResolverFilesystem = {
+  lstat: lstatSync,
+  realpath: realpathSync,
+  access: accessSync,
+};
+const trustedPathComponents = (root: string, path: string): string[] => {
+  const components = [root];
+  let current = root;
+  for (const component of relative(root, path).split("/").filter(Boolean)) {
+    current = join(current, component);
+    components.push(current);
+  }
+  return components;
+};
+const isInside = (root: string, path: string): boolean => {
+  const remainder = relative(root, path);
+  return remainder === "" || (!remainder.startsWith("../") && remainder !== "..");
+};
+const validateTrustedPath = (
+  path: string,
+  trustedRoot: string,
+  uid: number,
+  filesystem: GhResolverFilesystem,
+): string => {
+  const canonicalRoot = filesystem.realpath(trustedRoot);
+  if (canonicalRoot !== trustedRoot)
+    throw new Error("Trusted executable root is a symlink: " + trustedRoot);
+  for (const component of trustedPathComponents("/", trustedRoot)) {
+    const stat = filesystem.lstat(component);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0)
+      throw new Error("Trusted executable root has an unsafe component: " + component);
+    if (stat.uid !== 0 && stat.uid !== uid)
+      throw new Error("Trusted executable root has an unsafe owner: " + component);
+  }
+  const candidateStat = filesystem.lstat(path);
+  if (candidateStat.isSymbolicLink())
+    throw new Error("GitHub CLI candidate must not be a symlink: " + path);
+  const canonicalPath = filesystem.realpath(path);
+  if (!isInside(canonicalRoot, canonicalPath))
+    throw new Error("GitHub CLI resolves outside its trusted root: " + path);
+  for (const component of trustedPathComponents(canonicalRoot, canonicalPath)) {
+    const stat = filesystem.lstat(component);
+    const isLast = component === canonicalPath;
+    if ((stat.mode & 0o022) !== 0 || stat.isSymbolicLink())
+      throw new Error("GitHub CLI path has an unsafe component: " + component);
+    if (stat.uid !== 0 && stat.uid !== uid)
+      throw new Error("GitHub CLI path has an unsafe owner: " + component);
+    if ((isLast && !stat.isFile()) || (!isLast && !stat.isDirectory()))
+      throw new Error("GitHub CLI path component has an unsafe type: " + component);
+  }
+  filesystem.access(canonicalPath, fsConstants.X_OK);
+  return canonicalPath;
+};
+
+/** @internal Test seam for the production GitHub CLI trust policy. */
+export function resolveProductionGhExecutableForTest(
+  environment: NodeJS.ProcessEnv,
+  uid: number = process.getuid?.() ?? -1,
+  filesystem: GhResolverFilesystem = PRODUCTION_GH_FILESYSTEM,
+): string {
+  const roots = ["/usr/bin", "/usr/local/bin"];
+  const home = environment.HOME;
+  if (home !== undefined) {
+    if (!isAbsolute(home) || resolve(home) !== home)
+      throw new Error("HOME must be an absolute normalized path");
+    roots.push(join(home, ".local", "bin"));
+  }
+  const failures: string[] = [];
+  for (const root of roots) {
+    const candidate = join(root, "gh");
+    try {
+      return validateTrustedPath(candidate, root, uid, filesystem);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR")
+        failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  const detail = failures.length === 0 ? "no candidate exists" : failures.join("; ");
+  throw new Error("Could not find a trusted GitHub CLI executable: " + detail);
+}
+const productionExecutables = (): ClassifierExecutablePaths => ({
+  ...SYSTEM_EXECUTABLES,
+  gh: resolveProductionGhExecutableForTest(process.env),
+});
+const PRESERVED_ENVIRONMENT = [
+  "GH_CONFIG_DIR",
+  "GH_ENTERPRISE_TOKEN",
+  "GH_HOST",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "NO_COLOR",
+  "TERM",
+  "XDG_CONFIG_HOME",
+] as const;
+const UNSAFE_SUBPROCESS_ENVIRONMENT = new Set([
+  "BASH_ENV",
+  "ENV",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "NPM_CONFIG_NODE_OPTIONS",
+  "PATH",
+  "PERL5OPT",
+  "PYTHONHOME",
+  "PYTHONPATH",
+  "RUBYOPT",
+]);
+const sanitizeSubprocessEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.entries(environment).filter(
+      ([name, value]) => value !== undefined && !UNSAFE_SUBPROCESS_ENVIRONMENT.has(name),
+    ),
+  );
+const productionSubprocessEnvironment = (): NodeJS.ProcessEnv =>
+  sanitizeSubprocessEnvironment(
+    Object.fromEntries(
+      PRESERVED_ENVIRONMENT.flatMap((name) =>
+        process.env[name] === undefined ? [] : [[name, process.env[name]]],
+      ),
+    ),
+  );
+const validateExecutablePaths = (paths: ClassifierExecutablePaths): ClassifierExecutablePaths => {
+  for (const [name, path] of Object.entries(paths)) {
+    if (!path.startsWith("/")) throw new Error(`${name} executable path must be absolute`);
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0)
+      throw new Error(`${name} executable path is not a trusted regular file`);
+    accessSync(path, fsConstants.X_OK);
+  }
+  return paths;
 };
 const SECRET_ASSIGNMENT =
   /(\b(?:AWS_ACCESS_KEY_ID|[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY)[A-Za-z0-9_]*)\s*[=:]\s*)(?!\[REDACTED\])(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/giu;
@@ -161,6 +341,7 @@ export const execute = async (
   args: string[],
   workdir: string,
   timeoutMs: number,
+  environment: NodeJS.ProcessEnv = productionSubprocessEnvironment(),
 ): Promise<ProcessResult> => {
   temporaryDirectories.installHandlers();
   if (temporaryDirectories.shutdownStarted)
@@ -169,6 +350,7 @@ export const execute = async (
     const child = spawn(process.execPath, ["-e", PROCESS_GROUP_WRAPPER, command, ...args], {
       cwd: workdir,
       detached: true,
+      env: environment,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let group: ProcessGroup | undefined;
@@ -357,7 +539,13 @@ function selectUniqueArtifact(
   );
 }
 
-export async function classifyCiFailure(input: Input): Promise<Record<string, unknown>> {
+async function classifyCiFailureWithRuntime(
+  input: Input,
+  runtime: ClassifierRuntime,
+): Promise<Record<string, unknown>> {
+  const executables = validateExecutablePaths(runtime.executables);
+  const subprocessEnvironment = sanitizeSubprocessEnvironment(runtime.environment);
+  if (!process.execPath.startsWith("/")) throw new Error("Node executable path must be absolute");
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   const jobId = String(input.jobId);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
@@ -370,7 +558,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
   if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
   const artifactName = normalizeArtifactName(input.artifactName);
   const q = (value: unknown): string => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const project = async (
+  const project = (
     value: unknown,
     maxCharacters: number,
     maxLineCharacters: number = maxCharacters,
@@ -383,14 +571,19 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       maxCharacters,
       maxLineCharacters,
     });
-  const diagnosticError = async (message: unknown): Promise<Error> => {
+  const diagnosticError = (message: unknown): Error => {
     const safe = redact(String(message));
     return new Error(safe.slice(0, 2000) || "Diagnostic unavailable");
   };
   const github = async (args: string[], timeoutMs = 30000) => {
-    const result = await execute("gh", args, input.workdir, timeoutMs);
-    if (result.exitCode !== 0)
-      throw await diagnosticError(result.stderr.text || result.stdout.text);
+    const result = await execute(
+      executables.gh,
+      args,
+      input.workdir,
+      timeoutMs,
+      subprocessEnvironment,
+    );
+    if (result.exitCode !== 0) throw diagnosticError(result.stderr.text || result.stdout.text);
     return { stdout: result.stdout.text, stderr: result.stderr.text };
   };
   const isGithubAccessFailure = (detail: string): boolean =>
@@ -410,18 +603,21 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
         (detail ? "\n" + detail : ""),
     );
   const run = async (command: string, timeoutMs = 30000) => {
-    const result = await execute("bash", ["-c", command], input.workdir, timeoutMs);
+    const result = await execute(
+      executables.bash,
+      ["--noprofile", "--norc", "-c", command],
+      input.workdir,
+      timeoutMs,
+      subprocessEnvironment,
+    );
     const detail = result.stderr.text + "\n" + result.stdout.text;
     if (result.exitCode !== 0 && isGithubAccessFailure(detail)) {
-      const projected = await project(result.stderr.text, 1500, 1000);
+      const projected = project(result.stderr.text, 1500, 1000);
       throw githubAccessFailure(projected.text);
     }
     return result;
   };
-  const cleanupTemporaryDirectory = async (
-    dir: string,
-    kind: "CI log" | "artifact",
-  ): Promise<string> => {
+  const cleanupTemporaryDirectory = (dir: string, kind: "CI log" | "artifact"): string => {
     const generatedName = basename(dir);
     if (!temporaryDirectories.owns(dir))
       return `Cleanup failure: temporary ${kind} directory was not owned by this process`;
@@ -445,10 +641,8 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
   };
   const jobResult = await github(["api", `repos/${repo}/actions/jobs/${jobId}`]);
   const rawJob = JSON.parse(jobResult.stdout);
-  const [jobName, jobUrl] = await Promise.all([
-    project(rawJob.name ?? "", 500, 500),
-    project(rawJob.html_url ?? "", 2000, 2000),
-  ]);
+  const jobName = project(rawJob.name ?? "", 500, 500);
+  const jobUrl = project(rawJob.html_url ?? "", 2000, 2000);
   const job = {
     id: Number(rawJob.id ?? jobId),
     runId: Number(rawJob.run_id ?? 0),
@@ -467,7 +661,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     const rawPath = logDir + "/job.log";
     const boundedPath = logDir + "/job.tail.log";
     const downloaded = await run(
-      `set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} | tail -c 4000000 > ${q(rawPath)}; statuses=("\${PIPESTATUS[@]}"); bytes=$(stat -c %s -- ${q(rawPath)}) || exit 1; printf '%s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$bytes"`,
+      `set +e; set -o pipefail; ${q(executables.gh)} api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} | ${q(executables.tail)} -c 4000000 > ${q(rawPath)}; statuses=("\${PIPESTATUS[@]}"); bytes=$(${q(executables.stat)} -c %s -- ${q(rawPath)}) || exit 1; printf '%s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$bytes"`,
       60000,
     );
     const [githubStatus, captureStatus, byteText] = downloaded.stdout.text.trim().split(/\s+/, 3);
@@ -479,15 +673,13 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       Number.isSafeInteger(byteCount)
         ? 0
         : Number(githubStatus) || Number(captureStatus) || downloaded.exitCode || 1;
-    logStderr = (await project(downloaded.stderr.text, 4000, 1000)).text;
+    logStderr = project(downloaded.stderr.text, 4000, 1000).text;
     if (logCode === 0) {
       const bounded = await run(
-        `tail -n 20000 -- ${q(rawPath)} > ${q(boundedPath)}; lines=$(wc -l < ${q(rawPath)}); printf '%s' "$lines"`,
+        `${q(executables.tail)} -n 20000 -- ${q(rawPath)} > ${q(boundedPath)}; lines=$(${q(executables.wc)} -l < ${q(rawPath)}); printf '%s' "$lines"`,
       );
       if (bounded.exitCode !== 0)
-        throw await diagnosticError(
-          bounded.stderr.text || "Could not bound GitHub Actions job log",
-        );
+        throw diagnosticError(bounded.stderr.text || "Could not bound GitHub Actions job log");
       const lineCount = Number(bounded.stdout.text.trim());
       sourceTruncated =
         (Number.isFinite(byteCount) && byteCount >= 4000000) ||
@@ -498,7 +690,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
   } catch (error) {
     logFailure = error;
   }
-  const logCleanupFailure = await cleanupTemporaryDirectory(logDir, "CI log");
+  const logCleanupFailure = cleanupTemporaryDirectory(logDir, "CI log");
   if (logFailure !== undefined) throw appendCleanupFailure(logFailure, logCleanupFailure);
   const logAcquisitionFailure =
     logCode === 0
@@ -631,7 +823,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       try {
         const archive = dir + "/artifact.zip";
         const download = await run(
-          `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; dd bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
+          `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; ${q(executables.gh)} api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; ${q(executables.dd)} bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; ${q(executables.dd)} bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(${q(executables.dd)} bs=1 count=1 iflag=fullblock status=none | ${q(executables.base64)} -w0); bytes=$(${q(executables.stat)} -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; ${q(executables.rm)} -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
           60000,
         );
         const [downloadStatus, readerStatus, downloadState, downloadBytesText] =
@@ -686,12 +878,12 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
               : null;
           const timedOut = result.timedOut === true;
           const error = result.error
-            ? (await project(String(result.error), 1000, 1000)).text || null
+            ? project(String(result.error), 1000, 1000).text || null
             : null;
           const command =
             result.command == null
               ? null
-              : (await project(String(result.command), 2000, 1000)).text || null;
+              : project(String(result.command), 2000, 1000).text || null;
           if (exitCode === 0 && !signal && !error && !timedOut) continue;
           if (exitCode === null && !signal && !error && !timedOut && !result.command) continue;
           fileResults.push({
@@ -716,12 +908,12 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       } catch (error) {
         artifactFailure = error;
       }
-      const artifactCleanupFailure = await cleanupTemporaryDirectory(dir, "artifact");
+      const artifactCleanupFailure = cleanupTemporaryDirectory(dir, "artifact");
       if (artifactFailure !== undefined)
         throw appendCleanupFailure(artifactFailure, artifactCleanupFailure);
       if (artifactCleanupFailure) throw new Error(artifactCleanupFailure);
     } catch (error) {
-      throw await diagnosticError(error instanceof Error ? error.message : String(error));
+      throw diagnosticError(error instanceof Error ? error.message : String(error));
     }
   }
   if (log.code !== 0)
@@ -836,6 +1028,23 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     artifact,
     log,
   };
+}
+
+/** @internal Test seam for explicit trusted executable fixtures. */
+export async function classifyCiFailureWithRuntimeForTest(
+  input: Input,
+  runtime: ClassifierRuntime,
+): Promise<Record<string, unknown>> {
+  return await classifyCiFailureWithRuntime(input, runtime);
+}
+
+export async function classifyCiFailure(input: Input): Promise<Record<string, unknown>> {
+  if (process.platform !== "linux")
+    throw new Error("CI failure classification requires trusted Linux system executables");
+  return await classifyCiFailureWithRuntime(input, {
+    executables: productionExecutables(),
+    environment: productionSubprocessEnvironment(),
+  });
 }
 
 function parseArguments(args: string[]): Input {

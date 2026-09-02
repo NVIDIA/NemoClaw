@@ -16,7 +16,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { execute } from "../../.agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts";
+import {
+  execute,
+  type GhResolverFilesystem,
+  resolveProductionGhExecutableForTest,
+} from "../../.agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts";
 import { artifactZip, artifactZipEntryDataOffset } from "../helpers/artifact-zip";
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
@@ -85,7 +89,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
   );
   const gh = join(bin, "gh");
   const fake = [
-    "#!/usr/bin/env node",
+    `#!${process.execPath}`,
     "const fs=require('fs');",
     "const {spawn}=require('node:child_process');",
     "const block=()=>{ if(process.env.BLOCK_DESCENDANT_MARKER) { process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); } if(process.env.BLOCK_GROUP_MARKER) fs.writeFileSync(process.env.BLOCK_GROUP_MARKER,String(process.pid)); if(process.env.BLOCK_DESCENDANT_MARKER) { const child=spawn(process.execPath,['-e',\"process.on('SIGINT',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)\"],{stdio:process.env.EXIT_GROUP_LEADER ? ['ignore',process.stdout,process.stderr] : 'ignore'}); fs.writeFileSync(process.env.BLOCK_DESCENDANT_MARKER,String(child.pid)); if(process.env.EXIT_GROUP_LEADER) { fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); process.exit(0); } } fs.writeFileSync(process.env.BLOCK_MARKER,'ready'); setInterval(()=>{},1000); };",
@@ -103,7 +107,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
   writeFileSync(
     rm,
     [
-      "#!/usr/bin/env node",
+      `#!${process.execPath}`,
       "const fs=require('fs'); const path=require('path');",
       "const target=process.argv.at(-1);",
       "if(path.basename(target).startsWith('nemoclaw-ci-')) {",
@@ -121,6 +125,7 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
     PATH: bin + ":" + process.env.PATH,
     TMPDIR: root,
     GH_CALLS: join(root, "calls"),
+    TEST_GH: gh,
     CLEANUP_OBSERVATIONS: join(root, "cleanup-observations.jsonl"),
     TEST_LOG: log,
     LOG_PREFIX_LINES: "0",
@@ -137,8 +142,50 @@ const classifierArgs = (extra: string[] = []) => [
   "123",
   ...extra,
 ];
+function importedClassifierArgs(env: NodeJS.ProcessEnv, extra: string[]): string[] {
+  const optionValue = (name: string): string | undefined => {
+    const index = extra.indexOf(name);
+    return index < 0 ? undefined : extra[index + 1];
+  };
+  const repo = optionValue("--repo");
+  const artifactName = optionValue("--artifact-name");
+  const maxLines = optionValue("--max-lines");
+  const clipMode = optionValue("--clip-mode");
+  const input: Record<string, unknown> = {
+    workdir: process.cwd(),
+    jobId: "123",
+    ...(repo === undefined ? {} : { repo }),
+    ...(artifactName === undefined ? {} : { artifactName }),
+    ...(maxLines === undefined ? {} : { maxLines: Number(maxLines) }),
+    ...(clipMode === undefined ? {} : { clipMode }),
+  };
+  return [
+    "--experimental-strip-types",
+    "--no-warnings",
+    "--input-type=module",
+    "-e",
+    [
+      `import { classifyCiFailureWithRuntimeForTest } from ${JSON.stringify(new URL("file://" + script).href)};`,
+      `const input = ${JSON.stringify(input)};`,
+      "const environment = { ...process.env };",
+      "const executables = { bash: '/usr/bin/bash', base64: '/usr/bin/base64', dd: '/usr/bin/dd', gh: process.env.TEST_GH, rm: '/usr/bin/rm', stat: '/usr/bin/stat', tail: '/usr/bin/tail', wc: '/usr/bin/wc' };",
+      "void classifyCiFailureWithRuntimeForTest(input, { executables, environment }).then((value) => console.log(JSON.stringify(value, null, 2))).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });",
+    ].join("\n"),
+  ];
+}
 function run(env: NodeJS.ProcessEnv, extra: string[] = []) {
-  return spawnSync(process.execPath, classifierArgs(extra), { encoding: "utf8", env });
+  const useCli =
+    extra.some((value) => value === "--unknown") ||
+    extra.filter((value) => value === "--repo").length > 1 ||
+    extra.some((value) => value === "0" || value === "1.5" || value === "501");
+  return spawnSync(
+    process.execPath,
+    useCli ? classifierArgs(extra) : importedClassifierArgs(env, extra),
+    {
+      encoding: "utf8",
+      env,
+    },
+  );
 }
 function classifierTemporaryDirectories(prefix: "nemoclaw-ci-log." | "nemoclaw-ci-classify.") {
   const temporaryRoot = `/tmp/nemoclaw-ci-classifier-${uid}`;
@@ -149,6 +196,106 @@ function classifierTemporaryDirectories(prefix: "nemoclaw-ci-log." | "nemoclaw-c
 async function waitForFile(path: string): Promise<void> {
   await vi.waitFor(() => expect(existsSync(path)).toBe(true), { timeout: 2_000, interval: 10 });
 }
+type FakePath = {
+  type: "directory" | "file" | "symlink";
+  mode?: number;
+  uid?: number;
+  realpath?: string;
+};
+function resolverFilesystem(entries: Record<string, FakePath>): GhResolverFilesystem {
+  const missing = (path: string): never => {
+    const error = new Error("missing " + path) as NodeJS.ErrnoException;
+    error.code = "ENOENT";
+    throw error;
+  };
+  const entry = (path: string): FakePath => entries[path] ?? missing(path);
+  return {
+    lstat: (path) => {
+      const value = entry(path);
+      return {
+        isDirectory: () => value.type === "directory",
+        isFile: () => value.type === "file",
+        isSymbolicLink: () => value.type === "symlink",
+        mode: value.mode ?? 0o755,
+        uid: value.uid ?? 0,
+      };
+    },
+    realpath: (path) => entry(path).realpath ?? path,
+    access: (path) => {
+      entry(path);
+    },
+  };
+}
+function trustedDirectories(home = "/home/tester"): Record<string, FakePath> {
+  return {
+    "/": { type: "directory" },
+    "/usr": { type: "directory" },
+    "/usr/bin": { type: "directory" },
+    "/usr/local": { type: "directory" },
+    "/usr/local/bin": { type: "directory" },
+    "/home": { type: "directory" },
+    [home]: { type: "directory", uid: 1000, mode: 0o750 },
+    [join(home, ".local")]: { type: "directory", uid: 1000, mode: 0o700 },
+    [join(home, ".local", "bin")]: { type: "directory", uid: 1000 },
+  };
+}
+
+describe("GitHub CLI production resolver", () => {
+  test("selects a safe user-local executable without consulting PATH", () => {
+    const home = "/home/tester";
+    const gh = join(home, ".local", "bin", "gh");
+    const filesystem = resolverFilesystem({
+      ...trustedDirectories(home),
+      [gh]: { type: "file", uid: 1000 },
+      "/attacker/gh": { type: "file", uid: 1000 },
+    });
+    expect(
+      resolveProductionGhExecutableForTest({ HOME: home, PATH: "/attacker" }, 1000, filesystem),
+    ).toBe(gh);
+  });
+
+  test("skips a writable system candidate and selects a safe user-local executable", () => {
+    const home = "/home/tester";
+    const gh = join(home, ".local", "bin", "gh");
+    const filesystem = resolverFilesystem({
+      ...trustedDirectories(home),
+      "/usr/bin/gh": { type: "file", mode: 0o777 },
+      [gh]: { type: "file", uid: 1000 },
+    });
+    expect(resolveProductionGhExecutableForTest({ HOME: home }, 1000, filesystem)).toBe(gh);
+  });
+
+  test.each<[string, Record<string, FakePath>]>([
+    [
+      "writable path component",
+      { "/home/tester/.local": { type: "directory", uid: 1000, mode: 0o770 } },
+    ],
+    ["foreign owner", { "/home/tester/.local/bin/gh": { type: "file", uid: 2000 } }],
+    [
+      "symlink candidate",
+      {
+        "/home/tester/.local/bin/gh": {
+          type: "symlink",
+          uid: 1000,
+          realpath: "/attacker/gh",
+        },
+        "/attacker/gh": { type: "file", uid: 1000 },
+      },
+    ],
+  ])("rejects a user-local executable with a %s", (_case, overrides) => {
+    const home = "/home/tester";
+    const gh = join(home, ".local", "bin", "gh");
+    const filesystem = resolverFilesystem({
+      ...trustedDirectories(home),
+      [gh]: { type: "file", uid: 1000 },
+      ...overrides,
+    });
+    expect(() =>
+      resolveProductionGhExecutableForTest({ HOME: home, PATH: "/attacker" }, 1000, filesystem),
+    ).toThrow("Could not find a trusted GitHub CLI executable");
+  });
+});
+
 describe("CI failure classifier process", () => {
   test("redacts credentials from classified diagnostic output", () => {
     const secrets = [
@@ -175,6 +322,44 @@ describe("CI failure classifier process", () => {
     expect(r.stdout).toContain("unrelated diagnostic text");
     expect(r.stdout.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(10);
   });
+  test("does not pass executable lookup or startup injection to classifier subprocesses", () => {
+    const item = fixture("AssertionError: expected true");
+    const attackerBin = join(item.root, "attacker-bin");
+    const executableMarker = join(item.root, "attacker-executable-ran");
+    const bashMarker = join(item.root, "bash-env-ran");
+    const nodeMarker = join(item.root, "node-options-ran");
+    mkdirSync(attackerBin);
+    const bashExecutable = join(attackerBin, "bash");
+    const ghExecutable = join(attackerBin, "gh");
+    writeFileSync(
+      bashExecutable,
+      `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(executableMarker)}, "bash\n");`,
+    );
+    writeFileSync(
+      ghExecutable,
+      `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(executableMarker)}, "gh\n");`,
+    );
+    chmodSync(bashExecutable, 0o755);
+    chmodSync(ghExecutable, 0o755);
+    const bashHook = join(item.root, "bash-env");
+    writeFileSync(bashHook, `printf injected >> ${JSON.stringify(bashMarker)}`);
+    const nodeHook = join(item.root, "node-options.mjs");
+    writeFileSync(
+      nodeHook,
+      `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(nodeMarker)}, ${JSON.stringify("loaded\n")});`,
+    );
+    item.env.PATH = attackerBin;
+    item.env.BASH_ENV = bashHook;
+    item.env.ENV = bashHook;
+    item.env.NODE_OPTIONS = `--import=${nodeHook}`;
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).result).toBe("classified");
+    expect(existsSync(executableMarker)).toBe(false);
+    expect(existsSync(bashMarker)).toBe(false);
+    expect(readFileSync(nodeMarker, "utf8").trim().split("\n")).toEqual(["loaded"]);
+  });
+
   test("classifies an AssertionError as a test failure", () => {
     const item = fixture("AssertionError: expected true");
     const result = run(item.env);
@@ -532,7 +717,7 @@ describe("CI failure classifier process", () => {
     item.env.BLOCK_MARKER = marker;
     item.env.KILL_SIGNAL_LOG = signals;
     item.env.NODE_OPTIONS = `--import=${instrument}`;
-    const child = spawn(process.execPath, classifierArgs(), {
+    const child = spawn(process.execPath, importedClassifierArgs(item.env, []), {
       env: item.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -566,7 +751,7 @@ describe("CI failure classifier process", () => {
     item.env.BLOCK_LOG = "1";
     item.env.BLOCK_MARKER = marker;
     item.env.NODE_OPTIONS = `--import=${instrument}`;
-    const child = spawn(process.execPath, classifierArgs(), {
+    const child = spawn(process.execPath, importedClassifierArgs(item.env, []), {
       env: item.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -612,7 +797,7 @@ describe("CI failure classifier process", () => {
       item.env.BLOCK_GROUP_MARKER = groupMarker;
       item.env.BLOCK_DESCENDANT_MARKER = descendantMarker;
       Object.assign(item.env, exitGroupLeader ? { EXIT_GROUP_LEADER: "1" } : {});
-      const child = spawn(process.execPath, classifierArgs([...extra]), {
+      const child = spawn(process.execPath, importedClassifierArgs(item.env, [...extra]), {
         env: item.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
