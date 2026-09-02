@@ -48,10 +48,13 @@ for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
   fi
 
   last_line="$(awk 'NF { line=$0 } END { sub(/\r$/, "", line); print line }' "$attempt_log")"
-  if [ "$last_line" != "ERROR: $reference: not found" ]; then
-    echo "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=$attempt/$max_attempts docker-exit=$status" >&2
-    exit "$status"
-  fi
+  case "$last_line" in
+    "ERROR: $reference: not found" | *"$reference"*": not found") ;;
+    *)
+      echo "::error::GHCR anonymous exact-digest pull outcome=failed-no-retry attempt=$attempt/$max_attempts docker-exit=$status" >&2
+      exit "$status"
+      ;;
+  esac
 
   if [ "$attempt" -eq "$max_attempts" ]; then
     echo "::error::GHCR anonymous exact-digest pull outcome=exhausted attempt=$attempt/$max_attempts failure=not-found" >&2

@@ -12,7 +12,13 @@ const repoRoot = path.resolve(import.meta.dirname, "../..");
 const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh");
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
 
-type Scenario = "exhausted" | "near-match" | "success" | "terminal" | "transient-then-success";
+type Scenario =
+  | "exhausted"
+  | "modern-transient-then-success"
+  | "near-match"
+  | "success"
+  | "terminal"
+  | "transient-then-success";
 
 function runPuller(scenario: Scenario, candidateReference = reference) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-pull-"));
@@ -41,6 +47,10 @@ fi
 if [ "$SCENARIO" = "near-match" ]; then
   echo "ERROR: $EXPECTED_REFERENCE: not found while resolving manifest" >&2
   exit 43
+fi
+if [ "$SCENARIO" = "modern-transient-then-success" ] && [ "$count" -eq 1 ]; then
+  echo "Error response from daemon: failed to resolve reference \"$EXPECTED_REFERENCE\": $EXPECTED_REFERENCE: not found" >&2
+  exit 44
 fi
 if [ "$SCENARIO" = "exhausted" ] || { [ "$SCENARIO" = "transient-then-success" ] && [ "$count" -eq 1 ]; }; then
   echo "ERROR: $EXPECTED_REFERENCE: not found" >&2
@@ -103,6 +113,19 @@ describe("pull-public-exact-digest", () => {
 
   it("retries the exact transient GHCR not-found result and removes anonymous state", () => {
     const result = runPuller("transient-then-success");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.count).toBe(2);
+    expect(result.sleeps).toEqual(["2"]);
+    expect(new Set(result.configs).size).toBe(1);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr).toContain("outcome=transient-external attempt=1/5 retry-in=2s");
+    expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
+    expect(result.stdout + result.stderr).not.toContain(`${reference}: not found`);
+  });
+
+  it("retries Docker's exact-reference transient GHCR not-found result", () => {
+    const result = runPuller("modern-transient-then-success");
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.count).toBe(2);
