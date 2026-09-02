@@ -398,7 +398,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(existingResult.configText).toBe(attackerProjection);
   });
 
-  it("keeps forced removal identity-bound during a descriptor rewrite (#10754)", () => {
+  it("keeps forced removal identity-bound during a descriptor rewrite", () => {
     const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
     const raced = runDeepAgentsConfigCommand(
       forcedCommand,
