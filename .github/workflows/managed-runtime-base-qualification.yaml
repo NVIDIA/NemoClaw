@@ -82,13 +82,6 @@ jobs:
         run: >-
           node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts select-source "${RUNNER_TEMP}/managed-runtime-source/selection.json"
 
-      - name: Mark exact-base qualification pending on the candidate
-        env:
-          CANDIDATE_SHA: ${{ steps.select.outputs.candidate_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts publish-status pending
-
   publish-candidate-images:
     name: Publish authenticated candidate image (${{ matrix.agent }}, ${{ matrix.arch }})
     needs: authenticate-source
@@ -373,7 +366,7 @@ jobs:
           compression-level: 0
 
   trusted-candidate-mcp-discovery:
-    name: Trusted candidate OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
+    name: Trusted candidate OpenClaw managed-image MCP discovery
     needs:
       - authenticate-source
       - publish-candidate-images
@@ -386,13 +379,9 @@ jobs:
     permissions:
       actions: read
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        pass: [1, 2]
     env:
       CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.managed-runtime-candidate/mcp/pass-${{ matrix.pass }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.managed-runtime-candidate/mcp/evidence
       E2E_JOB: "1"
       E2E_TARGET_ID: mcp-bridge
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/.managed-runtime-candidate/mcp/nemoclaw
@@ -405,7 +394,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-pr-exact-mcp-${{ matrix.pass }}
+      NEMOCLAW_SANDBOX_NAME: e2e-pr-exact-mcp
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
       SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
       SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
@@ -623,18 +612,17 @@ jobs:
           MANAGED_MCP_CATALOG: ${{ env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG }}
           MANAGED_MCP_CONTROLLER_DIGEST: ${{ env.TRUSTED_MCP_CONTROLLER_DIGEST }}
           MANAGED_MCP_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
-          MANAGED_MCP_JOB: Trusted candidate OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
+          MANAGED_MCP_JOB: Trusted candidate OpenClaw managed-image MCP discovery
           MANAGED_MCP_OUTCOME: ${{ steps.mcp.outcome }}
-          MANAGED_MCP_PASS: ${{ matrix.pass }}
           OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
         run: >-
-          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-runtime-comparison.mts record-mcp "${RUNNER_TEMP}/managed-runtime-mcp-receipt-pass-${{ matrix.pass }}/receipt.json"
+          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-runtime-comparison.mts record-mcp "${RUNNER_TEMP}/managed-runtime-mcp-receipt/receipt.json"
 
       - name: Upload exact MCP discovery evidence
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-runtime-mcp-${{ github.run_id }}-${{ github.run_attempt }}-pass-${{ matrix.pass }}
+          name: managed-runtime-mcp-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.E2E_ARTIFACT_DIR }}/
           if-no-files-found: error
           retention-days: 14
@@ -643,8 +631,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-runtime-mcp-receipt-${{ github.run_id }}-${{ github.run_attempt }}-pass-${{ matrix.pass }}
-          path: ${{ runner.temp }}/managed-runtime-mcp-receipt-pass-${{ matrix.pass }}/receipt.json
+          name: managed-runtime-mcp-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-runtime-mcp-receipt/receipt.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -671,26 +659,18 @@ jobs:
           node-version: 22.23.1
 
       - name: Download protected MCP discovery receipts
-        id: receipts
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-runtime-mcp-receipt-${{ github.run_id }}-${{ github.run_attempt }}-pass-*
-          path: ${{ runner.temp }}/managed-runtime-mcp/receipts
-          merge-multiple: false
+          name: managed-runtime-mcp-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-runtime-mcp/receipt
 
       - name: Download protected MCP discovery evidence
-        id: evidence
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-runtime-mcp-${{ github.run_id }}-${{ github.run_attempt }}-pass-*
+          name: managed-runtime-mcp-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/managed-runtime-mcp/evidence
-          merge-multiple: false
 
-      - id: classify
-        name: Classify authenticated MCP discovery receipts
-        continue-on-error: true
+      - name: Verify authenticated MCP discovery receipt and evidence
         env:
           BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
           CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
@@ -698,23 +678,7 @@ jobs:
           SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
           SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
         run: >-
-          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts classify-mcp "${RUNNER_TEMP}/managed-runtime-mcp/receipts" "${RUNNER_TEMP}/managed-runtime-mcp/evidence" "${RUNNER_TEMP}/managed-runtime-mcp/comparison.json"
-
-      - name: Preserve authenticated MCP discovery comparison
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: managed-runtime-mcp-comparison-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/managed-runtime-mcp/comparison.json
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0
-
-      - name: Propagate the MCP discovery classification
-        if: steps.classify.outcome != 'success'
-        run: |
-          echo "ERROR: managed-image MCP discovery did not pass; inspect the comparison receipt." >&2
-          exit 1
+          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts verify-mcp "${RUNNER_TEMP}/managed-runtime-mcp/receipt/receipt.json" "${RUNNER_TEMP}/managed-runtime-mcp/evidence"
 
   trusted-candidate-activation:
     name: Trusted candidate all-agent managed runtime activation (${{ matrix.arch }})

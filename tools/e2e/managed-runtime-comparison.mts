@@ -30,8 +30,7 @@ const RECEIPT_KIND = "nemoclaw-managed-runtime-activation-v1";
 const MCP_SCENARIO_ID = "managed-image-mcp-discovery-v1";
 const MCP_TEST_PATH = "test/e2e/live/mcp-bridge.test.ts";
 const MCP_RECEIPT_KIND = "nemoclaw-managed-image-mcp-discovery-v1";
-const MCP_COMPARISON_KIND = "nemoclaw-managed-image-mcp-comparison-v1";
-const MCP_PASSES = [1, 2] as const;
+const MCP_JOB = "Trusted candidate OpenClaw managed-image MCP discovery";
 const SOURCE_SELECTION_KIND = "nemoclaw-managed-runtime-source-selection-v1";
 const SELECTION_KIND = "nemoclaw-managed-runtime-candidate-selection-v1";
 const COMPARISON_KIND = "nemoclaw-managed-runtime-comparison-v1";
@@ -49,8 +48,6 @@ type JsonRecord = Record<string, unknown>;
 type Role = "base" | "candidate";
 type Platform = (typeof PLATFORMS)[number];
 type StepOutcome = "cancelled" | "failure" | "skipped" | "success";
-type McpPass = (typeof MCP_PASSES)[number];
-type McpClassification = "failure" | "infrastructure-failure" | "pass";
 type ComparisonClassification =
   | "base-failure"
   | "candidate-failure"
@@ -126,7 +123,6 @@ export interface ManagedMcpDiscoveryReceipt {
   readonly scenario: {
     readonly id: typeof MCP_SCENARIO_ID;
     readonly testPath: typeof MCP_TEST_PATH;
-    readonly pass: McpPass;
   };
   readonly workflow: {
     readonly repository: typeof REPOSITORY;
@@ -149,17 +145,6 @@ export interface ManagedMcpDiscoveryReceipt {
   };
   readonly evidence: ManagedRuntimeReceipt["evidence"];
   readonly outcome: StepOutcome;
-}
-
-export interface ManagedMcpDiscoveryComparison {
-  readonly kind: typeof MCP_COMPARISON_KIND;
-  readonly classification: McpClassification;
-  readonly reason: string;
-  readonly passes: ReadonlyArray<{
-    readonly pass: McpPass;
-    readonly outcome: StepOutcome | null;
-    readonly evidenceError: string | null;
-  }>;
 }
 
 export interface ManagedRuntimeSourceSelection {
@@ -716,15 +701,6 @@ export function parseManagedRuntimeReceipt(
   return receipt as unknown as ManagedRuntimeReceipt;
 }
 
-function mcpPass(value: unknown, label: string): McpPass {
-  if (!MCP_PASSES.includes(value as McpPass)) throw new Error(`${label} is invalid`);
-  return value as McpPass;
-}
-
-function mcpJob(pass: McpPass): string {
-  return `Trusted candidate OpenClaw managed-image MCP discovery (pass ${pass})`;
-}
-
 export function createManagedMcpDiscoveryReceipt(input: {
   readonly baseSha: string;
   readonly candidateSha: string;
@@ -736,15 +712,13 @@ export function createManagedMcpDiscoveryReceipt(input: {
   readonly job: string;
   readonly openshellVersion: string;
   readonly outcome: StepOutcome;
-  readonly pass: McpPass;
   readonly runAttempt: number;
   readonly runId: number;
   readonly workflowSha: string;
 }): ManagedMcpDiscoveryReceipt {
   const candidateSha = sha(input.candidateSha, "MCP candidate SHA");
   const baseSha = sha(input.baseSha, "MCP base SHA");
-  const pass = mcpPass(input.pass, "MCP pass");
-  exactString(input.job, mcpJob(pass), "MCP workflow job");
+  exactString(input.job, MCP_JOB, "MCP workflow job");
   if (!VERSION_PATTERN.test(input.openshellVersion)) {
     throw new Error("MCP OpenShell runtime version is invalid");
   }
@@ -777,14 +751,14 @@ export function createManagedMcpDiscoveryReceipt(input: {
       runId: candidateSourceRunId,
       runAttempt: candidateSourceRunAttempt,
     },
-    scenario: { id: MCP_SCENARIO_ID, testPath: MCP_TEST_PATH, pass },
+    scenario: { id: MCP_SCENARIO_ID, testPath: MCP_TEST_PATH },
     workflow: {
       repository: REPOSITORY,
       path: BASE_WORKFLOW_PATH,
       sha: sha(input.workflowSha, "MCP workflow SHA"),
       runId: positiveInteger(input.runId, "MCP run id"),
       runAttempt: positiveInteger(input.runAttempt, "MCP run attempt"),
-      job: mcpJob(pass),
+      job: MCP_JOB,
       controllerDigest: digest(input.controllerDigest, "MCP controller digest"),
     },
     runtime: {
@@ -812,7 +786,6 @@ export function parseManagedMcpDiscoveryReceipt(
     readonly candidateSha: string;
     readonly candidateSourceRunAttempt: number;
     readonly candidateSourceRunId: number;
-    readonly pass: McpPass;
     readonly runAttempt: number;
     readonly runId: number;
     readonly workflowSha: string;
@@ -846,12 +819,10 @@ export function parseManagedMcpDiscoveryReceipt(
   ) {
     throw new Error("MCP receipt does not match the candidate source attempt");
   }
-  const pass = mcpPass(expected.pass, "expected MCP pass");
   const scenario = record(receipt.scenario, "MCP scenario");
-  exactKeys(scenario, ["id", "pass", "testPath"], "MCP scenario");
+  exactKeys(scenario, ["id", "testPath"], "MCP scenario");
   exactString(scenario.id, MCP_SCENARIO_ID, "MCP scenario id");
   exactString(scenario.testPath, MCP_TEST_PATH, "MCP scenario test");
-  if (scenario.pass !== pass) throw new Error("MCP scenario pass does not match");
   const workflow = record(receipt.workflow, "MCP workflow");
   exactKeys(
     workflow,
@@ -861,7 +832,7 @@ export function parseManagedMcpDiscoveryReceipt(
   exactString(workflow.repository, REPOSITORY, "MCP workflow repository");
   exactString(workflow.path, BASE_WORKFLOW_PATH, "MCP workflow path");
   exactString(workflow.sha, expected.workflowSha, "MCP workflow SHA");
-  exactString(workflow.job, mcpJob(pass), "MCP workflow job");
+  exactString(workflow.job, MCP_JOB, "MCP workflow job");
   if (workflow.runId !== expected.runId || workflow.runAttempt !== expected.runAttempt) {
     throw new Error("MCP receipt does not match the workflow attempt");
   }
@@ -903,73 +874,9 @@ function verifyMcpEvidenceDirectory(root: string, receipt: ManagedMcpDiscoveryRe
   }
 }
 
-export function classifyManagedMcpDiscovery(
-  passes: ReadonlyArray<{
-    readonly pass: McpPass;
-    readonly receipt: ManagedMcpDiscoveryReceipt | null;
-    readonly evidenceError: string | null;
-  }>,
-): ManagedMcpDiscoveryComparison {
-  const summaries = MCP_PASSES.map((pass) => {
-    const matches = passes.filter((entry) => entry.pass === pass);
-    if (matches.length !== 1)
-      return { pass, outcome: null, evidenceError: "pass evidence is missing or ambiguous" };
-    const entry = matches[0]!;
-    return { pass, outcome: entry.receipt?.outcome ?? null, evidenceError: entry.evidenceError };
-  });
-  const infrastructure = (reason: string): ManagedMcpDiscoveryComparison => ({
-    kind: MCP_COMPARISON_KIND,
-    classification: "infrastructure-failure",
-    reason,
-    passes: summaries,
-  });
-  if (summaries.some(({ evidenceError, outcome }) => evidenceError || !outcome)) {
-    return infrastructure("MCP discovery evidence is missing, ambiguous, or invalid");
-  }
-  const receipts = MCP_PASSES.map((pass) => passes.find((entry) => entry.pass === pass)!.receipt!);
-  if (receipts.some(({ outcome }) => outcome === "cancelled" || outcome === "skipped")) {
-    return infrastructure("MCP discovery was cancelled or skipped");
-  }
-  if (receipts.some(({ evidence }) => !evidence.cleanup.proven)) {
-    return infrastructure("MCP discovery cleanup is not proven");
-  }
-  const [first, second] = receipts;
-  if (
-    first!.candidateSha !== second!.candidateSha ||
-    first!.baseSha !== second!.baseSha ||
-    JSON.stringify(first!.candidateSource) !== JSON.stringify(second!.candidateSource) ||
-    first!.workflow.sha !== second!.workflow.sha ||
-    first!.workflow.runId !== second!.workflow.runId ||
-    first!.workflow.runAttempt !== second!.workflow.runAttempt ||
-    first!.workflow.controllerDigest !== second!.workflow.controllerDigest ||
-    first!.runtime.openshellVersion !== second!.runtime.openshellVersion ||
-    first!.runtime.catalogDigest !== second!.runtime.catalogDigest ||
-    JSON.stringify(first!.runtime.image) !== JSON.stringify(second!.runtime.image)
-  ) {
-    return infrastructure("MCP discovery passes use different authenticated identities");
-  }
-  if (receipts.some(({ outcome }) => outcome === "failure")) {
-    return {
-      kind: MCP_COMPARISON_KIND,
-      classification: "failure",
-      reason: "one or more authenticated MCP discovery passes failed",
-      passes: summaries,
-    };
-  }
-  if (receipts.some(({ outcome }) => outcome !== "success")) {
-    return infrastructure("MCP discovery outcomes are not classifiable");
-  }
-  return {
-    kind: MCP_COMPARISON_KIND,
-    classification: "pass",
-    reason: "both authenticated MCP discovery passes passed",
-    passes: summaries,
-  };
-}
-
-export function classifyCurrentMcpDiscovery(
-  receiptRoot: string,
-  evidenceRoot: string,
+export function verifyCurrentMcpDiscovery(
+  receiptPath: string,
+  evidenceDirectory: string,
   expected: {
     readonly baseSha: string;
     readonly candidateSha: string;
@@ -979,31 +886,20 @@ export function classifyCurrentMcpDiscovery(
     readonly runId: number;
     readonly workflowSha: string;
   },
-): ManagedMcpDiscoveryComparison {
-  const passes = MCP_PASSES.map((pass) => {
-    try {
-      const receiptPath = path.join(
-        receiptRoot,
-        `managed-runtime-mcp-receipt-${expected.runId}-${expected.runAttempt}-pass-${pass}`,
-        RECEIPT_FILE,
-      );
-      const receipt = parseManagedMcpDiscoveryReceipt(
-        JSON.parse(fs.readFileSync(receiptPath, "utf8")) as unknown,
-        { ...expected, pass },
-      );
-      const evidenceDirectory = path.join(
-        evidenceRoot,
-        `managed-runtime-mcp-${expected.runId}-${expected.runAttempt}-pass-${pass}`,
-      );
-      verifyMcpEvidenceDirectory(evidenceDirectory, receipt);
-      return { pass, receipt, evidenceError: null };
-    } catch {
-      return { pass, receipt: null, evidenceError: "receipt or evidence validation failed" };
-    }
-  });
-  return classifyManagedMcpDiscovery(passes);
+): ManagedMcpDiscoveryReceipt {
+  const receipt = parseManagedMcpDiscoveryReceipt(
+    JSON.parse(fs.readFileSync(receiptPath, "utf8")) as unknown,
+    expected,
+  );
+  verifyMcpEvidenceDirectory(evidenceDirectory, receipt);
+  if (!receipt.evidence.cleanup.proven) {
+    throw new Error("MCP discovery cleanup is not proven");
+  }
+  if (receipt.outcome !== "success") {
+    throw new Error("authenticated MCP discovery did not pass");
+  }
+  return receipt;
 }
-
 function validateWorkflow(
   value: unknown,
   expected: { readonly name: string; readonly path: string },
@@ -1784,13 +1680,10 @@ export function commitStatusForClassification(classification: ComparisonClassifi
   };
 }
 
-export function coordinationCommitStatus(state: "cancelled" | "error" | "pending"): {
-  readonly state: "error" | "pending";
+export function coordinationCommitStatus(state: "cancelled" | "error"): {
+  readonly state: "error";
   readonly description: string;
 } {
-  if (state === "pending") {
-    return { state: "pending", description: "Exact-base qualification is running" };
-  }
   if (state === "cancelled") {
     return {
       state: "error",
@@ -1808,7 +1701,7 @@ export async function publishManagedRuntimeCommitStatus(
     readonly description: string;
     readonly runId: number;
     readonly sha: string;
-    readonly state: "error" | "failure" | "pending" | "success";
+    readonly state: "error" | "failure" | "success";
     readonly token: string;
   },
   request: typeof githubRequest = githubRequest,
@@ -1844,10 +1737,6 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
         job: env.MANAGED_MCP_JOB ?? "",
         openshellVersion: env.OPENSHELL_VERSION ?? "",
         outcome: stepOutcome(env.MANAGED_MCP_OUTCOME, "MANAGED_MCP_OUTCOME"),
-        pass: mcpPass(
-          requiredInteger(env.MANAGED_MCP_PASS, "MANAGED_MCP_PASS"),
-          "MANAGED_MCP_PASS",
-        ),
         runAttempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
         runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
         workflowSha: env.GITHUB_WORKFLOW_SHA ?? "",
@@ -1855,11 +1744,11 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     );
     return;
   }
-  if (argv[0] === "classify-mcp") {
-    if (argv.length !== 4) {
-      throw new Error("expected MCP receipt directory, evidence directory, and comparison path");
+  if (argv[0] === "verify-mcp") {
+    if (argv.length !== 3) {
+      throw new Error("expected MCP receipt path and evidence directory");
     }
-    const comparison = classifyCurrentMcpDiscovery(argv[1], argv[2], {
+    verifyCurrentMcpDiscovery(argv[1], argv[2], {
       baseSha: sha(env.BASE_SHA, "BASE_SHA"),
       candidateSha: sha(env.CANDIDATE_SHA, "CANDIDATE_SHA"),
       candidateSourceRunAttempt: requiredInteger(env.SOURCE_RUN_ATTEMPT, "SOURCE_RUN_ATTEMPT"),
@@ -1868,9 +1757,6 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
       workflowSha: sha(env.GITHUB_WORKFLOW_SHA, "GITHUB_WORKFLOW_SHA"),
     });
-    writeJsonExclusive(argv[3], comparison);
-    if (comparison.classification === "infrastructure-failure") process.exitCode = 2;
-    if (comparison.classification === "failure") process.exitCode = 4;
     return;
   }
   if (argv[0] === "record") {
@@ -1980,14 +1866,14 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   }
   if (argv[0] === "publish-status") {
     if (argv.length !== 2 && argv.length !== 3) {
-      throw new Error("expected pending or one comparison path");
+      throw new Error("expected an error state or one comparison path");
     }
     const state = argv[1];
     let status: {
-      state: "error" | "failure" | "pending" | "success";
+      state: "error" | "failure" | "success";
       description: string;
     };
-    if ((state === "pending" || state === "error" || state === "cancelled") && argv.length === 2) {
+    if ((state === "error" || state === "cancelled") && argv.length === 2) {
       status = coordinationCommitStatus(state);
     } else if (state === "result" && argv.length === 3) {
       const comparison = record(
@@ -2004,7 +1890,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       }
       status = commitStatusForClassification(comparison.classification);
     } else {
-      throw new Error("expected pending or result with one comparison path");
+      throw new Error("expected error, cancelled, or result with one comparison path");
     }
     await publishManagedRuntimeCommitStatus({
       ...status,
@@ -2015,7 +1901,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     return;
   }
   throw new Error(
-    "expected classify, classify-mcp, combine, publish-status, record, record-mcp, select-candidate, or select-source",
+    "expected classify, combine, publish-status, record, record-mcp, select-candidate, select-source, or verify-mcp",
   );
 }
 

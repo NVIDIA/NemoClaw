@@ -9,7 +9,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseManagedImageDiscoveryContract } from "../../../tools/e2e/managed-image-discovery-contract.mts";
-import { repoRoot } from "../../helpers/managed-image-publication-workflow";
+
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 
 const reviewedArtifacts = [
   "BUNDLED_PACKAGES.json",

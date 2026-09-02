@@ -9,9 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  classifyCurrentMcpDiscovery,
   classifyCurrentRun,
-  classifyManagedMcpDiscovery,
   classifyManagedRuntimeComparison,
   combineManagedRuntimeComparisons,
   commitStatusForClassification,
@@ -23,6 +21,7 @@ import {
   publishManagedRuntimeCommitStatus,
   selectManagedRuntimeCandidate,
   selectManagedRuntimeSource,
+  verifyCurrentMcpDiscovery,
   type ManagedMcpDiscoveryReceipt,
   type ManagedRuntimeCandidateSelection,
   type ManagedRuntimeReceipt,
@@ -132,7 +131,6 @@ function receipt(
 }
 
 function mcpFixture(
-  pass: 1 | 2,
   outcome: "cancelled" | "failure" | "success" = "success",
   cleanupFailures = 0,
 ): { receipt: ManagedMcpDiscoveryReceipt; evidenceDirectory: string } {
@@ -147,10 +145,9 @@ function mcpFixture(
       catalogPath: catalog(CANDIDATE_SHA),
       controllerDigest: CONTROLLER_DIGEST,
       evidenceDirectory,
-      job: `Trusted candidate OpenClaw managed-image MCP discovery (pass ${pass})`,
+      job: "Trusted candidate OpenClaw managed-image MCP discovery",
       openshellVersion: "openshell 0.0.116",
       outcome,
-      pass,
       runAttempt: RUN_ATTEMPT,
       runId: BASE_RUN_ID,
       workflowSha: BASE_SHA,
@@ -158,37 +155,24 @@ function mcpFixture(
   };
 }
 
-function mcpExpected(pass: 1 | 2) {
+function mcpExpected() {
   return {
     baseSha: BASE_SHA,
     candidateSha: CANDIDATE_SHA,
     candidateSourceRunAttempt: RUN_ATTEMPT,
     candidateSourceRunId: CANDIDATE_RUN_ID,
-    pass,
     runAttempt: RUN_ATTEMPT,
     runId: BASE_RUN_ID,
     workflowSha: BASE_SHA,
   } as const;
 }
 
-function stageMcpDownloads(fixtures: ReadonlyArray<ReturnType<typeof mcpFixture>>) {
-  const receiptRoot = temporaryDirectory();
-  const evidenceRoot = temporaryDirectory();
-  fixtures.forEach((fixture, index) => {
-    const pass = (index + 1) as 1 | 2;
-    const receiptDirectory = path.join(
-      receiptRoot,
-      `managed-runtime-mcp-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-pass-${pass}`,
-    );
-    const evidenceDirectory = path.join(
-      evidenceRoot,
-      `managed-runtime-mcp-${BASE_RUN_ID}-${RUN_ATTEMPT}-pass-${pass}`,
-    );
-    fs.mkdirSync(receiptDirectory, { recursive: true });
-    fs.writeFileSync(path.join(receiptDirectory, "receipt.json"), JSON.stringify(fixture.receipt));
-    fs.cpSync(fixture.evidenceDirectory, evidenceDirectory, { recursive: true });
-  });
-  return { evidenceRoot, receiptRoot };
+function stageMcpDownload(fixture: ReturnType<typeof mcpFixture>) {
+  const receiptPath = path.join(temporaryDirectory(), "receipt.json");
+  const evidenceDirectory = path.join(temporaryDirectory(), "evidence");
+  fs.writeFileSync(receiptPath, JSON.stringify(fixture.receipt));
+  fs.cpSync(fixture.evidenceDirectory, evidenceDirectory, { recursive: true });
+  return { evidenceDirectory, receiptPath };
 }
 
 function artifact(name: string, id: number) {
@@ -486,96 +470,66 @@ afterEach(() => {
 });
 
 describe("managed runtime comparison receipts", () => {
-  it("passes the separate MCP check when both authenticated executions pass", () => {
-    const first = mcpFixture(1);
-    const second = mcpFixture(2);
+  it("accepts one authenticated MCP receipt with unchanged protected evidence", () => {
+    const fixture = mcpFixture();
+    const staged = stageMcpDownload(fixture);
 
     expect(
-      classifyManagedMcpDiscovery([
-        { pass: 1, receipt: first.receipt, evidenceError: null },
-        { pass: 2, receipt: second.receipt, evidenceError: null },
-      ]),
-    ).toMatchObject({ classification: "pass" });
-  });
-
-  it("fails the separate MCP check when one authenticated execution fails", () => {
-    const first = mcpFixture(1);
-    const second = mcpFixture(2, "failure");
-
-    expect(
-      classifyManagedMcpDiscovery([
-        { pass: 1, receipt: first.receipt, evidenceError: null },
-        { pass: 2, receipt: second.receipt, evidenceError: null },
-      ]),
-    ).toMatchObject({ classification: "failure" });
-  });
-
-  it("reports MCP infrastructure failure when protected evidence is incomplete", () => {
-    const first = mcpFixture(1);
-
-    expect(
-      classifyManagedMcpDiscovery([
-        { pass: 1, receipt: first.receipt, evidenceError: null },
-        { pass: 2, receipt: null, evidenceError: "receipt missing" },
-      ]),
-    ).toMatchObject({ classification: "infrastructure-failure" });
-  });
-
-  it("rejects MCP passes with different controller identities", () => {
-    const first = mcpFixture(1);
-    const second = mcpFixture(2);
-    const altered = {
-      ...second.receipt,
-      workflow: { ...second.receipt.workflow, controllerDigest: `sha256:${"f".repeat(64)}` },
-    };
-
-    expect(
-      classifyManagedMcpDiscovery([
-        { pass: 1, receipt: first.receipt, evidenceError: null },
-        { pass: 2, receipt: altered, evidenceError: null },
-      ]),
-    ).toMatchObject({ classification: "infrastructure-failure" });
+      verifyCurrentMcpDiscovery(staged.receiptPath, staged.evidenceDirectory, mcpExpected()),
+    ).toEqual(fixture.receipt);
   });
 
   it("rejects an invalid protected MCP controller digest", () => {
-    const fixture = mcpFixture(1);
+    const fixture = mcpFixture();
     const altered = {
       ...fixture.receipt,
       workflow: { ...fixture.receipt.workflow, controllerDigest: "untrusted" },
     };
 
-    expect(() => parseManagedMcpDiscoveryReceipt(altered, mcpExpected(1))).toThrow(
+    expect(() => parseManagedMcpDiscoveryReceipt(altered, mcpExpected())).toThrow(
       "controller digest",
     );
   });
 
   it("rejects MCP evidence changed after its protected receipt was recorded", () => {
-    const first = mcpFixture(1);
-    const second = mcpFixture(2);
-    const staged = stageMcpDownloads([first, second]);
+    const fixture = mcpFixture();
+    const staged = stageMcpDownload(fixture);
     fs.appendFileSync(
-      path.join(
-        staged.evidenceRoot,
-        `managed-runtime-mcp-${BASE_RUN_ID}-${RUN_ATTEMPT}-pass-2`,
-        "managed-runtime-activation",
-        "target.json",
-      ),
+      path.join(staged.evidenceDirectory, "managed-runtime-activation", "target.json"),
       "tampered",
     );
 
-    expect(
-      classifyCurrentMcpDiscovery(staged.receiptRoot, staged.evidenceRoot, mcpExpected(1)),
-    ).toMatchObject({ classification: "infrastructure-failure" });
+    expect(() =>
+      verifyCurrentMcpDiscovery(staged.receiptPath, staged.evidenceDirectory, mcpExpected()),
+    ).toThrow("evidence files do not match");
+  });
+
+  it("rejects an unsuccessful authenticated MCP execution", () => {
+    const fixture = mcpFixture("failure");
+    const staged = stageMcpDownload(fixture);
+
+    expect(() =>
+      verifyCurrentMcpDiscovery(staged.receiptPath, staged.evidenceDirectory, mcpExpected()),
+    ).toThrow("authenticated MCP discovery did not pass");
+  });
+
+  it("rejects MCP evidence that does not prove cleanup", () => {
+    const fixture = mcpFixture("success", 1);
+    const staged = stageMcpDownload(fixture);
+
+    expect(() =>
+      verifyCurrentMcpDiscovery(staged.receiptPath, staged.evidenceDirectory, mcpExpected()),
+    ).toThrow("cleanup is not proven");
   });
 
   it("publishes the fixed status request through the shared GitHub client", async () => {
     const requests: Array<{ path: string; token: string; options: unknown }> = [];
     await publishManagedRuntimeCommitStatus(
       {
-        description: "Exact-base qualification is running",
+        description: "Exact-base qualification passed",
         runId: BASE_RUN_ID,
         sha: CANDIDATE_SHA,
-        state: "pending",
+        state: "success",
         token: "status-token",
       },
       async (requestPath, token, options) => {
@@ -590,9 +544,9 @@ describe("managed runtime comparison receipts", () => {
         options: {
           method: "POST",
           body: {
-            state: "pending",
+            state: "success",
             context: "NemoClaw / Exact-base managed runtime",
-            description: "Exact-base qualification is running",
+            description: "Exact-base qualification passed",
             target_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${BASE_RUN_ID}`,
           },
         },

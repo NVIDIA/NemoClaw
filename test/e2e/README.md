@@ -136,12 +136,11 @@ controller and evidence boundaries non-writable, and execute the candidate produ
 unprivileged user. A regression probe attempts candidate-user writes to both protected paths before
 either native scenario can run.
 
-The same trusted workflow runs the OpenClaw managed-image MCP discovery twice against the
-authenticated amd64 candidate catalog. Base-controlled test code invokes the candidate CLI as an
-unprivileged user that cannot change the controller or evidence directory. Each pass uses a fresh
-runner and sandbox, records the discovery diagnostics, and scans the evidence for fixture
-credentials. A separate job verifies both protected receipts and evidence archives. These are two
-required acceptance executions, not retries; either failure fails the MCP discovery check.
+The same trusted workflow runs one OpenClaw managed-image MCP discovery against the authenticated
+amd64 candidate catalog. Base-controlled test code invokes the candidate CLI as an unprivileged
+user that cannot change the controller or evidence directory. The job records discovery
+diagnostics and scans the evidence for fixture credentials. A separate job verifies the protected
+receipt and evidence archive before accepting the MCP discovery check.
 
 Each protected controller records the candidate and base SHAs, source and qualification attempts,
 trusted workflow revision, platform, OpenShell version, complete immutable image identity,
@@ -164,15 +163,14 @@ An infrastructure failure does not produce a product verdict. This workflow cove
 runtime activation scenario only; it does not classify the separate MCP discovery check or qualify
 the Hermes dependency lane.
 
-The trusted workflow publishes `NemoClaw / Exact-base managed runtime` as a pending status on the
-candidate after source authentication, then replaces it with success, failure, or error from the
-comparison receipt. A cancellation after source authentication publishes a terminal error status
-with the recovery action; cancellation before source authentication publishes no status. If the
-`Images / Build, Test, and Publish Managed Images` producer fails or is cancelled, rerun that
-workflow. Its successful completion starts a new qualification. For a failure or cancellation in
-`E2E / Exact Base Managed Runtime`, open that workflow run and choose **Re-run all jobs**. This
-creates a new attempt and regenerates the platform receipts and evidence. Do not choose **Re-run
-failed jobs** because a previously successful producer may be the evidence that must be regenerated.
+The trusted workflow publishes `NemoClaw / Exact-base managed runtime` only after it has classified
+the comparison receipt. It does not publish an early pending status that could survive cancellation
+of the complete workflow. If the `Images / Build, Test, and Publish Managed Images` producer fails
+or is cancelled, rerun that workflow. Its successful completion starts a new qualification. For a
+failure or cancellation in `E2E / Exact Base Managed Runtime`, open that workflow run and choose
+**Re-run all jobs**. This creates a new attempt and regenerates the platform receipts and evidence.
+Do not choose **Re-run failed jobs** because a previously successful producer may be the evidence
+that must be regenerated.
 
 To dispatch the workflow manually from `main`, set `pr_number` to the still-open PR number,
 `candidate_sha` to
