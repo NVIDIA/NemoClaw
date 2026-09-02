@@ -143,6 +143,16 @@ function quoteYamlPath(value) {
   return JSON.stringify(value.replaceAll("\\", "/"));
 }
 
+function sanitizedDiagnostic(text, replacements) {
+  let sanitized = text.slice(-64 * 1024);
+  for (const [value, replacement] of replacements) {
+    if (value) sanitized = sanitized.replaceAll(value, replacement);
+  }
+  return sanitized
+    .replaceAll(/C:\\Users\\[^\\\r\n]+/giu, "<user-profile>")
+    .replaceAll(/[A-Za-z0-9_-]{32,}/gu, "<opaque>");
+}
+
 function probeSource() {
   return String.raw`import { execFile, spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -316,12 +326,12 @@ async function main() {
     "Staged OpenClaw entrypoint",
   );
   const artifactArgument = argumentValue("--artifact-directory");
-  const artifactRoot = path.resolve(
+  const evidenceRoot = path.resolve(
     artifactArgument ??
       path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence"),
   );
-  fs.mkdirSync(artifactRoot, { recursive: true });
-  const receiptPath = path.join(artifactRoot, `native-windows-turn-${runId}.json`);
+  fs.mkdirSync(evidenceRoot, { recursive: true });
+  const receiptPath = path.join(evidenceRoot, `native-windows-turn-${runId}.json`);
   const gatewayPort = await freePort();
   const mockPort = await freePort();
   const openClawPort = await freePort();
@@ -355,6 +365,8 @@ async function main() {
   );
   const gatewayLog = fs.openSync(path.join(runRoot, "openshell-gateway.log"), "w");
   const gatewayError = fs.openSync(path.join(runRoot, "openshell-gateway.err.log"), "w");
+  const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
+  const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
   const gatewayEnvironment = allowlistedWindowsEnvironment({
     OPENSHELL_DRIVERS: "mxc",
     OPENSHELL_GATEWAY_CONFIG: gatewayConfig,
@@ -377,6 +389,7 @@ async function main() {
   let passed = false;
   let result = null;
   let cliEnvironment = gatewayEnvironment;
+  const gatewayToken = randomBytes(32).toString("base64url");
   try {
     console.log("NEMOCLAW> Starting installed OpenShell MXC gateway");
     await waitForPort(gatewayPort, gateway);
@@ -400,7 +413,7 @@ async function main() {
       NEMOCLAW_MXC_NODE: node,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
       NEMOCLAW_MXC_HOME: home,
-      NEMOCLAW_MXC_TOKEN: randomBytes(32).toString("base64url"),
+      NEMOCLAW_MXC_TOKEN: gatewayToken,
       NEMOCLAW_MXC_RESULT: resultPath,
       NEMOCLAW_MXC_MOCK_PORT: String(mockPort),
       NEMOCLAW_MXC_OPENCLAW_PORT: String(openClawPort),
@@ -464,6 +477,21 @@ async function main() {
     await Promise.race([new Promise((resolve) => gateway.once("exit", resolve)), sleep(5000)]);
     fs.closeSync(gatewayLog);
     fs.closeSync(gatewayError);
+    if (!passed) {
+      const diagnostic = sanitizedDiagnostic(
+        `${fs.readFileSync(gatewayLogPath, "utf8")}\n${fs.readFileSync(gatewayErrorPath, "utf8")}`,
+        [
+          [gatewayToken, "<gateway-token>"],
+          [installRoot, "<install-root>"],
+          [runtimeRoot, "<runtime-root>"],
+          [shareRoot, "<share-root>"],
+          [runRoot, "<run-root>"],
+        ],
+      );
+      const diagnosticPath = path.join(evidenceRoot, `native-windows-turn-diagnostic-${runId}.log`);
+      fs.writeFileSync(diagnosticPath, diagnostic, "utf8");
+      console.error(`NEMOCLAW> Sanitized MXC diagnostic\n${diagnostic}`);
+    }
     try {
       fs.rmSync(runRoot, { recursive: true, force: true });
     } catch {}
