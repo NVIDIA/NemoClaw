@@ -153,6 +153,7 @@ const {
     options?: {
       allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
+      gatewayName?: string;
       replaceExisting?: boolean;
       revalidateSandboxIdentity?(operation: string): void;
       requireExactBindings?: boolean;
@@ -1162,6 +1163,51 @@ describe("onboard provider helpers", () => {
       );
     } finally {
       configureRefreshes.mockRestore();
+    }
+  });
+
+  it("preserves an exact existing bridge provider when refresh fails", () => {
+    const commands: string[] = [];
+    const ensureProfiles = vi
+      .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
+      .mockImplementation(() => undefined);
+    const configureRefreshes = vi
+      .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
+      .mockReturnValue({ ok: false, reason: "refresh failed" });
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [
+            {
+              name: "alpha-googlechat-bridge",
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
+              providerType: "google-chat-bridge",
+            },
+          ],
+          (command) => {
+            commands.push(command.join(" "));
+            return {
+              status: 0,
+              stdout: [
+                "Name: alpha-googlechat-bridge",
+                "Type: google-chat-bridge",
+                "Credential keys: GOOGLE_CHAT_ACCESS_TOKEN",
+                "Config keys: <none>",
+              ].join("\n"),
+              stderr: "",
+            };
+          },
+          { bestEffort: true, gatewayName: "test-gateway" },
+        ),
+      ).toThrow(/gateway token minting/u);
+      expect(commands).toEqual(["provider get alpha-googlechat-bridge"]);
+      expect(commands.some((command) => /provider (create|update|delete)/u.test(command))).toBe(
+        false,
+      );
+    } finally {
+      configureRefreshes.mockRestore();
+      ensureProfiles.mockRestore();
     }
   });
 

@@ -138,6 +138,7 @@ let bridgeProfileRegistered: boolean;
 let bridgeProfileWasImported: boolean;
 let detachedProviders: Set<string>;
 let deletedProviders: Set<string>;
+let registeredProviders: Set<string>;
 
 function printedText(): string {
   return [...logSpy.mock.calls, ...errorSpy.mock.calls]
@@ -249,10 +250,12 @@ beforeEach(() => {
   bridgeProfileWasImported = false;
   detachedProviders = new Set();
   deletedProviders = new Set();
+  registeredProviders = new Set();
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args, options) => {
     gatewayCallCount += 1;
     const command = withoutGateway(args);
-    const providerMissing = command[0] === "provider" && command[1] === "get";
+    const providerName = command[0] === "provider" && command[1] === "get" ? command[2] : null;
+    const providerMissing = Boolean(providerName && !registeredProviders.has(providerName));
     const exportingProfile =
       command[0] === "provider" && command[1] === "profile" && command.includes("export");
     const importingProfile =
@@ -266,8 +269,16 @@ beforeEach(() => {
         : null;
     const deletedProvider =
       command[0] === "provider" && command[1] === "delete" ? command[2] : null;
+    const createdProvider =
+      command[0] === "provider" && command[1] === "create"
+        ? command[command.indexOf("--name") + 1]
+        : null;
     detachedProvider ? detachedProviders.add(detachedProvider) : undefined;
-    deletedProvider ? deletedProviders.add(deletedProvider) : undefined;
+    if (deletedProvider) {
+      deletedProviders.add(deletedProvider);
+      registeredProviders.delete(deletedProvider);
+    }
+    if (createdProvider) registeredProviders.add(createdProvider);
     const configuringRefresh =
       command[0] === "provider" && command[1] === "refresh" && command[2] === "configure";
     const runEnv = options?.env as Record<string, string> | undefined;
@@ -285,6 +296,8 @@ beforeEach(() => {
         ? refreshStatusTable(command)
         : exportingProfile && !profileMissing
           ? JSON.stringify(GOOGLECHAT_PROFILE_DOC)
+          : providerName && !providerMissing
+            ? `Name: ${providerName}\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n`
           : "",
       stderr: invalidRefresh
         ? "invalid secret handoff"

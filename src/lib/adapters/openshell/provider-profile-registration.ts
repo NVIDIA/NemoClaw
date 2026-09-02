@@ -43,10 +43,12 @@ function capturedResult(
 export function registerCheckedInProviderProfile(input: {
   readonly profilePath: string;
   readonly runOpenshell: EndpointlessProviderProfileRunner;
+  readonly readProfileFile?: (profilePath: string) => string;
 }): CliOpenShellProviderProfileResult {
   return importCliOpenShellProviderProfile(
     { profilePath: input.profilePath, target: { kind: "selected" } },
     {
+      readProfileFile: input.readProfileFile,
       run: (args, options) => capturedResult(input.runOpenshell(args, options)),
     },
   );

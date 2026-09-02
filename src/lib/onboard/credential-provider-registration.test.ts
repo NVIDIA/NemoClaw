@@ -953,20 +953,49 @@ describe("credential provider registration", () => {
     "cleans up a newly created bridge provider when refresh $cleanup",
     async ({ deleteStatus, deleteError, recovery }) => {
       const session = { stagedCredentialProviders: [] } as unknown as Session;
-      const resultByCommand = new Map([
-        ["get", { status: 1, stdout: "", stderr: "not found" }],
-        ["delete", { status: deleteStatus, stdout: "", stderr: deleteError }],
+      let providerExists = false;
+      const commandHandlers = new Map<string, () => ReturnType<typeof providerMetadata>>([
+        [
+          "get",
+          () =>
+            providerExists
+              ? providerMetadata(
+                  "alpha-googlechat-bridge",
+                  "google-chat-bridge",
+                  "GOOGLE_CHAT_ACCESS_TOKEN",
+                )
+              : {
+                  status: 1,
+                  stdout: "",
+                  stderr:
+                    'Error: code: \'Some requested entity was not found\', message: "provider not found"',
+                },
+        ],
+        [
+          "create",
+          () => {
+            providerExists = true;
+            return { status: 0, stdout: "", stderr: "" };
+          },
+        ],
+        [
+          "delete",
+          () => {
+            providerExists = deleteStatus !== 0;
+            return { status: deleteStatus, stdout: "", stderr: deleteError };
+          },
+        ],
       ]);
       const runOpenshell = vi.fn(
         (args: string[]) =>
-          resultByCommand.get(args[1] ?? "") ?? { status: 0, stdout: "", stderr: "" },
+          commandHandlers.get(args[1] ?? "")?.() ?? { status: 0, stdout: "", stderr: "" },
       );
       const deps = registrationDeps(runOpenshell, session);
       const registration = createCredentialProviderRegistration(deps);
       const tokenDef: MessagingTokenDef = {
         name: "alpha-googlechat-bridge",
         envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        token: "sentinel-token",
+        token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
         providerType: "google-chat-bridge",
       };
       const ensureProfiles = vi
@@ -999,11 +1028,15 @@ describe("credential provider registration", () => {
           expect.objectContaining({ ignoreError: true }),
         );
         expect(session.stagedCredentialProviders).toEqual([]);
+        expect(providerExists).toBe(recovery);
         const diagnostics = errorLog.mock.calls.flat().join("\n");
         expect(diagnostics.includes("Automatic cleanup could not remove")).toBe(recovery);
         expect(diagnostics.includes("alpha-googlechat-bridge")).toBe(recovery);
+        expect(diagnostics.includes("gateway unavailable")).toBe(recovery);
         expect(
-          diagnostics.includes('openshell provider delete "alpha-googlechat-bridge"'),
+          diagnostics.includes(
+            'openshell provider delete -g "test-gateway" "alpha-googlechat-bridge"',
+          ),
         ).toBe(recovery);
       } finally {
         errorLog.mockRestore();

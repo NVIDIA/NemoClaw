@@ -19,12 +19,12 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
 import {
   exportedProviderProfileMatchesContract,
   parseCheckedInProviderProfileContract,
 } from "../adapters/openshell/provider-profile";
+import { registerCheckedInProviderProfile } from "../adapters/openshell/provider-profile-registration";
 import { compactText } from "../core/url-utils";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels";
 import type {
@@ -340,8 +340,9 @@ function bridgeProviderNameFor(sandboxName: string, channelId: string): string {
 /**
  * Build the messaging token definitions for every enabled bridge channel whose
  * source secret was captured. Mirrors how the Brave provider is pushed in
- * messaging-prep: the value is a non-empty sentinel (overwritten by the first
- * refresh) and the real material is supplied separately by
+ * messaging-prep: the value is a non-empty sentinel used only to create a
+ * missing provider. An exact existing provider keeps its working credential
+ * until refresh succeeds. The real material is supplied separately by
  * {@link configureMessagingBridgeRefreshes}.
  */
 export function collectMessagingBridgeTokenDefs(
@@ -434,17 +435,11 @@ export function ensureMessagingBridgeProfiles(
 
   const errorLog = deps.log ?? console.error;
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
-  const providerAdapter = createCliOpenShellProviderAdapter({
-    run: deps.runOpenshell,
-    readProfileFile:
-      deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
-  });
-
   for (const profile of active) {
-    const result = providerAdapter.importProviderProfile({
-      target: { kind: "selected" },
+    const result = registerCheckedInProviderProfile({
       profilePath: profile.profilePath,
-      timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+      runOpenshell: deps.runOpenshell,
+      readProfileFile: deps.readFileSync,
     });
     if (result.ok) continue;
     if (result.error.kind === "command" && result.error.reason === "profile_incompatible") {
