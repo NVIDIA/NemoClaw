@@ -183,15 +183,9 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
       const live = pid !== null && alive(pid);
       const record = pid === null ? null : readProcessRecord(paths.processStart, pid);
       const processFile = identity(paths.processStart);
-      const ownerStatus =
-        pid !== null && live && record === null && exact
-          ? "unverifiable"
-          : pid === null
-            ? "ordinary"
-            : status(pid, live, record, readIdentity);
       const decision = classifyExistingLock({
         ownerAlive: live, ownerPid: pid,
-        ownerStatus,
+        ownerStatus: pid === null ? "ordinary" : status(pid, live, record, readIdentity),
         lockMtimeMs: Number(lock.mtimeMs), nowMs: now(), staleMs: LOCK_STALE_MS,
       });
       if (decision === "break" && tryRemove({ device: lock.dev, inode: lock.ino, paths }, pid, owner, record, processFile, lock.mtimeNs))

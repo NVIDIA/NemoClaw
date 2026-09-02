@@ -406,10 +406,8 @@ describe("legacy non-default gateway state migration", () => {
           "selected registry lock": `${selectedRegistry}.lock`,
         } as const
       )[scenario]!;
-      fs.mkdirSync(staleLock, { recursive: true });
-      fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER), {
-        mode: 0o600,
-      });
+      fs.mkdirSync(path.dirname(staleLock), { recursive: true });
+      fs.writeFileSync(staleLock, onboardLockBody(DEPARTED_PID), { mode: 0o600 });
 
       expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
         migratedSandboxNames: ["port-box"],
@@ -508,6 +506,11 @@ describe("legacy non-default gateway state migration", () => {
       /has no verifiable host and PID-namespace provenance/u,
     ],
     [
+      "pre-provenance with a PID absent locally",
+      onboardLockBody(DEPARTED_PID, "2026-09-01T00:00:00.000Z", null, "legacy"),
+      /has no verifiable host and PID-namespace provenance/u,
+    ],
+    [
       "foreign",
       JSON.stringify({
         pid: DEPARTED_PID,
@@ -529,28 +532,6 @@ describe("legacy non-default gateway state migration", () => {
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(message);
     expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
-  });
-
-  it("migrates recovery state after a pre-provenance onboarding owner exits", () => {
-    const home = makeHome();
-    const shared = path.join(home, ".nemoclaw");
-    const selected = path.join(shared, "gateways", "9123");
-    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
-    recordRecovery(recoveryFile, "port-box", 9123, "d");
-    writeOnboardLock(
-      shared,
-      onboardLockBody(DEPARTED_PID, "2026-09-01T00:00:00.000Z", null, "legacy"),
-    );
-
-    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
-
-    expect(result.warnings).toEqual([]);
-    expect(fs.existsSync(recoveryFile)).toBe(false);
-    expect(
-      listRetainedSandboxRecoveryRecords(path.join(selected, "retained-sandbox-recovery.json")).map(
-        (record) => record.sandboxName,
-      ),
-    ).toEqual(["port-box"]);
   });
 
   it("names a live onboarding process only after its strong identity matches", () => {
@@ -814,6 +795,23 @@ describe("legacy non-default gateway state migration", () => {
       /another state operation owns/,
     );
     expect(fs.existsSync(stale)).toBe(true);
+  });
+
+  it("preserves a legacy migration directory whose PID is absent locally", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const staleIntent = path.join(shared, ".gateway-state-migration.preparing.999999.7");
+    const lock = path.join(shared, ".gateway-state-migration.lock");
+    const owner = path.join(lock, "owner");
+    fs.mkdirSync(staleIntent, { recursive: true });
+    fs.mkdirSync(lock);
+    fs.writeFileSync(owner, String(DEPARTED_PID), { mode: 0o600 });
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
+      /another state operation owns/,
+    );
+    expect(readFileSnapshot(owner)).toBe(String(DEPARTED_PID));
+    expect(fs.existsSync(staleIntent)).toBe(true);
   });
 
   it("preserves a replacement migration lock raced into stale generation reclaim", () => {

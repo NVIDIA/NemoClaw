@@ -40,7 +40,6 @@ export const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
 
 interface ParsedOnboardLockRecord {
   readonly record: OnboardLockRecord;
-  readonly format: "current" | "legacy";
 }
 
 const hostOnboardLockIdentityProbes: OnboardLockIdentityProbes = {
@@ -83,14 +82,7 @@ function parseOnboardLockRecord(value: unknown): ParsedOnboardLockRecord | null 
   const { pid, startedAt, command, processStartIdentity, hostIdentity, pidNamespaceIdentity } =
     value as Record<string, unknown>;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
-  const fields = value as Record<string, unknown>;
-  const format = ["processStartIdentity", "hostIdentity", "pidNamespaceIdentity"].some((field) =>
-    Object.hasOwn(fields, field),
-  )
-    ? "current"
-    : "legacy";
   return {
-    format,
     record: {
       pid,
       processStartIdentity:
@@ -107,13 +99,6 @@ function parseOnboardLockRecord(value: unknown): ParsedOnboardLockRecord | null 
       command: typeof command === "string" ? command : null,
     },
   };
-}
-
-function canProbeLegacyOwner(probes: OnboardLockIdentityProbes): boolean {
-  return (
-    probes.localHostIdentity !== null &&
-    (process.platform !== "linux" || probes.localPidNamespaceIdentity !== null)
-  );
 }
 
 /** Build the persisted owner record with process-start identity evidence when available. */
@@ -159,23 +144,15 @@ export function classifyOnboardLockContents(
   const { record } = parsed;
   const provenance = onboardLockHolderProvenance(record, probes);
   if (provenance !== "local") {
-    // Pre-provenance NemoClaw versions emitted only pid, startedAt, and
-    // command from the host CLI. Preserve that exact compatibility format:
-    // when this environment has stable local identity and the recorded PID
-    // is demonstrably absent, the interrupted legacy run is stale. Records
-    // with any current identity field remain fail-closed when provenance is
-    // incomplete, and explicitly foreign records never reach a local probe.
-    // Retirement: https://github.com/NVIDIA/NemoClaw/issues/10890. Remove this
-    // branch once the minimum supported direct-upgrade source release includes
-    // #10845, so every supported writer publishes provenance fields.
-    if (
-      provenance === "unknown" &&
-      parsed.format === "legacy" &&
-      canProbeLegacyOwner(probes) &&
-      !probes.isAlive(record.pid)
-    ) {
-      return { state: "stale" };
-    }
+    // Pre-provenance records do not prove which host or PID namespace created
+    // them, so a missing local PID cannot authorize reclamation. Preserve the
+    // record as held until an operator resolves it. Records with any current
+    // identity field also remain fail-closed when provenance is incomplete,
+    // and explicitly foreign records never reach a local probe.
+    // Retirement: https://github.com/NVIDIA/NemoClaw/issues/10890. Stop
+    // accepting the pre-provenance record shape once the minimum supported
+    // direct-upgrade source release includes #10845 and every supported writer
+    // therefore publishes provenance fields.
     return { state: "held", record, identityVerified: false, provenance };
   }
   const holderIdentity = onboardLockHolderIdentity(record, probes);

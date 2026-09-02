@@ -80,7 +80,7 @@ describe("onboarding lock classification", () => {
     ).toEqual({ state: "stale" });
   });
 
-  it("classifies a departed pre-provenance owner as stale", () => {
+  it("holds a pre-provenance owner whose PID is absent locally", () => {
     const isAlive = vi.fn(() => false);
 
     expect(
@@ -94,8 +94,13 @@ describe("onboarding lock classification", () => {
         100_000,
         { ...liveProbes, isAlive },
       ),
-    ).toEqual({ state: "stale" });
-    expect(isAlive).toHaveBeenCalledWith(424_242);
+    ).toMatchObject({
+      state: "held",
+      identityVerified: false,
+      provenance: "unknown",
+      record: { pid: 424_242 },
+    });
+    expect(isAlive).not.toHaveBeenCalled();
   });
 
   it("does not probe a pre-provenance owner without stable local environment identity", () => {

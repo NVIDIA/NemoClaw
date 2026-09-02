@@ -183,22 +183,28 @@ describe("onboard lock ownership", () => {
     expect(contention.reason).toContain(owner.reason);
   });
 
-  it("reclaims a departed pre-provenance onboard lock", () => {
+  it("preserves a pre-provenance onboard lock whose PID is absent locally", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
-    fs.writeFileSync(
-      session.LOCK_FILE,
-      JSON.stringify({
-        pid: 2_147_483_647,
-        startedAt: "2026-09-01T00:00:00.000Z",
-        command: "interrupted legacy onboard",
-      }),
-      { mode: 0o600 },
-    );
-
-    expect(session.acquireOnboardLock("nemoclaw onboard --resume")).toMatchObject({
-      acquired: true,
+    const contents = JSON.stringify({
+      pid: 2_147_483_647,
+      startedAt: "2026-09-01T00:00:00.000Z",
+      command: "foreign or interrupted legacy onboard",
     });
-    expect(session.isOnboardLockHeldByCurrentProcess()).toBe(true);
+    fs.writeFileSync(session.LOCK_FILE, contents, { mode: 0o600 });
+    const before = readFileSnapshot(session.LOCK_FILE);
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      holderPid: 2_147_483_647,
+      holderIdentityVerified: false,
+      holderProvenance: "unknown",
+    });
+    expect(readFileSnapshot(session.LOCK_FILE)).toEqual(before);
+    expect(session.describeOnboardLockContention(result).reason).toContain(
+      "no verifiable host and PID-namespace provenance",
+    );
   });
 
   it("preserves a foreign fallback lock that uses the current PID", () => {

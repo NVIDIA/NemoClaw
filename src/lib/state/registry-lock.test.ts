@@ -294,25 +294,6 @@ describe("process-bound registry locking", () => {
     ).toBe("acquired");
   });
 
-  it.runIf(process.platform === "linux")(
-    "keeps a live legacy owner during exact process-bound acquisition",
-    () => {
-      const test = fixture("nemoclaw-exact-legacy-lock-");
-      writeOrdinaryGeneration(test, 4242);
-      markStale(test.lockDir);
-      const wait = vi.fn();
-
-      expect(() =>
-        withProcessBoundRegistryLockAt(test.registryFile, () => undefined, {
-          ...exactDeps({ wait }),
-          maxRetries: 1,
-        }),
-      ).toThrow(/after 1 retries/);
-      expect(wait).toHaveBeenCalledOnce();
-      expect(fs.readFileSync(test.ownerFile, "utf8")).toBe("4242");
-    },
-  );
-
   it.each([
     [
       "numeric owner with trailing text",

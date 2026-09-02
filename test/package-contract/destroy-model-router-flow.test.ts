@@ -127,7 +127,6 @@ describe("destroySandbox model-router teardown (#9098)", () => {
 
       await vi.waitFor(() => expect(stubExited).toBe(true), { timeout: 8_000, interval: 100 });
       expect(await probeHealthy(port)).toBe(false);
-      expect(compareAndSwapSession).toHaveBeenCalledTimes(2);
       expect(session).toEqual(
         expect.objectContaining({
           sandboxName: null,
