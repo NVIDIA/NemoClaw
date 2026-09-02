@@ -114,6 +114,8 @@ info "4. Verify blueprint runner plan command"
 # Runner will fail at the OpenShell prerequisite check (expected in this image).
 # Use an independent minimal blueprint so shipped policy changes cannot mask
 # the missing-CLI behavior under test.
+PLAN_OUTPUT=$(mktemp)
+trap 'rm -f "$PLAN_OUTPUT"' EXIT
 (
   plan_blueprint=$(mktemp -d)
   trap 'rm -rf "$plan_blueprint"' EXIT
@@ -132,22 +134,24 @@ YAML
       console.log('EXPECTED_ERROR: ' + err.message);
     }
   "
-) 2>&1 | tee /tmp/plan-output.txt
-if grep -q "RUN_ID:" /tmp/plan-output.txt; then
+) 2>&1 | tee "$PLAN_OUTPUT"
+if grep -q "RUN_ID:" "$PLAN_OUTPUT"; then
   pass "Blueprint plan generates run ID"
 else
   fail "No run ID in plan output"
 fi
-if grep -q "Validating blueprint" /tmp/plan-output.txt; then
+if grep -q "Validating blueprint" "$PLAN_OUTPUT"; then
   pass "Blueprint runner validates before execution"
 else
   fail "No validation step"
 fi
-if grep -q "EXPECTED_ERROR: openshell CLI not found" /tmp/plan-output.txt; then
+if grep -q "EXPECTED_ERROR: openshell CLI not found" "$PLAN_OUTPUT"; then
   pass "Plan fails with expected openshell error (not silently)"
 else
   fail "Plan did not produce expected openshell error"
 fi
+rm -f "$PLAN_OUTPUT"
+trap - EXIT
 
 # -------------------------------------------------------
 info "4b. Verify blueprint runner apply smoke test"
