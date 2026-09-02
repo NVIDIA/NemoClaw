@@ -1046,6 +1046,19 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(evidenceFailure.if).toBe("failure()");
     expect(evidenceFailure.run).toContain("publish-status error");
+
+    const classification = managedRuntimeWorkflow.jobs.classify;
+    expect(classification.if).toBe("always() && needs.authenticate-source.result == 'success'");
+    const publishResult = requiredWorkflowStep(
+      classification,
+      "Publish qualification result on the candidate commit",
+    );
+    expect(publishResult.if).toBe("always()");
+    expect(publishResult.env?.QUALIFICATION_CANCELLED).toContain(
+      "needs.exact-base-activation.result == 'cancelled'",
+    );
+    expect(publishResult.run).toContain("publish-status cancelled");
+    expect(publishResult.run).toContain("publish-status result");
   });
 
   // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates

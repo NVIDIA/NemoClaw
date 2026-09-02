@@ -11,7 +11,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   classifyCurrentRun,
   classifyManagedRuntimeComparison,
+  combineManagedRuntimeComparisons,
   commitStatusForClassification,
+  coordinationCommitStatus,
   createManagedRuntimeReceipt,
   parseManagedRuntimeReceipt,
   publishManagedRuntimeCommitStatus,
@@ -359,13 +361,14 @@ function compareCandidate(candidate: ManagedRuntimeCandidateSelection) {
 function selection(
   outcome: "cancelled" | "failure" | "success",
   selectedReceipt: ManagedRuntimeReceipt | null,
+  platform: TestPlatform = "linux/amd64",
 ): ManagedRuntimeCandidateSelection {
   return {
     kind: "nemoclaw-managed-runtime-candidate-selection-v1",
     pullRequest: 10_790,
     candidateSha: CANDIDATE_SHA,
     baseSha: BASE_SHA,
-    platform: "linux/amd64",
+    platform,
     workflow: {
       id: 123,
       path: ".github/workflows/managed-runtime-base-qualification.yaml",
@@ -388,10 +391,17 @@ function compare(options: {
   baseReceipt?: ManagedRuntimeReceipt | null;
   candidateJob?: "cancelled" | "failure" | "success";
   candidateReceipt?: ManagedRuntimeReceipt | null;
+  platform?: TestPlatform;
 }) {
-  const baseReceipt = options.baseReceipt === undefined ? receipt("base") : options.baseReceipt;
+  const selectedPlatform = options.platform ?? "linux/amd64";
+  const baseReceipt =
+    options.baseReceipt === undefined
+      ? receipt("base", "success", 0, BASE_SHA, selectedPlatform)
+      : options.baseReceipt;
   const candidateReceipt =
-    options.candidateReceipt === undefined ? receipt("candidate") : options.candidateReceipt;
+    options.candidateReceipt === undefined
+      ? receipt("candidate", "success", 0, CANDIDATE_SHA, selectedPlatform)
+      : options.candidateReceipt;
   return classifyManagedRuntimeComparison({
     baseArtifact: baseReceipt ? artifact("base-receipt", 3) : null,
     baseEvidenceArtifact: baseReceipt ? artifact("base-evidence", 4) : null,
@@ -399,7 +409,7 @@ function compare(options: {
     baseReceipt,
     baseRunAttempt: RUN_ATTEMPT,
     baseRunId: BASE_RUN_ID,
-    candidate: selection(options.candidateJob ?? "success", candidateReceipt),
+    candidate: selection(options.candidateJob ?? "success", candidateReceipt, selectedPlatform),
   });
 }
 
@@ -726,11 +736,61 @@ describe("managed runtime comparison receipts", () => {
     });
   });
 
+  it("uses the matching platform base job instead of the matrix aggregate", async () => {
+    const baseReceipt = receipt("base");
+    const receiptArchive = artifactZip([
+      { name: "receipt.json", contents: JSON.stringify(baseReceipt) },
+    ]);
+    const evidenceArchive = candidateEvidenceArchive(baseReceipt);
+    const receiptName = `managed-runtime-base-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`;
+    const evidenceName = `managed-runtime-base-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`;
+    const comparison = await classifyCurrentRun(
+      selection("success", receipt("candidate")),
+      {
+        headSha: BASE_SHA,
+        runAttempt: RUN_ATTEMPT,
+        runId: BASE_RUN_ID,
+        token: "token",
+        workflowSha: BASE_SHA,
+      },
+      {
+        request: async (apiPath) =>
+          apiPath.includes("/jobs?")
+            ? {
+                total_count: 2,
+                jobs: [
+                  {
+                    id: 123,
+                    name: "Exact base all-agent managed runtime activation (amd64)",
+                    status: "completed",
+                    conclusion: "success",
+                  },
+                  {
+                    id: 124,
+                    name: "Exact base all-agent managed runtime activation (arm64)",
+                    status: "completed",
+                    conclusion: "failure",
+                  },
+                ],
+              }
+            : apiPath.includes("base-receipt")
+              ? artifactMetadata(receiptName, 91, receiptArchive)
+              : artifactMetadata(evidenceName, 92, evidenceArchive),
+        downloadArtifact: async (identity) =>
+          identity.name === receiptName ? receiptArchive : evidenceArchive,
+      },
+    );
+    expect(comparison).toMatchObject({
+      classification: "pass",
+      base: { jobConclusion: "success" },
+      scenario: { platform: "linux/amd64" },
+    });
+  });
+
   it("retains artifact identities and a bounded cause when base evidence download fails", async () => {
     const comparison = await classifyCurrentRun(
       selection("success", receipt("candidate")),
       {
-        baseJobConclusion: "success",
         headSha: BASE_SHA,
         runAttempt: RUN_ATTEMPT,
         runId: BASE_RUN_ID,
@@ -739,15 +799,27 @@ describe("managed runtime comparison receipts", () => {
       },
       {
         request: async (apiPath) =>
-          apiPath.includes("base-receipt")
-            ? artifactMetadata(
-                `managed-runtime-base-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`,
-                91,
-              )
-            : artifactMetadata(
-                `managed-runtime-base-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`,
-                92,
-              ),
+          apiPath.includes("/jobs?")
+            ? {
+                total_count: 1,
+                jobs: [
+                  {
+                    id: 123,
+                    name: "Exact base all-agent managed runtime activation (amd64)",
+                    status: "completed",
+                    conclusion: "success",
+                  },
+                ],
+              }
+            : apiPath.includes("base-receipt")
+              ? artifactMetadata(
+                  `managed-runtime-base-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`,
+                  91,
+                )
+              : artifactMetadata(
+                  `managed-runtime-base-evidence-${BASE_RUN_ID}-${RUN_ATTEMPT}-amd64`,
+                  92,
+                ),
         downloadArtifact: async () => {
           throw new Error("credential-that-must-not-leak upstream body");
         },
@@ -764,6 +836,43 @@ describe("managed runtime comparison receipts", () => {
       },
     });
     expect(JSON.stringify(comparison)).not.toContain("credential-that-must-not-leak");
+  });
+
+  it("keeps a passing platform when the other exact base fails", () => {
+    const amd64 = compare({});
+    const arm64 = compare({
+      baseJob: "failure",
+      baseReceipt: receipt("base", "failure", 0, BASE_SHA, "linux/arm64"),
+      platform: "linux/arm64",
+    });
+    const combined = combineManagedRuntimeComparisons([amd64, arm64]);
+    expect(combined).toMatchObject({
+      kind: "nemoclaw-managed-runtime-multiarch-comparison-v1",
+      classification: "base-failure",
+      mcpDiscoveryConclusion: "success",
+      platforms: {
+        "linux/amd64": { classification: "pass" },
+        "linux/arm64": { classification: "base-failure" },
+      },
+    });
+  });
+
+  it.each([
+    { outcome: "failure", classification: "candidate-failure" },
+    { outcome: "cancelled", classification: "infrastructure-failure" },
+  ] as const)("maps MCP $outcome to $classification", ({ outcome, classification }) => {
+    const combined = combineManagedRuntimeComparisons(
+      [compare({}), compare({ platform: "linux/arm64" })],
+      outcome,
+    );
+    expect(combined).toMatchObject({ classification, mcpDiscoveryConclusion: outcome });
+  });
+
+  it("maps cancellation to a terminal status with a runnable recovery action", () => {
+    expect(coordinationCommitStatus("cancelled")).toEqual({
+      state: "error",
+      description: "Qualification cancelled; use Re-run all jobs",
+    });
   });
 
   it("maps every comparison verdict to a blocking candidate status", () => {

@@ -226,21 +226,7 @@ jobs:
       - name: Reproduce staging discovery permission drift
         shell: bash
         working-directory: candidate
-        run: |
-          set -euo pipefail
-          reviewed_root="tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery"
-          for artifact in \
-            BUNDLED_PACKAGES.json \
-            THIRD_PARTY_LICENSES.txt \
-            mcp-tool-discovery.bundle
-          do
-            artifact_path="${reviewed_root}/${artifact}"
-            if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
-              echo "ERROR: reviewed discovery permission fixture must be a regular non-symlink: ${artifact_path}" >&2
-              exit 1
-            fi
-            chmod 0664 "$artifact_path"
-          done
+        run: scripts/checks/reproduce-reviewed-discovery-permission-drift.sh
 
       - name: Rebuild staging QA Deep Agents Code base from exact source
         id: staging-base
@@ -355,31 +341,8 @@ jobs:
             echo "ERROR: staging QA final image discovery contract probe failed." >&2
             exit 1
           fi
-          if ! node -e '
-            const expected = {
-              protocol: 1,
-              ok: false,
-              detail: "tool discovery received invalid runtime arguments",
-            };
-            let result;
-            try {
-              result = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-            } catch {
-              process.exit(1);
-            }
-            const record =
-              result !== null && typeof result === "object" && !Array.isArray(result)
-                ? result
-                : undefined;
-            if (
-              !record ||
-              record.protocol !== expected.protocol ||
-              record.ok !== expected.ok ||
-              record.detail !== expected.detail
-            ) {
-              process.exit(1);
-            }
-          ' <<< "$actual_discovery_contract" >/dev/null; then
+          if ! printf '%s' "$actual_discovery_contract" | node --experimental-strip-types \
+            --no-warnings tools/e2e/managed-image-discovery-contract.mts >/dev/null; then
             echo "ERROR: staging QA discovery bundle contract mismatch." >&2
             exit 1
           fi
@@ -450,21 +413,7 @@ jobs:
 
       - name: Reproduce reviewed discovery permission drift
         shell: bash
-        run: |
-          set -euo pipefail
-          reviewed_root="tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery"
-          for artifact in \
-            BUNDLED_PACKAGES.json \
-            THIRD_PARTY_LICENSES.txt \
-            mcp-tool-discovery.bundle
-          do
-            artifact_path="${reviewed_root}/${artifact}"
-            if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
-              echo "ERROR: reviewed discovery permission fixture must be a regular non-symlink: ${artifact_path}" >&2
-              exit 1
-            fi
-            chmod 0664 "$artifact_path"
-          done
+        run: scripts/checks/reproduce-reviewed-discovery-permission-drift.sh
 
       - name: Set up Docker Buildx
         id: buildx
@@ -687,31 +636,8 @@ jobs:
             echo "ERROR: final PR managed image discovery contract probe failed." >&2
             exit 1
           fi
-          if ! node -e '
-            const expected = {
-              protocol: 1,
-              ok: false,
-              detail: "tool discovery received invalid runtime arguments",
-            };
-            let result;
-            try {
-              result = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-            } catch {
-              process.exit(1);
-            }
-            const record =
-              result !== null && typeof result === "object" && !Array.isArray(result)
-                ? result
-                : undefined;
-            if (
-              !record ||
-              record.protocol !== expected.protocol ||
-              record.ok !== expected.ok ||
-              record.detail !== expected.detail
-            ) {
-              process.exit(1);
-            }
-          ' <<< "$actual_discovery_contract" >/dev/null; then
+          if ! printf '%s' "$actual_discovery_contract" | node --experimental-strip-types \
+            --no-warnings tools/e2e/managed-image-discovery-contract.mts >/dev/null; then
             echo "ERROR: final PR managed image discovery bundle contract mismatch." >&2
             exit 1
           fi

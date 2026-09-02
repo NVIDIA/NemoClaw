@@ -1085,7 +1085,7 @@ jobs:
       - authenticate-candidate-evidence
       - exact-base-activation
     if: >-
-      always() && needs.authenticate-source.result == 'success' && needs.authenticate-candidate-evidence.result == 'success'
+      always() && needs.authenticate-source.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1120,53 +1120,40 @@ jobs:
         name: Compare authenticated scenario receipts
         continue-on-error: true
         env:
-          BASE_JOB_CONCLUSION: ${{ needs.exact-base-activation.result }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
           MCP_JOB_CONCLUSION: ${{ needs.trusted-candidate-mcp-discovery.result }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/managed-runtime-comparison/platforms"
-          overall=pass
           for arch in amd64 arm64; do
             selection="$RUNNER_TEMP/managed-runtime-candidate/$arch/selection-$arch.json"
             comparison="$RUNNER_TEMP/managed-runtime-comparison/platforms/$arch.json"
             if ! node --experimental-strip-types --no-warnings \
               tools/e2e/managed-runtime-comparison.mts classify "$selection" "$comparison"; then
-              classification="$(jq -er .classification "$comparison")"
-              case "$classification" in
-                infrastructure-failure) overall=infrastructure-failure ;;
-                base-failure) [ "$overall" = infrastructure-failure ] || overall=base-failure ;;
-                candidate-failure) [ "$overall" = pass ] && overall=candidate-failure ;;
-                *) echo "ERROR: invalid platform classification" >&2; exit 1 ;;
-              esac
+              test -f "$comparison"
             fi
           done
-          if [ "$MCP_JOB_CONCLUSION" != success ] && [ "$overall" = pass ]; then
-            overall=candidate-failure
-          fi
-          jq -n \
-            --arg classification "$overall" \
-            --arg mcp_discovery_conclusion "$MCP_JOB_CONCLUSION" \
-            --slurpfile amd64 "$RUNNER_TEMP/managed-runtime-comparison/platforms/amd64.json" \
-            --slurpfile arm64 "$RUNNER_TEMP/managed-runtime-comparison/platforms/arm64.json" \
-            '{
-              kind: "nemoclaw-managed-runtime-multiarch-comparison-v1",
-              classification: $classification,
-              mcpDiscoveryConclusion: $mcp_discovery_conclusion,
-              platforms: {"linux/amd64": $amd64[0], "linux/arm64": $arm64[0]}
-            }' > "$RUNNER_TEMP/managed-runtime-comparison/comparison.json"
-          test "$overall" = pass
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/managed-runtime-comparison.mts combine \
+            "$RUNNER_TEMP/managed-runtime-comparison/platforms/amd64.json" \
+            "$RUNNER_TEMP/managed-runtime-comparison/platforms/arm64.json" \
+            "$RUNNER_TEMP/managed-runtime-comparison/comparison.json"
 
       - name: Publish qualification result on the candidate commit
         if: always()
         env:
           CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          QUALIFICATION_CANCELLED: ${{ needs.trusted-candidate-mcp-discovery.result == 'cancelled' || needs.trusted-candidate-activation.result == 'cancelled' || needs.authenticate-candidate-evidence.result == 'cancelled' || needs.exact-base-activation.result == 'cancelled' }}
         run: |
           set -euo pipefail
           comparison="$RUNNER_TEMP/managed-runtime-comparison/comparison.json"
-          if [ -f "$comparison" ]; then
+          if [ "$QUALIFICATION_CANCELLED" = true ]; then
+            node --experimental-strip-types --no-warnings \
+              tools/e2e/managed-runtime-comparison.mts \
+              publish-status cancelled
+          elif [ -f "$comparison" ]; then
             node --experimental-strip-types --no-warnings \
               tools/e2e/managed-runtime-comparison.mts \
               publish-status result "$comparison"

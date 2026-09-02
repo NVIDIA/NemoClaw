@@ -163,19 +163,27 @@ runtime activation scenario only; it does not qualify the Hermes dependency lane
 
 The trusted workflow publishes `NemoClaw / Exact-base managed runtime` as a pending status on the
 candidate after source authentication, then replaces it with success, failure, or error from the
-comparison receipt. Cancellation after that pending update leaves the status pending; cancellation
-before source authentication publishes no status. If the managed-image producer fails or is
-cancelled, rerun that producer; its successful completion starts a new qualification. For a failure
-inside qualification, rerun the exact failed qualification attempt. To dispatch the workflow
-manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
+comparison receipt. A cancellation after source authentication publishes a terminal error status
+with the recovery action; cancellation before source authentication publishes no status. If the
+`Images / Build, Test, and Publish Managed Images` producer fails or is cancelled, rerun that
+workflow. Its successful completion starts a new qualification. For a failure or cancellation in
+`E2E / Exact Base Managed Runtime`, open that workflow run and choose **Re-run all jobs**. This
+creates a new attempt and regenerates the platform receipts and evidence. Do not choose **Re-run
+failed jobs** because a previously successful producer may be the evidence that must be regenerated.
+
+To dispatch the workflow manually from `main`, set `pr_number` to the still-open PR number,
+`candidate_sha` to
 the latest PR commit SHA, `base_sha` to the PR base SHA, and `candidate_run_id` plus
 `candidate_run_attempt` to the successful managed-image workflow run ID and attempt that started
 the failed qualification. That source run must belong to the same open PR and current candidate
 SHA. If the comparison reports
-`base evidence validation failed`, use the retained receipt and evidence artifact IDs plus the
-bounded cause (`metadata lookup`, `receipt download or validation`, or `evidence download or digest
-validation`) to repair or rerun the affected producer. Do not substitute artifacts from another
-attempt.
+`base evidence validation failed`, inspect the platform entry in the multiarch comparison receipt.
+It identifies either `Exact base all-agent managed runtime activation (amd64)` or `Exact base
+all-agent managed runtime activation (arm64)`. Use the retained receipt and evidence artifact IDs
+plus the bounded cause (`metadata lookup`, `receipt download or validation`, or `evidence download
+or digest validation`) to diagnose the affected producer, then choose **Re-run all jobs** on the
+qualification workflow. The new attempt regenerates that base receipt and evidence. Do not
+substitute artifacts from another attempt.
 
 The Pi pull-request job validates its native candidate image and declared entrypoint locally without
 registry credentials. Trusted non-PR publication still emits the immutable

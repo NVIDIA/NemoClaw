@@ -30,6 +30,7 @@ const RECEIPT_KIND = "nemoclaw-managed-runtime-activation-v1";
 const SOURCE_SELECTION_KIND = "nemoclaw-managed-runtime-source-selection-v1";
 const SELECTION_KIND = "nemoclaw-managed-runtime-candidate-selection-v1";
 const COMPARISON_KIND = "nemoclaw-managed-runtime-comparison-v1";
+const MULTIARCH_COMPARISON_KIND = "nemoclaw-managed-runtime-multiarch-comparison-v1";
 const RECEIPT_FILE = "receipt.json";
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -168,6 +169,13 @@ export interface ManagedRuntimeComparison {
     readonly candidateSourceRunId: number;
     readonly candidateSourceRunAttempt: number;
   };
+}
+
+export interface ManagedRuntimeMultiarchComparison {
+  readonly kind: typeof MULTIARCH_COMPARISON_KIND;
+  readonly classification: ComparisonClassification;
+  readonly mcpDiscoveryConclusion: StepOutcome;
+  readonly platforms: Readonly<Record<Platform, ManagedRuntimeComparison>>;
 }
 
 function record(value: unknown, label: string): JsonRecord {
@@ -1082,6 +1090,73 @@ export function classifyManagedRuntimeComparison(input: {
   };
 }
 
+export function combineManagedRuntimeComparisons(
+  comparisons: readonly ManagedRuntimeComparison[],
+  mcpDiscoveryConclusion: StepOutcome = "success",
+): ManagedRuntimeMultiarchComparison {
+  if (comparisons.length !== PLATFORMS.length) {
+    throw new Error("managed runtime multiarch comparison requires every platform exactly once");
+  }
+  const byPlatform = new Map<Platform, ManagedRuntimeComparison>();
+  for (const comparison of comparisons) {
+    if (comparison.kind !== COMPARISON_KIND) {
+      throw new Error("managed runtime comparison kind is invalid");
+    }
+    const selectedPlatform = platform(
+      comparison.scenario.platform,
+      "managed runtime comparison platform",
+    );
+    if (byPlatform.has(selectedPlatform)) {
+      throw new Error("managed runtime multiarch comparison contains a duplicate platform");
+    }
+    byPlatform.set(selectedPlatform, comparison);
+  }
+  for (const selectedPlatform of PLATFORMS) {
+    if (!byPlatform.has(selectedPlatform)) {
+      throw new Error(`managed runtime multiarch comparison is missing ${selectedPlatform}`);
+    }
+  }
+  const reference = comparisons[0]!.scenario;
+  for (const comparison of comparisons.slice(1)) {
+    const scenario = comparison.scenario;
+    if (
+      scenario.id !== reference.id ||
+      scenario.candidateSha !== reference.candidateSha ||
+      scenario.baseSha !== reference.baseSha ||
+      scenario.candidateSourceRunId !== reference.candidateSourceRunId ||
+      scenario.candidateSourceRunAttempt !== reference.candidateSourceRunAttempt
+    ) {
+      throw new Error("managed runtime platform comparisons use different scenario identities");
+    }
+  }
+  const precedence: Readonly<Record<ComparisonClassification, number>> = {
+    pass: 0,
+    "candidate-failure": 1,
+    "base-failure": 2,
+    "infrastructure-failure": 3,
+  };
+  let classification = comparisons.reduce<ComparisonClassification>(
+    (overall, comparison) =>
+      precedence[comparison.classification] > precedence[overall]
+        ? comparison.classification
+        : overall,
+    "pass",
+  );
+  if (mcpDiscoveryConclusion === "cancelled" || mcpDiscoveryConclusion === "skipped") {
+    classification = "infrastructure-failure";
+  } else if (mcpDiscoveryConclusion === "failure" && classification === "pass") {
+    classification = "candidate-failure";
+  }
+  return {
+    kind: MULTIARCH_COMPARISON_KIND,
+    classification,
+    mcpDiscoveryConclusion,
+    platforms: Object.fromEntries(
+      PLATFORMS.map((selectedPlatform) => [selectedPlatform, byPlatform.get(selectedPlatform)!]),
+    ) as Record<Platform, ManagedRuntimeComparison>,
+  };
+}
+
 function readCandidateSelection(target: string): ManagedRuntimeCandidateSelection {
   const selection = record(
     JSON.parse(fs.readFileSync(target, "utf8")) as unknown,
@@ -1227,7 +1302,6 @@ async function readBaseArtifact(
 export async function classifyCurrentRun(
   candidate: ManagedRuntimeCandidateSelection,
   input: {
-    readonly baseJobConclusion: StepOutcome;
     readonly headSha: string;
     readonly runAttempt: number;
     readonly runId: number;
@@ -1245,6 +1319,22 @@ export async function classifyCurrentRun(
     ((identity: BoundArtifactIdentity) => downloadBoundArtifact(identity, input.token));
   const workflowSha = sha(input.workflowSha, "workflow SHA");
   const arch = platformArch(candidate.platform);
+  const jobs = record(
+    await collectPaginated(
+      request,
+      `/repos/${REPOSITORY}/actions/runs/${input.runId}/attempts/${input.runAttempt}/jobs?per_page=100`,
+      "jobs",
+    ),
+    "qualification workflow jobs",
+  );
+  if (!Array.isArray(jobs.jobs)) throw new Error("qualification workflow job listing is invalid");
+  const baseJobs = jobs.jobs
+    .map((value) => record(value, "qualification workflow job"))
+    .filter((job) => job.name === activationJob("base", candidate.platform));
+  if (baseJobs.length !== 1) throw new Error("base managed runtime job is missing or ambiguous");
+  const baseJob = baseJobs[0]!;
+  exactString(baseJob.status, "completed", "base managed runtime job status");
+  const baseJobConclusion = stepOutcome(baseJob.conclusion, "base managed runtime job conclusion");
   const receiptName = `managed-runtime-base-receipt-${input.runId}-${input.runAttempt}-${arch}`;
   const evidenceName = `managed-runtime-base-evidence-${input.runId}-${input.runAttempt}-${arch}`;
   let receiptIdentity: BoundArtifactIdentity | null = null;
@@ -1289,12 +1379,31 @@ export async function classifyCurrentRun(
     baseArtifact: receiptIdentity ? artifactIdentity(receiptIdentity) : null,
     baseEvidenceError: evidenceError,
     baseEvidenceArtifact: evidenceIdentity ? artifactIdentity(evidenceIdentity) : null,
-    baseJobConclusion: input.baseJobConclusion,
+    baseJobConclusion,
     baseReceipt: receipt,
     baseRunAttempt: input.runAttempt,
     baseRunId: input.runId,
     candidate,
   });
+}
+
+function readManagedRuntimeComparison(target: string): ManagedRuntimeComparison {
+  const comparison = record(
+    JSON.parse(fs.readFileSync(target, "utf8")) as unknown,
+    "managed runtime comparison",
+  );
+  exactString(comparison.kind, COMPARISON_KIND, "managed runtime comparison kind");
+  if (
+    comparison.classification !== "pass" &&
+    comparison.classification !== "candidate-failure" &&
+    comparison.classification !== "base-failure" &&
+    comparison.classification !== "infrastructure-failure"
+  ) {
+    throw new Error("managed runtime comparison classification is invalid");
+  }
+  const scenario = record(comparison.scenario, "managed runtime comparison scenario");
+  platform(scenario.platform, "managed runtime comparison platform");
+  return comparison as unknown as ManagedRuntimeComparison;
 }
 
 function writeJsonExclusive(target: string, value: unknown): void {
@@ -1336,6 +1445,25 @@ export function commitStatusForClassification(classification: ComparisonClassifi
   return {
     state: "error",
     description: "Qualification evidence was incomplete or invalid",
+  };
+}
+
+export function coordinationCommitStatus(state: "cancelled" | "error" | "pending"): {
+  readonly state: "error" | "pending";
+  readonly description: string;
+} {
+  if (state === "pending") {
+    return { state: "pending", description: "Exact-base qualification is running" };
+  }
+  if (state === "cancelled") {
+    return {
+      state: "error",
+      description: "Qualification cancelled; use Re-run all jobs",
+    };
+  }
+  return {
+    state: "error",
+    description: "Qualification evidence could not be classified",
   };
 }
 
@@ -1444,7 +1572,6 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (argv[0] === "classify") {
     if (argv.length !== 3) throw new Error("expected candidate selection and comparison paths");
     const comparison = await classifyCurrentRun(readCandidateSelection(argv[1]), {
-      baseJobConclusion: stepOutcome(env.BASE_JOB_CONCLUSION, "BASE_JOB_CONCLUSION"),
       headSha: sha(env.GITHUB_SHA, "GITHUB_SHA"),
       runAttempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
       runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
@@ -1452,6 +1579,20 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       workflowSha: env.GITHUB_WORKFLOW_SHA ?? "",
     });
     writeJsonExclusive(argv[2], comparison);
+    if (comparison.classification === "infrastructure-failure") process.exitCode = 2;
+    if (comparison.classification === "base-failure") process.exitCode = 3;
+    if (comparison.classification === "candidate-failure") process.exitCode = 4;
+    return;
+  }
+  if (argv[0] === "combine") {
+    if (argv.length !== 4) {
+      throw new Error("expected amd64, arm64, and multiarch comparison paths");
+    }
+    const comparison = combineManagedRuntimeComparisons(
+      [readManagedRuntimeComparison(argv[1]), readManagedRuntimeComparison(argv[2])],
+      stepOutcome(env.MCP_JOB_CONCLUSION, "MCP_JOB_CONCLUSION"),
+    );
+    writeJsonExclusive(argv[3], comparison);
     if (comparison.classification === "infrastructure-failure") process.exitCode = 2;
     if (comparison.classification === "base-failure") process.exitCode = 3;
     if (comparison.classification === "candidate-failure") process.exitCode = 4;
@@ -1466,17 +1607,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       state: "error" | "failure" | "pending" | "success";
       description: string;
     };
-    if ((state === "pending" || state === "error") && argv.length === 2) {
-      status =
-        state === "pending"
-          ? {
-              state: "pending",
-              description: "Exact-base qualification is running",
-            }
-          : {
-              state: "error",
-              description: "Qualification evidence could not be classified",
-            };
+    if ((state === "pending" || state === "error" || state === "cancelled") && argv.length === 2) {
+      status = coordinationCommitStatus(state);
     } else if (state === "result" && argv.length === 3) {
       const comparison = record(
         JSON.parse(fs.readFileSync(argv[2]!, "utf8")) as unknown,
@@ -1502,7 +1634,9 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     });
     return;
   }
-  throw new Error("expected classify, publish-status, record, select-candidate, or select-source");
+  throw new Error(
+    "expected classify, combine, publish-status, record, select-candidate, or select-source",
+  );
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {

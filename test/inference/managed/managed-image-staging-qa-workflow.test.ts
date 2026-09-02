@@ -8,13 +8,6 @@ import type { Job, Workflow } from "../../helpers/managed-image-publication-work
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 
-function inlineNodeStdinValidator(source: string): string {
-  return required(
-    source.match(/if ! node -e '([\s\S]+?)' <<< "\$actual_discovery_contract"/u)?.[1],
-    "managed-image workflow is missing or has an incomplete inline Node validator",
-  ).trim();
-}
-
 function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
@@ -121,12 +114,12 @@ describe("managed-image staging QA workflow", () => {
     expect(contractSource).toContain("-type d ! -perm 0555");
     expect(contractSource).toContain("-type f ! -perm 0444");
     expect(contractSource).toContain('node "$discovery_runtime/mcp-tool-discovery.mjs"');
-    expect(contractSource).toContain('result = JSON.parse(require("node:fs").readFileSync(0');
+    expect(contractSource).toContain("tools/e2e/managed-image-discovery-contract.mts");
     expect(contractSource).not.toContain('actual_discovery_contract" !=');
     const mainContract = required(
       step(managedPrBuilder(workflow), "Validate exact PR managed image contract").run,
       "main PR managed-image contract is missing",
     );
-    expect(inlineNodeStdinValidator(contractSource)).toBe(inlineNodeStdinValidator(mainContract));
+    expect(mainContract).toContain("tools/e2e/managed-image-discovery-contract.mts");
   });
 });
