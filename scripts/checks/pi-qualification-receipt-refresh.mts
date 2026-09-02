@@ -9,13 +9,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { acceptedCandidateReceiptDigests } from "../../src/lib/agent/candidate-authority.ts";
-import {
-  type ManagedImageContractV1,
-  type ManagedImagePlatform,
-  parseManagedImageContractV1,
+import * as candidateAuthority from "../../src/lib/agent/candidate-authority.ts";
+import type {
+  ManagedImageContractV1,
+  ManagedImagePlatform,
 } from "../../src/lib/onboard/managed-image/contract.ts";
+import * as managedImageContract from "../../src/lib/onboard/managed-image/contract.ts";
 import { directDockerfileCopySources } from "../lib/dockerfile-copy-sources.mts";
+
+type CandidateAuthorityModule = typeof candidateAuthority & { default?: typeof candidateAuthority };
+type ManagedImageContractModule = typeof managedImageContract & {
+  default?: typeof managedImageContract;
+};
 
 type GitResult = {
   error?: string;
@@ -127,11 +132,12 @@ function parseReceipt(
   if (!acceptedDigests.has(digest)) {
     throw new Error(`${receipt.path} is not present in the Pi candidate receipt authority`);
   }
-  return parseManagedImageContractV1(
-    JSON.parse(contents.toString("utf8")) as unknown,
-    "pi",
-    receipt.platform,
-  );
+  const contractModule = managedImageContract as ManagedImageContractModule;
+  const parseContract =
+    contractModule.parseManagedImageContractV1 ??
+    contractModule.default?.parseManagedImageContractV1;
+  if (!parseContract) throw new Error("Could not load the managed image contract parser");
+  return parseContract(JSON.parse(contents.toString("utf8")) as unknown, "pi", receipt.platform);
 }
 
 function requireReceiptSourceParity(
@@ -185,7 +191,14 @@ export function checkPiQualificationReceiptRefresh(
   const rootDir = options.rootDir ?? REPO_ROOT;
   const baseBranch = options.baseBranch ?? process.env.GITHUB_BASE_REF?.trim();
   const receipts = options.receipts ?? PI_QUALIFICATION_RECEIPTS;
-  const acceptedDigests = options.acceptedDigests ?? new Set(acceptedCandidateReceiptDigests("pi"));
+  const authorityModule = candidateAuthority as CandidateAuthorityModule;
+  const acceptedReceiptDigests =
+    authorityModule.acceptedCandidateReceiptDigests ??
+    authorityModule.default?.acceptedCandidateReceiptDigests;
+  if (!acceptedReceiptDigests) {
+    throw new Error("Could not load the Pi candidate receipt authority");
+  }
+  const acceptedDigests = options.acceptedDigests ?? new Set(acceptedReceiptDigests("pi"));
   const revision = mergeBaseRevision(git, baseBranch);
   const changedPaths = changedPathsFromBase(git, revision);
   const imageSourcePaths = piImageSourcePaths(rootDir);
