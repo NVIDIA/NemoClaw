@@ -214,6 +214,31 @@ describe("applyExternalPreset refresh contract (--from-file)", () => {
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects a reserved network policy key during --from-file dry-run (#10773)", async () => {
+    loadPresetFromFileMock.mockRestore();
+    fs.writeFileSync(
+      tempFile,
+      `preset:
+  name: qa-npm-test
+network_policies:
+  npm_yarn:
+    name: npm_yarn
+    endpoints:
+      - { host: api.example.com, port: 443, protocol: rest }
+`,
+    );
+
+    await expect(
+      captureExit(() => addSandboxPolicy("alpha", { fromFile: tempFile, yes: true, dryRun: true })),
+    ).resolves.toBe(1);
+
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Custom presets cannot own reserved network policy key 'npm_yarn'"),
+    );
+    expect(applyPresetContentMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects a link-local metadata endpoint during --from-file dry-run", async () => {
     loadPresetFromFileMock.mockReturnValue({
       presetName: "metadata",

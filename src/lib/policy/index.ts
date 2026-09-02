@@ -2269,9 +2269,7 @@ function applyPresetContent(
       console.error(`  Preset '${presetName}' has invalid or missing network_policies.`);
       return false;
     }
-    const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find((key) =>
-      Object.prototype.hasOwnProperty.call(np, key),
-    );
+    const reservedKey = reservedCustomNetworkPolicyKey(np);
     if (reservedKey) {
       console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
       return false;
@@ -2638,6 +2636,14 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
  * a name collision with a built-in preset (built-ins must be addressed by
  * their own name, so the custom file must be renamed).
  */
+function reservedCustomNetworkPolicyKey(networkPolicies: PolicyObject): string | null {
+  return (
+    [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find((key) =>
+      Object.prototype.hasOwnProperty.call(networkPolicies, key),
+    ) ?? null
+  );
+}
+
 function loadPresetFromFile(filePath: string): { presetName: string; content: string } | null {
   const abs = path.resolve(filePath);
   if (!/\.ya?ml$/i.test(abs)) {
@@ -2733,6 +2739,11 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     return null;
   }
   const np = parsed.network_policies as PolicyObject;
+  const reservedKey = reservedCustomNetworkPolicyKey(np);
+  if (reservedKey) {
+    console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}': ${filePath}`);
+    return null;
+  }
   if (networkPoliciesHasAllowedIps(np)) {
     console.error(
       `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets: ${filePath}`,

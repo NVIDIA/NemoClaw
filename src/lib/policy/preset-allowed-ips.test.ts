@@ -88,6 +88,24 @@ network_policies:
     expect(loadPresetFromFile(file)).toBeNull();
   });
 
+  it("rejects a custom preset that owns the reserved npm policy key (#10773)", () => {
+    const file = writePreset(
+      "reserved-npm",
+      `\
+preset:
+  name: reserved-npm
+  description: user-authored reserved policy key
+network_policies:
+  npm_yarn:
+    name: npm_yarn
+    endpoints:
+      - host: api.example.com
+        port: 443
+`,
+    );
+    expect(loadPresetFromFile(file)).toBeNull();
+  });
+
   it("accepts a valid preset with no allowed_ips", () => {
     const file = writePreset(
       "good-preset",
