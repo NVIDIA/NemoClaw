@@ -20,10 +20,10 @@ import { collectDeterministicContext } from "./deterministic-context.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
 import {
   ADVISOR_SPECIALISTS,
-  buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
   type AdvisorInterest,
-} from "./specialists.mts";
+} from "./specialist-catalog.mts";
+import { buildSpecialistInvestigateTurn } from "./specialists.mts";
 import { specialistCustomTools } from "./specialist-tools.mts";
 import { SPECIALIST_DIFF_FILE_NAME } from "./specialist-context.mts";
 import { buildSystemPrompt, readTrustedControlledWords } from "./trusted-guidance.mts";
@@ -122,6 +122,7 @@ async function main(): Promise<void> {
     { baseRef, headRef },
     {
       cwd: process.cwd(),
+      additionalReadRoots: [path.dirname(diffPath)],
       promptTurns: [turn],
       systemPrompt: buildSystemPrompt(),
       configDir,

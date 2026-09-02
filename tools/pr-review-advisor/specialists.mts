@@ -3,24 +3,8 @@
 
 import type { AdvisorPromptTurn } from "../advisors/session.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
-import {
-  ADVISOR_INTERESTS,
-  ADVISOR_SPECIALISTS,
-  parseAdvisorInterest,
-  readAdvisorSpecialists,
-  type AdvisorInterest,
-  type AdvisorSpecialist,
-} from "./specialist-catalog.mts";
+import { ADVISOR_SPECIALISTS, type AdvisorInterest, type AdvisorSpecialist } from "./specialist-catalog.mts";
 import { specialistToolNames } from "./specialist-tools.mts";
-
-export {
-  ADVISOR_INTERESTS,
-  ADVISOR_SPECIALISTS,
-  parseAdvisorInterest,
-  readAdvisorSpecialists,
-  type AdvisorInterest,
-  type AdvisorSpecialist,
-};
 
 function advisorSpecialist(interest: AdvisorInterest): AdvisorSpecialist {
   const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);

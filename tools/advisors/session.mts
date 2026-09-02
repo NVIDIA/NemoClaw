@@ -131,6 +131,7 @@ export type RunReadOnlyAdvisorOptions = {
   logPrefix: string;
   logProgress: (message: string) => void;
   customTools?: ToolDefinition[];
+  additionalReadRoots?: string[];
   onTurnStart?: (turn: AdvisorPromptTurn) => void;
   onTurnComplete?: (turn: AdvisorCompletedTurn) => void | Promise<void>;
 };
@@ -358,9 +359,13 @@ export async function runReadOnlyAdvisor(
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
-    ...createRepoConfinedReadOnlyTools(options.cwd, (observation) => {
-      currentTurnFlow.push({ type: "read", ...observation });
-    }),
+    ...createRepoConfinedReadOnlyTools(
+      options.cwd,
+      (observation) => {
+        currentTurnFlow.push({ type: "read", ...observation });
+      },
+      options.additionalReadRoots,
+    ),
     ...contextTools.customTools,
   ];
   const availableToolNames = new Set(READ_ONLY_TOOLS);

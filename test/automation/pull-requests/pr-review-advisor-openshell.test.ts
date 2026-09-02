@@ -37,7 +37,7 @@ import {
   runAdvisorSpecialistCommand,
   type AdvisorSpecialistLifecycle,
 } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
-import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialists.mts";
+import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const temporaryDirectories: string[] = [];
 

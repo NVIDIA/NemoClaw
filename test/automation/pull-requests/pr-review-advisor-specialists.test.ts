@@ -17,11 +17,11 @@ import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools
 import {
   ADVISOR_INTERESTS,
   ADVISOR_SPECIALISTS,
-  buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
   readAdvisorSpecialists,
   type AdvisorInterest,
-} from "../../../tools/pr-review-advisor/specialists.mts";
+} from "../../../tools/pr-review-advisor/specialist-catalog.mts";
+import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 import type { InvestigateTurnContext } from "../../../tools/pr-review-advisor/investigate-turn.mts";
 
 type CallableTool = ToolDefinition & {
