@@ -274,11 +274,9 @@ beforeEach(() => {
         ? command[command.indexOf("--name") + 1]
         : null;
     detachedProvider ? detachedProviders.add(detachedProvider) : undefined;
-    if (deletedProvider) {
-      deletedProviders.add(deletedProvider);
-      registeredProviders.delete(deletedProvider);
-    }
-    if (createdProvider) registeredProviders.add(createdProvider);
+    deletedProvider ? deletedProviders.add(deletedProvider) : undefined;
+    deletedProvider ? registeredProviders.delete(deletedProvider) : undefined;
+    createdProvider ? registeredProviders.add(createdProvider) : undefined;
     const configuringRefresh =
       command[0] === "provider" && command[1] === "refresh" && command[2] === "configure";
     const runEnv = options?.env as Record<string, string> | undefined;
