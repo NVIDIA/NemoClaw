@@ -11,7 +11,7 @@ import {
   parseOpenShellPolicy,
   parseSandboxPolicyMetadata,
   type OpenShellPolicyInspection,
-} from "../../policy/merge";
+} from "./policy-boundary";
 import { isValidName } from "../../sandbox-name-contract";
 import { stripCredentials } from "../../security/credential-filter";
 import { stripAnsi } from "./client";

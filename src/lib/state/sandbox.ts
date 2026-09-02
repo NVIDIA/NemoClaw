@@ -2615,6 +2615,7 @@ export function clearRebuildPolicyHandoff(
   ops: {
     write?: typeof writeManifest;
     remove?: typeof rmSync;
+    retainRetirement?: boolean;
   } = {},
 ): boolean {
   const handoff = manifest.rebuildPolicyHandoff;
@@ -2635,6 +2636,7 @@ export function clearRebuildPolicyHandoff(
   } catch {
     return false;
   }
+  if (ops.retainRetirement === true) return true;
   const cleared = { ...manifest };
   delete cleared.rebuildPolicyHandoff;
   try {

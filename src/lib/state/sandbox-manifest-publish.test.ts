@@ -122,10 +122,7 @@ describe("bounded rebuild policy handoff", () => {
     tempDirs.push(backupPath);
     const published = manifest(backupPath);
     __test.writeManifest(backupPath, published);
-    const withHandoff = writeRebuildPolicyHandoff(
-      published,
-      "version: 1\nnetwork_policies: {}\n",
-    );
+    const withHandoff = writeRebuildPolicyHandoff(published, "version: 1\nnetwork_policies: {}\n");
     const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
 
     expect(
@@ -169,4 +166,23 @@ describe("bounded rebuild policy handoff", () => {
       );
     },
   );
+
+  it("retains a retired handoff tombstone until the owning recovery marker is removed", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-retirement-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const withHandoff = writeRebuildPolicyHandoff(published, "version: 1\nnetwork_policies: {}\n");
+    const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+
+    expect(clearRebuildPolicyHandoff(withHandoff, { retainRetirement: true })).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(withHandoff.rebuildPolicyHandoff).toMatchObject({ retired: true });
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).toMatchObject({ rebuildPolicyHandoff: { retired: true } });
+
+    expect(clearRebuildPolicyHandoff(withHandoff)).toBe(true);
+    expect(withHandoff).not.toHaveProperty("rebuildPolicyHandoff");
+  });
 });

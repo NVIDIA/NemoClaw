@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellGatewayTarget, OpenShellSandboxResult } from "./sandbox-observer";
-import type { OpenShellPolicyInspection } from "../../policy/merge";
+import type { OpenShellPolicyInspection } from "./policy-boundary";
 
 export type OpenShellSandboxPolicyScope = "base" | "effective";
 
