@@ -193,13 +193,6 @@ export const DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS = [
   "            os.close(current)",
   "        except OSError:",
   "            pass",
-  "def load_managed_projection_for_update(path):",
-  "    raw, identity, descriptor, parent_descriptor, parent_identity = open_managed_projection(path, True)",
-  "    try:",
-  "        return decode_managed_projection(raw), identity, descriptor, parent_descriptor, parent_identity",
-  "    except Exception:",
-  "        close_managed_projection_descriptors(descriptor, parent_descriptor)",
-  "        raise",
   "def read_managed_projection(path, unsafe_path_prefix=None):",
   "    raw, identity, descriptor, parent_descriptor, _ = open_managed_projection(path, unsafe_path_prefix=unsafe_path_prefix)",
   "    try:",
@@ -209,6 +202,13 @@ export const DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS = [
 ];
 
 export const DEEPAGENTS_MANAGED_PROJECTION_MUTATION_HELPERS = [
+  "def load_managed_projection_for_update(path):",
+  "    raw, identity, descriptor, parent_descriptor, parent_identity = open_managed_projection(path, True)",
+  "    try:",
+  "        return decode_managed_projection(raw), identity, descriptor, parent_descriptor, parent_identity",
+  "    except Exception:",
+  "        close_managed_projection_descriptors(descriptor, parent_descriptor)",
+  "        raise",
   "def managed_projection_bytes(value):",
   "    payload = (json.dumps(value, indent=2, sort_keys=True) + '\\n').encode('utf-8')",
   "    if not payload or len(payload) > MANAGED_MCP_MAX_BYTES:",

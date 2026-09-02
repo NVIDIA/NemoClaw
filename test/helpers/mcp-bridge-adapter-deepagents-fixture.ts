@@ -56,13 +56,6 @@ export interface DeepAgentsManagedFixtureOptions {
   timeoutMs?: number;
 }
 
-export function isSafeManagedProjectionRaceResult(result: DeepAgentsConfigCommandResult): boolean {
-  return (
-    (result.status === 0 && result.stdout.trim() === "absent" && result.stderr.trim() === "") ||
-    (result.status === 2 && result.stdout.trim() === "")
-  );
-}
-
 function createFifo(target: string, mode = 0o600): void {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const fifo = spawnSync("mkfifo", [target], { encoding: "utf-8", timeout: 5000 });

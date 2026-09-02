@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 import {
   baseEntry,
-  isSafeManagedProjectionRaceResult,
   runDeepAgentsConfigCommand,
 } from "../../../../test/helpers/mcp-bridge-adapter-deepagents-fixture";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -26,6 +25,16 @@ const rollbackCommand = buildDeepAgentsMcpRegisterCommand(baseEntry, true, [base
 const removalCommand = buildDeepAgentsMcpRemoveCommand(baseEntry);
 
 describe("Deep Agents managed MCP projection safety", () => {
+  it("renders status without mutation-only projection helpers", () => {
+    const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
+
+    expect(statusCommand).toContain("def read_managed_projection");
+    expect(statusCommand).not.toContain("def load_managed_projection_for_update");
+    expect(registrationCommand).toContain("def load_managed_projection_for_update");
+    expect(removalCommand).toContain("def load_managed_projection_for_update");
+    expect(rollbackCommand).toContain("def load_managed_projection_for_update");
+  });
+
   it(
     "applies the shared server cap before normal and rollback v2 publication",
     { timeout: 60_000 },
@@ -168,19 +177,27 @@ describe("Deep Agents managed MCP projection safety", () => {
     {
       expectedConfigIsFifo: false,
       expectedConfigIsSymlink: true,
+      expectedSafetyDiagnostic: "Unsafe managed Deep Agents MCP projection path: symbolic link",
       expectedTargetText: emptyProjectionText,
       raceProjection: "symlink" as const,
     },
     {
       expectedConfigIsFifo: true,
       expectedConfigIsSymlink: false,
+      expectedSafetyDiagnostic: "Unsafe managed Deep Agents MCP projection path: FIFO",
       expectedTargetText: null,
       raceProjection: "fifo" as const,
     },
   ])(
     "rejects or safely loses a concurrent $raceProjection projection race (#10754)",
     { timeout: 60_000 },
-    ({ expectedConfigIsFifo, expectedConfigIsSymlink, expectedTargetText, raceProjection }) => {
+    ({
+      expectedConfigIsFifo,
+      expectedConfigIsSymlink,
+      expectedSafetyDiagnostic,
+      expectedTargetText,
+      raceProjection,
+    }) => {
       const result = runDeepAgentsConfigCommand(
         buildDeepAgentsMcpStatusCommand(baseEntry),
         emptyProjection,
@@ -191,7 +208,14 @@ describe("Deep Agents managed MCP projection safety", () => {
       );
 
       expect(result.managedRaceIterations).toBeGreaterThan(0);
-      expect(isSafeManagedProjectionRaceResult(result)).toBe(true);
+      expect([
+        { status: 0, stderr: "", stdout: "absent" },
+        { status: 2, stderr: expectedSafetyDiagnostic, stdout: "" },
+      ]).toContainEqual({
+        status: result.status,
+        stderr: result.stderr.trim(),
+        stdout: result.stdout.trim(),
+      });
       expect(result.configIsSymlink).toBe(expectedConfigIsSymlink);
       expect(result.configIsFifo).toBe(expectedConfigIsFifo);
       expect(result.managedSymlinkTargetText).toBe(expectedTargetText);
