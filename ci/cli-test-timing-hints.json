@@ -82,7 +82,6 @@
     "test/agents/openclaw/runtime/nemoclaw-start.test.ts": 28600,
     "test/automation/e2e/e2e-recommendations.test.ts": 45421,
     "test/automation/pull-requests/pr-review-advisor-security-boundaries.test.ts": 24108,
-    "test/automation/pull-requests/pr-review-advisor-submission-tools.test.ts": 5422,
     "test/automation/pull-requests/pr-review-advisor-writing-guide.test.ts": 8835,
     "test/automation/releases/release-latest-tag.test.ts": 20264,
     "test/automation/releases/retire-release-label.test.ts": 5642,

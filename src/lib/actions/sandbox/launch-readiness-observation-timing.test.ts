@@ -1,13 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
 import type {
   LaunchReadinessFence,
   LaunchReadinessIdentity,
   LaunchReadinessLease,
+} from "../../state/launch-readiness-lease";
+import {
+  readLaunchReadinessLease,
+  type LaunchReadinessStoreOptions,
 } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
 import {
@@ -103,7 +111,133 @@ function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
   };
 }
 
+function publicationDeps(
+  assertPublicationCurrent: () => void,
+  publishLease: NonNullable<LaunchReadinessDeps["publishLease"]>,
+): LaunchReadinessDeps {
+  const outputs: Readonly<Record<string, string>> = Object.freeze({
+    policy: POLICY,
+    inference: "Gateway Inference:\n\n  Provider: compatible-endpoint\n  Model: model-a\n",
+  });
+  return {
+    getSandbox: entry,
+    listAgents: () => ["hermes"],
+    loadAgent,
+    observeSandbox: () => ({ state: "ready", liveIdentityFingerprint: FINGERPRINT }),
+    capture: (args) => {
+      const output = outputs[String(args[0])] ?? "";
+      return { status: 0, output, stdout: output, stderr: "" } as ReturnType<
+        NonNullable<LaunchReadinessDeps["capture"]>
+      >;
+    },
+    gatewayHealth: async () => true,
+    forwardsHealthy: () => true,
+    inferenceProbe: () => ({ healthy: true, broken: false, httpStatus: 200, detail: "OK 200" }),
+    classifyPortableLifecycleReceipt: () => ({ kind: "absent" }),
+    readLease: () => ({ kind: "missing" }),
+    fenceLease: fence,
+    publishLease,
+    withSandboxLock: async (_name, operation) => operation(),
+    withGatewayLock: async (_name, operation) => operation(),
+    assertPublicationCurrent,
+  };
+}
+
 describe("launch readiness observation timing", () => {
+  const temporaryRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of temporaryRoots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("checks retained authority around final capture and lease publication", async () => {
+    const assertPublicationCurrent = vi.fn();
+    const publishLease = vi.fn((_name, _gateway, _port, _epoch, identity, _options, commit) => {
+      expect(assertPublicationCurrent).toHaveBeenCalledTimes(3);
+      commit?.();
+      return lease(identity);
+    });
+    const currentDeps = publicationDeps(assertPublicationCurrent, publishLease);
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toEqual({ kind: "published" });
+
+    expect(assertPublicationCurrent).toHaveBeenCalledTimes(4);
+    expect(publishLease).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["before semantic capture", 1, 0],
+    ["after semantic capture", 2, 0],
+    ["before lease storage", 3, 0],
+    ["at the lease commit seam", 4, 1],
+  ] as const)(
+    "fails closed when retained authority changes %s",
+    async (_label, failureCall, expectedPublicationAttempts) => {
+      const assertPublicationCurrent = vi.fn(() => {
+        expect(assertPublicationCurrent.mock.calls.length).not.toBe(failureCall);
+      });
+      let committed = false;
+      const publishLease = vi.fn((_name, _gateway, _port, _epoch, identity, _options, commit) => {
+        commit?.();
+        committed = true;
+        return lease(identity);
+      });
+      const currentDeps = publicationDeps(assertPublicationCurrent, publishLease);
+      const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+
+      await expect(
+        publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+      ).resolves.toEqual({ kind: "evidence-failed" });
+
+      expect(publishLease).toHaveBeenCalledTimes(expectedPublicationAttempts);
+      expect(committed).toBe(false);
+    },
+  );
+
+  it("leaves no valid lease when retained authority changes at the real store commit seam", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publication-currentness-"));
+    temporaryRoots.push(root);
+    const home = path.join(root, "home");
+    const runtimeRoot = path.join(root, "runtime");
+    fs.mkdirSync(home, { mode: 0o700 });
+    fs.mkdirSync(runtimeRoot, { mode: 0o700 });
+    const storeOptions: LaunchReadinessStoreOptions = {
+      home,
+      nowWallMs: () => 2_000_000_000_000,
+      nowUptimeMs: () => 100_000,
+      bootId: () => "boot-a",
+      uid: () => process.getuid?.() ?? 0,
+      randomEpoch: () => EPOCH,
+      runtimeAuthorityRoot: () => runtimeRoot,
+    };
+    const assertPublicationCurrent = vi.fn(() => {
+      expect(assertPublicationCurrent.mock.calls.length).not.toBe(4);
+    });
+    const currentDeps = publicationDeps(assertPublicationCurrent, () => lease({} as never));
+    delete currentDeps.readLease;
+    delete currentDeps.fenceLease;
+    delete currentDeps.publishLease;
+    currentDeps.storeOptions = storeOptions;
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toEqual({ kind: "evidence-failed" });
+
+    expect(readLaunchReadinessLease(SANDBOX, GATEWAY, PORT, storeOptions)).toEqual({
+      kind: "missing",
+    });
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "missing",
+    });
+  });
+
   it("records every fixed OpenShell-backed semantic observation without its values", async () => {
     const sandbox = entry();
     const stages: string[] = [];

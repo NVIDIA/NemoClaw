@@ -3,16 +3,19 @@
 
 import type { ManagedHermesStateVolumeContext } from "../../onboard/managed-workload/hermes-state-volume";
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/access";
+import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../onboard/runtime-provider/current";
+import type { RuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/contract";
 import { removeManagedHermesStateVolume } from "../../onboard/sandbox-provider-cleanup";
 
 export { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 export { requiresManagedHermesStateVolume } from "../../onboard/managed-workload/hermes-state-volume";
 export type { ManagedHermesStateVolumeContext };
 
-interface ManagedHermesStateVolumeRuntime {
+export interface ManagedHermesStateVolumeRuntime {
   env: NodeJS.ProcessEnv;
   error(message: string): void;
   log(message: string): void;
+  runtimeProviders?: RuntimeProviderBundleRegistry;
   runDocker(
     args: string[],
     options?: {
@@ -54,6 +57,7 @@ export function removeManagedHermesStateVolumes(
 ): boolean {
   for (const context of contexts) {
     const result = removeManagedHermesStateVolume(context, {
+      runtimeProviders: runtime.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
       runDocker: (args, options) =>
         runtime.runDocker(["volume", ...args], {
           env: runtime.env,
@@ -67,7 +71,9 @@ export function removeManagedHermesStateVolumes(
       return false;
     }
     if (result.status === "not-owned") {
-      runtime.warn(`Left Docker volume '${result.volumeName}' untouched because ${result.detail}.`);
+      runtime.warn(
+        `Left managed state volume '${result.volumeName}' untouched because ${result.detail}.`,
+      );
     } else if (result.status === "removed") {
       runtime.log(`Removed managed Hermes state volume for '${context.sandboxName}'.`);
     }

@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { expect, type MockInstance, vi } from "vitest";
 import type { SandboxDestroyExecutionResult } from "../../src/lib/actions/sandbox/destroy-execution";
 import type { PreparedManagedLlamaCppRuntimeCleanup } from "../../src/lib/inference/local-model-profile/cleanup";
-import type { ManagedHermesStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
+import type { ManagedAgentStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
 import type { Session } from "../../src/lib/state/onboard-session";
 import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-session/retained-sandbox-recovery";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
@@ -43,7 +43,7 @@ export type DestroyHarness = {
   cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
   preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
-  removeManagedHermesStateVolumeSpy: MockInstance;
+  removeManagedAgentStateVolumesSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   resolveRetainedSandboxRecoverySpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
@@ -101,10 +101,11 @@ type DestroyHarnessOptions = {
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   liveListOutput?: string;
-  managedHermesStateVolumeCleanupResult?: ManagedHermesStateVolumeCleanupResult;
+  managedAgentStateVolumeCleanupResults?: readonly ManagedAgentStateVolumeCleanupResult[];
   onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
   preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
   mcpAddState?: "prepared";
+  mcpAdapterScrubSkipped?: true;
   mcpServers?: string[];
   openshellDriver?: string;
   portableCommandError?: string;
@@ -487,9 +488,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
   let dockerOrphanIds = [...(options.dockerOrphanIds ?? [])];
-  let dockerNameLabeledIds = [
-    ...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? []),
-  ];
+  let dockerNameLabeledIds = [...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? [])];
   let dockerIdentityResult = options.dockerRunResult;
   const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
@@ -544,9 +543,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     const sequencedResult = options.dockerRunResultSequence?.[identityProbeCall - 1];
     const exactCleanupResult = {
       status: options.dockerOrphanQueryStatus ?? 0,
-      stdout: dockerNameLabeledIds
-        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
-        .join("\n"),
+      stdout: dockerNameLabeledIds.map((id) => `${id}\topenshell\tdefault\tsb-alpha`).join("\n"),
       stderr: "",
     };
     const result =
@@ -569,9 +566,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
-  const removeManagedHermesStateVolumeSpy = vi
-    .spyOn(sandboxProviderCleanup, "removeManagedHermesStateVolume")
-    .mockReturnValue(options.managedHermesStateVolumeCleanupResult ?? { status: "not-applicable" });
+  const removeManagedAgentStateVolumesSpy = vi
+    .spyOn(sandboxProviderCleanup, "removeManagedAgentStateVolumes")
+    .mockReturnValue(options.managedAgentStateVolumeCleanupResults ?? []);
   const stopNimByNameSpy = vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => {
     if (options.stopInferenceError !== undefined) {
       throw new Error(options.stopInferenceError);
@@ -619,6 +616,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     scrubbedAdapterEntries: preparedServers.map((server) => ({ server })),
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
+    ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
   };
   const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -687,7 +685,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     portableDestroyRevalidateSpy,
     portableDestroyVerifyAbsentSpy,
     promptSpy,
-    removeManagedHermesStateVolumeSpy,
+    removeManagedAgentStateVolumesSpy,
     removeSandboxSpy,
     resolveRetainedSandboxRecoverySpy,
     retirePortableLifecycleReceiptSpy,

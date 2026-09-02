@@ -150,21 +150,18 @@ describe("managed bootstrap envelope", () => {
     expect(parseManagedBootstrapEnvelope(serialized).rootApplyRequest).toEqual(request);
   });
 
-  it.each(MANAGED_STARTUP_AGENTS)(
-    "round-trips a canonical identity-bound %s image completion receipt",
-    (agent) => {
-      const request = requestFor(agent);
-      const completion = {
-        agent: request.agent,
-        bootstrapIdentity: "b".repeat(64),
-        profileFingerprint: request.profileFingerprint,
-        transactionPending: true,
-      } as const;
-      expect(
-        parseManagedBootstrapImageCompletion(serializeManagedBootstrapImageCompletion(completion)),
-      ).toEqual({ schemaVersion: 1, ...completion });
-    },
-  );
+  it("round-trips a canonical identity-bound Pi image completion receipt", () => {
+    const request = requestFor("pi");
+    const completion = {
+      agent: request.agent,
+      bootstrapIdentity: "b".repeat(64),
+      profileFingerprint: request.profileFingerprint,
+      transactionPending: true,
+    } as const;
+    expect(
+      parseManagedBootstrapImageCompletion(serializeManagedBootstrapImageCompletion(completion)),
+    ).toEqual({ schemaVersion: 1, ...completion });
+  });
 
   it("reports image completion field failures precisely", () => {
     const completion = {

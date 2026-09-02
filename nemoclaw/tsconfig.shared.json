@@ -9,6 +9,8 @@
     "src/shared/credential-filter-boundary.cts",
     "src/shared/openshell-gateway-endpoint-boundary.cts",
     "src/shared/openshell-external-target-boundary.cts",
+    "src/shared/openshell-gateway-health-sdk.ts",
+    "src/shared/openshell-observation-boundary.cts",
     "src/shared/openshell-policy-boundary.cts",
     "src/shared/private-networks-boundary.cts",
     "src/shared/sandbox-name.cts",
