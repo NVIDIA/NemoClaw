@@ -24,7 +24,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:OperationTimeoutMilliseconds = 300000
+$script:OperationTimeoutMilliseconds = 1200000
 $script:ProcessAuditSettleMilliseconds = 3000
 $script:MsiDisplayName = 'NemoClaw Native Windows Candidate'
 $script:BundleDisplayName = 'NemoClaw Native Windows Candidate Setup'
