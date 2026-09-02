@@ -296,6 +296,12 @@ bridge.restartMcpBridge("alpha", "example").then(
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
 
+  const redactedProbeDetailPrefix =
+    "MCP_TOKEN=<REDACTED>\nsandbox transport https://example.com/ failed; ";
+  const boundedRedactedProbeDetail = `${redactedProbeDetailPrefix}${"x".repeat(
+    240 - redactedProbeDetailPrefix.length,
+  )}`;
+
   it.each([
     {
       title: "refuses a hostless restart whose stored credential is not verified",
@@ -313,6 +319,27 @@ bridge.restartMcpBridge("alpha", "example").then(
         outcome: "rejected",
         message:
           "MCP server 'example' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+        exitCode: 1,
+        policyApplyCalls: 0,
+        providerCalls: [],
+      },
+    },
+    {
+      title: "redacts and bounds an unverified credential probe detail",
+      statusResponse: {
+        kind: "probe",
+        value: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail:
+            "MCP_TOKEN=untrusted-secret-value\nsandbox transport https://operator:credential@example.com failed; " +
+            "x".repeat(300),
+        },
+      },
+      expectedPayload: {
+        outcome: "rejected",
+        message: `MCP server 'example' cannot reuse its stored credential: ${boundedRedactedProbeDetail}. Export host environment variable 'MCP_TOKEN' and run \`nemoclaw alpha mcp restart example\` to replace it.`,
         exitCode: 1,
         policyApplyCalls: 0,
         providerCalls: [],
