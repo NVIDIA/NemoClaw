@@ -58,6 +58,9 @@ describe("exact-base managed runtime qualification workflow", () => {
     expect(candidate.needs).toBe("authenticate-candidate");
     expect(candidate.if).toBe("needs.authenticate-candidate.result == 'success'");
     expect(candidate.permissions).toEqual({ actions: "read", contents: "read", packages: "read" });
+    expect(candidate.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
+      "${{ github.workspace }}/managed-runtime-candidate/catalog.json",
+    );
     expect(step(candidate, "Check out exact base-controlled scenario controller").with?.ref).toBe(
       "${{ github.workflow_sha }}",
     );
@@ -89,6 +92,9 @@ describe("exact-base managed runtime qualification workflow", () => {
 
     expect(base["runs-on"]).toBe("ubuntu-24.04");
     expect(base.permissions).toEqual({ actions: "read", contents: "read", packages: "read" });
+    expect(base.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
+      "${{ github.workspace }}/managed-runtime-base/catalog.json",
+    );
     expect(step(base, "Check out exact comparison base").with).toMatchObject({
       ref: "${{ needs.authenticate-candidate.outputs.base_sha }}",
       path: "base",
