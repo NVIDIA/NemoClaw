@@ -101,6 +101,7 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(dependencyReview).toContain("any version other than exact `2.0.11`");
     expect(dependencyReview).toContain("the `/vercel` adapter");
+
     expect(dependencyReview).toContain("`hono@4.12.34`");
     expect(dependencyReview).toContain("`GHSA-54fx-42gc-7vw4`");
     expect(dependencyReview).toContain("exact `4.12.34`");

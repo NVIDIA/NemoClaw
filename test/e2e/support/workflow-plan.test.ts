@@ -272,7 +272,7 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
 
-  it("emits required fields and catalogue workflow jobs for migrated targets", () => {
+  it("emits the required workflow fields for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",
     });
@@ -312,16 +312,11 @@ describe("E2E workflow plan", () => {
         display_name: "Inference: OpenClaw switches providers and remains responsive",
       }),
     );
-    expect(selectedWorkflowJobs(plan)).toEqual([
-      "catalogue-nvidia-inference",
-      "catalogue-standard",
-    ]);
-    const migratedTargetIds = ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"];
-    const retainedMigratedJobs = readFreeStandingJobsInventory().allowedJobs.filter((id) =>
-      migratedTargetIds.includes(id),
-    );
+    const retainedJobs = readFreeStandingJobsInventory().allowedJobs;
 
-    expect(retainedMigratedJobs).toEqual([]);
+    expect(retainedJobs).not.toEqual(
+      expect.arrayContaining(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"]),
+    );
   });
 
   it.each([

@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Manual PR runs bind the selected head or base SHA independently from reusable image publication.
+# Manual PR runs bind the candidate SHA independently from reusable image publication.
 
 name: E2E / Main and Manual Suite
-run-name: "${{ inputs.checkout_sha != '' && inputs.checkout_sha == inputs.base_sha && format('E2E PR #{0} base ({1})', inputs.pr_number, inputs.correlation_id) || inputs.checkout_sha != '' && format('E2E PR #{0} head ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} {1} ({2})', inputs.pr_number, inputs.revision, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   push:
@@ -62,18 +62,26 @@ on:
         required: false
         type: string
         default: ""
+      revision:
+        description: Run checkout_sha as the PR candidate, or as its exact base for a failure comparison.
+        required: false
+        default: candidate
+        type: choice
+        options:
+          - candidate
+          - base
       post_to_slack:
         description: Post a selective-dispatch scorecard to the preview Slack route.
         required: false
         default: false
         type: boolean
       checkout_sha:
-        description: Optional lowercase 40-character PR head or exact PR base SHA for manual E2E.
+        description: Optional lowercase 40-character latest PR commit SHA for manual E2E.
         required: false
         default: ""
         type: string
       checkout_repository:
-        description: Optional repository containing the selected PR head or base SHA for manual E2E.
+        description: Optional PR source repository for manual E2E.
         required: false
         default: ""
         type: string
@@ -100,7 +108,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}-{1}', inputs.pr_number, inputs.checkout_sha == inputs.base_sha && 'base' || 'head') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && format('manual-pr-{0}', inputs.revision) || inputs.jobs || 'all-jobs' }}
   cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
@@ -235,7 +243,7 @@ jobs:
 
       - id: select_pr_source
         name: Resolve exact PR managed-image publication
-        if: ${{ inputs.pr_number != '' }}
+        if: ${{ inputs.pr_number != '' && inputs.revision != 'base' }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -309,7 +317,7 @@ jobs:
 
       - id: download_managed_cohort
         name: Download immutable managed-image cohort contract
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}
+        if: ${{ inputs.pr_number == '' || inputs.revision == 'base' || steps.select_pr_source.outputs.selection == 'base-cohort' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_ARTIFACT_KIND: managed-image-cohort
@@ -320,7 +328,7 @@ jobs:
 
       - id: validate_managed_cohort
         name: Validate immutable managed-image cohort contract
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}
+        if: ${{ inputs.pr_number == '' || inputs.revision == 'base' || steps.select_pr_source.outputs.selection == 'base-cohort' }}
         env:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
@@ -354,6 +362,7 @@ jobs:
       gateway_runtimes: ${{ steps.matrix.outputs.gateway_runtimes }}
       runtime_providers_by_job: ${{ steps.matrix.outputs.runtime_providers_by_job }}
       runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
+      pr_head_sha: ${{ steps.candidate_authorization.outputs.pr_head_sha }}
     steps:
       - id: runner_routing
         name: Build trusted larger-runner routing
@@ -388,6 +397,10 @@ jobs:
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
           JOBS: ${{ inputs.jobs }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          REVISION: ${{ inputs.revision }}
+          TARGETS: ${{ inputs.targets }}
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -405,6 +418,7 @@ jobs:
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
+          [[ "$REVISION" == "candidate" || "$REVISION" == "base" ]] || { echo "::error::revision must be candidate or base" >&2; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Accept: application/vnd.github+json" \
@@ -412,14 +426,24 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must be open" >&2; exit 1; }
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
-          [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
-          if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]; then
-            [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR base repository" >&2; exit 1; }
-          else
-            [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
-            [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
-          fi
+          pr_head_sha="$(jq -r '.head.sha' <<< "$pull_json")"
+          [[ "$pr_head_sha" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::pull request head SHA is invalid" >&2; exit 1; }
+          case "$REVISION" in
+            candidate)
+              [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
+              [[ "$pr_head_sha" == "$CHECKOUT_SHA" ]] || { echo "::error::candidate checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
+              ;;
+            base)
+              [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::exact-base E2E must use the trusted main workflow" >&2; exit 1; }
+              [[ "$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw" && "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::exact-base E2E requires a same-repository PR" >&2; exit 1; }
+              [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]] || { echo "::error::base checkout_sha must match the exact PR base SHA" >&2; exit 1; }
+              [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::exact-base E2E requires the failed candidate selector" >&2; exit 1; }
+              [[ ",${JOBS}," != *",native-runtime-qualification-producer,"* ]] || { echo "::error::native runtime qualification evidence is candidate-only" >&2; exit 1; }
+              [[ ",${JOBS}," != *",staging-brev-launchable,"* && ",${JOBS}," != *",staging-brev-launchable-identity,"* ]] || { echo "::error::exact-base E2E cannot select staging Launchable" >&2; exit 1; }
+              [[ "$INCLUDE_LAUNCHABLE" != "true" && "$ALLOW_JETSON_DISPATCH" != "true" && "$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true" ]] || { echo "::error::exact-base E2E cannot launch staging or dedicated hardware dispatches" >&2; exit 1; }
+              ;;
+          esac
           nvidia_owned=false
           if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
                 "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]]; then
@@ -434,6 +458,7 @@ jobs:
             [[ "$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw" ]] || { echo "::error::Launchable PR E2E requires a branch in NVIDIA/NemoClaw" >&2; exit 1; }
           fi
           printf 'nvidia_owned=%s\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"
+          printf 'pr_head_sha=%s\n' "$pr_head_sha" >> "$GITHUB_OUTPUT"
 
       - id: controller_matrix
         name: Build trusted controller target matrix
@@ -486,7 +511,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
           PR_NUMBER: ${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}
+          PR_HEAD_SHA: ${{ steps.candidate_authorization.outputs.pr_head_sha }}
           REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ inputs.checkout_sha != '' && inputs.revision || 'main' }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
@@ -503,7 +530,9 @@ jobs:
             --arg eventName "$EVENT_NAME" \
             --arg jobs "$DISPATCH_JOBS" \
             --arg prNumber "$PR_NUMBER" \
+            --arg prHeadSha "$PR_HEAD_SHA" \
             --arg repository "$REPOSITORY" \
+            --arg revision "$REVISION" \
             --arg targets "$DISPATCH_TARGETS" \
             --arg triggeringActor "$TRIGGERING_ACTOR" \
             --arg workflowRunId "$RUN_ID" \
@@ -518,6 +547,8 @@ jobs:
               actor: $actor,
               repository: $repository,
               prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end),
+              prHeadSha: (if $prHeadSha == "" then null else $prHeadSha end),
+              revision: $revision,
               candidateRepository: $candidateRepository,
               candidateSha: $candidateSha,
               baseSha: $baseSha,
@@ -737,6 +768,8 @@ jobs:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ steps.candidate_authorization.outputs.pr_head_sha }}
+          REVISION: ${{ inputs.revision }}
         shell: bash
         run: |
           set -euo pipefail
@@ -747,14 +780,14 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open" >&2; exit 1; }
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$PR_HEAD_SHA" ]] || { echo "::error::PR head changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
-          if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]; then
-            [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before base execution" >&2; exit 1; }
-          else
-            [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before head execution" >&2; exit 1; }
-            [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before head execution" >&2; exit 1; }
-          fi
+          case "$REVISION" in
+            candidate) [[ "$CHECKOUT_SHA" == "$PR_HEAD_SHA" ]] || { echo "::error::candidate checkout changed before execution" >&2; exit 1; } ;;
+            base) [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]] || { echo "::error::exact base checkout changed before execution" >&2; exit 1; } ;;
+            *) echo "::error::revision changed before execution" >&2; exit 1 ;;
+          esac
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
                   "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]] || {

@@ -1276,15 +1276,15 @@ function validateFreeStandingJobSelector(
     jobName === "external-gateway-health"
       ? ["generate-matrix", "package-openshell-sdk"]
       : jobName === "mcp-bridge-dev"
-      ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
-      : [
-            "mcp-bridge",
-            "openshell-credential-generation-window",
-            "cloud-onboard",
-            "messaging-providers",
-          ].includes(jobName)
-        ? ["base-image-publication", "generate-matrix"]
-        : "generate-matrix";
+        ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
+        : [
+              "mcp-bridge",
+              "openshell-credential-generation-window",
+              "cloud-onboard",
+              "messaging-providers",
+            ].includes(jobName)
+          ? ["base-image-publication", "generate-matrix"]
+          : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -1996,7 +1996,7 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && format('manual-pr-{0}', inputs.revision) || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
   }
@@ -2530,7 +2530,9 @@ function validateTrustedE2eDispatchReceipt(
     INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
+    PR_HEAD_SHA: "${{ steps.candidate_authorization.outputs.pr_head_sha }}",
     REPOSITORY: "${{ github.repository }}",
+    REVISION: "${{ inputs.checkout_sha != '' && inputs.revision || 'main' }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
     TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
@@ -2549,6 +2551,8 @@ function validateTrustedE2eDispatchReceipt(
     "actor: $actor",
     "repository: $repository",
     'prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end)',
+    'prHeadSha: (if $prHeadSha == "" then null else $prHeadSha end)',
+    "revision: $revision",
     "candidateRepository: $candidateRepository",
     "candidateSha: $candidateSha",
     "baseSha: $baseSha",
@@ -2720,6 +2724,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
+  const revisionInput = requireInput(errors, dispatchInputs, "revision");
+  if (
+    revisionInput.type !== "choice" ||
+    revisionInput.default !== "candidate" ||
+    !isDeepStrictEqual(revisionInput.options, ["candidate", "base"])
+  ) {
+    errors.push("workflow_dispatch revision must be the candidate/base choice");
+  }
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
@@ -2751,7 +2763,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
-    "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
+    "${{ inputs.checkout_sha != '' && format('E2E PR #{0} {1} ({2})', inputs.pr_number, inputs.revision, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {
     errors.push("workflow run-name must expose the unique manual-dispatch correlation ID");
   }

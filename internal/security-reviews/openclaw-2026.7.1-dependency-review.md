@@ -7,7 +7,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-09-02
+Last updated: 2026-08-21
 
 ## Decision
 
@@ -134,7 +134,7 @@ The reviewed audit materializes three production-compatible boundaries: the
 remediated reviewed-archive graph, the committed OpenClaw runtime lock, and the
 committed mcporter runtime lock.
 The August 21 registry-backed checks used Node `22.23.2` and npm `10.9.4`.
-Their recorded results were:
+Their exact current results are:
 
 - Reviewed archive graph: `info=0`, `low=0`, `moderate=1`, `high=0`,
   `critical=0`, `clean`.
