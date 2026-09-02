@@ -53,7 +53,7 @@ const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
     "compression-level": 9,
   },
 };
-const NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT: WorkflowStep = {
+export const NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT: WorkflowStep = {
   name: "Upload the qualification cleanup recovery receipt",
   if: "always()",
   uses: UPLOAD_ARTIFACT_ACTION,
@@ -120,10 +120,11 @@ function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep
   );
 }
 
-function isExactNativeRuntimeCleanupReceiptUpload(
+export function isExactNativeRuntimeCleanupReceiptUpload(
   jobName: string,
-  step: WorkflowStep,
+  stepValue: unknown,
 ): boolean {
+  const step = record(stepValue);
   return (
     jobName === "native-runtime-qualification-producer" &&
     isDeepStrictEqual(step, NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT)

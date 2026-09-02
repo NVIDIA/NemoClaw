@@ -17,6 +17,43 @@ completed_csv="${COMPLETED_STAGES:-}"
 account="${ACCOUNT:-}"
 uid="${ACCOUNT_UID:-}"
 gid="${ACCOUNT_GID:-}"
+ownership_marker="${OWNERSHIP_MARKER:-}"
+home="${ACCOUNT_HOME:-}"
+runtime_directory="${RUNTIME_DIRECTORY:-}"
+runtime_directory_unit="${RUNTIME_DIRECTORY_UNIT:-}"
+user_manager_unit="${USER_MANAGER_UNIT:-}"
+user_manager_dropin_directory="${USER_MANAGER_DROPIN_DIRECTORY:-}"
+user_manager_dropin="${USER_MANAGER_DROPIN:-}"
+storage_config_directory="${STORAGE_CONFIG_DIRECTORY:-}"
+storage_config="${STORAGE_CONFIG:-}"
+containers_config="${CONTAINERS_CONFIG:-}"
+apparmor_profile="${APPARMOR_PROFILE:-}"
+pasta_apparmor_profile="${PASTA_APPARMOR_PROFILE:-}"
+registry_auth_directory="${REGISTRY_AUTH_DIRECTORY:-}"
+registry_auth_file="${REGISTRY_AUTH_FILE:-}"
+runner_contract="${RUNNER_CONTRACT:-}"
+podman_executable="${PODMAN_EXECUTABLE:-}"
+helper_directory="${HELPER_DIRECTORY:-}"
+pasta_executable="${PASTA_EXECUTABLE:-}"
+resource_directory="${RESOURCE_DIRECTORY:-}"
+model_directory="${MODEL_DIRECTORY:-}"
+
+validate_path() {
+  local label="$1"
+  local value="$2"
+  [[ "$value" == /* && "$value" != *$'\n'* && "$value" != *"/../"* &&
+    "$value" != *"/./"* && "$value" != */.. && "$value" != */. ]] \
+    || fail "$label must be a normalized absolute path"
+}
+
+validate_optional_path() {
+  [[ -z "$2" ]] || validate_path "$1" "$2"
+}
+
+validate_unit() {
+  [[ -z "$2" || "$2" =~ ^[A-Za-z0-9_.@-]+$ ]] \
+    || fail "$1 must be a systemd unit name"
+}
 
 [[ "$receipt_path" == /* ]] || fail "cleanup receipt path must be absolute"
 [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]] || fail "cleanup receipt run ID is invalid"
@@ -25,6 +62,35 @@ gid="${ACCOUNT_GID:-}"
 if [[ -n "$uid" || -n "$gid" ]]; then
   [[ "$uid" =~ ^[1-9][0-9]*$ && "$gid" =~ ^[1-9][0-9]*$ ]] \
     || fail "cleanup receipt account identity is invalid"
+fi
+validate_path "cleanup receipt ownership marker" "$ownership_marker"
+for path_name in \
+  home \
+  runtime_directory \
+  user_manager_dropin_directory \
+  user_manager_dropin \
+  storage_config_directory \
+  storage_config \
+  containers_config \
+  apparmor_profile \
+  pasta_apparmor_profile \
+  registry_auth_directory \
+  registry_auth_file \
+  runner_contract \
+  podman_executable \
+  helper_directory \
+  pasta_executable \
+  resource_directory \
+  model_directory; do
+  validate_optional_path "cleanup receipt ${path_name//_/-}" "${!path_name}"
+  if [[ -n "$uid" && -z "${!path_name}" ]]; then
+    fail "cleanup receipt ${path_name//_/-} is required for an identified account"
+  fi
+done
+validate_unit "cleanup receipt runtime-directory unit" "$runtime_directory_unit"
+validate_unit "cleanup receipt user-manager unit" "$user_manager_unit"
+if [[ -n "$uid" && (-z "$runtime_directory_unit" || -z "$user_manager_unit") ]]; then
+  fail "cleanup receipt systemd units are required for an identified account"
 fi
 [[ "$stage" =~ ^[a-z][a-z0-9-]*$ ]] || fail "cleanup receipt stage is invalid"
 case "$status" in
@@ -56,30 +122,6 @@ while [[ -n "$remaining_stages" ]]; do
   seen_stages+="${completed_stage},"
 done
 
-ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-home=""
-runtime_directory=""
-runtime_directory_unit=""
-user_manager_unit=""
-user_manager_dropin_directory=""
-user_manager_dropin=""
-storage_config_directory=""
-podman_executable=""
-helper_directory=""
-resource_directory=""
-if [[ -n "$uid" ]]; then
-  home="/home/nemoclawq"
-  runtime_directory="/run/user/${uid}"
-  runtime_directory_unit="user-runtime-dir@${uid}.service"
-  user_manager_unit="user@${uid}.service"
-  user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"
-  user_manager_dropin="${user_manager_dropin_directory}/50-nemoclaw-native-runtime.conf"
-  storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-  podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-  helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-  resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-fi
-
 receipt_directory="$(dirname "$receipt_path")"
 install -d -m 0700 "$receipt_directory"
 [[ -d "$receipt_directory" && ! -L "$receipt_directory" ]] \
@@ -92,20 +134,29 @@ trap 'rm -f -- "$temporary_path"' EXIT
 umask 077
 jq -n \
   --arg account "$account" \
+  --arg apparmorProfile "$apparmor_profile" \
   --arg completed "$completed_csv" \
+  --arg containersConfig "$containers_config" \
   --arg failedStage "$failed_stage" \
   --arg gid "$gid" \
   --arg helperDirectory "$helper_directory" \
   --arg home "$home" \
   --arg ownershipMarker "$ownership_marker" \
+  --arg modelDirectory "$model_directory" \
+  --arg pastaApparmorProfile "$pasta_apparmor_profile" \
+  --arg pastaExecutable "$pasta_executable" \
   --arg podmanExecutable "$podman_executable" \
+  --arg registryAuthDirectory "$registry_auth_directory" \
+  --arg registryAuthFile "$registry_auth_file" \
   --arg resourceDirectory "$resource_directory" \
+  --arg runnerContract "$runner_contract" \
   --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
   --arg runId "$GITHUB_RUN_ID" \
   --arg runtimeDirectory "$runtime_directory" \
   --arg runtimeDirectoryUnit "$runtime_directory_unit" \
   --arg stage "$stage" \
   --arg status "$status" \
+  --arg storageConfig "$storage_config" \
   --arg storageConfigDirectory "$storage_config_directory" \
   --arg uid "$uid" \
   --arg userManagerDropin "$user_manager_dropin" \
@@ -134,18 +185,18 @@ jq -n \
       userManagerDropinDirectory: $userManagerDropinDirectory,
       userManagerDropin: $userManagerDropin,
       storageConfigDirectory: $storageConfigDirectory,
-      storageConfig: (if $storageConfigDirectory == "" then "" else ($storageConfigDirectory + "/storage.conf") end),
-      containersConfig: (if $storageConfigDirectory == "" then "" else ($storageConfigDirectory + "/containers.conf") end),
-      apparmorProfile: (if $storageConfigDirectory == "" then "" else ($storageConfigDirectory + "/podman.apparmor") end),
-      pastaApparmorProfile: (if $storageConfigDirectory == "" then "" else ($storageConfigDirectory + "/pasta.apparmor") end),
-      registryAuthDirectory: (if $storageConfigDirectory == "" then "" else ($storageConfigDirectory + "/registry-auth") end),
-      registryAuthFile: (if $storageConfigDirectory == "" then "" else ($storageConfigDirectory + "/registry-auth/auth.json") end),
-      runnerContract: (if $storageConfigDirectory == "" then "" else ($storageConfigDirectory + "/runner-contract.json") end),
+      storageConfig: $storageConfig,
+      containersConfig: $containersConfig,
+      apparmorProfile: $apparmorProfile,
+      pastaApparmorProfile: $pastaApparmorProfile,
+      registryAuthDirectory: $registryAuthDirectory,
+      registryAuthFile: $registryAuthFile,
+      runnerContract: $runnerContract,
       podmanExecutable: $podmanExecutable,
       helperDirectory: $helperDirectory,
-      pastaExecutable: (if $helperDirectory == "" then "" else ($helperDirectory + "/pasta") end),
+      pastaExecutable: $pastaExecutable,
       resourceDirectory: $resourceDirectory,
-      modelDirectory: (if $resourceDirectory == "" then "" else ($resourceDirectory + "/model") end)
+      modelDirectory: $modelDirectory
     }
   }' >"$temporary_path"
 chmod 0600 "$temporary_path"

@@ -34,6 +34,8 @@ authenticate() {
   [[ "$(pull_field '.state')" == "open" ]] || fail "pull request must be open"
   [[ "$(pull_field '.base.repo.full_name // ""')" == "NVIDIA/NemoClaw" ]] \
     || fail "pull request base repository must be NVIDIA/NemoClaw"
+  [[ "$(pull_field '.base.ref // ""')" == "main" ]] \
+    || fail "pull request base branch must be main"
   [[ "$(pull_field '.base.sha')" == "$BASE_SHA" ]] \
     || fail "base_sha must match the PR base SHA"
   pr_head_sha="$(pull_field '.head.sha')"
@@ -116,6 +118,8 @@ validate_checkout() {
   [[ "$(pull_field '.state')" == "open" ]] || fail "pull request must still be open"
   [[ "$(pull_field '.base.repo.full_name // ""')" == "NVIDIA/NemoClaw" ]] \
     || fail "pull request base repository changed before execution"
+  [[ "$(pull_field '.base.ref // ""')" == "main" ]] \
+    || fail "pull request base branch changed before execution"
   [[ "$(pull_field '.head.repo.full_name // ""')" == "$CHECKOUT_REPOSITORY" ]] \
     || fail "checkout_repository changed before execution"
   [[ "$(pull_field '.head.sha')" == "$PR_HEAD_SHA" ]] \

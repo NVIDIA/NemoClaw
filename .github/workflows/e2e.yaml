@@ -2096,6 +2096,50 @@ jobs:
           receipt_gid="${ACCOUNT_GID:-}"
           receipt_uid="${ACCOUNT_UID:-}"
           ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          configure_cleanup_targets() {
+            local target_uid="$1"
+            account_home=""
+            runtime_dir=""
+            runtime_directory_unit=""
+            user_manager_unit=""
+            user_manager_dropin_directory=""
+            user_manager_dropin=""
+            storage_config_directory=""
+            storage_config=""
+            containers_config=""
+            apparmor_profile=""
+            pasta_apparmor_profile=""
+            registry_auth_directory=""
+            registry_auth_file=""
+            runner_contract=""
+            podman_executable=""
+            helper_directory=""
+            pasta_executable=""
+            resource_directory=""
+            model_directory=""
+            if [[ -n "$target_uid" ]]; then
+              account_home="/home/nemoclawq"
+              runtime_dir="/run/user/${target_uid}"
+              runtime_directory_unit="user-runtime-dir@${target_uid}.service"
+              user_manager_unit="user@${target_uid}.service"
+              user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"
+              user_manager_dropin="${user_manager_dropin_directory}/50-nemoclaw-native-runtime.conf"
+              storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"
+              storage_config="${storage_config_directory}/storage.conf"
+              containers_config="${storage_config_directory}/containers.conf"
+              apparmor_profile="${storage_config_directory}/podman.apparmor"
+              pasta_apparmor_profile="${storage_config_directory}/pasta.apparmor"
+              registry_auth_directory="${storage_config_directory}/registry-auth"
+              registry_auth_file="${registry_auth_directory}/auth.json"
+              runner_contract="${storage_config_directory}/runner-contract.json"
+              podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"
+              helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"
+              pasta_executable="${helper_directory}/pasta"
+              resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"
+              model_directory="${resource_directory}/model"
+            fi
+          }
+          configure_cleanup_targets "$receipt_uid"
           cleanup_stage="validate-ownership"
           completed_stages=""
           write_cleanup_receipt() {
@@ -2106,8 +2150,28 @@ jobs:
               COMPLETED_STAGES="$completed_stages" \
               FIRST_FAILED_STAGE="$failed_stage" \
               ACCOUNT="$receipt_account" \
+              ACCOUNT_HOME="$account_home" \
               ACCOUNT_GID="$receipt_gid" \
               ACCOUNT_UID="$receipt_uid" \
+              APPARMOR_PROFILE="$apparmor_profile" \
+              CONTAINERS_CONFIG="$containers_config" \
+              HELPER_DIRECTORY="$helper_directory" \
+              MODEL_DIRECTORY="$model_directory" \
+              OWNERSHIP_MARKER="$ownership_marker" \
+              PASTA_APPARMOR_PROFILE="$pasta_apparmor_profile" \
+              PASTA_EXECUTABLE="$pasta_executable" \
+              PODMAN_EXECUTABLE="$podman_executable" \
+              REGISTRY_AUTH_DIRECTORY="$registry_auth_directory" \
+              REGISTRY_AUTH_FILE="$registry_auth_file" \
+              RESOURCE_DIRECTORY="$resource_directory" \
+              RUNNER_CONTRACT="$runner_contract" \
+              RUNTIME_DIRECTORY="$runtime_dir" \
+              RUNTIME_DIRECTORY_UNIT="$runtime_directory_unit" \
+              STORAGE_CONFIG="$storage_config" \
+              STORAGE_CONFIG_DIRECTORY="$storage_config_directory" \
+              USER_MANAGER_DROPIN="$user_manager_dropin" \
+              USER_MANAGER_DROPIN_DIRECTORY="$user_manager_dropin_directory" \
+              USER_MANAGER_UNIT="$user_manager_unit" \
               bash .qualification-workflow/scripts/e2e/native-runtime-cleanup-receipt.sh
           }
           complete_cleanup_stage() {
@@ -2149,6 +2213,7 @@ jobs:
             receipt_account="$account"
             receipt_gid="$gid"
             receipt_uid="$uid"
+            configure_cleanup_targets "$receipt_uid"
             [[ -z "$reported_account" || "$reported_account" == "$account" ]] || {
               echo "::error::Qualification account output does not match its ownership marker" >&2
               exit 1
@@ -2172,23 +2237,7 @@ jobs:
               echo "::error::Qualification private group disappeared before cleanup" >&2
               exit 1
             fi
-            runtime_dir="/run/user/${uid}"
-            runtime_directory_unit="user-runtime-dir@${uid}.service"
-            user_manager_unit="user@${uid}.service"
-            user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"
-            user_manager_dropin="${user_manager_dropin_directory}/50-nemoclaw-native-runtime.conf"
             trusted_user_unit_path="/usr/lib/systemd/user:/lib/systemd/user"
-            storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-            podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-            apparmor_profile="${storage_config_directory}/podman.apparmor"
-            pasta_apparmor_profile="${storage_config_directory}/pasta.apparmor"
-            helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-            pasta_executable="${helper_directory}/pasta"
-            registry_auth_directory="${storage_config_directory}/registry-auth"
-            registry_auth_file="${registry_auth_directory}/auth.json"
-            runner_contract="${storage_config_directory}/runner-contract.json"
-            resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-            model_directory="${resource_directory}/model"
             complete_cleanup_stage
             cleanup_stage="stop-processes"
             sudo systemctl stop "$user_manager_unit" "$runtime_directory_unit" 2>/dev/null || true
@@ -2265,14 +2314,14 @@ jobs:
                 }
                 sudo unlink "$runner_contract"
               fi
-              if [[ -e "$storage_config_directory/containers.conf" || -L "$storage_config_directory/containers.conf" ]]; then
-                [[ -f "$storage_config_directory/containers.conf" && ! -L "$storage_config_directory/containers.conf" && "$(stat -c '%u:%g:%a' "$storage_config_directory/containers.conf")" == "0:0:444" ]] || {
+              if [[ -e "$containers_config" || -L "$containers_config" ]]; then
+                [[ -f "$containers_config" && ! -L "$containers_config" && "$(stat -c '%u:%g:%a' "$containers_config")" == "0:0:444" ]] || {
                   echo "::error::Qualification containers configuration cleanup target is invalid" >&2
                   exit 1
                 }
-                sudo unlink "$storage_config_directory/containers.conf"
+                sudo unlink "$containers_config"
               fi
-              sudo rm -f -- "$storage_config_directory/storage.conf"
+              sudo rm -f -- "$storage_config"
               sudo rmdir "$storage_config_directory"
             fi
             complete_cleanup_stage
@@ -2360,11 +2409,10 @@ jobs:
             fi
             complete_cleanup_stage
             cleanup_stage="verify-removal"
-            [[ ! -e "/run/user/${uid}" && ! -L "/run/user/${uid}" ]] || {
+            [[ ! -e "$runtime_dir" && ! -L "$runtime_dir" ]] || {
               echo "::error::Qualification runtime directory remains after cleanup" >&2
               exit 1
             }
-            storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
               echo "::error::Qualification storage configuration remains after cleanup" >&2
               exit 1

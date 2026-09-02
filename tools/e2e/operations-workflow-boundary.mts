@@ -11,6 +11,7 @@ import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
+import { isExactNativeRuntimeCleanupReceiptUpload } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -125,6 +126,29 @@ export type OperationsWorkflow = {
     };
   };
 };
+
+export const NATIVE_RUNTIME_CLEANUP_RECEIPT_TARGET_BINDINGS = [
+  'ACCOUNT_HOME="$account_home"',
+  'APPARMOR_PROFILE="$apparmor_profile"',
+  'CONTAINERS_CONFIG="$containers_config"',
+  'HELPER_DIRECTORY="$helper_directory"',
+  'MODEL_DIRECTORY="$model_directory"',
+  'OWNERSHIP_MARKER="$ownership_marker"',
+  'PASTA_APPARMOR_PROFILE="$pasta_apparmor_profile"',
+  'PASTA_EXECUTABLE="$pasta_executable"',
+  'PODMAN_EXECUTABLE="$podman_executable"',
+  'REGISTRY_AUTH_DIRECTORY="$registry_auth_directory"',
+  'REGISTRY_AUTH_FILE="$registry_auth_file"',
+  'RESOURCE_DIRECTORY="$resource_directory"',
+  'RUNNER_CONTRACT="$runner_contract"',
+  'RUNTIME_DIRECTORY="$runtime_dir"',
+  'RUNTIME_DIRECTORY_UNIT="$runtime_directory_unit"',
+  'STORAGE_CONFIG="$storage_config"',
+  'STORAGE_CONFIG_DIRECTORY="$storage_config_directory"',
+  'USER_MANAGER_DROPIN="$user_manager_dropin"',
+  'USER_MANAGER_DROPIN_DIRECTORY="$user_manager_dropin_directory"',
+  'USER_MANAGER_UNIT="$user_manager_unit"',
+] as const;
 
 export function readE2eOperationsWorkflow(path = DEFAULT_WORKFLOW_PATH): OperationsWorkflow {
   return YAML.parse(readFileSync(path, "utf8")) as OperationsWorkflow;
@@ -1564,18 +1588,18 @@ export function validateNativeQualificationCleanupRecovery(
       "Native qualification cleanup must retain staged progress and the first failed cleanup stage",
     );
   }
+  if (
+    NATIVE_RUNTIME_CLEANUP_RECEIPT_TARGET_BINDINGS.some(
+      (binding) => !cleanupSource.includes(binding),
+    )
+  ) {
+    errors.push(
+      "Native qualification cleanup must pass every resolved recovery target to its receipt writer",
+    );
+  }
 
   const upload = findStep(job, "Upload the qualification cleanup recovery receipt");
-  if (
-    upload.if !== "always()" ||
-    upload.uses !== "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" ||
-    !isDeepStrictEqual(upload.with, {
-      name: "cleanup-${{ matrix.artifactName }}",
-      path: "${{ runner.temp }}/native-runtime-cleanup/receipt.json",
-      "if-no-files-found": "error",
-      "retention-days": 14,
-    })
-  ) {
+  if (!isExactNativeRuntimeCleanupReceiptUpload("native-runtime-qualification-producer", upload)) {
     errors.push("Native qualification must always upload its cleanup recovery receipt");
   }
   return errors;

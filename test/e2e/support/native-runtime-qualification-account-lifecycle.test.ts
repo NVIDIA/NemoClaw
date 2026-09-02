@@ -53,34 +53,33 @@ const fixtureRewrites = {
   ],
   homeIdentity: ['"$home" == "/home/${account}"', '"$home" == "$FIXTURE_HOME"'],
   runtimeDirectory: [
-    'runtime_dir="/run/user/${uid}"',
-    'runtime_dir="${FIXTURE_ROOT}/run/user/${uid}"',
+    'runtime_dir="/run/user/${target_uid}"',
+    'runtime_dir="${FIXTURE_ROOT}/run/user/${target_uid}"',
   ],
   userManagerDropinDirectory: [
     'user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"',
     'user_manager_dropin_directory="${FIXTURE_ROOT}/run/systemd/system/${user_manager_unit}.d"',
   ],
   storageConfigDirectory: [
-    'storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
+    'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
   ],
   podmanExecutable: [
-    'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    'podman_executable="${FIXTURE_ROOT}/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
+    'podman_executable="${FIXTURE_ROOT}/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
   ],
   helperDirectory: [
-    'helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    'helper_directory="${FIXTURE_ROOT}/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
+    'helper_directory="${FIXTURE_ROOT}/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
   ],
   resourceDirectory: [
-    'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
+    'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${target_uid}"',
   ],
   receiptWriter: [
     "bash .qualification-workflow/scripts/e2e/native-runtime-cleanup-receipt.sh",
     'bash "$NATIVE_RUNTIME_CLEANUP_RECEIPT_SCRIPT"',
   ],
-  userRuntimePath: ['"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"'],
 } as const;
 
 type FixtureRewrite = keyof typeof fixtureRewrites;
@@ -111,7 +110,6 @@ const fixtureRewriteProfiles: Record<FixtureRewriteProfile, FixtureRewriteContra
       "helperDirectory",
       "resourceDirectory",
       "receiptWriter",
-      "userRuntimePath",
     ],
     optional: [],
   },

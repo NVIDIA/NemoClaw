@@ -13,14 +13,19 @@ import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 const MANUAL_PR_DISPATCH_SCRIPT = path.join(process.cwd(), "scripts/e2e/manual-pr-dispatch.sh");
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 
-function pullRequest(headRepository: string, headSha: string, baseSha: string): string {
+function pullRequest(
+  headRepository: string,
+  headSha: string,
+  baseSha: string,
+  baseRef = "main",
+): string {
   return JSON.stringify({
     state: "open",
     head: {
       repo: { full_name: headRepository, owner: { login: "NVIDIA", type: "Organization" } },
       sha: headSha,
     },
-    base: { repo: { full_name: "NVIDIA/NemoClaw" }, ref: "main", sha: baseSha },
+    base: { repo: { full_name: "NVIDIA/NemoClaw" }, ref: baseRef, sha: baseSha },
   });
 }
 
@@ -32,6 +37,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       "NVIDIA/NemoClaw",
       "refs/heads/main",
       "managed-image-protected-runtime",
+      "main",
       0,
       "",
     ],
@@ -41,6 +47,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       "NVIDIA/NemoClaw",
       "refs/heads/main",
       "managed-image-protected-runtime",
+      "main",
       1,
       "::error::base checkout_sha must match the exact PR base SHA\n",
     ],
@@ -50,6 +57,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       "NVIDIA/NemoClaw",
       "refs/heads/main",
       "",
+      "main",
       1,
       "::error::exact-base E2E requires the failed candidate selector\n",
     ],
@@ -59,6 +67,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       "NVIDIA/NemoClaw",
       "refs/heads/candidate",
       "managed-image-protected-runtime",
+      "main",
       1,
       "::error::Manual PR E2E must be dispatched from the trusted main branch\n",
     ],
@@ -68,6 +77,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       "contributor/NemoClaw",
       "refs/heads/main",
       "managed-image-protected-runtime",
+      "main",
       1,
       "::error::exact-base E2E requires a same-repository PR\n",
     ],
@@ -77,6 +87,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       "NVIDIA/NemoClaw",
       "refs/heads/main",
       "managed-image-protected-runtime,native-runtime-qualification-producer",
+      "main",
       1,
       "::error::native runtime qualification evidence is candidate-only\n",
     ],
@@ -86,12 +97,23 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       "NVIDIA/NemoClaw",
       "refs/heads/main",
       "managed-image-protected-runtime,staging-brev-launchable",
+      "main",
       1,
       "::error::exact-base E2E cannot select staging Launchable\n",
     ],
+    [
+      "a PR targeting a non-main branch",
+      "b",
+      "NVIDIA/NemoClaw",
+      "refs/heads/main",
+      "managed-image-protected-runtime",
+      "release",
+      1,
+      "::error::pull request base branch must be main\n",
+    ],
   ] as const)(
     "authenticates %s",
-    (caseName, checkoutCharacter, headRepository, workflowRef, jobs, status, stderr) => {
+    (caseName, checkoutCharacter, headRepository, workflowRef, jobs, baseRef, status, stderr) => {
       const headSha = "a".repeat(40);
       const baseSha = "b".repeat(40);
       const workflowSha = "c".repeat(40);
@@ -110,7 +132,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
           INCLUDE_LAUNCHABLE: "false",
           JOBS: jobs,
           PR_NUMBER: "42",
-          PULL_JSON: pullRequest(headRepository, headSha, baseSha),
+          PULL_JSON: pullRequest(headRepository, headSha, baseSha, baseRef),
           REVISION: "base",
           TARGETS: "",
           WORKFLOW_EVENT: "workflow_dispatch",
@@ -168,6 +190,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       caseName: "the unchanged exact base and original head",
       checkoutCharacter: "b",
       currentBaseCharacter: "b",
+      currentBaseRef: "main",
       currentHeadCharacter: "a",
       expectedError: "",
       expectedStatus: 0,
@@ -176,6 +199,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       caseName: "a mismatched checkout",
       checkoutCharacter: "d",
       currentBaseCharacter: "b",
+      currentBaseRef: "main",
       currentHeadCharacter: "a",
       expectedError: "::error::checked-out commit does not match checkout_sha\n",
       expectedStatus: 1,
@@ -184,6 +208,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       caseName: "a changed PR base",
       checkoutCharacter: "b",
       currentBaseCharacter: "d",
+      currentBaseRef: "main",
       currentHeadCharacter: "a",
       expectedError: "::error::base_sha changed before execution\n",
       expectedStatus: 1,
@@ -192,8 +217,18 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
       caseName: "a changed PR head",
       checkoutCharacter: "b",
       currentBaseCharacter: "b",
+      currentBaseRef: "main",
       currentHeadCharacter: "d",
       expectedError: "::error::PR head changed before execution\n",
+      expectedStatus: 1,
+    },
+    {
+      caseName: "a changed PR base branch",
+      checkoutCharacter: "b",
+      currentBaseCharacter: "b",
+      currentBaseRef: "release",
+      currentHeadCharacter: "a",
+      expectedError: "::error::pull request base branch changed before execution\n",
       expectedStatus: 1,
     },
   ])(
@@ -201,6 +236,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
     ({
       checkoutCharacter,
       currentBaseCharacter,
+      currentBaseRef,
       currentHeadCharacter,
       expectedError,
       expectedStatus,
@@ -221,6 +257,7 @@ describe("exact-base E2E dispatch", testTimeoutOptions(15_000), () => {
             "NVIDIA/NemoClaw",
             currentHeadCharacter.repeat(40),
             currentBaseCharacter.repeat(40),
+            currentBaseRef,
           ),
           REVISION: "base",
         },

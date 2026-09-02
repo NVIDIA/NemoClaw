@@ -9,6 +9,28 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const RECEIPT_SCRIPT = path.join(process.cwd(), "scripts/e2e/native-runtime-cleanup-receipt.sh");
+const TARGET_ENV = {
+  ACCOUNT_HOME: "/recovery/account-home",
+  APPARMOR_PROFILE: "/recovery/policies/podman.profile",
+  CONTAINERS_CONFIG: "/recovery/config/containers.fixture.conf",
+  HELPER_DIRECTORY: "/recovery/helpers",
+  MODEL_DIRECTORY: "/recovery/model-data",
+  OWNERSHIP_MARKER: "/recovery/owner-marker",
+  PASTA_APPARMOR_PROFILE: "/recovery/policies/pasta.profile",
+  PASTA_EXECUTABLE: "/recovery/helpers/pasta-fixture",
+  PODMAN_EXECUTABLE: "/recovery/bin/podman-fixture",
+  REGISTRY_AUTH_DIRECTORY: "/recovery/registry",
+  REGISTRY_AUTH_FILE: "/recovery/registry/fixture-auth.json",
+  RESOURCE_DIRECTORY: "/recovery/resources",
+  RUNNER_CONTRACT: "/recovery/config/runner-fixture.json",
+  RUNTIME_DIRECTORY: "/recovery/runtime",
+  RUNTIME_DIRECTORY_UNIT: "runtime-fixture.service",
+  STORAGE_CONFIG: "/recovery/config/storage.fixture.conf",
+  STORAGE_CONFIG_DIRECTORY: "/recovery/config",
+  USER_MANAGER_DROPIN: "/recovery/systemd/dropins/fixture.conf",
+  USER_MANAGER_DROPIN_DIRECTORY: "/recovery/systemd/dropins",
+  USER_MANAGER_UNIT: "manager-fixture.service",
+} as const;
 
 function runReceipt(overrides: Record<string, string> = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-cleanup-receipt-"));
@@ -27,6 +49,7 @@ function runReceipt(overrides: Record<string, string> = {}) {
       FIRST_FAILED_STAGE: "remove-storage",
       GITHUB_RUN_ATTEMPT: "2",
       GITHUB_RUN_ID: "77",
+      ...TARGET_ENV,
       ...overrides,
     },
   });
@@ -53,17 +76,28 @@ describe("native runtime cleanup recovery receipt", () => {
           completedStages: ["validate-ownership", "stop-processes", "remove-systemd"],
           firstFailedStage: "remove-storage",
         },
-        targets: {
-          ownershipMarker: "/run/nemoclaw-native-runtime-owner-77-2",
-          runtimeDirectory: "/run/user/12345",
-          userManagerDropin:
-            "/run/systemd/system/user@12345.service.d/50-nemoclaw-native-runtime.conf",
-          storageConfigDirectory: "/run/nemoclaw-native-runtime-77-2-12345",
-          registryAuthFile: "/run/nemoclaw-native-runtime-77-2-12345/registry-auth/auth.json",
-          podmanExecutable: "/nemoclaw-native-runtime-podman-77-2-12345",
-          pastaExecutable: "/nemoclaw-native-runtime-helpers-77-2-12345/pasta",
-          modelDirectory: "/var/tmp/nemoclaw-native-runtime-resources-77-2-12345/model",
-        },
+      });
+      expect(receipt.targets).toEqual({
+        ownershipMarker: TARGET_ENV.OWNERSHIP_MARKER,
+        home: TARGET_ENV.ACCOUNT_HOME,
+        runtimeDirectory: TARGET_ENV.RUNTIME_DIRECTORY,
+        runtimeDirectoryUnit: TARGET_ENV.RUNTIME_DIRECTORY_UNIT,
+        userManagerUnit: TARGET_ENV.USER_MANAGER_UNIT,
+        userManagerDropinDirectory: TARGET_ENV.USER_MANAGER_DROPIN_DIRECTORY,
+        userManagerDropin: TARGET_ENV.USER_MANAGER_DROPIN,
+        storageConfigDirectory: TARGET_ENV.STORAGE_CONFIG_DIRECTORY,
+        storageConfig: TARGET_ENV.STORAGE_CONFIG,
+        containersConfig: TARGET_ENV.CONTAINERS_CONFIG,
+        apparmorProfile: TARGET_ENV.APPARMOR_PROFILE,
+        pastaApparmorProfile: TARGET_ENV.PASTA_APPARMOR_PROFILE,
+        registryAuthDirectory: TARGET_ENV.REGISTRY_AUTH_DIRECTORY,
+        registryAuthFile: TARGET_ENV.REGISTRY_AUTH_FILE,
+        runnerContract: TARGET_ENV.RUNNER_CONTRACT,
+        podmanExecutable: TARGET_ENV.PODMAN_EXECUTABLE,
+        helperDirectory: TARGET_ENV.HELPER_DIRECTORY,
+        pastaExecutable: TARGET_ENV.PASTA_EXECUTABLE,
+        resourceDirectory: TARGET_ENV.RESOURCE_DIRECTORY,
+        modelDirectory: TARGET_ENV.MODEL_DIRECTORY,
       });
       expect(fs.statSync(fixture.receipt).mode & 0o777).toBe(0o600);
     } finally {
@@ -116,6 +150,19 @@ describe("native runtime cleanup recovery receipt", () => {
       expect(fixture.result.status).toBe(1);
       expect(fixture.result.stderr).toContain(
         "failed cleanup receipt must identify its current stage",
+      );
+      expect(fs.existsSync(fixture.receipt)).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects an identified account without every recovery target", () => {
+    const fixture = runReceipt({ MODEL_DIRECTORY: "" });
+    try {
+      expect(fixture.result.status).toBe(1);
+      expect(fixture.result.stderr).toContain(
+        "cleanup receipt model-directory is required for an identified account",
       );
       expect(fs.existsSync(fixture.receipt)).toBe(false);
     } finally {

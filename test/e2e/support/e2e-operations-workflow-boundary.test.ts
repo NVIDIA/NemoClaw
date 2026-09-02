@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  NATIVE_RUNTIME_CLEANUP_RECEIPT_TARGET_BINDINGS,
   type OperationsWorkflow,
   readE2eOperationsWorkflow,
   validateE2eOperationsWorkflow,
@@ -16,6 +17,7 @@ import {
   validateNativeQualificationCleanupRecovery,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT } from "../../../tools/e2e/upload-e2e-artifacts-workflow-boundary.mts";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
@@ -94,18 +96,12 @@ function nativeQualificationCleanupWorkflow(): OperationsWorkflow {
               "complete_cleanup_stage",
               'write_cleanup_receipt failed "$cleanup_stage"',
               "write_cleanup_receipt success",
+              ...NATIVE_RUNTIME_CLEANUP_RECEIPT_TARGET_BINDINGS,
             ].join("\n"),
           },
           {
-            name: "Upload the qualification cleanup recovery receipt",
-            if: "always()",
-            uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-            with: {
-              name: "cleanup-${{ matrix.artifactName }}",
-              path: "${{ runner.temp }}/native-runtime-cleanup/receipt.json",
-              "if-no-files-found": "error",
-              "retention-days": 14,
-            },
+            ...NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT,
+            with: { ...NATIVE_RUNTIME_CLEANUP_RECEIPT_UPLOAD_CONTRACT.with },
           },
         ],
       },
@@ -723,6 +719,18 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateNativeQualificationCleanupRecovery(workflow)).toContain(
       "Native qualification must always upload its cleanup recovery receipt",
+    );
+  });
+
+  it("rejects a cleanup receipt that omits a resolved recovery target", () => {
+    const workflow = nativeQualificationCleanupWorkflow();
+    const cleanup = workflow.jobs["native-runtime-qualification-producer"].steps!.find(
+      (step) => step.name === "Remove qualification resources",
+    )!;
+    cleanup.run = cleanup.run!.replace('MODEL_DIRECTORY="$model_directory"', "");
+
+    expect(validateNativeQualificationCleanupRecovery(workflow)).toContain(
+      "Native qualification cleanup must pass every resolved recovery target to its receipt writer",
     );
   });
 
