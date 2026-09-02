@@ -337,6 +337,32 @@ jobs:
             -PackageManifestPath "$packageRoot\package-manifest.json" `
             -ArtifactDirectory "$packageRoot\qualification"
 
+      - name: Create native Windows proof-of-life video
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          $version = '${{ steps.windows-package.outputs.product_version }}'
+          $packageRoot = '${{ steps.windows-package.outputs.package_root }}'
+          & "$candidate\scripts\checks\create-windows-native-proof-video.ps1" `
+            -ProductVersion $version `
+            -CandidateSha $env:GITHUB_SHA `
+            -PackageManifestPath "$packageRoot\package-manifest.json" `
+            -QualificationReceiptPath "$packageRoot\qualification\package-qualification.json" `
+            -HostReceiptPath "$packageRoot\reference-qualification\host-platform.json" `
+            -OpenShellReceiptPath "$packageRoot\reference-qualification\openshell-source.json" `
+            -OutputDirectory "$packageRoot\proof-video"
+
+      - name: Upload native Windows proof-of-life video
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-proof-video-${{ github.sha }}
+          path: ${{ runner.temp }}/nemoclaw-windows-package/proof-video/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload downloadable Windows native package
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
