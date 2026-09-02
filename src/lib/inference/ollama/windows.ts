@@ -9,7 +9,6 @@ const { spawn } = require("child_process");
 const { run, runCapture } = require("../../runner");
 const {
   createOllamaApiCapture,
-  getOllamaApiCommand,
   isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
   setResolvedOllamaHost,
@@ -527,18 +526,10 @@ function printWindowsOllamaTimeoutDiagnostics(): void {
   console.error(
     '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
   );
+  console.error("  After correcting the Windows process or listener, retry:");
+  console.error("    nemoclaw onboard");
   console.error(
-    `    ${getOllamaApiCommand(
-      [
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
-      ],
-      OLLAMA_HOST_DOCKER_INTERNAL,
-    ).join(" ")}`,
+    "  NemoClaw repeats the reachability check with an isolated Docker client configuration and removes that temporary configuration afterward.",
   );
 }
 

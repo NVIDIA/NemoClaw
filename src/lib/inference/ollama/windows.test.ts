@@ -254,6 +254,24 @@ function createWindowsInstallBoundary(options: {
 }
 
 describe("Windows Ollama helper", () => {
+  it("routes timeout recovery through the credential-isolated NemoClaw probe", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      windows.printWindowsOllamaTimeoutDiagnostics();
+    } finally {
+      restore();
+    }
+
+    const diagnostic = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+    errorSpy.mockRestore();
+    expect(diagnostic).toContain("nemoclaw onboard");
+    expect(diagnostic).toContain("isolated Docker client configuration");
+    expect(diagnostic).toContain("removes that temporary configuration afterward");
+    expect(diagnostic).not.toContain("docker run");
+  });
+
   it("continues probing after a nonempty invalid Docker readiness response (#10100)", () => {
     const run = vi.fn();
     const localInference = require(LOCAL_INFERENCE_PATH);
