@@ -11,7 +11,6 @@ import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
@@ -45,7 +44,9 @@ import {
 } from "./inference-routing-helpers.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
-// Credential-backed smokes live in inference-routing-provider-smoke.test.ts outside this lane.
+// This is the PR-required inference-routing lane. Credential-backed provider
+// smokes live in inference-routing-provider-smoke.test.ts and are never selected
+// by the PR-safe workflow job.
 
 test("TC-INF-06 invalid API key fails with credential classification and cleanup", {
   timeout: 5 * 60_000,
@@ -313,7 +314,7 @@ type RuntimeIdentityE2EContext = Pick<
 };
 
 const RUNTIME_IDENTITY_E2E_OPTIONS = {
-  timeout: testTimeout(ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS),
+  timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm live runtime identity prerequisites",
@@ -400,7 +401,7 @@ async function runRuntimeIdentityE2EScenario(
     [inferenceKey],
     `${artifactPrefix}-onboard-real-openshell-sandbox`,
     progress,
-    execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   expectOnboardSuccess(onboard, `${scenario.testId} real OpenShell prerequisite onboard`);
 
@@ -1004,7 +1005,7 @@ test
 );
 
 test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {
-  timeout: testTimeout(ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS),
+  timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm compatible-endpoint prerequisites",
@@ -1074,7 +1075,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     [apiKey],
     "tc-inf-09-onboard-compatible-endpoint",
     progress,
-    execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
   progress.phase("inspect the compatible provider route");
@@ -1146,7 +1147,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
 });
 
 test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)", {
-  timeout: testTimeout(ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS),
+  timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm live inference prerequisites",
@@ -1256,7 +1257,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     [apiKey],
     "tc-inf-11-onboard-https-pin-placeholder",
     progress,
-    execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   await captureOpenClawPairingDiagnosticsAfterFailedOnboard(onboard, sandbox, sandboxName, [apiKey]);
   expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");

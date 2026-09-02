@@ -5,7 +5,6 @@ import {
   buildMcpCredentialDetachedCommand,
   buildMcpCredentialRevisionObservationCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness.ts";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";

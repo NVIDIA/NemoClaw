@@ -18,7 +18,6 @@ import {
 import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { createDockerLlamaCppPrivateBridgeController } from "../../../src/lib/onboard/runtime-provider/docker-llama-cpp-private-bridge.ts";
-import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -126,7 +125,7 @@ test(
       artifactName: "install-managed-llama-cpp",
       cwd: REPO_ROOT,
       env: env(),
-      timeoutMs: execTimeout(75 * 60_000),
+      timeoutMs: 75 * 60_000,
     });
     expect(install.exitCode, resultText(install)).toBe(0);
 

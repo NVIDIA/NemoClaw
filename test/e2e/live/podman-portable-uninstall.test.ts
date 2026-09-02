@@ -10,7 +10,6 @@ import {
   createPodmanContainerEngine,
 } from "../../../src/lib/adapters/podman";
 import { portableDemoReceiptPath } from "../../../src/lib/onboard/experimental/portable-runtime-receipt-readiness";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
@@ -139,7 +138,7 @@ test(
     expect(fs.existsSync(configDir)).toBe(false);
     const gatewayRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-uninstall-"));
     const cliEnv: NodeJS.ProcessEnv = {
-      ...buildAvailabilityProbeEnv(),
+      ...process.env,
       XDG_CONFIG_HOME: path.join(gatewayRoot, "cli-config"),
     };
     const previousPortableProfile = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE;

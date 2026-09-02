@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { containsReplyTokenAllowingWhitespace } from "../../helpers/e2e-answer-assertions.ts";
-import { testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import {
@@ -559,7 +558,7 @@ test(
   {
     // 75-minute budget covers cloud onboarding, sandbox provisioning, gateway
     // warmup, the 120-second wait-for-replies window, and retry.
-    timeout: testTimeout(75 * 60_000),
+    timeout: 75 * 60_000,
     meta: {
       e2ePhases: [
         "confirm checkout fidelity and hosted credential",
