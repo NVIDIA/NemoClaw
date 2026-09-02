@@ -46,7 +46,7 @@ import {
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
-import { runBoundedRetry } from "../fixtures/retry-policy.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,

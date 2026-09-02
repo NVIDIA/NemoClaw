@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ShellProbeResult } from "./shell-probe.ts";
-import { runBoundedRetry, type RetryEvidence } from "./retry-policy.ts";
+import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 
 const TRANSIENT_INFERENCE_SET_FAILURE =
   /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|\b50[234]\b/iu;

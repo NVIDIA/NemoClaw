@@ -186,7 +186,7 @@ function importedClassifierArgs(env: NodeJS.ProcessEnv, extra: string[]): string
 function run(env: NodeJS.ProcessEnv, extra: string[] = []) {
   const useCli =
     extra.some((value) => value === "--unknown") ||
-    extra.filter((value) => value === "--repo").length > 1 ||
+    extra.some((value) => value === "--repo") ||
     extra.some((value) => value === "0" || value === "1.5" || value === "501");
   return spawnSync(
     process.execPath,
@@ -496,11 +496,18 @@ describe("CI failure classifier process", () => {
     expect(result.stdout).not.toContain(nameSecret);
     expect(result.stdout).not.toContain(urlSecret);
   });
-  test("rejects invalid input before invoking GitHub", () => {
+  test("rejects an alternate valid repository before invoking GitHub", () => {
     const item = fixture("unused");
-    const r = run(item.env, ["--repo", "bad/repo/extra"]);
+    const r = spawnSync(
+      process.execPath,
+      importedClassifierArgs(item.env, ["--repo", "NVIDIA/Other"]),
+      {
+        encoding: "utf8",
+        env: item.env,
+      },
+    );
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain("repo must be owner/name");
+    expect(r.stderr).toContain("repo must be NVIDIA/NemoClaw");
     expect(readdirSync(item.root)).not.toContain("calls");
   });
   test("bounds streamed logs before filtering", () => {
@@ -522,7 +529,7 @@ describe("CI failure classifier process", () => {
   });
   test.each([
     [["--unknown", "value"], "Unknown option --unknown"],
-    [["--repo", "NVIDIA/NemoClaw", "--repo", "NVIDIA/NemoClaw"], "Duplicate option --repo"],
+    [["--repo", "NVIDIA/NemoClaw"], "Unknown option --repo"],
     [["--max-lines", "0"], "--max-lines must be an integer from 1 through 500"],
     [["--max-lines", "1.5"], "--max-lines must be an integer from 1 through 500"],
     [["--max-lines", "501"], "--max-lines must be an integer from 1 through 500"],

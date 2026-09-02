@@ -592,7 +592,7 @@ async function classifyCiFailureWithRuntime(
   if (!process.execPath.startsWith("/")) throw new Error("Node executable path must be absolute");
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   const jobId = String(input.jobId);
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
+  if (repo !== "NVIDIA/NemoClaw") throw new Error("repo must be NVIDIA/NemoClaw");
   if (!/^\d+$/.test(jobId) || jobId === "0")
     throw new Error("jobId must be a positive numeric GitHub Actions job ID");
   const maxLines = input.maxLines ?? 120;
@@ -1111,7 +1111,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
 
 function parseArguments(args: string[]): Input {
   const values: Record<string, string> = {};
-  const allowed = new Set(["workdir", "job-id", "repo", "artifact-name", "max-lines", "clip-mode"]);
+  const allowed = new Set(["workdir", "job-id", "artifact-name", "max-lines", "clip-mode"]);
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index];
     const value = args[index + 1];
@@ -1131,7 +1131,6 @@ function parseArguments(args: string[]): Input {
   return {
     workdir: values.workdir ?? process.cwd(),
     jobId: values["job-id"],
-    repo: values.repo,
     artifactName: values["artifact-name"],
     maxLines: values["max-lines"] ? Number(values["max-lines"]) : undefined,
     clipMode: values["clip-mode"] as ClipMode | undefined,

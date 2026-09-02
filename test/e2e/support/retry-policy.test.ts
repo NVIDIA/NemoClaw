@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { RetryPolicyError, runBoundedRetry } from "../fixtures/retry-policy.ts";
+import { RetryPolicyError, runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 
 describe("bounded E2E operation retry policy", () => {
   it("reports a first-attempt pass", async () => {

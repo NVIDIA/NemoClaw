@@ -46,7 +46,7 @@ import {
   runBoundedRetry,
   type RetryEvidence,
   type RetryFailureClass,
-} from "../fixtures/retry-policy.ts";
+} from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
