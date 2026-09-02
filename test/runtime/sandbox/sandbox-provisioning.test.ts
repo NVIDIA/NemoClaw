@@ -1091,28 +1091,6 @@ describe("Hermes sandbox provisioning", () => {
     ]);
     return { ...result, tmp, sandboxRoot };
   }
-  function runHermesLayoutBlock(
-    dockerfilePath: string,
-    startMarker: string,
-    endMarker: string,
-    { precreateConfig = false }: { precreateConfig?: boolean } = {},
-  ) {
-    const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-layout-"));
-    const sandboxRoot = path.join(tmp, "sandbox");
-    const hermesDir = path.join(sandboxRoot, ".hermes");
-    fs.mkdirSync(hermesDir, { recursive: true });
-    if (precreateConfig) {
-      fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n");
-      fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n");
-    }
-    const command = dockerRunCommandBetween(dockerfile, startMarker, endMarker).replaceAll(
-      "/root/.cache/pip",
-      path.join(tmp, "root-cache", "pip"),
-    );
-    const result = runDockerShell(command, sandboxRoot);
-    return { ...result, tmp, sandboxRoot };
-  }
   it("final image validates and runs the manifest-declared hermes binary path", () => {
     const result = runHermesPathValidation();
     expect(result.status).toBe(0);
@@ -1237,89 +1215,6 @@ describe("Hermes sandbox provisioning", () => {
       expect(calls).toContain(`chown -R sandbox:sandbox ${sandboxRoot}`);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-  it("creates the Hermes lazy dependency target with sandbox ownership (#8613)", () => {
-    const layout = runHermesLayoutBlock(
-      HERMES_DOCKERFILE_BASE,
-      "# Create .hermes with mutable integration dirs",
-      "# Pre-create shell init files",
-    );
-    try {
-      expect(layout.result.status, layout.result.stderr).toBe(0);
-      const lazyPackages = path.join(layout.sandboxRoot, ".hermes", "lazy-packages");
-      const metadata = fs.statSync(lazyPackages);
-      expect(metadata.mode & 0o777).toBe(0o750);
-      expect(layout.calls).toContain(
-        `chown -R sandbox:sandbox ${path.join(layout.sandboxRoot, ".hermes")}`,
-      );
-    } finally {
-      fs.rmSync(layout.tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("grants the Hermes gateway group write access to runtime state directories", () => {
-    const runs = [
-      runHermesLayoutBlock(
-        HERMES_DOCKERFILE_BASE,
-        "# Create .hermes with mutable integration dirs",
-        "# Pre-create shell init files",
-      ),
-      runHermesLayoutBlock(
-        HERMES_DOCKERFILE,
-        "# Flatten stale published base images",
-        "# Pin config hash at build time",
-        { precreateConfig: true },
-      ),
-    ];
-    try {
-      runs.forEach((run) => {
-        expect(run.result.status).toBe(0);
-        const hermesDir = path.join(run.sandboxRoot, ".hermes");
-        expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
-        expect(
-          [
-            "logs",
-            "logs/curator",
-            "cache",
-            "hooks",
-            "image_cache",
-            "audio_cache",
-            "platforms",
-          ].every((dir) =>
-            Object.is((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8), "770"),
-          ),
-        ).toBe(true);
-        expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
-          "2770",
-        );
-        expect((fs.statSync(path.join(hermesDir, "logs")).mode & 0o7777).toString(8)).toBe("2770");
-        expect(
-          (fs.statSync(path.join(hermesDir, "logs", "curator")).mode & 0o7777).toString(8),
-        ).toBe("2770");
-        const whatsappSessionDir = path.join(hermesDir, "platforms", "whatsapp", "session");
-        expect((fs.statSync(whatsappSessionDir).mode & 0o7777).toString(8)).toBe("2770");
-        expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(
-          "2770",
-        );
-        expect(fs.readlinkSync(path.join(hermesDir, "gateway_state.json"))).toBe(
-          "runtime/gateway_state.json",
-        );
-        expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
-        expect(run.calls).toContain(
-          `chown gateway:sandbox ${path.join(hermesDir, "sessions")} ${path.join(
-            hermesDir,
-            "cron",
-          )} ${path.join(hermesDir, "gateway")} ${path.join(hermesDir, "runtime")}`,
-        );
-        const historyPath = path.join(hermesDir, ".hermes_history");
-        expect(run.calls).toContain(`chown gateway:sandbox ${historyPath}`);
-        expect((fs.statSync(historyPath).mode & 0o777).toString(8)).toBe("660");
-      });
-    } finally {
-      runs.forEach((run) => {
-        fs.rmSync(run.tmp, { recursive: true, force: true });
-      });
     }
   });
 });

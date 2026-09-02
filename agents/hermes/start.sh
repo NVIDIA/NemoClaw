@@ -262,7 +262,7 @@ NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("${NEMOCLAW_CMD[@]}")
 
 _chat_ui_url_dashboard_settings() {
   [ -n "${CHAT_UI_URL:-}" ] || return 2
-  python3 - "$CHAT_UI_URL" <<'PYPORT'
+  python3 -I - "$CHAT_UI_URL" <<'PYPORT'
 import ipaddress
 import re
 import sys
@@ -1087,7 +1087,7 @@ repair_hermes_log_permissions() {
   ensure_hermes_state_dir "${HERMES_DIR}/logs/curator" 2770 || return 1
 
   NEMOCLAW_HERMES_LOG_DIR="${HERMES_DIR}/logs" \
-    python3 - <<'PYLOGS'
+    python3 -I - <<'PYLOGS'
 import errno
 import grp
 import os
@@ -1200,7 +1200,7 @@ ensure_hermes_history_file() {
   # O_NOFOLLOW + fstat/fchown/fchmod against the actual opened inode.
   NEMOCLAW_HERMES_HISTORY_FILE="$file" \
     NEMOCLAW_HERMES_HISTORY_MODE="$mode" \
-    python3 - <<'PYHISTORY'
+    python3 -I - <<'PYHISTORY'
 import errno
 import grp
 import os

@@ -472,7 +472,6 @@ function runHermesGatewayRuntimeCleanup(opts: {
   staleLock?: boolean;
   stalePid?: boolean;
   lockedConfigRoot?: boolean;
-  rootOwnedConfigRoot?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
   unsafeState?: readonly [name: HermesStateDir, kind: "symlink" | "file"];
@@ -488,7 +487,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   const runtimePid = path.join(runtimeDir, "gateway.pid");
   const runtimeLock = path.join(runtimeDir, "gateway.lock");
   const agentLogPath = path.join(hermesHome, "logs", "agent.log");
-  const historyOwnerLog = path.join(tmpDir, "history-owner.log");
+  const pythonImportSentinel = path.join(tmpDir, "python-import-sentinel");
   const configYamlPath = path.join(hermesHome, "config.yaml");
   const envFilePath = path.join(hermesHome, ".env");
   fs.mkdirSync(runtimeDir, { recursive: true });
@@ -514,7 +513,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
         ? (fs.mkdirSync(path.dirname(agentLogPath), { recursive: true }),
           fs.linkSync(envFilePath, agentLogPath))
         : undefined);
-  if (opts.lockedConfigRoot || opts.rootOwnedConfigRoot) {
+  if (opts.lockedConfigRoot) {
     fs.chmodSync(hermesHome, 0o755);
   }
   if (opts.lockedConfigRoot) {
@@ -589,17 +588,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   }
   fs.writeFileSync(
     path.join(tmpDir, "sitecustomize.py"),
-    (opts.rootOwnedConfigRoot
-      ? [
-          "import grp, os, pwd, types",
-          `owner_log = ${JSON.stringify(historyOwnerLog)}`,
-          "open(owner_log, 'w').close()",
-          "os.geteuid = lambda: 0\nos.fchown = lambda fd, uid, gid: None",
-          "pwd.getpwnam = lambda name: (open(owner_log, 'w').write(name), types.SimpleNamespace(pw_uid=os.getuid()))[1]",
-          "grp.getgrnam = lambda name: types.SimpleNamespace(gr_gid=os.getgid())",
-        ]
-      : ["import os", "os.geteuid = lambda: 1000"]
-    ).join("\n"),
+    `from pathlib import Path\nPath(${JSON.stringify(pythonImportSentinel)}).write_text("loaded")\n`,
   );
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -628,7 +617,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `NEMOCLAW_PROC_ROOT=${shellQuote(procRoot)}`,
-      opts.lockedConfigRoot || opts.rootOwnedConfigRoot ? LOCKED_HERMES_CONFIG_STAT_MOCK : "",
+      opts.lockedConfigRoot ? LOCKED_HERMES_CONFIG_STAT_MOCK : "",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
       "DASHBOARD_PUBLIC_PORT=18789",
@@ -705,9 +694,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       historyMode,
       historyKind,
       historyContent,
-      historyOwnerLookup: opts.rootOwnedConfigRoot
-        ? fs.readFileSync(historyOwnerLog, "utf-8").trim()
-        : "",
+      pythonImportSentinelExists: fs.existsSync(pythonImportSentinel),
       symlinkTargetContent,
       unsafeStateBefore,
       unsafeStateAfter:
@@ -1209,7 +1196,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     const run = runHermesGatewayRuntimeCleanup({
       staleLock: false,
       stalePid: false,
-      rootOwnedConfigRoot: true,
       preExistingLogFile: true,
     });
     expect(run.result.status).toBe(0);
@@ -1256,18 +1242,16 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     );
   });
 
-  it("preserves a pre-existing Hermes history file and applies root-separated ownership", () => {
+  it("preserves a pre-existing Hermes history file and reasserts its mode", () => {
     const run = runHermesGatewayRuntimeCleanup({
       staleLock: false,
       stalePid: false,
-      rootOwnedConfigRoot: true,
       preExistingHistory: "regular",
     });
     expect(run.result.status).toBe(0);
     expect(run.historyKind).toBe("regular");
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("pre-existing\n");
-    expect(run.historyOwnerLookup).toBe("gateway");
   });
 
   it.each([
@@ -1278,7 +1262,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   ] as const)("refuses unsafe history with locked root=%s and kind=%s", (locked, kind, message) => {
     const run = runHermesGatewayRuntimeCleanup({
       lockedConfigRoot: locked,
-      rootOwnedConfigRoot: !locked,
       staleLock: false,
       stalePid: false,
       preExistingHistory: kind,
@@ -1310,6 +1293,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     });
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("");
+    expect(run.pythonImportSentinelExists).toBe(false);
     expect(run.runtimePidExists).toBe(false);
     expect(run.runtimeLockExists).toBe(false);
     expect(run.legacyPidExists).toBe(false);

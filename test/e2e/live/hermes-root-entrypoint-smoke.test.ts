@@ -484,6 +484,10 @@ chmod 3770 /sandbox/.hermes
 chown root:root /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
 chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash
 sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /sandbox/.hermes/.config-hash >/tmp/nemoclaw-locked-config.sha256
+install -d -m 755 /tmp/nemoclaw-hostile-python
+printf '%s\n' 'import os' 'from pathlib import Path' 'if os.geteuid() == 0:' '    Path("/tmp/nemoclaw-root-sitecustomize-ran").write_text("root")' >/tmp/nemoclaw-hostile-python/sitecustomize.py
+chmod 444 /tmp/nemoclaw-hostile-python/sitecustomize.py
+export PYTHONPATH=/tmp/nemoclaw-hostile-python
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
   await probe.expect(
@@ -503,6 +507,8 @@ test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "root:sandbox 3770"
 for file in config.yaml .env .config-hash; do
   test "$(stat -c '%U:%G %a' "/sandbox/.hermes/$file")" = "root:root 444"
 done
+test -f /tmp/nemoclaw-hostile-python/sitecustomize.py
+test ! -e /tmp/nemoclaw-root-sitecustomize-ran
 sha256sum -c /tmp/nemoclaw-locked-config.sha256`,
   );
   await assertGatewayProcess(probe, container);
