@@ -93,10 +93,6 @@ const trustedActionDirs = [
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
-const sdkPackageLocatorScript = join(
-  process.cwd(),
-  "scripts/checks/locate-openshell-sdk-package-for-pr.sh",
-);
 const dependencyInstallJobs = [
   "build-typecheck",
   "cli-tests",
@@ -171,29 +167,13 @@ type SdkPackageLocatorFixture = Readonly<{
   inspectorOutput?: string;
   inspectorRequired?: unknown;
   runs: readonly unknown[];
+  step: WorkflowStep;
   workflowRunFailure?: boolean;
 }>;
 
-function runSdkPackageLocatorScript(
-  env: Record<string, string>,
-  cwd: string,
-): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("bash", [sdkPackageLocatorScript], {
-    cwd,
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-    timeout: 5_000,
-  });
-  return {
-    status: result.status,
-    stdout: String(result.stdout),
-    stderr: String(result.stderr),
-  };
-}
-
 function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
   githubOutput: string;
-  result: ReturnType<typeof runSdkPackageLocatorScript>;
+  result: ReturnType<typeof runWorkflowShellStep>;
 }> {
   const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-locator-"));
   try {
@@ -243,7 +223,8 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
       { mode: 0o755 },
     );
     const outputPath = join(tempRoot, "github-output");
-    const result = runSdkPackageLocatorScript(
+    const result = runWorkflowShellStep(
+      fixture.step,
       {
         BASE_SHA: "base-sha",
         FAKE_ARTIFACTS_BY_RUN_ID: JSON.stringify(fixture.artifactsByRunId ?? {}),
@@ -474,9 +455,6 @@ describe("pull request and main workflow contracts", () => {
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
   const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
-  const managedRuntimeWorkflow = readYaml<CiWorkflow>(
-    ".github/workflows/managed-runtime-base-qualification.yaml",
-  );
 
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
@@ -488,7 +466,9 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
+    compileArtifacts: readYaml<CompositeAction>(
+      ".github/actions/ci-compile-artifacts/action.yaml",
+    ),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -513,7 +493,10 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
+      string,
+      string[]
+    >;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(
@@ -530,7 +513,9 @@ describe("pull request and main workflow contracts", () => {
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(requiredWorkflowStep(job, "Install dependencies").run).toBe("npm ci --ignore-scripts");
+    expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
+      "npm ci --ignore-scripts",
+    );
     expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
       "npm run catalog:verify-hugging-face",
     );
@@ -604,27 +589,24 @@ describe("pull request and main workflow contracts", () => {
     expect(locate.env?.HEAD_REPOSITORY).toBe(
       "${{ github.event.pull_request.head.repo.full_name }}",
     );
-    expect(locate.run).toContain("scripts/checks/locate-openshell-sdk-package-for-pr.sh");
-    expect(locate.run).toContain(".trusted-sdk-package-decision");
-    const locatorSource = readFileSync(sdkPackageLocatorScript, "utf8");
-    expect(locatorSource).toContain(
+    expect(locate.run).toContain(
       "trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
     );
-    expect(locatorSource).toContain('if [ ! -f "$trusted_inspector" ]');
-    expect(locatorSource).toContain('if [ -f "$trusted_workflow" ]');
-    expect(locatorSource).toContain(
+    expect(locate.run).toContain('if [ ! -f "$trusted_inspector" ]');
+    expect(locate.run).toContain('if [ -f "$trusted_workflow" ]');
+    expect(locate.run).toContain(
       'all(type == "string" and startswith("https://registry.npmjs.org/"))',
     );
-    expect(locatorSource).toContain("requires two valid public-registry npm lockfiles");
-    expect(locatorSource).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
-    expect(locatorSource).toContain("for _attempt in $(seq 1 84)");
-    expect(locatorSource).toContain("sleep 5");
-    expect(locatorSource).toContain(".head.sha == $head and .base.sha == $base");
-    expect(locatorSource).toContain("required=false");
-    expect(locatorSource).toContain('[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]');
-    expect(locatorSource).toContain("available only to same-repository pull requests");
-    expect(locatorSource).not.toContain("@nvidia/openshell-sdk@0.0.106");
-    expect(locatorSource).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+    expect(locate.run).toContain("requires two valid public-registry npm lockfiles");
+    expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
+    expect(locate.run).toContain("for attempt in $(seq 1 84)");
+    expect(locate.run).toContain("sleep 5");
+    expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
+    expect(locate.run).toContain("required=false");
+    expect(locate.run).toContain('[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]');
+    expect(locate.run).toContain("available only to same-repository pull requests");
+    expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
+    expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
   });
 
   // The one-time bootstrap may proceed only while both lockfiles use the public registry.
@@ -643,7 +625,13 @@ describe("pull request and main workflow contracts", () => {
       writeFileSync(join(tempRoot, "package-lock.json"), lock);
       writeFileSync(join(tempRoot, "nemoclaw/package-lock.json"), lock);
       const outputPath = join(tempRoot, "github-output");
-      const result = runSdkPackageLocatorScript(
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
         {
           GITHUB_OUTPUT: outputPath,
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
@@ -680,7 +668,13 @@ describe("pull request and main workflow contracts", () => {
           },
         }),
       );
-      const result = runSdkPackageLocatorScript(
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
         {
           GITHUB_OUTPUT: join(tempRoot, "github-output"),
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
@@ -706,7 +700,13 @@ describe("pull request and main workflow contracts", () => {
         JSON.stringify({ lockfileVersion: 3, packages: {} }),
       );
       writeFileSync(join(tempRoot, "nemoclaw/package-lock.json"), "not JSON");
-      const result = runSdkPackageLocatorScript(
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
         {
           GITHUB_OUTPUT: join(tempRoot, "github-output"),
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
@@ -727,6 +727,10 @@ describe("pull request and main workflow contracts", () => {
     const { githubOutput, result } = runSdkPackageLocator({
       inspectorRequired: false,
       runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
     });
 
     expect(result).toMatchObject({ status: 0, stderr: "" });
@@ -737,6 +741,10 @@ describe("pull request and main workflow contracts", () => {
     const { githubOutput, result } = runSdkPackageLocator({
       inspectorRequired: "false",
       runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
     });
 
     expect(result.status).not.toBe(0);
@@ -750,6 +758,10 @@ describe("pull request and main workflow contracts", () => {
     const { githubOutput, result } = runSdkPackageLocator({
       inspectorOutput,
       runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
     });
 
     expect(result.status).not.toBe(0);
@@ -762,6 +774,10 @@ describe("pull request and main workflow contracts", () => {
         "321": { artifacts: [{ expired: true, name: "openshell-sdk-head-sha" }] },
       },
       runs: [sdkPackageWorkflowRun(321, "completed", "success", "2026-08-27T00:00:00Z")],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
     });
 
     expect(result.status).toBe(1);
@@ -783,6 +799,10 @@ describe("pull request and main workflow contracts", () => {
         sdkPackageWorkflowRun(321, "completed", "cancelled", "2026-08-27T01:00:00Z"),
         sdkPackageWorkflowRun(320, "completed", "success", "2026-08-27T00:00:00Z"),
       ],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
     });
 
     expect(result).toMatchObject({ status: 0, stderr: "" });
@@ -793,6 +813,10 @@ describe("pull request and main workflow contracts", () => {
     const { githubOutput, result } = runSdkPackageLocator({
       artifactFailureRunId: 321,
       runs: [sdkPackageWorkflowRun(321, "completed", "success", "2026-08-27T00:00:00Z")],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
     });
 
     expect(result.status).toBe(1);
@@ -808,6 +832,10 @@ describe("pull request and main workflow contracts", () => {
   it("explains how to retry an SDK workflow-run-listing failure", () => {
     const { githubOutput, result } = runSdkPackageLocator({
       runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
       workflowRunFailure: true,
     });
 
@@ -824,6 +852,10 @@ describe("pull request and main workflow contracts", () => {
   it("explains how to recover when the SDK package wait expires", () => {
     const { githubOutput, result } = runSdkPackageLocator({
       runs: [sdkPackageWorkflowRun(321, "in_progress", null, "2026-08-27T00:00:00Z")],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
     });
 
     expect(result.status).toBe(1);
@@ -914,151 +946,6 @@ describe("pull request and main workflow contracts", () => {
       "if-no-files-found": "error",
       "retention-days": 1,
     });
-
-    const qualificationPackageJob = managedRuntimeWorkflow.jobs["package-openshell-sdk"];
-    const candidateBuild = managedRuntimeWorkflow.jobs["build-candidate-cli"];
-    const candidateActivation = managedRuntimeWorkflow.jobs["trusted-candidate-activation"];
-    const baseActivation = managedRuntimeWorkflow.jobs["exact-base-activation"];
-    expect(qualificationPackageJob.permissions).toEqual({ actions: "read", contents: "read" });
-    expect(qualificationPackageJob["timeout-minutes"]).toBe(10);
-    expect(qualificationPackageJob.outputs).toEqual({
-      required: "${{ steps.package.outputs.required }}",
-    });
-    expect(candidateActivation.permissions).toEqual({ actions: "read", contents: "read" });
-    expect(candidateBuild.permissions).toEqual({ actions: "read", contents: "read" });
-    expect(baseActivation.permissions).toEqual({ actions: "read", contents: "read" });
-    expect(candidateActivation.needs).toEqual([
-      "authenticate-source",
-      "publish-candidate-images",
-      "package-openshell-sdk",
-      "build-candidate-cli",
-    ]);
-    expect(baseActivation.needs).toEqual(["authenticate-source", "package-openshell-sdk"]);
-
-    const qualificationCandidate = requiredWorkflowStep(
-      qualificationPackageJob,
-      "Check out candidate lockfiles as package inputs",
-    );
-    expect(qualificationCandidate.with).toMatchObject({
-      ref: "${{ needs.authenticate-source.outputs.candidate_sha }}",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    const qualificationBase = requiredWorkflowStep(
-      qualificationPackageJob,
-      "Check out exact base package decision",
-    );
-    expect(qualificationBase.with).toMatchObject({
-      ref: "${{ needs.authenticate-source.outputs.base_sha }}",
-      path: ".trusted-sdk-package-decision",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    const qualificationSelector = requiredWorkflowStep(
-      qualificationPackageJob,
-      "Check out trusted SDK producer selector",
-    );
-    expect(qualificationSelector.with).toMatchObject({
-      ref: "${{ github.workflow_sha }}",
-      path: ".trusted-sdk-package-selector",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    const qualificationLocate = requiredWorkflowStep(
-      qualificationPackageJob,
-      "Locate the authenticated OpenShell SDK producer",
-    );
-    expect(qualificationLocate.env).toEqual({
-      BASE_SHA: "${{ needs.authenticate-source.outputs.base_sha }}",
-      GH_TOKEN: "${{ github.token }}",
-      HEAD_REPOSITORY: "${{ github.repository }}",
-      HEAD_SHA: "${{ needs.authenticate-source.outputs.candidate_sha }}",
-      PR_NUMBER: "${{ needs.authenticate-source.outputs.pr_number }}",
-    });
-    expect(qualificationLocate.run).toBe(
-      "bash .trusted-sdk-package-selector/scripts/checks/locate-openshell-sdk-package-for-pr.sh",
-    );
-    expect(JSON.stringify(qualificationPackageJob)).not.toContain("NODE_AUTH_TOKEN");
-    expect(JSON.stringify(qualificationPackageJob)).not.toContain("package-openshell-sdk-for-pr");
-
-    const qualificationDownload = requiredWorkflowStep(
-      qualificationPackageJob,
-      "Download the authenticated OpenShell SDK archive",
-    );
-    expect(qualificationDownload.if).toBe("steps.package.outputs.required == 'true'");
-    expect(qualificationDownload.with).toMatchObject({
-      "github-token": "${{ github.token }}",
-      name: "openshell-sdk-${{ needs.authenticate-source.outputs.candidate_sha }}",
-      repository: "${{ github.repository }}",
-      "run-id": "${{ steps.package.outputs.run_id }}",
-    });
-
-    const qualificationUpload = requiredWorkflowStep(
-      qualificationPackageJob,
-      "Upload reviewed OpenShell SDK archive",
-    );
-    expect(qualificationUpload.with).toMatchObject({
-      name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
-      path: "${{ runner.temp }}/openshell-sdk/${{ steps.package.outputs.artifact_name }}",
-      "if-no-files-found": "error",
-      "retention-days": 1,
-    });
-    expect(qualificationUpload.if).toBe("steps.package.outputs.required == 'true'");
-
-    const candidateDownload = requiredWorkflowStep(
-      candidateActivation,
-      "Download reviewed OpenShell SDK archive",
-    );
-    expect(candidateDownload.uses).toBe(
-      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
-    );
-    expect(candidateDownload.if).toBe("needs.package-openshell-sdk.outputs.required == 'true'");
-    expect(candidateDownload.with).toEqual({
-      name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
-      path: "${{ runner.temp }}/openshell-sdk",
-    });
-    const baseDownload = requiredWorkflowStep(
-      baseActivation,
-      "Download reviewed OpenShell SDK archive",
-    );
-    expect(baseDownload).toEqual(candidateDownload);
-
-    const candidateInstall = requiredWorkflowStep(
-      candidateActivation,
-      "Install trusted controller and candidate dependencies without credentials",
-    );
-    expect(candidateInstall.env?.NODE_AUTH_TOKEN).toBeUndefined();
-    expect(candidateInstall.run).toContain("env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN");
-    expect(candidateInstall.run).toContain("ci-install-dependencies.sh");
-    expect(candidateInstall.run).not.toContain("github.token");
-    const candidateActivationDefinition = JSON.stringify(candidateActivation);
-    expect(candidateActivationDefinition).not.toContain("managed-runtime-candidate-catalog-");
-    expect(candidateActivationDefinition).toContain("managed-runtime-candidate-evidence-");
-    expect(candidateActivationDefinition).toContain("managed-runtime-candidate-receipt-");
-
-    const evidenceAuthentication = managedRuntimeWorkflow.jobs["authenticate-candidate-evidence"];
-    expect(evidenceAuthentication.if).toBe(
-      "always() && needs.authenticate-source.result == 'success'",
-    );
-    const evidenceFailure = requiredWorkflowStep(
-      evidenceAuthentication,
-      "Fail closed when candidate evidence cannot be authenticated",
-    );
-    expect(evidenceFailure.if).toBe("failure()");
-    expect(evidenceFailure.run).toContain("publish-status error");
-
-    const classification = managedRuntimeWorkflow.jobs.classify;
-    expect(classification.if).toBe("always() && needs.authenticate-source.result == 'success'");
-    const publishResult = requiredWorkflowStep(
-      classification,
-      "Publish qualification result on the candidate commit",
-    );
-    expect(publishResult.if).toBe("always()");
-    expect(publishResult.env?.QUALIFICATION_CANCELLED).toContain(
-      "needs.exact-base-activation.result == 'cancelled'",
-    );
-    expect(publishResult.run).toContain("publish-status cancelled");
-    expect(publishResult.run).toContain("publish-status result");
   });
 
   // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates

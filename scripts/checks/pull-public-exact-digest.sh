@@ -18,8 +18,8 @@ if [[ ! "$reference" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]; then
   echo "ERROR: public image reference must be an exact lowercase GHCR digest" >&2
   exit 2
 fi
-if [[ ! "$platform" =~ ^linux/(amd64|arm64)$ ]]; then
-  echo "ERROR: public image pull platform must be linux/amd64 or linux/arm64" >&2
+if [ "$platform" != "linux/amd64" ]; then
+  echo "ERROR: public image pull platform must be linux/amd64" >&2
   exit 2
 fi
 if [ -z "${RUNNER_TEMP:-}" ] || [ ! -d "$RUNNER_TEMP" ]; then

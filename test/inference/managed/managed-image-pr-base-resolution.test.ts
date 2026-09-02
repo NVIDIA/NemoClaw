@@ -81,7 +81,6 @@ exit 90
     GITHUB_STEP_SUMMARY: summary,
     LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-    PLATFORM: "linux/arm64",
     RUNNER_TEMP: temporaryRoot,
   };
 
@@ -97,7 +96,6 @@ exit 90
     );
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
     expect(dockerCommands).toContain("buildx build");
-    expect(dockerCommands).toContain("--platform linux/arm64");
     expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
     expect(dockerCommands).not.toContain("imagetools inspect");
     expect(fs.readFileSync(summary, "utf8")).toContain(

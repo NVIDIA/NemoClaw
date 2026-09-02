@@ -14,7 +14,6 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-  parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageAgent,
   type ManagedImageContractV1,
@@ -80,10 +79,7 @@ function contract(agent: ManagedImageAgent, index: number): ManagedImageContract
 
 function contractArchive(agent: ManagedImageAgent, index: number): Buffer {
   return artifactZip([
-    {
-      name: "contract.json",
-      contents: `${JSON.stringify(contract(agent, index))}\n`,
-    },
+    { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
   ]);
 }
 
@@ -177,7 +173,7 @@ function candidateRequest(options: {
     responses.set(`${runsPath}&page=${index + 1}`, page);
   }
   for (const [index, agent] of SHIPPED_MANAGED_IMAGE_AGENTS.entries()) {
-    const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}-amd64`;
+    const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}`;
     const archive = contractArchive(agent, index);
     const id = index + 100;
     responses.set(
@@ -225,9 +221,7 @@ function downloadContract(
   identity: { readonly name: string },
   cohort: ManagedImageContractV1["source"]["cohort"] = `ghrun-${RUN_ID}-1`,
 ): Promise<Buffer> {
-  const index = SHIPPED_MANAGED_IMAGE_AGENTS.findIndex((agent) =>
-    identity.name.endsWith(`${agent}-amd64`),
-  );
+  const index = SHIPPED_MANAGED_IMAGE_AGENTS.findIndex((agent) => identity.name.endsWith(agent));
   expect(index, "artifact identity must name one shipped agent").toBeGreaterThanOrEqual(0);
   const agent = SHIPPED_MANAGED_IMAGE_AGENTS[index]!;
   return Promise.resolve(
@@ -396,10 +390,7 @@ describe("exact PR managed-image publication", () => {
     await expect(
       resolvePrManagedImageCatalog(
         resolverInput(),
-        candidateRequest({
-          imageChanged: true,
-          run: workflowRun({ conclusion: "failure" }),
-        }),
+        candidateRequest({ imageChanged: true, run: workflowRun({ conclusion: "failure" }) }),
         download,
       ),
     ).rejects.toThrow("must complete successfully before live E2E");
@@ -513,10 +504,7 @@ describe("exact PR managed-image publication", () => {
     await expect(
       resolvePrManagedImageCatalog(
         resolverInput(),
-        candidateRequest({
-          imageChanged: true,
-          run: { total_count: 0, workflow_runs: [] },
-        }),
+        candidateRequest({ imageChanged: true, run: { total_count: 0, workflow_runs: [] } }),
         download,
       ),
     ).rejects.toThrow("missing or ambiguous");
@@ -529,10 +517,7 @@ describe("exact PR managed-image publication", () => {
     await expect(
       resolvePrManagedImageCatalog(
         resolverInput(),
-        candidateRequest({
-          artifactHeadSha: "f".repeat(40),
-          imageChanged: true,
-        }),
+        candidateRequest({ artifactHeadSha: "f".repeat(40), imageChanged: true }),
         download,
       ),
     ).rejects.toThrow("artifact producer head does not match");
@@ -560,14 +545,7 @@ describe("exact PR managed-image publication", () => {
     ],
     [
       "invalid type and mode",
-      [
-        {
-          mode: "040000",
-          path: "Dockerfile.base",
-          sha: "5".repeat(40),
-          type: "blob",
-        },
-      ],
+      [{ mode: "040000", path: "Dockerfile.base", sha: "5".repeat(40), type: "blob" }],
       "entry mode is invalid",
     ],
   ])("rejects candidate commit trees with %s", async (_label, tree, message) => {
@@ -594,45 +572,6 @@ describe("exact PR managed-image publication", () => {
         workflowId: WORKFLOW_ID,
       }),
     ).toThrow("does not match the PR number");
-  });
-
-  it("assembles every shipped agent contract for the exact candidate cohort", () => {
-    const assembled = assembleManagedImageCatalog(
-      SHIPPED_MANAGED_IMAGE_AGENTS.map(contract),
-      CANDIDATE_SHA,
-      `ghrun-${RUN_ID}-1`,
-    );
-
-    expect(Object.keys(assembled)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
-  });
-
-  it("assembles the independent native arm64 candidate catalog", () => {
-    const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => ({
-      ...contract(agent, index),
-      platform: "linux/arm64" as const,
-    }));
-    const assembled = assembleManagedImageCatalog(
-      contracts,
-      CANDIDATE_SHA,
-      `ghrun-${RUN_ID}-1`,
-      "linux/arm64",
-    );
-
-    expect(
-      Object.values(assembled).map(
-        (value) => parseManagedImageContractV1(value, undefined, "linux/arm64").platform,
-      ),
-    ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => "linux/arm64"));
-  });
-
-  it("rejects an incomplete all-agent candidate contract set", () => {
-    expect(() =>
-      assembleManagedImageCatalog(
-        SHIPPED_MANAGED_IMAGE_AGENTS.slice(1).map(contract),
-        CANDIDATE_SHA,
-        `ghrun-${RUN_ID}-1`,
-      ),
-    ).toThrow(`requires ${SHIPPED_MANAGED_IMAGE_AGENTS.length} contracts`);
   });
 
   it("rejects mixed candidate revisions in an all-agent catalog", () => {

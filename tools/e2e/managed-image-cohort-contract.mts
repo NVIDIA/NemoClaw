@@ -1,17 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-  MANAGED_IMAGE_CONTRACT_VERSION,
   MANAGED_IMAGE_REPOSITORIES,
-  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-  type ManagedImageContractCatalog,
   type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
@@ -24,7 +20,6 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 type JsonRecord = Record<string, unknown>;
 
 export interface ManagedImageCohortIdentity {
-  readonly catalog: ManagedImageContractCatalog;
   readonly cohort: string;
   readonly receipt: ManagedImageCohortReceipt;
   readonly revision: string;
@@ -208,14 +203,8 @@ function validatePlatformEvidence(
 /** Validate one complete published cohort against its selected workflow attempt. */
 export function validateManagedImageCohort(
   value: unknown,
-  expected: {
-    readonly revision: string;
-    readonly runAttempt: number;
-    readonly runId: number;
-  },
-  catalogPlatform: ManagedImagePlatform = "linux/amd64",
+  expected: { readonly revision: string; readonly runAttempt: number; readonly runId: number },
 ): ManagedImageCohortIdentity {
-  if (!PLATFORMS.includes(catalogPlatform)) throw new Error("catalog platform is invalid");
   if (!SHA_PATTERN.test(expected.revision)) throw new Error("expected cohort revision is invalid");
   positiveInteger(expected.runId, "expected cohort run id");
   positiveInteger(expected.runAttempt, "expected cohort run attempt");
@@ -228,13 +217,6 @@ export function validateManagedImageCohort(
   const source = record(cohort.source, "managed-image cohort source");
   exactString(source.repository, REPOSITORY, "managed-image cohort source repository");
   exactString(source.revision, expected.revision, "managed-image cohort source revision");
-  if (
-    source.release !== null &&
-    (typeof source.release !== "string" ||
-      !/^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u.test(source.release))
-  ) {
-    throw new Error("managed-image cohort source release is invalid");
-  }
   const run = record(cohort.run, "managed-image cohort run");
   if (run.id !== expected.runId || run.attempt !== expected.runAttempt) {
     throw new Error("managed-image cohort run does not match the selected publication");
@@ -305,33 +287,8 @@ export function validateManagedImageCohort(
     runId: expected.runId,
     images,
   };
-  const catalog = Object.fromEntries(
-    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => {
-      const reference = receipt.images[agent][catalogPlatform];
-      return [
-        agent,
-        {
-          contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
-          agent,
-          platform: catalogPlatform,
-          image: MANAGED_IMAGE_REPOSITORIES[agent],
-          digest: reference.slice(reference.indexOf("@") + 1),
-          reference,
-          source: {
-            repository: REPOSITORY,
-            revision: expected.revision,
-            release: source.release,
-            cohort: expectedCohort,
-          },
-          startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-          capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
-        },
-      ];
-    }),
-  ) as ManagedImageContractCatalog;
 
   return {
-    catalog,
     cohort: expectedCohort,
     receipt,
     revision: expected.revision,
@@ -345,16 +302,8 @@ function requiredInteger(value: string | undefined, label: string): number {
   return positiveInteger(Number(value), label);
 }
 
-function requestedCatalogPlatform(value: string | undefined): ManagedImagePlatform {
-  if (value === undefined) return "linux/amd64";
-  if (PLATFORMS.includes(value as ManagedImagePlatform)) return value as ManagedImagePlatform;
-  throw new Error("MANAGED_RUNTIME_PLATFORM is invalid");
-}
-
 export function main(argv = process.argv.slice(2), env = process.env): void {
-  if (argv.length < 1 || argv.length > 2) {
-    throw new Error("expected a managed-image cohort contract and optional catalog path");
-  }
+  if (argv.length !== 1) throw new Error("expected one managed-image cohort contract path");
   const identity = validateManagedImageCohort(
     JSON.parse(readFileSync(argv[0], "utf8")) as unknown,
     {
@@ -362,7 +311,6 @@ export function main(argv = process.argv.slice(2), env = process.env): void {
       runAttempt: requiredInteger(env.PUBLICATION_RUN_ATTEMPT, "PUBLICATION_RUN_ATTEMPT"),
       runId: requiredInteger(env.PUBLICATION_RUN_ID, "PUBLICATION_RUN_ID"),
     },
-    requestedCatalogPlatform(env.MANAGED_RUNTIME_PLATFORM),
   );
   if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
   appendFileSync(
@@ -370,14 +318,6 @@ export function main(argv = process.argv.slice(2), env = process.env): void {
     `cohort=${identity.cohort}\nreceipt=${JSON.stringify(identity.receipt)}\nrevision=${identity.revision}\nrun_attempt=${identity.runAttempt}\nrun_id=${identity.runId}\n`,
     "utf8",
   );
-  if (argv[1]) {
-    const catalogPath = path.resolve(argv[1]);
-    mkdirSync(path.dirname(catalogPath), { mode: 0o700, recursive: true });
-    writeFileSync(catalogPath, `${JSON.stringify(identity.catalog)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
-  }
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {

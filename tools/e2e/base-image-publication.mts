@@ -144,9 +144,7 @@ export function writePublicationRunOutputs(path: string, run: PublicationRun): v
 export interface GithubRequestOptions {
   authenticated?: boolean;
   additionalRepository?: string;
-  body?: unknown;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
-  method?: "GET" | "POST";
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
   attempts?: number;
@@ -815,14 +813,6 @@ export async function githubRequest(
   const attempts = options.attempts ?? REQUEST_ATTEMPTS;
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   const authenticated = options.authenticated ?? true;
-  const method = options.method ?? "GET";
-  if (method === "GET" && options.body !== undefined) {
-    throw new Error("GitHub GET requests must not contain a body");
-  }
-  if (method === "POST" && options.body === undefined) {
-    throw new Error("GitHub POST requests require a body");
-  }
-  const body = options.body === undefined ? undefined : JSON.stringify(options.body);
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > REQUEST_ATTEMPTS) {
     throw new Error(`request attempts must be between 1 and ${REQUEST_ATTEMPTS}`);
   }
@@ -834,15 +824,12 @@ export async function githubRequest(
     let response: Response;
     try {
       response = await fetchImpl(`${API_ROOT}${path}`, {
-        method,
         headers: {
           Accept: "application/vnd.github+json",
           ...(authenticated ? { Authorization: `Bearer ${token}` } : {}),
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           "User-Agent": "NemoClaw-base-image-publication-gate",
           "X-GitHub-Api-Version": "2022-11-28",
         },
-        ...(body === undefined ? {} : { body }),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {

@@ -371,9 +371,7 @@ describe("base-image publication evidence", () => {
   });
 
   it("restarts collection after a concurrent workflow-run count change", async () => {
-    const entries = Array.from({ length: 102 }, (_, index) => ({
-      id: index + 1,
-    }));
+    const entries = Array.from({ length: 102 }, (_, index) => ({ id: index + 1 }));
     const pages = [
       { total_count: 101, workflow_runs: entries.slice(0, 100) },
       { total_count: 102, workflow_runs: entries.slice(100) },
@@ -401,9 +399,7 @@ describe("base-image publication evidence", () => {
   });
 
   it("fails closed after three unstable pagination attempts", async () => {
-    const entries = Array.from({ length: 101 }, (_, index) => ({
-      id: index + 1,
-    }));
+    const entries = Array.from({ length: 101 }, (_, index) => ({ id: index + 1 }));
     let requests = 0;
 
     await expect(
@@ -539,9 +535,7 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toThrow(
-      /name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u,
-    );
+    ).toThrow(/name must be one of Images \/ Publish Base and Managed Images, Images \/ Base Images/u);
   });
 
   it("selects an in-progress trusted publication run (#9549)", () => {
@@ -753,10 +747,7 @@ describe("base-image publication evidence", () => {
   });
 
   it("accepts required publishers while managed-image jobs remain in progress (#9549)", async () => {
-    const inProgressRun = workflowRun({
-      status: "in_progress",
-      conclusion: null,
-    });
+    const inProgressRun = workflowRun({ status: "in_progress", conclusion: null });
     const jobs = [
       ...successfulJobs(),
       publisherJob("Build and validate OpenClaw managed image (amd64)", {
@@ -788,10 +779,7 @@ describe("base-image publication evidence", () => {
   });
 
   it("waits for managed-image publication when downstream E2E requires it", async () => {
-    const inProgressRun = workflowRun({
-      status: "in_progress",
-      conclusion: null,
-    });
+    const inProgressRun = workflowRun({ status: "in_progress", conclusion: null });
     const responses = [
       workflowMetadata(),
       runsPayload([inProgressRun]),
@@ -1000,30 +988,6 @@ describe("base-image publication evidence", () => {
       }),
     ).resolves.toEqual({ ok: true });
     expect(authorization).toBeNull();
-  });
-
-  it("sends authenticated JSON POST requests through the bounded GitHub client", async () => {
-    let observed: { input: string; init: RequestInit } | undefined;
-    await expect(
-      githubRequest(`/repos/NVIDIA/NemoClaw/statuses/${RELEVANT_SHA}`, "status-token", {
-        attempts: 1,
-        body: { state: "pending" },
-        method: "POST",
-        timeoutMs: 1234,
-        fetchImpl: async (input, init) => {
-          observed = { input, init };
-          return new Response(JSON.stringify({ id: 1 }), { status: 201 });
-        },
-      }),
-    ).resolves.toEqual({ id: 1 });
-    expect(observed?.input).toBe(
-      `https://api.github.com/repos/NVIDIA/NemoClaw/statuses/${RELEVANT_SHA}`,
-    );
-    expect(observed?.init.method).toBe("POST");
-    expect(observed?.init.body).toBe(JSON.stringify({ state: "pending" }));
-    expect(new Headers(observed?.init.headers).get("authorization")).toBe("Bearer status-token");
-    expect(new Headers(observed?.init.headers).get("content-type")).toBe("application/json");
-    expect(observed?.init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("loads directly with the Node strip-types runtime used by Actions (#7372)", () => {

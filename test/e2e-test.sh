@@ -148,33 +148,13 @@ info "4b. Verify blueprint runner apply smoke test"
 # return the same metadata + YAML shape as OpenShell 0.0.72; an empty successful
 # response is intentionally rejected by the runner.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
-APPLY_BLUEPRINT_DIR=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
 APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
 cleanup_apply_fixture() {
   rm -rf "$FAKE_OPENSHELL_BIN"
-  rm -rf "$APPLY_BLUEPRINT_DIR"
   rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
 }
 trap cleanup_apply_fixture EXIT
-# The shipped blueprint leaves inference egress to provider-managed policy.
-# Add a safe public fixture entry so this smoke test still covers policy mutation.
-cp -a /opt/nemoclaw-blueprint/. "$APPLY_BLUEPRINT_DIR/"
-APPLY_BLUEPRINT_PATH="$APPLY_BLUEPRINT_DIR/blueprint.yaml" node --input-type=module <<'JS'
-import { createRequire } from "node:module";
-import { readFileSync, writeFileSync } from "node:fs";
-
-const require = createRequire("/opt/nemoclaw/");
-const YAML = require("yaml");
-const blueprint = YAML.parse(readFileSync(process.env.APPLY_BLUEPRINT_PATH, "utf8"));
-blueprint.components.policy.additions = {
-  e2e_public_service: {
-    name: "e2e_public_service",
-    endpoints: [{ host: "93.184.216.34", port: 443, access: "full" }],
-  },
-};
-writeFileSync(process.env.APPLY_BLUEPRINT_PATH, YAML.stringify(blueprint));
-JS
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -238,12 +218,8 @@ case "$*" in
       echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
       exit 64
     fi
-    policy_file=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
-    if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
-      policy_file="${BASH_SOURCE[0]%/*}/effective-policy.yaml"
-    fi
     printf '%s\n' 'Policy for sandbox fixture' '---'
-    cat "$policy_file"
+    cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
     ;;
   "policy get "*)
     echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
@@ -253,7 +229,7 @@ esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
 PATH="$FAKE_OPENSHELL_BIN:$PATH" \
-  NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_DIR" \
+  NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint \
   OPENSHELL_SANDBOX_POLICY=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml \
   node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
