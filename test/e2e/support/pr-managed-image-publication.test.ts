@@ -14,6 +14,7 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageAgent,
   type ManagedImageContractV1,
@@ -617,9 +618,11 @@ describe("exact PR managed-image publication", () => {
       "linux/arm64",
     );
 
-    expect(Object.values(assembled).map(({ platform }) => platform)).toEqual(
-      SHIPPED_MANAGED_IMAGE_AGENTS.map(() => "linux/arm64"),
-    );
+    expect(
+      Object.values(assembled).map(
+        (value) => parseManagedImageContractV1(value, undefined, "linux/arm64").platform,
+      ),
+    ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => "linux/arm64"));
   });
 
   it("rejects an incomplete all-agent candidate contract set", () => {
