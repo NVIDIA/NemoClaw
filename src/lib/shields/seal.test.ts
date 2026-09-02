@@ -183,20 +183,6 @@ describe("buildConfigHashRepairCommand", () => {
     }
   });
 
-  it("runs the repair helper under an isolated interpreter", async () => {
-    const { buildConfigHashRepairCommand, CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT } = await loadSeal();
-    expect(
-      buildConfigHashRepairCommand("/sandbox/.deepagents", "/sandbox/.deepagents/config.toml"),
-    ).toEqual([
-      "python3",
-      "-I",
-      "-c",
-      CONFIG_HASH_REPAIR_NOFOLLOW_SCRIPT,
-      "/sandbox/.deepagents",
-      "/sandbox/.deepagents/config.toml",
-    ]);
-  });
-
   it("writes a read-only record for a config directory that has none", async () => {
     const configDir = makeConfigDir();
 
@@ -205,6 +191,21 @@ describe("buildConfigHashRepairCommand", () => {
     const record = hashRecordPath(configDir);
     expect(fs.readFileSync(record, "utf-8")).toBe(EXPECTED_RECORD);
     expect(fs.statSync(record).mode & 0o777).toBe(0o444);
+  });
+
+  it("restores directory metadata when the config file is missing (#10752)", async () => {
+    const configDir = makeConfigDir();
+    const parentDir = path.dirname(configDir);
+    fs.unlinkSync(path.join(configDir, "config.toml"));
+    fs.chmodSync(parentDir, 0o751);
+    fs.chmodSync(configDir, 0o2770);
+
+    const outcome = await runRepair(configDir);
+
+    expect(outcome.status).toBe(1);
+    expect(fs.statSync(parentDir).mode & 0o7777).toBe(0o751);
+    expect(fs.statSync(configDir).mode & 0o7777).toBe(0o2770);
+    expect(fs.existsSync(hashRecordPath(configDir))).toBe(false);
   });
 
   it("pins and publishes the managed sandbox parent around repair", async () => {
@@ -986,89 +987,5 @@ os.unlink = failed_unlink
       fs.chmodSync(configDir, 0o700);
       fs.chmodSync(parentDir, 0o700);
     }
-  });
-});
-
-describe("buildDeepAgentsShieldsDownHashMintGateCommand", () => {
-  afterEach(() => {
-    while (fixtures.length > 0) {
-      fs.rmSync(fixtures.pop() as string, { recursive: true, force: true });
-    }
-  });
-
-  it("runs the mint gate under an isolated interpreter", async () => {
-    const {
-      buildDeepAgentsShieldsDownHashMintGateCommand,
-      DEEP_AGENTS_SHIELDS_DOWN_HASH_MINT_GATE_SCRIPT,
-    } = await loadSeal();
-    expect(
-      buildDeepAgentsShieldsDownHashMintGateCommand(
-        "/sandbox/.deepagents",
-        "/sandbox/.deepagents/config.toml",
-      ),
-    ).toEqual([
-      "python3",
-      "-I",
-      "-c",
-      DEEP_AGENTS_SHIELDS_DOWN_HASH_MINT_GATE_SCRIPT,
-      "/sandbox/.deepagents",
-      "/sandbox/.deepagents/config.toml",
-    ]);
-  });
-
-  it("asks to mint when the hash is absent and config.toml is a regular file (#10752)", async () => {
-    const configDir = makeConfigDir();
-    const { buildDeepAgentsShieldsDownHashMintGateCommand } = await loadSeal();
-    const [binary, ...args] = buildDeepAgentsShieldsDownHashMintGateCommand(
-      configDir,
-      path.join(configDir, "config.toml"),
-    );
-    const result = spawnSync(binary, args, { encoding: "utf-8" });
-    ifError(result.error);
-    expect(result).toMatchObject({ status: 0, stdout: "mint\n", stderr: "" });
-    expect(fs.existsSync(hashRecordPath(configDir))).toBe(false);
-  });
-
-  it("skips mint when a hash record already exists (#10752)", async () => {
-    const configDir = makeConfigDir();
-    fs.writeFileSync(hashRecordPath(configDir), "existing\n", { mode: 0o444 });
-    const { buildDeepAgentsShieldsDownHashMintGateCommand } = await loadSeal();
-    const [binary, ...args] = buildDeepAgentsShieldsDownHashMintGateCommand(
-      configDir,
-      path.join(configDir, "config.toml"),
-    );
-    const result = spawnSync(binary, args, { encoding: "utf-8" });
-    ifError(result.error);
-    expect(result).toMatchObject({ status: 0, stdout: "skip\n", stderr: "" });
-    expect(fs.readFileSync(hashRecordPath(configDir), "utf-8")).toBe("existing\n");
-  });
-
-  it("skips mint when config.toml is missing (#10752)", async () => {
-    const configDir = makeConfigDir();
-    fs.unlinkSync(path.join(configDir, "config.toml"));
-    const { buildDeepAgentsShieldsDownHashMintGateCommand } = await loadSeal();
-    const [binary, ...args] = buildDeepAgentsShieldsDownHashMintGateCommand(
-      configDir,
-      path.join(configDir, "config.toml"),
-    );
-    const result = spawnSync(binary, args, { encoding: "utf-8" });
-    ifError(result.error);
-    expect(result).toMatchObject({ status: 0, stdout: "skip\n", stderr: "" });
-  });
-
-  it("skips mint when the hash path is a symlink (#10752)", async () => {
-    const configDir = makeConfigDir();
-    const outside = path.join(path.dirname(configDir), "outside");
-    fs.writeFileSync(outside, "untouched\n");
-    fs.symlinkSync(outside, hashRecordPath(configDir));
-    const { buildDeepAgentsShieldsDownHashMintGateCommand } = await loadSeal();
-    const [binary, ...args] = buildDeepAgentsShieldsDownHashMintGateCommand(
-      configDir,
-      path.join(configDir, "config.toml"),
-    );
-    const result = spawnSync(binary, args, { encoding: "utf-8" });
-    ifError(result.error);
-    expect(result).toMatchObject({ status: 0, stdout: "skip\n", stderr: "" });
-    expect(fs.readFileSync(outside, "utf-8")).toBe("untouched\n");
   });
 });

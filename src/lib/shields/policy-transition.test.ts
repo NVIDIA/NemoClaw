@@ -168,6 +168,77 @@ describe("shields down policy rejection", () => {
     });
   }
 
+  it("repairs a missing Deep Agents config hash immediately before unlock (#10752)", () => {
+    const configDir = "/sandbox/.deepagents";
+    const configPath = `${configDir}/config.toml`;
+    const hashPath = `${configDir}/.config-hash`;
+    const events: string[] = [];
+    const agent = "langchain-deepagents-code";
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      sandboxName: "dcode-safety",
+      sandboxEntry: { name: "dcode-safety", agent, openshellDriver: "docker" },
+      agentConfigTarget: {
+        agentName: agent,
+        configDir,
+        configFile: "config.toml",
+        configPath,
+        format: "toml",
+        sensitiveFiles: [hashPath],
+        stateLockPlan: {
+          version: 1,
+          readOnlyRoots: ["skills"],
+          confidentialRoots: [],
+          readOnlyPrefixes: [],
+          confidentialPrefixes: [],
+          writableSubpaths: [],
+        },
+        stateLockPlanInImage: false,
+      },
+      dockerExecFileSync: (argv) => {
+        const args = Array.isArray(argv) ? argv.map(String) : [];
+        const command = args.slice(4);
+        return new Map<boolean, () => string>([
+          [true, () => ""],
+          [
+            command[0] === "lsattr",
+            () => `-------------- ${String(command.at(-1))}`,
+          ],
+          [command[0] === "sha256sum", () => `${"a".repeat(64)}  ${configPath}`],
+          [
+            command[0] === "stat",
+            () =>
+              new Map<string, string>([
+                ["/sandbox", "755 sandbox:sandbox"],
+                [configDir, "2770 sandbox:sandbox"],
+              ]).get(String(command.at(-1))) ?? "660 sandbox:sandbox",
+          ],
+          [
+            command[0] === "python3" && command[4] === "660",
+            () => {
+              events.push("unlock-config");
+              return "";
+            },
+          ],
+          [
+            command.length === 6 &&
+              command[0] === "python3" &&
+              command.at(-2) === configDir &&
+              command.at(-1) === configPath,
+            () => {
+              events.push("repair-config-hash");
+              return "";
+            },
+          ],
+        ]).get(true)!();
+      },
+    });
+
+    harness.shieldsDown("dcode-safety", { throwOnError: true });
+
+    expect(events).toEqual(["repair-config-hash", "unlock-config"]);
+    expect(harness.isShieldsDown("dcode-safety")).toBe(true);
+  });
+
   it("pins Shields policy inspection, reads, and writes to the recorded gateway (#9833)", () => {
     const gatewayName = "nemoclaw-18080";
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
@@ -362,6 +433,7 @@ describe("shields config lock without a shipped config hash", () => {
   const CONFIG_PATH = `${CONFIG_DIR}/config.toml`;
   const HASH_PATH = `${CONFIG_DIR}/.config-hash`;
   const LOCK_COMMAND_KEY = [CONFIG_DIR, CONFIG_PATH].join("\0");
+  const PREFLIGHT_COMMAND_KEY = [CONFIG_DIR, HASH_PATH, CONFIG_PATH, HASH_PATH].join("\0");
 
   type SandboxEntry = { mode: string; owner: string };
   type SandboxCommandHandler = (args: string[], command: string[]) => string;
@@ -436,15 +508,11 @@ describe("shields config lock without a shipped config hash", () => {
     return "";
   }
 
-  function runConfigHashRepair(_command: string[]): string {
-    entries.set("/sandbox", { mode: "1775", owner: "root:sandbox" });
-    entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
-    entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
-    return "hash-created";
-  }
-
   function runConfigPreflight(command: string[]): string {
-    const missing = command.slice(5).find((pathname) => !entries.has(pathname));
+    const allowedMissingPath = command[5];
+    const missing = command
+      .slice(6)
+      .find((pathname) => pathname !== allowedMissingPath && !entries.has(pathname));
     return new Map<boolean, () => string>([
       [
         true,
@@ -459,16 +527,6 @@ describe("shields config lock without a shipped config hash", () => {
     ]).get(missing !== undefined)!();
   }
 
-  function runShieldsDownHashMintGate(command: string[]): string {
-    const configDir = String(command[4] ?? "");
-    const configPath = String(command[5] ?? "");
-    const hashPath = `${configDir.replace(/\/+$/, "")}/.config-hash`;
-    return new Map<boolean, () => string>([
-      [true, () => "mint\n"],
-      [false, () => "skip\n"],
-    ]).get(!entries.has(hashPath) && entries.has(configPath))!();
-  }
-
   const exactPythonFixtureHandlers = new Map<string, (command: string[]) => string>([
     [LOCK_COMMAND_KEY, runConfigLock],
   ]);
@@ -477,12 +535,9 @@ describe("shields config lock without a shipped config hash", () => {
   ]);
 
   function runPythonFixtureCommand(_args: string[], command: string[]): string {
-    const body = String(command[3] ?? "");
-    const classifiedHandler = new Map([
-      [body.includes("missing config path:"), runConfigPreflight],
-      [body.includes("config hash changed during repair"), runConfigHashRepair],
-      [body.includes("unsupported shields-down hash mint gate arguments"), runShieldsDownHashMintGate],
-    ]).get(true);
+    const classifiedHandler = new Map<string, (command: string[]) => string>([
+      [PREFLIGHT_COMMAND_KEY, runConfigPreflight],
+    ]).get(command.slice(4).join("\0"));
     const handler =
       classifiedHandler ??
       exactPythonFixtureHandlers.get(pythonCommandKey(command)) ??
@@ -843,8 +898,10 @@ describe("shields config lock without a shipped config hash", () => {
     expect(entries.get(CONFIG_DIR)).toEqual({ mode: "2770", owner: "sandbox:sandbox" });
   });
 
-  it("mints an absent Deep Agents config hash before shields-down preflight (#10752)", () => {
+  it("does not repair an absent Deep Agents config hash when policy capture fails (#10752)", () => {
     expect(entries.has(HASH_PATH)).toBe(false);
+    const initialParent = entries.get("/sandbox");
+    const initialConfigDir = entries.get(CONFIG_DIR);
 
     let caught: unknown;
     try {
@@ -857,12 +914,14 @@ describe("shields config lock without a shipped config hash", () => {
       caught = error;
     }
 
-    expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "root:root" });
+    expect(entries.has(HASH_PATH)).toBe(false);
+    expect(entries.get("/sandbox")).toEqual(initialParent);
+    expect(entries.get(CONFIG_DIR)).toEqual(initialConfigDir);
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toBe("Cannot capture current policy");
   });
 
-  it("does not repair a present Deep Agents config hash before shields-down preflight (#10752)", () => {
+  it("does not repair a present Deep Agents config hash when policy capture fails (#10752)", () => {
     entries.set("/sandbox", { mode: "755", owner: "sandbox:sandbox" });
     entries.set(CONFIG_DIR, { mode: "2770", owner: "sandbox:sandbox" });
     entries.set(HASH_PATH, { mode: "444", owner: "sandbox:sandbox" });
@@ -904,33 +963,6 @@ describe("shields config lock without a shipped config hash", () => {
     expect((caught as Error).message).toBe(`missing config path: ${CONFIG_PATH}`);
   });
 
-  it("propagates unexpected Deep Agents hash mint gate failures (#10752)", () => {
-    const originalPython = commandHandlers.get("python3") ?? unsupportedCommand;
-    commandHandlers.set("python3", (args, command) => {
-      const body = String(command[3] ?? "");
-      const unexpectedGate = new Map<boolean, () => string>([
-        [
-          true,
-          () => {
-            throw sandboxCommandFailure(
-              "python interpreter aborted\n",
-              "python interpreter aborted",
-            );
-          },
-        ],
-      ]).get(body.includes("unsupported shields-down hash mint gate arguments"));
-      return (unexpectedGate ?? (() => originalPython(args, command)))();
-    });
-
-    expect(() =>
-      shields.shieldsDown("dcode-safety", {
-        timeout: "15m",
-        reason: "provider continuity verification",
-        throwOnError: true,
-      }),
-    ).toThrow("python interpreter aborted");
-    expect(entries.has(HASH_PATH)).toBe(false);
-  });
 });
 
 function removeWithInjectedStateRestoreFailure(

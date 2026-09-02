@@ -110,7 +110,6 @@ const {
 const {
   buildConfigHashRepairCommand,
   buildDeepAgentsConfigLockCommand,
-  buildDeepAgentsShieldsDownHashMintGateCommand,
   DEEP_AGENTS_CONFIG_LOCK_ERROR_PROTOCOL_PREFIX,
   parseSha256Output,
   isHashVerificationIssue,
@@ -915,7 +914,7 @@ def open_flags(want_dir):
         flags |= getattr(os, "O_NONBLOCK", 0)
     return flags
 
-def open_nofollow(path, want_dir, dir_fd=None):
+def open_nofollow(path, want_dir, dir_fd=None, allow_missing=False):
     try:
         if dir_fd is None:
             return os.open(path, open_flags(want_dir))
@@ -924,6 +923,8 @@ def open_nofollow(path, want_dir, dir_fd=None):
         label = path if dir_fd is None else "%s/%s" % (sys.argv[1].rstrip("/"), path)
         if exc.errno in (errno.ELOOP, getattr(errno, "ENOTDIR", errno.EINVAL)):
             die("refusing symlink path: " + label)
+        if exc.errno == errno.ENOENT and allow_missing:
+            return None
         if exc.errno == errno.ENOENT:
             die("missing config path: " + label)
         die("open failed for %s: %s" % (label, exc))
@@ -938,7 +939,8 @@ def child_name(config_dir, path):
     return name
 
 config_dir = sys.argv[1]
-files = sys.argv[2:]
+allowed_missing_path = sys.argv[2]
+files = sys.argv[3:]
 dir_fd = open_nofollow(config_dir, True)
 try:
     mode = os.fstat(dir_fd).st_mode
@@ -946,7 +948,9 @@ try:
         die("refusing non-directory config path: " + config_dir)
     for path in files:
         name = child_name(config_dir, path)
-        fd = open_nofollow(name, False, dir_fd=dir_fd)
+        fd = open_nofollow(name, False, dir_fd=dir_fd, allow_missing=path == allowed_missing_path)
+        if fd is None:
+            continue
         try:
             mode = os.fstat(fd).st_mode
             if not stat.S_ISREG(mode):
@@ -978,20 +982,11 @@ function isUnsafeShieldsConfigPathError(error: unknown): boolean {
   );
 }
 
-function isDeepAgentsConfigHashMintDeferredToPreflightError(error: unknown): boolean {
-  const message = errorText(error);
-  return (
-    isUnsafeShieldsConfigPathError(error) ||
-    /not a regular file:/i.test(message) ||
-    /not a directory:/i.test(message) ||
-    /refusing multiply linked file:/i.test(message) ||
-    /refusing (?:invalid config path|config path outside config dir)/i.test(message) ||
-    /open failed for /i.test(message)
-  );
-}
-
 function assertShieldsDownConfigPathsSafe(sandboxName: string, target: AgentConfigTarget): void {
   const files = [target.configPath, ...(target.sensitiveFiles || [])];
+  const allowedMissingPath = isCanonicalDeepAgentsTarget(target)
+    ? DEEP_AGENTS_CONFIG_HASH_PATH
+    : "";
   try {
     privilegedSandboxExecCapture(sandboxName, [
       "python3",
@@ -999,6 +994,7 @@ function assertShieldsDownConfigPathsSafe(sandboxName: string, target: AgentConf
       "-c",
       SHIELDS_DOWN_CONFIG_PATH_PREFLIGHT_SCRIPT,
       target.configDir,
+      allowedMissingPath,
       ...files,
     ]);
   } catch (error) {
@@ -3125,24 +3121,6 @@ function writeAbsentConfigHashNoSymlinkFollow(
     sandboxName,
     buildConfigHashRepairCommand(target.configDir, target.configPath),
   );
-}
-
-function mintAbsentDeepAgentsConfigHashBeforeShieldsDownPreflight(
-  sandboxName: string,
-  target: AgentConfigTarget,
-): void {
-  if (!isDeepAgentsTarget(target) || !isCanonicalDeepAgentsTarget(target)) return;
-  try {
-    const decision = privilegedSandboxExecCapture(
-      sandboxName,
-      buildDeepAgentsShieldsDownHashMintGateCommand(target.configDir, target.configPath),
-    ).trim();
-    if (decision !== "mint") return;
-    writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
-  } catch (error) {
-    if (isDeepAgentsConfigHashMintDeferredToPreflightError(error)) return;
-    throw error;
-  }
 }
 
 type DeepAgentsConfigLockFailureStatus =
@@ -5328,13 +5306,10 @@ function shieldsDownWithoutHostLock(
     ? "provider-state-mutation-v2"
     : requireHermesShieldsProtocol(sandboxName, target, opts.allowLegacyHermesProtocol === true);
 
-  // Deep Agents Code may omit a reconstructable `.config-hash` after onboard,
-  // `mcp restart`, or image rebuild. Lock already mints that record. Mint only
-  // the canonical dcode pair, and only when a nofollow gate sees an absent hash
-  // plus a regular `config.toml`. Skip non-canonical descriptors and leave
-  // missing or unsafe paths to preflight. Do not re-run lock-oriented
-  // parent/dir repair while status is still UP (#10752).
-  mintAbsentDeepAgentsConfigHashBeforeShieldsDownPreflight(sandboxName, target);
+  // Deep Agents Code may omit `/sandbox/.deepagents/.config-hash` after
+  // onboarding, `mcp restart`, or an image rebuild. Preflight permits only
+  // that exact absent path; it still rejects an unsafe existing hash or
+  // `/sandbox/.deepagents/config.toml` before any Shields mutation (#10752).
   // Refuse an unsafe config path before timer, host state, or policy mutation.
   // Otherwise unlock rejects the path after the provisional DOWN/permissive
   // record is already live, and status integrity fails when re-lock cannot
@@ -5632,6 +5607,12 @@ function shieldsDownWithoutHostLock(
     verifyAppliedPolicyDocument(sandboxName, appliedPolicyDocument, policyContext);
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+    }
+    if (isCanonicalDeepAgentsTarget(target)) {
+      // Reuse the existing no-follow repair only after the policy and recovery
+      // authority are committed. A later unlock failure uses the ordinary
+      // Shields rollback path to restore lockdown.
+      writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
     }
     if (
       target.agentName === "hermes" &&
