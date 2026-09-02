@@ -320,7 +320,7 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(255);
   });
 
-  it("prints the terminal launch command in the connect hint for terminal agents", async () => {
+  it("prints a credential-safe connect hint for terminal agents", async () => {
     const harness = createConnectHarness({
       agentName: "langchain-deepagents-code",
       sessionAgent: {
@@ -332,8 +332,9 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("Inside the sandbox, run `dcode`");
-    expect(output).not.toContain("Inside the sandbox, run `langchain-deepagents-code`");
+    expect(output).toContain("Inside the sandbox, run the configured command to start chatting.");
+    expect(output).not.toContain("dcode");
+    expect(output).not.toContain("langchain-deepagents-code");
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 

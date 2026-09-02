@@ -107,16 +107,16 @@ function makeRunCaptureOpenshell(openshell: string): ForwardListRunner {
   };
 }
 
-export function stopAgentForwardPortsForStop(
+function stopAndConfirmAgentForwardPorts(
   sandboxName: string | undefined,
   deps: StopAgentForwardPortsDeps = {},
-): void {
-  if (!sandboxName) return;
+): boolean {
+  if (!sandboxName) return false;
 
   const warn = deps.warn ?? (() => {});
   if (!SAFE_SANDBOX_NAME_RE.test(sandboxName) || sandboxName.includes("..")) {
     warn(`Invalid sandbox name: ${JSON.stringify(sandboxName)} - skipping host forward cleanup.`);
-    return;
+    return false;
   }
 
   const info = deps.info ?? (() => {});
@@ -130,13 +130,13 @@ export function stopAgentForwardPortsForStop(
         `${error instanceof Error ? error.message : String(error)}. ` +
         "Skipping agent host port forward cleanup.",
     );
-    return;
+    return false;
   }
   if (!sandbox) {
     warn(
       `Could not resolve sandbox '${sandboxName}' - cannot safely stop agent host port forwards.`,
     );
-    return;
+    return false;
   }
 
   const getRegisteredAgent = deps.getRegisteredAgent ?? agentRuntime.getRegisteredAgent;
@@ -146,9 +146,9 @@ export function stopAgentForwardPortsForStop(
       `Could not resolve registered agent '${sandbox.agent}' for sandbox '${sandboxName}'; ` +
         "skipping agent host port forward cleanup.",
     );
-    return;
+    return false;
   }
-  if (!agent) return;
+  if (!agent) return true;
 
   const displayName = deps.getAgentDisplayName
     ? deps.getAgentDisplayName(agent)
@@ -164,16 +164,16 @@ export function stopAgentForwardPortsForStop(
         `${(error as Error).message ?? String(error)}. ` +
         `Skipping ${displayName} host port forward cleanup.`,
     );
-    return;
+    return false;
   }
 
   const ports = getAgentForwardPorts(agent, sandbox.dashboardPort);
-  if (ports.length === 0) return;
+  if (ports.length === 0) return true;
 
   const openshell = (deps.resolveOpenshell ?? resolveOpenshell)();
   if (!openshell) {
     warn(`openshell not found - cannot stop ${displayName} host port forwards.`);
-    return;
+    return false;
   }
 
   const runOpenshell = deps.runOpenshell ?? makeRunOpenshell(openshell);
@@ -184,6 +184,7 @@ export function stopAgentForwardPortsForStop(
     runCaptureOpenshell([...args, "--gateway", gatewayName], opts);
   const confirmPortReleased = deps.confirmPortReleased ?? confirmForwardPortReleased;
 
+  let released = true;
   for (const port of ports) {
     const result = bestEffortForwardStopForSandbox(
       scopedRunOpenshell,
@@ -195,6 +196,7 @@ export function stopAgentForwardPortsForStop(
       warn(
         `Keeping ${displayName} host port forward ${String(port)}; it belongs to another sandbox.`,
       );
+      released = false;
       continue;
     }
     if (result === "list-failed") {
@@ -203,6 +205,7 @@ export function stopAgentForwardPortsForStop(
           port,
         )} cleanup.`,
       );
+      released = false;
       continue;
     }
 
@@ -212,10 +215,26 @@ export function stopAgentForwardPortsForStop(
           `within ${String(FORWARD_RELEASE_TIMEOUT_MS / 1000)} seconds; ` +
           "the listener may still be running.",
       );
+      released = false;
     } else if (result === "stopped") {
       info(
         `Stopped ${displayName} host port forward ${String(port)} for sandbox '${sandboxName}'.`,
       );
     }
   }
+  return released;
+}
+
+export function stopAgentForwardPortsForStop(
+  sandboxName: string | undefined,
+  deps: StopAgentForwardPortsDeps = {},
+): void {
+  stopAndConfirmAgentForwardPorts(sandboxName, deps);
+}
+
+export function settleAgentForwardPortsForRebuild(
+  sandboxName: string | undefined,
+  deps: StopAgentForwardPortsDeps = {},
+): boolean {
+  return stopAndConfirmAgentForwardPorts(sandboxName, deps);
 }

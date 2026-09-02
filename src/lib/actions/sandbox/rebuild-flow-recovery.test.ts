@@ -449,7 +449,7 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Prepared backup recovery");
 
     expect(harness.errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
+      expect.stringContaining("MCP bridge restore incomplete; inspect redacted diagnostics"),
     );
     expect(harness.relockSpy).toHaveBeenCalled();
   });
@@ -616,7 +616,7 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
     expect(output).not.toContain("rebuilt successfully");
     expect(harness.errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
+      expect.stringContaining("MCP bridge restore incomplete; inspect redacted diagnostics"),
     );
   });
 });

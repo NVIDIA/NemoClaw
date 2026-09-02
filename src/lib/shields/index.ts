@@ -30,12 +30,9 @@ const YAML: typeof import("yaml") = require("yaml");
 const { CLI_NAME }: typeof import("../cli/branding") = require("../cli/branding");
 const { isObjectRecord }: typeof import("../core/json-types") = require("../core/json-types");
 const {
-  dockerExecFileSync,
-  dockerSpawnSync,
-}: typeof import("../adapters/docker/exec") = require("../adapters/docker/exec");
-const {
+  capturePrivilegedSandboxCommand,
+  executePrivilegedSandboxCommand,
   isDirectSandboxFallbackUnavailableError,
-  privilegedSandboxExecArgv,
   withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
@@ -121,6 +118,7 @@ const {
   restoreStateDirLockPosture,
   restoreStateDirStartupAccess,
   stateLockPlanCompatibilityIssues,
+  verifyLockedStateDirPosture,
   verifyStateDirMutablePosture,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
 const {
@@ -140,6 +138,7 @@ const {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
   hermesRuntimeProviderPhaseBlocksMutation,
   hasActiveHermesRuntimeProviderStateMutation,
+  hasHermesRuntimeProviderStateMutationAuthority,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
 }: typeof import("./hermes-runtime-state-mutation") = require("./hermes-runtime-state-mutation");
@@ -875,8 +874,8 @@ function openClawRollbackIssue(prefix: string, error: unknown): OpenClawRollback
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 15000): void {
   withPrivilegedSandboxExecutionLease(sandboxName, "shields privileged execution", () => {
-    dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
-      stdio: ["ignore", "pipe", "pipe"],
+    capturePrivilegedSandboxCommand(sandboxName, cmd, {
+      sanitizeEnvironment: true,
       timeout,
     });
   });
@@ -884,10 +883,12 @@ function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 150
 
 function privilegedSandboxExecCapture(sandboxName: string, cmd: string[], timeout = 15000): string {
   return withPrivilegedSandboxExecutionLease(sandboxName, "shields privileged capture", () =>
-    dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
-      stdio: ["ignore", "pipe", "pipe"],
+    capturePrivilegedSandboxCommand(sandboxName, cmd, {
+      sanitizeEnvironment: true,
       timeout,
-    }).trim(),
+    })
+      .toString("utf8")
+      .trim(),
   );
 }
 
@@ -1107,18 +1108,11 @@ function inspectHermesShieldsProtocol(
   if (hasActiveRuntimeProviderStateMutation(sandboxName)) {
     return "provider-state-mutation-v2";
   }
-  if (
-    sandbox.openshellDriver?.trim().toLowerCase() === "docker" &&
-    sandbox.workload?.kind === "managed-image" &&
-    !sandbox.lifecycleGeneration
-  ) {
-    throw new Error("Managed Hermes Docker registry authority has no lifecycle generation");
+  const providerStateMutation = hasHermesRuntimeProviderStateMutationAuthority(sandbox);
+  if (providerStateMutation && !sandbox.lifecycleGeneration) {
+    throw new Error("Managed Hermes runtime-provider authority has no lifecycle generation");
   }
-  if (
-    sandbox.openshellDriver?.trim().toLowerCase() === "docker" &&
-    sandbox.workload?.kind === "managed-image" &&
-    sandbox.lifecycleGeneration
-  ) {
+  if (providerStateMutation && sandbox.lifecycleGeneration) {
     const capabilityPresence = privilegedSandboxExecCapture(sandboxName, [
       HERMES_PYTHON,
       "-I",
@@ -1345,12 +1339,12 @@ function requireHermesRuntimeProviderSandbox(sandboxName: string) {
   if (
     !sandbox ||
     sandbox.agent !== "hermes" ||
-    sandbox.openshellDriver?.trim().toLowerCase() !== "docker" ||
     sandbox.workload?.kind !== "managed-image" ||
-    !sandbox.lifecycleGeneration
+    !sandbox.lifecycleGeneration ||
+    !hasHermesRuntimeProviderStateMutationAuthority(sandbox)
   ) {
     throw new Error(
-      "Hermes runtime-provider state mutation lost its exact managed Docker registry authority",
+      "Hermes runtime-provider state mutation lost its exact managed provider registry authority",
     );
   }
   return sandbox;
@@ -1452,11 +1446,14 @@ function runHermesProviderProtectionTransition(
   // then asynchronously republishes the sandbox lifecycle phase; callers must
   // not issue route or mutation commands during that Provisioning interval.
   waitForHermesRuntimeProviderReleaseReady(sandboxName);
-  // The fenced gateway can prove local health while OpenShell PID 1 is held,
-  // but Hermes performs network MCP discovery before exposing that health.
-  // Restart once after release so configured managed bridges are discovered
-  // with the exact supervisor/network control path live.
-  restartHermesManagedMcpAfterProviderRelease(sandboxName, sandbox);
+  // The locked activation has already proven the exact gateway under the
+  // final immutable config. A second ordinary restart can only attempt a
+  // configuration reconciliation that lockdown forbids. Mutable activation
+  // still restarts once after release so configured managed bridges discover
+  // through the live supervisor/network control path.
+  if (targetPosture === "mutable") {
+    restartHermesManagedMcpAfterProviderRelease(sandboxName, sandbox);
+  }
 }
 
 function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentConfigTarget): void {
@@ -1467,6 +1464,7 @@ function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentCo
       requireStateLockPlan(target),
       target.stateLockPlanInImage,
       [target.configPath, ...(target.sensitiveFiles || [])],
+      ["gateway"],
     ),
   ];
   if (issues.length > 0) throw new Error(`Config not unlocked: ${issues.join(", ")}`);
@@ -2473,20 +2471,17 @@ function stateDirLockExec(sandboxName: string) {
   return {
     run: (cmd: string[], input?: string) =>
       withPrivilegedSandboxExecutionLease(sandboxName, "state directory guard", () => {
-        const result = dockerSpawnSync(
-          privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-          {
-            encoding: "utf-8",
-            input,
-            timeout: STATE_DIR_GUARD_TIMEOUT_MS,
-            maxBuffer: 16 * 1024 * 1024,
-          },
-        );
+        const result = executePrivilegedSandboxCommand(sandboxName, cmd, {
+          ...(input === undefined ? {} : { input }),
+          sanitizeEnvironment: true,
+          timeout: STATE_DIR_GUARD_TIMEOUT_MS,
+          maxOutputBytes: 16 * 1024 * 1024,
+        });
         return {
           status: result.status,
           signal: result.signal,
-          stdout: String(result.stdout ?? ""),
-          stderr: String(result.stderr ?? ""),
+          stdout: result.stdout.toString("utf8"),
+          stderr: result.stderr.toString("utf8"),
           ...(result.error ? { error: result.error.message } : {}),
         };
       }),
@@ -2500,20 +2495,17 @@ function openClawConfigGuardExec(sandboxName: string) {
         const timeout = cmd.includes("unlock-failed-startup")
           ? OPENCLAW_CONFIG_GUARD_RECOVERY_TIMEOUT_MS
           : OPENCLAW_CONFIG_GUARD_TIMEOUT_MS;
-        const result = dockerSpawnSync(
-          privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-          {
-            encoding: "utf-8",
-            input,
-            timeout,
-            maxBuffer: 2 * 1024 * 1024,
-          },
-        );
+        const result = executePrivilegedSandboxCommand(sandboxName, cmd, {
+          ...(input === undefined ? {} : { input }),
+          sanitizeEnvironment: true,
+          timeout,
+          maxOutputBytes: 2 * 1024 * 1024,
+        });
         return {
           status: result.status,
           signal: result.signal,
-          stdout: String(result.stdout ?? ""),
-          stderr: String(result.stderr ?? ""),
+          stdout: result.stdout.toString("utf8"),
+          stderr: result.stderr.toString("utf8"),
           ...(result.error ? { error: result.error.message } : {}),
         };
       }),
@@ -6231,7 +6223,13 @@ function shieldsStatusWithoutHostLock(
           target.agentName === "hermes" &&
           inspectHermesShieldsProtocol(sandboxName, target) === "provider-state-mutation-v2"
         ) {
-          runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+          driftIssues.push(
+            ...verifyLockedStateDirPosture(
+              stateDirLockExec(sandboxName),
+              target.configDir,
+              requireStateLockPlan(target),
+            ).map((issue) => `state lock posture: ${issue}`),
+          );
         }
         try {
           planIssues = deps.verifyStateLockPlan

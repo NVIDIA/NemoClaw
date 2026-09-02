@@ -34,8 +34,14 @@ function installMockPrivilegedExec(
     exports: {
       // Routing is covered by privileged-exec tests; this suite exercises
       // config validation and write behavior without requiring real Docker.
-      privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
-      resolveDirectSandboxContainer: () => "container-id",
+      capturePrivilegedSandboxCommand: () => Buffer.alloc(0),
+      executePrivilegedSandboxCommand: () => ({
+        status: 0,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      }),
+      resolvePrivilegedSandboxTarget: () => ({ resourceHandle: "container-id" }),
       withPrivilegedSandboxExecutionLease: <T>(
         _sandboxName: string,
         _operation: string,
