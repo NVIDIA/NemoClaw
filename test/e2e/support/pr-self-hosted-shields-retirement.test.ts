@@ -86,6 +86,9 @@ describe("released Shields retirement PR qualification", () => {
       uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
       with: { "persist-credentials": false, ref: "${{ github.sha }}" },
     });
+    expect(
+      job?.steps?.find((step) => step.name === "Bind E2E correlation identity")?.run,
+    ).toContain("NEMOCLAW_E2E_CORRELATION_ID");
     expect(run?.run).toContain(
       "npx tsx tools/e2e/target-catalogue.mts run \\\n  shields-retirement-upgrade \\\n  test/e2e/live/shields-retirement-upgrade.test.ts",
     );
