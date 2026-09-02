@@ -166,14 +166,14 @@ test(
     meta: {
       e2ePhases: [
         "install and register the sandbox",
-        "restart the gateway and seed tracked legacy forwards",
+        "restart the sandbox workload and seed tracked legacy forwards",
         "recover through the production migration path",
         "verify exact migration and unrelated forward preservation",
         "stop the sandbox and verify natural port release",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, lifecycle, progress, sandbox, secrets }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const redactionValues = [hosted.apiKey];
 
@@ -265,16 +265,43 @@ test(
       timeoutMs: 60_000,
     });
 
-    progress.phase("restart the gateway and seed tracked legacy forwards");
-    await lifecycle.restartGatewayRuntime({ delayMs: 3_000 });
-    await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 2_000 });
-    await waitForSandboxReady(host);
+    progress.phase("restart the sandbox workload and seed tracked legacy forwards");
+    const stopForSeeding = await host.nemoclaw([SANDBOX_NAME, "stop"], {
+      artifactName: "legacy-forward-stop-before-seeding",
+      env: env(),
+      redactionValues,
+      timeoutMs: 5 * 60_000,
+    });
+    assertExitZero(stopForSeeding, "stop sandbox before legacy forward seeding");
     await waitForPort(
       host,
       DASHBOARD_PORT,
       false,
-      "legacy-forward-direct-service-released-after-gateway-restart",
+      "legacy-forward-direct-service-released-before-seeding",
     );
+    const startWorkload = await host.command(
+      "bash",
+      [
+        "-lc",
+        String.raw`set -eu
+sandbox_name="$1"
+container_id="$(docker ps -aq \
+  --filter label=openshell.ai/managed-by=openshell \
+  --filter "label=openshell.ai/sandbox-name=$sandbox_name")"
+test -n "$container_id"
+test "$(printf '%s\n' "$container_id" | wc -l | tr -d ' ')" = 1
+docker start "$container_id"`,
+        "legacy-forward-start-workload",
+        SANDBOX_NAME,
+      ],
+      {
+        artifactName: "legacy-forward-start-sandbox-workload-only",
+        env: env(),
+        timeoutMs: 120_000,
+      },
+    );
+    assertExitZero(startWorkload, "start sandbox workload without NemoClaw recovery");
+    await waitForSandboxReady(host);
 
     cleanup.trackForward(host, UNREGISTERED_PORT, {
       artifactName: "legacy-forward-cleanup-unregistered-forward",
