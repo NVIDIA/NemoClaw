@@ -16,8 +16,10 @@ const BOUNDARY_VALIDATOR = path.join(
 const NONCE = "a".repeat(64);
 const LAYOUT_REPAIR_DIAGNOSTICS = ["sessions", "gateway", "runtime"]
   .map((name) => `[gateway] Hermes pre-launch layout repair failed at ${name} state directory`)
-  .concat("[gateway] Hermes pre-launch layout repair failed at history file");
-
+  .concat(
+    "[gateway] Hermes pre-launch layout repair failed at logs directory",
+    "[gateway] Hermes pre-launch layout repair failed at history file",
+  );
 const HERMES_HASH_HARNESS = String.raw`
 import importlib.util
 import json
@@ -55,7 +57,6 @@ print(json.dumps({
     "duplicate_path": parse(config, config, environment),
 }, sort_keys=True))
 `;
-
 const PROCESS_HARNESS = String.raw`
 import importlib.util
 import contextlib
@@ -999,6 +1000,7 @@ with tempfile.TemporaryDirectory() as root:
         "[gateway] Hermes pre-launch layout repair failed at sessions state directory",
         "[gateway] Hermes pre-launch layout repair failed at gateway state directory",
         "[gateway] Hermes pre-launch layout repair failed at runtime state directory",
+        "[gateway] Hermes pre-launch layout repair failed at logs directory",
         "[gateway] Hermes pre-launch layout repair failed at history file",
     ]
     start_log_events = [

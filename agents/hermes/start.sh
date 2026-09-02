@@ -1083,10 +1083,7 @@ PYCROSSUIDDIR
 }
 
 repair_hermes_log_permissions() {
-  ensure_hermes_state_dir "${HERMES_DIR}/logs" 2770 || return 1
-  ensure_hermes_state_dir "${HERMES_DIR}/logs/curator" 2770 || return 1
-
-  NEMOCLAW_HERMES_LOG_DIR="${HERMES_DIR}/logs" \
+  NEMOCLAW_HERMES_CONFIG_ROOT="$HERMES_DIR" \
     python3 -I - <<'PYLOGS'
 import errno
 import grp
@@ -1095,97 +1092,255 @@ import pwd
 import stat
 import sys
 
-root = os.environ["NEMOCLAW_HERMES_LOG_DIR"]
-mode = 0o660
-
-if not hasattr(os, "O_NOFOLLOW"):
-    print("[SECURITY] Refusing Hermes log repair because O_NOFOLLOW is unavailable", file=sys.stderr)
-    sys.exit(1)
-
-root_real = os.path.realpath(root)
-flags = os.O_RDONLY | os.O_NOFOLLOW
-for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
-    flags |= getattr(os, optional_flag, 0)
-
+root = os.environ["NEMOCLAW_HERMES_CONFIG_ROOT"]
+directory_mode = 0o2770
+file_mode = 0o660
 
 def fail(message: str) -> None:
     print(f"[SECURITY] Refusing Hermes log repair because {message}", file=sys.stderr)
     sys.exit(1)
 
 
-def describe_unsafe_existing_path(path: str) -> str:
-    try:
-        st = os.lstat(path)
-    except OSError:
-        return "could not be opened safely"
-    if stat.S_ISLNK(st.st_mode):
-        return "is a symlink"
-    if not stat.S_ISREG(st.st_mode):
-        return "is not a regular file"
-    return "could not be opened safely"
+if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+    fail("descriptor-safe directory flags are unavailable")
+
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+directory_flags |= getattr(os, "O_CLOEXEC", 0)
+file_flags = os.O_RDONLY | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    file_flags |= getattr(os, optional_flag, 0)
+
+sandbox_identity = None
 
 
-def repair_file(path: str) -> None:
+def resolve_sandbox_identity() -> tuple[int | None, int | None]:
+    global sandbox_identity
+    if os.geteuid() != 0:
+        return None, None
+    if sandbox_identity is not None:
+        return sandbox_identity
     try:
-        current = os.lstat(path)
+        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+        sandbox_gid = grp.getgrnam("sandbox").gr_gid
+    except KeyError as exc:
+        fail(f"sandbox account lookup failed: {exc}")
+    sandbox_identity = (sandbox_uid, sandbox_gid)
+    return sandbox_identity
+
+
+def stat_entry(parent_fd: int, name: str, path: str) -> os.stat_result:
+    try:
+        return os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as exc:
         fail(f"{path} could not be statted safely: {exc.strerror}")
-    if stat.S_ISLNK(current.st_mode):
+
+
+def verify_named_inode(
+    parent_fd: int,
+    name: str,
+    path: str,
+    opened: os.stat_result,
+) -> None:
+    current = stat_entry(parent_fd, name, path)
+    if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+        fail(f"{path} changed during repair")
+
+
+def open_directory(
+    parent_fd: int,
+    name: str,
+    path: str,
+    *,
+    create: bool,
+) -> tuple[int, os.stat_result]:
+    try:
+        before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        if not create:
+            fail(f"{path} disappeared during repair")
+        try:
+            os.mkdir(name, directory_mode, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            fail(f"{path} could not be created: {exc.strerror}")
+        before = stat_entry(parent_fd, name, path)
+    except OSError as exc:
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} could not be inspected safely: {detail}")
+
+    if stat.S_ISLNK(before.st_mode):
         fail(f"{path} is a symlink")
-    if not stat.S_ISREG(current.st_mode):
+    if not stat.S_ISDIR(before.st_mode):
+        fail(f"{path} is not a directory")
+
+    try:
+        fd = os.open(name, directory_flags, dir_fd=parent_fd)
+    except OSError as exc:
+        current = stat_entry(parent_fd, name, path)
+        if stat.S_ISLNK(current.st_mode):
+            fail(f"{path} is a symlink")
+        if not stat.S_ISDIR(current.st_mode):
+            fail(f"{path} is not a directory")
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} could not be opened safely: {detail}")
+
+    opened = os.fstat(fd)
+    if not stat.S_ISDIR(opened.st_mode):
+        os.close(fd)
+        fail(f"{path} is not a directory")
+    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+        os.close(fd)
+        fail(f"{path} changed while it was opened")
+    return fd, opened
+
+
+def repair_managed_directory(
+    parent_fd: int,
+    name: str,
+    path: str,
+) -> tuple[int, os.stat_result]:
+    fd, _opened = open_directory(parent_fd, name, path, create=True)
+    sandbox_uid, sandbox_gid = resolve_sandbox_identity()
+    if sandbox_uid is not None and sandbox_gid is not None:
+        os.fchown(fd, sandbox_uid, sandbox_gid)
+    os.fchmod(fd, directory_mode)
+    current = os.fstat(fd)
+    if stat.S_IMODE(current.st_mode) != directory_mode:
+        fail(
+            f"{path} mode is {stat.S_IMODE(current.st_mode):04o}, "
+            f"expected {directory_mode:04o}"
+        )
+    if sandbox_uid is not None and current.st_uid != sandbox_uid:
+        fail(f"{path} has owner uid {current.st_uid}, expected sandbox uid {sandbox_uid}")
+    if sandbox_gid is not None and current.st_gid != sandbox_gid:
+        fail(f"{path} has group gid {current.st_gid}, expected sandbox gid {sandbox_gid}")
+    verify_named_inode(parent_fd, name, path, current)
+    return fd, current
+
+
+def repair_file(parent_fd: int, name: str, path: str) -> None:
+    before = stat_entry(parent_fd, name, path)
+    if stat.S_ISLNK(before.st_mode):
+        fail(f"{path} is a symlink")
+    if not stat.S_ISREG(before.st_mode):
         fail(f"{path} is not a regular file")
 
     try:
-        fd = os.open(path, flags)
+        fd = os.open(name, file_flags, dir_fd=parent_fd)
     except OSError as exc:
-        reason = describe_unsafe_existing_path(path)
+        current = stat_entry(parent_fd, name, path)
+        if stat.S_ISLNK(current.st_mode):
+            fail(f"{path} is a symlink")
+        if not stat.S_ISREG(current.st_mode):
+            fail(f"{path} is not a regular file")
         detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
-        fail(f"{path} {reason}: {detail}")
+        fail(f"{path} could not be opened safely: {detail}")
 
     try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
             fail(f"{path} is not a regular file")
-        if st.st_nlink != 1:
-            fail(f"{path} has hard-link count {st.st_nlink}")
-        current = os.stat(path, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
-            fail(f"{path} changed during repair")
-        if os.geteuid() == 0:
-            try:
-                uid = pwd.getpwnam("sandbox").pw_uid
-                gid = grp.getgrnam("sandbox").gr_gid
-            except KeyError as exc:
-                fail(f"sandbox account lookup failed: {exc}")
-            os.fchown(fd, uid, gid)
-        os.fchmod(fd, mode)
-        current = os.stat(path, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
-            fail(f"{path} changed during repair")
+        if opened.st_nlink != 1:
+            fail(f"{path} has hard-link count {opened.st_nlink}")
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            fail(f"{path} changed while it was opened")
+        sandbox_uid, sandbox_gid = resolve_sandbox_identity()
+        if sandbox_uid is not None and sandbox_gid is not None:
+            os.fchown(fd, sandbox_uid, sandbox_gid)
+        os.fchmod(fd, file_mode)
+        current = os.fstat(fd)
+        if stat.S_IMODE(current.st_mode) != file_mode:
+            fail(
+                f"{path} mode is {stat.S_IMODE(current.st_mode):04o}, "
+                f"expected {file_mode:04o}"
+            )
+        if sandbox_uid is not None and current.st_uid != sandbox_uid:
+            fail(f"{path} has owner uid {current.st_uid}, expected sandbox uid {sandbox_uid}")
+        if sandbox_gid is not None and current.st_gid != sandbox_gid:
+            fail(f"{path} has group gid {current.st_gid}, expected sandbox gid {sandbox_gid}")
+        verify_named_inode(parent_fd, name, path, current)
     finally:
         os.close(fd)
 
 
-def on_walk_error(exc: OSError) -> None:
-    fail(f"{exc.filename} could not be scanned safely: {exc.strerror}")
+def repair_directory(
+    directory_fd: int,
+    display_path: str,
+    *,
+    skip_names: frozenset[str] = frozenset(),
+) -> None:
+    try:
+        names = sorted(os.listdir(directory_fd))
+    except OSError as exc:
+        fail(f"{display_path} could not be scanned safely: {exc.strerror}")
+
+    for name in names:
+        if name in skip_names:
+            continue
+        path = f"{display_path}/{name}"
+        before = stat_entry(directory_fd, name, path)
+        if stat.S_ISLNK(before.st_mode):
+            fail(f"{path} is a symlink")
+        if stat.S_ISDIR(before.st_mode):
+            child_fd, opened = open_directory(directory_fd, name, path, create=False)
+            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                os.close(child_fd)
+                fail(f"{path} changed while it was opened")
+            try:
+                repair_directory(child_fd, path)
+                verify_named_inode(directory_fd, name, path, os.fstat(child_fd))
+            finally:
+                os.close(child_fd)
+            continue
+        if stat.S_ISREG(before.st_mode):
+            repair_file(directory_fd, name, path)
+            continue
+        fail(f"{path} is not a regular file or directory")
 
 
-for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=on_walk_error, followlinks=False):
-    dir_real = os.path.realpath(dirpath)
-    if os.path.commonpath([root_real, dir_real]) != root_real:
-        fail(f"{dirpath} escapes {root}")
-    for dirname in list(dirnames):
-        entry = os.path.join(dirpath, dirname)
-        try:
-            st = os.lstat(entry)
-        except OSError as exc:
-            fail(f"{entry} could not be statted safely: {exc.strerror}")
-        if stat.S_ISLNK(st.st_mode):
-            fail(f"{entry} is a symlink")
-        if not stat.S_ISDIR(st.st_mode):
-            fail(f"{entry} is not a directory")
-    for filename in filenames:
-        repair_file(os.path.join(dirpath, filename))
+try:
+    root_before = os.lstat(root)
+except OSError as exc:
+    fail(f"{root} could not be inspected: {exc.strerror}")
+if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    fail(f"{root} is not a safe directory")
+
+root_fd = -1
+logs_fd = -1
+curator_fd = -1
+try:
+    try:
+        root_fd = os.open(root, directory_flags)
+    except OSError as exc:
+        fail(f"{root} could not be opened safely: {exc.strerror}")
+    root_open = os.fstat(root_fd)
+    if (root_open.st_dev, root_open.st_ino) != (root_before.st_dev, root_before.st_ino):
+        fail(f"{root} changed while it was opened")
+
+    logs_path = f"{root}/logs"
+    logs_fd, logs_open = repair_managed_directory(root_fd, "logs", logs_path)
+    curator_path = f"{logs_path}/curator"
+    curator_fd, curator_open = repair_managed_directory(logs_fd, "curator", curator_path)
+
+    repair_directory(curator_fd, curator_path)
+    verify_named_inode(logs_fd, "curator", curator_path, curator_open)
+    repair_directory(logs_fd, logs_path, skip_names=frozenset({"curator"}))
+    verify_named_inode(root_fd, "logs", logs_path, logs_open)
+
+    try:
+        root_after = os.lstat(root)
+    except OSError as exc:
+        fail(f"{root} disappeared during repair: {exc.strerror}")
+    if (root_after.st_dev, root_after.st_ino) != (root_open.st_dev, root_open.st_ino):
+        fail(f"{root} changed during repair")
+finally:
+    if curator_fd >= 0:
+        os.close(curator_fd)
+    if logs_fd >= 0:
+        os.close(logs_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
 PYLOGS
 }
 
@@ -1329,7 +1484,11 @@ repair_hermes_startup_layout() {
   fi
 
   ensure_hermes_config_root_mode || return 1
-  repair_hermes_log_permissions || return 1
+  if ! repair_hermes_log_permissions; then
+    echo "[gateway] Hermes pre-launch layout repair failed at logs directory" >&2
+    echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+    return 1
+  fi
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770 || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770 || return 1
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770 || return 1
