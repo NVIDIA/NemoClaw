@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../../../src/lib/adapters/fs/regular-file";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -299,16 +300,17 @@ function expectCandidateManagedSandbox(): void {
 }
 
 function expectLegacyStateRecord(): void {
-  expect(fs.existsSync(LEGACY_STATE_RECORD), `${LEGACY_STATE_RECORD} must exist`).toBe(true);
-  const stat = fs.lstatSync(LEGACY_STATE_RECORD);
-  expect(stat.isFile()).toBe(true);
-  expect(stat.isSymbolicLink()).toBe(false);
-  const state = JSON.parse(fs.readFileSync(LEGACY_STATE_RECORD, "utf8")) as {
-    fileHashes?: unknown;
-    shieldsDown?: unknown;
-  };
-  expect(state.shieldsDown).toBe(false);
-  expect(state.fileHashes).toEqual(expect.any(Object));
+  const record = openRegularFileNoFollow(LEGACY_STATE_RECORD);
+  try {
+    const state = JSON.parse(record.readBytes(1024 * 1024).toString("utf8")) as {
+      fileHashes?: unknown;
+      shieldsDown?: unknown;
+    };
+    expect(state.shieldsDown).toBe(false);
+    expect(state.fileHashes).toEqual(expect.any(Object));
+  } finally {
+    record.close();
+  }
 }
 
 function expectRemovedShieldsCommand(result: ShellProbeResult, command: string): void {
@@ -472,7 +474,8 @@ test.skipIf(process.platform !== "linux")(
       process.env.PATH = originalPath;
       dockerBuildGuard.dispose();
     });
-    expect(fs.existsSync(CANDIDATE_CLI), `${CANDIDATE_CLI} must exist`).toBe(true);
+    const candidateRealPath = fs.realpathSync(CANDIDATE_CLI);
+    expect(path.isAbsolute(candidateRealPath)).toBe(true);
     const candidateIdentity = JSON.parse(
       fs.readFileSync(path.join(REPO_ROOT, "dist", "build-identity.json"), "utf8"),
     ) as { sourceRevision?: unknown };
@@ -490,7 +493,7 @@ test.skipIf(process.platform !== "linux")(
       { artifactName: "candidate-cli-path", timeoutMs: 30_000 },
     );
     expectExitZero(candidatePath, "resolve activated candidate CLI");
-    expect(candidatePath.stdout.trim().split("\n").at(-1)).toBe(fs.realpathSync(CANDIDATE_CLI));
+    expect(candidatePath.stdout.trim().split("\n").at(-1)).toBe(candidateRealPath);
     const candidateVersion = await candidateNemoclaw(host, ["--version"], "candidate-version");
     expectExitZero(candidateVersion, "candidate nemoclaw --version");
     expect(resultText(candidateVersion)).toContain(EXPECTED_CANDIDATE_SHA.slice(0, 10));
