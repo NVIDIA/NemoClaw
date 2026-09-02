@@ -21,8 +21,9 @@
  * available for this host." message. It also lets the caller surface managed
  * vLLM by default for known DGX platforms while generic Linux stays gated, and
  * logs a note when running-vLLM takes precedence over the env-var opt-in. N1x
- * keeps the managed selection because its readiness exception is limited to
- * the managed-vLLM preview.
+ * and explicit managed GPU selection keep the managed selection so the
+ * provider flow can report the running-server conflict without changing the
+ * user's intent.
  */
 
 import { VLLM_PORT } from "../core/ports";
@@ -66,8 +67,11 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   const env = opts.env ?? process.env;
   const userChoseManagedVllm =
     (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === MANAGED_VLLM_PROVIDER_KEY;
-  const keepN1xManagedPreview = userChoseManagedVllm && opts.platform === "n1x";
-  if (opts.vllmRunning && !keepN1xManagedPreview) {
+  const hasManagedVllmGpuSelection =
+    String(env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
+  const preserveManagedVllmIntent =
+    userChoseManagedVllm && (opts.platform === "n1x" || hasManagedVllmGpuSelection);
+  if (opts.vllmRunning && !preserveManagedVllmIntent) {
     if (userChoseManagedVllm) {
       log(
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,

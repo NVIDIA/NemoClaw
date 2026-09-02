@@ -105,6 +105,7 @@ vi.mock("../domain/lifecycle/options", () => ({
 
 import {
   backupAll,
+  backupAllUnderPortableHostFence,
   garbageCollectImages,
   rebuildBackupsDirectory,
   shouldSkipUnreachableSandboxBackup,
@@ -317,6 +318,7 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.withSandboxMutationLock.mockRejectedValueOnce(
       new Error("Timed out waiting for the sandbox mutation lock"),
@@ -655,6 +657,31 @@ describe("backupAll", () => {
     expect(errorOutput).not.toContain("prepare the upgrade manually");
   });
 
+  it("uses uninstall retry guidance when a required sandbox is skipped", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(
+      backupAllUnderPortableHostFence({
+        purpose: "pre-uninstall",
+        requireAll: true,
+        sandboxNames: ["sb-stopped"],
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const errorOutput = errorSpy.mock.calls.flat().join("\n");
+    expect(errorOutput).toContain("Strict pre-uninstall backup");
+    expect(errorOutput).toContain("rerun the original uninstall command");
+    expect(errorOutput).not.toContain("rerun the installer or");
+  });
+
   it("starts a stopped container, backs it up, and returns it to stopped so strict mode passes (#6500)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
@@ -670,7 +697,9 @@ describe("backupAll", () => {
       manifest: { backupPath: "/backups/sb-good/timestamp" },
     });
     mocks.startStoppedSandboxContainerForBackup.mockImplementation((name: string) =>
-      name === "sb-stopped" ? { containerName: "openshell-sb-stopped-abc" } : null,
+      name === "sb-stopped"
+        ? { containerName: "openshell-sb-stopped-abc", runtimeProviderId: "docker" }
+        : null,
     );
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: true,
@@ -691,7 +720,10 @@ describe("backupAll", () => {
     expect(exitSpy).not.toHaveBeenCalled();
     expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped");
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
     expect(mocks.relockBackupShieldsWindow.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       mocks.returnSandboxContainerToStopped.mock.invocationCallOrder.at(-1)!,
     );
@@ -726,7 +758,7 @@ describe("backupAll", () => {
     mocks.startStoppedSandboxContainerForBackup.mockImplementation((name: string) => {
       expect(lockActive).toBe(true);
       events.push(`start:${name}`);
-      return { containerName: "openshell-sb-stopped-abc" };
+      return { containerName: "openshell-sb-stopped-abc", runtimeProviderId: "docker" };
     });
     mocks.openBackupShieldsWindow.mockImplementation((name: string) => {
       expect(lockActive).toBe(true);
@@ -781,6 +813,7 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: false,
@@ -799,7 +832,10 @@ describe("backupAll", () => {
 
     await expect(backupAll()).rejects.toThrow("exit:1");
 
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
     expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
       "backup failed (identity (permission denied))",
@@ -814,6 +850,7 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: true,
@@ -855,6 +892,7 @@ describe("backupAll", () => {
     );
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
     mocks.backupStartedSandboxState.mockResolvedValue({
@@ -887,7 +925,10 @@ describe("backupAll", () => {
     expect(lockActive).toBe(false);
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
     expect(mocks.openBackupShieldsWindow).toHaveBeenCalledOnce();
   });
 
@@ -899,6 +940,7 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.backupStartedSandboxState.mockRejectedValue(
       new Error("Agent 'sb-stopped' not found: /path/to/manifest.yaml"),
@@ -907,7 +949,10 @@ describe("backupAll", () => {
 
     await backupAll();
 
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
     const output = logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Returned 'sb-stopped' to its stopped state");
     expect(output).toContain("Skipped 'sb-stopped' (orphan manifest)");
@@ -1199,6 +1244,11 @@ describe("backupAll", () => {
     mocks.isSandboxContainerDefinitivelyAbsent.mockImplementation(
       (name: string) => name === "sb-stranded",
     );
+    mocks.withSandboxMutationLock.mockImplementation((name: string, action: () => unknown) =>
+      name === "sb-stranded"
+        ? Promise.reject(new Error("Sandbox mutation containment is active"))
+        : action(),
+    );
     mocks.backupSandboxState.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
@@ -1218,6 +1268,8 @@ describe("backupAll", () => {
     expect(exitSpy).not.toHaveBeenCalled();
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
+    expect(mocks.withSandboxMutationLock).toHaveBeenCalledTimes(1);
+    expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-good", expect.any(Function));
     // The exemption requires a confirming second pinned listing after the loop.
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenNthCalledWith(

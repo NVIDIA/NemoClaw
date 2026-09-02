@@ -7,8 +7,10 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
+  credentialProviderRegistrationDependencies,
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
+  installLiveE2eCredentialProviderRegistrationOverride,
 } from "./credential-provider-registration";
 import type { MessagingTokenDef } from "./messaging-prep";
 
@@ -43,8 +45,10 @@ function providerMetadata(
   return {
     status: 0,
     stdout: [
+      `Id: provider-${name}`,
       `Name: ${name}`,
       `Type: ${type}`,
+      "Resource version: 1",
       `Credential keys: ${credentialKey}`,
       "Config keys: <none>",
     ].join("\n"),
@@ -90,6 +94,107 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
+  it("restricts the process-global provider override to the destructive live E2E", () => {
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "0");
+    try {
+      expect(() =>
+        installLiveE2eCredentialProviderRegistrationOverride({
+          expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
+          expectedType: "google-chat-bridge",
+          upsert: vi.fn(() => []),
+        }),
+      ).toThrow("restricted to its destructive live E2E");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("routes one exact Google Chat live E2E plan through the process-global override", () => {
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "e2e-oc-ch-cycle-googlechat-bridge",
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: null,
+        providerType: "google-chat-bridge",
+      },
+    ];
+    const runOpenshell = vi.fn();
+    const override = vi.fn(() => ["e2e-oc-ch-cycle-googlechat-bridge"]);
+    const restore = installLiveE2eCredentialProviderRegistrationOverride({
+      expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
+      expectedType: "google-chat-bridge",
+      upsert: override,
+    });
+    try {
+      expect(
+        credentialProviderRegistrationDependencies.upsertMessagingProviders(
+          tokenDefs,
+          runOpenshell,
+          { replaceExisting: true },
+        ),
+      ).toEqual(["e2e-oc-ch-cycle-googlechat-bridge"]);
+      expect(override).toHaveBeenCalledExactlyOnceWith(tokenDefs, runOpenshell, {
+        replaceExisting: true,
+      });
+    } finally {
+      restore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("leaves unrelated provider batches on the production path while the live override is installed", () => {
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "e2e-oc-ch-cycle-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        token: null,
+        providerType: "generic",
+      },
+    ];
+    const runOpenshell = vi.fn();
+    const override = vi.fn(() => ["e2e-oc-ch-cycle-googlechat-bridge"]);
+    const restore = installLiveE2eCredentialProviderRegistrationOverride({
+      expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
+      expectedType: "google-chat-bridge",
+      upsert: override,
+    });
+    try {
+      expect(
+        credentialProviderRegistrationDependencies.upsertMessagingProviders(
+          tokenDefs,
+          runOpenshell,
+          {},
+        ),
+      ).toEqual([]);
+      expect(override).not.toHaveBeenCalled();
+    } finally {
+      restore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("resolves the provider upsert dependency when registration executes", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDefs: MessagingTokenDef[] = [
+      { name: "alpha-googlechat-bridge", envKey: "GOOGLE_CHAT_ACCESS_TOKEN", token: null },
+    ];
+    const upsert = vi
+      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
+      .mockReturnValue(["alpha-googlechat-bridge"]);
+
+    try {
+      expect(registration.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-googlechat-bridge"]);
+      expect(upsert).toHaveBeenCalledExactlyOnceWith(tokenDefs, deps.runOpenshell, {});
+    } finally {
+      upsert.mockRestore();
+    }
+  });
+
   it.each([
     { condition: "matches", endpoints: [], expected: true },
     {
@@ -783,7 +888,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings([tokenDef])),
-          revalidatePolicyRequirements: () => {
+          revalidateSandboxIdentity: () => {
             throw new Error("authority changed");
           },
         },
@@ -810,7 +915,7 @@ describe("credential provider registration", () => {
       { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first-secret" },
       { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second-secret" },
     ];
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const revalidateSandboxIdentity = vi.fn((operation: string) =>
       operation === 'inspect or change provider "alpha-second"'
         ? refuseAuthorityChange()
         : undefined,
@@ -820,7 +925,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings(tokenDefs)),
-          revalidatePolicyRequirements,
+          revalidateSandboxIdentity,
         },
         async () => ({ messagingTokenDefs: tokenDefs }),
       ),
@@ -847,7 +952,7 @@ describe("credential provider registration", () => {
     const deps = registrationDeps(runOpenshell, session);
     deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
     const registration = createCredentialProviderRegistration(deps);
-    const revalidatePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
@@ -862,7 +967,7 @@ describe("credential provider registration", () => {
             token: DISCORD_SECRET,
           },
         ],
-        { revalidatePolicyRequirements },
+        { revalidateSandboxIdentity },
       ),
     ).toThrow("authority changed");
 

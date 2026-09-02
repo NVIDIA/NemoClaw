@@ -4916,6 +4916,7 @@ def _runtime_plan_replacements_and_provider_keys(
             active_channel_ids.add(channel_id)
 
     provider_env_keys: set[str] = set()
+    provider_env_keys_by_channel: dict[str, set[str]] = {}
     bindings = plan.get("credentialBindings", [])
     if not isinstance(bindings, list):
         raise UnsafePathError(
@@ -4929,10 +4930,12 @@ def _runtime_plan_replacements_and_provider_keys(
         channel_id = binding.get("channelId")
         provider_env_key = binding.get("providerEnvKey")
         if isinstance(channel_id, str) and channel_id in active_channel_ids:
-            provider_env_keys.add(
-                _validate_runtime_plan_env_key(
-                    provider_env_key, "credentialBindings.providerEnvKey"
-                )
+            validated_provider_env_key = _validate_runtime_plan_env_key(
+                provider_env_key, "credentialBindings.providerEnvKey"
+            )
+            provider_env_keys.add(validated_provider_env_key)
+            provider_env_keys_by_channel.setdefault(channel_id, set()).add(
+                validated_provider_env_key
             )
 
     runtime_setup = plan.get("runtimeSetup") or {}
@@ -4954,6 +4957,7 @@ def _runtime_plan_replacements_and_provider_keys(
         if not isinstance(channel_id, str) or channel_id not in active_channel_ids:
             continue
         env_key = alias.get("envKey")
+        target_env_key = alias.get("targetEnvKey")
         pattern = alias.get("match")
         value = alias.get("value")
         message = alias.get("message") or ""
@@ -4966,7 +4970,27 @@ def _runtime_plan_replacements_and_provider_keys(
         env_key = _validate_runtime_plan_env_key(
             env_key, "runtimeSetup.envAliases.envKey"
         )
-        if env_key in replacements:
+        if target_env_key is not None:
+            target_env_key = _validate_runtime_plan_env_key(
+                target_env_key, "runtimeSetup.envAliases.targetEnvKey"
+            )
+            if target_env_key == env_key:
+                raise UnsafePathError(
+                    "messaging runtime plan cross-key env alias must use distinct keys"
+                )
+            if env_key not in provider_env_keys_by_channel.get(channel_id, set()):
+                raise UnsafePathError(
+                    "messaging runtime plan cross-key env alias source is not bound "
+                    "to its channel"
+                )
+            expected_pattern = f"^openshell:resolve:env:v[0-9]+_{env_key}$"
+            expected_value = f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
+            if pattern != expected_pattern or value != expected_value:
+                raise UnsafePathError(
+                    "messaging runtime plan cross-key env alias identity is invalid"
+                )
+        replacement_env_key = target_env_key or env_key
+        if replacement_env_key in replacements:
             continue
         if _has_env_control_chars(value) or _has_env_control_chars(message):
             raise UnsafePathError(
@@ -4984,7 +5008,20 @@ def _runtime_plan_replacements_and_provider_keys(
             if not _placeholder_suffix_matches_env_key(suffix, env_key):
                 continue
         if compiled.search(runtime_value):
-            replacements[env_key] = (value, message)
+            replacement_value = runtime_value if target_env_key else value
+            alias_marker = "-OPENSHELL-RESOLVE-ENV-"
+            if (
+                target_env_key is None
+                and alias_marker in value
+                and runtime_value.startswith(SCOPED_PLACEHOLDER_PREFIX)
+            ):
+                runtime_suffix = runtime_value[len(SCOPED_PLACEHOLDER_PREFIX) :]
+                alias_prefix, alias_suffix = value.split(alias_marker, 1)
+                if alias_suffix == env_key and re.fullmatch(
+                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix
+                ):
+                    replacement_value = f"{alias_prefix}{alias_marker}{runtime_suffix}"
+            replacements[replacement_env_key] = (replacement_value, message)
     return replacements, provider_env_keys, True
 
 

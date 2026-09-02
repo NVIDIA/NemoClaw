@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { createLocalInferenceRouteApplier } from "../../src/lib/onboard/local-inference-route.js";
-import type { SetupInference } from "../../src/lib/onboard/setup-inference.js";
+import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import {
   bedrockRuntimeOnboard,
@@ -149,57 +149,71 @@ describe("onboard helpers", () => {
         commands.at(-1)?.command || "",
         /inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
       );
-      expect(updateSandbox).toHaveBeenCalledWith("test-box", { model: "anthropic.claude-3-5-sonnet-20240620-v1:0", provider: "compatible-anthropic-endpoint", endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", endpointSource: "onboard", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", preferredInferenceApi: null, gatewayName: "nemoclaw", hostLocalInferenceReceipt: null });
+      expect(updateSandbox).toHaveBeenCalledWith("test-box", {
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        provider: "compatible-anthropic-endpoint",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        endpointSource: "onboard",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        hostLocalInferenceReceipt: null,
+      });
     });
   });
-  it("resolves a sandbox name before reconciling Hermes Provider on resume", {
-    timeout: 60_000,
-  }, () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
-    const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const sessionPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-    );
-    const checkpointPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
-    const gatewayStatePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "state", "gateway.ts"),
-    );
-    const dockerDriverPlatformPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "docker-driver-platform.ts"),
-    );
-    const gatewayGpuPassthroughPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "gateway-gpu-passthrough.ts"),
-    );
-    const onboardProbesPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "onboard-probes.ts"),
-    );
-    const preflightGatewayAuthorityPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "machine", "preflight-gateway-authority.ts"),
-    );
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const bridgeDnsPreflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "bridge-dns-preflight.ts"),
-    );
+  it(
+    "resolves a sandbox name before reconciling Hermes Provider on resume",
+    {
+      timeout: 60_000,
+    },
+    () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
+      const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const sessionPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
+      const checkpointPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
+      const gatewayStatePath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "gateway.ts"),
+      );
+      const dockerDriverPlatformPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "docker-driver-platform.ts"),
+      );
+      const gatewayGpuPassthroughPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "gateway-gpu-passthrough.ts"),
+      );
+      const onboardProbesPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "inference", "onboard-probes.ts"),
+      );
+      const preflightGatewayAuthorityPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "machine", "preflight-gateway-authority.ts"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+      );
+      const bridgeDnsPreflightPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "bridge-dns-preflight.ts"),
+      );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-    fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      writeOkOpenshell(fakeBin);
+      fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const onboardSession = require(${sessionPath});
@@ -311,7 +325,6 @@ registry.getSandbox = (name) =>
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
         hermesToolGateways: [],
-        policies: ["nous-web"],
       }
     : null;
 registry.reserveSandboxInferenceRoute = (name, updates) => {
@@ -390,7 +403,6 @@ const resumeSession = onboardSession.createSession({
   credentialEnv: "NOUS_API_KEY",
   hermesAuthMethod: "api_key",
   hermesToolGateways: [],
-  policyPresets: ["nous-web"],
   metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
   steps: {
     preflight: complete(),
@@ -432,62 +444,63 @@ const { onboard } = require(${onboardPath});
   }
 })();
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const env: Record<string, string | undefined> = {
-      ...stripMessagingEnv(process.env),
-      HOME: tmpDir,
-      PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
-    };
-    delete env.NEMOCLAW_NON_INTERACTIVE;
-    delete env.NEMOCLAW_SANDBOX_NAME;
-    delete env.NOUS_API_KEY;
+      const env: Record<string, string | undefined> = {
+        ...stripMessagingEnv(process.env),
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
+      };
+      delete env.NEMOCLAW_NON_INTERACTIVE;
+      delete env.NEMOCLAW_SANDBOX_NAME;
+      delete env.NOUS_API_KEY;
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env,
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env,
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    assert.doesNotMatch(
-      `${result.stderr}\n${result.stdout}`,
-      /Hermes Provider requires a sandbox name/,
-    );
-    const payload = parseStdoutJson<{
-      commands: CommandEntry[];
-      prompts: string[];
-      registryUpdates: Array<{ name: string; updates: Record<string, unknown> }>;
-      inferenceSessionSandboxName: string | null;
-    }>(result.stdout);
+      assert.equal(result.status, 0, result.stderr);
+      assert.doesNotMatch(
+        `${result.stderr}\n${result.stdout}`,
+        /Hermes Provider requires a sandbox name/,
+      );
+      const payload = parseStdoutJson<{
+        commands: CommandEntry[];
+        prompts: string[];
+        registryUpdates: Array<{ name: string; updates: Record<string, unknown> }>;
+        inferenceSessionSandboxName: string | null;
+      }>(result.stdout);
 
-    assert.ok(
-      payload.prompts.some((question) => question.includes("Sandbox name")),
-      "resume should prompt for the missing sandbox name before Hermes inference reconciliation",
-    );
-    assert.ok(
-      payload.commands.some((entry) =>
-        /inference set -g nemoclaw --no-verify --provider hermes-provider/.test(entry.command),
-      ),
-      "resume should reach openshell inference set",
-    );
-    assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
-    assert.equal(
-      payload.inferenceSessionSandboxName,
-      "hermes-resume",
-      "resume inference persists the canonical sandbox identity before sandbox creation",
-    );
-    assert.ok(
-      payload.registryUpdates.some(
-        (call) =>
-          call.name === "hermes-resume" &&
-          call.updates.provider === "hermes-provider" &&
-          call.updates.model === "moonshotai/kimi-k2.6",
-      ),
-      "Hermes setup should reconcile inference against the resolved sandbox name",
-    );
-  });
+      assert.ok(
+        payload.prompts.some((question) => question.includes("Sandbox name")),
+        "resume should prompt for the missing sandbox name before Hermes inference reconciliation",
+      );
+      assert.ok(
+        payload.commands.some((entry) =>
+          /inference set -g nemoclaw --no-verify --provider hermes-provider/.test(entry.command),
+        ),
+        "resume should reach openshell inference set",
+      );
+      assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
+      assert.equal(
+        payload.inferenceSessionSandboxName,
+        "hermes-resume",
+        "resume inference persists the canonical sandbox identity before sandbox creation",
+      );
+      assert.ok(
+        payload.registryUpdates.some(
+          (call) =>
+            call.name === "hermes-resume" &&
+            call.updates.provider === "hermes-provider" &&
+            call.updates.model === "moonshotai/kimi-k2.6",
+        ),
+        "Hermes setup should reconcile inference against the resolved sandbox name",
+      );
+    },
+  );
 
   it("reconciles a registered Hermes Provider when a fresh shell Nous key is selected", async () => {
     await withProcessEnv(
@@ -857,66 +870,6 @@ console.log(JSON.stringify({
     }
   });
 
-  it("detects when recorded policy presets are already applied", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-ready-"));
-    const registryDir = path.join(tmpDir, ".nemoclaw");
-    const registryFile = path.join(registryDir, "sandboxes.json");
-    const scriptPath = path.join(tmpDir, "policy-ready-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      registryFile,
-      JSON.stringify(
-        {
-          sandboxes: {
-            "my-assistant": {
-              name: "my-assistant",
-              policies: ["pypi", "npm"],
-            },
-          },
-          defaultSandbox: "my-assistant",
-        },
-        null,
-        2,
-      ),
-    );
-
-    fs.writeFileSync(
-      scriptPath,
-      `
-const { arePolicyPresetsApplied } = require(${onboardPath});
-console.log(JSON.stringify({
-  ready: arePolicyPresetsApplied("my-assistant", ["pypi", "npm"]),
-  missing: arePolicyPresetsApplied("my-assistant", ["pypi", "slack"]),
-  empty: arePolicyPresetsApplied("my-assistant", []),
-}));
-`,
-    );
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-      },
-    });
-
-    try {
-      expect(result.status).toBe(0);
-      const payload = JSON.parse(result.stdout.trim());
-      expect(payload).toEqual({
-        ready: true,
-        missing: false,
-        empty: false,
-      });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("uses native Anthropic provider creation without embedding the secret in argv", async () => {
     await withProcessEnv({ ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
@@ -1058,13 +1011,31 @@ console.log(JSON.stringify({
 });
 
 describe("re-onboard Ollama GPU release (#9110)", () => {
-  const priorEntry = { name: "test-box", provider: "ollama-local", model: "llama3" };
+  type ReleaseEntry = {
+    name: string;
+    provider: string;
+    model: string;
+    endpointUrl?: string | null;
+  };
+  const priorEntry: ReleaseEntry = {
+    name: "test-box",
+    provider: "ollama-local",
+    model: "llama3",
+  };
 
   function releaseHarness(options: {
-    getSandbox: () => typeof priorEntry | null;
-    sandboxes: (typeof priorEntry)[];
-    unloadOllamaModels: (onlyModels: readonly string[]) => void;
+    getSandbox: () => ReleaseEntry | null;
+    sandboxes: ReleaseEntry[] | (() => ReleaseEntry[]);
+    unloadOllamaModels: NonNullable<SetupInferenceDeps["unloadOllamaModels"]>;
     applyLocalInferenceRoute?: () => Promise<boolean>;
+    loadPersistedOllamaHost?: () => "127.0.0.1" | "host.docker.internal" | null;
+    clearPersistedOllamaHostIfUnused?: SetupInferenceDeps["localInference"]["clearPersistedOllamaHostIfUnused"];
+    loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
+    persistPendingOllamaModelCleanup?: (sandboxName: string, models: readonly string[]) => void;
+    clearPendingOllamaModelCleanup?: (
+      sandboxName: string,
+      releasedModels?: readonly string[],
+    ) => void;
   }) {
     return createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
@@ -1079,8 +1050,23 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         persistAndProbeOllamaProxy: async () => {},
         applyLocalInferenceRoute: options.applyLocalInferenceRoute,
         getSandbox: options.getSandbox,
-        listSandboxes: () => ({ sandboxes: options.sandboxes, defaultSandbox: null }),
+        listSandboxes: () => ({
+          sandboxes:
+            typeof options.sandboxes === "function" ? options.sandboxes() : options.sandboxes,
+          defaultSandbox: null,
+        }),
         unloadOllamaModels: options.unloadOllamaModels,
+        localInference: {
+          validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+          validateSandboxFacingOllamaModel: () => ({ ok: true }),
+          runOllamaWarmup: () => {},
+          persistResolvedOllamaHost: () => () => {},
+          loadPersistedOllamaHost: options.loadPersistedOllamaHost,
+          clearPersistedOllamaHostIfUnused: options.clearPersistedOllamaHostIfUnused,
+          loadPendingOllamaModelCleanup: options.loadPendingOllamaModelCleanup ?? (() => []),
+          persistPendingOllamaModelCleanup: options.persistPendingOllamaModelCleanup ?? (() => {}),
+          clearPendingOllamaModelCleanup: options.clearPendingOllamaModelCleanup ?? (() => {}),
+        },
       },
     });
   }
@@ -1101,6 +1087,24 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
   });
 
+  it("retires the final Ollama route receipt after switching providers", async () => {
+    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }],
+      unloadOllamaModels: vi.fn(),
+      clearPersistedOllamaHostIfUnused,
+    });
+
+    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(clearPersistedOllamaHostIfUnused).toHaveBeenCalledWith([
+      { ...priorEntry, provider: "vllm-local", model: "vllm-model" },
+    ]);
+  });
+
   it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
       throw new Error("synthetic unload failure");
@@ -1114,11 +1118,129 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     let result: Awaited<ReturnType<SetupInference>>;
     try {
       result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("synthetic unload failure"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("retry only the recorded models"));
     } finally {
       warn.mockRestore();
     }
     expect(result).toEqual({ ok: true });
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
+  it("reports structured cleanup failure after a successful provider switch", async () => {
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<SetupInference>>;
+    try {
+      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("http://host.docker.internal:11434"),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("unload-request-failed"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Allow the model unload request"));
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Re-run onboarding or destroy 'test-box'");
+      expect(warning).not.toContain("stop, or destroy");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("persists a failed superseded cleanup and retries only that model on re-onboard", async () => {
+    let current = priorEntry;
+    let pending: readonly string[] = [];
+    const persistPendingOllamaModelCleanup = vi.fn((_sandboxName, models: readonly string[]) => {
+      pending = models;
+    });
+    const clearPendingOllamaModelCleanup = vi.fn(
+      (_sandboxName, releasedModels?: readonly string[]) => {
+        pending = releasedModels ? pending.filter((model) => !releasedModels.includes(model)) : [];
+      },
+    );
+    const unloadOllamaModels = vi
+      .fn<NonNullable<SetupInferenceDeps["unloadOllamaModels"]>>()
+      .mockReturnValueOnce({
+        ok: false,
+        outcome: "unload-request-failed",
+        endpoint: "http://host.docker.internal:11434",
+        selectedModels: ["llama3"],
+        discoveries: [],
+        requests: [],
+        message: "connection refused",
+      })
+      .mockReturnValueOnce(undefined);
+    const harness = releaseHarness({
+      getSandbox: () => current,
+      sandboxes: () => [current],
+      unloadOllamaModels,
+      loadPendingOllamaModelCleanup: () => pending,
+      persistPendingOllamaModelCleanup,
+      clearPendingOllamaModelCleanup,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      expect(pending).toEqual(["llama3"]);
+      current = { ...priorEntry, model: "qwen3.5:9b" };
+
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(unloadOllamaModels).toHaveBeenNthCalledWith(1, ["llama3"]);
+    expect(unloadOllamaModels).toHaveBeenNthCalledWith(2, ["llama3"]);
+    expect(clearPendingOllamaModelCleanup).toHaveBeenCalledWith("test-box", ["llama3"]);
+    expect(pending).toEqual([]);
+  });
+
+  it("names manual cleanup when a superseded-model retry record cannot be written", async () => {
+    const persistPendingOllamaModelCleanup = vi.fn(() => {
+      throw new Error("state directory is unavailable");
+    });
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+      persistPendingOllamaModelCleanup,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Manually release only llama3");
+      expect(warning).toContain("http://host.docker.internal:11434");
+      expect(warning).not.toContain("Re-run onboarding, stop, or destroy");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(persistPendingOllamaModelCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+      unloadOllamaModels.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("keeps the model when the re-onboard selects the same one (#9110)", async () => {
@@ -1155,6 +1277,31 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
+  it("keeps the route and shared model for a compatible local Ollama peer", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const peer: ReleaseEntry = {
+      name: "peer",
+      provider: "compatible-endpoint",
+      model: "llama3:latest",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+    };
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
+      unloadOllamaModels,
+      loadPersistedOllamaHost: () => "127.0.0.1",
+      clearPersistedOllamaHostIfUnused,
+    });
+
+    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPersistedOllamaHostIfUnused).not.toHaveBeenCalled();
+  });
+
   it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {
     const events: string[] = [];
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
@@ -1187,7 +1334,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
           events.push("ownership-lock-exit");
           return value;
         },
-        withSandboxMutationLock: async <T,>(_name: string, operation: () => Promise<T> | T) => {
+        withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
           events.push("lock-enter");
           const value = await operation();
           events.push("lock-exit");

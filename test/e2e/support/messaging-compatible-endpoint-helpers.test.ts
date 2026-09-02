@@ -13,13 +13,8 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   cleanupMessagingState,
   cleanupOwnedGatewayRuntimeStrict,
-  parseOpenClawAgentText,
   stopGatewayRuntime,
 } from "../live/messaging-compatible-endpoint-helpers.ts";
-
-const COMPAT_AGENT_REPLY = "COMPAT_MOCK_ROUTE_5098_OK";
-const COMPAT_AGENT_PROMPT =
-  "Call the configured model and report the compatible endpoint route token.";
 
 describe("messaging compatible endpoint helper coverage", () => {
   it.runIf(process.platform === "linux")(
@@ -53,7 +48,7 @@ describe("messaging compatible endpoint helper coverage", () => {
         await expect(
           cleanupOwnedGatewayRuntimeStrict(host, "strict-invalid-gateway-pid"),
         ).rejects.toThrow(/PID file is invalid or unreadable/u);
-        expect(command).toHaveBeenCalledTimes(1);
+        expect(command).toHaveBeenCalledTimes(4);
       } finally {
         vi.unstubAllEnvs();
         process.kill(pid!, "SIGKILL");
@@ -122,7 +117,7 @@ describe("messaging compatible endpoint helper coverage", () => {
       })(),
     ).rejects.toThrow(/HTTP 429/);
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(6);
     expect(calls[0]?.command).toBe("node");
     expect(calls[0]?.args[0]).toMatch(/bin\/nemoclaw\.js$/);
     expect(calls[0]?.args.slice(1)).toEqual(["e2e-msg-compat-missing", "destroy", "--yes"]);
@@ -130,39 +125,26 @@ describe("messaging compatible endpoint helper coverage", () => {
       command: "openshell",
       args: ["sandbox", "delete", "e2e-msg-compat-missing"],
     });
-    expect(calls[2]?.command).toBe("bash");
-    expect(calls[2]?.args[0]).toBe("-lc");
-    expect(calls[2]?.args[1]).toContain('"$openshell_bin" gateway destroy -g nemoclaw');
-    expect(calls[2]?.args.at(-1)).toBe("openshell");
-  });
-
-  it("extracts noisy OpenClaw JSON while rejecting prompt echo text", () => {
-    expect(COMPAT_AGENT_PROMPT).not.toContain(COMPAT_AGENT_REPLY);
-    expect(
-      parseOpenClawAgentText(JSON.stringify({ result: { content: COMPAT_AGENT_PROMPT } })),
-    ).not.toContain(COMPAT_AGENT_REPLY);
-
-    const noisyOutput = [
-      "openclaw: session starting",
-      "debug: {not-json}",
-      JSON.stringify({
-        result: {
-          messages: [{ role: "assistant", content: COMPAT_AGENT_REPLY }],
-        },
-      }),
-      "openclaw: session complete",
-    ].join("\n");
-
-    expect(parseOpenClawAgentText(noisyOutput)).toContain(COMPAT_AGENT_REPLY);
-  });
-
-  it("extracts OpenAI Responses content parts", () => {
-    const output = JSON.stringify({
-      result: {
-        content: [{ type: "output_text", text: COMPAT_AGENT_REPLY }],
-      },
+    expect(calls[2]).toEqual({
+      command: "openshell",
+      args: ["forward", "stop", "18789"],
     });
-
-    expect(parseOpenClawAgentText(output)).toContain(COMPAT_AGENT_REPLY);
+    expect(calls[3]).toEqual({
+      command: "openshell",
+      args: ["gateway", "stop", "-g", "nemoclaw"],
+    });
+    expect(calls[4]?.args).toEqual([
+      "container",
+      "ps",
+      "--filter",
+      "name=^openshell-cluster-nemoclaw$",
+      "--format",
+      "{{.Names}}",
+    ]);
+    expect(calls[5]).toEqual({
+      command: "openshell",
+      args: ["gateway", "destroy", "-g", "nemoclaw"],
+    });
   });
+
 });

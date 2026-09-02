@@ -1158,7 +1158,7 @@ with tempfile.TemporaryDirectory() as root:
         lambda _reader, _supervisor: diagnostic_output_events
     )
     control._control = lambda *_args: (_ for _ in ()).throw(
-        control.ControlError("SUPERVISOR_UNAVAILABLE", stage="await-replacement")
+        control.ControlError("GATEWAY_FAILED", stage="await-replacement")
     )
     staged_stderr = io.StringIO()
     try:
@@ -1443,7 +1443,7 @@ describe("managed gateway root control", () => {
       staged_diagnostic: [
         1,
         [
-          "SUPERVISOR_UNAVAILABLE",
+          "GATEWAY_FAILED",
           "NEMOCLAW_CONTROL_STAGE=await-replacement",
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",

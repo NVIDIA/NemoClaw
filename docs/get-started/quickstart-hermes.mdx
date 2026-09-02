@@ -19,7 +19,7 @@ The `nemohermes` command is the NemoClaw CLI with Hermes pre-selected.
 
 Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
 The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
-It asks the agent to confirm Hermes before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
+It asks the agent to confirm Hermes before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the command that receives credentials.
 
 <Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
@@ -125,6 +125,46 @@ Use these details when your first-run path needs more control.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling those services.
   </Accordion>
 
+  <Accordion title="Add Langfuse observability">
+    Register Langfuse keys with OpenShell instead of writing them into the sandbox.
+    The checked-in `langfuse-hermes-v1` profile binds both keys to Langfuse Cloud and the managed Hermes Python runtime.
+
+    ```bash
+    export LANGFUSE_PUBLIC_KEY=pk-lf-...
+    export LANGFUSE_SECRET_KEY=sk-lf-...
+
+    nemohermes credentials add my-hermes-langfuse \
+      --type langfuse-hermes-v1 \
+      --credential LANGFUSE_PUBLIC_KEY \
+      --credential LANGFUSE_SECRET_KEY
+
+    unset LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+    nemohermes my-hermes rebuild
+    ```
+
+    Connect to the rebuilt sandbox and enable the bundled plugin, then restart the managed Hermes gateway from the host.
+
+    ```bash
+    nemohermes my-hermes connect
+    hermes plugins enable observability/langfuse
+    exit
+    nemohermes my-hermes gateway restart
+    ```
+
+    Hermes receives revision-scoped `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
+    OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
+    The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
+    Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
+    A copied revision can shadow the current provider value after rotation or rebuild.
+
+    For a self-hosted Langfuse deployment, copy `nemoclaw-blueprint/provider-profiles/langfuse-hermes-v1.yaml` to a new profile, change its `id` and exact `endpoints[0].host`, and import that reviewed profile before running `credentials add` with the new type.
+    When `HERMES_LANGFUSE_BASE_URL` uses a non-default HTTPS port, change `endpoints[0].port` to that exact port too.
+    Keep the profile limited to the HTTPS ingestion origin and `/api/public/**` paths.
+    Store only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
+    Do not use the cloud profile for a self-hosted host because OpenShell will correctly refuse to resolve its credentials there.
+    Use the same exact-host profile process when a hosted Langfuse project uses an origin other than `cloud.langfuse.com`.
+  </Accordion>
+
   <Accordion title="Automate or repeat onboarding">
     The hosted installer follows the maintained last-known-good (`lkg`) release tag by default.
     For a scripted installation, provide the required values before running the installer.
@@ -156,11 +196,11 @@ Use these details when your first-run path needs more control.
 
     This path does not inspect, start, or use a host Ollama process.
     It does not use the default Docker runtime.
-    Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the exact model is loaded.
+    Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the model is loaded.
     NemoClaw records the provider selection only after those checks pass.
 
     Run `nemohermes uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
-    NemoClaw revalidates the exact lifecycle receipt, sandbox and Podman container identities, committed gateway provider revision, inference runtime, socket, and Portable network before it removes an owned resource.
+    NemoClaw revalidates the lifecycle receipt, sandbox and Podman container identities, committed gateway provider revision, inference runtime, socket, and Portable network before it removes an owned resource.
     If cleanup is interrupted, preserve the reported state and rerun the same command.
     NemoClaw resumes the recorded phase without deleting a same-name replacement, shared provider or inference runtime, or Podman image.
     Per-sandbox `destroy` remains outside this full-uninstall cleanup contract.
@@ -181,7 +221,10 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
-    NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL`, binds it for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
+    NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL` and passes its hostname to Hermes for browser Host-header validation.
+    The Hermes dashboard service remains bound to loopback.
+    External `CHAT_UI_URL` values must use HTTPS.
+    NemoClaw preserves an external browser URL across rebuild and clone operations.
     Otherwise, leave it unset and use SSH port forwarding for remote access.
 
     ```bash
@@ -224,7 +267,7 @@ Use these details when your first-run path needs more control.
     On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
     On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
     Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
-    The first Hermes start can take several minutes while OpenShell pulls the exact managed image when it is not already cached.
+    The first Hermes start can take several minutes while OpenShell pulls the managed image when it is not already cached.
     The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
@@ -335,7 +378,7 @@ Use these details when your first-run path needs more control.
     The onboard flow starts both port forwards automatically.
     For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and creation.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
-    If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
+    If OpenShell returns the `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
     The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected host port.
     NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.

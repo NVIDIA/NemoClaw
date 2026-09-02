@@ -8,10 +8,11 @@
  * and gateway recovery — without introducing another target framework.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -27,17 +28,23 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import {
   RESOURCE_LIMIT_CONNECT_BEGIN_MARKER,
   RESOURCE_LIMIT_CONNECT_END_MARKER,
   resourceLimitOutputFilterScript,
 } from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
+import { ubuntuRepoManagedRuntime } from "../registry/matrix.ts";
 
-const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
+const ENVIRONMENT = ubuntuRepoManagedRuntime("cloud-openclaw");
 const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
+const CREDENTIAL_PROVIDER = "e2e-sandbox-tavily";
+const CREDENTIAL_ENV_NAME = "TAVILY_API_KEY";
+const CREDENTIAL_VALUE = "e2e-sandbox-operations-provider-secret";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
@@ -148,6 +155,21 @@ async function onboardSandbox(
   return result;
 }
 
+async function resetCredentialProvider(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const reset = await host.nemoclaw(["credentials", "reset", CREDENTIAL_PROVIDER, "--yes"], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [CREDENTIAL_VALUE],
+    timeoutMs: 3 * 60_000,
+  });
+  expectExitZero(reset, `nemoclaw credentials reset ${CREDENTIAL_PROVIDER} --yes`);
+  expect(resultText(reset)).not.toContain(CREDENTIAL_VALUE);
+  return reset;
+}
+
 async function expectListed(host: HostCliClient, sandboxName: string, artifactName: string) {
   const list = await host.nemoclaw(["list"], {
     artifactName,
@@ -173,109 +195,96 @@ async function execInSandbox(
   });
 }
 
-function findJsonObjectEnd(raw: string, start: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-    } else if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return index + 1;
-    }
-  }
-  return null;
+function credentialBoundaryProbeScript(): string {
+  const fixtureDigest = createHash("sha256").update(CREDENTIAL_VALUE, "utf8").digest("hex");
+  return `python3 - ${shellQuote(fixtureDigest)} ${CREDENTIAL_VALUE.length} <<'PY'
+from pathlib import Path
+import hashlib
+import os
+import sys
+
+secret_digest = bytes.fromhex(sys.argv[1])
+secret_length = int(sys.argv[2])
+
+def contains_secret(path):
+    try:
+        content = Path(path).read_bytes()
+    except OSError:
+        return False
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
+
+def contains_secret_bytes(content):
+    if len(content) < secret_length:
+        return False
+    view = memoryview(content)
+    return any(
+        hashlib.sha256(view[offset:offset + secret_length]).digest() == secret_digest
+        for offset in range(len(content) - secret_length + 1)
+    )
+
+environment = b"\\0".join(
+    f"{key}={value}".encode("utf-8", errors="surrogateescape")
+    for key, value in os.environ.items()
+)
+if contains_secret_bytes(environment):
+    raise SystemExit(98)
+
+managed_config_files = 0
+for root_text in ("/sandbox/.openclaw", "/etc/nemoclaw", "/tmp"):
+    root = Path(root_text)
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                continue
+        except OSError:
+            continue
+        if root_text != "/tmp":
+            managed_config_files += 1
+        if contains_secret(path):
+            raise SystemExit(98)
+
+agent_environment_inspected = False
+for process in Path("/proc").iterdir():
+    if not process.name.isdigit():
+        continue
+    try:
+        command = (process / "cmdline").read_bytes()
+    except OSError:
+        continue
+    if b"openclaw" not in command.lower():
+        continue
+    try:
+        agent_environment = (process / "environ").read_bytes()
+    except OSError:
+        continue
+    agent_environment_inspected = True
+    if contains_secret_bytes(command) or contains_secret_bytes(agent_environment):
+        raise SystemExit(98)
+
+if managed_config_files == 0 or not agent_environment_inspected:
+    raise SystemExit(97)
+PY`;
 }
 
-function parseOpenClawAgentText(raw: string): string {
-  if (!raw.trim()) return "";
-  const parts: string[] = [];
-  const visited = new Set<unknown>();
-  const textKeys = new Set(["text", "content", "reasoning_content"]);
-  const containerKeys = new Set([
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "choices",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "delta",
-  ]);
-
-  const add = (value: unknown) => {
-    if (typeof value === "string" && value.trim()) parts.push(value.trim());
-  };
-  const collect = (value: unknown) => {
-    if (visited.has(value)) return;
-    visited.add(value);
-    if (typeof value === "string") {
-      add(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach(collect);
-      return;
-    }
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    for (const key of textKeys) add(record[key]);
-    const choices = record.choices;
-    if (Array.isArray(choices)) {
-      for (const choice of choices) {
-        if (!choice || typeof choice !== "object") continue;
-        collect((choice as Record<string, unknown>).message);
-        collect((choice as Record<string, unknown>).delta);
-        add((choice as Record<string, unknown>).text);
-      }
-    }
-    for (const key of containerKeys) {
-      if (key in record) collect(record[key]);
-    }
-  };
-  const collectDoc = (doc: unknown) => {
-    if (doc && typeof doc === "object" && (doc as Record<string, unknown>).result) {
-      collect((doc as Record<string, unknown>).result);
-    } else {
-      collect(doc);
-    }
-  };
-
-  try {
-    collectDoc(JSON.parse(raw));
-  } catch {
-    for (const match of raw.matchAll(/{/g)) {
-      try {
-        const before = parts.length;
-        const start = match.index;
-        const end = findJsonObjectEnd(raw, start);
-        if (end === null) continue;
-        collectDoc(JSON.parse(raw.slice(start, end)));
-        if (parts.length > before) break;
-      } catch {
-        // Continue scanning for a later JSON object, matching the legacy parser.
-      }
-    }
-  }
-  return parts.join("\n");
+async function assertCredentialRemainsOutsideSandbox(sandbox: SandboxClient): Promise<void> {
+  const probe = await execInSandbox(
+    sandbox,
+    SANDBOX_A,
+    credentialBoundaryProbeScript(),
+    "tc-sbx-14-sandbox-credential-boundary",
+  );
+  expect(
+    probe.exitCode,
+    "credential fixture must remain absent from sandbox environment and managed runtime configuration",
+  ).toBe(0);
 }
 
 async function assertAgentCanAnswer(
@@ -304,7 +313,7 @@ async function assertAgentCanAnswer(
   );
   const reply = parseOpenClawAgentText(result.stdout);
   expectExitZero(result, `nemoclaw ${sandboxName} agent --json`);
-  expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
+  expect(containsAnswer(reply, "42"), resultText(result)).toBe(true);
 }
 
 async function assertForcedGatewayRestart(
@@ -645,32 +654,31 @@ type GatewayRecoveryOutcome =
 
 async function assertGatewayRecovery(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandboxName: string,
 ): Promise<GatewayRecoveryOutcome> {
-  const running = await host.command(
-    "docker",
-    ["ps", "-q", "--filter", `name=${GATEWAY_CONTAINER}`],
+  const running = await runtimeProvider.command(
+    ["container", "ps", "--filter", `name=^${GATEWAY_CONTAINER}$`, "--format", "{{.Names}}"],
     {
-      artifactName: "tc-sbx-06-gateway-container-running",
+      artifactName: "tc-sbx-06-gateway-runtime-resource-running",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 15_000,
     },
   );
-  if (!running.stdout.trim()) {
+  if (!running.stdout.split(/\r?\n/u).some((name) => name.trim() === GATEWAY_CONTAINER)) {
     return "skipped-gateway-absent";
   }
 
-  const kill = await host.command("docker", ["kill", GATEWAY_CONTAINER], {
-    artifactName: "tc-sbx-06-docker-kill-gateway",
+  const kill = await runtimeProvider.command(["container", "kill", GATEWAY_CONTAINER], {
+    artifactName: "tc-sbx-06-runtime-kill-gateway",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
   expectExitZero(kill, "kill shared NemoClaw gateway container");
   await new Promise((resolve) => setTimeout(resolve, 5_000));
 
-  const afterKill = await host.command(
-    "docker",
-    ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
+  const afterKill = await runtimeProvider.command(
+    ["container", "inspect", "--format", "{{.State.Running}}", GATEWAY_CONTAINER],
     {
       artifactName: "tc-sbx-06-gateway-container-after-kill",
       env: buildAvailabilityProbeEnv(),
@@ -685,9 +693,8 @@ async function assertGatewayRecovery(
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 10 * 60_000,
   });
-  const afterStatus = await host.command(
-    "docker",
-    ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
+  const afterStatus = await runtimeProvider.command(
+    ["container", "inspect", "--format", "{{.State.Running}}", GATEWAY_CONTAINER],
     {
       artifactName: "tc-sbx-06-gateway-container-after-status",
       env: buildAvailabilityProbeEnv(),
@@ -698,6 +705,113 @@ async function assertGatewayRecovery(
   expect(afterStatus.stdout.trim(), resultText(afterStatus)).toBe("true");
   return recoveryOutcome;
 }
+
+test(
+  "credentials reset removes a provider attached during sandbox rebuild (#9806)",
+  {
+    timeout: 45 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and clear the credential provider fixture",
+        "onboard the credential lifecycle sandbox",
+        "add, attach, reset, and remove the credential provider",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+    const hosted = requireHostedInferenceConfig(secrets);
+
+    await artifacts.target.declare({
+      id: "sandbox-operations",
+      boundary: "repo-cli-openshell-provider-sandbox-attachment",
+      contracts: [
+        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, keeps the credential outside the rebuilt sandbox, and removes the attachment and provider",
+      ],
+    });
+
+    artifacts.addRedactionValues([CREDENTIAL_VALUE]);
+    await docker.requireDocker();
+    await environment.assertReady(ENVIRONMENT);
+    cleanup.trackGateway(host, "nemoclaw", {
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 5 * 60_000,
+    });
+    await host.cleanupSandbox(SANDBOX_A);
+    await resetCredentialProvider(host, "tc-sbx-14-clear-stale-credential-provider");
+    cleanup.add(`remove credential provider ${CREDENTIAL_PROVIDER}`, async () => {
+      await resetCredentialProvider(host, "cleanup-tc-sbx-14-credential-provider");
+    });
+
+    progress.phase("onboard the credential lifecycle sandbox");
+    await onboardSandbox(host, cleanup, SANDBOX_A, "tc-sbx-14-onboard-sandbox", hosted);
+
+    progress.phase("add, attach, reset, and remove the credential provider");
+    const add = await host.nemoclaw(
+      [
+        "credentials",
+        "add",
+        CREDENTIAL_PROVIDER,
+        "--type",
+        "tavily",
+        "--credential",
+        CREDENTIAL_ENV_NAME,
+      ],
+      {
+        artifactName: "tc-sbx-14-credentials-add",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          [CREDENTIAL_ENV_NAME]: CREDENTIAL_VALUE,
+        },
+        redactionValues: [CREDENTIAL_VALUE],
+        timeoutMs: 3 * 60_000,
+      },
+    );
+    expectExitZero(add, `nemoclaw credentials add ${CREDENTIAL_PROVIDER}`);
+    expect(resultText(add)).toContain(`Registered provider '${CREDENTIAL_PROVIDER}'`);
+    expect(resultText(add)).not.toContain(CREDENTIAL_VALUE);
+
+    const beforeRebuild = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-before-rebuild",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(beforeRebuild, "nemoclaw credentials list before rebuild");
+    expect(resultText(beforeRebuild)).toContain(CREDENTIAL_PROVIDER);
+
+    const rebuild = await host.nemoclaw([SANDBOX_A, "rebuild", "--yes"], {
+      artifactName: "tc-sbx-14-rebuild-with-credential-provider",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        ...hosted.env,
+      },
+      redactionValues: [hosted.apiKey, CREDENTIAL_VALUE],
+      timeoutMs: 20 * 60_000,
+    });
+    expectExitZero(rebuild, `nemoclaw ${SANDBOX_A} rebuild --yes`);
+    expect(resultText(rebuild)).not.toContain(CREDENTIAL_VALUE);
+
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "present", {
+      artifactName: "tc-sbx-14-provider-attached-after-rebuild",
+      env: buildAvailabilityProbeEnv(),
+    });
+    await assertCredentialRemainsOutsideSandbox(sandbox);
+
+    const reset = await resetCredentialProvider(host, "tc-sbx-14-credentials-reset-attached");
+    expect(resultText(reset)).toContain(`Removed provider '${CREDENTIAL_PROVIDER}'`);
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_A, CREDENTIAL_PROVIDER, "absent", {
+      artifactName: "tc-sbx-14-provider-detached-after-reset",
+      env: buildAvailabilityProbeEnv(),
+    });
+
+    const afterReset = await host.nemoclaw(["credentials", "list"], {
+      artifactName: "tc-sbx-14-credentials-list-after-reset",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(afterReset, "nemoclaw credentials list after reset");
+    expect(resultText(afterReset)).not.toContain(CREDENTIAL_PROVIDER);
+  },
+);
 
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
@@ -717,7 +831,16 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+  async ({
+    artifacts,
+    cleanup,
+    environment,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.target.declare({
@@ -742,7 +865,10 @@ test(
       ],
     });
 
-    await docker.requireDocker();
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-provider-info",
+      scenarioLabel: "sandbox operations",
+    });
 
     await environment.assertReady(ENVIRONMENT);
     cleanup.trackGateway(host, "nemoclaw", {
@@ -787,7 +913,7 @@ test(
     await expectListed(host, SANDBOX_A, "tc-sbx-12-survivor-listed-after-destroy-b");
     await assertAgentCanAnswer(host, SANDBOX_A, "tc-sbx-12-survivor-agent-after-destroy-b");
 
-    const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
+    const gatewayRecovery = await assertGatewayRecovery(host, runtimeProvider, SANDBOX_A);
     const finalDestroyCleanupMode =
       process.platform === "darwin" ? "macos-default" : "explicit-non-macos";
 

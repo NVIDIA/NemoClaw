@@ -31,16 +31,16 @@ import {
 } from "../fixtures/onboard-performance.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
+import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  buildOpenClawFirstTurnLatencyEvidence,
-  extractOpenClawAgentPayloadText,
-} from "./agent-turn-latency-helpers.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
@@ -293,10 +293,9 @@ async function assertColdOnboardPerformance(input: {
     performanceEvaluation.rootStartToFirstTurnCompletionMs / 1_000,
   );
   const turnText = resultText(turn);
-  const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
+  const assistantReply = parseOpenClawAgentText(turnText).trim();
   const firstTurnLatency = buildOpenClawFirstTurnLatencyEvidence(turnText, firstTurnCommandMs);
-  const compactAssistantReply = assistantReply.replace(/\s+/gu, "");
-  const firstTurnSentinelMatched = compactAssistantReply.includes(EXPECTED_FIRST_REPLY);
+  const firstTurnSentinelMatched = containsAnswer(assistantReply, EXPECTED_FIRST_REPLY);
   const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {
@@ -427,15 +426,12 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+  await ensureConfiguredRuntimeProviderAvailable({
+    artifactName: "phase-0-runtime-provider-info",
+    host,
+    scenarioLabel: FULL_E2E_TARGET_ID,
+    skip,
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   cleanupRegistry.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway-destroy",

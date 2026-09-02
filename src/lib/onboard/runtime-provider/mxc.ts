@@ -13,6 +13,7 @@ import {
   NATIVE_ARTIFACT_WORKLOAD_PLATFORM,
   parseNativeArtifactWorkloadReceiptV1,
 } from "../workload/native-artifact";
+import { exitOnSandboxGpuConfigErrors } from "../sandbox-gpu-preflight";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -101,8 +102,8 @@ function inspectMxcHost(
         `Windows x64 build ${assessment.windowsBuild} and OpenShell ${attachment.distribution.version} ` +
         "match the inactive attachment contract.",
       hint:
-        "This check does not enable MXC. Maintainers must qualify the accepted OpenShell " +
-        "distribution and required live E2E coverage before adding production selection.",
+        "This check does not enable MXC. Maintainers must accept a stable OpenShell distribution " +
+        "and complete required live E2E coverage before adding production selection.",
     };
   } catch (error) {
     return {
@@ -172,6 +173,8 @@ export function createMxcRuntimeProviderBundle({
       providerId: MXC_PROVIDER_ID,
       supported: true,
       inspectHost: () => inspectMxcHost(hostFacts, qualifyAttachment),
+      validateSandboxGpu: (config, exitProcess) =>
+        exitOnSandboxGpuConfigErrors(config, exitProcess),
       preflightLifecycle: () => ({ exitCode: 1, message: lifecycleReason }),
     },
     gateway: {
@@ -179,6 +182,9 @@ export function createMxcRuntimeProviderBundle({
       supported: true,
       launcher: "openshell",
       inspectLegacyContainer: false,
+      prepareHostRuntime: () => {
+        throw new Error("OpenShell MXC does not launch a host-managed gateway.");
+      },
     },
     workload: {
       providerId: MXC_PROVIDER_ID,

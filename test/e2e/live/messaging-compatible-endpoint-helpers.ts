@@ -14,6 +14,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -37,6 +38,33 @@ async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
 
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = resolveGatewayPortFromName(GATEWAY_NAME);
+const GATEWAY_RESOURCE_NAME = "openshell-cluster-nemoclaw";
+
+function selectedRuntimeProvider(host: HostCliClient): RuntimeProviderPrerequisite {
+  return new RuntimeProviderPrerequisite(host, (reason) => {
+    throw new Error(reason);
+  });
+}
+
+async function stopGatewayRuntimeResource(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<void> {
+  const runtimeProvider = selectedRuntimeProvider(host);
+  const resources = await runtimeProvider.command(
+    ["container", "ps", "--filter", `name=^${GATEWAY_RESOURCE_NAME}$`, "--format", "{{.Names}}"],
+    { artifactName: `${artifactName}-list`, timeoutMs: 30_000 },
+  );
+  assertExitZero(resources, "list messaging-compatible gateway runtime resource");
+  if (!resources.stdout.split(/\r?\n/u).some((name) => name.trim() === GATEWAY_RESOURCE_NAME)) {
+    return;
+  }
+  const stopped = await runtimeProvider.command(["container", "stop", GATEWAY_RESOURCE_NAME], {
+    artifactName,
+    timeoutMs: 90_000,
+  });
+  assertExitZero(stopped, "stop messaging-compatible gateway runtime resource");
+}
 
 type GatewayPidState =
   | { kind: "absent" }
@@ -195,51 +223,31 @@ export async function cleanupOwnedGatewayRuntimeStrict(
   artifactName: string,
 ): Promise<void> {
   await stopOwnedGatewayPid(true);
-  const result = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        "set -uo pipefail",
-        'cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)" || exit $?',
-        'if [ -n "$cid" ]; then docker stop "$cid" >/dev/null; fi',
-      ].join("\n"),
-    ],
-    {
-      artifactName,
-      env: commandEnv(),
-      timeoutMs: 90_000,
-    },
-  );
-  assertExitZero(result, "cleanup messaging-compatible owned gateway runtime");
+  await stopGatewayRuntimeResource(host, artifactName);
 }
 
 export async function stopGatewayRuntime(host: HostCliClient, artifactName: string): Promise<void> {
   await preCleanBestEffort(() =>
-    host.command(
-      "bash",
-      [
-        "-lc",
-        [
-          "set +e",
-          'openshell_bin="$1"',
-          '"$openshell_bin" forward stop 18789 >/dev/null 2>&1',
-          '"$openshell_bin" gateway stop -g nemoclaw >/dev/null 2>&1',
-          'cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" 2>/dev/null | head -1)"',
-          'if [ -n "$cid" ]; then docker stop "$cid" >/dev/null 2>&1 || true; fi',
-          '"$openshell_bin" gateway remove nemoclaw >/dev/null 2>&1',
-          '"$openshell_bin" gateway destroy -g nemoclaw >/dev/null 2>&1',
-          "exit 0",
-        ].join("\n"),
-        "gateway-runtime-preclean",
-        host.openshellCommandPath,
-      ],
-      {
-        artifactName,
+    host.command(host.openshellCommandPath, ["forward", "stop", "18789"], {
+      artifactName: `${artifactName}-forward-stop`,
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    }),
+  );
+  await preCleanBestEffort(() =>
+    host.command(host.openshellCommandPath, ["gateway", "stop", "-g", GATEWAY_NAME], {
+      artifactName: `${artifactName}-gateway-stop`,
         env: commandEnv(),
         timeoutMs: 90_000,
-      },
-    ),
+    }),
+  );
+  await preCleanBestEffort(() => stopGatewayRuntimeResource(host, artifactName));
+  await preCleanBestEffort(() =>
+    host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", GATEWAY_NAME], {
+      artifactName: `${artifactName}-gateway-destroy`,
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    }),
   );
   await stopOwnedGatewayPid(false);
 }
@@ -266,111 +274,4 @@ export async function cleanupMessagingState(
     }),
   );
   await stopGatewayRuntime(host, "cleanup-openshell-gateway-runtime-nemoclaw");
-}
-
-function findJsonObjectEnd(raw: string, start: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-    } else if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return index + 1;
-    }
-  }
-  return null;
-}
-
-export function parseOpenClawAgentText(raw: string): string {
-  if (!raw.trim()) return "";
-  const parts: string[] = [];
-  const visited = new Set<unknown>();
-  const textKeys = new Set(["text", "content", "reasoning_content"]);
-  const containerKeys = new Set([
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "choices",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "delta",
-  ]);
-
-  const add = (value: unknown) => {
-    if (typeof value === "string" && value.trim()) parts.push(value.trim());
-  };
-  const collect = (value: unknown) => {
-    if (visited.has(value)) return;
-    visited.add(value);
-    if (typeof value === "string") {
-      add(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach(collect);
-      return;
-    }
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    for (const key of textKeys) {
-      if (key in record) collect(record[key]);
-    }
-    const choices = record.choices;
-    if (Array.isArray(choices)) {
-      for (const choice of choices) {
-        if (!choice || typeof choice !== "object") continue;
-        collect((choice as Record<string, unknown>).message);
-        collect((choice as Record<string, unknown>).delta);
-        add((choice as Record<string, unknown>).text);
-      }
-    }
-    for (const key of containerKeys) {
-      if (key in record) collect(record[key]);
-    }
-  };
-  const collectDoc = (doc: unknown) => {
-    if (doc && typeof doc === "object" && (doc as Record<string, unknown>).result) {
-      collect((doc as Record<string, unknown>).result);
-    } else {
-      collect(doc);
-    }
-  };
-
-  try {
-    collectDoc(JSON.parse(raw));
-  } catch {
-    for (const match of raw.matchAll(/{/g)) {
-      try {
-        const before = parts.length;
-        const start = match.index;
-        const end = findJsonObjectEnd(raw, start);
-        if (end === null) continue;
-        collectDoc(JSON.parse(raw.slice(start, end)));
-        if (parts.length > before) break;
-      } catch {
-        // Continue scanning for a later JSON object, matching the legacy parser.
-      }
-    }
-  }
-  return parts.join("\n");
 }

@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
+import YAML from "yaml";
+
 import type { McpBridgeEntry } from "../../state/registry";
+import * as policies from "../../policy";
+import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
@@ -16,6 +22,7 @@ import {
 import {
   assertGeneratedPolicyMutationSafe,
   assertGeneratedPolicyRegistrationMutationSafe,
+  buildMcpBridgePolicyKey,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
@@ -44,10 +51,46 @@ export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
   scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
-  /** Full read-only target, policy, provider, and registry proof before delete. */
+  /** Complete live OpenShell policy captured immediately before MCP teardown. */
+  policyHandoff?: string;
+  /** Full target, policy, provider, and registry proof before delete. */
   revalidateBeforeDelete?: () => Promise<void>;
   /** Final synchronous registry-only proof immediately before delete. */
   assertDeleteEdgeUnchanged?: () => void;
+}
+
+function policyDocumentsMatch(left: string, right: string): boolean {
+  try {
+    return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
+  } catch {
+    return false;
+  }
+}
+
+function policyWithoutManagedMcpEntries(
+  policyHandoff: string,
+  entries: readonly McpBridgeEntry[],
+): string {
+  return entries.reduce(
+    (policy, entry) =>
+      policies.removePresetFromPolicy(policy, `  ${buildMcpBridgePolicyKey(entry.server)}: {}\n`),
+    policyHandoff,
+  );
+}
+
+function assertMcpTeardownPolicyUnchanged(
+  sandboxName: string,
+  expectedTeardownPolicy: string,
+): void {
+  const currentPolicy = policies.captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "verify the live policy before MCP teardown",
+  );
+  if (!currentPolicy || !policyDocumentsMatch(currentPolicy, expectedTeardownPolicy)) {
+    throw new McpBridgeError(
+      `OpenShell policy changed while preparing MCP teardown for sandbox '${sandboxName}'. Refusing sandbox deletion.`,
+    );
+  }
 }
 
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild-exec-unavailable";
@@ -64,7 +107,7 @@ async function getCompleteMcpRebuildEntries(
       (entry) => entry.addState !== "prepared",
     );
     // This host-visible config preflight must precede
-    // discardSafeIncompleteMcpAdds, which can remove an owned policy for a
+    // discardSafeIncompleteMcpAdds, which can remove the generated live policy key for a
     // providerless preflighted add. That cleanup has no adapter/provider to
     // probe; complete entries get the teardown runtime probe below.
     assertMcpAdapterConfigMutationsAllowed(
@@ -133,6 +176,26 @@ export async function prepareMcpBridgesForRebuild(
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   assertNoProviderCredentialCollisions(sandboxName, entries);
+  // This is the bounded replacement handoff, not a durable NemoClaw policy
+  // record. Capture OpenShell immediately before the internal teardown
+  // mutations so the replacement receives the complete operator-owned
+  // document, including the MCP rules that must be removed temporarily from
+  // the still-running source sandbox before provider detach.
+  const policyHandoff = policies.captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "capture the live policy before MCP teardown",
+  );
+  if (!policyHandoff) {
+    throw new McpBridgeError(
+      `Could not capture the live OpenShell policy before MCP teardown for sandbox '${sandboxName}'.`,
+    );
+  }
+  if (!isSandboxPolicyCredentialFree(policyHandoff)) {
+    throw new McpBridgeError(
+      `Cannot prepare the MCP rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
+    );
+  }
+  const expectedTeardownPolicy = policyWithoutManagedMcpEntries(policyHandoff, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
@@ -145,10 +208,9 @@ export async function prepareMcpBridgesForRebuild(
     }
     for (const entry of entries) {
       // The same-name replacement journal fingerprints this source row before
-      // MCP teardown. Keep exact generated-policy ownership in that preserved
-      // row while removing only the live policy; inner onboarding excludes the
-      // generated name and post-rebuild restoration reuses this ownership.
-      removeGeneratedPolicy(sandboxName, entry, { preserveRegistryOwnership: true });
+      // MCP teardown removes the live entry from the source sandbox. Rebuild's
+      // OpenShell policy handoff already captured the complete live document.
+      removeGeneratedPolicy(sandboxName, entry);
       removedPolicies.push(entry);
     }
     for (const entry of entries) {
@@ -167,6 +229,7 @@ export async function prepareMcpBridgesForRebuild(
       // reattached if sandbox deletion later aborts.
       detached.push(entry);
     }
+    assertMcpTeardownPolicyUnchanged(sandboxName, expectedTeardownPolicy);
   } catch (error) {
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
@@ -183,9 +246,7 @@ export async function prepareMcpBridgesForRebuild(
       }
     }
     if (!runtimeRestored) {
-      rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
-      );
+      rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
     }
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpBridgeError(
@@ -198,6 +259,10 @@ export async function prepareMcpBridgesForRebuild(
     entries,
     detachedProviderEntries: detached,
     scrubbedAdapterEntries: scrubbedAdapters,
+    policyHandoff,
+    revalidateBeforeDelete: async () => {
+      assertMcpTeardownPolicyUnchanged(sandboxName, expectedTeardownPolicy);
+    },
   };
 }
 
@@ -246,5 +311,8 @@ export async function restoreMcpBridgesAfterRebuild(
   // Persist the recovery contract before touching the gateway. If refresh
   // fails, `mcp restart` remains retryable after the operator fixes the cause.
   setBridgeState(sandboxName, bridges);
-  await restoreExistingMcpBridgeRuntime(sandboxName, entries);
+  // Sandbox creation already received the complete pre-rebuild OpenShell
+  // policy. Restore providers and adapters without regenerating or overwriting
+  // policy entries that an operator may have edited independently.
+  await restoreExistingMcpBridgeRuntime(sandboxName, entries, { applyPolicy: false });
 }

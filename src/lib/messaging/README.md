@@ -48,8 +48,8 @@ The workflow has these stages.
 5. `src/lib/onboard/dockerfile-patch.ts` passes the encoded plan into image builds.
 6. `applier/build/messaging-build-applier.mts` applies build-time package installs, render entries, post-agent-install files, and the reduced runtime plan artifact.
 7. `MessagingHostStateApplier` persists compact plan state under the sandbox registry entry.
-8. Rebuild hydrates persisted plans from current manifests so compacted render, host-forward, package, runtime, and hook fields stay current.
-   Non-empty persisted `networkPolicy` entries are preserved and regenerated only when they are absent or empty.
+8. Rebuild hydrates persisted plans from current manifests so compacted policy, render, host-forward, package, runtime, and hook fields stay current.
+   `networkPolicy` is never persisted; it is transient command input regenerated from current manifests.
 
 ## Class Diagram
 
@@ -300,6 +300,12 @@ It is a serializable declaration for one channel and one set of supported agents
 Secret inputs cannot declare `statePath` or defaults.
 Plans may carry `credentialAvailable`, `credentialHash`, and placeholders, but they must not carry raw tokens.
 
+WeChat's validated enrollment response can select an account-specific iLink IDC origin. The
+enrollment handler must validate that value before persisting `WECHAT_BASE_URL`. Policy loading
+revalidates the stored origin and clones only the reviewed `ilinkai.wechat.com` endpoint for the
+one exact IDC host. It rejects ports, credentials, paths, queries, fragments, wildcard hosts, and
+hosts outside the WeChat iLink contract.
+
 ## Manifest Skeleton
 
 Use `satisfies ChannelManifest` so TypeScript checks the manifest while preserving literal IDs and template strings.
@@ -479,4 +485,4 @@ Add the channel through the manifest-first path.
 - Agent render and hook build-file targets must stay inside `/sandbox/.openclaw`, `/sandbox/.hermes`, or `/sandbox/.deepagents`.
 - Disabled channels must be filtered before side effects run.
 - Rebuild should hydrate compacted or missing derived fields from current manifests instead of trusting stale persisted render, package, host-forward, runtime, or hook data.
-- Rebuild preserves non-empty persisted `networkPolicy` entries and regenerates policy only when entries are absent or empty.
+- Persisted plans never contain `networkPolicy`; command-time policy references are regenerated from current manifests.

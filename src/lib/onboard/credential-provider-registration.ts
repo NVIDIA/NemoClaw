@@ -12,6 +12,85 @@ import { createGatewayScopedOpenshellRunner } from "./setup-inference";
 
 const providers = require("./providers");
 
+type CredentialProviderRegistrationUpsert = (
+  tokenDefs: MessagingTokenDef[],
+  runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  options: MessagingProviderRegistrationOptions,
+) => string[];
+
+type LiveE2eCredentialProviderOverride = {
+  readonly expectedName: string;
+  readonly expectedType: string;
+  readonly upsert: CredentialProviderRegistrationUpsert;
+};
+
+const LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY =
+  "__nemoclawLiveE2eCredentialProviderRegistrationOverride" as const;
+
+function liveE2eCredentialProviderOverride(): LiveE2eCredentialProviderOverride | null {
+  const state = globalThis as typeof globalThis & {
+    [LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]?: LiveE2eCredentialProviderOverride;
+  };
+  return state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] ?? null;
+}
+
+/** Install the exact Google Chat fake-mint boundary used by the destructive live E2E. */
+export function installLiveE2eCredentialProviderRegistrationOverride(input: {
+  readonly expectedName: string;
+  readonly expectedType: "google-chat-bridge" | "google-chat-hermes-bridge";
+  readonly upsert: CredentialProviderRegistrationUpsert;
+}): () => void {
+  if (
+    process.env.NEMOCLAW_RUN_LIVE_E2E !== "1" ||
+    !/^e2e-(?:oc|hm)-ch-[a-z0-9-]+-googlechat-bridge$/u.test(input.expectedName)
+  ) {
+    throw new Error("Google Chat provider override is restricted to its destructive live E2E.");
+  }
+  const state = globalThis as typeof globalThis & {
+    [LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]?: LiveE2eCredentialProviderOverride;
+  };
+  if (state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY]) {
+    throw new Error("A live E2E credential provider override is already installed.");
+  }
+  const installed = { ...input };
+  state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] = installed;
+  let restored = false;
+  return () => {
+    if (restored) return;
+    if (state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY] !== installed) {
+      throw new Error("The live E2E credential provider override changed before cleanup.");
+    }
+    delete state[LIVE_E2E_CREDENTIAL_PROVIDER_OVERRIDE_KEY];
+    restored = true;
+  };
+}
+
+/** Late-bound provider upsert seam used by live credential fixtures. */
+export const credentialProviderRegistrationDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: MessagingTokenDef[],
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+    options: MessagingProviderRegistrationOptions,
+  ): string[] {
+    const override = liveE2eCredentialProviderOverride();
+    if (override) {
+      const selected = tokenDefs.filter(({ name }) => name === override.expectedName);
+      if (selected.length === 0) {
+        return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
+      }
+      if (
+        selected.length !== 1 ||
+        selected[0]?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
+        selected[0]?.providerType !== override.expectedType
+      ) {
+        throw new Error("Google Chat live E2E provider override received an unexpected plan.");
+      }
+      return override.upsert(tokenDefs, runOpenshell, options);
+    }
+    return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
+  },
+};
+
 export interface StageSandboxCredentialProvidersInput<Agent> {
   sandboxName: string;
   enabledChannels: readonly string[];
@@ -19,14 +98,14 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
   agent: Agent;
   requiredBindings: readonly CheckpointProviderBinding[];
   replaceExisting?: boolean;
-  revalidatePolicyRequirements?(operation: string): void;
+  revalidateSandboxIdentity?(operation: string): void;
 }
 
 export interface MessagingProviderRegistrationOptions {
   replaceExisting?: boolean;
   bestEffort?: boolean;
   allowedSandboxes?: readonly string[];
-  revalidatePolicyRequirements?(operation: string): void;
+  revalidateSandboxIdentity?(operation: string): void;
 }
 
 type PreparedCredentialProviders = {
@@ -52,7 +131,7 @@ function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
   deps: CredentialProviderRegistrationDeps,
-  revalidatePolicyRequirements?: (operation: string) => void,
+  revalidateSandboxIdentity?: (operation: string) => void,
 ): void {
   const registeredProviders = new Set(registeredProviderNames);
   const migrations: Array<{ envKey: string; migrated: boolean }> = [];
@@ -63,7 +142,7 @@ function recordMigratedLegacyMessagingCredentials(
     migrations.push({ envKey: def.envKey, migrated: def.token === stagedValue });
   }
   if (migrations.length === 0) return;
-  revalidatePolicyRequirements?.("record migrated messaging provider credentials");
+  revalidateSandboxIdentity?.("record migrated messaging provider credentials");
   for (const migration of migrations) {
     if (migration.migrated) deps.migratedLegacyKeys.add(migration.envKey);
     else deps.migratedLegacyKeys.delete(migration.envKey);
@@ -160,7 +239,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     if (result.ok && credentialEnv) {
       const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
       if (stagedValue !== undefined) {
-        options.revalidatePolicyRequirements?.(
+        options.revalidateSandboxIdentity?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,
         );
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
@@ -180,16 +259,16 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
-    const upserted = providers.upsertMessagingProviders(
+    const upserted = credentialProviderRegistrationDependencies.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
       options,
-    ) as string[];
+    );
     recordMigratedLegacyMessagingCredentials(
       tokenDefs,
       upserted,
       deps,
-      options.revalidatePolicyRequirements,
+      options.revalidateSandboxIdentity,
     );
     return upserted;
   }
@@ -249,7 +328,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     prepareCredentialProviders: PrepareCredentialProviders<Agent>,
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
-    input.revalidatePolicyRequirements?.("stage sandbox credential providers after planning");
+    input.revalidateSandboxIdentity?.("stage sandbox credential providers after planning");
     const plannedBindings = validatePlannedCredentialProviderBindings(
       messaging.messagingTokenDefs,
       input.requiredBindings,
@@ -266,7 +345,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       runOpenshell,
       input.replaceExisting === true,
     );
-    input.revalidatePolicyRequirements?.("clear staged credential provider receipts");
+    input.revalidateSandboxIdentity?.("clear staged credential provider receipts");
     setStagedCredentialProviderReceipts(
       tokenDefs.map((tokenDef) => tokenDef.name),
       false,
@@ -277,11 +356,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       {
         replaceExisting: input.replaceExisting === true,
         allowedSandboxes: input.replaceExisting === true ? [input.sandboxName] : undefined,
-        revalidatePolicyRequirements: input.revalidatePolicyRequirements,
+        revalidateSandboxIdentity: input.revalidateSandboxIdentity,
       },
       runOpenshell,
     );
-    input.revalidatePolicyRequirements?.("record staged credential provider receipts");
+    input.revalidateSandboxIdentity?.("record staged credential provider receipts");
     setStagedCredentialProviderReceipts(registered, true, deps);
     return registered.map((name) => {
       const binding = plannedBindings.get(name);

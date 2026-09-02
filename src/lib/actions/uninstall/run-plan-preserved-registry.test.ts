@@ -6,12 +6,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
   type RunResult,
   type UninstallRunDeps,
   type UninstallRunOptions,
-  runUninstallPlan as runUninstallPlanBase,
+  runUninstallPlanProduction as runUninstallPlanBase,
 } from "./run-plan";
 
 const STATIC_TEST_HOME = fs.mkdtempSync(
@@ -31,30 +32,77 @@ function notFound(): RunResult {
 }
 
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
-    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-      gatewayName,
-      gatewayPort,
-      mode: "nemoclaw-managed",
-      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
+  return runUninstallPlanBase(
+    options,
+    withSuccessfulPreUninstallBackup({
+      resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: gatewayPort === 8080 ? "packaged-service" : "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      ...deps,
     }),
-    ...deps,
-  });
+  );
+}
+
+function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
+  return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+    ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+    : ok();
+}
+
+function setupStateDir(): { tmpHome: string; stateDir: string } {
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-registry-"));
+  const stateDir = path.join(tmpHome, ".nemoclaw");
+  fs.mkdirSync(path.join(stateDir, "rebuild-backups"), { recursive: true });
+  fs.mkdirSync(path.join(stateDir, "backups"), { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "sandboxes.json"),
+    JSON.stringify({
+      defaultSandbox: "preserved-box",
+      sandboxes: { "preserved-box": { name: "preserved-box" } },
+    }),
+  );
+  return { tmpHome, stateDir };
+}
+
+function preserveCaseDeps(
+  tmpHome: string,
+  logs: string[],
+  warnings: string[],
+  opts: { envOverrides?: Record<string, string> } = {},
+): UninstallRunDeps {
+  return {
+    commandExists: (command) => command === "openshell",
+    env: {
+      HOME: tmpHome,
+      NEMOCLAW_NON_INTERACTIVE: "",
+      NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
+      ...(opts.envOverrides ?? {}),
+    } as NodeJS.ProcessEnv,
+    error: (line) => warnings.push(line),
+    existsSync: (target: string) => target.startsWith(tmpHome) && fs.existsSync(target),
+    isTty: false,
+    log: (line) => logs.push(line),
+    run: vi.fn(okWithKnownGatewayList),
+    runDocker: () => ok(""),
+  };
 }
 
 describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#6520)", () => {
-  it("uses the 'already removed' wording for provider and sandbox delete no-ops", () => {
+  it("uses the 'already removed' wording for provider and sandbox delete no-ops", async () => {
     // Same defect family as the gateway wording fix (#3456 sub-bug 4): when
     // `openshell provider delete <name>` or `openshell sandbox delete --all`
     // no-ops (target already gone), `Deleted provider 'X' skipped` reads as if
     // the deletion both happened and was skipped.
     const warnings: string[] = [];
     const logs: string[] = [];
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
@@ -67,13 +115,10 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
         run: (command, args) =>
           command === "openshell" && args[0] === "gateway" && args[1] === "list"
             ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-            : command === "openshell" &&
-                args[0] === "gateway" &&
-                args[1] === "remove" &&
-                args[2] === "nemoclaw"
-              ? ok()
-            : command === "openshell"
-              ? notFound()
+            : command === "openshell" && args[0] === "gateway" && args[1] === "remove"
+              ? { status: 1, stdout: "", stderr: "gateway not found" }
+              : command === "openshell"
+                ? notFound()
               : args[0] === "-c"
                 ? ok("/fake/bin/tool\n")
                 : ok(),
@@ -87,5 +132,73 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
     expect(warnings.join("\n")).toContain("OpenShell sandboxes already removed or unreachable");
     expect(combined).not.toContain("Deleted provider 'nvidia-nim' skipped");
     expect(combined).not.toContain("Deleted all OpenShell sandboxes skipped");
+  });
+
+  it("warns that preserved sandboxes.json cannot be auto-recovered after uninstall removes its dependencies", async () => {
+    // Uninstall keeps sandboxes.json but removes the gateway, provider
+    // registrations, and Docker image its recorded sandboxes depend on. Say
+    // so at the moment the preserve choice is made, with a remediation path,
+    // instead of letting a later reinstall report false success.
+    const { tmpHome } = setupStateDir();
+    try {
+      const logs: string[] = [];
+      const warnings: string[] = [];
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        preserveCaseDeps(tmpHome, logs, warnings),
+      );
+
+      expect(result.exitCode).toBe(0);
+      const joined = warnings.join("\n");
+      expect(joined).toContain("sandboxes.json");
+      expect(joined).toContain("cannot be recovered automatically");
+      expect(joined).toContain("--destroy-user-data");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("warns on the interactive keep path when the purge prompt is declined", async () => {
+    const { tmpHome } = setupStateDir();
+    try {
+      const logs: string[] = [];
+      const warnings: string[] = [];
+      // First reply confirms the uninstall itself; the empty second reply
+      // declines the purge prompt, keeping user data.
+      const replies = ["yes", ""];
+      const result = await runUninstallPlan(
+        { assumeYes: false, deleteModels: false, keepOpenShell: true },
+        {
+          ...preserveCaseDeps(tmpHome, logs, warnings),
+          isTty: true,
+          readLine: () => replies.shift() ?? null,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(logs).toContain("Keeping user data.");
+      expect(warnings.join("\n")).toContain("cannot be recovered automatically");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not warn about unrecoverable sandboxes when user data is purged", async () => {
+    const { tmpHome } = setupStateDir();
+    try {
+      const logs: string[] = [];
+      const warnings: string[] = [];
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        preserveCaseDeps(tmpHome, logs, warnings, {
+          envOverrides: { NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1" },
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(warnings.join("\n")).not.toContain("cannot be recovered automatically");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 });

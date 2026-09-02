@@ -7,6 +7,12 @@ import {
   createContainerStateMutationSurface,
   type ContainerStateMutationSurfaceOptions,
 } from "./container-state-mutation";
+import {
+  NATIVE_PODMAN_RESOURCE_LABEL,
+  NATIVE_PODMAN_RESOURCE_LABEL_VALUE,
+  normalizePodmanLogicalMounts,
+  resolvePodmanStorageGraphRoot,
+} from "./podman-runtime-surfaces";
 
 export interface PodmanStateMutationSurfaceOptions {
   readonly engine: PodmanBoundContainerEngine;
@@ -25,6 +31,16 @@ export function createPodmanStateMutationSurface(
     providerId: "podman",
     providerDisplayName: "Podman",
     engineOperation: "state-mutation",
+    runtimeIdInspectField: "ID",
+    privatePidMode: "private",
+    managedLabelKey: NATIVE_PODMAN_RESOURCE_LABEL,
+    managedLabelValue: NATIVE_PODMAN_RESOURCE_LABEL_VALUE,
+    normalizeInspectionMounts: (mounts, runtimeId) =>
+      normalizePodmanLogicalMounts(
+        mounts,
+        resolvePodmanStorageGraphRoot(options.engine),
+        runtimeId,
+      ),
     createAuthority: () => ({
       assertAuthority: options.engine.assertAuthority,
       engine: options.engine,

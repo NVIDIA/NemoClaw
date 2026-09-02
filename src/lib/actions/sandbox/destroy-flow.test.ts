@@ -121,6 +121,7 @@ describe("destroySandbox flow", () => {
         switch (`${String(argv[0])}:${String(argv[1])}`) {
           case "sandbox:delete":
             trace.push("delete");
+            harness.setSandboxPresent(false);
             return { status: 0, stdout: "", stderr: "" };
           case "sandbox:list":
             trace.push("list");
@@ -177,6 +178,7 @@ describe("destroySandbox flow", () => {
           switch (`${String(argv[0])}:${String(argv[1])}`) {
             case "sandbox:delete":
               crossedDeleteBoundary = true;
+              harness.setSandboxPresent(false);
               return { status: 0, stdout: "", stderr: "" };
             case "sandbox:list":
               return {
@@ -547,18 +549,21 @@ describe("destroySandbox flow", () => {
         agent: "hermes",
         openshellDriver: "docker",
         workload: managedHermesWorkload,
-        managedHermesStateVolumeCleanupResult: { status: "removed" },
+        managedAgentStateVolumeCleanupResults: [{ status: "removed" }],
       });
 
       await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-      expect(harness.removeManagedHermesStateVolumeSpy).toHaveBeenCalledWith({
-        agentName: "hermes",
-        runtimeProviderId: "docker",
-        sandboxName: "alpha",
-        workloadKind: "managed-image",
-      });
-      expect(harness.removeManagedHermesStateVolumeSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(harness.removeManagedAgentStateVolumesSpy).toHaveBeenCalledWith(
+        {
+          agentName: "hermes",
+          runtimeProviderId: "docker",
+          sandboxName: "alpha",
+          workloadKind: "managed-image",
+        },
+        { runtimeProviders: expect.any(Object) },
+      );
+      expect(harness.removeManagedAgentStateVolumesSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.removeSandboxSpy.mock.invocationCallOrder[0],
       );
     },
@@ -569,11 +574,13 @@ describe("destroySandbox flow", () => {
       agent: "hermes",
       openshellDriver: "docker",
       workload: managedHermesWorkload,
-      managedHermesStateVolumeCleanupResult: {
-        status: "failed",
-        detail: "volume is still in use",
-        volumeName: "nemoclaw-hermes-state-v1-alpha",
-      },
+      managedAgentStateVolumeCleanupResults: [
+        {
+          status: "failed",
+          detail: "volume is still in use",
+          volumeName: "nemoclaw-hermes-state-v1-alpha",
+        },
+      ],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
@@ -589,17 +596,19 @@ describe("destroySandbox flow", () => {
       agent: "hermes",
       openshellDriver: "docker",
       workload: managedHermesWorkload,
-      managedHermesStateVolumeCleanupResult: {
-        status: "not-owned",
-        detail: "the exact NemoClaw ownership labels are absent or changed",
-        volumeName: "nemoclaw-hermes-state-v1-alpha",
-      },
+      managedAgentStateVolumeCleanupResults: [
+        {
+          status: "not-owned",
+          detail: "the exact NemoClaw ownership labels are absent or changed",
+          volumeName: "nemoclaw-hermes-state-v1-alpha",
+        },
+      ],
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "Left Docker volume 'nemoclaw-hermes-state-v1-alpha' untouched",
+      "Left managed state volume 'nemoclaw-hermes-state-v1-alpha' untouched",
     );
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
@@ -992,7 +1001,13 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(trace.slice(-2)).toEqual([`probe:${String(identityProbeCalls)}`, "delete"]);
+    const deleteIndex = trace.indexOf("delete");
+    expect(deleteIndex).toBeGreaterThan(0);
+    expect(trace[deleteIndex - 1]).toMatch(/^probe:/u);
+    expect(trace.slice(deleteIndex + 1)).toEqual([
+      `probe:${String(identityProbeCalls - 1)}`,
+      `probe:${String(identityProbeCalls)}`,
+    ]);
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {
@@ -1086,7 +1101,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", { force: false });
   });
 
   it("does not require mutable Hermes config for absent-sandbox cleanup", async () => {
@@ -1272,17 +1287,58 @@ describe("destroySandbox flow", () => {
 
     expectActiveTimerDestroyOrder(harness);
   });
-
-  it("warns and still deletes when active-window hardening fails after the wipe (#7727)", async () => {
+  it("skips unrestorable hardening when Docker confirms absence (#10066)", async () => {
     const harness = createDestroyHarness({
       activeTimer: true,
+      sandboxPresent: true,
+      dockerRunResult: { status: 0, stdout: "", stderr: "" },
+      openshellDriver: "docker",
+      shieldsUpError: new Error("inline auto-restore would commit containment"),
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.events).not.toContain("wipe");
+    expect(harness.events).not.toContain("harden");
+    expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
+    expect(harness.killTimerSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("hardens a live Docker identity when OpenShell reports absence (#10066)", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      sandboxPresent: false,
+      dockerRunResult: {
+        status: 0,
+        stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n",
+        stderr: "",
+      },
+      openshellDriver: "docker",
+      shieldsUpError: new Error("must still harden a live Docker identity"),
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.events).toContain("wipe");
+    expect(harness.events).toContain("harden");
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+  it("warns with the invoked CLI and still deletes when active-window hardening fails (#7727)", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      invokedCliName: "nemohermes",
       shieldsUpError: new Error("injected hardening failure"),
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expectFailedHardeningStillDeletes(harness);
+    expectFailedHardeningStillDeletes(harness, "nemohermes");
     expect(exitSpy).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+    resetDestroyModuleCache();
   });
 
   it("keeps the timer and local record when --force cannot confirm deletion after failed hardening (#7727)", async () => {

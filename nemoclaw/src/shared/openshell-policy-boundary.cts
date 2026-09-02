@@ -7,6 +7,82 @@ import YAML from "yaml";
 
 export type OpenShellPolicyMapping = Record<string, unknown>;
 
+export type OpenShellSandboxPolicyReadScope = "base" | "effective";
+
+export type OpenShellSandboxPolicyRead = Readonly<{
+  document: string;
+  appliedRevision: number | null;
+}>;
+
+export type OpenShellSandboxPolicySetOutcome =
+  | Readonly<{ kind: "applied" }>
+  | Readonly<{ kind: "rejected"; status: number; message: string }>
+  | Readonly<{ kind: "ambiguous"; detail: string }>;
+
+export type OpenShellSandboxPolicySetSubmission = Readonly<{
+  outcome: OpenShellSandboxPolicySetOutcome;
+  status: number | null;
+}>;
+
+export type OpenShellSandboxPolicySetCommandResult = Readonly<{
+  status: number | null;
+  stderr?: string | null;
+  error?: { readonly message?: string } | null;
+}>;
+
+type SandboxPolicyTarget = {
+  readonly sandboxName: string;
+  readonly gatewayName?: string;
+};
+
+function sandboxPolicyGetArgs(input: SandboxPolicyTarget, flags: readonly string[]): string[] {
+  return [
+    "policy",
+    "get",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    ...flags,
+    input.sandboxName,
+  ];
+}
+
+/** Build one sandbox policy read without selecting an OpenShell executable. */
+export function buildOpenShellSandboxPolicyReadArgs(
+  input: SandboxPolicyTarget & {
+    readonly scope: OpenShellSandboxPolicyReadScope;
+  },
+): string[] {
+  return sandboxPolicyGetArgs(input, [input.scope === "base" ? "--base" : "--full"]);
+}
+
+/** Build one machine-readable effective-policy inspection. */
+export function buildOpenShellSandboxPolicyInspectionArgs(input: SandboxPolicyTarget): string[] {
+  return sandboxPolicyGetArgs(input, ["--full", "--output", "json"]);
+}
+
+/** Build one immutable sandbox base-policy revision read. */
+export function buildOpenShellSandboxPolicyRevisionReadArgs(
+  input: SandboxPolicyTarget & {
+    readonly revision: number;
+  },
+): string[] {
+  return sandboxPolicyGetArgs(input, ["--rev", String(input.revision), "--base"]);
+}
+
+/** Build one sandbox policy write without selecting an OpenShell executable. */
+export function buildOpenShellSandboxPolicySetArgs(
+  input: SandboxPolicyTarget & { readonly policyPath: string },
+): string[] {
+  return [
+    "policy",
+    "set",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    "--policy",
+    input.policyPath,
+    "--wait",
+    input.sandboxName,
+  ];
+}
+
 export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {
   readonly version?: number;
   readonly network_policies?: OpenShellPolicyMapping;
@@ -17,28 +93,57 @@ export interface ParsedOpenShellPolicy {
   readonly policy: ValidatedOpenShellPolicyMapping;
 }
 
-export type OpenShellPolicyAuthority = "nemoclaw-managed" | "externally-managed" | "owner-unknown";
+const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
+  "h2 protocol error",
+  "http2 error",
+  "tonic::transport::error",
+];
+const AUTHORITATIVE_REFUSAL_PATTERN =
+  /^Error:\s+code:\s*'failed[ _]precondition',\s*message:\s*'([^'\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/iu;
+
+/** Parse one sandbox base-policy read into the transport-neutral typed contract. */
+export function parseOpenShellSandboxPolicyRead(raw: string): OpenShellSandboxPolicyRead {
+  const parsed = parseOpenShellPolicy(raw);
+  const metadata = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/u.exec(raw);
+  const metadataSource = metadata ? raw.slice(0, metadata.index) : "";
+  const rawRevision = metadataSource.match(/^Active:\s*(\d+)\s*$/imu)?.[1];
+  const revision = rawRevision ? Number.parseInt(rawRevision, 10) : null;
+  return {
+    document: parsed.yamlBody,
+    appliedRevision: revision !== null && Number.isSafeInteger(revision) ? revision : null,
+  };
+}
+
+/** Classify a policy write without trusting an unstructured nonzero diagnostic. */
+export function classifyOpenShellSandboxPolicySetResult(
+  captured: OpenShellSandboxPolicySetCommandResult,
+): OpenShellSandboxPolicySetOutcome {
+  const detail = [captured.error?.message, captured.stderr]
+    .map((part) => part?.trim() ?? "")
+    .filter((part) => part.length > 0)
+    .join("\n");
+  const ambiguous = (): OpenShellSandboxPolicySetOutcome => ({
+    kind: "ambiguous",
+    detail: detail || `openshell policy set exited with status ${String(captured.status)}`,
+  });
+  const normalizedDetail = detail.toLowerCase();
+  if (TRANSPORT_FAILURE_MARKERS.some((marker) => normalizedDetail.includes(marker))) {
+    return ambiguous();
+  }
+  if (captured.status === 0) return captured.error ? ambiguous() : { kind: "applied" };
+  if (captured.status === null) return ambiguous();
+  const firstLine = captured.stderr?.split("\n", 1)[0] ?? "";
+  const message = firstLine.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim() ?? null;
+  return message === null ? ambiguous() : { kind: "rejected", status: captured.status, message };
+}
 
 export interface OpenShellPolicyIdentity {
   readonly hash: string;
   readonly activeVersion: number;
 }
 
-/** Secret-free proof that NemoClaw created and verified one sandbox policy. */
-export interface NemoClawPolicyCreationReceipt {
-  readonly schemaVersion: 1;
-  readonly origin: "sandbox-create";
-  readonly gatewayName: string;
-  readonly gatewayPort: number;
-  readonly sandboxName: string;
-  readonly lifecycleGeneration: string;
-  readonly sandboxIdentityFingerprint: string;
-  readonly policyHash: string;
-  readonly policyVersion: number;
-}
-
-export interface SandboxPolicyAuthorityInspection {
-  readonly authority: OpenShellPolicyAuthority;
+export interface OpenShellPolicyInspection {
+  readonly policySource: "sandbox" | "global";
   readonly effectivePolicy: OpenShellPolicyMapping;
   readonly policyIdentity: OpenShellPolicyIdentity;
 }
@@ -48,9 +153,7 @@ export type ActiveGlobalPolicyInspection =
   | { readonly state: "absent" }
   | {
       readonly state: "active";
-      readonly inspection: SandboxPolicyAuthorityInspection & {
-        readonly authority: "externally-managed";
-      };
+      readonly inspection: OpenShellPolicyInspection & { readonly policySource: "global" };
     };
 
 export type OpenShellGlobalPolicyHistoryState = "absent" | "present" | "invalid";
@@ -73,27 +176,7 @@ function isMapping(value: unknown): value is OpenShellPolicyMapping {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isPolicyAuthority(value: unknown): value is OpenShellPolicyAuthority {
-  return (
-    value === "nemoclaw-managed" || value === "externally-managed" || value === "owner-unknown"
-  );
-}
-
-const RECEIPT_KEYS = new Set([
-  "schemaVersion",
-  "origin",
-  "gatewayName",
-  "gatewayPort",
-  "sandboxName",
-  "lifecycleGeneration",
-  "sandboxIdentityFingerprint",
-  "policyHash",
-  "policyVersion",
-]);
-const RECEIPT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
-const RECEIPT_POLICY_HASH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/u;
-const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const POLICY_HASH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/u;
 
 function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -105,68 +188,12 @@ function parsePolicyIdentity(
 ): OpenShellPolicyIdentity {
   if (
     typeof metadata.hash !== "string" ||
-    !RECEIPT_POLICY_HASH_PATTERN.test(metadata.hash) ||
+    !POLICY_HASH_PATTERN.test(metadata.hash) ||
     !positiveInteger(metadata.active_version)
   ) {
     throw new Error(invalidMessage);
   }
   return { hash: metadata.hash, activeVersion: metadata.active_version };
-}
-
-/** Parse a complete receipt. Pending, extended, or malformed values fail closed. */
-export function parseNemoClawPolicyCreationReceipt(value: unknown): NemoClawPolicyCreationReceipt {
-  if (
-    !isMapping(value) ||
-    Object.keys(value).some((key) => !RECEIPT_KEYS.has(key)) ||
-    value.schemaVersion !== 1 ||
-    value.origin !== "sandbox-create" ||
-    typeof value.gatewayName !== "string" ||
-    !RECEIPT_NAME_PATTERN.test(value.gatewayName) ||
-    !positiveInteger(value.gatewayPort) ||
-    value.gatewayPort > 65_535 ||
-    typeof value.sandboxName !== "string" ||
-    !RECEIPT_NAME_PATTERN.test(value.sandboxName) ||
-    typeof value.lifecycleGeneration !== "string" ||
-    !UUID_PATTERN.test(value.lifecycleGeneration) ||
-    typeof value.sandboxIdentityFingerprint !== "string" ||
-    !SHA256_PATTERN.test(value.sandboxIdentityFingerprint) ||
-    typeof value.policyHash !== "string" ||
-    !RECEIPT_POLICY_HASH_PATTERN.test(value.policyHash) ||
-    !positiveInteger(value.policyVersion)
-  ) {
-    throw new Error("NemoClaw policy creation receipt is unavailable or invalid");
-  }
-  return {
-    schemaVersion: 1,
-    origin: "sandbox-create",
-    gatewayName: value.gatewayName,
-    gatewayPort: value.gatewayPort,
-    sandboxName: value.sandboxName,
-    lifecycleGeneration: value.lifecycleGeneration,
-    sandboxIdentityFingerprint: value.sandboxIdentityFingerprint,
-    policyHash: value.policyHash,
-    policyVersion: value.policyVersion,
-  };
-}
-
-/** Require a receipt to describe the exact live policy boundary being used. */
-export function assertNemoClawPolicyCreationReceiptMatches(
-  value: unknown,
-  expected: Omit<NemoClawPolicyCreationReceipt, "schemaVersion">,
-): NemoClawPolicyCreationReceipt {
-  const receipt = parseNemoClawPolicyCreationReceipt(value);
-  if (
-    receipt.gatewayName !== expected.gatewayName ||
-    receipt.gatewayPort !== expected.gatewayPort ||
-    receipt.sandboxName !== expected.sandboxName ||
-    receipt.lifecycleGeneration !== expected.lifecycleGeneration ||
-    receipt.sandboxIdentityFingerprint !== expected.sandboxIdentityFingerprint ||
-    receipt.policyHash !== expected.policyHash ||
-    receipt.policyVersion !== expected.policyVersion
-  ) {
-    throw new Error("NemoClaw policy creation receipt does not match the live sandbox policy");
-  }
-  return receipt;
 }
 
 function parseJsonMapping(source: string, invalidMessage: string): OpenShellPolicyMapping {
@@ -183,17 +210,14 @@ function parseJsonMapping(source: string, invalidMessage: string): OpenShellPoli
 }
 
 /** Parse machine-readable effective policy metadata for one sandbox. */
-export function parseSandboxPolicyAuthorityMetadata(
+export function parseSandboxPolicyMetadata(
   raw: string,
   sandboxName: string,
-): SandboxPolicyAuthorityInspection {
+): OpenShellPolicyInspection {
   if (raw.trim().length === 0) {
-    throw new Error("OpenShell returned empty sandbox policy authority metadata");
+    throw new Error("OpenShell returned empty sandbox policy metadata");
   }
-  const metadata = parseJsonMapping(
-    raw,
-    "OpenShell returned malformed sandbox policy authority metadata",
-  );
+  const metadata = parseJsonMapping(raw, "OpenShell returned malformed sandbox policy metadata");
   if (
     metadata.scope !== "sandbox" ||
     metadata.sandbox !== sandboxName ||
@@ -201,10 +225,10 @@ export function parseSandboxPolicyAuthorityMetadata(
     (metadata.policy_source !== "sandbox" && metadata.policy_source !== "global") ||
     !isMapping(metadata.policy)
   ) {
-    throw new Error("OpenShell returned invalid sandbox policy authority metadata");
+    throw new Error("OpenShell returned invalid sandbox policy metadata");
   }
   return {
-    authority: metadata.policy_source === "sandbox" ? "owner-unknown" : "externally-managed",
+    policySource: metadata.policy_source,
     effectivePolicy: metadata.policy,
     policyIdentity: parsePolicyIdentity(
       metadata,
@@ -214,52 +238,34 @@ export function parseSandboxPolicyAuthorityMetadata(
 }
 
 /** Parse one global policy revision without treating absence as NemoClaw ownership. */
-export function parseActiveGlobalPolicyAuthorityMetadata(
-  raw: string,
-): ActiveGlobalPolicyInspection {
+export function parseActiveGlobalPolicyMetadata(raw: string): ActiveGlobalPolicyInspection {
   if (raw.trim().length === 0) {
-    throw new Error("OpenShell returned empty global policy authority metadata");
+    throw new Error("OpenShell returned empty global policy metadata");
   }
-  const metadata = parseJsonMapping(
-    raw,
-    "OpenShell returned malformed global policy authority metadata",
-  );
+  const metadata = parseJsonMapping(raw, "OpenShell returned malformed global policy metadata");
   if (
     metadata.scope !== "global" ||
     (metadata.status !== "loaded" && metadata.status !== "superseded") ||
     metadata.policy_source !== "global" ||
     Object.hasOwn(metadata, "sandbox")
   ) {
-    throw new Error("OpenShell returned invalid global policy authority metadata");
+    throw new Error("OpenShell returned invalid global policy metadata");
   }
   if (metadata.status === "superseded") return { state: "absent" };
   if (!isMapping(metadata.policy)) {
-    throw new Error("OpenShell returned invalid global policy authority metadata");
+    throw new Error("OpenShell returned invalid global policy metadata");
   }
   return {
     state: "active",
     inspection: {
-      authority: "externally-managed",
+      policySource: "global",
       effectivePolicy: metadata.policy,
       policyIdentity: parsePolicyIdentity(
         metadata,
-        "OpenShell returned invalid global policy authority metadata",
+        "OpenShell returned invalid global policy metadata",
       ),
     },
   };
-}
-
-/** Require durable and observed policy authority to describe the same owner. */
-export function assertMatchingPolicyAuthority(recorded: unknown, observed: unknown): void {
-  if (!isPolicyAuthority(recorded) || recorded === "owner-unknown") {
-    throw new Error("the recorded policy authority is unavailable or invalid");
-  }
-  if (!isPolicyAuthority(observed) || observed === "owner-unknown") {
-    throw new Error("the observed OpenShell policy authority is unavailable or invalid");
-  }
-  if (recorded !== observed) {
-    throw new Error(`OpenShell policy authority changed from ${recorded} to ${observed}`);
-  }
 }
 
 function policyMapping(value: unknown, invalidMessage: string): OpenShellPolicyMapping {
@@ -271,14 +277,31 @@ function formatPolicyKeys(keys: readonly string[]): string {
   return keys.map((key) => JSON.stringify(key)).join(", ");
 }
 
+function policyValueContains(observed: unknown, required: unknown): boolean {
+  if (isMapping(required)) {
+    return (
+      isMapping(observed) &&
+      Object.entries(required).every(
+        ([key, value]) => Object.hasOwn(observed, key) && policyValueContains(observed[key], value),
+      )
+    );
+  }
+  if (Array.isArray(required)) {
+    return (
+      Array.isArray(observed) &&
+      required.every((requiredValue) =>
+        observed.some((observedValue) => policyValueContains(observedValue, requiredValue)),
+      )
+    );
+  }
+  return isDeepStrictEqual(observed, required);
+}
+
 function assertPolicyRequirementContainmentForOwner(
-  inspection: SandboxPolicyAuthorityInspection,
+  inspection: OpenShellPolicyInspection,
   requiredPolicy: OpenShellPolicyMapping,
   owner: string,
 ): void {
-  if (!isPolicyAuthority(inspection.authority)) {
-    throw new Error("the observed OpenShell policy authority is invalid");
-  }
   const effectivePolicy = policyMapping(
     inspection.effectivePolicy,
     "the observed effective policy is invalid",
@@ -296,7 +319,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of Object.keys(requiredNetwork).sort()) {
     if (!observedNetwork || !Object.hasOwn(observedNetwork, key)) {
       missing.push(key);
-    } else if (!isDeepStrictEqual(observedNetwork[key], requiredNetwork[key])) {
+    } else if (!policyValueContains(observedNetwork[key], requiredNetwork[key])) {
       drifted.push(key);
     }
   }
@@ -308,7 +331,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of requiredSections) {
     if (!Object.hasOwn(effectivePolicy, key)) {
       missingSections.push(key);
-    } else if (!isDeepStrictEqual(effectivePolicy[key], required[key])) {
+    } else if (!policyValueContains(effectivePolicy[key], required[key])) {
       driftedSections.push(key);
     }
   }
@@ -335,32 +358,10 @@ function assertPolicyRequirementContainmentForOwner(
 
 /** Require a policy to contain the requested entries and sections. */
 export function assertPolicyRequirementContainment(
-  inspection: SandboxPolicyAuthorityInspection,
+  inspection: OpenShellPolicyInspection,
   requiredPolicy: OpenShellPolicyMapping,
 ): void {
   assertPolicyRequirementContainmentForOwner(inspection, requiredPolicy, "observed policy");
-}
-
-/**
- * Require an external policy to contain the requested entries and sections.
- * Additional externally managed content is allowed.
- */
-export function assertExternalPolicyRequirementContainment(
-  inspection: SandboxPolicyAuthorityInspection,
-  requiredPolicy: OpenShellPolicyMapping,
-): void {
-  if (!isPolicyAuthority(inspection.authority)) {
-    throw new Error("the observed OpenShell policy authority is invalid");
-  }
-  if (inspection.authority === "owner-unknown") {
-    throw new Error("the observed OpenShell policy authority is unknown");
-  }
-  if (inspection.authority === "nemoclaw-managed") return;
-  assertPolicyRequirementContainmentForOwner(
-    inspection,
-    requiredPolicy,
-    "externally managed policy",
-  );
 }
 
 function assertValidatedPolicyFields(
@@ -432,8 +433,8 @@ export function parseOpenShellPolicy(raw: string): ParsedOpenShellPolicy {
 
 // invalidState: OpenShell `policy get --base` unexpectedly includes a
 // provider-composed `_provider_*` entry that `policy set` must never receive.
-// sourceBoundary: OpenShell owns base-policy composition; NemoClaw owns every
-// read-modify-write payload it submits.
+// sourceBoundary: OpenShell owns base-policy composition; NemoClaw is responsible
+// only for the exact read-modify-write payload of the current command.
 // whyNotSourceFix: the upstream formatter cannot be fixed from this repository,
 // so filter defensively until the supported contract guarantees their absence.
 // regressionTest: the root policy round-trip and plugin runner policy tests.

@@ -50,7 +50,7 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 - Check distribution, architecture, product and firmware identity, GPU and memory, NVIDIA driver, Container Toolkit, Docker, Node.js, disk space, existing NemoClaw, Ollama, vLLM, relevant ports, and administrator access.
 - Classify the computer as DGX Spark, DGX Station, NVIDIA GB300, another NVIDIA computer, ordinary macOS/Linux, or unknown.
 - Do not identify DGX Spark from the GPU name alone; combine product, firmware, architecture, and GPU evidence.
-- Classify a system as DGX Station when its firmware identifies a Station GB300 platform, or when its exact OEM model is documented by NVIDIA or the manufacturer as based on DGX Station architecture.
+- Classify a system as DGX Station only when its detected platform matches a supported DGX Station GB300 mapping. Do not load Station instructions for unsupported hardware or release profiles.
 - A confirmed NVIDIA GB300 can independently qualify for expanded local-runtime choices.
 - If uncertain, explain that and let NemoClaw's official preflight make the final platform decision.
 
@@ -62,13 +62,13 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 - Let the real `sudo` program collect the password; never use chat or the API-key form for the computer password.
 - If neither passwordless sudo nor a secure password prompt is available, stop before the affected install or system change.
 - Never pipe a password, store it in a file, generate a password helper, or put it in command arguments.
-- Offer a user-local alternative only when official documentation supports it for that exact operation.
+- Offer a user-local alternative only when official documentation supports it for that operation.
 - Do not silently use user-local Ollama for a system Ollama upgrade when the old system service would remain active.
 
 ## Execution Sandbox
 
 - If the coding agent's execution sandbox blocks a Docker command, use its command-scoped approval flow, if available.
-- Request permission to rerun only that exact command outside the sandbox.
+- Request permission to rerun only that command outside the sandbox.
 - Before requesting approval, explain that Docker daemon access can modify containers, images, and host files.
 - Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.
 - If the user or managed policy denies approval, stop before the command.
@@ -79,23 +79,24 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/66b532695db0ae38b74725ce7c57e4c91be24b19/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/66b532695db0ae38b74725ce7c57e4c91be24b19/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/66b532695db0ae38b74725ce7c57e4c91be24b19/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/f0d71bec51f0d5e66eae6e211cd816ff9e35c023/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/f0d71bec51f0d5e66eae6e211cd816ff9e35c023/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/f0d71bec51f0d5e66eae6e211cd816ff9e35c023/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
 
 ## Runtime and Provider Selection
 
-If the readiness check confirms N1x, do not show the generic provider menu.
+If the Windows WSL platform asset applies, follow that asset's provider selection and skip the native-N1x branch below.
+If the readiness check confirms native N1x (not Windows WSL), do not show the generic provider menu.
 Offer only the Deferred managed-vLLM preview with `NEMOCLAW_PROVIDER=install-vllm`.
 Explain that N1x remains outside the supported-platform set pending complete physical NemoClaw Express E2E validation, accepting this path is explicit preview intent, and the preview uses one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 Do not offer or reuse an existing vLLM server on N1x.
 If the configured vLLM port, `${NEMOCLAW_VLLM_PORT:-8000}`, is occupied, stop and ask the user to stop that server before trying the Deferred preview again.
 If the user declines the preview, stop before installation.
 
-For a computer other than N1x, if no platform asset applies or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
+For a computer other than native N1x, if no platform asset applies or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
 Choices:
 
 1. Existing vLLM, only when the computer is not N1x and a ready server is detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`.
@@ -148,7 +149,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 
 ## Handle Tokens Securely and Visually
 
-Before collecting secrets, determine the exact environment-variable names and exact command argv, explain them, and ask permission.
+Before collecting secrets, determine every environment-variable name and the complete command argv, explain them, and ask permission.
 Do not generate, rewrite, or redesign the helper or form.
 Use this reviewed pair without modification:
 
@@ -164,7 +165,7 @@ Use this reviewed pair without modification:
 - Use `:secret` for secrets and `:text` only for non-secret values.
 - Use `--execution-profile isolated` for stateless commands.
 - For persistent install or onboarding, use `--execution-profile account-home --cwd <approved-absolute-directory>` and ask permission for both.
-- Pass every `--field NAME:type`, then a literal `--`, an absolute executable path, and the exact approved argv.
+- Pass every `--field NAME:type`, then a literal `--`, an absolute executable path, and the approved argv.
 - Never omit the literal `--`.
 - Never use a relative, alias-only, or PATH-only approved executable.
 - Never put credentials in argv.
@@ -190,8 +191,8 @@ Use this provider mapping for non-interactive setup:
 - OpenAI-compatible: `NEMOCLAW_PROVIDER=custom`, endpoint, model, `COMPATIBLE_API_KEY`.
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
-- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; unavailable on N1x.
-- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; this is the only admitted N1x provider and requires explicit Deferred preview intent there. Use an approved optional model override only when the selected platform supports it.
+- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; unavailable on native N1x.
+- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; this is the only admitted native-N1x provider and requires explicit Deferred preview intent there. Qualifying N1x WSL hosts instead follow the Windows WSL asset's managed llama.cpp path. Use an approved optional model override only when the selected platform supports it.
 
 Do not offer Hermes Provider for OpenClaw or Deep Agents.
 
@@ -220,7 +221,7 @@ Choices:
 ## Messaging During Initial Onboarding
 
 For OpenClaw or Hermes, ask before the first sandbox build: "Do you want to configure a messaging channel during onboarding?"
-Choices: No, Telegram, Discord, Slack, WhatsApp, WeChat (experimental).
+Before offering choices, read the selected agent's current **Enable Channels During Onboarding** page and present every channel in that picker; do not rely on a copied channel list.
 Skip messaging for Deep Agents.
 Configure one channel at a time, then ask whether to add another.
 Collect messaging before policy selection so the first image includes channel configuration and matching network presets.
@@ -230,9 +231,12 @@ Collect messaging before policy selection so the first image includes channel co
 - Slack requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`; optional settings include allowed users and channels.
 - WhatsApp uses documented allowed IDs for non-interactive selection, followed by QR pairing after startup.
 - WeChat requires an interactive QR handshake; explain the limitation before installation and never leave an unsupported UI waiting.
+- Microsoft Teams is experimental and requires `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and `MSTEAMS_TENANT_ID`, plus a public HTTPS messaging endpoint ending in `/api/messages`; optional settings include an Entra user allowlist, webhook port, and mention mode.
+- Google Chat is experimental and requires service-account JSON. Follow the selected agent's setup page: OpenClaw uses an interactive public `/googlechat` webhook enrollment, while Hermes requires a Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist.
 
-Collect messaging secrets through the reviewed helper and exact-URL SSH flow.
-Do not manually set `NEMOCLAW_MESSAGING_CHANNELS_B64`; let NemoClaw generate it.
+Collect messaging secrets through the reviewed helper and URL-specific SSH flow.
+Do not manually set `NEMOCLAW_MESSAGING_PLAN_B64`; NemoClaw compiles the selected messaging configuration into this derived sandbox image build artifact and removes the full plan from the runtime environment.
+The plan contains OpenShell credential placeholders instead of raw messaging credentials.
 Use `channels add` and rebuild only for channels omitted from initial onboarding or changed later.
 
 ## Policy, Approval, and Verification
@@ -240,7 +244,7 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.
 - For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.
 - Explain that messaging and web-search selections add required endpoints.
-- Before installation outside an accepted platform-asset path, summarize platform, administrator access, agent, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
+- Before installation outside an accepted platform-asset path, summarize platform, administrator access, agent, provider, model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
 - Ask for final permission before installation outside an accepted platform-asset path.
 - When a platform asset delegates consent to the official installer, let the installer present its notice and final Express confirmation instead of pre-accepting them.
 - For other accepted platform-asset install paths, treat the asset's confirmation as final permission and do not ask again.
@@ -248,7 +252,7 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - Keep credentials in the approved environment and never display them.
 - Verify the command and version, sandbox status, provider, model, `inference.local`, GPU access when applicable, messaging bridges when configured, and dashboard route when available.
 - If `curl | bash` returns no output, verify installation; if absent, ask permission to download and inspect the official installer before retrying.
-- For remote dashboards, use private loopback SSH forwarding, preserve authenticated URLs exactly, and treat them as secrets.
+- For remote dashboards, use private loopback SSH forwarding, preserve authenticated URLs, and treat them as secrets.
 - Ask permission before sending a live channel test or harmless first agent prompt.
 - Declare success only after the sandbox is ready and the agent responds.
 - Summarize what was installed, how to reconnect, what starts after reboot, and anything skipped.

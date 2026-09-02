@@ -25,6 +25,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
@@ -32,10 +33,7 @@ import { runInteractivePolicyAdd } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
-import {
-  ensureDockerAvailable,
-  runRestrictedOnboardWithRetry,
-} from "./restricted-onboard-helpers.ts";
+import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
 const PERMISSIVE_POLICY = path.join(
   REPO_ROOT,
@@ -498,7 +496,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm built CLI Docker OpenShell and credential",
+        "confirm built CLI selected runtime provider OpenShell and credential",
         "clear the sandbox and onboard restricted policy",
         "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
         "exercise package and SaaS policy presets",
@@ -510,7 +508,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     await artifacts.target.declare({
       id: "network-policy",
       boundary: "live-sandbox-network-policy",
@@ -537,17 +535,12 @@ test(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-network-policy",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await ensureConfiguredRuntimeProviderAvailable({
+      artifactName: "prereq-runtime-provider-info-network-policy",
+      host,
+      scenarioLabel: "network-policy",
+      skip,
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for network-policy live E2E: ${text(docker)}`);
-      }
-      skip("Docker is required for network-policy live E2E");
-    }
 
     const openshellVersion = await host.command("openshell", ["--version"], {
       artifactName: "prereq-openshell-version-network-policy",
@@ -663,7 +656,7 @@ test(
     await expectPackageDatabaseReadOnly({
       artifactPrefix: "tc-net",
       env: baseEnv(),
-      host,
+      runtimeProvider,
       sandbox,
       sandboxName: SANDBOX_NAME,
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -929,9 +922,14 @@ echo "$OUT CURL_RC_$RC"
     );
     expect(directProvider).toMatch(/STATUS_403|ERROR_/);
 
-    expect(["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
-        Object.is(isPrivateIp(ip), true))).toBe(true);
-    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(true);
+    expect(
+      ["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
+        Object.is(isPrivateIp(ip), true),
+      ),
+    ).toBe(true);
+    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(
+      true,
+    );
 
     progress.phase("exercise scoped host-gateway web fetch policy");
     const marker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK";
@@ -997,10 +995,8 @@ NEMOCLAW_WEB_FETCH_PROBE`,
       await Promise.all([approvedServer.close(), deniedServer.close()]);
     }
 
-    // A direct OpenShell policy update intentionally invalidates NemoClaw's
-    // durable policy receipt. Keep this final among NemoClaw-owned mutations so
-    // the test proves the fail-closed ownership contract without asking a later
-    // policy-add to overwrite externally changed policy.
+    // A direct OpenShell policy update is authoritative. Keep this final so the
+    // test proves host-side edits require no NemoClaw receipt or adoption step.
     progress.phase("prove per-binary Jira approval after NemoClaw policy mutations");
     const curlApproval = await sandbox.openshell(
       [
@@ -1040,6 +1036,20 @@ printf '\n'
     expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
     expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
 
+    const githubAdd = await applyPreset(host, "github");
+    expect(githubAdd.exitCode, text(githubAdd)).toBe(0);
+    const policyAfterNemoclawMutation = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "tc-net-08-policy-after-nemoclaw-mutation",
+        env: baseEnv(),
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(policyAfterNemoclawMutation.exitCode, text(policyAfterNemoclawMutation)).toBe(0);
+    expect(policyAfterNemoclawMutation.stdout).toContain("api.atlassian.com");
+    expect(policyAfterNemoclawMutation.stdout).toMatch(/github|api\.github\.com/i);
+
     progress.phase("switch to permissive policy and record the contract");
     const permissiveApply = await sandbox.openshell(
       ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
@@ -1069,6 +1079,7 @@ printf '\n'
         livePolicyAdd: true,
         dryRunNoSideEffect: true,
         jiraPerBinaryPolicy: true,
+        hostEditSurvivesNemoclawMutation: true,
         hotReloadNoRestart: true,
         inferenceExemption: true,
         ssrfValidation: true,
@@ -1110,7 +1121,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm built CLI Docker OpenShell and credential",
+        "confirm built CLI selected runtime provider OpenShell and credential",
         "clear the restricted-policy sandbox",
         "onboard default restricted OpenClaw",
         "confirm the restricted tier has zero active presets",
@@ -1130,9 +1141,9 @@ test(
       "run `npm run build:cli` before live repo CLI scenarios",
     ).toBe(true);
 
-    await ensureDockerAvailable({
+    await ensureConfiguredRuntimeProviderAvailable({
+      artifactName: "prereq-runtime-provider-info-restricted-zero-presets",
       host,
-      artifactName: "prereq-docker-info-restricted-zero-presets",
       skip,
       scenarioLabel: "restricted-zero-presets",
     });

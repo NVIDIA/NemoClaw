@@ -298,11 +298,13 @@ async function expectJsonCommand(
   return parseJsonEnvelope(result, args.join(" "));
 }
 
-test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes", {
+test(
+  "sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm CLI Docker and OpenShell prerequisites",
+      "confirm CLI, selected runtime, and OpenShell prerequisites",
       "onboard the sessions and agents sandbox",
       "exercise main-agent session JSON and reset",
       "add and list the secondary agent",
@@ -310,7 +312,8 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
       "delete the secondary agent and confirm absence",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -332,14 +335,10 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-sessions-agents-cli",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-sessions-agents-cli",
+      scenarioLabel: "sessions and agents CLI",
   });
-  expect(docker.exitCode, `Docker is required for sessions/agents E2E\n${resultText(docker)}`).toBe(
-    0,
-  );
 
   const hosted = requireHostedInferenceConfig(secrets);
   await ensureOpenshellAvailable(host);
@@ -547,4 +546,5 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
     agentEntries(agentsAfterDelete).some((entry) => entry.id === TEST_AGENT_ID),
     `agent '${TEST_AGENT_ID}' still visible after delete`,
   ).toBe(false);
-});
+  },
+);
