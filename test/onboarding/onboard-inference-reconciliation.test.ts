@@ -1011,16 +1011,25 @@ console.log(JSON.stringify({
 });
 
 describe("re-onboard Ollama GPU release (#9110)", () => {
-  const priorEntry = { name: "test-box", provider: "ollama-local", model: "llama3" };
+  type ReleaseEntry = {
+    name: string;
+    provider: string;
+    model: string;
+    endpointUrl?: string | null;
+  };
+  const priorEntry: ReleaseEntry = {
+    name: "test-box",
+    provider: "ollama-local",
+    model: "llama3",
+  };
 
   function releaseHarness(options: {
-    getSandbox: () => typeof priorEntry | null;
-    sandboxes: (typeof priorEntry)[] | (() => (typeof priorEntry)[]);
+    getSandbox: () => ReleaseEntry | null;
+    sandboxes: ReleaseEntry[] | (() => ReleaseEntry[]);
     unloadOllamaModels: NonNullable<SetupInferenceDeps["unloadOllamaModels"]>;
     applyLocalInferenceRoute?: () => Promise<boolean>;
-    clearPersistedOllamaHostIfUnused?: (
-      providers: readonly (string | null | undefined)[],
-    ) => boolean;
+    loadPersistedOllamaHost?: () => "127.0.0.1" | "host.docker.internal" | null;
+    clearPersistedOllamaHostIfUnused?: SetupInferenceDeps["localInference"]["clearPersistedOllamaHostIfUnused"];
     loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
     persistPendingOllamaModelCleanup?: (sandboxName: string, models: readonly string[]) => void;
     clearPendingOllamaModelCleanup?: (
@@ -1052,6 +1061,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
           validateSandboxFacingOllamaModel: () => ({ ok: true }),
           runOllamaWarmup: () => {},
           persistResolvedOllamaHost: () => () => {},
+          loadPersistedOllamaHost: options.loadPersistedOllamaHost,
           clearPersistedOllamaHostIfUnused: options.clearPersistedOllamaHostIfUnused,
           loadPendingOllamaModelCleanup: options.loadPendingOllamaModelCleanup ?? (() => []),
           persistPendingOllamaModelCleanup: options.persistPendingOllamaModelCleanup ?? (() => {}),
@@ -1090,7 +1100,9 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
       ok: true,
     });
 
-    expect(clearPersistedOllamaHostIfUnused).toHaveBeenCalledWith(["vllm-local"]);
+    expect(clearPersistedOllamaHostIfUnused).toHaveBeenCalledWith([
+      { ...priorEntry, provider: "vllm-local", model: "vllm-model" },
+    ]);
   });
 
   it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
@@ -1139,6 +1151,9 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
       );
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("unload-request-failed"));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("Allow the model unload request"));
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Re-run onboarding or destroy 'test-box'");
+      expect(warning).not.toContain("stop, or destroy");
     } finally {
       warn.mockRestore();
     }
@@ -1260,6 +1275,31 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
       warn.mockRestore();
     }
     expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("keeps the route and shared model for a compatible local Ollama peer", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const peer: ReleaseEntry = {
+      name: "peer",
+      provider: "compatible-endpoint",
+      model: "llama3:latest",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+    };
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
+      unloadOllamaModels,
+      loadPersistedOllamaHost: () => "127.0.0.1",
+      clearPersistedOllamaHostIfUnused,
+    });
+
+    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPersistedOllamaHostIfUnused).not.toHaveBeenCalled();
   });
 
   it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {

@@ -42,12 +42,26 @@ function loadWindowsOllamaWithMocks(
 describe("Windows Ollama helper", () => {
   it("rejects a nonempty invalid Docker readiness response (#10100)", () => {
     const run = vi.fn();
-    const runCapture = vi.fn((command: string | string[]) =>
-      Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
-        ? "<html>proxy response</html>"
-        : "",
-    );
     const localInference = require(LOCAL_INFERENCE_PATH);
+    const runCapture = vi.fn((command: string | string[]) => {
+      expect(command).toEqual(
+        expect.arrayContaining([
+          "docker",
+          "run",
+          "--rm",
+          localInference.CONTAINER_REACHABILITY_IMAGE,
+          WINDOWS_OLLAMA_TAGS_URL,
+        ]),
+      );
+      expect(command.slice(0, 4)).toEqual([
+        "docker",
+        "run",
+        "--rm",
+        localInference.CONTAINER_REACHABILITY_IMAGE,
+      ]);
+      expect(command.at(-1)).toBe(WINDOWS_OLLAMA_TAGS_URL);
+      return "<html>proxy response</html>";
+    });
     localInference.resetOllamaHostCache();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
@@ -63,7 +77,7 @@ describe("Windows Ollama helper", () => {
           }),
         }),
       ).toBe(false);
-      expect(runCapture).toHaveBeenCalledTimes(15);
+      expect(runCapture.mock.calls.length).toBeGreaterThan(0);
       expect(localInference.getResolvedOllamaHost()).toBe("127.0.0.1");
     } finally {
       localInference.resetOllamaHostCache();

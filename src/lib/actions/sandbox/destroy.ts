@@ -23,6 +23,8 @@ import {
 } from "../../inference/https-pin-runtime-adapter";
 import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
 import {
+  isLocalOllamaRouteOwner,
+  loadPersistedOllamaHost,
   type OllamaUnloadResult,
   withOllamaModelOwnershipTransaction,
 } from "../../inference/ollama/proxy";
@@ -182,6 +184,7 @@ export type CleanupSandboxServicesDeps = {
     sandboxName: string,
     releasedModels?: readonly string[],
   ) => void;
+  loadPersistedOllamaHost?: () => "127.0.0.1" | "host.docker.internal" | null;
   withOllamaModelOwnershipLock?: <T>(operation: () => T) => T;
   ollamaModelRefsMatch?: (left: string, right: string) => boolean;
   runOpenshell?: RunOpenshell;
@@ -281,6 +284,10 @@ export function cleanupSandboxServices(
       };
       local.clearPendingOllamaModelCleanup(name, releasedModels);
     });
+  const loadPersistedOllamaHost =
+    deps.loadPersistedOllamaHost ??
+    (require("../../inference/local") as typeof import("../../inference/local"))
+      .loadPersistedOllamaHost;
   const withOllamaModelOwnershipLock =
     deps.withOllamaModelOwnershipLock ??
     (<T>(operation: () => T): T => {
@@ -353,8 +360,9 @@ export function cleanupSandboxServices(
       ollamaCleanup = withOllamaModelOwnershipLock(() => {
         const sandbox = getSandbox(validatedSandboxName);
         const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
+        const selectedHost = loadPersistedOllamaHost();
         const cleanupOllamaModels = Boolean(
-          sandbox?.provider?.includes("ollama") || pending.length > 0,
+          (sandbox && isLocalOllamaRouteOwner(sandbox, selectedHost)) || pending.length > 0,
         );
         return stopAll({
           sandboxName: validatedSandboxName,
@@ -380,15 +388,17 @@ export function cleanupSandboxServices(
     // branch a single-sandbox destroy would leave models loaded on the GPU.
     withOllamaModelOwnershipLock(() => {
       const sb = getSandbox(validatedSandboxName);
+      const selectedHost = loadPersistedOllamaHost();
       const peers = listSandboxes().sandboxes.filter(
         (candidate) =>
-          candidate.name !== validatedSandboxName && candidate.provider?.includes("ollama"),
+          candidate.name !== validatedSandboxName &&
+          isLocalOllamaRouteOwner(candidate, selectedHost),
       );
       const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
       const currentModel = String(sb?.model ?? "").trim();
       const candidates = [
         ...pending,
-        ...(sb?.provider?.includes("ollama") && currentModel ? [currentModel] : []),
+        ...(sb && isLocalOllamaRouteOwner(sb, selectedHost) && currentModel ? [currentModel] : []),
       ].filter(
         (model, index, models) =>
           models.findIndex((candidate) => ollamaModelRefsMatch(candidate, model)) === index &&
@@ -1073,16 +1083,18 @@ async function destroySandboxUnlocked(
         `  ${YW}⚠${R} Failed to retire portable lifecycle authority for '${sandboxName}': ${redactDestroyError(error)}`,
       );
     }
-    if (sandbox?.provider?.includes("ollama")) {
+    const localInference = require("../../inference/local") as {
+      clearPersistedOllamaHostIfUnused(
+        routes: readonly { provider?: string | null; endpointUrl?: string | null }[],
+      ): boolean;
+    };
+    if (sandbox && isLocalOllamaRouteOwner(sandbox)) {
       try {
         await withOllamaModelOwnershipTransaction(() => {
+          const selectedHost = loadPersistedOllamaHost();
+          if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return;
           const remainingSandboxes = registry.listSandboxes().sandboxes;
-          const { clearPersistedOllamaHostIfUnused } = require("../../inference/local") as {
-            clearPersistedOllamaHostIfUnused(
-              providers: readonly (string | null | undefined)[],
-            ): boolean;
-          };
-          clearPersistedOllamaHostIfUnused(remainingSandboxes.map(({ provider }) => provider));
+          localInference.clearPersistedOllamaHostIfUnused(remainingSandboxes);
         });
       } catch (error) {
         console.warn(
