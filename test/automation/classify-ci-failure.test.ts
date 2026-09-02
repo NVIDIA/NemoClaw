@@ -179,7 +179,8 @@ function importedClassifierArgs(env: NodeJS.ProcessEnv, extra: string[]): string
       `const input = ${JSON.stringify(input)};`,
       "const environment = { ...process.env };",
       "const executables = { bash: '/usr/bin/bash', dd: process.env.TEST_DD || '/usr/bin/dd', gh: process.env.TEST_GH, stat: '/usr/bin/stat', tail: '/usr/bin/tail', wc: process.env.TEST_WC || '/usr/bin/wc' };",
-      "void classifyCiFailureWithRuntimeForTest(input, { executables, environment }).then((value) => console.log(JSON.stringify(value, null, 2))).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });",
+      "const timeouts = { metadataMs: process.env.TEST_METADATA_TIMEOUT_MS ? Number(process.env.TEST_METADATA_TIMEOUT_MS) : undefined, logMs: process.env.TEST_LOG_TIMEOUT_MS ? Number(process.env.TEST_LOG_TIMEOUT_MS) : undefined, artifactMs: process.env.TEST_ARTIFACT_TIMEOUT_MS ? Number(process.env.TEST_ARTIFACT_TIMEOUT_MS) : undefined };",
+      "void classifyCiFailureWithRuntimeForTest(input, { executables, environment, timeouts }).then((value) => console.log(JSON.stringify(value, null, 2))).catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });",
     ].join("\n"),
   ];
 }
@@ -588,6 +589,50 @@ describe("CI failure classifier process", () => {
     },
   );
 
+  test.each([
+    [
+      "job metadata",
+      "BLOCK_METADATA",
+      "TEST_METADATA_TIMEOUT_MS",
+      [],
+      "GitHub job metadata read timed out after 30 seconds",
+    ],
+    [
+      "job log",
+      "BLOCK_LOG",
+      "TEST_LOG_TIMEOUT_MS",
+      [],
+      "GitHub job log read timed out after 60 seconds",
+    ],
+    [
+      "artifact",
+      "BLOCK_ARTIFACT",
+      "TEST_ARTIFACT_TIMEOUT_MS",
+      ["--artifact-name", "results"],
+      "GitHub artifact read timed out after 60 seconds",
+    ],
+  ] as const)(
+    "reports a bounded silent %s timeout and removes temporary data",
+    (_operation, block, timeoutVariable, extra, diagnostic) => {
+      const item = fixture("ordinary output");
+      item.env[block] = "1";
+      item.env.BLOCK_MARKER = join(item.root, "blocked");
+      item.env[timeoutVariable] = "50";
+      const result = run(item.env, [...extra]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(diagnostic);
+      expect(result.stderr).toContain(
+        "Check GitHub availability, then retry CI failure classification.",
+      );
+      expect(result.stderr).not.toContain("repos/NVIDIA/NemoClaw/actions");
+      expect(result.stderr).not.toContain("--hostname");
+      expect(result.stderr.length).toBeLessThanOrEqual(2001);
+      expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
+      expect(classifierTemporaryDirectories("nemoclaw-ci-classify.")).toEqual([]);
+    },
+  );
+
   test("preserves the primary log failure and directly removes its temporary directory", () => {
     const item = fixture("AssertionError: retained tail");
     const credential = "cleanup-path-secret";
@@ -939,6 +984,7 @@ describe("CI failure classifier process", () => {
     const result = await pending;
     expect(Date.now() - started).toBeGreaterThanOrEqual(200);
     expect(result.exitCode).not.toBe(0);
+    expect(result.timedOut).toBe(true);
     expect(() => process.kill(descendantPid, 0)).toThrow();
   });
 

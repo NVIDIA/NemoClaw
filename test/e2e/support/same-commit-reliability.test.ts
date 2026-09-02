@@ -530,7 +530,7 @@ describe("same-commit E2E reliability", () => {
             owner: "provider",
             idempotence: "read-only",
             maxAttempts: 1,
-            outcome: "failed-no-retry",
+            outcome: failureClass === "transient-external" ? "exhausted" : "failed-no-retry",
             attempts: [
               {
                 attempt: 1,
@@ -696,7 +696,7 @@ describe("same-commit E2E reliability", () => {
     });
   });
 
-  it("reports malformed failure-class evidence without discarding a terminal outcome", async () => {
+  it("reports an invalid retry invariant as malformed without discarding a terminal outcome", async () => {
     const dispatch = artifactZip([
       {
         name: "dispatch.json",
@@ -714,7 +714,22 @@ describe("same-commit E2E reliability", () => {
       terminalEvidence(SHA_A, "success"),
       {
         name: "e2e-artifacts/live/example/retry/provider.json",
-        contents: "{}",
+        contents: JSON.stringify({
+          schemaVersion: 1,
+          operation: "provider.readiness",
+          owner: "provider",
+          idempotence: "read-only",
+          maxAttempts: 1,
+          outcome: "passed-first-attempt",
+          attempts: [
+            {
+              attempt: 1,
+              outcome: "failed",
+              failureClass: "deterministic",
+              retryScheduled: false,
+            },
+          ],
+        }),
       },
     ]);
     const archives = new Map([

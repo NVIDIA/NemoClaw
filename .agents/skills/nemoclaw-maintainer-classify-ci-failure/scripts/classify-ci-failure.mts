@@ -31,6 +31,7 @@ type Input = {
 type ProcessResult = {
   kind: "foreground";
   exitCode: number;
+  timedOut: boolean;
   stdout: { text: string };
   stderr: { text: string };
 };
@@ -94,6 +95,11 @@ export type ClassifierExecutablePaths = {
 export type ClassifierRuntime = {
   executables: ClassifierExecutablePaths;
   environment: NodeJS.ProcessEnv;
+  timeouts?: {
+    metadataMs?: number;
+    logMs?: number;
+    artifactMs?: number;
+  };
 };
 const SYSTEM_EXECUTABLES = {
   bash: "/usr/bin/bash",
@@ -439,6 +445,7 @@ export const execute = async (
       resolve({
         kind: "foreground",
         exitCode: 1,
+        timedOut,
         stdout: { text: stdout },
         stderr: { text: stderr || error.message },
       });
@@ -452,6 +459,7 @@ export const execute = async (
       resolve({
         kind: "foreground",
         exitCode: overflow || timedOut ? 1 : (code ?? 1),
+        timedOut,
         stdout: { text: stdout },
         stderr: {
           text: overflow
@@ -635,14 +643,39 @@ async function classifyCiFailureWithRuntime(
       "GitHub access failed. Run gh auth status, then ask the user to correct authentication, authorization, SSO, or token scope before retrying." +
         (detail ? "\n" + detail : ""),
     );
-  const github = async (args: string[], timeoutMs = 30000) => {
+  type GithubOperation =
+    | "GitHub job metadata read"
+    | "GitHub job log read"
+    | "GitHub artifact read";
+  const operationTimeout = (
+    operation: GithubOperation,
+  ): { executionMs: number; fixedMs: number } => {
+    const fixedMs = operation === "GitHub job metadata read" ? 30000 : 60000;
+    const override =
+      operation === "GitHub job metadata read"
+        ? runtime.timeouts?.metadataMs
+        : operation === "GitHub job log read"
+          ? runtime.timeouts?.logMs
+          : runtime.timeouts?.artifactMs;
+    return { executionMs: override ?? fixedMs, fixedMs };
+  };
+  const timeoutError = (operation: GithubOperation, fixedMs: number): Error =>
+    new Error(
+      `${operation} timed out after ${fixedMs / 1000} seconds. Check GitHub availability, then retry CI failure classification.`,
+    );
+  const github = async (
+    args: string[],
+    operation: GithubOperation = "GitHub job metadata read",
+  ) => {
+    const timeout = operationTimeout(operation);
     const result = await execute(
       executables.gh,
       args[0] === "api" ? ["api", "--hostname", "github.com", ...args.slice(1)] : args,
       input.workdir,
-      timeoutMs,
+      timeout.executionMs,
       subprocessEnvironment,
     );
+    if (result.timedOut) throw timeoutError(operation, timeout.fixedMs);
     if (result.exitCode !== 0) {
       const detail = result.stderr.text + "\n" + result.stdout.text;
       if (isGithubAccessFailure(detail))
@@ -653,14 +686,21 @@ async function classifyCiFailureWithRuntime(
     }
     return { stdout: result.stdout.text, stderr: result.stderr.text };
   };
-  const run = async (command: string, timeoutMs = 30000) => {
+  const run = async (
+    command: string,
+    operation: "GitHub job log read" | "GitHub artifact read" | null = null,
+  ) => {
+    const timeout = operation
+      ? operationTimeout(operation)
+      : { executionMs: 30000, fixedMs: 30000 };
     const result = await execute(
       executables.bash,
       ["--noprofile", "--norc", "-c", command],
       input.workdir,
-      timeoutMs,
+      timeout.executionMs,
       subprocessEnvironment,
     );
+    if (result.timedOut && operation) throw timeoutError(operation, timeout.fixedMs);
     const detail = result.stderr.text + "\n" + result.stdout.text;
     if (result.exitCode !== 0 && isGithubAccessFailure(detail)) {
       const projected = project(result.stderr.text, 1500, 1000);
@@ -690,7 +730,10 @@ async function classifyCiFailureWithRuntime(
     const primary = error instanceof Error ? error.message : String(error);
     return new Error(cleanupFailure ? `${primary}\n${cleanupFailure}` : primary);
   };
-  const jobResult = await github(["api", `repos/${repo}/actions/jobs/${jobId}`]);
+  const jobResult = await github(
+    ["api", `repos/${repo}/actions/jobs/${jobId}`],
+    "GitHub job metadata read",
+  );
   const rawJob = JSON.parse(jobResult.stdout);
   const jobName = project(rawJob.name ?? "", 500, 500);
   const jobUrl = project(rawJob.html_url ?? "", 2000, 2000);
@@ -713,7 +756,7 @@ async function classifyCiFailureWithRuntime(
     const boundedPath = logDir + "/job.tail.log";
     const downloaded = await run(
       `set +e; set -o pipefail; ${q(executables.gh)} api --hostname github.com ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} | ${q(executables.tail)} -c 4000000 > ${q(rawPath)}; statuses=("\${PIPESTATUS[@]}"); bytes=$(${q(executables.stat)} -c %s -- ${q(rawPath)}) || exit 1; printf '%s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$bytes"`,
-      60000,
+      "GitHub job log read",
     );
     const [githubStatus, captureStatus, byteText] = downloaded.stdout.text.trim().split(/\s+/, 3);
     const byteCount = Number(byteText);
@@ -819,11 +862,14 @@ async function classifyCiFailureWithRuntime(
       const artifacts: Record<string, unknown>[] = [];
       let artifactTotal = null;
       for (let page = 1; page <= 20; page += 1) {
-        const inventoryResult = await github([
-          "api",
-          "--include",
-          `repos/${repo}/actions/runs/${job.runId}/artifacts?per_page=100&page=${page}`,
-        ]);
+        const inventoryResult = await github(
+          [
+            "api",
+            "--include",
+            `repos/${repo}/actions/runs/${job.runId}/artifacts?per_page=100&page=${page}`,
+          ],
+          "GitHub artifact read",
+        );
         const boundary = inventoryResult.stdout.search(/\r?\n\r?\n/u);
         if (boundary < 0) throw new Error("Artifact inventory response omitted headers");
         const separatorLength = inventoryResult.stdout.slice(boundary).startsWith("\r\n\r\n")
@@ -876,7 +922,7 @@ async function classifyCiFailureWithRuntime(
         const archive = dir + "/artifact.zip";
         const download = await run(
           `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; ${q(executables.gh)} api --hostname github.com ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; ${q(executables.dd)} bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; ${q(executables.dd)} bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(${q(executables.dd)} bs=1 count=1 iflag=fullblock status=none | ${q(executables.wc)} -c); extra_status=$?; bytes=$(${q(executables.stat)} -c %s -- "$output") || exit 1; state=ok; if [ "$extra_status" -ne 0 ]; then state=reader; elif [ "$extra" -ne 0 ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
-          60000,
+          "GitHub artifact read",
         );
         const [downloadStatus, readerStatus, downloadState, downloadBytesText] =
           download.stdout.text.trim().split(/\s+/, 4);

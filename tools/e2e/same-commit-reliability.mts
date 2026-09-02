@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { readValidatedArtifactZipEntries } from "../../scripts/scorecard/read-artifact-zip.mts";
 import {
   RETRY_FAILURE_CLASSES,
-  type RetryEvidence,
+  validateRetryEvidence,
   type RetryFailureClass,
 } from "./retry-evidence.mts";
 import {
@@ -269,41 +269,6 @@ function parseTerminalEvidenceManifest(
   }
 }
 
-function parseRetryEvidence(value: unknown): RetryEvidence | null {
-  const evidence = record(value);
-  if (
-    evidence?.schemaVersion !== 1 ||
-    typeof evidence.operation !== "string" ||
-    !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(evidence.operation) ||
-    typeof evidence.owner !== "string" ||
-    !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(evidence.owner) ||
-    !["read-only", "idempotent", "reconciled-mutation"].includes(String(evidence.idempotence)) ||
-    !positiveInteger(evidence.maxAttempts) ||
-    (evidence.maxAttempts as number) > 10 ||
-    !["failed-no-retry", "exhausted", "passed-after-retry", "passed-first-attempt"].includes(
-      String(evidence.outcome),
-    ) ||
-    !Array.isArray(evidence.attempts) ||
-    evidence.attempts.length < 1 ||
-    evidence.attempts.length > (evidence.maxAttempts as number)
-  ) {
-    return null;
-  }
-  for (let index = 0; index < evidence.attempts.length; index += 1) {
-    const attempt = record(evidence.attempts[index]);
-    if (
-      attempt?.attempt !== index + 1 ||
-      (attempt.outcome !== "failed" && attempt.outcome !== "passed") ||
-      typeof attempt.retryScheduled !== "boolean" ||
-      (attempt.failureClass !== undefined &&
-        !RETRY_FAILURE_CLASSES.includes(attempt.failureClass as RetryFailureClass))
-    ) {
-      return null;
-    }
-  }
-  return evidence as unknown as RetryEvidence;
-}
-
 function parseMainRetryEvidence(
   value: unknown,
   run: WorkflowRun,
@@ -485,7 +450,7 @@ async function collectRunEvidence(
           classes.add(parseClassificationLine(text).classification);
           failureClassRecords += 1;
         } else {
-          const evidence = parseRetryEvidence(JSON.parse(text));
+          const evidence = validateRetryEvidence(JSON.parse(text));
           if (evidence === null) {
             failureClassMalformed = true;
             continue;
