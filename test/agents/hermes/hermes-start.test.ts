@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -661,6 +660,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       extractShellFunctionFromSource(src, "ensure_hermes_cross_uid_state_dir"),
       extractShellFunctionFromSource(src, "repair_hermes_log_permissions"),
       extractShellFunctionFromSource(src, "ensure_hermes_history_file"),
+      extractShellFunctionFromSource(src, "fail_hermes_startup_layout_repair"),
       extractShellFunctionFromSource(src, "repair_hermes_startup_layout"),
       extractShellFunctionFromSource(src, "cleanup_stale_hermes_gateway_runtime"),
       `KILL_LOG=${shellQuote(killLog)}`,

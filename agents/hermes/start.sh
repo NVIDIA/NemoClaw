@@ -1609,6 +1609,14 @@ finally:
 PYHISTORY
 }
 
+fail_hermes_startup_layout_repair() {
+  local item="${1:?Hermes layout item is required}"
+
+  echo "[gateway] Hermes pre-launch layout repair failed at ${item}" >&2
+  echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+  return 1
+}
+
 repair_hermes_startup_layout() {
   local state_dir
 
@@ -1617,8 +1625,7 @@ repair_hermes_startup_layout() {
   # while Shields up seals cron job definitions.
   for state_dir in sessions gateway runtime; do
     if ! ensure_hermes_cross_uid_state_dir "$state_dir"; then
-      echo "[gateway] Hermes pre-launch layout repair failed at ${state_dir} state directory" >&2
-      echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+      fail_hermes_startup_layout_repair "${state_dir} state directory"
       return 1
     fi
   done
@@ -1637,33 +1644,28 @@ repair_hermes_startup_layout() {
     # original keypress traceback.
     echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
     if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
-      echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
-      echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+      fail_hermes_startup_layout_repair "history file"
       return 1
     fi
     return 0
   fi
 
   if ! ensure_hermes_config_root_mode; then
-    echo "[gateway] Hermes pre-launch layout repair failed at config root" >&2
-    echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+    fail_hermes_startup_layout_repair "config root"
     return 1
   fi
   if ! repair_hermes_log_permissions; then
-    echo "[gateway] Hermes pre-launch layout repair failed at logs directory" >&2
-    echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+    fail_hermes_startup_layout_repair "logs directory"
     return 1
   fi
   for state_dir in hooks image_cache audio_cache; do
     if ! ensure_hermes_state_dir "$state_dir" 770; then
-      echo "[gateway] Hermes pre-launch layout repair failed at ${state_dir} directory" >&2
-      echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+      fail_hermes_startup_layout_repair "${state_dir} directory"
       return 1
     fi
   done
   if ! ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660; then
-    echo "[gateway] Hermes pre-launch layout repair failed at history file" >&2
-    echo "[gateway] Do not repair this path in place. Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration." >&2
+    fail_hermes_startup_layout_repair "history file"
     return 1
   fi
 }
