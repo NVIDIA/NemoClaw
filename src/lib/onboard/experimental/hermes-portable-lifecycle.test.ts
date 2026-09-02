@@ -854,18 +854,26 @@ describe("Hermes portable lifecycle", () => {
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     let healthAttempts = 0;
     let now = 0;
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
-        ? {
-            status: 0,
-            stdout:
-              (healthAttempts += 1) >= 2 && launchOpenShell.mock.calls.length === 1
-                ? "200\n"
-                : "unavailable\n",
-            stderr: "",
-          }
-        : defaultCapture(args),
-    );
+    const healthBoundaries: Array<{ attempt: number; inspectsBefore: number }> = [];
+    const sleepBoundaries: Array<{ inspectsBefore: number; milliseconds: number }> = [];
+    captureOpenShell.mockImplementation((args: readonly string[]) => {
+      if (args.includes("python3")) {
+        healthAttempts += 1;
+        healthBoundaries.push({
+          attempt: healthAttempts,
+          inspectsBefore: podman.mock.calls.filter(([command]) => command[1] === "inspect").length,
+        });
+        return {
+          status: 0,
+          stdout:
+            healthAttempts >= 2 && launchOpenShell.mock.calls.length === 1
+              ? "200\n"
+              : "unavailable\n",
+          stderr: "",
+        };
+      }
+      return defaultCapture(args);
+    });
 
     const result = withMcpLifecycleLockSync(
       SANDBOX,
@@ -874,6 +882,10 @@ describe("Hermes portable lifecycle", () => {
           ...deps,
           now: () => now,
           sleep: (milliseconds) => {
+            sleepBoundaries.push({
+              inspectsBefore: podman.mock.calls.filter(([command]) => command[1] === "inspect").length,
+              milliseconds,
+            });
             now += milliseconds;
           },
         }),
@@ -889,6 +901,25 @@ describe("Hermes portable lifecycle", () => {
       ([args]) => args[0] === "container" && args[1] === "inspect",
     );
     expect(healthRunInspects).toHaveLength(11);
+    expect(healthBoundaries).toHaveLength(2);
+    // A fresh poll/currentness observation exists before each external health
+    // command, and each command is followed by a fresh post-health inspection.
+    expect(healthBoundaries[0]!.inspectsBefore).toBeGreaterThan(0);
+    expect(healthBoundaries[1]!.inspectsBefore).toBeGreaterThan(
+      healthBoundaries[0]!.inspectsBefore + 1,
+    );
+    expect(healthRunInspects.length).toBeGreaterThan(
+      healthBoundaries[1]!.inspectsBefore,
+    );
+    expect(sleepBoundaries).toEqual([
+      {
+        inspectsBefore: healthBoundaries[0]!.inspectsBefore + 1,
+        milliseconds: 1_000,
+      },
+    ]);
+    expect(healthBoundaries[1]!.inspectsBefore).toBeGreaterThan(
+      sleepBoundaries[0]!.inspectsBefore,
+    );
     expect(launchOpenShell).toHaveBeenCalledTimes(1);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1); expect(launchOpenShell).toHaveBeenCalledWith([
       "sandbox",
