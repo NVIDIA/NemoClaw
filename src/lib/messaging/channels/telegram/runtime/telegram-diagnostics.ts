@@ -288,6 +288,10 @@ type TelegramHttpRequestLike = (
     try {
       var fs = require("fs");
       var config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      var root = asObject(config);
+      var channels = root ? asObject(root.channels) : null;
+      var channel = channels ? asObject(channels.telegram) : null;
+      if (!channel || channel.enabled === false) return;
       account = readTelegramAccount(config);
       configToken = readTelegramBotToken(config);
     } catch (_e) {
@@ -395,7 +399,6 @@ type TelegramHttpRequestLike = (
   wrapHttp(http, "get");
   wrapHttp(https, "request");
   wrapHttp(https, "get");
-  process.nextTick(maybeLogCredentialPlaceholderDiagnostics);
 
   // Defense in depth for #4314/#4390: if Telegram is configured but the
   // bridge module never logs "starting provider" and never hits the Bot
@@ -424,6 +427,7 @@ type TelegramHttpRequestLike = (
     return "";
   }
   if (!gatewayProcessFlavor()) return;
+  process.nextTick(maybeLogCredentialPlaceholderDiagnostics);
   process.nextTick(maybeLogRuntimeConfigDiagnostics);
   var STARTUP_GRACE_MS = Number(process.env.NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS || "") || 15000;
   var noStartupTimer = setTimeout(function () {

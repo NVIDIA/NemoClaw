@@ -160,6 +160,7 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "50" });
     expect(result.status).toBe(0);
     expect(result.stderr).not.toMatch(/bridge did not start within/);
+    expect(result.stderr).not.toContain("TELEGRAM_BOT_TOKEN");
   });
 
   it("stays silent in non-gateway processes that inherit NODE_OPTIONS=--require", () => {
@@ -179,6 +180,7 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "50" });
     expect(result.status).toBe(0);
     expect(result.stderr).not.toMatch(/bridge did not start within/);
+    expect(result.stderr).not.toContain("TELEGRAM_BOT_TOKEN");
   });
 
   it("logs Telegram DM allowlist state without exposing IDs", () => {
