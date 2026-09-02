@@ -50,8 +50,9 @@ from deepagents.profiles.harness.harness_profiles import (
     _HARNESS_PROFILES,
     _harness_profile_for_model,
 )
+from deepagents_code import config as dcode_config
 from deepagents_code.model_config import ModelConfig
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 CONFIG_PATH = Path("/sandbox/.deepagents/config.toml")
@@ -88,11 +89,14 @@ EXPECTED_NATIVE_MIDDLEWARE = [
     "FinalAnswerGuardMiddleware",
 ]
 MANAGED_GUARD = "NemoClawExecutePlaceholderGuardMiddleware"
+MANAGED_MESSAGE_COMPATIBILITY = "NemotronPolicyNudgeMiddleware"
 EXPECTED_MIDDLEWARE = [*EXPECTED_NATIVE_MIDDLEWARE, MANAGED_GUARD]
 
 for distribution, expected in EXPECTED_VERSIONS.items():
     actual = importlib.metadata.version(distribution)
     assert actual == expected, (distribution, actual)
+
+assert dcode_config.is_openai_prompt_cache_key_enabled() is False
 
 profile_entry_points = [
     entry_point
@@ -303,6 +307,53 @@ guard = next(
     for item in middleware_items(managed_profiles[0])
     if type(item).__name__ == MANAGED_GUARD
 )
+compatibility = next(
+    item
+    for item in middleware_items(managed_profiles[0])
+    if type(item).__name__ == MANAGED_MESSAGE_COMPATIBILITY
+)
+assert compatibility._nemoclaw_internal_name_compatibility is True
+
+
+class ModelRequest:
+    def __init__(self, messages):
+        self.messages = messages
+        self.state = {"messages": messages}
+        self.tools = [{"name": "read_file"}, {"name": "get_goal"}]
+
+    def override(self, *, messages):
+        return ModelRequest(messages)
+
+
+internal = HumanMessage(
+    content="managed nudge",
+    name="nemotron_domain_tool_preference",
+)
+named_user = HumanMessage(content="named user", name="user_supplied")
+plain_user = HumanMessage(content="plain user")
+model_request = ModelRequest([internal, named_user, plain_user])
+sync_model_result = compatibility.wrap_model_call(
+    model_request,
+    lambda value: value,
+)
+assert sync_model_result is not model_request
+assert sync_model_result.messages[0].content == "managed nudge"
+assert sync_model_result.messages[0].name is None
+assert sync_model_result.messages[1] is named_user
+assert sync_model_result.messages[2] is plain_user
+assert sync_model_result.messages[-1].name is None
+assert internal.name == "nemotron_domain_tool_preference"
+
+
+async def async_model_handler(value):
+    return value
+
+
+async_model_result = asyncio.run(
+    compatibility.awrap_model_call(model_request, async_model_handler)
+)
+assert async_model_result.messages[0].name is None
+assert async_model_result.messages[-1].name is None
 
 
 class GuardRequest:

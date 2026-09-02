@@ -11,6 +11,7 @@ import re
 import threading
 from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
+from types import MethodType
 from typing import Any
 
 EXPECTED_DCODE_VERSION = "0.1.55"
@@ -114,11 +115,66 @@ def _require_source(path: Path, label: str, expected_sha256: str) -> None:
 
 def _managed_profile_overlay() -> Any:
     """Build the NemoClaw-only middleware layered onto managed Ultra aliases."""
+    from deepagents.profiles.harness._nvidia_nemotron_3_ultra import (  # noqa: PLC0415
+        NemotronPolicyNudgeMiddleware,
+    )
     from deepagents.profiles.harness.harness_profiles import (  # noqa: PLC0415
         HarnessProfile,
     )
     from langchain.agents.middleware.types import AgentMiddleware  # noqa: PLC0415
-    from langchain_core.messages import ToolMessage  # noqa: PLC0415
+    from langchain_core.messages import HumanMessage, ToolMessage  # noqa: PLC0415
+
+    def without_internal_names(request: Any) -> Any:
+        messages = list(request.messages or ())
+        repaired = []
+        changed = False
+        for message in messages:
+            name = getattr(message, "name", None)
+            if (
+                isinstance(message, HumanMessage)
+                and isinstance(name, str)
+                and name.startswith("nemotron_")
+            ):
+                message = message.model_copy(update={"name": None})
+                changed = True
+            repaired.append(message)
+        return request.override(messages=repaired) if changed else request
+
+    # The native Ultra nudge inserts local `nemotron_` message names. NVIDIA's
+    # OpenAI-compatible stream accepts those messages, then returns an in-stream
+    # BadRequest instead of assistant text. Replace the exact native instance at
+    # its existing profile position. The wrapper preserves named graph state and
+    # removes only copied provider-request metadata (#10549).
+    policy_nudge = NemotronPolicyNudgeMiddleware()
+    original_wrap_model_call = policy_nudge.wrap_model_call
+    original_awrap_model_call = policy_nudge.awrap_model_call
+
+    def wrap_model_call(
+        self: Any,
+        request: Any,
+        handler: Callable[[Any], Any],
+    ) -> Any:
+        del self
+        return original_wrap_model_call(
+            request,
+            lambda value: handler(without_internal_names(value)),
+        )
+
+    async def awrap_model_call(
+        self: Any,
+        request: Any,
+        handler: Callable[[Any], Awaitable[Any]],
+    ) -> Any:
+        del self
+
+        async def repaired_handler(value: Any) -> Any:
+            return await handler(without_internal_names(value))
+
+        return await original_awrap_model_call(request, repaired_handler)
+
+    policy_nudge.wrap_model_call = MethodType(wrap_model_call, policy_nudge)
+    policy_nudge.awrap_model_call = MethodType(awrap_model_call, policy_nudge)
+    policy_nudge._nemoclaw_internal_name_compatibility = True
 
     class NemoClawExecutePlaceholderGuardMiddleware(AgentMiddleware):
         """Reject Ultra's literal execute placeholder before shell dispatch."""
@@ -171,7 +227,10 @@ def _managed_profile_overlay() -> Any:
             return await handler(request)
 
     return HarnessProfile(
-        extra_middleware=[NemoClawExecutePlaceholderGuardMiddleware()]
+        extra_middleware=[
+            policy_nudge,
+            NemoClawExecutePlaceholderGuardMiddleware(),
+        ]
     )
 
 
@@ -189,10 +248,21 @@ def _register_aliases(
         managed_profile = registry[NATIVE_MANAGED_PROFILE_KEY]
         native_middleware = tuple(getattr(native_profile, "extra_middleware", ()))
         managed_middleware = tuple(getattr(managed_profile, "extra_middleware", ()))
+        compatibility = [
+            item
+            for item in managed_middleware
+            if type(item).__name__ == "NemotronPolicyNudgeMiddleware"
+            and getattr(item, "_nemoclaw_internal_name_compatibility", False)
+        ]
         preserves_native_middleware = (
             len(managed_middleware) == len(native_middleware) + 1
+            and len(compatibility) == 1
             and all(
                 managed_item is native_item
+                or (
+                    type(managed_item) is type(native_item)
+                    and managed_item is compatibility[0]
+                )
                 for managed_item, native_item in zip(
                     managed_middleware, native_middleware, strict=False
                 )

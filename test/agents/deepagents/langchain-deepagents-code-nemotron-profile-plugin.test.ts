@@ -54,7 +54,31 @@ const BUILTIN_ONLY_PROFILE_STATE = MANAGED_MODEL_ALIASES.map((_alias, index) => 
 
 const NATIVE_PROFILE_SOURCE = `"""Focused native Nemotron profile fixture."""
 
+from langchain_core.messages import HumanMessage
+
 NATIVE_PROFILE_MARKER = "reviewed"
+
+
+class NemotronPolicyNudgeMiddleware:
+    def wrap_model_call(self, request, handler):
+        nudged = request.override(messages=[
+            *request.messages,
+            HumanMessage(
+                "managed nudge",
+                name="nemotron_domain_tool_preference",
+            ),
+        ])
+        return handler(nudged)
+
+    async def awrap_model_call(self, request, handler):
+        nudged = request.override(messages=[
+            *request.messages,
+            HumanMessage(
+                "managed nudge",
+                name="nemotron_domain_tool_preference",
+            ),
+        ])
+        return await handler(nudged)
 `;
 
 const BOOTSTRAP_SOURCE = `"""Focused unmodified Deep Agents bootstrap fixture."""
@@ -74,8 +98,19 @@ type ProbeResult = {
   aliases: boolean[];
   aliasesShareManagedProfile: boolean;
   aliasMiddleware: string[];
+  canonicalHasCompatibility: boolean;
   canonicalHasGuard: boolean;
   canonicalPresent: boolean;
+  compatibilityProbe: {
+    asyncInternalName: string | null;
+    appendedInternalName: string | null;
+    originalInternalName: string;
+    plainPreserved: boolean;
+    syncContent: string;
+    syncInternalName: string | null;
+    userName: string;
+    userPreserved: boolean;
+  } | null;
   error: string | null;
   guardProbe: {
     async: {
@@ -178,9 +213,23 @@ def register_harness_profile(key, profile):
     if existing is None:
         _HARNESS_PROFILES[key] = profile
     else:
-        _HARNESS_PROFILES[key] = HarnessProfile(
-            extra_middleware=[*existing.extra_middleware, *profile.extra_middleware]
+        overrides = {type(item): item for item in profile.extra_middleware}
+        replaced = set()
+        merged = []
+        for item in existing.extra_middleware:
+            item_type = type(item)
+            if item_type in overrides:
+                if item_type not in replaced:
+                    merged.append(overrides[item_type])
+                    replaced.add(item_type)
+            else:
+                merged.append(item)
+        merged.extend(
+            item
+            for item in profile.extra_middleware
+            if type(item) not in replaced
         )
+        _HARNESS_PROFILES[key] = HarnessProfile(extra_middleware=merged)
     if os.environ.get("NEMOCLAW_TEST_FAIL_KEY") == key:
         raise RuntimeError(f"injected registration failure for {key}")
 `,
@@ -196,6 +245,18 @@ def register_harness_profile(key, profile):
     `class TextAccessor(str):
     def __call__(self):
         return str(self)
+
+
+class HumanMessage:
+    def __init__(self, content, name=None):
+        self.content = content
+        self.name = name
+
+    def model_copy(self, *, update):
+        return HumanMessage(
+            update.get("content", self.content),
+            update.get("name", self.name),
+        )
 
 
 class ToolMessage:
@@ -271,6 +332,7 @@ function makeValidatorDependencyStubRoot(): string {
       "_HARNESS_PROFILES = {}\nclass HarnessProfile: pass\ndef _harness_profile_for_model(*args, **kwargs): return HarnessProfile()\n",
     "deepagents_code/__init__.py": "",
     "deepagents_code/agent.py": "def create_cli_agent(*args, **kwargs): return None\n",
+    "deepagents_code/config.py": "def is_openai_prompt_cache_key_enabled(): return False\n",
     "langchain/agents/middleware/types.py": "class AgentMiddleware: pass\n",
     "langchain_core/language_models/fake_chat_models.py": "class FakeMessagesListChatModel: pass\n",
     "langchain_core/messages.py":
@@ -420,11 +482,19 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from deepagents.profiles.harness.harness_profiles import HarnessProfile, _HARNESS_PROFILES
 
-class NativeMiddleware:
-    pass
+try:
+    from deepagents.profiles.harness._nvidia_nemotron_3_ultra import (
+        NemotronPolicyNudgeMiddleware,
+    )
+    native_middleware = NemotronPolicyNudgeMiddleware()
+except Exception:
+    class MissingNativeMiddleware:
+        pass
+
+    native_middleware = MissingNativeMiddleware()
 
 aliases = ${JSON.stringify(MANAGED_MODEL_ALIASES)}
-canonical = HarnessProfile(extra_middleware=[NativeMiddleware()])
+canonical = HarnessProfile(extra_middleware=[native_middleware])
 if ${(options.withCanonical ?? true) ? "True" : "False"}:
     _HARNESS_PROFILES[${JSON.stringify(CANONICAL_MODEL_SPEC)}] = canonical
     _HARNESS_PROFILES[aliases[0]] = canonical
@@ -464,6 +534,7 @@ try:
 except Exception as exc:
     error = str(exc)
 
+compatibility_probe = None
 guard_probe = None
 aliases_registered = [key in _HARNESS_PROFILES for key in aliases]
 managed_profile = _HARNESS_PROFILES.get(aliases[0]) if all(aliases_registered) else None
@@ -534,6 +605,50 @@ if error is None and ${options.probeGuard ? "True" : "False"}:
         return "non-execute-handler-result"
 
     non_execute_result = guard.wrap_tool_call(non_execute_request, non_execute_handler)
+    compatibility = next(
+        item
+        for item in managed_profile.extra_middleware
+        if type(item).__name__ == "NemotronPolicyNudgeMiddleware"
+        and getattr(item, "_nemoclaw_internal_name_compatibility", False)
+    )
+    from langchain_core.messages import HumanMessage
+
+    class ModelRequest:
+        def __init__(self, messages):
+            self.messages = messages
+
+        def override(self, *, messages):
+            return ModelRequest(messages)
+
+    internal = HumanMessage(
+        "managed nudge",
+        name="nemotron_domain_tool_preference",
+    )
+    named_user = HumanMessage("named user", name="user_supplied")
+    plain_user = HumanMessage("plain user")
+    model_request = ModelRequest([internal, named_user, plain_user])
+    sync_compatibility = compatibility.wrap_model_call(
+        model_request,
+        lambda value: value,
+    )
+
+    async def async_model_handler(value):
+        return value
+
+    async_compatibility = asyncio.run(
+        compatibility.awrap_model_call(model_request, async_model_handler)
+    )
+    compatibility_probe = {
+        "appendedInternalName": sync_compatibility.messages[-1].name,
+        "asyncInternalName": async_compatibility.messages[0].name,
+        "originalInternalName": internal.name,
+        "plainPreserved": sync_compatibility.messages[2] is plain_user,
+        "syncContent": sync_compatibility.messages[0].content,
+        "syncInternalName": sync_compatibility.messages[0].name,
+        "userName": sync_compatibility.messages[1].name,
+        "userPreserved": sync_compatibility.messages[1] is named_user,
+    }
+
     guard_probe = {
         "sync": {
             "content": sync_result.content,
@@ -580,11 +695,16 @@ print(json.dumps({
         )
     ),
     "aliasMiddleware": alias_middleware,
+    "canonicalHasCompatibility": any(
+        getattr(item, "_nemoclaw_internal_name_compatibility", False)
+        for item in canonical.extra_middleware
+    ),
     "canonicalHasGuard": any(
         type(item).__name__ == "NemoClawExecutePlaceholderGuardMiddleware"
         for item in canonical.extra_middleware
     ),
     "canonicalPresent": _HARNESS_PROFILES.get(${JSON.stringify(CANONICAL_MODEL_SPEC)}) is canonical,
+    "compatibilityProbe": compatibility_probe,
     "error": error,
     "guardProbe": guard_probe,
     "registryKeys": sorted(_HARNESS_PROFILES),
@@ -742,13 +862,15 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     const fixture = makePluginFixture();
     const result = runPlugin(fixture, { registerCalls: 2 });
 
+    expect(result.probe.error).toBeNull();
     expect(result.status, result.stderr).toBe(0);
     expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => true));
     expect(result.probe.aliasesShareManagedProfile).toBe(true);
     expect(result.probe.aliasMiddleware).toEqual([
-      "NativeMiddleware",
+      "NemotronPolicyNudgeMiddleware",
       "NemoClawExecutePlaceholderGuardMiddleware",
     ]);
+    expect(result.probe.canonicalHasCompatibility).toBe(false);
     expect(result.probe.canonicalHasGuard).toBe(false);
     expect(result.probe.canonicalPresent).toBe(true);
     expect(result.probe.registryKeys).toEqual(
@@ -765,14 +887,34 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => true));
     expect(result.probe.aliasesShareManagedProfile).toBe(true);
     expect(result.probe.aliasMiddleware).toEqual([
-      "NativeMiddleware",
+      "NemotronPolicyNudgeMiddleware",
       "NemoClawExecutePlaceholderGuardMiddleware",
     ]);
+    expect(result.probe.canonicalHasCompatibility).toBe(false);
     expect(result.probe.canonicalHasGuard).toBe(false);
     expect(result.probe.canonicalPresent).toBe(true);
     expect(result.probe.registryKeys).toEqual(
       [...MANAGED_MODEL_ALIASES, CANONICAL_MODEL_SPEC].sort(),
     );
+    expectOfficialSourcesUnchanged(fixture);
+  });
+
+  it("removes Nemotron control names only from provider request copies (#10549)", () => {
+    const fixture = makePluginFixture();
+    const result = runPlugin(fixture, { probeGuard: true });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.probe.compatibilityProbe).toEqual({
+      appendedInternalName: null,
+      asyncInternalName: null,
+      originalInternalName: "nemotron_domain_tool_preference",
+      plainPreserved: true,
+      syncContent: "managed nudge",
+      syncInternalName: null,
+      userName: "user_supplied",
+      userPreserved: true,
+    });
+    expect(result.probe.canonicalHasCompatibility).toBe(false);
     expectOfficialSourcesUnchanged(fixture);
   });
 

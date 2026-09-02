@@ -537,6 +537,14 @@ def _parse_interpreter_ptc(raw):
     return False
 
 
+# Deep Agents Code 0.1.55 enables OpenAI prompt-cache affinity for every
+# ChatOpenAI-compatible endpoint. NVIDIA Endpoints rejects that OpenAI-specific
+# request field. Disable its dynamic injection at the final config boundary so
+# managed non-interactive calls retain only supported request fields (#10549).
+def is_openai_prompt_cache_key_enabled() -> bool:
+    return False
+
+
 # Managed Ultra compatibility workaround: the NVIDIA Ultra serving template can
 # return empty assistant content when a completion combines reasoning and tool
 # calls, so managed Ultra requests must carry this reviewed template argument.
@@ -863,6 +871,7 @@ import time as _nemoclaw_time
 
 import httpx as _nemoclaw_httpx
 from deepagents_code import model_config as _nemoclaw_model_config
+from langgraph.pregel import remote as _nemoclaw_langgraph_remote
 from langgraph_sdk import errors as _nemoclaw_langgraph_errors
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -871,6 +880,11 @@ from langgraph_sdk import errors as _nemoclaw_langgraph_errors
 # `repr(exception)`, which application code can replace through `__repr__`.
 # Checkpoint text is therefore not a trustworthy error-type source.
 _NEMOCLAW_EXCEPTION_CLASSIFIERS = {
+    _nemoclaw_langgraph_remote.RemoteException: (
+        "RemoteError",
+        "agent_remote_failure",
+        "false",
+    ),
     _nemoclaw_langgraph_errors.RateLimitError: (
         "RateLimited",
         "rate_limited",
