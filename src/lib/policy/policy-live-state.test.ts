@@ -43,6 +43,7 @@ import {
   applyPresets,
   excludeBaselineEntry,
   inspectPolicyMutationContext,
+  loadPresetForSandbox,
   removePreset,
   restoreBaselineEntry,
   setPolicyDocument,
@@ -324,6 +325,48 @@ describe("live OpenShell policy mutations", () => {
     ).toBe(true);
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty(
       "nemoclaw_custom__weather__weather",
+    );
+  });
+
+  it("loads a live custom preset without reporting a built-in miss (#10775)", () => {
+    vi.mocked(console.error).mockClear();
+    expect(
+      applyPresetContent(sandboxName, "fixture-weather", preset, {
+        custom: { sourcePath: "/tmp/weather.yaml" },
+        nonFatal: true,
+      }),
+    ).toBe(true);
+    expect(console.error).not.toHaveBeenCalled();
+    vi.mocked(console.error).mockClear();
+
+    expect(loadPresetForSandbox(sandboxName, "fixture-weather")).toContain(
+      "nemoclaw_custom__fixture-weather__weather",
+    );
+    expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("Preset not found"));
+  });
+
+  it("removes a live custom preset without reporting a built-in miss (#10775)", () => {
+    vi.mocked(console.error).mockClear();
+    expect(
+      applyPresetContent(sandboxName, "fixture-weather", preset, {
+        custom: { sourcePath: "/tmp/weather.yaml" },
+        nonFatal: true,
+      }),
+    ).toBe(true);
+    expect(console.error).not.toHaveBeenCalled();
+    vi.mocked(console.error).mockClear();
+
+    expect(removePreset(sandboxName, "fixture-weather", { nonFatal: true })).toBe(true);
+    expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("Preset not found"));
+    expect(YAML.parse(livePolicy).network_policies).not.toHaveProperty(
+      "nemoclaw_custom__fixture-weather__weather",
+    );
+  });
+
+  it("still reports a genuinely missing preset (#10775)", () => {
+    expect(removePreset(sandboxName, "no-such-preset", { nonFatal: true })).toBe(false);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Cannot load preset: no-such-preset"),
     );
   });
 });
