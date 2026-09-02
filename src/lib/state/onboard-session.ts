@@ -1730,7 +1730,13 @@ export function releaseOnboardLock(): void {
       throw error;
     }
     if (snapshot.disposition.state !== "held") return;
-    if (snapshot.disposition.record.pid !== process.pid) return;
+    if (
+      snapshot.disposition.record.pid !== process.pid ||
+      snapshot.disposition.provenance !== "local" ||
+      !snapshot.disposition.identityVerified
+    ) {
+      return;
+    }
     reclaimLockFileGenerationSync(LOCK_FILE, snapshot.observation);
   } catch {
     return;

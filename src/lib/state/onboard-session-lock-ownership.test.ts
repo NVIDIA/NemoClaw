@@ -184,6 +184,25 @@ describe("onboard lock ownership", () => {
     expect(contention.reason).toContain(owner.reason);
   });
 
+  it("preserves a foreign fallback lock that uses the current PID", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    const localRecord = lockHolder.createOnboardLockRecord(
+      "foreign current-PID owner",
+      "2026-09-02T00:00:00.000Z",
+    );
+    const foreignRecord = {
+      ...localRecord,
+      hostIdentity: `${localRecord.hostIdentity ?? "host"}:foreign`,
+    };
+    const contents = JSON.stringify(foreignRecord);
+    fs.writeFileSync(session.LOCK_FILE, contents, { mode: 0o600 });
+    const before = readFileSnapshot(session.LOCK_FILE);
+
+    session.releaseOnboardLock();
+
+    expect(readFileSnapshot(session.LOCK_FILE)).toEqual(before);
+  });
+
   it("refuses cleanup authority after the acquired lock path is replaced (#9833)", () => {
     expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
     expect(session.isOnboardLockHeldByCurrentProcess()).toBe(true);

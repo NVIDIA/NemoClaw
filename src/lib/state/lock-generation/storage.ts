@@ -32,19 +32,19 @@ async function restoreClaimedLockFileGeneration(
 ): Promise<void> {
   try {
     await fs.promises.link(quarantinePath, targetPath);
-    await fs.promises.rm(quarantinePath, { force: true });
   } catch (error) {
     if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
   }
+  await fs.promises.rm(quarantinePath, { force: true });
 }
 
 function restoreClaimedLockFileGenerationSync(targetPath: string, quarantinePath: string): void {
   try {
     fs.linkSync(quarantinePath, targetPath);
-    fs.rmSync(quarantinePath, { force: true });
   } catch (error) {
     if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
   }
+  fs.rmSync(quarantinePath, { force: true });
 }
 
 /** Atomically remove only the exact regular-file generation observed earlier. */
