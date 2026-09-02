@@ -51,6 +51,7 @@ function gatewayConfig(proxyMode?: boolean, driver: "docker" | "podman" = "docke
 function writeRuntimeIdentity(
   stateDir: string,
   config: string,
+  driver: "docker" | "podman" = "docker",
   mutateMarker: (marker: ReturnType<typeof buildDockerDriverGatewayRuntimeMarker>) => void = () =>
     undefined,
 ): string {
@@ -60,7 +61,7 @@ function writeRuntimeIdentity(
   fs.writeFileSync(configPath, config, { mode: 0o600 });
   const marker = buildDockerDriverGatewayRuntimeMarker({
     pid: process.pid,
-    desiredEnv: { OPENSHELL_GATEWAY_CONFIG: configPath },
+    desiredEnv: { OPENSHELL_DRIVERS: driver, OPENSHELL_GATEWAY_CONFIG: configPath },
     endpoint: "https://127.0.0.1:8080",
   });
   mutateMarker(marker);
@@ -92,13 +93,17 @@ describe("managed MCP gateway proxy DNS boundary", () => {
   it("admits a launch-bound portable Podman gateway to the MCP mutation boundary", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-podman-"));
     try {
-      writeRuntimeIdentity(stateDir, gatewayConfig(false, "podman"));
+      writeRuntimeIdentity(stateDir, gatewayConfig(false, "podman"), "podman");
 
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
       expect(processProofs.standaloneOwnershipFailure).toHaveBeenCalledWith(
         {},
         expect.objectContaining({ driver: "podman", stateDir }),
       );
+      const marker = JSON.parse(fs.readFileSync(path.join(stateDir, "runtime.json"), "utf-8")) as {
+        driver: string;
+      };
+      expect(marker.driver).toBe("podman");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -107,12 +112,27 @@ describe("managed MCP gateway proxy DNS boundary", () => {
   it("rejects a launch-bound portable Podman gateway with hostname proxy resolution", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-podman-"));
     try {
-      writeRuntimeIdentity(stateDir, gatewayConfig(true, "podman"));
+      writeRuntimeIdentity(stateDir, gatewayConfig(true, "podman"), "podman");
 
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
         /enables proxy hostname resolution/,
       );
       expect(processProofs.standaloneOwnershipFailure).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a launch marker whose driver differs from the selected config", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-podman-"));
+    try {
+      writeRuntimeIdentity(stateDir, gatewayConfig(false, "podman"), "podman", (marker) => {
+        marker.driver = "docker";
+      });
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /launch marker driver does not match the selected config driver/,
+      );
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -125,12 +145,12 @@ describe("managed MCP gateway proxy DNS boundary", () => {
         delete marker.gatewayConfigPath;
         delete marker.gatewayConfigSha256;
       };
-      writeRuntimeIdentity(stateDir, gatewayConfig(), makeLegacy);
+      writeRuntimeIdentity(stateDir, gatewayConfig(), "docker", makeLegacy);
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
         /launch marker does not record a gateway config identity/,
       );
 
-      writeRuntimeIdentity(stateDir, gatewayConfig(false), makeLegacy);
+      writeRuntimeIdentity(stateDir, gatewayConfig(false), "docker", makeLegacy);
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
         /launch marker does not record a gateway config identity/,
       );

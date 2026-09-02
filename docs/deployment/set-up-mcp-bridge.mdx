@@ -90,7 +90,8 @@ The exception is OpenShell's operator-controlled `proxy_connect_by_hostname` opt
 When enabled, OpenShell sends the requested hostname to the corporate proxy instead of the validated address, which reopens proxy-side DNS resolution; the upstream source records that residual risk at [`crates/openshell-supervisor-network/src/proxy.rs:3208-3240`](https://github.com/NVIDIA/OpenShell/blob/c4b500a7de64d0b66e3ee8098f58d14299092162/crates/openshell-supervisor-network/src/proxy.rs#L3208-L3240).
 NemoClaw writes `proxy_connect_by_hostname = false` into its managed gateway configuration.
 Before an MCP add, restart, or rebuild restoration mutates a policy, provider, or adapter, NemoClaw proves the selected running gateway identity and verifies that its launch-bound configuration keeps this setting disabled.
-An exact older NemoClaw launch with the setting omitted remains valid because the pinned OpenShell version defaults it to `false`; the next managed gateway restart writes the explicit setting.
+An older gateway launch without launch-bound configuration identity is rejected even when the pinned OpenShell version would default the omitted setting to `false`.
+Restart a NemoClaw-managed gateway through onboarding, or restart an externally managed gateway through its declared supervisor, before retrying the MCP mutation.
 An enabled, changed, or unproven configuration fails closed before the MCP mutation.
 
 ### Stable OpenShell 0.0.106 Limitations

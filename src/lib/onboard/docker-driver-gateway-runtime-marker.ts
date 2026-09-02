@@ -9,10 +9,12 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION = 1;
 export const NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV =
   "NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256";
 
+export type DockerDriverGatewayRuntimeDriver = "docker" | "podman";
+
 export type DockerDriverGatewayRuntimeMarker = {
   version: typeof DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION;
   pid: number;
-  driver: "docker";
+  driver: DockerDriverGatewayRuntimeDriver;
   platform: NodeJS.Platform;
   arch: NodeJS.Architecture;
   endpoint: string;
@@ -108,7 +110,7 @@ export function buildDockerDriverGatewayRuntimeMarker({
   return {
     version: DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION,
     pid,
-    driver: "docker",
+    driver: desiredEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker",
     platform,
     arch,
     endpoint,
@@ -126,7 +128,7 @@ function isRuntimeMarker(value: unknown): value is DockerDriverGatewayRuntimeMar
   const marker = value as Partial<DockerDriverGatewayRuntimeMarker>;
   return (
     marker.version === DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION &&
-    marker.driver === "docker" &&
+    (marker.driver === "docker" || marker.driver === "podman") &&
     Number.isInteger(marker.pid) &&
     typeof marker.platform === "string" &&
     typeof marker.arch === "string" &&
@@ -217,7 +219,11 @@ export function getDockerDriverGatewayRuntimeMarkerDrift(
   const desired = buildDockerDriverGatewayRuntimeMarker(expected);
   if (marker.pid !== desired.pid)
     return { reason: `runtime marker pid=${marker.pid} (expected ${desired.pid})` };
-  if (marker.driver !== "docker") return { reason: `runtime marker driver=${marker.driver}` };
+  if (marker.driver !== desired.driver) {
+    return {
+      reason: `runtime marker driver=${marker.driver} (expected ${desired.driver})`,
+    };
+  }
   if (marker.platform !== desired.platform) {
     return { reason: `runtime marker platform=${marker.platform} (expected ${desired.platform})` };
   }

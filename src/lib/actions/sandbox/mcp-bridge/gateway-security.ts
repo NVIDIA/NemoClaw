@@ -162,6 +162,10 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
     throw refusal("the gateway launch marker does not record a gateway config identity");
   }
 
+  if (marker.driver !== driver) {
+    throw refusal("the gateway launch marker driver does not match the selected config driver");
+  }
+
   if (
     marker.gatewayConfigPath !== path.resolve(configPath) ||
     marker.gatewayConfigSha256 !== configSha256

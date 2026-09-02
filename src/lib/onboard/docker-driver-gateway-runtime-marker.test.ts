@@ -37,6 +37,20 @@ describe("docker-driver gateway runtime marker", () => {
     expect(getDockerDriverGatewayRuntimeMarkerDrift(marker, expected)).toBeNull();
   });
 
+  it("records the selected portable Podman driver and rejects driver drift", () => {
+    const podmanExpected = {
+      ...expected,
+      desiredEnv: { ...expected.desiredEnv, OPENSHELL_DRIVERS: "podman" },
+    };
+    const marker = buildDockerDriverGatewayRuntimeMarker(podmanExpected);
+
+    expect(marker.driver).toBe("podman");
+    expect(getDockerDriverGatewayRuntimeMarkerDrift(marker, podmanExpected)).toBeNull();
+    expect(getDockerDriverGatewayRuntimeMarkerDrift(marker, expected)?.reason).toContain(
+      "driver=podman (expected docker)",
+    );
+  });
+
   it("forces recreation when the marker is missing or stale", () => {
     expect(getDockerDriverGatewayRuntimeMarkerDrift(null, expected)?.reason).toContain(
       "missing Docker-driver runtime marker",
