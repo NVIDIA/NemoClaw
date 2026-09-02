@@ -96,8 +96,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
     },
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
-    markDeleting: vi.fn(),
-    observeSourceForDelete: vi.fn(() => "source" as const),
+    beginDelete: vi.fn(() => "source" as const),
     confirmDeleted: vi.fn(),
     completeAcceptedTarget: vi.fn(),
   };
@@ -961,7 +960,7 @@ describe("rebuild destroy phase", () => {
       ["sandbox", "get", "-g", "nemoclaw", "alpha"],
       expect.objectContaining({ timeout: expect.any(Number) }),
     );
-    expect(recreateJournal.markDeleting).toHaveBeenCalledOnce();
+    expect(recreateJournal.beginDelete).toHaveBeenCalledOnce();
     expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
   });
 
@@ -972,8 +971,9 @@ describe("rebuild destroy phase", () => {
       order.push("forward:stop");
       return true;
     });
-    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
+    vi.mocked(recreateJournal.beginDelete).mockImplementation(() => {
       order.push("journal:deleting");
+      return "source";
     });
     mocks.runOpenshell.mockImplementation((args: string[]) => {
       const deleting = args[1] === "delete";
@@ -997,17 +997,12 @@ describe("rebuild destroy phase", () => {
       onDeleted: vi.fn(),
     });
 
-    expect(order).toEqual([
-      "forward:stop",
-      "journal:deleting",
-      "openshell:delete",
-      "forward:stop",
-    ]);
+    expect(order).toEqual(["forward:stop", "journal:deleting", "openshell:delete", "forward:stop"]);
   });
 
   it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {
     const recreateJournal = stubRecreateJournal();
-    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
+    vi.mocked(recreateJournal.beginDelete).mockImplementation(() => {
       throw new Error("session store is unwritable");
     });
     mocks.prepareMcpForRebuild.mockResolvedValue({
