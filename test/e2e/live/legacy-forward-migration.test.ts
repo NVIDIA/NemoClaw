@@ -134,12 +134,25 @@ async function listLegacyForwards(sandbox: SandboxClient, artifactName: string):
 
 async function startLegacyForward(
   host: HostCliClient,
-  sandbox: SandboxClient,
   port: number,
   artifactName: string,
 ): Promise<void> {
-  const result = await sandbox.openshell(
-    ["forward", "start", "--background", String(port), SANDBOX_NAME, "--gateway", GATEWAY_NAME],
+  const result = await host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set +e
+log="$(mktemp)"
+trap 'rm -f -- "$log"' EXIT
+openshell forward start --background "$1" "$2" --gateway nemoclaw \
+  </dev/null >"$log" 2>&1
+status=$?
+cat "$log"
+exit "$status"`,
+      "legacy-forward-start",
+      String(port),
+      SANDBOX_NAME,
+    ],
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
   assertExitZero(result, `openshell forward start ${String(port)} ${SANDBOX_NAME}`);
@@ -270,13 +283,11 @@ test(
     });
     await startLegacyForward(
       host,
-      sandbox,
       DASHBOARD_PORT,
       "legacy-forward-seed-registered-dashboard-forward",
     );
     await startLegacyForward(
       host,
-      sandbox,
       UNREGISTERED_PORT,
       "legacy-forward-seed-unregistered-sandbox-forward",
     );
