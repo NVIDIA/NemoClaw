@@ -1,22 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { claimRepairAttempt } from "../../../tools/pr-review-advisor-repair/claim.mts";
 import {
+  parseValidationReceipt,
   parseSelectionInput,
   selectRepairAttempt,
+  sha256,
   type FindingInput,
   type SelectionBundle,
+  type ValidationReceipt,
 } from "../../../tools/pr-review-advisor-repair/contract.mts";
 import {
   assertDcoDeclaration,
   collectGeneratedHeadContext,
 } from "../../../tools/pr-review-advisor-repair/generated-head-context.mts";
 import {
+  assertPublicationPullRequest,
   atomicUpdate,
   dispatchGeneratedHeadValidation,
+  publishValidatedRepair,
+  reconstructValidatedTree,
   waitForVerifiedCommit,
 } from "../../../tools/pr-review-advisor-repair/publish.mts";
 import {
@@ -36,7 +46,7 @@ function finding(): FindingInput {
   };
 }
 
-function selection(): SelectionBundle {
+function selection(overrides: Record<string, unknown> = {}): SelectionBundle {
   const head = "a".repeat(40);
   return selectRepairAttempt(
     parseSelectionInput({
@@ -46,6 +56,7 @@ function selection(): SelectionBundle {
       pullRequest: {
         state: "open",
         draft: false,
+        author: "contributor",
         baseRef: "main",
         headRepository: "NVIDIA/NemoClaw",
         headRef: "fix/demo",
@@ -70,8 +81,28 @@ function selection(): SelectionBundle {
         identity: "#10791",
       },
       findings: [finding()],
+      ...overrides,
     }),
   );
+}
+
+function git(repository: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: repository,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function write(root: string, file: string, content: string): void {
+  const target = path.join(root, ...file.split("/"));
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content);
 }
 
 describe("PR Review Advisor repair Phase 1 publication", () => {
@@ -121,6 +152,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         state: "open",
         draft: false,
         maintainer_can_modify: true,
+        user: { login: "contributor" },
         head: {
           sha: sourceHeadSha,
           ref: "fix/demo",
@@ -197,6 +229,61 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     expect(
       requestMock.mock.calls.filter(([apiPath]) => String(apiPath).includes("/collaborators/")),
     ).toHaveLength(2);
+  });
+
+  it("rejects a changed PR author at the publication boundary (#10791)", () => {
+    const bundle = selection();
+
+    expect(() =>
+      assertPublicationPullRequest(bundle, {
+        number: bundle.input.prNumber,
+        state: "open",
+        draft: false,
+        maintainer_can_modify: true,
+        user: { login: "different-author" },
+        head: {
+          sha: bundle.input.sourceHeadSha,
+          ref: bundle.input.pullRequest.headRef,
+          repo: { full_name: "NVIDIA/NemoClaw" },
+        },
+        base: {
+          sha: bundle.input.baseSha,
+          ref: "main",
+          repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
+        },
+      }),
+    ).toThrow("identity or ownership changed");
+  });
+
+  it("rejects a validation receipt whose patch digest does not match (#10791)", () => {
+    const bundle = selection();
+    const patch = Buffer.from("not the validated patch\n");
+    const candidateDigest = `sha256:${sha256("candidate")}`;
+    const receipt: ValidationReceipt = {
+      version: 1,
+      attemptKey: bundle.attemptKey,
+      repository: "NVIDIA/NemoClaw",
+      prNumber: bundle.input.prNumber,
+      headRef: bundle.input.pullRequest.headRef,
+      sourceHeadSha: bundle.input.sourceHeadSha,
+      baseSha: bundle.input.baseSha,
+      advisor: bundle.input.advisor,
+      findingIds: bundle.selectedFindingIds,
+      patchSha256: "0".repeat(64),
+      candidateTreeSha: "f".repeat(40),
+      changedPaths: [{ path: "src/demo.ts", status: "M", mode: "100644", type: "blob", bytes: 24 }],
+      validation: {
+        candidateDigestBefore: candidateDigest,
+        candidateDigestAfter: candidateDigest,
+        commands: [{ argv: ["npm", "run", "test:fast"], exitCode: 0 }],
+      },
+      productScope: bundle.input.productScope,
+      optIn: bundle.input.optIn,
+      outcome: "validated",
+      reason: null,
+    };
+
+    expect(() => parseValidationReceipt(receipt, bundle, patch)).toThrow("patch digest is invalid");
   });
 
   it("binds generated-head validation to the live exact PR and checks DCO (#10791)", async () => {
@@ -296,16 +383,289 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     );
   });
 
+  it("rejects an unconfirmed compare-and-swap ref update (#10791)", async () => {
+    const bundle = selection();
+
+    await expect(
+      atomicUpdate({
+        repositoryId: "R_repo",
+        headRef: bundle.input.pullRequest.headRef,
+        beforeOid: bundle.input.sourceHeadSha,
+        afterOid: "d".repeat(40),
+        graphql: vi.fn().mockResolvedValue({
+          data: { updateRefs: { clientMutationId: "e".repeat(40) } },
+        }),
+      }),
+    ).rejects.toThrow("did not confirm the atomic repair ref update");
+  });
+
+  it("reconstructs and publishes the validated tree through deterministic GitHub calls (#10791)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-advisor-publisher-test-"));
+    try {
+      const repository = path.join(root, "source");
+      fs.mkdirSync(repository);
+      git(repository, ["init", "--initial-branch=main"]);
+      git(repository, ["config", "user.name", "Advisor Publisher Test"]);
+      git(repository, ["config", "user.email", "advisor-publisher@example.test"]);
+      git(repository, ["config", "commit.gpgsign", "false"]);
+      write(repository, "src/demo.ts", "export const value = 1;\n");
+      git(repository, ["add", "."]);
+      git(repository, ["commit", "-m", "test: add publisher base"]);
+      const baseSha = git(repository, ["rev-parse", "HEAD"]);
+      write(repository, "src/pr-owned.ts", "export const prOwned = true;\n");
+      git(repository, ["add", "."]);
+      git(repository, ["commit", "-m", "test: add publisher PR head"]);
+      const sourceHeadSha = git(repository, ["rev-parse", "HEAD"]);
+      const candidate = "export const value = 2;\n";
+      write(repository, "src/demo.ts", candidate);
+      git(repository, ["add", "src/demo.ts"]);
+      const candidateTreeSha = git(repository, ["write-tree"]);
+      const candidateBlobSha = git(repository, ["hash-object", "src/demo.ts"]);
+      const patch = execFileSync("git", ["diff", "--cached", "--binary", "HEAD", "--"], {
+        cwd: repository,
+      });
+      git(repository, ["reset", "--hard", "HEAD"]);
+      const patchFile = path.join(root, "validated.patch");
+      fs.writeFileSync(patchFile, patch);
+      const bundle = selection({
+        baseSha,
+        sourceHeadSha,
+        optIn: {
+          kind: "phase1-maintainer-dispatch",
+          actor: "maintainer",
+          triggeringActor: "maintainer",
+          headSha: sourceHeadSha,
+        },
+      });
+      const candidateDigest = `sha256:${sha256("candidate")}`;
+      const receipt: ValidationReceipt = {
+        version: 1,
+        attemptKey: bundle.attemptKey,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: bundle.input.prNumber,
+        headRef: bundle.input.pullRequest.headRef,
+        sourceHeadSha,
+        baseSha,
+        advisor: bundle.input.advisor,
+        findingIds: bundle.selectedFindingIds,
+        patchSha256: sha256(patch),
+        candidateTreeSha,
+        changedPaths: [
+          {
+            path: "src/demo.ts",
+            status: "M",
+            mode: "100644",
+            type: "blob",
+            bytes: Buffer.byteLength(candidate),
+          },
+        ],
+        validation: {
+          candidateDigestBefore: candidateDigest,
+          candidateDigestAfter: candidateDigest,
+          commands: [{ argv: ["npm", "run", "test:fast"], exitCode: 0 }],
+        },
+        productScope: bundle.input.productScope,
+        optIn: bundle.input.optIn,
+        outcome: "validated",
+        reason: null,
+      };
+      expect(() =>
+        reconstructValidatedTree({
+          sourceCheckout: repository,
+          selection: bundle,
+          patchFile,
+          expectedTree: "f".repeat(40),
+          stagingDirectory: path.join(root, "mismatched-publisher"),
+        }),
+      ).toThrow("reconstructed a different candidate tree");
+      const commitSha = "d".repeat(40);
+      const pullRequest = {
+        number: bundle.input.prNumber,
+        state: "open",
+        draft: false,
+        maintainer_can_modify: true,
+        user: { login: bundle.input.pullRequest.author },
+        head: {
+          sha: sourceHeadSha,
+          ref: bundle.input.pullRequest.headRef,
+          repo: { full_name: "NVIDIA/NemoClaw" },
+        },
+        base: {
+          sha: baseSha,
+          ref: "main",
+          repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
+        },
+      };
+      const workflowNames = [
+        "pr.yaml",
+        "commit-lint.yaml",
+        "dco-check.yaml",
+        "installer-hash-check.yaml",
+        "code-scanning.yaml",
+        "pr-review-advisor.yaml",
+      ];
+      const responseEntries: Array<[string, unknown[]]> = [
+        ["GET repos/NVIDIA/NemoClaw/pulls/42", [pullRequest, pullRequest]],
+        ...workflowNames.map((workflow): [string, unknown[]] => [
+          `GET repos/NVIDIA/NemoClaw/actions/workflows/${workflow}`,
+          [{ state: "active", path: `.github/workflows/${workflow}` }],
+        ]),
+        ["POST repos/NVIDIA/NemoClaw/git/blobs", [{ sha: candidateBlobSha }]],
+        ["POST repos/NVIDIA/NemoClaw/git/trees", [{ sha: candidateTreeSha }]],
+        ["POST repos/NVIDIA/NemoClaw/git/commits", [{ sha: commitSha }]],
+        [
+          `GET repos/NVIDIA/NemoClaw/git/commits/${commitSha}`,
+          [
+            {
+              sha: commitSha,
+              message: `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${bundle.attemptKey}`,
+              tree: { sha: candidateTreeSha },
+              parents: [{ sha: sourceHeadSha }],
+              verification: { verified: true, reason: "valid" },
+            },
+          ],
+        ],
+        ...workflowNames.map((workflow): [string, unknown[]] => [
+          `POST repos/NVIDIA/NemoClaw/actions/workflows/${workflow}/dispatches`,
+          [{}],
+        ]),
+      ];
+      const responses = new Map(responseEntries);
+      const requestMock = vi.fn(
+        async (
+          apiPath: string,
+          _token: string,
+          options?: { method?: string; body?: unknown },
+        ): Promise<unknown> => {
+          const key = `${options?.method ?? "GET"} ${apiPath}`;
+          const queue = responses.get(key);
+          expect(queue, `unexpected GitHub request: ${key}`).toBeDefined();
+          expect(queue, `exhausted GitHub response queue: ${key}`).not.toHaveLength(0);
+          return queue?.shift();
+        },
+      );
+      const request = requestMock as unknown as NonNullable<
+        Parameters<typeof publishValidatedRepair>[0]["request"]
+      >;
+      const graphql = vi.fn(async () => ({
+        data: { updateRefs: { clientMutationId: commitSha } },
+      }));
+
+      const publication = await publishValidatedRepair({
+        sourceCheckout: repository,
+        selection: bundle,
+        receipt,
+        patchFile,
+        stagingDirectory: path.join(root, "publisher"),
+        token: "token",
+        request,
+        graphql,
+      });
+
+      expect(publication).toMatchObject({
+        attemptKey: bundle.attemptKey,
+        sourceHeadSha,
+        candidateTreeSha,
+        commitSha,
+        headRef: bundle.input.pullRequest.headRef,
+      });
+      expect(Array.from(responses.values()).flat()).toEqual([]);
+      expect(
+        requestMock.mock.calls.find(
+          ([apiPath, , options]) =>
+            apiPath === "repos/NVIDIA/NemoClaw/git/commits" && options?.method === "POST",
+        )?.[2]?.body,
+      ).toEqual(
+        expect.objectContaining({
+          tree: candidateTreeSha,
+          parents: [sourceHeadSha],
+        }),
+      );
+      expect(graphql).toHaveBeenCalledWith(expect.stringContaining("updateRefs"), {
+        input: expect.objectContaining({
+          repositoryId: "R_repo",
+          refUpdates: [
+            expect.objectContaining({
+              beforeOid: sourceHeadSha,
+              afterOid: commitSha,
+              force: false,
+            }),
+          ],
+        }),
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("requires GitHub verification before publication (#10791)", async () => {
+    const commitSha = "d".repeat(40);
+    const parentSha = "a".repeat(40);
+    const treeSha = "e".repeat(40);
+    const message = "fix(advisor): test";
     const request = vi
       .fn()
       .mockResolvedValueOnce({ verification: { verified: false, reason: "unsigned" } })
-      .mockResolvedValueOnce({ verification: { verified: true, reason: "valid" } });
+      .mockResolvedValueOnce({
+        sha: commitSha,
+        message,
+        tree: { sha: treeSha },
+        parents: [{ sha: parentSha }],
+        verification: { verified: true, reason: "valid" },
+      });
     const wait = vi.fn().mockResolvedValue(undefined);
 
-    await waitForVerifiedCommit("d".repeat(40), "token", request, wait);
+    await waitForVerifiedCommit({ commitSha, message, parentSha, treeSha }, "token", request, wait);
     expect(request).toHaveBeenCalledTimes(2);
     expect(wait).toHaveBeenCalledWith(5000);
+  });
+
+  it("rejects a verified commit with a different approved tree or parent (#10791)", async () => {
+    const commitSha = "d".repeat(40);
+    const request = vi.fn().mockResolvedValue({
+      sha: commitSha,
+      message: "fix(advisor): test",
+      tree: { sha: "f".repeat(40) },
+      parents: [{ sha: "a".repeat(40) }],
+      verification: { verified: true, reason: "valid" },
+    });
+
+    await expect(
+      waitForVerifiedCommit(
+        {
+          commitSha,
+          message: "fix(advisor): test",
+          parentSha: "a".repeat(40),
+          treeSha: "e".repeat(40),
+        },
+        "token",
+        request,
+        vi.fn(),
+      ),
+    ).rejects.toThrow("verified repair commit does not match the approved one-parent tree");
+  });
+
+  it("fails closed when GitHub never verifies the commit (#10791)", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValue({ verification: { verified: false, reason: "unsigned" } });
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      waitForVerifiedCommit(
+        {
+          commitSha: "d".repeat(40),
+          message: "fix(advisor): test",
+          parentSha: "a".repeat(40),
+          treeSha: "e".repeat(40),
+        },
+        "token",
+        request,
+        wait,
+      ),
+    ).rejects.toThrow("GitHub did not verify the repair commit before publication");
+    expect(request).toHaveBeenCalledTimes(12);
+    expect(wait).toHaveBeenCalledTimes(11);
   });
 
   it("accepts generated-head gates only from the exact commit (#10791)", async () => {
@@ -340,5 +700,31 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         request,
       }),
     ).resolves.toBe("success");
+  });
+
+  it("fails closed when an exact generated-head required check fails (#10791)", async () => {
+    const bundle = selection();
+    const commitSha = "d".repeat(40);
+    const checks = ["changes", "checks", "commit-lint", "dco-check", "check-hash"].map((name) => ({
+      name,
+      head_sha: commitSha,
+      status: "completed",
+      conclusion: name === "checks" ? "failure" : "success",
+      app: { slug: "github-actions" },
+    }));
+    const request = vi.fn().mockResolvedValueOnce({
+      total_count: checks.length,
+      check_runs: checks,
+    });
+
+    await expect(
+      verifyGeneratedHeadOnce({
+        commitSha,
+        headRef: bundle.input.pullRequest.headRef,
+        attemptKey: bundle.attemptKey,
+        token: "token",
+        request,
+      }),
+    ).rejects.toThrow("checks failed generated-head validation");
   });
 });

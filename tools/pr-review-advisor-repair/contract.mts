@@ -42,6 +42,7 @@ export type SelectionInput = {
   pullRequest: {
     state: "open";
     draft: false;
+    author: string;
     baseRef: "main";
     headRepository: typeof CANONICAL_REPOSITORY;
     headRef: string;
@@ -376,7 +377,7 @@ export function parseSelectionInput(value: unknown): SelectionInput {
   const pullRequest = record(input.pullRequest, "pullRequest");
   exactKeys(
     pullRequest,
-    ["state", "draft", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
+    ["state", "draft", "author", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
     "pullRequest",
   );
   if (
@@ -434,6 +435,7 @@ export function parseSelectionInput(value: unknown): SelectionInput {
     pullRequest: {
       state: "open",
       draft: false,
+      author: boundedString(pullRequest.author, "pullRequest.author", 256),
       baseRef: "main",
       headRepository: CANONICAL_REPOSITORY,
       headRef: boundedString(pullRequest.headRef, "pullRequest.headRef", 255),

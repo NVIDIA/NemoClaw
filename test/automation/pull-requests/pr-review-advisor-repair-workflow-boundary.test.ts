@@ -248,13 +248,18 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     ).toMatchObject({
       GITHUB_TOKEN: "${{ github.token }}",
     });
-    expect(
-      namedStep(validate, "Upload the trusted validation receipt and validated patch").if,
-    ).toBe("always()");
-    expect(
-      record(namedStep(validate, "Upload the trusted validation receipt and validated patch").with)
-        .path,
-    ).toBe("${{ env.VALIDATION_ARTIFACT_DIR }}/");
+    const validationBundle = namedStep(validate, "Upload the short-lived validation bundle");
+    expect(validationBundle.if).toBe("always()");
+    expect(record(validationBundle.with)).toMatchObject({
+      path: "${{ env.VALIDATION_ARTIFACT_DIR }}/",
+      "retention-days": 1,
+    });
+    const validationReceipt = namedStep(validate, "Upload the durable validation receipt");
+    expect(validationReceipt.if).toBe("always()");
+    expect(record(validationReceipt.with)).toMatchObject({
+      path: "${{ env.VALIDATION_ARTIFACT_DIR }}/validation-receipt.json",
+      "retention-days": 14,
+    });
     expect(record(validate.env).VALIDATION_IMAGE).toMatch(
       /^ghcr[.]io\/nvidia\/openshell-community\/sandboxes\/pi@sha256:[0-9a-f]{64}$/u,
     );
@@ -301,6 +306,12 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     expect(advisorInputs).toHaveProperty("repair_attempt_key");
     expect(generatedHeadWorkflowSources["pr-review-advisor.yaml"]).toContain(
       "tools/pr-review-advisor-repair/generated-head-context.mts",
+    );
+    expect(generatedHeadWorkflowSources["pr-review-advisor.yaml"]).toContain(
+      "inputs.repair_attempt_key != '' && inputs.base_sha",
+    );
+    expect(generatedHeadWorkflowSources["pr-review-advisor.yaml"]).toContain(
+      "inputs.repair_attempt_key != '' && inputs.source_head_sha",
     );
   });
 

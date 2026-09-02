@@ -37,6 +37,7 @@ type PullRequest = {
   state?: unknown;
   draft?: unknown;
   maintainer_can_modify?: unknown;
+  user?: { login?: unknown };
   head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
   base?: {
     sha?: unknown;
@@ -111,6 +112,7 @@ export function assertPublicationPullRequest(
     pull.state !== "open" ||
     pull.draft !== false ||
     pull.maintainer_can_modify !== true ||
+    pull.user?.login !== selection.input.pullRequest.author ||
     pull.head?.sha !== selection.input.sourceHeadSha ||
     pull.head?.ref !== selection.input.pullRequest.headRef ||
     pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||
@@ -241,18 +243,40 @@ async function createGitHubTree(input: {
 }
 
 export async function waitForVerifiedCommit(
-  commitSha: string,
+  expected: {
+    commitSha: string;
+    message: string;
+    parentSha: string;
+    treeSha: string;
+  },
   token: string,
   request: GitHubRequest = githubApi,
   wait: (milliseconds: number) => Promise<void> = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 ): Promise<void> {
   for (let attempt = 1; attempt <= VERIFIED_RETRY_ATTEMPTS; attempt += 1) {
-    const commit = await request<{ verification?: { verified?: unknown; reason?: unknown } }>(
-      `repos/${CANONICAL_REPOSITORY}/git/commits/${commitSha}`,
-      token,
-    );
-    if (commit.verification?.verified === true) return;
+    const commit = await request<{
+      sha?: unknown;
+      message?: unknown;
+      tree?: { sha?: unknown };
+      parents?: Array<{ sha?: unknown }>;
+      verification?: { verified?: unknown; reason?: unknown };
+    }>(`repos/${CANONICAL_REPOSITORY}/git/commits/${expected.commitSha}`, token);
+    if (commit.verification?.verified === true) {
+      if (
+        commit.sha !== expected.commitSha ||
+        commit.message !== expected.message ||
+        commit.tree?.sha !== expected.treeSha ||
+        !Array.isArray(commit.parents) ||
+        commit.parents.length !== 1 ||
+        commit.parents[0]?.sha !== expected.parentSha
+      ) {
+        throw new RepairContractError(
+          "verified repair commit does not match the approved one-parent tree",
+        );
+      }
+      return;
+    }
     if (attempt < VERIFIED_RETRY_ATTEMPTS) await wait(VERIFIED_RETRY_DELAY_MS);
   }
   throw new RepairContractError("GitHub did not verify the repair commit before publication");
@@ -385,20 +409,31 @@ export async function publishValidatedRepair(input: {
     token: input.token,
     request,
   });
+  const commitMessage = `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${input.selection.attemptKey}`;
   const commit = await request<{ sha?: unknown }>(
     `repos/${CANONICAL_REPOSITORY}/git/commits`,
     input.token,
     {
       method: "POST",
       body: {
-        message: `fix(advisor): apply validated review repair\n\nAdvisor-Repair-Attempt: ${input.selection.attemptKey}`,
+        message: commitMessage,
         tree: reconstructed.treeSha,
         parents: [input.selection.input.sourceHeadSha],
       },
     },
   );
   const commitSha = fullSha(commit.sha, "created repair commit SHA");
-  await waitForVerifiedCommit(commitSha, input.token, request, input.wait);
+  await waitForVerifiedCommit(
+    {
+      commitSha,
+      message: commitMessage,
+      parentSha: input.selection.input.sourceHeadSha,
+      treeSha: reconstructed.treeSha,
+    },
+    input.token,
+    request,
+    input.wait,
+  );
   const current = await request<PullRequest>(
     `repos/${CANONICAL_REPOSITORY}/pulls/${input.selection.input.prNumber}`,
     input.token,

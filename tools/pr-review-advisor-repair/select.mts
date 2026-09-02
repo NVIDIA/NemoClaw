@@ -36,6 +36,7 @@ type PullRequestApi = {
   state?: unknown;
   draft?: unknown;
   maintainer_can_modify?: unknown;
+  user?: { login?: unknown };
   head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
   base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
 };
@@ -145,6 +146,7 @@ export function validatePullRequest(
   headSha: string;
   baseSha: string;
   headRef: string;
+  author: string;
   maintainerCanModify: true;
 } {
   const number = positiveInteger(value.number, "pull request number");
@@ -163,6 +165,7 @@ export function validatePullRequest(
     headSha: fullSha(value.head?.sha, "pull request head SHA"),
     baseSha: fullSha(value.base?.sha, "pull request base SHA"),
     headRef: plainString(value.head?.ref, "pull request head ref", 255),
+    author: plainString(value.user?.login, "pull request author", 256),
     maintainerCanModify: true,
   };
 }
@@ -336,6 +339,7 @@ export async function collectRepairSelection(
     pullRequest: {
       state: "open",
       draft: false,
+      author: pullRequest.author,
       baseRef: "main",
       headRepository: CANONICAL_REPOSITORY,
       headRef: pullRequest.headRef,
@@ -410,6 +414,7 @@ function validatePreparedContext(value: unknown, selection: SelectionBundle): vo
   if (
     nested(value, ["pullRequest", "state"]) !== "open" ||
     nested(value, ["pullRequest", "draft"]) !== false ||
+    nested(value, ["pullRequest", "user", "login"]) !== expected.pullRequest.author ||
     nested(value, ["pullRequest", "head", "sha"]) !== expected.sourceHeadSha ||
     nested(value, ["pullRequest", "head", "ref"]) !== expected.pullRequest.headRef ||
     nested(value, ["pullRequest", "head", "repo", "full_name"]) !== CANONICAL_REPOSITORY ||

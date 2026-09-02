@@ -23,10 +23,19 @@
     "pullRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state", "draft", "baseRef", "headRepository", "headRef", "maintainerCanModify"],
+      "required": [
+        "state",
+        "draft",
+        "author",
+        "baseRef",
+        "headRepository",
+        "headRef",
+        "maintainerCanModify"
+      ],
       "properties": {
         "state": { "const": "open" },
         "draft": { "const": false },
+        "author": { "$ref": "#/$defs/identity" },
         "baseRef": { "const": "main" },
         "headRepository": { "const": "NVIDIA/NemoClaw" },
         "headRef": { "type": "string", "minLength": 1, "maxLength": 255 },

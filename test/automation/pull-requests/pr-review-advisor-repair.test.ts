@@ -97,6 +97,7 @@ function selectionInput(overrides: Record<string, unknown> = {}): Record<string,
     pullRequest: {
       state: "open",
       draft: false,
+      author: "contributor",
       baseRef: "main",
       headRepository: "NVIDIA/NemoClaw",
       headRef: "fix/demo",
@@ -591,6 +592,7 @@ describe("PR Review Advisor repair Phase 1", () => {
       pullRequest: {
         state: "open",
         draft: false,
+        user: { login: "contributor" },
         head: { sha: "a".repeat(40), ref: "fix/demo", repo: { full_name: "NVIDIA/NemoClaw" } },
         base: { sha: "b".repeat(40), ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
       },
@@ -1171,6 +1173,7 @@ describe("PR Review Advisor repair Phase 1", () => {
         number: 42,
         state: "open",
         draft: false,
+        user: { login: "contributor" },
         head: { sha: "f".repeat(40), ref: "fix/demo", repo: { full_name: "NVIDIA/NemoClaw" } },
         base: { sha: "b".repeat(40), ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
       }) as T;

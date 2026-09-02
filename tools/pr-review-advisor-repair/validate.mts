@@ -780,6 +780,7 @@ export async function assertLivePullRequestIdentity(
     state?: unknown;
     draft?: unknown;
     maintainer_can_modify?: unknown;
+    user?: { login?: unknown };
     head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
     base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } };
   }>(`repos/${CANONICAL_REPOSITORY}/pulls/${selection.input.prNumber}`, token);
@@ -788,6 +789,7 @@ export async function assertLivePullRequestIdentity(
     pull.state !== "open" ||
     pull.draft !== false ||
     pull.maintainer_can_modify !== true ||
+    pull.user?.login !== selection.input.pullRequest.author ||
     pull.head?.sha !== selection.input.sourceHeadSha ||
     pull.head?.ref !== selection.input.pullRequest.headRef ||
     pull.head?.repo?.full_name !== CANONICAL_REPOSITORY ||

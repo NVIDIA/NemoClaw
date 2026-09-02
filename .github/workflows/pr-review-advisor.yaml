@@ -258,8 +258,8 @@ jobs:
           TARGET_REPO: ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo }}
           TARGET_PR: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || inputs.target_pr }}
           TARGET_BASE: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref || inputs.target_base }}
-          PR_BASE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || '' }}
-          EXPECTED_HEAD_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || '' }}
+          PR_BASE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' && inputs.base_sha || '') }}
+          EXPECTED_HEAD_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || (github.event_name == 'workflow_dispatch' && inputs.repair_attempt_key != '' && inputs.source_head_sha || '') }}
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
