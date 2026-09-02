@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { stripProviderComposedPolicies, withoutProviderComposedPolicies } from "./merge";
+import { stripProviderComposedPolicies, withoutProviderComposedPolicies } from "./policy-boundary";
 
 describe("OpenShell provider-composed policy boundary", () => {
   it("preserves ordinary entries while removing reserved provider entries", () => {

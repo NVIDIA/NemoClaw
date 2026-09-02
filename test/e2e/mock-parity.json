@@ -98,6 +98,7 @@
     },
     {
       "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
+      "liveSources": ["test/e2e/live/native-runtime-qualification-case-executor.ts"],
       "fast": [
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
@@ -115,6 +116,7 @@
     },
     {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
+      "liveSources": ["test/e2e/live/hermes-gpu-startup-proof.ts"],
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
@@ -129,6 +131,7 @@
     },
     {
       "live": "test/e2e/live/inference-routing.test.ts",
+      "liveSources": ["test/e2e/live/inference-routing-helpers.ts"],
       "fast": [
         "nemoclaw/src/blueprint/runner-identity.test.ts",
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
@@ -223,14 +226,19 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
-      "liveSources": ["test/e2e/live/policy-list-state.ts"],
+      "liveSources": [
+        "test/e2e/live/package-database-read-only.ts",
+        "test/e2e/live/restricted-onboard-helpers.ts",
+        "test/e2e/live/policy-list-state.ts"
+      ],
       "fast": [
         "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
         "test/channels/channels-add-preset.test.ts",
         "test/runtime/policy/policy-channel-agent-resolution.test.ts",
         "test/onboarding/validate-blueprint.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
     },
     {
@@ -251,20 +259,25 @@
         "test/credentials/openshell-credential-generation-window.test.ts",
         "test/mcp/mcp-artifact-secret-scan.test.ts",
         "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
-        "test/e2e/support/mcp-workflow-boundary.test.ts"
+        "test/e2e/support/mcp-workflow-boundary.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
-        "test/e2e/support/openclaw-tui-run-classification.test.ts"
+        "test/e2e/support/openclaw-tui-run-classification.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts"],
-      "fast": ["test/e2e/support/dashboard-connect-handoff.test.ts"]
+      "fast": [
+        "test/e2e/support/dashboard-connect-handoff.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
@@ -313,7 +326,10 @@
     },
     {
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
-      "fast": ["test/e2e/support/onboard-interactive-pty.test.ts"]
+      "fast": [
+        "test/e2e/support/onboard-interactive-pty.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
@@ -460,6 +476,7 @@
       ],
       "fast": [
         "test/e2e/support/gpu-e2e-helpers.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
@@ -471,6 +488,7 @@
     },
     {
       "live": "test/e2e/live/hermes-discord.test.ts",
+      "liveSources": ["test/e2e/live/hermes-discord-proxy.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -520,7 +538,9 @@
     },
     {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
+      "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
+        "test/e2e/support/issue-4462-fixture-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -546,10 +566,14 @@
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
+        "test/e2e/live/dns-rebinding-hosts-fixture.ts",
         "test/e2e/live/mcp-bridge-cleanup.ts",
+        "test/e2e/live/mcp-bridge-deepagents-config.ts",
+        "test/e2e/live/mcp-bridge-hermes-http.ts",
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
+        "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
@@ -564,6 +588,7 @@
         "test/e2e/support/e2e-redaction-entry.test.ts",
         "test/e2e/support/mcp-bridge-cleanup.test.ts",
         "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
         "test/e2e/support/mcp-bridge-reliability.test.ts",
         "test/e2e/support/mcp-bridge-sandbox.test.ts",
@@ -579,6 +604,7 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/messaging-compatible-endpoint-helpers.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
@@ -586,6 +612,7 @@
       "live": "test/e2e/live/messaging-providers.test.ts",
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts",
         "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
       ],
       "fast": [
@@ -626,7 +653,8 @@
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
     },
     {
@@ -693,6 +721,7 @@
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/rebuild-hermes-bootstrap.test.ts",
         "test/e2e/support/rebuild-hermes-env.test.ts",
         "test/e2e/support/rebuild-hermes-base-identity.test.ts",
         "test/e2e/support/rebuild-hermes-image-state.test.ts",
@@ -873,11 +902,13 @@
     },
     {
       "live": "test/e2e/live/tunnel-lifecycle.test.ts",
+      "liveSources": ["test/e2e/live/tunnel-lifecycle-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
+        "test/e2e/support/workflow-e2e-progress.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
     },
     {

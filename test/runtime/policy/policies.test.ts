@@ -28,9 +28,12 @@ const policies = requireForTest(
 const resolveOpenshellModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "resolve.ts"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };
-const policyStateModule = requireForTest(
-  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "policy-state.ts"),
-) as typeof import("../../../src/lib/adapters/openshell/policy-state");
+const sandboxIdentityModule = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "sandbox-identity-cli.ts"),
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-identity-cli");
+const policyReaderModule = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "sandbox-policy-cli.ts"),
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-policy-cli");
 const registryForTest = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
 ) as typeof import("../../../src/lib/state/registry");
@@ -48,12 +51,18 @@ function requirePresetContent(content: string | null): string {
 
 describe("policies", () => {
   beforeEach(() => {
-    vi.spyOn(policyStateModule, "inspectSandboxPolicy").mockReturnValue({
-      policySource: "sandbox",
-      effectivePolicy: {},
-      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+    vi.spyOn(
+      policyReaderModule.syncCliOpenShellSandboxPolicyReader,
+      "inspectSandboxPolicy",
+    ).mockReturnValue({
+      ok: true,
+      value: {
+        policySource: "sandbox",
+        effectivePolicy: {},
+        policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+      },
     });
-    vi.spyOn(policyStateModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+    vi.spyOn(sandboxIdentityModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
       SANDBOX_IDENTITY,
     );
   });
@@ -505,99 +514,9 @@ exit 1
     });
   });
 
-  describe("buildPolicySetCommand", () => {
-    it("returns an argv array with sandbox name as a separate element", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      // The binary is resolved via resolveOpenshell() so it may be an absolute
-      // path; assert the openshell tail and the rest of the argv shape.
-      expect(cmd[0]).toMatch(/openshell$/);
-      expect(cmd.slice(1)).toEqual([
-        "policy",
-        "set",
-        "--policy",
-        "/tmp/policy.yaml",
-        "--wait",
-        "my-assistant",
-      ]);
-    });
-
-    it("preserves shell metacharacters literally in sandbox name (no injection)", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
-      expect(cmd).toContain("test; whoami");
-      // The metacharacters are a literal argv element, not shell-interpreted
-    });
-
-    it("places --wait before the sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
-      const waitIdx = cmd.indexOf("--wait");
-      const nameIdx = cmd.indexOf("test-box");
-      expect(waitIdx < nameIdx).toBeTruthy();
-    });
-
-    it("pins policy reads and writes to an explicit gateway (#9833)", () => {
-      expect(
-        policies
-          .buildPolicySetCommand("/tmp/policy.yaml", "my-assistant", "nemoclaw-18080")
-          .slice(1),
-      ).toEqual([
-        "policy",
-        "set",
-        "-g",
-        "nemoclaw-18080",
-        "--policy",
-        "/tmp/policy.yaml",
-        "--wait",
-        "my-assistant",
-      ]);
-      expect(policies.buildPolicyGetCommand("my-assistant", "nemoclaw-18080").slice(1)).toEqual([
-        "policy",
-        "get",
-        "-g",
-        "nemoclaw-18080",
-        "--base",
-        "my-assistant",
-      ]);
-    });
-
-    it("uses the resolved openshell binary for every policy command", () => {
-      const resolved = "/opt/nvidia/bin/openshell";
-      const resolveSpy = vi
-        .spyOn(resolveOpenshellModule, "resolveOpenshell")
-        .mockReturnValue(resolved);
-      try {
-        expect(policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "set",
-          "--policy",
-          "/tmp/policy.yaml",
-          "--wait",
-          "my-assistant",
-        ]);
-        expect(policies.buildPolicyGetCommand("my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "get",
-          "--base",
-          "my-assistant",
-        ]);
-        expect(policies.buildPolicyGetFullCommand("my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "get",
-          "--full",
-          "my-assistant",
-        ]);
-      } finally {
-        resolveSpy.mockRestore();
-      }
-    });
-  });
-
   // Regression for issue #4224: when openshell is installed at ~/.local/bin/openshell
   // (the installer's user-local location) but PATH from a non-interactive shell does
-  // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
-  // resolve openshell to an absolute path so spawnSync does not raise ENOENT.
+  // not include ~/.local/bin/, the OpenShell resolver must still find it.
   describe("spawnSync openshell ENOENT in non-interactive shells (#4224)", () => {
     let tmpHome: string;
     let fakeOpenshell: string;
@@ -633,26 +552,6 @@ exit 1
       if (origBin === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
       else process.env.NEMOCLAW_OPENSHELL_BIN = origBin;
       fs.rmSync(tmpHome, { recursive: true, force: true });
-    });
-
-    it("buildPolicySetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([
-        fakeOpenshell,
-        "policy",
-        "set",
-        "--policy",
-        "/tmp/policy.yaml",
-        "--wait",
-        "my-assistant",
-      ]);
-    });
-
-    it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
-      const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--base", "my-assistant"]);
     });
 
     it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {

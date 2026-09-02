@@ -133,6 +133,24 @@ nemoclaw_runtime_state_mutation_checkpoint() {
   return 1
 }
 
+# A supervised Hermes recovery can fail after the provider has fenced this
+# exact startup shell. Keep that authenticated process available for the
+# existing USR2 retry protocol instead of letting `set -e` replace its
+# PID/start identity. Outside an active mutation, preserve ordinary failure.
+nemoclaw_runtime_state_mutation_hold_supervisor_failure() {
+  local status
+  if nemoclaw_runtime_state_mutation_gate admit; then
+    return 1
+  else
+    status=$?
+  fi
+  [ "$status" -eq 75 ] || return 1
+  printf '%s\n' '[SECURITY] Hermes supervisor recovery failed during an active runtime state mutation; holding for authenticated retry.' >&2
+  while :; do
+    kill -STOP "$$"
+  done
+}
+
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
 if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
@@ -3528,8 +3546,10 @@ if [ "$(id -u)" -ne 0 ]; then
   bootstrap_hermes_gateway_current_user || exit 1
   print_dashboard_urls
 
-  supervise_hermes_gateway_current_user
-  exit $?
+  if ! supervise_hermes_gateway_current_user; then
+    nemoclaw_runtime_state_mutation_hold_supervisor_failure || exit 1
+    exit 1
+  fi
 fi
 
 # ── Root path (full privilege separation via setpriv) ──────────

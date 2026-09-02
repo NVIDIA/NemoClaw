@@ -65,7 +65,9 @@ function canonicalEndpoint(value: unknown): string | null {
   return typeof value === "string" ? new URL(value).toString() : null;
 }
 
-test("Hermes inference set updates route/config and preserves live runtime", {
+test(
+  "Hermes inference set updates route/config and preserves live runtime",
+  {
   timeout: TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -78,7 +80,8 @@ test("Hermes inference set updates route/config and preserves live runtime", {
       "prove split provider/model credential resolution",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
   await artifacts.target.declare({
     id: "hermes-inference-switch",
     boundary:
@@ -110,12 +113,10 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   });
   await cleanupHermesSwitch(host, sandbox);
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "runtime-info",
+      scenarioLabel: "Hermes inference switch",
   });
-  expect(docker.exitCode, resultText(docker)).toBe(0);
 
   // OpenShell reaches this fixture from its gateway network namespace, where
   // the runner's loopback address is not routable.
@@ -263,15 +264,11 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(dashboardModel.provider).toBe(SWITCH_PROVIDER);
   expect(dashboardModel.base_url).toBe(expectedBaseUrl());
   expect(dashboardModel.api_mode).toBe(expectedApiMode());
-  [
-    "approvals",
-    "browser",
-    "session_reset",
-    "display",
-    "updates",
-  ].forEach((reviewedPolicySection) => {
+    ["approvals", "browser", "session_reset", "display", "updates"].forEach(
+      (reviewedPolicySection) => {
     expect(dashboardConfig.stdout).toMatch(new RegExp(`^${reviewedPolicySection}:`, "mu"));
-  });
+      },
+    );
 
   const dashboardModelInfo = await sandbox.exec(
     SANDBOX_NAME,
@@ -318,7 +315,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
   const durableEndpointUrl = publicSwitch
     ? null
-    : (switchEndpointUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL);
+      : (switchEndpointUrl ??
+        process.env.NEMOCLAW_ENDPOINT_URL ??
+        DEFAULT_HOSTED_INFERENCE_BASE_URL);
   const durableCredentialEnv = publicSwitch
     ? null
     : switchEndpointUrl
@@ -335,7 +334,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(canonicalEndpoint(state.session.endpointUrl)).toBe(
     canonicalEndpoint(publicSwitch ? "https://inference.local/v1" : durableEndpointUrl),
   );
-  expect(state.session.credentialEnv).toBe(publicSwitch ? "OPENAI_API_KEY" : durableCredentialEnv);
+    expect(state.session.credentialEnv).toBe(
+      publicSwitch ? "OPENAI_API_KEY" : durableCredentialEnv,
+    );
   expect(state.session.preferredInferenceApi).toBe(RUNTIME_SWITCH_API);
   expect(state.session.nimContainer).toBeNull();
 
@@ -472,4 +473,5 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(proxyResolutionCli.stdout).toMatch(/\bPONG\b/iu);
 
   expectAuthenticatedProxyResolutionRequests(mockBaseline, requestOffset, proxyResolutionModel);
-});
+  },
+);
