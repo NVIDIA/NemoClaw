@@ -1260,6 +1260,21 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
+  it(
+    "recognizes the exact Colossus BaseOS profile with the GB300WS display name (#10906)",
+    () => {
+      const release = noOtaFactoryRelease("colossus-baseos").replace(
+        "NVIDIA DGX Server",
+        "NVIDIA DGX GB300WS",
+      );
+      const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe("DGX Station");
+    },
+    15_000,
+  );
+
   it("requires explicit intent before treating unrecognized metadata as Station Express", () => {
     const releasePath = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-force-")),
@@ -1270,7 +1285,7 @@ detect_express_platform
       [
         'DGX_NAME="DGX Server"',
         'DGX_PRETTY_NAME="NVIDIA DGX GB300WS"',
-        'DGX_SWBUILD_DATE="2026-04-02-08-20-16"',
+        'DGX_SWBUILD_DATE="2099-01-02-03-04-05"',
         'DGX_SWBUILD_VERSION="7.5.0-GB300ws-GB200ws"',
         'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
         "",

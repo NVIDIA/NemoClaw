@@ -603,6 +603,24 @@ describe("platform readiness qualification (#7410)", () => {
     },
   );
 
+  it.each(["NVIDIA DGX Server", "NVIDIA DGX GB300WS"])(
+    "classifies the exact Colossus BaseOS profile with the %s display name (#10906)",
+    (prettyName) => {
+      expect(
+        collectStationIdentity(
+          noOtaStationRelease({
+            prettyName,
+            version: "7.5.0-GB300ws-GB200ws",
+            buildDate: "2026-04-02-08-20-16",
+          }),
+        ),
+      ).toMatchObject({
+        stationProfile: "supported-colossus-baseos",
+        stationGb300PciGpu: true,
+      });
+    },
+  );
+
   it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as supported-ai-developer-tools (#7979)", () => {
     expect(
       collectStationIdentity(
@@ -616,6 +634,14 @@ describe("platform readiness qualification (#7410)", () => {
 
   it.each([
     ["different lineage", { prettyName: "Unrecognized DGX Station" }],
+    [
+      "unreviewed Colossus display name",
+      {
+        prettyName: "NVIDIA DGX Customer Image",
+        version: "7.5.0-GB300ws-GB200ws",
+        buildDate: "2026-04-02-08-20-16",
+      },
+    ],
     ["older no-OTA version", { version: "7.5.0" }],
     ["future release family", { version: "7.7.0" }],
     ["non-numeric patch", { version: "7.6.rc1" }],

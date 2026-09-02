@@ -203,6 +203,11 @@ describe("DGX Station stock DGX OS classification", () => {
       writeNoOtaFactoryRelease("colossus-baseos"),
     ],
     [
+      "April 2026 Colossus BaseOS with the GB300WS display name",
+      "supported-colossus-baseos",
+      writeNoOtaFactoryRelease("colossus-baseos", { pretty: "NVIDIA DGX GB300WS" }),
+    ],
+    [
       "June 2026 AI Developer Tools",
       "supported-ai-developer-tools",
       writeNoOtaFactoryRelease("ai-developer-tools"),
@@ -291,6 +296,10 @@ dgx_station_release_state "$DGX_RELEASE"
     [
       "BaseOS build date drift",
       writeNoOtaFactoryRelease("colossus-baseos", { buildDate: "2026-04-03-00-00-00" }),
+    ],
+    [
+      "BaseOS display name drift",
+      writeNoOtaFactoryRelease("colossus-baseos", { pretty: "NVIDIA DGX Customer Image" }),
     ],
     [
       "AI Developer Tools product drift",

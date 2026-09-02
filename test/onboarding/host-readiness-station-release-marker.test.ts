@@ -143,4 +143,20 @@ describe("DGX Station release marker readiness", () => {
       expect(findings).not.toContain("host.platform.dgx_station_inconclusive");
     },
   );
+
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server"])(
+    "qualifies the exact Colossus BaseOS profile with the %s display name (#10906)",
+    (prettyName) => {
+      const release = STATION_RELEASE.replace("NVIDIA DGX GB300WS", prettyName)
+        .replace("2026-07-14-13-59-06", "2026-04-02-08-20-16")
+        .replace("7.6.0", "7.5.0-GB300ws-GB200ws");
+      const report = reportForStationHost(createStationFixture("regular-file", release));
+      const findings = report.findings.map(({ id }) => id);
+
+      expect(stationQualification(report)).toBe("qualified");
+      expect(stationCapability(report)).toBe("present");
+      expect(findings).not.toContain("host.platform.dgx_station_unqualified");
+      expect(findings).not.toContain("host.platform.dgx_station_inconclusive");
+    },
+  );
 });

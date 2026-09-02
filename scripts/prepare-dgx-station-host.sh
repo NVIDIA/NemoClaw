@@ -275,7 +275,8 @@ dgx_station_release_profile() {
   fi
 
   case "${pretty}|${version}|${build_date}" in
-    "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
+    "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16" | \
+      "NVIDIA DGX GB300WS|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16")
       printf '%s' supported-colossus-baseos
       ;;
     "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38" | \

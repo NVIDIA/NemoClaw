@@ -214,7 +214,10 @@ function parseStationRelease(contents: string): StationProfile {
     return "supported-dgx-os";
   }
   const identity = [noOtaPrettyName, noOtaVersion, values.get("DGX_SWBUILD_DATE")?.[0]].join("|");
-  if (identity === "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16") {
+  if (
+    identity === "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16" ||
+    identity === "NVIDIA DGX GB300WS|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16"
+  ) {
     return "supported-colossus-baseos";
   }
   if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10") {
