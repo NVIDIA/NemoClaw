@@ -40,7 +40,6 @@ const HERMES_RESTART_SUCCESS_PREFIX = new RegExp(
     String.raw`Removed preset: mcp-bridge-concurrent`,
     String.raw`✓ Policy version (?<cleanupVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
     String.raw`✓ Policy version \k<cleanupVersion> loaded \(active version: \k<cleanupVersion>\)`,
-    String.raw`Preset not found: mcp-bridge-concurrent`,
     String.raw`✓ Policy version (?<commitVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
     String.raw`✓ Policy version \k<commitVersion> loaded \(active version: \k<commitVersion>\)`,
   ].join("\n")}$`,
