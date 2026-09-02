@@ -112,7 +112,7 @@ describe("Launchable evidence inspection", () => {
       "no successful",
     ),
   );
-  it("returns early recovery identity before full evidence exists (#10798)", () => {
+  it("reports early recovery identity before full evidence exists (#10798)", () => {
     const artifact: ArtifactFiles = {
       "workspace-recovery.json": JSON.stringify({
         schemaVersion: 1,
@@ -220,7 +220,7 @@ describe("Launchable evidence inspection", () => {
       inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, artifact)),
     ).toThrow("workspace=nclaw-e2e-10-2 id=ws-1 status=PRESENT");
   });
-  it("returns recovery identity from a failed cleanup job (#10798)", () => {
+  it("reports recovery identity from a failed cleanup job (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({
         workspaceName: "workspace",

@@ -62,6 +62,7 @@ type Fixture = {
   remote: string;
   summary: string;
   firstCommit: string;
+  launchableInspector: string;
 };
 
 function createFixture(): Fixture {
@@ -74,16 +75,8 @@ function createFixture(): Fixture {
 
   run(root, ["git", "init", "--bare", remote]);
   run(root, [
-    "ssh-keygen",
-    "-q",
-    "-t",
-    "ed25519",
-    "-N",
-    "",
-    "-C",
-    "release-test@example.com",
-    "-f",
-    signingKey,
+    "ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+    "-C", "release-test@example.com", "-f", signingKey,
   ]);
   fs.mkdirSync(work);
   run(work, ["git", "init"]);
@@ -98,8 +91,11 @@ function createFixture(): Fixture {
   run(work, ["git", "remote", "add", "origin", remote]);
   run(work, ["git", "push", "-u", "origin", "main"]);
   const firstCommit = run(work, ["git", "rev-parse", "HEAD"]).trim();
-
-  return { root, work, remote, summary, firstCommit };
+  const launchableInspector = path.join(root, "launchable-inspector.mts");
+  fs.writeFileSync(launchableInspector, `const candidate = process.argv[3];
+process.stdout.write(JSON.stringify({ version: 1, candidate: { sha: candidate }, run: { id: 10, attempt: 1, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10" }, job: { id: 20, url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10/job/20" }, artifact: { name: \`staging-brev-launchable-\${candidate}-10-1\` }, producer: { runId: 30, status: "success", url: "https://github.com/brevdev/nemoclaw-image/actions/runs/30" }, boot: { bootImage: "image@sha256:123", schemaVersion: 1, sourceRepository: "NVIDIA/NemoClaw", sourcePath: "/opt/nemoclaw-image/NemoClaw", repoSha: candidate, provisionSha: candidate, imageRepositorySha: "b".repeat(40), repoClean: true, runtimeOverrides: false }, workspace: { name: "nclaw-e2e-10-1", id: "ws-1" }, fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" }, cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" } }));
+`);
+  return { root, work, remote, summary, firstCommit, launchableInspector };
 }
 
 function commit(fixture: Fixture, text: string): string {
@@ -322,7 +318,8 @@ function cutFromPlan(
       "--confirm",
       confirmation,
     ],
-    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1", ...extraEnv },
+    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
+      NEMOCLAW_RELEASE_TEST_LAUNCHABLE_INSPECTOR: fixture.launchableInspector, ...extraEnv },
   );
 }
 

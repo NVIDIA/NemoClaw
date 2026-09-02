@@ -52,7 +52,7 @@ When one or more checks ran without failure but another required check did not r
 
 Record the expected commit. Then follow
 [Validate Existing Launchable Evidence](../nemoclaw-maintainer-e2e/references/launchable-evidence.md)
-to select and validate `Staging Brev Launchable` evidence for that commit. Stop unless the
+to select and validate `Exact staging Brev Launchable` evidence for that commit. Stop unless the
 inspection succeeds. Use the returned boot image and producer for the web journey. Do not
 substitute a mutable image URI.
 

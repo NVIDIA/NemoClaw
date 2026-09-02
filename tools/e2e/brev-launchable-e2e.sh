@@ -525,7 +525,12 @@ cleanup() {
       else
         absent=0
         workspace_observed=1
-        [ -n "$workspace_id" ] || workspace_id="$(jq -r '.id // ""' <<<"$record")"
+        current_workspace_id="$(jq -r '.id // ""' <<<"$record")"
+        [ -n "$workspace_id" ] || workspace_id="$current_workspace_id"
+        if [ -z "$current_workspace_id" ] || [ "$current_workspace_id" != "$workspace_id" ]; then
+          log "FAILED: workspace name now resolves to a different identity; refusing deletion" >&2
+          break
+        fi
         if [ "$delete_attempts" -eq 0 ]; then
           create_state="reconciled"
           delete_attempts=$((delete_attempts + 1))
@@ -536,7 +541,7 @@ cleanup() {
             fi
           fi
           log "Workspace cleanup delete attempt $delete_attempts of 1"
-          timeout 60s brev delete "$INSTANCE_NAME" || true
+          timeout 60s brev delete "$workspace_id" || true
         fi
       fi
     else

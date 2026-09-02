@@ -58,8 +58,9 @@ PLAN_PATH="$plan_directory/$(basename -- "$PLAN_PATH")"
 message_directory="$(cd -- "$(dirname -- "$MESSAGE_FILE")" && pwd -P)"
 MESSAGE_FILE="$message_directory/$(basename -- "$MESSAGE_FILE")"
 brief_snapshot="$(mktemp)"
-chmod 600 "$brief_snapshot"
-trap 'rm -f -- "$brief_snapshot"' EXIT
+launchable_snapshot="$(mktemp)"
+chmod 600 "$brief_snapshot" "$launchable_snapshot"
+trap 'rm -f -- "$brief_snapshot" "$launchable_snapshot"' EXIT
 cp -- "$MESSAGE_FILE" "$brief_snapshot" || fail "Could not snapshot the release brief"
 [[ -s "$brief_snapshot" ]] || fail "Release brief snapshot is empty"
 
@@ -239,6 +240,7 @@ if [[ "$canonical_release_origin" == true ]]; then
   [[ "$SCRIPT_DIR" == "$repo_root/scripts" ]] \
     || fail "Release cutter must run from the canonical repository scripts directory"
   git diff --quiet origin/main -- scripts/release-cut-tag.sh scripts/release/remote.mts \
+    .agents/skills/nemoclaw-maintainer-e2e/scripts/inspect-launchable-evidence.ts \
     || fail "Release cutter files differ from refreshed origin/main"
 fi
 
@@ -330,6 +332,28 @@ git merge-base --is-ancestor "$previous_commit" "$target" \
 if git show-ref --verify --quiet "refs/tags/$tag"; then
   fail "Local tag $tag already exists. Inspect the exact remote ref and do not rerun the cutter"
 fi
+
+launchable_inspector="$repo_root/.agents/skills/nemoclaw-maintainer-e2e/scripts/inspect-launchable-evidence.ts"
+if [[ -n "${NEMOCLAW_RELEASE_TEST_LAUNCHABLE_INSPECTOR:-}" ]]; then
+  [[ "$canonical_release_origin" == false ]] || fail "A test Launchable inspector is not accepted for a canonical origin"
+  launchable_inspector="$NEMOCLAW_RELEASE_TEST_LAUNCHABLE_INSPECTOR"
+fi
+node --experimental-strip-types --no-warnings "$launchable_inspector" --candidate "$target" \
+  >"$launchable_snapshot" || fail "Canonical Launchable evidence inspection failed"
+[[ -s "$launchable_snapshot" ]] || fail "Canonical Launchable evidence inspection returned no receipt"
+node -e '
+  const fs = require("node:fs"), { isDeepStrictEqual } = require("node:util");
+  const brief = fs.readFileSync(process.argv[1], "utf8");
+  const section = brief.split(/^## Canonical Launchable evidence$/m);
+  if (section.length !== 2) throw new Error("brief must contain one Launchable section");
+  const body = section[1].split(/^## /m, 1)[0];
+  const lines = body.split("\n").filter((line) => line.startsWith("- Receipt: "));
+  if (lines.length !== 1) throw new Error("brief must contain one Launchable receipt");
+  const briefReceipt = JSON.parse(lines[0].slice("- Receipt: ".length));
+  const inspectedReceipt = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  if (!isDeepStrictEqual(briefReceipt, inspectedReceipt)) throw new Error("brief receipt differs from inspected receipt");
+' "$brief_snapshot" "$launchable_snapshot" \
+  || fail "Release brief canonical Launchable receipt does not match current inspected evidence"
 
 # Git signs the tag on the maintainer workstation. The private signing key does not enter CI.
 git tag -s -F "$brief_snapshot" --cleanup=verbatim "$tag" "$target"
