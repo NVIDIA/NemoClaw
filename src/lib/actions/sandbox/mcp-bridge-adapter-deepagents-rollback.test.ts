@@ -38,6 +38,28 @@ describe("Deep Agents MCP config adapter rollback", () => {
     });
   });
 
+  it("refuses rollback through a symlinked legacy parent", () => {
+    const legacyConfig = {
+      mcpServers: { local: { type: "stdio", command: "user-owned" } },
+      ui: { theme: "dark" },
+    };
+    const original = `${JSON.stringify(legacyConfig, null, 2)}\n`;
+
+    const rollback = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true),
+      undefined,
+      "legacy",
+      legacyConfig,
+      0o600,
+      { legacyParentSymlink: true },
+    );
+
+    expect(rollback.status).toBe(2);
+    expect(rollback.stderr).toContain("legacy MCP config parent is unsafe: symbolic link");
+    expect(rollback.legacyParentIsSymlink).toBe(true);
+    expect(rollback.legacyParentTargetText).toBe(original);
+  });
+
   it("keeps v2 teardown and rollback isolated from the legacy user file", () => {
     const managedServer = {
       type: "http",

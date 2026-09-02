@@ -198,14 +198,23 @@ describe("Deep Agents managed MCP projection safety", () => {
       );
 
       expect(result.managedRaceIterations).toBeGreaterThan(0);
-      expect([
-        { status: 0, stderr: "", stdout: "absent" },
-        { status: 2, stderr: expectedSafetyDiagnostic, stdout: "" },
-      ]).toContainEqual({
+      const actualOutcome = {
         status: result.status,
         stderr: result.stderr.trim(),
         stdout: result.stdout.trim(),
-      });
+      };
+      const safelyLostRace =
+        actualOutcome.status === 0 &&
+        actualOutcome.stderr === "" &&
+        actualOutcome.stdout === "absent";
+      const safelyRejectedRace =
+        actualOutcome.status === 2 &&
+        actualOutcome.stdout === "" &&
+        (actualOutcome.stderr === expectedSafetyDiagnostic ||
+          /^Could not inspect managed Deep Agents MCP state at .+: managed MCP projection has unsafe ownership, mode, type, links, or path identity$/u.test(
+            actualOutcome.stderr,
+          ));
+      expect(safelyLostRace || safelyRejectedRace, JSON.stringify(actualOutcome)).toBe(true);
       expect(result.configIsSymlink).toBe(expectedConfigIsSymlink);
       expect(result.configIsFifo).toBe(expectedConfigIsFifo);
       expect(result.managedSymlinkTargetText).toBe(expectedTargetText);

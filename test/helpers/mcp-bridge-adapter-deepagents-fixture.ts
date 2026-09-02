@@ -34,6 +34,8 @@ export interface DeepAgentsConfigCommandResult {
   legacyConfigExists: boolean;
   legacyConfig: Record<string, unknown> | null;
   legacyConfigText: string | null;
+  legacyParentIsSymlink: boolean;
+  legacyParentTargetText: string | null;
   managedParentIsSymlink: boolean;
   managedParentTargetText: string | null;
   managedRaceIterations: number;
@@ -46,6 +48,7 @@ export interface DeepAgentsManagedFixtureOptions {
   danglingSymlink?: boolean;
   directory?: boolean;
   fifo?: boolean;
+  legacyParentSymlink?: boolean;
   mode?: number;
   parentSymlink?: boolean;
   raceAbsentPublication?: string;
@@ -326,6 +329,9 @@ export function runDeepAgentsConfigCommand(
   const managedTargetReadReady = path.join(tmp, "managed-target-read-ready");
   const managedTargetReadAccess = path.join(tmp, "managed-target-read-accessed");
   const legacyConfigPath = path.join(tmp, ".deepagents", ".mcp.json");
+  const legacyParentPath = path.dirname(legacyConfigPath);
+  const legacyParentTarget = path.join(tmp, "legacy-parent-target");
+  const legacyParentTargetConfig = path.join(legacyParentTarget, path.basename(legacyConfigPath));
   const initializeConfig = (
     target: string,
     value: Record<string, unknown> | string | undefined,
@@ -340,6 +346,20 @@ export function runDeepAgentsConfigCommand(
     );
   };
   const managedSymlink = managedOptions.symlink === true || managedOptions.danglingSymlink === true;
+  if (
+    managedOptions.legacyParentSymlink &&
+    (initialConfig !== undefined ||
+      managedOptions.danglingSymlink ||
+      managedOptions.directory ||
+      managedOptions.fifo ||
+      managedOptions.parentSymlink ||
+      managedOptions.raceAbsentPublication !== undefined ||
+      managedOptions.raceProjection !== undefined ||
+      managedOptions.socket ||
+      managedOptions.symlink)
+  ) {
+    throw new Error("legacyParentSymlink cannot share the managed projection parent fixture");
+  }
   const managedTargetReadPath = managedOptions.targetReadProbe
     ? managedOptions.parentSymlink
       ? managedParentTargetConfig
@@ -387,8 +407,13 @@ export function runDeepAgentsConfigCommand(
   if (managedOptions.raceAbsentPublication !== undefined) {
     initializeConfig(managedSymlinkTarget, managedOptions.raceAbsentPublication);
   }
-  initializeConfig(legacyConfigPath, initialLegacyConfig);
-  if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);
+  if (managedOptions.legacyParentSymlink) {
+    fs.mkdirSync(legacyParentTarget, { recursive: true });
+    initializeConfig(legacyParentTargetConfig, initialLegacyConfig, initialLegacyMode);
+    fs.symlinkSync(legacyParentTarget, legacyParentPath);
+  } else {
+    initializeConfig(legacyConfigPath, initialLegacyConfig, initialLegacyMode);
+  }
   let targetReadProbe: ReturnType<typeof spawn> | null = null;
   let managedRace: ManagedFixtureProcess | null = null;
   let socketFixture: ManagedFixtureProcess | null = null;
@@ -469,6 +494,12 @@ export function runDeepAgentsConfigCommand(
       // A missing projection parent cannot redirect the managed path.
     }
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
+    let legacyParentIsSymlink = false;
+    try {
+      legacyParentIsSymlink = fs.lstatSync(legacyParentPath).isSymbolicLink();
+    } catch {
+      // A missing legacy parent cannot redirect the legacy config path.
+    }
     const configIsFifo = configStat?.isFIFO() === true;
     const configIsSocket = configStat?.isSocket() === true;
     const configIsSymlink = configStat?.isSymbolicLink() === true;
@@ -501,6 +532,7 @@ export function runDeepAgentsConfigCommand(
     const managedTargetReadAccessed =
       managedTargetReadPath !== null && waitForPath(managedTargetReadAccess, 200);
     const legacyConfigText = legacyConfigExists ? fs.readFileSync(legacyConfigPath, "utf-8") : null;
+    const legacyParentTargetText = readRegularFile(legacyParentTargetConfig);
     const parseConfigText = (text: string | null): Record<string, unknown> | null => {
       if (!text) return null;
       try {
@@ -526,6 +558,8 @@ export function runDeepAgentsConfigCommand(
       legacyConfigExists,
       legacyConfig: parseConfigText(legacyConfigText),
       legacyConfigText,
+      legacyParentIsSymlink,
+      legacyParentTargetText,
       managedParentIsSymlink,
       managedParentTargetText,
       managedRaceIterations,
