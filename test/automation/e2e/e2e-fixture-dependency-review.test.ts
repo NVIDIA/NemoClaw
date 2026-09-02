@@ -50,6 +50,10 @@ describe("E2E fixture dependency review", () => {
       version: "3.1.6",
     });
     expect(review).toContain("`openclaw@2026.7.1`");
+    expect(review).toContain("resolves nested `fast-uri` to reviewed `3.1.6`");
+    expect(review).toContain(
+      "every non-root package entry records both its resolved registry URL and integrity value",
+    );
     expect(review).toContain("`fast-uri` is absent from the advisory report");
     expect(review).toContain("`36f8e08c8dca622017c943e4b41d1758651b2911e6c44b96e26cba4ea05b2556`");
   });

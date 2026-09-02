@@ -170,7 +170,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // publishes every corrected dependency identity in its manifest and shrinkwrap.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-OfBP5yJPR5gdGnQ1LPtvSvrn3WoRT7+vi3KMsNGyXgwM8wpzJ174dfnJTLRtn6zSX9Vrp84uDn6YffkaLyNOVg==",
+      "sha512-PzF1Lyw0yIo3mr7mNGql7azYoioDP+jQ47gERww6vgb9iyKnEWcscScsvv1IOt9yCp6BJTLxcRYYe7X0s95BnA==",
     kind: "current-core",
     version: "2026.7.1",
   },

@@ -68,7 +68,7 @@ whose amd64 config reports Node `22.23.1`.
 - `openclaw@2026.7.1`
   - `sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==`
   - `https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz`
-  - remediated package tree: `sha512-OfBP5yJPR5gdGnQ1LPtvSvrn3WoRT7+vi3KMsNGyXgwM8wpzJ174dfnJTLRtn6zSX9Vrp84uDn6YffkaLyNOVg==`
+  - remediated package tree: `sha512-PzF1Lyw0yIo3mr7mNGql7azYoioDP+jQ47gERww6vgb9iyKnEWcscScsvv1IOt9yCp6BJTLxcRYYe7X0s95BnA==`
 - `@openclaw/diagnostics-otel@2026.7.1`
   - `sha512-XXhMifYWTgoR6yFN4T3JkHxdPvQCe8k1cNZjVIgXNmk1svCdBWuALfQQicmpemlmWwauIQuHYgBURY6k63e+rw==`
 - `@openclaw/brave-plugin@2026.7.1`
