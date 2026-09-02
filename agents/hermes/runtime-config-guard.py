@@ -49,6 +49,7 @@ PROC_ROOT = "/proc"
 MAX_PROC_ENTRIES = 32768
 MCP_HASH_STATE_PREFIX = "# nemoclaw-hermes-mcp-state-v1"
 MCP_INTEGRITY_PENDING_EXIT_CODE = 10
+STARTUP_READY_NOT_READY_EXIT_CODE = 10
 MCP_HASH_STATE_RE = re.compile(
     rf"{re.escape(MCP_HASH_STATE_PREFIX)} intended=([0-9a-f]{{64}}) applied=([0-9a-f]{{64}})"
 )
@@ -805,6 +806,12 @@ def _attested_shields_runtime_topology() -> str:
 
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
     installed_current = os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD
+    if action == "observe-startup-ready":
+        if not installed_current or os.geteuid() != 0:
+            raise UnsafePathError(
+                "startup readiness observation requires the installed root guard"
+            )
+        return
     try:
         sandbox_uid = pwd.getpwnam("sandbox").pw_uid
     except KeyError:
@@ -898,11 +905,19 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
         )
 
 
-def _startup_ready_for_current_pid1() -> bool:
+def _assert_startup_ready_snapshot_current(snapshot: FileSnapshot) -> None:
+    parent_fd, basename = _open_parent_dir(HERMES_STARTUP_READY_FILE)
+    try:
+        _assert_current_snapshot(parent_fd, basename, HERMES_STARTUP_READY_FILE, snapshot)
+    finally:
+        os.close(parent_fd)
+
+
+def _startup_ready_state_for_current_pid1() -> str:
     try:
         opened = _open_regular(HERMES_STARTUP_READY_FILE)
-    except (FileNotFoundError, UnsafePathError):
-        return False
+    except FileNotFoundError:
+        return "not-ready"
     try:
         snapshot = opened.snapshot
         if (
@@ -911,30 +926,44 @@ def _startup_ready_for_current_pid1() -> bool:
             or snapshot.mode != 0o600
             or snapshot.nlink != 1
         ):
-            return False
+            raise UnsafePathError("unsafe Hermes startup readiness record")
         try:
             text = opened.read_bytes(MAX_HASH_BYTES).decode("ascii")
-        except UnicodeDecodeError:
-            return False
+        except UnicodeDecodeError as exc:
+            raise UnsafePathError("malformed Hermes startup readiness record") from exc
         legacy = re.fullmatch(r"v1 ([0-9]+)\n", text)
+        current = re.fullmatch(r"v2 ([0-9]+) ([0-9]+)\n", text)
         if legacy:
             # Version 1 has no PID-namespace identity and is safe only when
             # the helper directly observes the NemoClaw entrypoint as PID 1.
             start_time = _process_start_time(1)
-            return bool(
-                start_time is not None
+            state = (
+                "ready"
+                if start_time is not None
                 and _pid1_is_nemoclaw_start()
                 and secrets.compare_digest(legacy.group(1), start_time)
+                else "not-ready"
             )
-        current = re.fullmatch(r"v2 ([0-9]+) ([0-9]+)\n", text)
-        if not current:
-            return False
-        namespace_inode = int(current.group(2), 10)
-        return _startup_process_identity_is_live(
-            current.group(1), namespace_inode
-        )
+        elif current:
+            namespace_inode = int(current.group(2), 10)
+            state = (
+                "ready"
+                if _startup_process_identity_is_live(current.group(1), namespace_inode)
+                else "not-ready"
+            )
+        else:
+            raise UnsafePathError("malformed Hermes startup readiness record")
+        _assert_startup_ready_snapshot_current(snapshot)
+        return state
     finally:
         opened.close()
+
+
+def _startup_ready_for_current_pid1() -> bool:
+    try:
+        return _startup_ready_state_for_current_pid1() == "ready"
+    except (OSError, UnsafePathError):
+        return False
 
 
 def publish_startup_ready() -> None:
@@ -5139,6 +5168,7 @@ def main() -> int:
             "commit-mcp-applied",
             "provider-placeholders",
             "publish-startup-ready",
+            "observe-startup-ready",
             "seal-restart",
             "unseal-restart",
             "inspect-mutation-owner",
@@ -5227,6 +5257,9 @@ def main() -> int:
         elif args.action == "publish-startup-ready":
             publish_startup_ready()
             print("ready=1")
+        elif args.action == "observe-startup-ready":
+            if _startup_ready_state_for_current_pid1() != "ready":
+                return STARTUP_READY_NOT_READY_EXIT_CODE
         elif args.action == "seal-restart":
             if not args.hash_file or not args.state_file:
                 raise UnsafePathError(
@@ -5366,8 +5399,12 @@ def main() -> int:
                 args.state_lock_plan_json,
             )
     except UnsafePathError as exc:
+        if args.action == "observe-startup-ready":
+            return 1
         _die(str(exc))
     except OSError as exc:
+        if args.action == "observe-startup-ready":
+            return 1
         if exc.errno in (errno.ELOOP, errno.EPERM, errno.EACCES):
             _die(f"refusing unsafe Hermes runtime config path: {exc}")
         raise

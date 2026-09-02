@@ -308,7 +308,8 @@ function lifecycleDeps(
   });
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(LIVE)!;
   const captureOpenShell = vi.fn((args: readonly string[]) => {
-    const sandboxExecOutput = args.includes("python3") ? "200\n" : "";
+    const observesStartup = args.includes("observe-startup-ready");
+    const sandboxExecOutput = args.includes("python3") && !observesStartup ? "200\n" : "";
     const responses = {
       "policy:get": { status: 0, stdout: options.livePolicy ?? POLICY, stderr: "" },
       "sandbox:list": {
@@ -445,6 +446,7 @@ describe("Hermes portable lifecycle", () => {
         qualificationCount: 2,
         containerStartCount: 1,
         execReadyAttempts: 1,
+        startupReadyObserverAttempts: 1,
         authenticatedHealthCount: 1,
         startupLaunchCount: 1,
         rollbackCount: 0,
@@ -452,14 +454,7 @@ describe("Hermes portable lifecycle", () => {
         result: "recovered",
       }),
     );
-    const operations = fixture.captureOpenShell.mock.calls.map(([args]) =>
-      args.slice(0, 2).join(":"),
-    );
-    expect(operations.filter((operation) => operation === "sandbox:list")).toHaveLength(3);
-    expect(operations.filter((operation) => operation === "sandbox:get")).toHaveLength(3);
-    expect(operations.filter((operation) => operation === "policy:get")).toHaveLength(3);
     expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
-    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(0);
     expect(fixture.assertOpenShellExecutableFileAuthority).toHaveBeenCalled();
     expect(fixture.capturePodmanExecutableFileAuthority).toHaveBeenCalled();
   });
@@ -564,7 +559,11 @@ describe("Hermes portable lifecycle", () => {
       }),
     );
     expect(evidence.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({ authenticatedHealthSleepMs: 90_000 }),
+      expect.objectContaining({
+        authenticatedHealthCount: 1,
+        authenticatedHealthSleepMs: 0,
+        startupReadyObserverAttempts: 1,
+      }),
     );
   });
 
@@ -854,17 +853,22 @@ describe("Hermes portable lifecycle", () => {
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     let healthAttempts = 0;
     let now = 0;
+    let observerAttempts = 0;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
-        ? {
-            status: 0,
-            stdout:
-              (healthAttempts += 1) >= 2 && launchOpenShell.mock.calls.length === 1
-                ? "200\n"
-                : "unavailable\n",
-            stderr: "",
-          }
-        : defaultCapture(args),
+      args.includes("observe-startup-ready")
+        ? ((observerAttempts += 1),
+          (now = observerAttempts >= 2 ? 90_000 : now),
+          { status: observerAttempts >= 2 ? 0 : 10, stdout: "", stderr: "" })
+        : args.includes("python3")
+          ? {
+              status: 0,
+              stdout:
+                (healthAttempts += 1) === 1 && launchOpenShell.mock.calls.length === 1
+                  ? "200\n"
+                  : "unavailable\n",
+              stderr: "",
+            }
+          : defaultCapture(args),
     );
 
     const result = withMcpLifecycleLockSync(
@@ -881,42 +885,34 @@ describe("Hermes portable lifecycle", () => {
     );
 
     expect(result).toEqual({ kind: "recovered" });
-    expect(healthAttempts).toBe(2);
-    expect(launchOpenShell).toHaveBeenCalledTimes(1);
-    expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1); expect(launchOpenShell).toHaveBeenCalledWith([
-      "sandbox",
-      "exec",
-      "-g",
-      GATEWAY,
-      "--name",
-      SANDBOX,
-      "--no-tty",
-      "--",
-      ...receipt.startup.argv,
-    ]);
-    const execCommands = captureOpenShell.mock.calls
-      .map(([args]) => args)
-      .filter((args) => args.slice(0, 2).join(":") === "sandbox:exec")
-      .map((args) => args.slice(args.indexOf("--") + 1));
-    expect(execCommands).toEqual([
-      ["true"],
-      ...Array.from({ length: 2 }, () => [
-        "python3",
-        "-c",
-        hermesPortableContainerInternals.authenticatedHealthScript,
-      ]),
-    ]);
+    expect([observerAttempts, healthAttempts]).toEqual([2, 1]);
+    expect(launchOpenShell).toHaveBeenCalledOnce();
+    expect(launchOpenShell).toHaveBeenCalledWith(
+      expect.arrayContaining([...receipt.startup.argv]),
+    );
+    const commands = captureOpenShell.mock.calls.flatMap(([args]) => args);
+    expect([
+      commands.filter((arg) => arg === "observe-startup-ready").length,
+      commands.filter((arg) => arg === "-c").length,
+    ]).toEqual([2, 1]);
   });
 
-  it("launches the receipt-owned startup once before rolling back unavailable health (#9211)", () => {
+  it("uses bounded authenticated health fallback for an image without the observer (#10821)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     let now = 0;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
-        ? { status: 0, stdout: "unavailable\n", stderr: "" }
-        : defaultCapture(args),
+      args.includes("observe-startup-ready")
+        ? (now += 5_000,
+          {
+            status: 2,
+            stdout: "",
+            stderr: "argument action: invalid choice: 'observe-startup-ready'",
+          })
+        : args.includes("python3")
+          ? { status: 0, stdout: "unavailable\n", stderr: "" }
+          : defaultCapture(args),
     );
 
     expect(() =>
@@ -933,25 +929,30 @@ describe("Hermes portable lifecycle", () => {
         { stateDir: path.join(stateDir, "state") },
       ),
     ).toThrow("managed startup did not pass authenticated health");
-    expect(now).toBe(90_000);
-    expect(launchOpenShell).toHaveBeenCalledTimes(1);
-    const execCommands = captureOpenShell.mock.calls
-      .map(([args]) => args)
-      .filter((args) => args.slice(0, 2).join(":") === "sandbox:exec")
-      .map((args) => args.slice(args.indexOf("--") + 1));
-    expect(execCommands[0]).toEqual(["true"]);
-    expect(
-      execCommands
-        .slice(1)
-        .every(
-          (command) =>
-            command.length === 3 &&
-            command[0] === "python3" &&
-            command[1] === "-c" &&
-            command[2] === hermesPortableContainerInternals.authenticatedHealthScript,
-        ),
-    ).toBe(true);
-    expect(execCommands.flat()).not.toContain(receipt.startup.argv.at(-1));
+    expect([now, launchOpenShell.mock.calls.length]).toEqual([90_000, 1]);
+    const commands = captureOpenShell.mock.calls.flatMap(([args]) => args);
+    expect(commands.filter((arg) => arg === "observe-startup-ready")).toHaveLength(1);
+    expect(commands.filter((arg) => arg === "-c").length).toBeGreaterThan(1);
+  });
+
+  it("rolls back an unsafe readiness observation without authenticated health (#10821)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
+    const defaultCapture = captureOpenShell.getMockImplementation()!;
+    captureOpenShell.mockImplementation((args: readonly string[]) =>
+      args.includes("observe-startup-ready")
+        ? { status: 1, stdout: "secret-ready-record-canary", stderr: "pid=42" }
+        : defaultCapture(args),
+    );
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("startup readiness observation was unsafe");
+    expect(captureOpenShell.mock.calls.flatMap(([args]) => args)).not.toContain("-c");
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
   });
 

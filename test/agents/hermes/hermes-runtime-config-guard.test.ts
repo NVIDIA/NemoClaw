@@ -1070,6 +1070,97 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes startup readiness lease", () => {
+  it("reports current, stale, and unsafe startup records only by exit status (#10821)", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import contextlib
+import io
+import json
+import sys
+
+results = []
+for state in ("ready", "not-ready", "unsafe"):
+    guard.__file__ = guard.INSTALLED_RUNTIME_CONFIG_GUARD
+    guard.os.geteuid = lambda: 0
+    def observe(current=state):
+        if current == "unsafe":
+            raise guard.UnsafePathError("secret-ready-record-canary")
+        return current
+    guard._startup_ready_state_for_current_pid1 = observe
+    sys.argv = [
+        guard.INSTALLED_RUNTIME_CONFIG_GUARD,
+        "observe-startup-ready",
+        "--hermes-dir",
+        "/sandbox/.hermes",
+    ]
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        status = guard.main()
+    results.append({"state": state, "status": status, "stdout": stdout.getvalue(), "stderr": stderr.getvalue()})
+print(json.dumps(results))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      { state: "ready", status: 0, stdout: "", stderr: "" },
+      { state: "not-ready", status: 10, stdout: "", stderr: "" },
+      { state: "unsafe", status: 1, stdout: "", stderr: "" },
+    ]);
+    expect(result.stdout).not.toContain("secret-ready-record-canary");
+  });
+
+  it("distinguishes missing, stale, malformed, and replaced readiness records (#10821)", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+from types import SimpleNamespace
+
+snapshot = SimpleNamespace(uid=0, gid=0, mode=0o600, nlink=1)
+class Opened:
+    def __init__(self, text, current_snapshot=snapshot):
+        self.snapshot = current_snapshot
+        self.text = text
+    def read_bytes(self, _limit):
+        return self.text
+    def close(self):
+        pass
+
+def classify(first, initial=snapshot, current=snapshot, live=False):
+    def opened(_path):
+        if first is None:
+            raise FileNotFoundError()
+        return Opened(first, initial)
+    guard._open_regular = opened
+    guard._assert_startup_ready_snapshot_current = lambda observed: (
+        None if observed is current else (_ for _ in ()).throw(guard.UnsafePathError("changed"))
+    )
+    guard._startup_process_identity_is_live = lambda *_args: live
+    try:
+        return guard._startup_ready_state_for_current_pid1()
+    except guard.UnsafePathError:
+        return "unsafe"
+
+print(json.dumps({
+    "missing": classify(None),
+    "current": classify(b"v2 101 202\\n", live=True),
+    "stale_start_or_namespace": classify(b"v2 101 202\\n", live=False),
+    "malformed": classify(b"secret-ready-record-canary"),
+    "wrong_mode": classify(b"v2 101 202\\n", SimpleNamespace(uid=0, gid=0, mode=0o644, nlink=1), live=True),
+    "replaced": classify(b"v2 101 202\\n", current=SimpleNamespace(uid=0, gid=0, mode=0o600, nlink=1, changed=True), live=True),
+}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      missing: "not-ready",
+      current: "ready",
+      stale_start_or_namespace: "not-ready",
+      malformed: "unsafe",
+      wrong_mode: "unsafe",
+      replaced: "unsafe",
+    });
+    expect(result.stdout).not.toContain("secret-ready-record-canary");
+  });
+
   it("rejects a supervisor argv polluted with the appended startup command (#6110)", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
@@ -1298,6 +1389,7 @@ class FakeOpen:
 
 guard._process_start_time = lambda pid: "424242" if pid == 1 else None
 guard._pid1_is_nemoclaw_start = lambda: True
+guard._assert_startup_ready_snapshot_current = lambda _snapshot: None
 payload = b"v1 111111\\n"
 guard._open_regular = lambda _path: FakeOpen(payload)
 stale = guard._startup_ready_for_current_pid1()
