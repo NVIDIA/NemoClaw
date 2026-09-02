@@ -10,18 +10,16 @@
  */
 
 import { createBearerAuthConfig, createXApiKeyAuthConfig } from "../adapters/http/auth-config";
-import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
 import { getProviderSelectionConfig } from "./config";
 import {
-  createOllamaApiCapture,
   getResolvedOllamaHost,
-  isValidOllamaTagsResponseBody,
   loadPersistedOllamaHost,
   type LocalProviderHealthProbeOptions,
   OLLAMA_PORT,
+  probeOllamaEndpointInventory,
   probeLocalProviderHealth,
   type RunCaptureFn,
 } from "./local";
@@ -66,39 +64,25 @@ export interface ProviderHealthProbeOptions {
 export type OllamaHostInventoryProbeOptions = {
   getOllamaHost?: () => string;
   runCaptureImpl?: RunCaptureFn;
-  prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
+  prepareDockerEnvironment?: Parameters<typeof probeOllamaEndpointInventory>[3];
 };
 
 /** Probe the persisted raw Ollama daemon through its platform-specific host transport. */
 export function probeOllamaHostInventory(options: OllamaHostInventoryProbeOptions = {}): {
   endpoint: string;
-  output: string;
-  valid: boolean;
+  inventory: string[] | null;
 } {
   const host = options.getOllamaHost
     ? options.getOllamaHost()
     : (loadPersistedOllamaHost() ?? getResolvedOllamaHost());
   const endpoint = `http://${host}:${OLLAMA_PORT}/api/tags`;
-  const capture = createOllamaApiCapture(
-    options.runCaptureImpl,
+  const inventory = probeOllamaEndpointInventory(
     host,
+    options.runCaptureImpl,
+    5_000,
     options.prepareDockerEnvironment,
   );
-  const output = capture(
-    [
-      "curl",
-      ...buildValidatedCurlCommandArgs([
-        "-sS",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "4",
-        endpoint,
-      ]),
-    ],
-    { ignoreError: true, timeout: 6000 },
-  );
-  return { endpoint, output, valid: isValidOllamaTagsResponseBody(output) };
+  return { endpoint, inventory };
 }
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);

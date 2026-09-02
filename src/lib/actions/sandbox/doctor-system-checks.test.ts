@@ -102,7 +102,7 @@ describe("doctor system checks", () => {
       group: "Local services",
       label: "Ollama",
       status: "fail",
-      detail: "invalid response from http://127.0.0.1:11434/api/tags",
+      detail: "not reachable or invalid response at http://127.0.0.1:11434/api/tags",
       hint: "start Ollama or change the sandbox inference provider",
     });
   });

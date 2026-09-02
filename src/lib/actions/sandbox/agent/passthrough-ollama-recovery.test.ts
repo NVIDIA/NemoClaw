@@ -73,7 +73,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
     expect(stderr).toContain(
-      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+      "NemoClaw will check the model before the next `nemoclaw <sandbox> agent` command and warm it if necessary",
     );
     expect(stderr).not.toContain("rerun this command");
   });
@@ -105,7 +105,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
     expect(stderr).toContain(
-      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+      "NemoClaw will check the model before the next `nemoclaw <sandbox> agent` command and warm it if necessary",
     );
     expect(stderr).not.toContain("rerun this command");
   });
@@ -147,7 +147,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("Restore Ollama access");
     expect(stderr).toContain("confirm that it serves");
     expect(stderr).toContain(
-      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+      "NemoClaw will check the model before the next `nemoclaw <sandbox> agent` command and warm it if necessary",
     );
     expect(stderr).not.toContain("rerun this command");
   });
@@ -234,7 +234,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).toContain("OpenClaw dispatch will continue");
     expect(stderr).toContain("Restore Ollama access to that endpoint");
     expect(stderr).toContain(
-      "NemoClaw will check the model before the next OpenClaw agent command and warm it if necessary",
+      "NemoClaw will check the model before the next `nemoclaw <sandbox> agent` command and warm it if necessary",
     );
     expect(stderr).not.toContain("rerun this command");
     expect(stderr).not.toContain(exposedToken);

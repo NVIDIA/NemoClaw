@@ -65,7 +65,7 @@ function reportRecovery(
       `  Ollama warm-up for '${model}' at ${endpoint} ${describeWarmFailure(result.reason)} ` +
         `(${detail}). OpenClaw dispatch will continue. Restore Ollama access to ${endpoint} ` +
         `and confirm that it serves '${model}'. NemoClaw will check the model before the next ` +
-        `OpenClaw agent command and warm it if necessary.\n`,
+        `\`nemoclaw <sandbox> agent\` command and warm it if necessary.\n`,
     );
     return;
   }
@@ -104,8 +104,8 @@ function reportRecovery(
       proc.stderr.write(
         `  Ollama at ${endpoint} was unreachable while checking '${model}'; continuing to ` +
           `OpenClaw dispatch. Restore Ollama access to ${endpoint}, confirm that it serves ` +
-          `'${model}'. NemoClaw will check the model before the next OpenClaw agent command ` +
-          `and warm it if necessary.\n`,
+          `'${model}'. NemoClaw will check the model before the next ` +
+          `\`nemoclaw <sandbox> agent\` command and warm it if necessary.\n`,
       );
       break;
     }
@@ -142,8 +142,8 @@ export async function runOllamaRestartRecovery(
     proc.stderr.write(
       `  Ollama restart recovery for '${model}' ${endpoint} failed unexpectedly: ${detail}. ` +
         `OpenClaw dispatch will continue. Restore Ollama access to that endpoint, confirm it ` +
-        `serves '${model}'. NemoClaw will check the model before the next OpenClaw agent ` +
-        `command and warm it if necessary.\n`,
+        `serves '${model}'. NemoClaw will check the model before the next ` +
+        `\`nemoclaw <sandbox> agent\` command and warm it if necessary.\n`,
     );
   }
   return null;

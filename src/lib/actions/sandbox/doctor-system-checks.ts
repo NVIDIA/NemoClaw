@@ -178,30 +178,23 @@ export function ollamaDoctorCheck(
   currentProvider: string,
   deps: OllamaDoctorCheckDeps = {},
 ): DoctorCheck {
-  const { endpoint, output, valid } = probeOllamaHostInventory(deps);
+  const { endpoint, inventory } = probeOllamaHostInventory(deps);
   const required = currentProvider === "ollama-local";
-  if (!output || !valid) {
+  if (inventory === null) {
     return {
       group: "Local services",
       label: "Ollama",
       status: required ? "fail" : "info",
-      detail: output ? `invalid response from ${endpoint}` : `not reachable at ${endpoint}`,
+      detail: `not reachable or invalid response at ${endpoint}`,
       hint: required ? "start Ollama or change the sandbox inference provider" : undefined,
     };
   }
 
-  let modelCount = "unknown model count";
-  try {
-    const parsed = JSON.parse(output);
-    if (Array.isArray(parsed.models)) modelCount = `${parsed.models.length} model(s)`;
-  } catch {
-    /* keep generic detail */
-  }
   return {
     group: "Local services",
     label: "Ollama",
     status: "ok",
-    detail: `reachable at ${endpoint} (${modelCount})`,
+    detail: `reachable at ${endpoint} (${inventory.length} model(s))`,
   };
 }
 
