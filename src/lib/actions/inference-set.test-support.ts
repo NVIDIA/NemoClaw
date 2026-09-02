@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import type { ValidationResult } from "../inference/local";
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import type { InferenceSetDeps } from "./inference-set";
 import type { EnsureHttpsPinRuntimeAdapterFn } from "./inference-set-route-containment";
+
+type LocalValidationResult = ReturnType<InferenceSetDeps["validateLocalProvider"]>;
 
 export const OPENCLAW_TARGET: AgentConfigTarget = {
   agentName: "openclaw",
@@ -165,7 +166,7 @@ export function createDeps(options: {
   session?: Session | null;
   openshellStatus?: number;
   captureOpenshell?: InferenceSetDeps["captureOpenshell"];
-  localValidation?: ValidationResult;
+  localValidation?: LocalValidationResult;
   localReachable?: boolean;
   contextWindow?: number | null;
   shieldsMutable?: boolean;
@@ -232,7 +233,9 @@ export function createDeps(options: {
     }),
     appendAuditEntry: vi.fn(),
     log: vi.fn(),
-    validateLocalProvider: vi.fn((): ValidationResult => options.localValidation ?? { ok: true }),
+    validateLocalProvider: vi.fn(
+      (): LocalValidationResult => options.localValidation ?? { ok: true },
+    ),
     ensureLocalProviderReachable: vi.fn(() => options.localReachable ?? true),
     resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
       options.contextWindow === undefined ? null : options.contextWindow,
