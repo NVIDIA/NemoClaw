@@ -104,11 +104,11 @@ function advisorTools(runImplementation?: OpenShellTools["run"]): OpenShellTools
           switch (`${command} ${args.join(" ")}`) {
             case "which openshell-sandbox":
               return "/trusted/bin/openshell-sandbox";
-            case "openshell gateway info -o json":
+            case "openshell status -o json":
               return JSON.stringify({
                 gateway: "pr-review-advisor",
                 server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
-                status: "healthy",
+                status: "connected",
               });
             default:
               return "";
@@ -1041,7 +1041,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(calls).toContainEqual([
       "openshell",
-      ["gateway", "info", "-o", "json"],
+      ["status", "-o", "json"],
       expect.objectContaining({ capture: true, timeout: 10_000 }),
     ]);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();

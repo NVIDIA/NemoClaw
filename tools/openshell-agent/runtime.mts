@@ -302,7 +302,7 @@ function gatewayExitError(exit: OpenShellProcessExit): OpenShellAgentError {
   );
 }
 
-function assertExpectedGatewayInfo(output: string, endpoint: URL, gatewayId: string): void {
+function assertExpectedGatewayStatus(output: string, endpoint: URL, gatewayId: string): void {
   let value: unknown;
   try {
     value = JSON.parse(output);
@@ -318,7 +318,7 @@ function assertExpectedGatewayInfo(output: string, endpoint: URL, gatewayId: str
   } catch {
     serverOrigin = undefined;
   }
-  if (info.gateway !== gatewayId || serverOrigin !== endpoint.origin || info.status !== "healthy")
+  if (info.gateway !== gatewayId || serverOrigin !== endpoint.origin || info.status !== "connected")
     throw new OpenShellAgentError("OpenShell gateway health response did not match the owned endpoint");
 }
 
@@ -378,12 +378,12 @@ function startOpenShellGateway(
       for (let attempt = 0; attempt < 30; attempt += 1) {
         if (exited) throw gatewayExitError(exited);
         try {
-          const info = tools.run("openshell", ["gateway", "info", "-o", "json"], {
+          const info = tools.run("openshell", ["status", "-o", "json"], {
             capture: true,
             env: commandEnv,
             timeout: 10_000,
           });
-          assertExpectedGatewayInfo(info, gatewayEndpoint, input.gatewayId);
+          assertExpectedGatewayStatus(info, gatewayEndpoint, input.gatewayId);
           await tools.wait(50);
           if (exited) throw gatewayExitError(exited);
           if (!gatewayIsRunning())

@@ -800,18 +800,22 @@ describe("post-merge documentation runner", () => {
   it("enables bind mounts before creating a reviewer sandbox", async () => {
     const input = runnerFixture("review");
     const responses = new Map([["which", "/trusted/bin/openshell-sandbox"]]);
+    const stopGateway = Object.assign(vi.fn(async () => undefined), {
+      exit: new Promise<never>(() => undefined),
+      isRunning: () => true,
+    });
     const tools: OpenShellTools = {
       run: vi.fn((command, args, options) =>
-        args.join(" ") === "gateway info -o json"
+        args.join(" ") === "status -o json"
           ? JSON.stringify({
-              gateway: options.env.OPENSHELL_GATEWAY_ENDPOINT,
+              gateway: "post-merge-docs",
               server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
-              status: "healthy",
+              status: "connected",
             })
           : (responses.get(command) ?? ""),
       ),
       runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
-      start: vi.fn(),
+      start: vi.fn(() => stopGateway),
       wait: async () => undefined,
     };
     await configurePostMergeDocs(input.env, tools);

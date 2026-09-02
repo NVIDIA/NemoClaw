@@ -1271,11 +1271,11 @@ describe("PR Review Advisor repair Phase 1", () => {
         switch (`${command} ${args.join(" ")}`) {
           case "which openshell-sandbox":
             return "/trusted/openshell-sandbox";
-          case "openshell gateway info -o json":
+          case "openshell status -o json":
             return JSON.stringify({
               gateway: "phase1-validation",
               server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
-              status: "healthy",
+              status: "connected",
             });
           default:
             return "";
@@ -1326,11 +1326,11 @@ describe("PR Review Advisor repair Phase 1", () => {
         switch (`${command} ${args.join(" ")}`) {
           case "which openshell-sandbox":
             return "/trusted/openshell-sandbox";
-          case "openshell gateway info -o json":
+          case "openshell status -o json":
             return JSON.stringify({
               gateway: "phase1-validation",
               server: endpoint,
-              status: "healthy",
+              status: "connected",
             });
           default:
             return "";

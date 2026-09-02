@@ -91,11 +91,11 @@ function resolverTools(outputs: string[] = []): ResolverTools {
   }) satisfies OpenShellStop;
   return {
     run: vi.fn((_command, args, options) =>
-      args.join(" ") === "gateway info -o json"
+      args.join(" ") === "status -o json"
         ? JSON.stringify({
             gateway: "pr-conflict-fixer",
             server: options.env.OPENSHELL_GATEWAY_ENDPOINT,
-            status: "healthy",
+            status: "connected",
           })
         : (outputs.shift() ?? ""),
     ),
@@ -584,12 +584,10 @@ describe("PR merge conflict fixer", () => {
     );
     expect(run.mock.calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(stopGateway).not.toHaveBeenCalled();
-    const gatewayInfoCalls = run.mock.calls.filter(
-      ([, args]) => args[0] === "gateway" && args[1] === "info",
-    );
-    expect(gatewayInfoCalls).toHaveLength(1);
-    expect(gatewayInfoCalls[0]?.[1]).toEqual(["gateway", "info", "-o", "json"]);
-    expect(gatewayInfoCalls[0]?.[2]).toMatchObject({ capture: true, timeout: 10_000 });
+    const gatewayStatusCalls = run.mock.calls.filter(([, args]) => args[0] === "status");
+    expect(gatewayStatusCalls).toHaveLength(1);
+    expect(gatewayStatusCalls[0]?.[1]).toEqual(["status", "-o", "json"]);
+    expect(gatewayStatusCalls[0]?.[2]).toMatchObject({ capture: true, timeout: 10_000 });
     expect(
       run.mock.calls.map(([command, args]) => [command, ...args].join(" ")).join("\n"),
     ).not.toContain("provider-secret");
