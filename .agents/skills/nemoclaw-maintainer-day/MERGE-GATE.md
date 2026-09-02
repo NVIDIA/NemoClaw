@@ -7,9 +7,8 @@ Approve only when the trusted checker passes and all maintainer judgments pass f
 
 ## Stabilize the commit under review
 
-Follow [PR follow-up](../_shared/pr-follow-up.md) before manual review or the trusted checker. Wait
-for required CI, CodeRabbit, every scheduled Advisor specialist, and the complete Advisor writeup
-for one unchanged latest PR commit. A first-time fork check-approval review is the only exception.
+Complete [PR follow-up](../_shared/pr-follow-up.md) successfully for one unchanged latest PR commit
+before manual review or the trusted checker. A first-time fork check-approval review is the only exception.
 
 Do not integrate the base branch while this evidence is pending. If the stable candidate is behind
 after every other finding settles, integrate the base once, restart PR follow-up, and review the new

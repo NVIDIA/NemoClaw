@@ -37,9 +37,8 @@ The first script selects the target version. The second lists shipped and open i
 
 ## Step 2: Pick One Action
 
-Before selecting an action, follow [PR follow-up](../_shared/pr-follow-up.md) for the latest PR
-commit. Defer a PR whose required CI, CodeRabbit review, Advisor specialists, or complete Advisor
-writeup is pending. Do not begin human review or push a repair for that candidate.
+Before selecting an action, complete [PR follow-up](../_shared/pr-follow-up.md) successfully for one
+unchanged latest PR commit. Do not begin human review or push a repair before that collection completes.
 
 Select the first applicable action for an open item:
 

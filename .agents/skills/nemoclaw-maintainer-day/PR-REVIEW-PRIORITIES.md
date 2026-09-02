@@ -24,9 +24,8 @@ current diff and repository evidence while evaluating these gates and expectatio
 
 ## Manual review inputs
 
-Before manual review, complete the shared [PR follow-up](../_shared/pr-follow-up.md) collection for
-one unchanged latest PR commit. Defer the PR while required automated evidence is pending. A
-first-time fork check-approval review is the only exception.
+Before manual review, complete shared [PR follow-up](../_shared/pr-follow-up.md) successfully for one
+unchanged latest PR commit. A first-time fork check-approval review is the only exception.
 
 The PR Review Advisor provides review input. It does not authorize a merge.
 Read its comment and verify each claim against code, tests, and workflow evidence.

@@ -24,7 +24,8 @@
     "ground_truth": "An open-PR update requires complete review collection for one stable latest PR commit before trusted-base refresh, direct validation, and push.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Waits for required CI, CodeRabbit, every scheduled Advisor specialist, and the complete Advisor writeup for one unchanged latest PR commit.",
+      "Waits for required CI, CodeRabbit, and every scheduled Advisor specialist to reach a terminal state for one unchanged latest PR commit; collects each specialist review from its job summary or artifact instead of waiting for an aggregate writeup.",
+      "Treats a failed Advisor specialist or missing review artifact as terminal evidence that blocks successful collection.",
       "Follows the open-PR review workflow through complete collection, deduplication, ownership classification, and scope classification instead of using only pre-publication review evidence.",
       "Stops while a finding is unclassified, an unresolved finding requires a change, a required review is pending, or the remote `headRefOid` changes from the reviewed value.",
       "Routes an accepted code-changing finding to `nemoclaw-contributor-implement-issue`, receives its change and test evidence without a push, then resumes this skill's publication gates.",
@@ -68,6 +69,18 @@
       "Classifies the failed check as candidate-owned, groups it by root cause, and routes the in-scope repair to `nemoclaw-contributor-implement-issue`.",
       "Keeps the PR draft and blocks publication until all required evidence for the failed candidate has settled.",
       "After the implementation workflow returns, applies the trusted validation and guarded publication gates without treating the shared contract as a repair or publication owner."
+    ]
+  },
+  {
+    "id": "positive-routed-review-repair-with-scope",
+    "question": "The completed review of my open NemoClaw PR found one in-scope defect. Route the repair and update the PR.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A review repair needs the original PR objective, accepted scope, deferred scope, and complete root-cause group so the implementation workflow can verify that the repair remains in scope.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and preserves the complete disposition record from the stable candidate.",
+      "Passes the original PR objective, accepted scope, deferred scope, and complete accepted root-cause group to `nemoclaw-contributor-implement-issue`.",
+      "Requires the implementation workflow to make the local repair, validate it, and return change and test evidence without publication.",
+      "Resumes trusted validation and guarded publication in `nemoclaw-contributor-create-pr` without assigning repair or push authority to the shared contract."
     ]
   },
   {
