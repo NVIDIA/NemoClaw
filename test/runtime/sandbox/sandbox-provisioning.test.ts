@@ -1313,7 +1313,7 @@ describe("Hermes sandbox provisioning", () => {
           )} ${path.join(hermesDir, "gateway")} ${path.join(hermesDir, "runtime")}`,
         );
         const historyPath = path.join(hermesDir, ".hermes_history");
-        expect(run.calls).toContain(`chown gateway:sandbox ${historyPath}`);
+        expect(run.calls).toContain(`chown sandbox:sandbox ${historyPath}`);
         expect((fs.statSync(historyPath).mode & 0o777).toString(8)).toBe("660");
       });
     } finally {

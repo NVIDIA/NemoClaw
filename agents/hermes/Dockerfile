@@ -1203,7 +1203,7 @@ RUN set -eu; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
     done \
     && : > /sandbox/.hermes/.hermes_history \
-    && chown gateway:sandbox /sandbox/.hermes/.hermes_history \
+    && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
 # Exercise the real reviewed lazy installer under the sandbox identity, then
