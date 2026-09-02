@@ -59,15 +59,15 @@ import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   MAX_ONBOARD_LOCK_BYTES,
   openRegularFileNoFollow,
+  reclaimStaleMcpLifecycleLockGenerationSync,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
-  withOnboardLockReclamationGuard,
   type RecordRetainedSandboxRecoveryInput,
+  type LockObservation,
   type OnboardLockDisposition,
   type OnboardLockRecord,
-  type OnboardLockReclamationGuardContention,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
 } from "./onboard-session/index";
@@ -92,7 +92,6 @@ const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
-const LOCK_RECLAMATION_GUARD_FILE = path.join(SESSION_DIR, "onboard.lock.reclamation-guard");
 export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
 const LEGACY_STATE_MIGRATION_LOCK = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
@@ -353,7 +352,6 @@ export interface LockResult {
   holderProvenance?: "foreign" | "local" | "unknown";
   holderHostIdentity?: string | null;
   holderPidNamespaceIdentity?: string | null;
-  reclamationGuard?: OnboardLockReclamationGuardContention;
 }
 
 export interface OnboardLockContentionDescription {
@@ -366,39 +364,6 @@ function quotedIdentity(value: string): string {
 }
 
 export function describeOnboardLockContention(lock: LockResult): OnboardLockContentionDescription {
-  if (lock.reclamationGuard) {
-    const { cleanupFailure, guardFile, owner } = lock.reclamationGuard;
-    const ownerDetails = owner
-      ? [
-          `owner PID ${String(owner.pid)}`,
-          owner.hostIdentity ? `host ${quotedIdentity(owner.hostIdentity)}` : null,
-          owner.pidNamespaceIdentity
-            ? `PID namespace ${quotedIdentity(owner.pidNamespaceIdentity)}`
-            : null,
-          `acquired ${quotedIdentity(owner.acquiredAt)}`,
-        ]
-          .filter((detail): detail is string => detail !== null)
-          .join(", ")
-      : "owner identity unavailable";
-    if (cleanupFailure) {
-      return {
-        reason: `Cleanup of onboarding lock reclamation guard artifact '${guardFile}' failed (${ownerDetails}).`,
-        remediation:
-          "Let the reported NemoClaw process exit, then retry. If the artifact remains, confirm " +
-          "on its reported host and PID namespace that the owner no longer uses it. Do not " +
-          "remove the artifact if you cannot confirm this; ask that host's administrator to " +
-          `resolve '${guardFile}'.`,
-      };
-    }
-    return {
-      reason: `Onboarding lock reclamation guard '${guardFile}' is blocking this operation (${ownerDetails}).`,
-      remediation:
-        "Wait briefly and retry. If the guard remains, confirm on its reported host and PID " +
-        "namespace that the owner no longer uses it. Do not remove the guard if you cannot " +
-        `confirm this; ask that host's administrator to resolve '${guardFile}', then retry.`,
-    };
-  }
-
   if (lock.holderIdentityVerified === false) {
     const recordedPid =
       lock.holderPid === undefined ? "an unknown PID" : `PID ${String(lock.holderPid)}`;
@@ -1437,7 +1402,7 @@ export function clearSession(): void {
 
 interface LockFileSnapshot {
   disposition: OnboardLockDisposition;
-  inode: bigint;
+  observation: LockObservation;
 }
 
 function readLockFileSnapshot(): LockFileSnapshot {
@@ -1453,13 +1418,28 @@ function readLockFileSnapshot(): LockFileSnapshot {
         (error.message.startsWith("regular file changed") ||
           error.message.startsWith("short read from regular file"))
       ) {
-        return { disposition: { state: "settling" }, inode: BigInt(stat.ino) };
+        return {
+          disposition: { state: "settling" },
+          observation: {
+            owner: null,
+            mtimeMs: stat.mtimeMs,
+            dev: stat.dev,
+            ino: stat.ino,
+            reclaimable: true,
+          },
+        };
       }
       throw error;
     }
     return {
       disposition: classifyOnboardLockContents(contents, stat.mtimeMs),
-      inode: BigInt(stat.ino),
+      observation: {
+        owner: null,
+        mtimeMs: stat.mtimeMs,
+        dev: stat.dev,
+        ino: stat.ino,
+        reclaimable: true,
+      },
     };
   } finally {
     lockFile.close();
@@ -1528,20 +1508,10 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
 
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
-  const guarded = withOnboardLockReclamationGuard(LOCK_RECLAMATION_GUARD_FILE, () =>
-    acquireOnboardLockWhileGuarded(command),
-  );
-  return guarded.status === "completed"
-    ? guarded.value
-    : {
-        acquired: false,
-        lockFile: LOCK_FILE,
-        stale: false,
-        reclamationGuard: guarded.contention,
-      };
+  return acquireOnboardLockGeneration(command);
 }
 
-function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
+function acquireOnboardLockGeneration(command: string | null): LockResult {
   const payload = JSON.stringify(
     createOnboardLockRecord(typeof command === "string" ? command : null, new Date().toISOString()),
     null,
@@ -1584,7 +1554,7 @@ function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
         }
         throw readError;
       }
-      const { disposition, inode: staleInode } = snapshot;
+      const { disposition, observation } = snapshot;
       if (disposition.state === "settling") {
         continue;
       }
@@ -1603,13 +1573,15 @@ function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
         };
       }
 
-      // Stale: unlink ONLY if the file on disk is still the same inode
-      // we just read. If a concurrent process already cleaned up and
-      // claimed the lock, the inode will have changed and we'll fall
-      // through to the next iteration where openSync(wx) will either
-      // succeed (we win) or fail EEXIST against the new holder (and we
-      // re-read it).
-      unlinkIfInodeMatches(LOCK_FILE, staleInode);
+      // Atomically move the canonical path, then verify the exact observed
+      // generation before deleting it. A replacement raced into the path is
+      // restored without overwriting a newer owner.
+      reclaimStaleMcpLifecycleLockGenerationSync(
+        LOCK_FILE,
+        observation,
+        undefined,
+        MAX_ONBOARD_LOCK_BYTES,
+      );
       continue;
     }
 
@@ -1653,41 +1625,6 @@ function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
   }
 
   return { acquired: false, lockFile: LOCK_FILE, stale: true };
-}
-
-/**
- * Unlink LOCK_FILE only if its current inode equals `expectedInode`.
- * The dual stat-then-unlink is the only portable POSIX primitive Node
- * exposes for this — there's no atomic "unlink-if-inode" syscall — so
- * a sufficiently unlucky race can still slip through. The window is
- * orders of magnitude smaller than the unconditional unlink it
- * replaces, and the outer loop will detect a wrong unlink on its next
- * `writeFileSync(wx)` attempt because either we re-create the file
- * or we observe the new lock with a different inode.
- */
-function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): void {
-  if (expectedInode === null) {
-    return;
-  }
-  try {
-    const stat = fs.statSync(filePath, { bigint: true });
-    if (stat.ino !== expectedInode) {
-      // Someone else replaced the file. Leave it alone.
-      return;
-    }
-  } catch (statError) {
-    if (isErrnoException(statError) && statError.code === "ENOENT") {
-      return;
-    }
-    throw statError;
-  }
-  try {
-    fs.unlinkSync(filePath);
-  } catch (unlinkError) {
-    if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
-      throw unlinkError;
-    }
-  }
 }
 
 export function releaseOnboardLock(): void {
@@ -1754,7 +1691,12 @@ export function releaseOnboardLock(): void {
     }
     if (snapshot.disposition.state !== "held") return;
     if (snapshot.disposition.record.pid !== process.pid) return;
-    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
+    reclaimStaleMcpLifecycleLockGenerationSync(
+      LOCK_FILE,
+      snapshot.observation,
+      undefined,
+      MAX_ONBOARD_LOCK_BYTES,
+    );
   } catch {
     return;
   }

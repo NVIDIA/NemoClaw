@@ -247,39 +247,6 @@ describe("rebuild preflight guards", () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it("reports the guard path and says not to remove a foreign reclamation guard", () => {
-    const guardFile = "/tmp/onboard.lock.reclamation-guard";
-    vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
-      acquired: false,
-      lockFile: "/tmp/nemoclaw-onboard.lock",
-      stale: false,
-      reclamationGuard: {
-        guardFile,
-        owner: {
-          pid: 4242,
-          processIdentity: "foreign-process",
-          hostIdentity: "foreign-host",
-          pidNamespaceIdentity: "pid:[4242]",
-          acquiredAt: "2026-09-02T00:00:00.000Z",
-        },
-      },
-    });
-    const release = vi
-      .spyOn(onboardSession, "releaseOnboardLock")
-      .mockImplementation(() => undefined);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
-
-    expect(acquireRebuildOnboardLock("alpha", bail)).toBeNull();
-
-    const output = error.mock.calls.flat().join("\n");
-    expect(output).toContain(guardFile);
-    expect(output).toContain("owner PID 4242");
-    expect(output).toContain("Do not remove the guard if you cannot confirm this");
-    expect(output).not.toContain("another nemoclaw onboarding run");
-    expect(release).not.toHaveBeenCalled();
-  });
-
   it("rejects a multi-agent sandbox before later rebuild work", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bail = (message: string): never => {

@@ -17,12 +17,12 @@ export { resolveNemoclawStateDir } from "./paths";
 
 export const MCP_LIFECYCLE_LOCK_DIRNAME = "mcp-lifecycle-locks";
 
-export class McpLifecycleLockObservationTooLargeError extends Error {
+export class LockObservationTooLargeError extends Error {
   readonly lockPath: string;
 
   constructor(lockPath: string, maxBytes: number) {
-    super(`Lifecycle lock '${lockPath}' exceeds the ${String(maxBytes)}-byte observation limit.`);
-    this.name = "McpLifecycleLockObservationTooLargeError";
+    super(`Lock '${lockPath}' exceeds the ${String(maxBytes)}-byte observation limit.`);
+    this.name = "LockObservationTooLargeError";
     this.lockPath = lockPath;
   }
 }
@@ -149,7 +149,7 @@ export function readMcpLifecycleLockObservationSync(
       };
     }
     if (stat.size > maxBytes) {
-      throw new McpLifecycleLockObservationTooLargeError(lockPath, maxBytes);
+      throw new LockObservationTooLargeError(lockPath, maxBytes);
     }
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
@@ -205,19 +205,10 @@ export async function safelyReleaseMcpLifecycleLock(
   await reclaimStaleMcpLifecycleLockGeneration(lockPath, observation);
 }
 
-export function safelyReleaseMcpLifecycleLockSync(
-  lockPath: string,
-  token: string,
-  maxObservationBytes = Number.POSITIVE_INFINITY,
-): void {
-  const observation = readMcpLifecycleLockObservationSync(lockPath, maxObservationBytes);
+export function safelyReleaseMcpLifecycleLockSync(lockPath: string, token: string): void {
+  const observation = readMcpLifecycleLockObservationSync(lockPath);
   if (!observation || observation.owner?.token !== token) return;
-  reclaimStaleMcpLifecycleLockGenerationSync(
-    lockPath,
-    observation,
-    undefined,
-    maxObservationBytes,
-  );
+  reclaimStaleMcpLifecycleLockGenerationSync(lockPath, observation);
 }
 
 async function restoreClaimedMcpLifecycleLockGeneration(
@@ -308,6 +299,9 @@ export function reclaimStaleMcpLifecycleLockGenerationSync(
     claimed = readMcpLifecycleLockObservationSync(quarantinePath, maxObservationBytes);
   } catch (error) {
     restoreClaimedMcpLifecycleLockGenerationSync(targetPath, quarantinePath);
+    if (error instanceof LockObservationTooLargeError) {
+      throw new LockObservationTooLargeError(targetPath, maxObservationBytes);
+    }
     throw error;
   }
   const expectedToken = expected.owner?.token ?? null;
@@ -377,8 +371,6 @@ export async function writeMcpLifecycleLockCandidateAndLink(
 export function writeMcpLifecycleLockCandidateAndLinkSync(
   lockPath: string,
   owner: McpLifecycleLockOwner,
-  maxObservationBytes = Number.POSITIVE_INFINITY,
-  onCandidateCleanupFailure?: (candidatePath: string) => void,
 ): boolean {
   const candidatePath = `${lockPath}.candidate-${process.pid}-${owner.token}`;
   try {
@@ -394,7 +386,7 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
       return true;
     } catch (error) {
       const candidateStat = fs.statSync(candidatePath);
-      const published = readMcpLifecycleLockObservationSync(lockPath, maxObservationBytes);
+      const published = readMcpLifecycleLockObservationSync(lockPath);
       if (candidateStat.nlink >= 2 && published?.owner?.token === owner.token) {
         return true;
       }
@@ -406,7 +398,6 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
       fs.rmSync(candidatePath, { force: true });
     } catch {
       // Publication is decided only by LINK plus owner-token reconciliation.
-      onCandidateCleanupFailure?.(candidatePath);
     }
   }
 }

@@ -255,32 +255,25 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("owns the session lock"));
   });
 
-  it("identifies reclamation-guard contention before preserving router recovery", async () => {
-    const guardFile = "/tmp/onboard.lock.reclamation-guard";
+  it("identifies foreign lock contention before preserving router recovery", async () => {
+    const lockFile = "/tmp/onboard.lock";
     const { deps } = createDeps({
       acquireOnboardLock: vi.fn(() => ({
         acquired: false,
-        lockFile: "/tmp/onboard.lock",
+        lockFile,
         stale: false,
-        reclamationGuard: {
-          guardFile,
-          owner: {
-            pid: 4242,
-            processIdentity: "foreign-process",
-            hostIdentity: "foreign-host",
-            pidNamespaceIdentity: "pid:[4242]",
-            acquiredAt: "2026-09-02T00:00:00.000Z",
-          },
-        },
+        holderPid: 4242,
+        holderIdentityVerified: false,
+        holderProvenance: "foreign" as const,
+        holderHostIdentity: "foreign-host",
+        holderPidNamespaceIdentity: "pid:[4242]",
       })),
     });
 
     await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
 
-    expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining(guardFile));
-    expect(deps.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Do not remove the guard if you cannot confirm this"),
-    );
+    expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining(lockFile));
+    expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining("different host"));
     expect(deps.stopProcess).not.toHaveBeenCalled();
   });
 
