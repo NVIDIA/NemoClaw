@@ -379,8 +379,8 @@ export function describeOnboardLockContention(lock: LockResult): OnboardLockCont
     return {
       reason: `Onboarding lock reclamation guard '${guardFile}' is blocking this operation (${ownerDetails}).`,
       remediation:
-        "Wait briefly and retry. If the guard remains, stop the identified owner, or prove it " +
-        `is obsolete before removing only '${guardFile}', then retry.`,
+        "Wait briefly and retry. If the guard remains, verify its owner and prove the guard is " +
+        `obsolete before removing only '${guardFile}'. Then retry.`,
     };
   }
 

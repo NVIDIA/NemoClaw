@@ -12,6 +12,7 @@ import {
   type LockObservation,
 } from "../mcp-lifecycle-lock-identity";
 import {
+  McpLifecycleLockObservationTooLargeError,
   readMcpLifecycleLockObservationSync,
   reclaimStaleMcpLifecycleLockGenerationSync,
   safelyReleaseMcpLifecycleLockSync,
@@ -63,6 +64,24 @@ function describeContention(
         }
       : {}),
   };
+}
+
+type GuardObservationResult =
+  | { readonly status: "read"; readonly observation: LockObservation | null }
+  | { readonly status: "blocked"; readonly contention: OnboardLockReclamationGuardContention };
+
+function readGuardObservation(guardFile: string): GuardObservationResult {
+  try {
+    return {
+      status: "read",
+      observation: readMcpLifecycleLockObservationSync(guardFile, MAX_GUARD_ARTIFACT_BYTES),
+    };
+  } catch (error) {
+    if (error instanceof McpLifecycleLockObservationTooLargeError) {
+      return { status: "blocked", contention: describeContention(error.lockPath, null) };
+    }
+    throw error;
+  }
 }
 
 function escapeRegExp(value: string): string {
@@ -122,7 +141,9 @@ function reconcileGuardArtifacts(guardPath: string): OnboardLockReclamationGuard
       return describeContention(artifactPath, null);
     }
 
-    const observation = readMcpLifecycleLockObservationSync(artifactPath);
+    const observed = readGuardObservation(artifactPath);
+    if (observed.status === "blocked") return observed.contention;
+    const { observation } = observed;
     if (observation === null) continue;
     const owner = observation.owner;
     if (
@@ -166,7 +187,20 @@ export function withOnboardLockReclamationGuard<T>(
   for (let attempt = 0; attempt < MAX_GUARD_ACQUIRE_ATTEMPTS; attempt++) {
     const token = randomUUID();
     const owner = createMcpLifecycleLockOwner(ONBOARD_RECLAMATION_GUARD_OWNER, token);
-    if (writeMcpLifecycleLockCandidateAndLinkSync(guardPath, owner)) {
+    let acquired: boolean;
+    try {
+      acquired = writeMcpLifecycleLockCandidateAndLinkSync(
+        guardPath,
+        owner,
+        MAX_GUARD_ARTIFACT_BYTES,
+      );
+    } catch (error) {
+      if (error instanceof McpLifecycleLockObservationTooLargeError) {
+        return { status: "blocked", contention: describeContention(error.lockPath, null) };
+      }
+      throw error;
+    }
+    if (acquired) {
       try {
         return { status: "completed", value: operation() };
       } finally {
@@ -174,7 +208,9 @@ export function withOnboardLockReclamationGuard<T>(
       }
     }
 
-    const observation = readMcpLifecycleLockObservationSync(guardPath);
+    const observed = readGuardObservation(guardPath);
+    if (observed.status === "blocked") return observed;
+    const { observation } = observed;
     if (observation === null) continue;
     const disposition = classifyMcpLifecycleLock(
       observation,
@@ -191,8 +227,8 @@ export function withOnboardLockReclamationGuard<T>(
     reclaimStaleMcpLifecycleLockGenerationSync(guardPath, observation);
   }
 
-  return {
-    status: "blocked",
-    contention: describeContention(guardPath, readMcpLifecycleLockObservationSync(guardPath)),
-  };
+  const observed = readGuardObservation(guardPath);
+  return observed.status === "blocked"
+    ? observed
+    : { status: "blocked", contention: describeContention(guardPath, observed.observation) };
 }

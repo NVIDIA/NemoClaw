@@ -17,6 +17,16 @@ export { resolveNemoclawStateDir } from "./paths";
 
 export const MCP_LIFECYCLE_LOCK_DIRNAME = "mcp-lifecycle-locks";
 
+export class McpLifecycleLockObservationTooLargeError extends Error {
+  readonly lockPath: string;
+
+  constructor(lockPath: string, maxBytes: number) {
+    super(`Lifecycle lock '${lockPath}' exceeds the ${String(maxBytes)}-byte observation limit.`);
+    this.name = "McpLifecycleLockObservationTooLargeError";
+    this.lockPath = lockPath;
+  }
+}
+
 function lockFileStem(sandboxName: string): string {
   // Hashing makes the filesystem key traversal-safe even if a caller reaches
   // the lock before the command's normal sandbox-name validation.
@@ -97,7 +107,10 @@ export async function readMcpLifecycleLockObservation(
   }
 }
 
-export function readMcpLifecycleLockObservationSync(lockPath: string): LockObservation | null {
+export function readMcpLifecycleLockObservationSync(
+  lockPath: string,
+  maxBytes = Number.POSITIVE_INFINITY,
+): LockObservation | null {
   let fd: number;
   try {
     fd = fs.openSync(
@@ -134,6 +147,9 @@ export function readMcpLifecycleLockObservationSync(lockPath: string): LockObser
         ino: stat.ino,
         reclaimable: !stat.isDirectory(),
       };
+    }
+    if (stat.size > maxBytes) {
+      throw new McpLifecycleLockObservationTooLargeError(lockPath, maxBytes);
     }
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
@@ -345,6 +361,7 @@ export async function writeMcpLifecycleLockCandidateAndLink(
 export function writeMcpLifecycleLockCandidateAndLinkSync(
   lockPath: string,
   owner: McpLifecycleLockOwner,
+  maxObservationBytes = Number.POSITIVE_INFINITY,
 ): boolean {
   const candidatePath = `${lockPath}.candidate-${process.pid}-${owner.token}`;
   try {
@@ -360,7 +377,7 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
       return true;
     } catch (error) {
       const candidateStat = fs.statSync(candidatePath);
-      const published = readMcpLifecycleLockObservationSync(lockPath);
+      const published = readMcpLifecycleLockObservationSync(lockPath, maxObservationBytes);
       if (candidateStat.nlink >= 2 && published?.owner?.token === owner.token) {
         return true;
       }

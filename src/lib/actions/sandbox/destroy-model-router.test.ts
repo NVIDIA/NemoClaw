@@ -279,7 +279,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
     expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining(guardFile));
     expect(deps.warn).toHaveBeenCalledWith(
-      expect.stringContaining("prove it is obsolete before removing only"),
+      expect.stringContaining("prove the guard is obsolete before removing only"),
     );
     expect(deps.stopProcess).not.toHaveBeenCalled();
   });

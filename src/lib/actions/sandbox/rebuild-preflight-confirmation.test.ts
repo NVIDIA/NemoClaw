@@ -221,7 +221,7 @@ describe("rebuild preflight guards", () => {
     expect(output).not.toContain("remove the stale lock");
   });
 
-  it("identifies a foreign reclamation guard and its conservative recovery path", () => {
+  it("reports the guard path and safe recovery guidance for a foreign reclamation guard", () => {
     const guardFile = "/tmp/onboard.lock.reclamation-guard";
     vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
       acquired: false,
@@ -249,7 +249,7 @@ describe("rebuild preflight guards", () => {
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain(guardFile);
     expect(output).toContain("owner PID 4242");
-    expect(output).toContain("prove it is obsolete before removing only");
+    expect(output).toContain("prove the guard is obsolete before removing only");
     expect(output).not.toContain("another nemoclaw onboarding run");
     expect(release).not.toHaveBeenCalled();
   });

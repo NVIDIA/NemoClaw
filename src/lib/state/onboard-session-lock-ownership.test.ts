@@ -172,9 +172,25 @@ describe("onboard lock ownership", () => {
     expect(session.describeOnboardLockContention(result)).toEqual({
       reason: expect.stringContaining(`reclamation guard '${guardFile}'`),
       remediation:
-        "Wait briefly and retry. If the guard remains, stop the identified owner, or prove it " +
-        `is obsolete before removing only '${guardFile}', then retry.`,
+        "Wait briefly and retry. If the guard remains, verify its owner and prove the guard is " +
+        `obsolete before removing only '${guardFile}'. Then retry.`,
     });
+  });
+
+  it("reports an oversized canonical reclamation guard without reading its body (#10779)", () => {
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+    fs.writeFileSync(guardFile, "x".repeat(65_537), { mode: 0o600 });
+    const readSpy = vi.spyOn(fs, "readFileSync");
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      reclamationGuard: { guardFile },
+    });
+    expect(readSpy.mock.calls.some(([target]) => typeof target === "number")).toBe(false);
+    expect(fs.existsSync(guardFile)).toBe(true);
   });
 
   it.each(["candidate", "reclaim"] as const)(

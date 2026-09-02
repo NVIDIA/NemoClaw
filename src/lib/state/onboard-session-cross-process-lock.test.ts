@@ -252,7 +252,7 @@ describe("cross-process onboard lock", () => {
     }
   });
 
-  it("prints the exact recovery path for reclamation-guard contention", async () => {
+  it("prints the guard path and safe guidance when reclamation guard acquisition is blocked", async () => {
     const authority = await import("../onboard/portable-retirement-authority");
     const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
     const messages: string[] = [];
@@ -278,7 +278,7 @@ describe("cross-process onboard lock", () => {
       const output = messages.join("\n");
       expect(output).toContain(guardFile);
       expect(output).toContain("owner PID 4242");
-      expect(output).toContain("prove it is obsolete before removing only");
+      expect(output).toContain("prove the guard is obsolete before removing only");
       expect(output).not.toContain("Another NemoClaw onboarding run");
     } finally {
       errorSpy.mockRestore();
