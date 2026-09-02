@@ -357,7 +357,7 @@ public static class NemoClawProofVideoEncoder
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $encoderAssemblyPath -PathType Leaf)) {
         Fail-ProofVideo 'The Windows Media Foundation encoder did not compile.'
     }
-    Add-Type -Path $encoderAssemblyPath
+    [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($encoderAssemblyPath)) | Out-Null
 
     $videoName = "NemoClaw-$ProductVersion-windows-arm64-proof-$($CandidateSha.Substring(0, 12)).mp4"
     $videoPath = Join-Path $output $videoName
