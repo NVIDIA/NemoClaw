@@ -28,6 +28,7 @@ import {
 export const DELEGATED_CAPABILITY_COMMENT_PREFIX =
   "# TEST-ONLY delegated-capability marker from validated canonical OpenShell: ";
 export const TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR = "/usr/local/share/nemoclaw-e2e/weather-plugin";
+const TRUSTED_PLUGIN_RUNTIME_STAGE_DIR = "/tmp/nemoclaw-e2e-weather-plugin-runtime";
 
 export type TrustedPluginFixtureImage = {
   imageId: string;
@@ -35,6 +36,7 @@ export type TrustedPluginFixtureImage = {
 };
 
 export function createTrustedPluginFixtureDockerfile(options: {
+  crossDeviceVersionSourceName: string;
   pluginDirName: string;
   source: string;
   versionSourceName: string;
@@ -52,6 +54,9 @@ COPY ${options.pluginDirName}/openclaw.plugin.json ./
 COPY ${options.pluginDirName}/src/ ./src/
 COPY ${options.versionSourceName} ./src/version.ts
 RUN npm run build \
+    && cp -R /opt/weather/dist /opt/weather-runtime-dist
+COPY ${options.crossDeviceVersionSourceName} ./src/version.ts
+RUN npm run build \
     && npm prune --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund
 
 # Extend the completed managed runtime so its entrypoint, health check, config
@@ -68,10 +73,20 @@ COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
     /opt/weather/dist/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist/
 COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
     /opt/weather/node_modules/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/node_modules/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/package.json \
+    /opt/weather/package-lock.json \
+    /opt/weather/openclaw.plugin.json \
+    ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather-runtime-dist/ ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}/dist/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/node_modules/ ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}/node_modules/
 
 USER sandbox
-RUN HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
-    && HOME=/sandbox openclaw plugins enable weather
+RUN HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR} \
+    && HOME=/sandbox openclaw plugins enable weather \
+    && rm -rf ${TRUSTED_PLUGIN_RUNTIME_STAGE_DIR}
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.
 # The runtime test copies this fixture from OpenShell's read-only /usr policy tree
@@ -151,7 +166,7 @@ if (args[0] === "sandbox" && args[1] === "create") {
     process.stderr.write("trusted EXDEV image handoff detected an immutable identity mismatch\\n");
     process.exit(64);
   }
-  args[fromIndexes[0] + 1] = selected.imageRef;
+  args[fromIndexes[0] + 1] = selected.imageId;
 }
 const result = spawnSync(${JSON.stringify(delegated.executable)}, args, { stdio: "inherit" });
 if (result.error) throw result.error;

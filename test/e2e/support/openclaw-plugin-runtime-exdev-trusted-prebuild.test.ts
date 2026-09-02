@@ -277,12 +277,19 @@ function createWrapperFixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-test-"));
   const delegate = path.join(directory, "real-openshell");
   const imageIdPath = path.join(directory, "resolved-image-id");
+  const nextImageIdPath = path.join(directory, "next-resolved-image-id");
   const gateway = path.join(directory, "openshell-gateway");
   const sandbox = path.join(directory, "openshell-sandbox");
   fs.writeFileSync(imageIdPath, `${IMAGE_ID}\n`, { encoding: "utf8", mode: 0o600 });
   const executableSource = `#!/bin/sh
 if [ "\${1:-}" = "--version" ]; then echo 'openshell 0.0.106'; exit 0; fi
-if [ "\${1:-}" = "image" ]; then cat ${JSON.stringify(imageIdPath)}; exit 0; fi
+if [ "\${1:-}" = "image" ]; then
+  cat ${JSON.stringify(imageIdPath)}
+  if [ -f ${JSON.stringify(nextImageIdPath)} ]; then
+    mv ${JSON.stringify(nextImageIdPath)} ${JSON.stringify(imageIdPath)}
+  fi
+  exit 0
+fi
 printf '%s\\n' "$@"
 `;
   for (const executable of [delegate, gateway]) {
@@ -308,12 +315,15 @@ printf '%s\\n' "$@"
     setResolvedImageId: (imageId: string) => {
       fs.writeFileSync(imageIdPath, `${imageId}\n`, { encoding: "utf8", mode: 0o600 });
     },
+    retagAfterNextInspection: (imageId: string) => {
+      fs.writeFileSync(nextImageIdPath, `${imageId}\n`, { encoding: "utf8", mode: 0o600 });
+    },
     wrapper,
   };
 }
 
 describe("trusted EXDEV OpenShell wrapper", () => {
-  it("rewrites sandbox creation to the selected local image and injects driver config", () => {
+  it("rewrites sandbox creation to the verified image ID and injects driver config", () => {
     const fixture = createWrapperFixture();
     try {
       const imageRef = trustedExdevImageRef("wrapper-contract-v1");
@@ -330,7 +340,7 @@ describe("trusted EXDEV OpenShell wrapper", () => {
         forwarded.flatMap((argument, index) => (argument === option ? [forwarded[index + 1]] : []));
       expect(forwarded.slice(0, 2)).toEqual(["sandbox", "create"]);
       expect(valuesFor("--driver-config-json")).toEqual([DRIVER_CONFIG_JSON]);
-      expect(valuesFor("--from")).toEqual([imageRef]);
+      expect(valuesFor("--from")).toEqual([IMAGE_ID]);
       expect(valuesFor("--name")).toEqual(["demo"]);
     } finally {
       fixture.remove();
@@ -424,7 +434,29 @@ describe("trusted EXDEV OpenShell wrapper", () => {
     }
   });
 
-  it("passes the OpenShell feature gate and exposes sibling component paths", () => {
+  it("delegates the verified image ID when the selected tag changes after inspection", () => {
+    const fixture = createWrapperFixture();
+    try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.retagAfterNextInspection(`sha256:${"b".repeat(64)}`);
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const forwarded = result.stdout.trimEnd().split("\n");
+      const fromIndex = forwarded.indexOf("--from");
+      expect(forwarded[fromIndex + 1]).toBe(IMAGE_ID);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("passes the OpenShell feature gate for a coherent component set", () => {
     const fixture = createWrapperFixture();
     try {
       expect(
@@ -436,6 +468,15 @@ describe("trusted EXDEV OpenShell wrapper", () => {
           allowExternalSandboxBin: true,
         }),
       ).toBe(true);
+    } finally {
+      fixture.remove();
+    }
+    expect(fs.existsSync(fixture.wrapper.directory)).toBe(false);
+  });
+
+  it("prepends the wrapper path and sets OpenShell component variables", () => {
+    const fixture = createWrapperFixture();
+    try {
       expect(
         withOpenShellDriverConfigWrapperEnv(
           { PATH: "/usr/bin" },

@@ -631,8 +631,8 @@ The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 3. Restart the gateway and verify v1.
 4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
-The recreation remains the replacement boundary. One `tools.invoke` assertion
-per phase proves the plugin version after onboarding, restart, and recreation.
+The recreation remains the replacement boundary. `tools.invoke` assertions
+prove the plugin version after restart and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
 deterministic wrapper argument rewriting. Deterministic tests own exact package

@@ -71,8 +71,8 @@ const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
     mounts: [EXDEV_TMPFS_MOUNT_CONFIG],
   },
 });
-type WeatherFixtureVersion = "v1" | "v2";
-type WeatherRuntimeVersion = WeatherFixtureVersion | "v1-exdev";
+type WeatherFixtureVersion = "v1" | "v1-exdev" | "v2";
+type WeatherRuntimeVersion = WeatherFixtureVersion;
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -135,6 +135,7 @@ async function stopOpenShellGatewayBeforeInstall(
 }
 
 type CustomPluginBuildContext = {
+  crossDeviceVersionSourcePath: string;
   sourceParentDir: string;
   sourceRoot: string;
   dockerfilePath: string;
@@ -147,6 +148,10 @@ function createCustomPluginBuildContext(): CustomPluginBuildContext {
   const sourceParentDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-weather-plugin-"));
   const sourceRoot = path.join(sourceParentDir, "NemoClaw");
   return {
+    crossDeviceVersionSourcePath: path.join(
+      sourceRoot,
+      `e2e-weather-plugin-cross-device-version-${nonce}.ts`,
+    ),
     sourceParentDir,
     sourceRoot,
     dockerfilePath: path.join(sourceRoot, `Dockerfile.e2e-weather-plugin-${nonce}`),
@@ -196,9 +201,11 @@ function createCustomPluginDockerfile(context: CustomPluginBuildContext): void {
   const source = fs.readFileSync(sourceDockerfile, "utf8");
   stageWeatherPluginFixture(context);
   writeCustomPluginVersion(context.versionSourcePath, "v1", true);
+  writeCustomPluginVersion(context.crossDeviceVersionSourcePath, "v1-exdev", true);
   fs.writeFileSync(
     context.dockerfilePath,
     createTrustedPluginFixtureDockerfile({
+      crossDeviceVersionSourceName: path.basename(context.crossDeviceVersionSourcePath),
       pluginDirName: path.basename(context.pluginDirPath),
       source,
       versionSourceName: path.basename(context.versionSourcePath),
@@ -253,19 +260,6 @@ const crossDevicePluginInstallSource = `set -eu
 rm -rf ${EXDEV_TMPFS_SOURCE}
 mkdir -p ${EXDEV_TMPFS_SOURCE} /sandbox/.openclaw/extensions
 cp -R ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/. ${EXDEV_TMPFS_SOURCE}/
-node <<'NODE'
-const fs = require("node:fs");
-const versionPath = "${EXDEV_TMPFS_SOURCE}/dist/version.js";
-const source = fs.readFileSync(versionPath, "utf8");
-const compiledVersion = /WEATHER_FIXTURE_VERSION\\s*=\\s*["']v1["']/;
-if (!compiledVersion.test(source)) {
-  throw new Error("trusted EXDEV fixture did not contain compiled version v1");
-}
-fs.writeFileSync(
-  versionPath,
-  source.replace(compiledVersion, 'WEATHER_FIXTURE_VERSION = "v1-exdev"'),
-);
-NODE
 source_device=$(stat -c '%d' ${EXDEV_TMPFS_SOURCE})
 target_device=$(stat -c '%d' /sandbox/.openclaw/extensions)
 printf 'source_device=%s target_device=%s\n' "$source_device" "$target_device"
