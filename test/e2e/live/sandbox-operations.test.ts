@@ -36,9 +36,10 @@ import {
 } from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
-import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
+import { ubuntuRepoManagedRuntime } from "../registry/matrix.ts";
 
-const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
+const ENVIRONMENT = ubuntuRepoManagedRuntime("cloud-openclaw");
 const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
 const CREDENTIAL_PROVIDER = "e2e-sandbox-tavily";
@@ -653,32 +654,31 @@ type GatewayRecoveryOutcome =
 
 async function assertGatewayRecovery(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandboxName: string,
 ): Promise<GatewayRecoveryOutcome> {
-  const running = await host.command(
-    "docker",
-    ["ps", "-q", "--filter", `name=${GATEWAY_CONTAINER}`],
+  const running = await runtimeProvider.command(
+    ["container", "ps", "--filter", `name=^${GATEWAY_CONTAINER}$`, "--format", "{{.Names}}"],
     {
-      artifactName: "tc-sbx-06-gateway-container-running",
+      artifactName: "tc-sbx-06-gateway-runtime-resource-running",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 15_000,
     },
   );
-  if (!running.stdout.trim()) {
+  if (!running.stdout.split(/\r?\n/u).some((name) => name.trim() === GATEWAY_CONTAINER)) {
     return "skipped-gateway-absent";
   }
 
-  const kill = await host.command("docker", ["kill", GATEWAY_CONTAINER], {
-    artifactName: "tc-sbx-06-docker-kill-gateway",
+  const kill = await runtimeProvider.command(["container", "kill", GATEWAY_CONTAINER], {
+    artifactName: "tc-sbx-06-runtime-kill-gateway",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
   expectExitZero(kill, "kill shared NemoClaw gateway container");
   await new Promise((resolve) => setTimeout(resolve, 5_000));
 
-  const afterKill = await host.command(
-    "docker",
-    ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
+  const afterKill = await runtimeProvider.command(
+    ["container", "inspect", "--format", "{{.State.Running}}", GATEWAY_CONTAINER],
     {
       artifactName: "tc-sbx-06-gateway-container-after-kill",
       env: buildAvailabilityProbeEnv(),
@@ -693,9 +693,8 @@ async function assertGatewayRecovery(
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 10 * 60_000,
   });
-  const afterStatus = await host.command(
-    "docker",
-    ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
+  const afterStatus = await runtimeProvider.command(
+    ["container", "inspect", "--format", "{{.State.Running}}", GATEWAY_CONTAINER],
     {
       artifactName: "tc-sbx-06-gateway-container-after-status",
       env: buildAvailabilityProbeEnv(),
@@ -832,7 +831,16 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+  async ({
+    artifacts,
+    cleanup,
+    environment,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.target.declare({
@@ -857,7 +865,10 @@ test(
       ],
     });
 
-    await docker.requireDocker();
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-provider-info",
+      scenarioLabel: "sandbox operations",
+    });
 
     await environment.assertReady(ENVIRONMENT);
     cleanup.trackGateway(host, "nemoclaw", {
@@ -902,7 +913,7 @@ test(
     await expectListed(host, SANDBOX_A, "tc-sbx-12-survivor-listed-after-destroy-b");
     await assertAgentCanAnswer(host, SANDBOX_A, "tc-sbx-12-survivor-agent-after-destroy-b");
 
-    const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
+    const gatewayRecovery = await assertGatewayRecovery(host, runtimeProvider, SANDBOX_A);
     const finalDestroyCleanupMode =
       process.platform === "darwin" ? "macos-default" : "explicit-non-macos";
 
