@@ -7,13 +7,8 @@ import path from "node:path";
 
 import { parse as parseToml } from "smol-toml";
 
-import { openRegularFileNoFollow } from "../../../adapters/fs/regular-file";
+import { type DockerDriverGatewayDriver } from "../../../onboard/docker-driver-gateway-config";
 import {
-  type DockerDriverGatewayDriver,
-  DOCKER_DRIVER_GATEWAY_CONFIG_NAME,
-} from "../../../onboard/docker-driver-gateway-config";
-import {
-  getDockerDriverGatewayRuntimeMarkerPath,
   NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV,
   parseDockerDriverGatewayRuntimeMarker,
 } from "../../../onboard/docker-driver-gateway-runtime-marker";
@@ -24,26 +19,15 @@ import {
   readHostGatewayProcessEnvironment,
   scopedHostGatewayProcessOwnershipFailure,
 } from "../../../onboard/host-gateway-process";
-
-const MAX_GATEWAY_IDENTITY_FILE_BYTES = 64 * 1024;
+import {
+  readPrivateGatewayConfig,
+  readPrivateGatewayRuntimeMarker,
+} from "../../../state/gateway-runtime/files";
 
 function asTable(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function readOwnedGatewayFile(filePath: string): Buffer {
-  const file = openRegularFileNoFollow(filePath);
-  try {
-    const state = file.stat();
-    if ((state.mode & 0o077) !== 0) {
-      throw new Error("file is not private");
-    }
-    return file.readBytes(MAX_GATEWAY_IDENTITY_FILE_BYTES);
-  } finally {
-    file.close();
-  }
 }
 
 function configuredDriverProxyHostnameMode(configBytes: Buffer): {
@@ -90,12 +74,12 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
     home: os.homedir(),
     port: gatewayPort,
   });
-  const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
+  let configPath: string;
   let configBytes: Buffer;
   let driver: DockerDriverGatewayDriver;
   let proxyHostnameMode: unknown;
   try {
-    configBytes = readOwnedGatewayFile(configPath);
+    ({ path: configPath, bytes: configBytes } = readPrivateGatewayConfig(stateDir));
     ({ driver, proxyHostnameMode } = configuredDriverProxyHostnameMode(configBytes));
   } catch (error) {
     throw refusal(error instanceof Error ? error.message : "the gateway config is unreadable");
@@ -149,7 +133,7 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
   let marker;
   try {
     marker = parseDockerDriverGatewayRuntimeMarker(
-      readOwnedGatewayFile(getDockerDriverGatewayRuntimeMarkerPath(stateDir)).toString("utf-8"),
+      readPrivateGatewayRuntimeMarker(stateDir).bytes.toString("utf-8"),
     );
   } catch (error) {
     throw refusal(error instanceof Error ? error.message : "the runtime marker is unreadable");
