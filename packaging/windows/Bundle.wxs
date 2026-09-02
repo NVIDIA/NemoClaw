@@ -18,7 +18,7 @@
         SuppressRepair="no" />
     </BootstrapperApplication>
     <Chain>
-      <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.NemoClaw.TargetPath)" Compressed="yes" Vital="yes" />
+      <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.MsiPath)" Compressed="yes" Vital="yes" />
     </Chain>
   </Bundle>
 </Wix>

@@ -111,6 +111,10 @@ $intermediate = Join-Path $outputParent ('.windows-package-' + [guid]::NewGuid()
 [IO.Directory]::CreateDirectory($intermediate) | Out-Null
 $restorePackages = Join-Path $intermediate 'nuget'
 $wixRoot = Join-Path $sourceRoot 'packaging\windows'
+$msiName = "NemoClaw-$ProductVersion-windows-arm64.msi"
+$setupName = "NemoClawSetup-$ProductVersion-windows-arm64.exe"
+$msiPath = Join-Path $output $msiName
+$setupPath = Join-Path $output $setupName
 Push-Location $wixRoot
 try {
     $dotnetVersion = (& dotnet --version).Trim()
@@ -118,7 +122,8 @@ try {
         Fail-WindowsPackageBuild "dotnet SDK $($script:ExpectedDotNetSdk) is required."
     }
 
-    $project = Join-Path $sourceRoot 'packaging\windows\NemoClaw.Bundle.wixproj'
+    $msiProject = Join-Path $sourceRoot 'packaging\windows\NemoClaw.wixproj'
+    $bundleProject = Join-Path $sourceRoot 'packaging\windows\NemoClaw.Bundle.wixproj'
     $commonProperties = @(
         "-p:ProductVersion=$ProductVersion",
         "-p:PayloadRoot=$payload",
@@ -129,32 +134,59 @@ try {
         '-p:ContinuousIntegrationBuild=true',
         '-p:RestoreIgnoreFailedSources=false'
     )
-    $restoreArguments = @(
-        'restore', $project,
+    $msiRestoreArguments = @(
+        'restore', $msiProject,
         '--nologo',
         '--force',
         '--no-cache',
         '--packages', $restorePackages
     ) + $commonProperties
-    & dotnet @restoreArguments
+    & dotnet @msiRestoreArguments
     if ($LASTEXITCODE -ne 0) {
-        Fail-WindowsPackageBuild 'Pinned WiX dependency restore failed.'
+        Fail-WindowsPackageBuild 'Pinned WiX MSI dependency restore failed.'
+    }
+    $msiBuildArguments = @(
+        'build', $msiProject,
+        '--configuration', 'Release',
+        '--nologo',
+        '--no-restore',
+        '--disable-build-servers'
+    ) + $commonProperties
+    & dotnet @msiBuildArguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-WindowsPackageBuild 'WiX MSI build failed.'
+    }
+    if (-not (Test-Path -LiteralPath $msiPath -PathType Leaf) -or (Get-Item -LiteralPath $msiPath).Length -eq 0) {
+        Fail-WindowsPackageBuild "Expected package output is missing: $msiName"
+    }
+
+    $bundleProperties = $commonProperties + "-p:MsiPath=$msiPath"
+    $bundleRestoreArguments = @(
+        'restore', $bundleProject,
+        '--nologo',
+        '--force',
+        '--no-cache',
+        '--packages', $restorePackages
+    ) + $bundleProperties
+    & dotnet @bundleRestoreArguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-WindowsPackageBuild 'Pinned WiX Burn dependency restore failed.'
     }
     $bootstrapperExtension = Join-Path $restorePackages 'wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll'
     if (-not (Test-Path -LiteralPath $bootstrapperExtension -PathType Leaf)) {
         Fail-WindowsPackageBuild 'Pinned WiX BootstrapperApplications extension was not restored.'
     }
 
-    $buildArguments = @(
-        'build', $project,
+    $bundleBuildArguments = @(
+        'build', $bundleProject,
         '--configuration', 'Release',
         '--nologo',
         '--no-restore',
         '--disable-build-servers'
-    ) + $commonProperties
-    & dotnet @buildArguments
+    ) + $bundleProperties
+    & dotnet @bundleBuildArguments
     if ($LASTEXITCODE -ne 0) {
-        Fail-WindowsPackageBuild 'WiX build failed.'
+        Fail-WindowsPackageBuild 'WiX Burn build failed.'
     }
 } finally {
     Pop-Location
@@ -163,10 +195,6 @@ try {
     }
 }
 
-$msiName = "NemoClaw-$ProductVersion-windows-arm64.msi"
-$setupName = "NemoClawSetup-$ProductVersion-windows-arm64.exe"
-$msiPath = Join-Path $output $msiName
-$setupPath = Join-Path $output $setupName
 foreach ($package in @($msiPath, $setupPath)) {
     if (-not (Test-Path -LiteralPath $package -PathType Leaf) -or (Get-Item -LiteralPath $package).Length -eq 0) {
         Fail-WindowsPackageBuild "Expected package output is missing: $(Split-Path -Leaf $package)"

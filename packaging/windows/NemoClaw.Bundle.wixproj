@@ -8,16 +8,13 @@
     <OutputPath>$(PackageOutputRoot)</OutputPath>
     <IntermediateOutputPath>$(PackageIntermediateRoot)\bundle\</IntermediateOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot)</DefineConstants>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot);MsiPath=$(MsiPath)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <DebugType>none</DebugType>
     <BootstrapperApplicationsExtensionPath>$(RestorePackagesPath)\wixtoolset.bootstrapperapplications.wixext\5.0.2\wixext5\WixToolset.BootstrapperApplications.wixext.dll</BootstrapperApplicationsExtensionPath>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Bundle.wxs" />
-    <ProjectReference Include="NemoClaw.wixproj">
-      <AdditionalProperties>ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot);PackageOutputRoot=$(PackageOutputRoot);PackageIntermediateRoot=$(PackageIntermediateRoot)</AdditionalProperties>
-    </ProjectReference>
     <PackageReference
       Include="WixToolset.BootstrapperApplications.wixext"
       Version="5.0.2"
@@ -25,6 +22,8 @@
     <WixExtension Include="$(BootstrapperApplicationsExtensionPath)" />
   </ItemGroup>
   <Target Name="ValidateNemoClawBundleInputs" BeforeTargets="ResolveWixExtensionReferences">
+    <Error Condition="'$(MsiPath)' == ''" Text="MsiPath is required." />
+    <Error Condition="!Exists('$(MsiPath)')" Text="The ARM64 MSI input is missing." />
     <Error
       Condition="!Exists('$(BootstrapperApplicationsExtensionPath)')"
       Text="The pinned WiX BootstrapperApplications extension is missing." />
