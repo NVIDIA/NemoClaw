@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -19,12 +17,10 @@ import {
   captureSandboxRebuildAuthority,
   type SandboxRebuildAuthority,
 } from "../../state/registry/rebuild-authority";
-import { MESSAGING_BRIDGE_PENDING_VALUE } from "../../onboard/messaging-bridge-provider";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import type { SnapshotRestoreAuthority } from "../../state/sandbox";
 import {
   cleanupManagedCloneProviderTransaction,
-  createManagedCloneProviderRecoveryStore,
   type ManagedCloneProviderBinding,
   ManagedCloneProviderTransactionError,
   prepareManagedCloneProviderTransaction,
@@ -118,28 +114,6 @@ function messagingPlan(sandboxName: string): SandboxMessagingPlan {
   } as unknown as SandboxMessagingPlan;
 }
 
-function customMessagingPlan(input: {
-  readonly sandboxName: string;
-  readonly agent: "openclaw" | "hermes";
-  readonly channelId: "discord" | "googlechat";
-  readonly credentialBindings: readonly unknown[];
-}): SandboxMessagingPlan {
-  return {
-    ...messagingPlan(input.sandboxName),
-    agent: input.agent,
-    channels: [
-      {
-        channelId: input.channelId,
-        configured: true,
-        active: true,
-        disabled: false,
-        inputs: [],
-      },
-    ],
-    credentialBindings: input.credentialBindings,
-  } as unknown as SandboxMessagingPlan;
-}
-
 function handoff(
   profile: ManagedStartupProfile,
   source: SandboxEntry,
@@ -191,82 +165,6 @@ const EXACT_MESSAGING_PROFILE = {
   stderr: "",
 };
 
-const EXACT_HERMES_DISCORD_PROFILE = {
-  status: 0,
-  stdout: JSON.stringify({
-    id: "discord-hermes-static-v1",
-    credentials: [
-      {
-        name: "bot_token",
-        env_vars: ["DISCORD_BOT_TOKEN"],
-        required: true,
-        auth_style: "header",
-        header_name: "Authorization",
-        query_param: "",
-      },
-    ],
-    endpoints: [],
-    binaries: [],
-    inference_capable: false,
-  }),
-  stderr: "",
-};
-
-const EXACT_GOOGLE_CHAT_PROFILE = {
-  status: 0,
-  stdout: JSON.stringify({
-    id: "google-chat-bridge",
-    credentials: [
-      {
-        name: "access_token",
-        env_vars: ["GOOGLE_CHAT_ACCESS_TOKEN"],
-        required: true,
-        auth_style: "bearer",
-        header_name: "Authorization",
-        query_param: "",
-        refresh: {
-          strategy: "google-service-account-jwt",
-          scopes: ["https://www.googleapis.com/auth/chat.bot"],
-          material: [
-            {
-              name: "client_email",
-              description: "Service-account client email (JWT issuer)",
-              required: true,
-            },
-            {
-              name: "private_key",
-              description: "Service-account RSA private key (PEM); signs the JWT assertion",
-              required: true,
-              secret: true,
-            },
-            {
-              name: "scope",
-              description: "OAuth scope(s) to mint the token for",
-            },
-          ],
-        },
-      },
-    ],
-    endpoints: [
-      {
-        host: "chat.googleapis.com",
-        port: 443,
-        protocol: "rest",
-        access: "read-write",
-        enforcement: "enforce",
-      },
-    ],
-    binaries: ["/usr/local/bin/node", "/usr/bin/node"],
-    inference_capable: false,
-  }),
-  stderr: "",
-};
-
-const GOOGLE_CHAT_SERVICE_ACCOUNT = JSON.stringify({
-  client_email: "bridge@example.test",
-  private_key: "test-only-private-key",
-});
-
 function providerRunner(initial: readonly LiveBinding[] = []) {
   const live = new Map(initial.map((binding) => [binding.providerName, { ...binding }] as const));
   const commands: string[] = [];
@@ -275,27 +173,18 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
     | undefined;
   let profileImportResult = { status: 0, stdout: "", stderr: "" };
   let profileExportResult = EXACT_MESSAGING_PROFILE;
-  let profileImportedExportResult = EXACT_MESSAGING_PROFILE;
   let failDelete = false;
-  const run = vi.fn((args: string[], _options?: Record<string, unknown>) => {
+  const run = vi.fn((args: string[]) => {
     commands.push(args.join(" "));
     switch (args.slice(0, 2).join(" ")) {
       case "provider profile": {
         const importing = args[2] === "import";
         profileExportResult =
           importing && profileImportResult.status === 0
-            ? profileImportedExportResult
+            ? EXACT_MESSAGING_PROFILE
             : profileExportResult;
         return importing ? profileImportResult : profileExportResult;
       }
-      case "provider refresh":
-        return args[2] === "status"
-          ? {
-              status: 0,
-              stdout: `${args[3]}  ${args[5]}  google-service-account-jwt  refreshed\n`,
-              stderr: "",
-            }
-          : { status: 0, stdout: "", stderr: "" };
       case "provider get": {
         const name = args[2] ?? "";
         const binding = live.get(name);
@@ -339,9 +228,6 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
     },
     setProfileImportResult(value: typeof profileImportResult) {
       profileImportResult = value;
-    },
-    setProfileImportedExportResult(value: typeof profileImportedExportResult) {
-      profileImportedExportResult = value;
     },
     setProfileExportResult(value: typeof profileExportResult) {
       profileExportResult = value;
@@ -470,158 +356,6 @@ describe("managed clone provider transaction", () => {
       )}`,
     );
     expect(createIndex).toBeGreaterThan(importIndex);
-  });
-
-  it("imports the Hermes Discord profile before creating its exact static binding (#10765)", () => {
-    const profile = managedStartupE2eProfile("hermes");
-    const source = entry("source", profile);
-    const runner = providerRunner();
-    runner.setProfileExportResult({
-      status: 1,
-      stdout: "",
-      stderr: "provider profile not found",
-    });
-    runner.setProfileImportedExportResult(EXACT_HERMES_DISCORD_PROFILE);
-    const plan = customMessagingPlan({
-      sandboxName: "destination",
-      agent: "hermes",
-      channelId: "discord",
-      credentialBindings: [
-        {
-          channelId: "discord",
-          credentialId: "discordBotToken",
-          providerName: "destination-discord-bridge",
-          providerEnvKey: "DISCORD_BOT_TOKEN",
-          credentialAvailable: true,
-        },
-      ],
-    });
-    const prepared = prepareManagedCloneProviderTransaction({
-      handoff: handoff(profile, source, plan),
-      destination: null,
-      environment: { DISCORD_BOT_TOKEN: "test-only-discord-token" },
-      runOpenshell: runner.run,
-      transactionId: "a".repeat(32),
-    });
-
-    expect(prepared.providers).toMatchObject([
-      {
-        binding: {
-          providerName: "destination-discord-bridge",
-          providerType: "discord-hermes-static-v1",
-          providerEnvKey: "DISCORD_BOT_TOKEN",
-        },
-        action: "create",
-      },
-    ]);
-    provisionManagedCloneProviderTransaction(prepared, {
-      ...authorityDeps(source),
-      environment: { DISCORD_BOT_TOKEN: "test-only-discord-token" },
-      runOpenshell: runner.run,
-    });
-    const importIndex = runner.commands.indexOf(
-      `provider profile import --file ${path.join(
-        REPOSITORY_ROOT,
-        "src",
-        "lib",
-        "messaging",
-        "channels",
-        "discord",
-        "provider-profile",
-        "hermes.yaml",
-      )}`,
-    );
-    const createIndex = runner.commands.indexOf(
-      "provider create --name destination-discord-bridge --type discord-hermes-static-v1 --credential DISCORD_BOT_TOKEN",
-    );
-    expect(importIndex).toBeGreaterThanOrEqual(0);
-    expect(createIndex).toBeGreaterThan(importIndex);
-  });
-
-  it("creates and mints a Google Chat bridge from host-only source material (#10765)", () => {
-    const profile = managedStartupE2eProfile("openclaw");
-    const source = entry("source", profile);
-    const runner = providerRunner();
-    runner.setProfileExportResult({
-      status: 1,
-      stdout: "",
-      stderr: "provider profile not found",
-    });
-    runner.setProfileImportedExportResult(EXACT_GOOGLE_CHAT_PROFILE);
-    const plan = customMessagingPlan({
-      sandboxName: "destination",
-      agent: "openclaw",
-      channelId: "googlechat",
-      credentialBindings: [],
-    });
-    const environment = { GOOGLECHAT_SERVICE_ACCOUNT: GOOGLE_CHAT_SERVICE_ACCOUNT };
-    const prepared = prepareManagedCloneProviderTransaction({
-      handoff: handoff(profile, source, plan),
-      destination: null,
-      environment,
-      runOpenshell: runner.run,
-      transactionId: "b".repeat(32),
-    });
-
-    expect(prepared.providers).toEqual([
-      {
-        binding: {
-          providerName: "destination-googlechat-bridge",
-          providerType: "google-chat-bridge",
-          providerEnvKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-          sourceCredentialEnvKey: "GOOGLECHAT_SERVICE_ACCOUNT",
-          source: "messaging",
-        },
-        action: "create",
-      },
-    ]);
-    expect(JSON.stringify(prepared)).not.toContain(GOOGLE_CHAT_SERVICE_ACCOUNT);
-    provisionManagedCloneProviderTransaction(prepared, {
-      ...authorityDeps(source),
-      environment,
-      runOpenshell: runner.run,
-    });
-    expect(runner.run).toHaveBeenCalledWith(
-      [
-        "provider",
-        "create",
-        "--name",
-        "destination-googlechat-bridge",
-        "--type",
-        "google-chat-bridge",
-        "--credential",
-        "GOOGLE_CHAT_ACCESS_TOKEN",
-      ],
-      expect.objectContaining({
-        env: { GOOGLE_CHAT_ACCESS_TOKEN: MESSAGING_BRIDGE_PENDING_VALUE },
-      }),
-    );
-    expect(runner.commands).toContain(
-      "provider refresh configure --credential-key GOOGLE_CHAT_ACCESS_TOKEN --strategy google-service-account-jwt --material client_email=bridge@example.test --secret-material-env private_key=MESSAGING_BRIDGE_SECRET_0 --material scope=https://www.googleapis.com/auth/chat.bot destination-googlechat-bridge",
-    );
-    expect(runner.commands.join("\n")).not.toContain("test-only-private-key");
-    expect(
-      runner.commands.indexOf(
-        "provider create --name destination-googlechat-bridge --type google-chat-bridge --credential GOOGLE_CHAT_ACCESS_TOKEN",
-      ),
-    ).toBeGreaterThan(
-      runner.commands.indexOf(
-        `provider profile import --file ${path.join(
-          REPOSITORY_ROOT,
-          "src",
-          "lib",
-          "messaging",
-          "channels",
-          "googlechat",
-          "provider-profile",
-          "openclaw.yaml",
-        )}`,
-      ),
-    );
-    expect(runner.run).toHaveBeenCalledWith(
-      expect.arrayContaining(["--secret-material-env", "private_key=MESSAGING_BRIDGE_SECRET_0"]),
-      expect.objectContaining({ env: { MESSAGING_BRIDGE_SECRET_0: "test-only-private-key" } }),
-    );
   });
 
   it("rejects stale clone authority before importing the messaging profile (#9875)", () => {
@@ -1034,137 +768,6 @@ describe("managed clone provider transaction", () => {
       providers: [{ outcome: "delete-failed" }],
     });
     expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(true);
-  });
-
-  it("recovers an exact orphan from durable state after a process restart", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-provider-recovery-"));
-    try {
-      const first = { ...TOKEN_BINDING, providerName: "destination-first-token" };
-      const second = {
-        ...TOKEN_BINDING,
-        providerName: "destination-second-token",
-        providerEnvKey: "SECOND_TOKEN",
-      };
-      const profile = managedStartupE2eProfile("openclaw");
-      const source = entry("source", profile);
-      const runner = providerRunner();
-      const firstStore = createManagedCloneProviderRecoveryStore(stateDir);
-      const prepared = prepareManagedCloneProviderTransaction({
-        handoff: handoff(profile, source),
-        destination: null,
-        additionalBindings: [first, second],
-        environment: {
-          RUNTIME_TOKEN: "test-only-runtime-token",
-          SECOND_TOKEN: "test-only-second-token",
-        },
-        recoveryStore: firstStore,
-        runOpenshell: runner.run,
-        transactionId: "a".repeat(32),
-      });
-      runner.setFailDelete(true);
-
-      expect(() =>
-        provisionManagedCloneProviderTransaction(prepared, {
-          ...authorityDeps(source),
-          environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
-          recoveryStore: firstStore,
-          runOpenshell: runner.run,
-        }),
-      ).toThrow(/credential SECOND_TOKEN disappeared/u);
-      expect(firstStore.load("destination")).toMatchObject({
-        transactionId: "a".repeat(32),
-        providers: [first, second],
-      });
-      expect(runner.live.get(first.providerName)).toEqual({
-        providerName: first.providerName,
-        providerType: first.providerType,
-        providerEnvKey: first.providerEnvKey,
-      });
-
-      runner.setFailDelete(false);
-      const restartedStore = createManagedCloneProviderRecoveryStore(stateDir);
-      const retry = prepareManagedCloneProviderTransaction({
-        handoff: handoff(profile, source),
-        destination: null,
-        additionalBindings: [first, second],
-        environment: {
-          RUNTIME_TOKEN: "test-only-runtime-token",
-          SECOND_TOKEN: "test-only-second-token",
-        },
-        recoveryStore: restartedStore,
-        runOpenshell: runner.run,
-        transactionId: "b".repeat(32),
-      });
-      expect(retry.providers.map((provider) => provider.action)).toEqual([
-        "recover-and-create",
-        "create",
-      ]);
-
-      const receipt = provisionManagedCloneProviderTransaction(retry, {
-        ...authorityDeps(source),
-        environment: {
-          RUNTIME_TOKEN: "test-only-runtime-token",
-          SECOND_TOKEN: "test-only-second-token",
-        },
-        recoveryStore: restartedStore,
-        runOpenshell: runner.run,
-      });
-      expect(runner.commands).toContain(`provider delete ${first.providerName}`);
-      expect(runner.live.get(first.providerName)).toEqual({
-        providerName: first.providerName,
-        providerType: first.providerType,
-        providerEnvKey: first.providerEnvKey,
-      });
-      expect(runner.live.get(second.providerName)).toEqual({
-        providerName: second.providerName,
-        providerType: second.providerType,
-        providerEnvKey: second.providerEnvKey,
-      });
-      expect(restartedStore.load("destination")).toBeNull();
-      expect(
-        cleanupManagedCloneProviderTransaction(receipt, runner.run, restartedStore).status,
-      ).toBe("complete");
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
-  });
-
-  it("preserves a changed same-name provider during durable recovery", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-provider-recovery-"));
-    try {
-      const profile = managedStartupE2eProfile("openclaw");
-      const source = entry("source", profile);
-      const changed = { ...TOKEN_BINDING, providerType: "other" };
-      const runner = providerRunner([changed]);
-      const recoveryStore = createManagedCloneProviderRecoveryStore(stateDir);
-      recoveryStore.persist({
-        schemaVersion: 1,
-        transactionId: "c".repeat(32),
-        destinationSandboxName: "destination",
-        providers: [TOKEN_BINDING],
-      });
-
-      expect(() =>
-        prepareManagedCloneProviderTransaction({
-          handoff: handoff(profile, source),
-          destination: null,
-          additionalBindings: [TOKEN_BINDING],
-          environment: { RUNTIME_TOKEN: "test-only-runtime-token" },
-          recoveryStore,
-          runOpenshell: runner.run,
-          transactionId: "d".repeat(32),
-        }),
-      ).toThrow(/changed from its durable recovery binding.*preserving/u);
-      expect(runner.commands.some((command) => command.startsWith("provider delete"))).toBe(false);
-      expect(runner.live.get(TOKEN_BINDING.providerName)).toMatchObject({
-        providerName: changed.providerName,
-        providerType: changed.providerType,
-        providerEnvKey: changed.providerEnvKey,
-      });
-      expect(recoveryStore.load("destination")).not.toBeNull();
-    } finally {
-      fs.rmSync(stateDir, { force: true, recursive: true });
-    }
   });
 
   it("rejects a cloned or fabricated cleanup receipt", () => {

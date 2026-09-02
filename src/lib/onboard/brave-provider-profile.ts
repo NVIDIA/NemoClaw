@@ -28,12 +28,6 @@ export type WebSearchProviderProfileId = (typeof WEB_SEARCH_PROVIDER_PROFILE_IDS
  * finalization/verifier paths already gate on `fetchEnabled`. Keep every gate
  * routed through this helper so they stay aligned.
  */
-export function shouldEnableBraveWebSearch(
-  webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
-): boolean {
-  return shouldEnableWebSearch(webSearchConfig);
-}
-
 export function shouldEnableWebSearch(
   webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
 ): boolean {

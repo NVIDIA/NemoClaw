@@ -35,6 +35,31 @@ const DISCORD_STATIC_PROFILE = {
   inference_capable: false,
 };
 
+const BRAVE_PROFILE = {
+  id: "brave",
+  credentials: [
+    {
+      name: "api_key",
+      env_vars: ["BRAVE_API_KEY"],
+      required: true,
+      auth_style: "header",
+      header_name: "x-subscription-token",
+      query_param: "",
+    },
+  ],
+  endpoints: [
+    {
+      host: "api.search.brave.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node", "/usr/local/bin/curl", "/usr/bin/curl"],
+  inference_capable: false,
+};
+
 function providerMetadata(
   name: string,
   type: string,
@@ -380,8 +405,10 @@ describe("credential provider registration", () => {
       ],
     ]);
     const defaultResult = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn(
-      (args: string[]) => commandResults.get(args.join(" ")) ?? defaultResult,
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export") && args.includes("brave")
+        ? { ...defaultResult, stdout: JSON.stringify(BRAVE_PROFILE) }
+        : (commandResults.get(args.join(" ")) ?? defaultResult),
     );
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
@@ -494,14 +521,24 @@ describe("credential provider registration", () => {
 
   it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = {
+      status: 1,
+      stdout: "",
+      stderr: "provider profile 'discord-hermes-static-v1' not found",
+    };
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn((args: string[]) =>
-      (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
-      (args[0] === "provider" && args[1] === "get")
-        ? missing
-        : success,
-    );
+    let profileImported = false;
+    const runOpenshell = vi.fn((args: string[]) => {
+      profileImported ||=
+        args[0] === "provider" && args.includes("profile") && args.includes("import");
+      return args[0] === "provider" && args.includes("profile") && args.includes("export")
+        ? profileImported
+          ? { ...success, stdout: JSON.stringify(DISCORD_STATIC_PROFILE) }
+          : missing
+        : args[0] === "provider" && args[1] === "get"
+          ? missing
+          : success;
+    });
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
     );

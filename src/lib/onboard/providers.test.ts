@@ -49,6 +49,31 @@ const MESSAGING_ENDPOINTLESS_PROFILE_EXPORT = JSON.stringify({
   inference_capable: false,
 });
 
+const BRAVE_PROFILE_EXPORT = JSON.stringify({
+  id: "brave",
+  credentials: [
+    {
+      name: "api_key",
+      env_vars: ["BRAVE_API_KEY"],
+      required: true,
+      auth_style: "header",
+      header_name: "x-subscription-token",
+      query_param: "",
+    },
+  ],
+  endpoints: [
+    {
+      host: "api.search.brave.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node", "/usr/local/bin/curl", "/usr/bin/curl"],
+  inference_capable: false,
+});
+
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
@@ -678,8 +703,11 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
-        return { status: 0, stdout: "", stderr: "" };
+        return command[1] === "profile"
+          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
+          : command.includes("get")
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -922,7 +950,9 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        return command[1] === "profile"
+          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
+          : { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -930,7 +960,7 @@ describe("onboard provider helpers", () => {
     // still attached to a live sandbox, so reuse paths must use `update`.
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
-      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
+      "provider profile export brave --output json",
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
     ]);
@@ -1242,14 +1272,16 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        return command[1] === "profile"
+          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
+          : { status: 0, stdout: "", stderr: "" };
       },
       { replaceExisting: true },
     );
 
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
-      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
+      "provider profile export brave --output json",
       "provider get alpha-brave-search",
       "provider delete alpha-brave-search",
       "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",

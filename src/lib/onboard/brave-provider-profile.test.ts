@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { describe, expect, it, vi } from "vitest";
 
-import { parseCheckedInProviderProfileContract } from "../adapters/openshell/provider-profile";
 import { REPOSITORY_ROOT } from "../core/repository-root";
 import {
   BRAVE_PROVIDER_PROFILE_ID,
@@ -13,10 +10,8 @@ import {
   ensureBraveProviderProfile,
   ensureWebSearchProviderProfiles,
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
-  shouldEnableBraveWebSearch,
+  shouldEnableWebSearch,
   TAVILY_PROVIDER_PROFILE_ID,
-  type WebSearchProviderProfileId,
-  webSearchProviderProfilePath,
 } from "./brave-provider-profile";
 
 function makeDeps(runOpenshell: ReturnType<typeof vi.fn>, overrides: Record<string, unknown> = {}) {
@@ -32,21 +27,114 @@ function makeDeps(runOpenshell: ReturnType<typeof vi.fn>, overrides: Record<stri
   } as Parameters<typeof ensureBraveProviderProfile>[1];
 }
 
-function exactExport(provider: WebSearchProviderProfileId) {
-  const source = fs.readFileSync(webSearchProviderProfilePath(REPOSITORY_ROOT, provider), "utf8");
-  const contract = parseCheckedInProviderProfileContract(source);
-  expect(contract, `invalid test profile: ${provider}`).not.toBeNull();
-  return {
-    status: 0,
-    stderr: "",
-    stdout: JSON.stringify(contract!.boundary, (_key, value) =>
-      value === null ? undefined : value,
-    ),
-  };
-}
+const MATCHING_BRAVE_EXPORT = {
+  status: 0,
+  stderr: "",
+  stdout: JSON.stringify({
+    id: "brave",
+    credentials: [
+      {
+        name: "api_key",
+        env_vars: ["BRAVE_API_KEY"],
+        required: true,
+        auth_style: "header",
+        header_name: "x-subscription-token",
+        query_param: "",
+      },
+    ],
+    endpoints: [
+      {
+        host: "api.search.brave.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+        enforcement: "enforce",
+      },
+    ],
+    binaries: ["/usr/local/bin/node", "/usr/bin/node", "/usr/local/bin/curl", "/usr/bin/curl"],
+    inference_capable: false,
+  }),
+};
 
-function exactProfileRunner() {
-  return vi.fn((args: string[]) => exactExport(args[3] as WebSearchProviderProfileId));
+const MATCHING_TAVILY_EXPORT = {
+  status: 0,
+  stderr: "",
+  stdout: JSON.stringify({
+    id: "tavily",
+    credentials: [
+      {
+        name: "api_key",
+        env_vars: ["TAVILY_API_KEY"],
+        required: true,
+        auth_style: "bearer",
+        header_name: "authorization",
+        query_param: "",
+      },
+    ],
+    endpoints: [
+      {
+        host: "api.tavily.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: true,
+        rules: [
+          { allow: { method: "POST", path: "/search" } },
+          { allow: { method: "POST", path: "/extract" } },
+        ],
+      },
+    ],
+    binaries: [
+      "/opt/venv/bin/python3*",
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ],
+    inference_capable: false,
+  }),
+};
+
+const MATCHING_HERMES_TAVILY_EXPORT = {
+  status: 0,
+  stderr: "",
+  stdout: JSON.stringify({
+    id: "tavily-hermes-v1",
+    credentials: [
+      {
+        name: "api_key",
+        env_vars: ["TAVILY_API_KEY"],
+        required: true,
+        auth_style: "bearer",
+        header_name: "authorization",
+        query_param: "",
+      },
+    ],
+    endpoints: [
+      {
+        host: "api.tavily.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: true,
+        rules: [
+          { allow: { method: "POST", path: "/search" } },
+          { allow: { method: "POST", path: "/extract" } },
+        ],
+      },
+    ],
+    binaries: ["/opt/hermes/.venv/bin/python", "/usr/local/bin/curl", "/usr/bin/curl"],
+    inference_capable: false,
+  }),
+};
+
+function matchingProfileRunner() {
+  const exportsById = {
+    [BRAVE_PROVIDER_PROFILE_ID]: MATCHING_BRAVE_EXPORT,
+    [TAVILY_PROVIDER_PROFILE_ID]: MATCHING_TAVILY_EXPORT,
+    [HERMES_TAVILY_PROVIDER_PROFILE_ID]: MATCHING_HERMES_TAVILY_EXPORT,
+  };
+  return vi.fn((args: string[]) => exportsById[args[3] as keyof typeof exportsById]);
 }
 
 describe("ensureBraveProviderProfile", () => {
@@ -66,7 +154,7 @@ describe("ensureBraveProviderProfile", () => {
   });
 
   it("accepts an exact existing Brave profile without importing it", () => {
-    const runOpenshell = exactProfileRunner();
+    const runOpenshell = matchingProfileRunner();
     ensureBraveProviderProfile(
       [{ providerType: BRAVE_PROVIDER_PROFILE_ID, token: "brv-test" }],
       makeDeps(runOpenshell),
@@ -79,7 +167,7 @@ describe("ensureBraveProviderProfile", () => {
   });
 
   it("validates Tavily and Brave profiles when both have tokens", () => {
-    const runOpenshell = exactProfileRunner();
+    const runOpenshell = matchingProfileRunner();
     ensureWebSearchProviderProfiles(
       [
         { providerType: TAVILY_PROVIDER_PROFILE_ID, token: "tvly-test" },
@@ -100,7 +188,7 @@ describe("ensureBraveProviderProfile", () => {
   });
 
   it("uses a versioned Hermes profile instead of accepting a stale Tavily profile", () => {
-    const runOpenshell = exactProfileRunner();
+    const runOpenshell = matchingProfileRunner();
 
     ensureWebSearchProviderProfiles(
       [{ providerType: HERMES_TAVILY_PROVIDER_PROFILE_ID, token: "tvly-test" }],
@@ -118,7 +206,7 @@ describe("ensureBraveProviderProfile", () => {
       .fn()
       .mockReturnValueOnce({ status: 1, stderr: "provider profile 'brave' not found", stdout: "" })
       .mockReturnValueOnce({ status: 0, stderr: "", stdout: "" })
-      .mockReturnValueOnce(exactExport(BRAVE_PROVIDER_PROFILE_ID));
+      .mockReturnValueOnce(MATCHING_BRAVE_EXPORT);
     const deps = makeDeps(runOpenshell);
     expect(() =>
       ensureBraveProviderProfile(
@@ -140,7 +228,7 @@ describe("ensureBraveProviderProfile", () => {
   });
 
   it("rejects an incompatible existing Brave profile without importing it", () => {
-    const incompatible = exactExport(BRAVE_PROVIDER_PROFILE_ID);
+    const incompatible = MATCHING_BRAVE_EXPORT;
     const runOpenshell = vi.fn(() => ({
       ...incompatible,
       stdout: JSON.stringify({ ...JSON.parse(incompatible.stdout), endpoints: [] }),
@@ -177,10 +265,10 @@ describe("ensureBraveProviderProfile", () => {
   });
 });
 
-describe("shouldEnableBraveWebSearch", () => {
+describe("shouldEnableWebSearch", () => {
   it("returns false for null/undefined web search config", () => {
-    expect(shouldEnableBraveWebSearch(null)).toBe(false);
-    expect(shouldEnableBraveWebSearch(undefined)).toBe(false);
+    expect(shouldEnableWebSearch(null)).toBe(false);
+    expect(shouldEnableWebSearch(undefined)).toBe(false);
   });
 
   it("returns false when fetchEnabled is missing or falsy", () => {
@@ -188,12 +276,12 @@ describe("shouldEnableBraveWebSearch", () => {
     // tripped `if (webSearchConfig)` in createSandbox and pushed a Brave
     // provider/token plus the BRAVE_API_KEY abort even though the runtime
     // gate downstream is `fetchEnabled`.
-    expect(shouldEnableBraveWebSearch({})).toBe(false);
-    expect(shouldEnableBraveWebSearch({ fetchEnabled: false })).toBe(false);
-    expect(shouldEnableBraveWebSearch({ fetchEnabled: null })).toBe(false);
+    expect(shouldEnableWebSearch({})).toBe(false);
+    expect(shouldEnableWebSearch({ fetchEnabled: false })).toBe(false);
+    expect(shouldEnableWebSearch({ fetchEnabled: null })).toBe(false);
   });
 
   it("returns true only when fetchEnabled is explicitly true", () => {
-    expect(shouldEnableBraveWebSearch({ fetchEnabled: true })).toBe(true);
+    expect(shouldEnableWebSearch({ fetchEnabled: true })).toBe(true);
   });
 });

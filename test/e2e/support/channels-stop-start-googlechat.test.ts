@@ -366,13 +366,11 @@ describe("channels stop/start Google Chat live composition", () => {
       });
       expect(ensureProfiles).toHaveBeenCalledOnce();
       const profileDependencies = ensureProfiles.mock.calls[0]?.[1] as {
-        redact: (value: string) => string;
         root: string;
         runOpenshell: FixtureRunner;
       };
       expect(profileDependencies.root).toBe("/repo");
       expect(profileDependencies.runOpenshell).not.toBe(run);
-      expect(profileDependencies.redact(GOOGLECHAT_E2E_ACCESS_TOKEN)).toBe("[redacted]");
       expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
 
       const createCall = runMock.mock.calls.find(([args]) => args[1] === "create");

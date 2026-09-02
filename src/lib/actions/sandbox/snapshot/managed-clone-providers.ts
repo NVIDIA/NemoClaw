@@ -17,16 +17,7 @@ import {
   matchesGatewayCredentialOnlyProviderBinding,
   parseGatewayProviderMetadata,
 } from "../../../onboard/gateway-provider-metadata";
-import { collectRequiredMessagingProviderBindings } from "../../../onboard/checkpoint-replay";
 import type { ManagedStartupProfile } from "../../../onboard/managed-startup/profile";
-import {
-  configureMessagingBridgeRefreshes,
-  ensureMessagingBridgeProfiles,
-  listMessagingBridgeProfiles,
-  MESSAGING_BRIDGE_PENDING_VALUE,
-  messagingBridgeProfilesForAgent,
-  type MessagingBridgeProfile,
-} from "../../../onboard/messaging-bridge-provider";
 import { normalizeRuntimeProviderIdentity } from "../../../onboard/runtime-provider/registry";
 import { deleteProviderWithRecovery } from "../../../onboard/sandbox-provider-cleanup";
 import type { PreparedManagedWorkloadCloneHandoff } from "../../../onboard/workload/clone";
@@ -37,11 +28,6 @@ import {
 } from "../../../state/registry/rebuild-authority";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
-import {
-  createManagedCloneProviderRecoveryStore as createRecoveryStore,
-  type ManagedCloneProviderRecoveryRecord,
-  type ManagedCloneProviderRecoveryStore,
-} from "./managed-clone-provider-recovery";
 
 const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 export const MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS = 30_000;
@@ -75,15 +61,13 @@ export interface ManagedCloneProviderBinding {
   readonly providerName: string;
   readonly providerType: string;
   readonly providerEnvKey: string;
-  /** Host-only source material for a gateway-refreshed provider credential. */
-  readonly sourceCredentialEnvKey?: string;
   /** Provider-neutral contribution owner, for diagnostics only. */
   readonly source: string;
 }
 
 export interface PreparedManagedCloneProvider {
   readonly binding: ManagedCloneProviderBinding;
-  readonly action: "create" | "recover-and-create" | "reuse-destination-owned";
+  readonly action: "create" | "reuse-destination-owned";
 }
 
 export interface PreparedManagedCloneProviderTransaction {
@@ -96,8 +80,6 @@ export interface PreparedManagedCloneProviderTransaction {
   readonly sourceRegistryAuthority: SandboxRebuildAuthority;
   readonly snapshotRestoreAuthority: sandboxState.SnapshotRestoreAuthority;
   readonly destinationRegistryAuthority?: SandboxRebuildAuthority;
-  readonly destinationOwnedBindings: readonly ManagedCloneProviderBinding[];
-  readonly priorRecovery: ManagedCloneProviderRecoveryRecord | null;
   readonly providers: readonly PreparedManagedCloneProvider[];
 }
 
@@ -126,7 +108,6 @@ export type ManagedCloneProviderCleanupOutcome =
 
 export interface ManagedCloneProviderCleanupResult {
   readonly status: "complete" | "partial";
-  readonly recovery: "cleared" | "not-recorded" | "retained";
   readonly providers: readonly {
     readonly providerName: string;
     readonly outcome: ManagedCloneProviderCleanupOutcome;
@@ -156,12 +137,6 @@ export class ManagedCloneProviderTransactionError extends Error {
 
 const issuedReceipts = new WeakSet<object>();
 const completedCleanup = new WeakMap<object, Set<string>>();
-
-export function createManagedCloneProviderRecoveryStore(
-  stateDir?: string,
-): ManagedCloneProviderRecoveryStore {
-  return createRecoveryStore({ isValidSandboxName: isValidName, isValidProviderName }, stateDir);
-}
 
 function fail(message: string, cause?: unknown): never {
   throw new ManagedCloneProviderTransactionError(
@@ -229,12 +204,6 @@ function validatedBinding(binding: ManagedCloneProviderBinding): ManagedClonePro
     fail(`provider '${binding.providerName}' has an invalid credential binding`);
   }
   if (
-    binding.sourceCredentialEnvKey !== undefined &&
-    !PROVIDER_ENV_KEY_PATTERN.test(binding.sourceCredentialEnvKey)
-  ) {
-    fail(`provider '${binding.providerName}' has an invalid source credential binding`);
-  }
-  if (
     typeof binding.source !== "string" ||
     binding.source.trim() === "" ||
     binding.source !== binding.source.trim() ||
@@ -255,8 +224,7 @@ function mergeBindings(
     if (
       existing &&
       (existing.providerType !== binding.providerType ||
-        existing.providerEnvKey !== binding.providerEnvKey ||
-        existing.sourceCredentialEnvKey !== binding.sourceCredentialEnvKey)
+        existing.providerEnvKey !== binding.providerEnvKey)
     ) {
       fail(`provider '${binding.providerName}' has conflicting desired bindings`);
     }
@@ -265,43 +233,27 @@ function mergeBindings(
   return [...merged.values()];
 }
 
-function validatedMessagingPlan(
+function activeMessagingCredentialBindings(
   plan: SandboxMessagingPlan | null | undefined,
   expectedSandboxName: string,
   expectedAgent: string | null | undefined,
-): SandboxMessagingPlan | null {
-  if (!plan) return null;
+): readonly SandboxMessagingPlan["credentialBindings"][number][] {
+  if (!plan) return [];
   if (
     plan.sandboxName !== expectedSandboxName ||
     (expectedAgent !== null && expectedAgent !== undefined && plan.agent !== expectedAgent)
   ) {
     fail(`messaging provider ownership does not belong to '${expectedSandboxName}'`);
   }
-  return plan;
-}
-
-function messagingBindings(
-  plan: SandboxMessagingPlan | null | undefined,
-  expectedSandboxName: string,
-  expectedAgent: string | null | undefined,
-): readonly ManagedCloneProviderBinding[] {
-  const validated = validatedMessagingPlan(plan, expectedSandboxName, expectedAgent);
-  if (!validated) return [];
-  const profiles = messagingBridgeProfilesForAgent(
-    validated.agent,
-    listMessagingBridgeProfiles({ root: REPOSITORY_ROOT }),
+  const activeChannels = new Set(
+    plan.channels
+      .filter(
+        (channel) =>
+          channel.active && !channel.disabled && !plan.disabledChannels.includes(channel.channelId),
+      )
+      .map((channel) => channel.channelId),
   );
-  const profilesByType = new Map(profiles.map((profile) => [profile.profileId, profile]));
-  return collectRequiredMessagingProviderBindings(expectedSandboxName, validated).map((binding) => {
-    const profile = profilesByType.get(binding.type);
-    return {
-      providerName: binding.name,
-      providerType: binding.type,
-      providerEnvKey: binding.credentialEnv,
-      ...(profile?.strategy ? { sourceCredentialEnvKey: profile.sourceSecretEnv } : {}),
-      source: "messaging",
-    };
-  });
+  return plan.credentialBindings.filter((binding) => activeChannels.has(binding.channelId));
 }
 
 function applicationBindings(input: {
@@ -309,9 +261,16 @@ function applicationBindings(input: {
   readonly messagingPlan: SandboxMessagingPlan | null | undefined;
   readonly sandboxName: string;
 }): readonly ManagedCloneProviderBinding[] {
-  const bindings: ManagedCloneProviderBinding[] = [
-    ...messagingBindings(input.messagingPlan, input.sandboxName, input.profile.agent),
-  ];
+  const bindings: ManagedCloneProviderBinding[] = activeMessagingCredentialBindings(
+    input.messagingPlan,
+    input.sandboxName,
+    input.profile.agent,
+  ).map((binding) => ({
+    providerName: binding.providerName,
+    providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    providerEnvKey: binding.providerEnvKey,
+    source: "messaging",
+  }));
   if (
     input.profile.agentConfig.agent === "openclaw" ||
     input.profile.agentConfig.agent === "hermes"
@@ -333,9 +292,16 @@ function applicationBindings(input: {
 }
 
 function destinationOwnedBindings(entry: SandboxEntry): readonly ManagedCloneProviderBinding[] {
-  const bindings: ManagedCloneProviderBinding[] = [
-    ...messagingBindings(entry.messaging?.plan, entry.name, entry.agent),
-  ];
+  const bindings: ManagedCloneProviderBinding[] = activeMessagingCredentialBindings(
+    entry.messaging?.plan,
+    entry.name,
+    entry.agent,
+  ).map((binding) => ({
+    providerName: binding.providerName,
+    providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    providerEnvKey: binding.providerEnvKey,
+    source: "messaging",
+  }));
   if (entry.webSearchEnabled === true && entry.webSearchProvider) {
     bindings.push({
       providerName: `${entry.name}-${entry.webSearchProvider}-search`,
@@ -357,17 +323,13 @@ function sameBinding(
   return (
     left.providerName === right.providerName &&
     left.providerType === right.providerType &&
-    left.providerEnvKey === right.providerEnvKey &&
-    left.sourceCredentialEnvKey === right.sourceCredentialEnvKey
+    left.providerEnvKey === right.providerEnvKey
   );
 }
 
 function hasCredential(environment: NodeJS.ProcessEnv, envKey: string): boolean {
-  return normalizeManagedCloneCredential(environment[envKey]).length > 0;
-}
-
-function normalizeManagedCloneCredential(value: unknown): string {
-  return typeof value === "string" ? value.replace(/\r/gu, "").trim() : "";
+  const value = environment[envKey];
+  return typeof value === "string" && value.replace(/\r/gu, "").trim().length > 0;
 }
 
 function requireTransactionId(value: string | undefined): string {
@@ -402,7 +364,6 @@ export function prepareManagedCloneProviderTransaction(input: {
     destination: Readonly<SandboxEntry>,
   ) => readonly ManagedCloneProviderBinding[];
   readonly environment?: NodeJS.ProcessEnv;
-  readonly recoveryStore?: ManagedCloneProviderRecoveryStore;
   readonly runOpenshell: ManagedCloneProviderRunner;
   readonly transactionId?: string;
 }): PreparedManagedCloneProviderTransaction {
@@ -443,44 +404,21 @@ export function prepareManagedCloneProviderTransaction(input: {
         ...(input.resolveAdditionalDestinationOwnedBindings?.(input.destination) ?? []),
       ])
     : [];
-  let priorRecovery: ManagedCloneProviderRecoveryRecord | null;
-  try {
-    priorRecovery = (input.recoveryStore ?? createManagedCloneProviderRecoveryStore()).load(
-      destinationSandboxName,
-    );
-  } catch (error) {
-    fail("could not read durable provider recovery state", error);
-  }
   const environment = input.environment ?? process.env;
   const providers: PreparedManagedCloneProvider[] = [];
   for (const binding of desired) {
-    const requiredCredentialEnvKey = binding.sourceCredentialEnvKey ?? binding.providerEnvKey;
-    if (!hasCredential(environment, requiredCredentialEnvKey)) {
+    if (!hasCredential(environment, binding.providerEnvKey)) {
       fail(
         `${binding.source} provider '${binding.providerName}' requires an explicit clone ` +
-          `credential in ${requiredCredentialEnvKey}`,
+          `credential in ${binding.providerEnvKey}`,
       );
     }
     const inspection = inspectProvider(binding, input.runOpenshell);
     if (inspection.kind === "collision") {
-      if (
-        priorRecovery?.providers.some(
-          (candidate) => candidate.providerName === binding.providerName,
-        )
-      ) {
-        fail(
-          `provider '${binding.providerName}' changed from its durable recovery binding; ` +
-            "preserving the incompatible live provider",
-        );
-      }
       fail(`provider '${binding.providerName}' has an incompatible live binding`);
     }
     if (inspection.kind === "exact") {
       if (!input.destination || !owned.some((candidate) => sameBinding(candidate, binding))) {
-        if (priorRecovery?.providers.some((candidate) => sameBinding(candidate, binding))) {
-          providers.push({ binding, action: "recover-and-create" });
-          continue;
-        }
         fail(
           `provider '${binding.providerName}' exists without exact destination ownership; ` +
             "refusing credential reuse",
@@ -514,8 +452,6 @@ export function prepareManagedCloneProviderTransaction(input: {
     sourceRegistryAuthority: structuredClone(input.handoff.sourceRegistryAuthority),
     snapshotRestoreAuthority: structuredClone(input.handoff.snapshotRestoreAuthority),
     ...(destinationRegistryAuthority === undefined ? {} : { destinationRegistryAuthority }),
-    destinationOwnedBindings: owned,
-    priorRecovery,
     providers,
   });
 }
@@ -573,120 +509,6 @@ function issueReceipt(
   return receipt;
 }
 
-function messagingProfileTokenDefs(
-  providers: readonly PreparedManagedCloneProvider[],
-  profiles: readonly MessagingBridgeProfile[],
-): readonly { readonly name: string; readonly providerType: string; readonly token: string }[] {
-  const profileTypes = new Set(profiles.map((profile) => profile.profileId));
-  return providers
-    .filter(
-      (provider) =>
-        provider.binding.source === "messaging" && profileTypes.has(provider.binding.providerType),
-    )
-    .map((provider) => ({
-      name: provider.binding.providerName,
-      providerType: provider.binding.providerType,
-      token: MESSAGING_BRIDGE_PENDING_VALUE,
-    }));
-}
-
-function configureCreatedMessagingRefreshes(
-  confirmed: readonly ManagedCloneProviderOwnershipReceipt[],
-  profiles: readonly MessagingBridgeProfile[],
-  environment: NodeJS.ProcessEnv,
-  runOpenshell: ManagedCloneProviderRunner,
-): void {
-  const tokenDefs = confirmed
-    .filter(
-      (provider) =>
-        provider.disposition === "created" && provider.binding.sourceCredentialEnvKey !== undefined,
-    )
-    .map((provider) => ({
-      name: provider.binding.providerName,
-      providerType: provider.binding.providerType,
-      token: MESSAGING_BRIDGE_PENDING_VALUE,
-    }));
-  if (tokenDefs.length === 0) return;
-  const result = configureMessagingBridgeRefreshes(tokenDefs, {
-    runOpenshell,
-    // Refresh material is passed through the child environment. Suppress any
-    // unexpected command diagnostic here rather than risk echoing it.
-    redact: () => "",
-    getCredential: (envKey) => normalizeManagedCloneCredential(environment[envKey]) || null,
-    env: environment,
-    normalizeCredentialValue: normalizeManagedCloneCredential,
-    profiles,
-  });
-  if (!result.ok) fail("could not configure gateway token minting for a messaging bridge");
-}
-
-function pendingRecoveryRecord(
-  prepared: PreparedManagedCloneProviderTransaction,
-): ManagedCloneProviderRecoveryRecord | null {
-  const providers = prepared.providers
-    .filter((provider) => provider.action !== "reuse-destination-owned")
-    .map((provider) => ({
-      providerName: provider.binding.providerName,
-      providerType: provider.binding.providerType,
-      providerEnvKey: provider.binding.providerEnvKey,
-      ...(provider.binding.sourceCredentialEnvKey === undefined
-        ? {}
-        : { sourceCredentialEnvKey: provider.binding.sourceCredentialEnvKey }),
-      source: provider.binding.source,
-    }));
-  return providers.length === 0
-    ? null
-    : {
-        schemaVersion: 1,
-        transactionId: prepared.transactionId,
-        destinationSandboxName: prepared.destinationSandboxName,
-        providers,
-      };
-}
-
-function reconcilePriorRecovery(
-  prepared: PreparedManagedCloneProviderTransaction,
-  input: {
-    readonly runOpenshell: ManagedCloneProviderRunner;
-    readonly readSandbox: ReadSandbox;
-    readonly captureSnapshotRestoreAuthority?: CaptureSnapshotRestoreAuthority;
-  },
-  store: ManagedCloneProviderRecoveryStore,
-): void {
-  const recovery = prepared.priorRecovery;
-  if (!recovery) return;
-  if (!isDeepStrictEqual(store.load(prepared.destinationSandboxName), recovery)) {
-    fail("durable provider recovery authority changed after clone preflight");
-  }
-  for (const binding of [...recovery.providers].reverse()) {
-    revalidateManagedCloneMutationAuthority(prepared, input);
-    const inspection = inspectProvider(binding, input.runOpenshell);
-    if (inspection.kind === "missing") continue;
-    if (
-      inspection.kind === "exact" &&
-      prepared.destinationOwnedBindings.some((candidate) => sameBinding(candidate, binding))
-    ) {
-      continue;
-    }
-    if (inspection.kind === "collision") {
-      fail(
-        `recovery provider '${binding.providerName}' changed from its recorded binding; ` +
-          "preserving the live provider",
-      );
-    }
-    const deletion = deleteProviderWithRecovery(binding.providerName, {
-      runOpenshell: input.runOpenshell,
-      allowedSandboxes: [prepared.destinationSandboxName],
-    });
-    if (!deletion.ok || inspectProvider(binding, input.runOpenshell).kind !== "missing") {
-      fail(`could not clean exact recovery provider '${binding.providerName}'`);
-    }
-  }
-  if (!store.clear(recovery)) {
-    fail("durable provider recovery authority changed before retirement");
-  }
-}
-
 /**
  * Materialize missing providers under one process-local ownership ledger.
  * A non-zero create followed by an exact provider is explicitly ambiguous:
@@ -696,7 +518,6 @@ export function provisionManagedCloneProviderTransaction(
   prepared: PreparedManagedCloneProviderTransaction,
   input: {
     readonly environment?: NodeJS.ProcessEnv;
-    readonly recoveryStore?: ManagedCloneProviderRecoveryStore;
     readonly runOpenshell: ManagedCloneProviderRunner;
     readonly readSandbox: ReadSandbox;
     readonly captureSnapshotRestoreAuthority?: CaptureSnapshotRestoreAuthority;
@@ -708,14 +529,10 @@ export function provisionManagedCloneProviderTransaction(
   },
 ): ManagedCloneProviderTransactionReceipt {
   const environment = input.environment ?? process.env;
-  const recoveryStore = input.recoveryStore ?? createManagedCloneProviderRecoveryStore();
   const confirmed: ManagedCloneProviderOwnershipReceipt[] = [];
-  const recovery = pendingRecoveryRecord(prepared);
   try {
     // Fence every shared gateway mutation, including provider profile import.
     revalidateManagedCloneMutationAuthority(prepared, input);
-    reconcilePriorRecovery(prepared, input, recoveryStore);
-    const messagingProfiles = listMessagingBridgeProfiles({ root: REPOSITORY_ROOT });
     if (
       prepared.providers.some(
         (provider) => provider.binding.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -726,16 +543,6 @@ export function provisionManagedCloneProviderTransaction(
         runOpenshell: input.runOpenshell,
       });
     }
-    ensureMessagingBridgeProfiles(
-      messagingProfileTokenDefs(prepared.providers, messagingProfiles),
-      {
-        root: REPOSITORY_ROOT,
-        runOpenshell: input.runOpenshell,
-        profiles: messagingProfiles,
-        exit: () => fail("could not register an OpenShell messaging provider profile"),
-      },
-    );
-    if (recovery) recoveryStore.persist(recovery);
     for (const provider of prepared.providers) {
       revalidateManagedCloneMutationAuthority(prepared, input);
       const current = inspectProvider(provider.binding, input.runOpenshell);
@@ -752,18 +559,12 @@ export function provisionManagedCloneProviderTransaction(
       if (current.kind !== "missing") {
         fail(`provider '${provider.binding.providerName}' appeared after preflight`);
       }
-      const sourceCredential = provider.binding.sourceCredentialEnvKey;
-      if (sourceCredential && !hasCredential(environment, sourceCredential)) {
-        fail(`credential ${sourceCredential} disappeared before provider creation`);
-      }
-      const resolved = sourceCredential
-        ? undefined
-        : input.resolveCredential?.(provider.binding, environment);
-      const credential = sourceCredential
-        ? MESSAGING_BRIDGE_PENDING_VALUE
-        : normalizeManagedCloneCredential(
-            resolved === undefined ? environment[provider.binding.providerEnvKey] : resolved,
-          );
+      const resolved = input.resolveCredential?.(provider.binding, environment);
+      const credential = (
+        resolved === undefined ? environment[provider.binding.providerEnvKey] : resolved
+      )
+        ?.replace(/\r/gu, "")
+        .trim();
       if (!credential) {
         fail(`credential ${provider.binding.providerEnvKey} disappeared before provider creation`);
       }
@@ -810,24 +611,10 @@ export function provisionManagedCloneProviderTransaction(
       }
       confirmed.push({ binding: provider.binding, disposition: "created" });
     }
-    revalidateManagedCloneMutationAuthority(prepared, input);
-    configureCreatedMessagingRefreshes(
-      confirmed,
-      messagingProfiles,
-      environment,
-      input.runOpenshell,
-    );
-    if (recovery && !recoveryStore.clear(recovery)) {
-      fail("durable provider recovery authority changed before successful retirement");
-    }
     return issueReceipt(prepared, confirmed);
   } catch (cause) {
     const partialReceipt = issueReceipt(prepared, confirmed);
-    const rollback = cleanupManagedCloneProviderTransaction(
-      partialReceipt,
-      input.runOpenshell,
-      recoveryStore,
-    );
+    const rollback = cleanupManagedCloneProviderTransaction(partialReceipt, input.runOpenshell);
     const detail = cause instanceof Error ? cause.message : String(cause);
     throw new ManagedCloneProviderTransactionError(detail, {
       cause,
@@ -845,7 +632,6 @@ export function provisionManagedCloneProviderTransaction(
 export function cleanupManagedCloneProviderTransaction(
   receipt: ManagedCloneProviderTransactionReceipt,
   runOpenshell: ManagedCloneProviderRunner,
-  recoveryStore: ManagedCloneProviderRecoveryStore = createManagedCloneProviderRecoveryStore(),
 ): ManagedCloneProviderCleanupResult {
   if (!issuedReceipts.has(receipt)) {
     fail("cleanup requires the exact process-local ownership receipt");
@@ -902,39 +688,14 @@ export function cleanupManagedCloneProviderTransaction(
     cleaned.add(providerName);
     outcomes.push({ providerName, outcome: "deleted" });
   }
-  const providerCleanupComplete = outcomes.every((result) =>
-    ["already-cleaned", "already-missing", "deleted", "reused-preserved"].includes(result.outcome),
-  );
-  let recovery: ManagedCloneProviderCleanupResult["recovery"] = "not-recorded";
-  try {
-    const recorded = recoveryStore.load(receipt.destinationSandboxName);
-    if (recorded) {
-      recovery = "retained";
-      if (
-        recorded.transactionId === receipt.transactionId &&
-        recorded.destinationSandboxName === receipt.destinationSandboxName
-      ) {
-        const recordedProvidersAbsent = recorded.providers.every((binding) => {
-          try {
-            return inspectProvider(binding, runOpenshell).kind === "missing";
-          } catch {
-            return false;
-          }
-        });
-        if (providerCleanupComplete && recordedProvidersAbsent && recoveryStore.clear(recorded)) {
-          recovery = "cleared";
-        }
-      }
-    }
-  } catch {
-    recovery = "retained";
-  }
   return cloneAndDeepFreeze({
-    status:
-      providerCleanupComplete && recovery !== "retained"
-        ? ("complete" as const)
-        : ("partial" as const),
-    recovery,
+    status: outcomes.every((result) =>
+      ["already-cleaned", "already-missing", "deleted", "reused-preserved"].includes(
+        result.outcome,
+      ),
+    )
+      ? ("complete" as const)
+      : ("partial" as const),
     providers: outcomes,
   });
 }
