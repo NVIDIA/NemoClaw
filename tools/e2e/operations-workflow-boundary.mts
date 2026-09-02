@@ -293,12 +293,19 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (workflow.env?.[name] !== value) errors.push(`E2E workflow must bind ${name}`);
   }
   const runName = String(workflow["run-name"] ?? "");
-  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number"]) {
+  for (const fragment of ["inputs.checkout_sha", "inputs.base_sha", "inputs.pr_number"]) {
     if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must include ${fragment}`);
+  }
+  for (const fragment of [
+    "format('E2E PR #{0} base ({1})'",
+    "format('E2E PR #{0} head ({1})'",
+  ]) {
+    if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must distinguish ${fragment}`);
   }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");
   if (
     !concurrencyGroup.includes("inputs.checkout_sha") ||
+    !concurrencyGroup.includes("inputs.base_sha") ||
     !concurrencyGroup.includes("inputs.pr_number") ||
     !concurrencyGroup.includes("manual-pr")
   ) {
@@ -399,6 +406,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
+    `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
@@ -464,9 +474,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "pull request must still be open",
     "pull request base repository changed before execution",
-    "checkout_repository changed before execution",
-    "checkout_sha changed before execution",
+    "pull request base branch changed before execution",
     "base_sha changed before execution",
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     '"$NVIDIA_OWNED" == "true"',
     "PR source repository ownership changed before execution",
   ]) {
