@@ -261,6 +261,70 @@ async function assertBuildOnlyPathsAbsent(probe: DockerProbe, container: string)
   );
 }
 
+async function assertImageRuntimeCapabilities(
+  probe: DockerProbe,
+  container: string,
+): Promise<void> {
+  await expectContainerSh(
+    probe,
+    container,
+    "Hermes image is missing a selected optional capability or root sandbox-group membership",
+    String.raw`
+set -eu
+id -nG root | tr ' ' '\n' | grep -Fx sandbox
+/opt/hermes/.venv/bin/python -I - <<'PY'
+from importlib import metadata
+
+import acp
+import anthropic
+import discord
+import fastapi
+import mcp
+import ptyprocess
+import slack_bolt
+import slack_sdk
+import telegram
+import uvicorn
+from acp_adapter.server import HermesACPAgent
+from tools import mcp_tool
+
+required_distributions = (
+    "agent-client-protocol",
+    "anthropic",
+    "discord.py",
+    "fastapi",
+    "mcp",
+    "ptyprocess",
+    "slack-bolt",
+    "slack-sdk",
+    "python-telegram-bot",
+    "uvicorn",
+)
+for distribution in required_distributions:
+    metadata.version(distribution)
+
+app = fastapi.FastAPI()
+
+@app.get("/nemoclaw-capability-probe")
+def capability_probe():
+    return {"ok": True}
+
+assert "/nemoclaw-capability-probe" in app.openapi()["paths"]
+child = ptyprocess.PtyProcess.spawn(["/bin/sh", "-c", "printf pty-ready"])
+try:
+    assert child.read().decode() == "pty-ready"
+finally:
+    child.close()
+assert getattr(mcp_tool, "_MCP_AVAILABLE", False)
+assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False)
+assert HermesACPAgent
+assert anthropic.Anthropic and discord.Client and telegram.Bot
+assert acp and mcp and slack_bolt and slack_sdk and uvicorn
+PY
+`,
+  );
+}
+
 async function assertBearerAuth(probe: DockerProbe, container: string): Promise<void> {
   await expectContainerSh(
     probe,
@@ -436,6 +500,7 @@ async function runCleanVariant(
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
   await assertBuildOnlyPathsAbsent(probe, container);
+  await assertImageRuntimeCapabilities(probe, container);
   await assertBearerAuth(probe, container);
   await assertDashboardHome(probe, container);
 }
@@ -744,6 +809,8 @@ test(
         "gateway log has no PID race or config load failure",
         "Hermes v0.14 writable runtime directories are present",
         "build-only upstream tests and root caches are absent from the runtime image",
+        "selected Hermes optional capabilities import and execute from the runtime image",
+        "root retains effective sandbox-group membership in the runtime image",
         "gateway.pid is stored as a regular file below the writable runtime directory",
         "gateway user cannot remove config.yaml from sticky config root",
         "Hermes API denies missing/wrong bearer tokens and accepts API_SERVER_KEY",
@@ -805,6 +872,8 @@ test(
         lockedRootStartupHealthy: true,
         runtimeLayoutVerified: true,
         buildOnlyPathsAbsent: true,
+        selectedHermesCapabilitiesVerified: true,
+        rootSandboxGroupMembershipVerified: true,
         gatewayPrivilegeSeparationVerified: true,
         gatewayKanbanDispatcherBoundaryVerified: true,
         bearerAuthVerified: true,
