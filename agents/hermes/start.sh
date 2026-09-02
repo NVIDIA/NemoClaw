@@ -876,11 +876,11 @@ apply_shields_up_runtime_env() {
   fi
 
   if [ "$config_locked" -eq 1 ]; then
-    if [ -z "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" ]; then
-      export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
-      _NEMOCLAW_SET_KANBAN_DISPATCH=1
+    if [ "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" != 0 ]; then
       echo "[gateway] Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended; kanban.db on locked config root is read-only)" >&2
     fi
+    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
+    _NEMOCLAW_SET_KANBAN_DISPATCH=1
     return 0
   fi
 
@@ -894,11 +894,6 @@ ensure_hermes_config_root_mode() {
   if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
     return 1
-  fi
-
-  if hermes_config_root_is_locked; then
-    echo "[gateway] Hermes config root is locked; preserving shields-up permissions" >&2
-    return 0
   fi
 
   if [ "$(id -u)" -eq 0 ]; then
@@ -3716,6 +3711,26 @@ bootstrap_hermes_gateway_current_user() {
   nemoclaw_runtime_state_mutation_checkpoint || return 1
 }
 
+start_hermes_root_gateway() {
+  # Migrate and seed the dashboard profile before Hermes reads the shared home.
+  # Waiting until dashboard launch leaves restored legacy state in the gateway's
+  # HERMES_HOME during its readiness check.
+  prepare_hermes_dashboard_home sandbox:sandbox || return 1
+
+  # Start Hermes gateway. Messaging egress goes directly through OpenShell.
+  launch_hermes_gateway || return 1
+  start_gateway_log_stream || return 1
+  wait_for_hermes_gateway_internal "$GATEWAY_PID" || return 1
+  ensure_hermes_supervised_auxiliaries || return 1
+  finalize_tirith_marker_retry || return 1
+  if ! commit_hermes_mcp_applied_if_pending; then
+    echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
+    stop_hermes_gateway_fail_closed
+    return 1
+  fi
+  restore_hermes_config_permissions_after_dashboard_start || return 1
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # A PID 1 interruption within the same container writable layer can leave the
@@ -3818,23 +3833,7 @@ prepare_restricted_log /tmp/gateway.log gateway:gateway 600
 # shellcheck disable=SC2119
 validate_tmp_permissions
 
-# Migrate and seed the dashboard profile before Hermes reads the shared home.
-# Waiting until dashboard launch leaves restored legacy state in the gateway's
-# HERMES_HOME during its readiness check.
-prepare_hermes_dashboard_home sandbox:sandbox || exit 1
-
-# Start Hermes gateway. Messaging egress goes directly through OpenShell.
-launch_hermes_gateway
-start_gateway_log_stream
-wait_for_hermes_gateway_internal "$GATEWAY_PID"
-ensure_hermes_supervised_auxiliaries
-finalize_tirith_marker_retry
-if ! commit_hermes_mcp_applied_if_pending; then
-  echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
-  stop_hermes_gateway_fail_closed
-  exit 1
-fi
-restore_hermes_config_permissions_after_dashboard_start
+start_hermes_root_gateway || exit 1
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.

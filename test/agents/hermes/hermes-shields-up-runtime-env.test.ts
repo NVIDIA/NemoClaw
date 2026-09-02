@@ -94,7 +94,7 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
     expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
   });
 
-  it("preserves a caller-supplied HERMES_KANBAN_DISPATCH_IN_GATEWAY value under shields-up", () => {
+  it("overrides a caller-supplied kanban dispatcher value when the config root is locked", () => {
     const run = runShieldsUpRuntimeEnv({
       configureRoot: configureLockedHermesRoot,
       presetValue: "1",
@@ -102,7 +102,7 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
     });
 
     expect(run.result.status).toBe(0);
-    expect(run.kanbanValue).toBe("1");
-    expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
+    expect(run.kanbanValue).toBe("0");
+    expect(run.result.stderr).toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
   });
 });
