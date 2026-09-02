@@ -1014,7 +1014,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
         runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
         sourceSha: env.MANAGED_RUNTIME_SOURCE_SHA ?? "",
         workflowPath: env.MANAGED_RUNTIME_WORKFLOW_PATH ?? "",
-        workflowSha: env.GITHUB_WORKFLOW_SHA ?? "",
+        workflowSha: env.MANAGED_RUNTIME_CONTROLLER_SHA ?? "",
       }),
     );
     return;
@@ -1035,7 +1035,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       runAttempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
       runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
       token: env.GITHUB_TOKEN ?? "",
-      workflowSha: env.GITHUB_WORKFLOW_SHA ?? "",
+      workflowSha: env.MANAGED_RUNTIME_CONTROLLER_SHA ?? "",
     });
     writeJsonExclusive(argv[1], comparison);
     if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");

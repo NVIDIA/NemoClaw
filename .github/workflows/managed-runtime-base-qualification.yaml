@@ -94,7 +94,7 @@ jobs:
       - name: Check out exact base-controlled qualification controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
           persist-credentials: false
 
       - name: Set up pinned Node.js
@@ -115,13 +115,12 @@ jobs:
           PR_MANAGED_IMAGE_RUN_ID: ${{ inputs.candidate_run_id }}
           PR_MANAGED_IMAGE_WAIT_SECONDS: "5400"
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$WORKFLOW_SHA" == "$BASE_SHA" ]]
+          test "$(git rev-parse --verify HEAD)" = "$BASE_SHA"
           if { [ -n "$PR_MANAGED_IMAGE_RUN_ID" ] && [ -z "$PR_MANAGED_IMAGE_RUN_ATTEMPT" ]; } ||
              { [ -z "$PR_MANAGED_IMAGE_RUN_ID" ] && [ -n "$PR_MANAGED_IMAGE_RUN_ATTEMPT" ]; }; then
             echo "ERROR: candidate run ID and attempt must be supplied together." >&2
@@ -169,7 +168,7 @@ jobs:
       - name: Check out exact base-controlled scenario controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ needs.authenticate-candidate.outputs.base_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -247,7 +246,7 @@ jobs:
       - name: Record the candidate activation receipt from trusted code
         if: always()
         env:
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MANAGED_RUNTIME_CONTROLLER_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
           MANAGED_IMAGE_REVISION: ${{ needs.authenticate-candidate.outputs.candidate_sha }}
           MANAGED_RUNTIME_CATALOG: ${{ env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG }}
           MANAGED_RUNTIME_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
@@ -308,7 +307,7 @@ jobs:
       - name: Check out exact base-controlled scenario controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ needs.authenticate-candidate.outputs.base_sha }}
           path: trusted
           persist-credentials: false
 
@@ -325,16 +324,13 @@ jobs:
         with:
           node-version: 22.23.1
 
-      - name: Verify base and workflow source identities
-        env:
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
+      - name: Verify base and controller checkout identities
         run: |
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$WORKFLOW_SHA" == "$BASE_SHA" ]]
           test "$(git -C base rev-parse --verify HEAD)" = "$BASE_SHA"
-          test "$(git -C trusted rev-parse --verify HEAD)" = "$WORKFLOW_SHA"
+          test "$(git -C trusted rev-parse --verify HEAD)" = "$BASE_SHA"
 
       - id: publication
         name: Select the production managed-image cohort for the base
@@ -426,7 +422,7 @@ jobs:
       - name: Record the base activation receipt
         if: always()
         env:
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MANAGED_RUNTIME_CONTROLLER_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
           MANAGED_IMAGE_REVISION: ${{ steps.publication.outputs.head_sha }}
           MANAGED_RUNTIME_CATALOG: ${{ env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG }}
           MANAGED_RUNTIME_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
@@ -474,7 +470,7 @@ jobs:
       - name: Check out exact base-controlled classifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ needs.authenticate-candidate.outputs.base_sha }}
           persist-credentials: false
 
       - name: Set up pinned Node.js
@@ -491,12 +487,14 @@ jobs:
           CANDIDATE_JOB_CONCLUSION: ${{ needs.candidate-activation.result }}
           CANDIDATE_SHA: ${{ needs.authenticate-candidate.outputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MANAGED_RUNTIME_CONTROLLER_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
-        run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/managed-runtime-comparison.mts classify
-          "${RUNNER_TEMP}/managed-runtime-comparison/comparison.json"
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$MANAGED_RUNTIME_CONTROLLER_SHA"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/managed-runtime-comparison.mts classify \
+            "${RUNNER_TEMP}/managed-runtime-comparison/comparison.json"
 
       - name: Preserve managed runtime comparison receipt
         if: always()
