@@ -55,187 +55,215 @@ describe("Deep Agents managed MCP projection safety", () => {
     },
   );
 
-  it(
-    "names unsafe projection types without following hostile paths (#10754)",
-    { timeout: 60_000 },
-    () => {
-      const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
-      const symlink = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
+  it.each([
+    {
+      caseName: "symbolic link",
+      diagnostic: "symbolic link",
+      expectedConfigIsDirectory: false,
+      expectedConfigIsFifo: false,
+      expectedConfigIsSymlink: true,
+      expectedTargetText: `${JSON.stringify(emptyProjection, null, 2)}\n`,
+      initialConfig: emptyProjection,
+      options: { symlink: true },
+    },
+    {
+      caseName: "FIFO",
+      diagnostic: "FIFO",
+      expectedConfigIsDirectory: false,
+      expectedConfigIsFifo: true,
+      expectedConfigIsSymlink: false,
+      expectedTargetText: null,
+      initialConfig: undefined,
+      options: { fifo: true },
+    },
+    {
+      caseName: "directory",
+      diagnostic: "non-regular file",
+      expectedConfigIsDirectory: true,
+      expectedConfigIsFifo: false,
+      expectedConfigIsSymlink: false,
+      expectedTargetText: null,
+      initialConfig: undefined,
+      options: { directory: true },
+    },
+    {
+      caseName: "dangling symbolic link",
+      diagnostic: "symbolic link",
+      expectedConfigIsDirectory: false,
+      expectedConfigIsFifo: false,
+      expectedConfigIsSymlink: true,
+      expectedTargetText: null,
+      initialConfig: undefined,
+      options: { danglingSymlink: true },
+    },
+  ])(
+    "rejects an existing $caseName projection path without following it (#10754)",
+    ({
+      diagnostic,
+      expectedConfigIsDirectory,
+      expectedConfigIsFifo,
+      expectedConfigIsSymlink,
+      expectedTargetText,
+      initialConfig,
+      options,
+    }) => {
+      const result = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpStatusCommand(baseEntry),
+        initialConfig,
         "v2",
         undefined,
         0o600,
-        { symlink: true, timeoutMs: managedCommandTimeoutMs },
+        { ...options, timeoutMs: managedCommandTimeoutMs },
       );
-      expect(symlink.status).toBe(2);
-      expect(symlink.stdout.trim()).toBe("");
-      expect(symlink.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
+      expect(result.status).toBe(2);
+      expect(result.stdout.trim()).toBe("");
+      expect(result.stderr).toContain(
+        `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
       );
-      expect(symlink.managedSymlinkTargetText).toBe(
-        `${JSON.stringify(emptyProjection, null, 2)}\n`,
-      );
-
-      const fifo = runDeepAgentsConfigCommand(statusCommand, undefined, "v2", undefined, 0o600, {
-        fifo: true,
-        timeoutMs: managedCommandTimeoutMs,
-      });
-      expect(fifo.status).toBe(2);
-      expect(fifo.stdout.trim()).toBe("");
-      expect(fifo.stderr).toContain("Unsafe managed Deep Agents MCP projection path: FIFO");
-
-      const directory = runDeepAgentsConfigCommand(
-        statusCommand,
-        undefined,
-        "v2",
-        undefined,
-        0o600,
-        {
-          directory: true,
-          timeoutMs: managedCommandTimeoutMs,
-        },
-      );
-      expect(directory.status).toBe(2);
-      expect(directory.stdout.trim()).toBe("");
-      expect(directory.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: non-regular file",
-      );
-
-      const danglingSymlink = runDeepAgentsConfigCommand(
-        statusCommand,
-        undefined,
-        "v2",
-        undefined,
-        0o600,
-        { danglingSymlink: true, timeoutMs: managedCommandTimeoutMs },
-      );
-      expect(danglingSymlink.status).toBe(2);
-      expect(danglingSymlink.stdout.trim()).toBe("");
-      expect(danglingSymlink.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
-      );
-
-      const racedSymlink = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
-        "v2",
-        undefined,
-        0o600,
-        { swapOnManagedOpen: "symlink", timeoutMs: managedCommandTimeoutMs },
-      );
-      expect(racedSymlink.status).toBe(2);
-      expect(racedSymlink.stdout.trim()).toBe("");
-      expect(racedSymlink.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
-      );
-      expect(racedSymlink.configIsSymlink).toBe(true);
-      expect(racedSymlink.managedSymlinkTargetText).toBe(
-        `${JSON.stringify(emptyProjection, null, 2)}\n`,
-      );
-
-      const racedFifo = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
-        "v2",
-        undefined,
-        0o600,
-        { swapOnManagedOpen: "fifo", timeoutMs: managedCommandTimeoutMs },
-      );
-      expect(racedFifo.status).toBe(2);
-      expect(racedFifo.stdout.trim()).toBe("");
-      expect(racedFifo.stderr).toContain("Unsafe managed Deep Agents MCP projection path: FIFO");
-      expect(racedFifo.configIsFifo).toBe(true);
-
-      const racedSocket = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
-        "v2",
-        undefined,
-        0o600,
-        { swapOnManagedOpen: "socket", timeoutMs: managedCommandTimeoutMs },
-      );
-      expect(racedSocket.status).toBe(2);
-      expect(racedSocket.stdout.trim()).toBe("");
-      expect(racedSocket.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: non-regular file",
-      );
-      expect(racedSocket.configIsSocket).toBe(true);
-
-      const replacedAfterOpenWithSymlink = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
-        "v2",
-        undefined,
-        0o600,
-        { swapAfterManagedOpen: "symlink", timeoutMs: managedCommandTimeoutMs },
-      );
-      expect(replacedAfterOpenWithSymlink.status).toBe(2);
-      expect(replacedAfterOpenWithSymlink.stdout.trim()).toBe("");
-      expect(replacedAfterOpenWithSymlink.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
-      );
-      expect(replacedAfterOpenWithSymlink.configIsSymlink).toBe(true);
-      expect(replacedAfterOpenWithSymlink.managedSymlinkTargetText).toBe(
-        `${JSON.stringify(emptyProjection, null, 2)}\n`,
-      );
-
-      const replacedAfterOpenWithFifo = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
-        "v2",
-        undefined,
-        0o600,
-        { swapAfterManagedOpen: "fifo", timeoutMs: managedCommandTimeoutMs },
-      );
-      expect(replacedAfterOpenWithFifo.status).toBe(2);
-      expect(replacedAfterOpenWithFifo.stdout.trim()).toBe("");
-      expect(replacedAfterOpenWithFifo.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: FIFO",
-      );
-      expect(replacedAfterOpenWithFifo.configIsFifo).toBe(true);
-
-      const replacedWhileReadingWithSymlink = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
-        "v2",
-        undefined,
-        0o600,
-        { swapOnManagedRead: "symlink", timeoutMs: managedCommandTimeoutMs },
-      );
-      expect(replacedWhileReadingWithSymlink.status).toBe(2);
-      expect(replacedWhileReadingWithSymlink.stdout.trim()).toBe("");
-      expect(replacedWhileReadingWithSymlink.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
-      );
-      expect(replacedWhileReadingWithSymlink.configIsSymlink).toBe(true);
-      expect(replacedWhileReadingWithSymlink.managedSymlinkTargetText).toBe(
-        `${JSON.stringify(emptyProjection, null, 2)}\n`,
-      );
-
-      const replacedAfterEloop = runDeepAgentsConfigCommand(
-        statusCommand,
-        emptyProjection,
-        "v2",
-        undefined,
-        0o600,
-        {
-          statAfterManagedEloopAsRegular: true,
-          symlink: true,
-          timeoutMs: managedCommandTimeoutMs,
-        },
-      );
-      expect(replacedAfterEloop.status).toBe(2);
-      expect(replacedAfterEloop.stdout.trim()).toBe("");
-      expect(replacedAfterEloop.stderr).toContain(
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
-      );
-      expect(replacedAfterEloop.configIsSymlink).toBe(true);
-      expect(replacedAfterEloop.managedSymlinkTargetText).toBe(
-        `${JSON.stringify(emptyProjection, null, 2)}\n`,
-      );
+      expect(result.configIsDirectory).toBe(expectedConfigIsDirectory);
+      expect(result.configIsFifo).toBe(expectedConfigIsFifo);
+      expect(result.configIsSymlink).toBe(expectedConfigIsSymlink);
+      expect(result.managedSymlinkTargetText).toBe(expectedTargetText);
     },
   );
+
+  it.each([
+    {
+      diagnostic: "symbolic link",
+      expectedConfigIsFifo: false,
+      expectedConfigIsSocket: false,
+      expectedConfigIsSymlink: true,
+      expectedTargetText: `${JSON.stringify(emptyProjection, null, 2)}\n`,
+      replacementType: "symlink" as const,
+    },
+    {
+      diagnostic: "FIFO",
+      expectedConfigIsFifo: true,
+      expectedConfigIsSocket: false,
+      expectedConfigIsSymlink: false,
+      expectedTargetText: null,
+      replacementType: "fifo" as const,
+    },
+    {
+      diagnostic: "non-regular file",
+      expectedConfigIsFifo: false,
+      expectedConfigIsSocket: true,
+      expectedConfigIsSymlink: false,
+      expectedTargetText: null,
+      replacementType: "socket" as const,
+    },
+  ])(
+    "rejects a $replacementType replacement before projection open (#10754)",
+    ({
+      diagnostic,
+      expectedConfigIsFifo,
+      expectedConfigIsSocket,
+      expectedConfigIsSymlink,
+      expectedTargetText,
+      replacementType,
+    }) => {
+      const result = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpStatusCommand(baseEntry),
+        emptyProjection,
+        "v2",
+        undefined,
+        0o600,
+        { swapOnManagedOpen: replacementType, timeoutMs: managedCommandTimeoutMs },
+      );
+      expect(result.status).toBe(2);
+      expect(result.stdout.trim()).toBe("");
+      expect(result.stderr).toContain(
+        `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
+      );
+      expect(result.configIsFifo).toBe(expectedConfigIsFifo);
+      expect(result.configIsSocket).toBe(expectedConfigIsSocket);
+      expect(result.configIsSymlink).toBe(expectedConfigIsSymlink);
+      expect(result.managedSymlinkTargetText).toBe(expectedTargetText);
+    },
+  );
+
+  it.each([
+    {
+      diagnostic: "symbolic link",
+      expectedConfigIsFifo: false,
+      expectedConfigIsSymlink: true,
+      expectedTargetText: `${JSON.stringify(emptyProjection, null, 2)}\n`,
+      replacementType: "symlink" as const,
+    },
+    {
+      diagnostic: "FIFO",
+      expectedConfigIsFifo: true,
+      expectedConfigIsSymlink: false,
+      expectedTargetText: null,
+      replacementType: "fifo" as const,
+    },
+  ])(
+    "rejects a $replacementType replacement after projection open (#10754)",
+    ({
+      diagnostic,
+      expectedConfigIsFifo,
+      expectedConfigIsSymlink,
+      expectedTargetText,
+      replacementType,
+    }) => {
+      const result = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpStatusCommand(baseEntry),
+        emptyProjection,
+        "v2",
+        undefined,
+        0o600,
+        { swapAfterManagedOpen: replacementType, timeoutMs: managedCommandTimeoutMs },
+      );
+      expect(result.status).toBe(2);
+      expect(result.stdout.trim()).toBe("");
+      expect(result.stderr).toContain(
+        `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
+      );
+      expect(result.configIsFifo).toBe(expectedConfigIsFifo);
+      expect(result.configIsSymlink).toBe(expectedConfigIsSymlink);
+      expect(result.managedSymlinkTargetText).toBe(expectedTargetText);
+    },
+  );
+
+  it("rejects a symbolic-link replacement while reading the projection (#10754)", () => {
+    const result = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { swapOnManagedRead: "symlink", timeoutMs: managedCommandTimeoutMs },
+    );
+    expect(result.status).toBe(2);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    );
+    expect(result.configIsSymlink).toBe(true);
+    expect(result.managedSymlinkTargetText).toBe(`${JSON.stringify(emptyProjection, null, 2)}\n`);
+  });
+
+  it("preserves conclusive ELOOP classification across a follow-up path swap (#10754)", () => {
+    const result = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      {
+        statAfterManagedEloopAsRegular: true,
+        symlink: true,
+        timeoutMs: managedCommandTimeoutMs,
+      },
+    );
+    expect(result.status).toBe(2);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    );
+    expect(result.configIsSymlink).toBe(true);
+    expect(result.managedSymlinkTargetText).toBe(`${JSON.stringify(emptyProjection, null, 2)}\n`);
+  });
 
   it.each([
     {
@@ -405,7 +433,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(raced.configText).toBe(attackerProjection);
   });
 
-  it("keeps forced removal identity-bound for malformed files and symlinks", () => {
+  it("keeps forced removal identity-bound for malformed and unsafe projections", () => {
     const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
     const forcedSymlink = runDeepAgentsConfigCommand(
       forcedCommand,
@@ -443,6 +471,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     );
     expect(forcedFifo.status).toBe(2);
     expect(forcedFifo.configExists).toBe(true);
+    expect(forcedFifo.configIsFifo).toBe(true);
 
     const duplicate = runDeepAgentsConfigCommand(removalCommand, duplicateProjection);
     expect(duplicate.status).toBe(2);

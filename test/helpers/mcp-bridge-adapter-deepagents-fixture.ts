@@ -25,6 +25,7 @@ export interface DeepAgentsConfigCommandResult {
   stdout: string;
   stderr: string;
   configExists: boolean;
+  configIsDirectory: boolean;
   configIsFifo: boolean;
   configIsSocket: boolean;
   configIsSymlink: boolean;
@@ -317,6 +318,7 @@ export function runDeepAgentsConfigCommand(
       stdout: result.stdout,
       stderr: result.stderr,
       configExists,
+      configIsDirectory,
       configIsFifo,
       configIsSocket,
       configIsSymlink,
