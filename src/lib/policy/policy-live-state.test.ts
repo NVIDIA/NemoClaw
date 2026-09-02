@@ -154,6 +154,13 @@ describe("live OpenShell policy mutations", () => {
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
   });
 
+  it("uses one initial base-policy read, one final recheck, and one write readback for a batch", () => {
+    expect(applyPresets(sandboxName, ["weather"])).toBe(true);
+
+    expect(mocks.readSandboxPolicy).toHaveBeenCalledTimes(3);
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("weather");
+  });
+
   it("does not overwrite a host edit that races a prepared full-policy update", () => {
     let observations = 0;
     mocks.inspectSandboxPolicy.mockImplementation(() => {
@@ -183,6 +190,7 @@ describe("live OpenShell policy mutations", () => {
 
     expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(false);
     expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+    expect(mocks.readSandboxPolicy).toHaveBeenCalledTimes(2);
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
   });
 

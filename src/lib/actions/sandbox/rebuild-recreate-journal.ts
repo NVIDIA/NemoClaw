@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -67,7 +68,20 @@ type RebuildRecoveryBackupRecordV2 = {
   readonly gatewayPort: number;
 };
 
-type RebuildRecoveryBackupRecord = RebuildRecoveryBackupRecordV1 | RebuildRecoveryBackupRecordV2;
+type RebuildRecoveryBackupRecordV3 = {
+  readonly schemaVersion: 3;
+  readonly transactionId: string;
+  readonly sandboxName: string;
+  readonly backupTimestamp: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly phase: "restore" | "cleanup";
+};
+
+type RebuildRecoveryBackupRecord =
+  | RebuildRecoveryBackupRecordV1
+  | RebuildRecoveryBackupRecordV2
+  | RebuildRecoveryBackupRecordV3;
 
 type RebuildRecoveryBackupIdentity = {
   readonly sandboxName: string;
@@ -134,7 +148,17 @@ function parseRecoveryRecord(raw: string): RebuildRecoveryBackupRecord | null {
   try {
     const value = JSON.parse(raw) as Record<string, unknown>;
     const expectedKeys =
-      value?.schemaVersion === 2
+      value?.schemaVersion === 3
+        ? [
+            "backupTimestamp",
+            "gatewayName",
+            "gatewayPort",
+            "phase",
+            "sandboxName",
+            "schemaVersion",
+            "transactionId",
+          ]
+        : value?.schemaVersion === 2
         ? [
             "backupTimestamp",
             "gatewayName",
@@ -149,18 +173,19 @@ function parseRecoveryRecord(raw: string): RebuildRecoveryBackupRecord | null {
       typeof value !== "object" ||
       Array.isArray(value) ||
       JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys) ||
-      (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+      (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
       typeof value.transactionId !== "string" ||
       !UUID_PATTERN.test(value.transactionId) ||
       typeof value.sandboxName !== "string" ||
       !isValidName(value.sandboxName) ||
       typeof value.backupTimestamp !== "string" ||
-      (value.schemaVersion === 2 &&
+      ((value.schemaVersion === 2 || value.schemaVersion === 3) &&
         (typeof value.gatewayName !== "string" ||
           !isValidName(value.gatewayName) ||
           !Number.isSafeInteger(value.gatewayPort) ||
           Number(value.gatewayPort) < 1 ||
-          Number(value.gatewayPort) > 65_535))
+          Number(value.gatewayPort) > 65_535)) ||
+      (value.schemaVersion === 3 && value.phase !== "restore" && value.phase !== "cleanup")
     ) {
       return null;
     }
@@ -234,6 +259,31 @@ function recoveryRecordMatches(
   );
 }
 
+function replaceRecoveryRecord(
+  backupPath: string,
+  record: RebuildRecoveryBackupRecordV3,
+): void {
+  const filePath = recoveryPath(backupPath);
+  const temporaryPath = `${filePath}.tmp-${randomUUID()}`;
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(
+      temporaryPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(descriptor, `${JSON.stringify(record)}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporaryPath, filePath);
+    syncDirectory(backupPath);
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
 /** Bind one published backup to the active outer rebuild transaction. */
 export function recordRebuildRecoveryBackup(
   input: RebuildRecoveryBackupIdentity &
@@ -260,12 +310,13 @@ export function recordRebuildRecoveryBackup(
     return;
   }
   const record: RebuildRecoveryBackupRecord = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     transactionId: input.transactionId,
     sandboxName: input.sandboxName,
     backupTimestamp: manifest.timestamp,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    phase: "restore",
   };
   const descriptor = fs.openSync(
     recoveryPath(manifest.backupPath),
@@ -279,6 +330,52 @@ export function recordRebuildRecoveryBackup(
     fs.closeSync(descriptor);
   }
   syncDirectory(manifest.backupPath);
+}
+
+/** Report whether an exact recovery record has entered cleanup-only state. */
+export function isRebuildRecoveryCleanupOnly(
+  input: Omit<RebuildRecoveryBackupIdentity, "transactionId"> & {
+    readonly transactionId?: string;
+    readonly backupManifest: RebuildManifest;
+  },
+  deps: RebuildRecoveryBackupDeps = {},
+): boolean {
+  if (!isValidName(input.sandboxName)) {
+    throw new Error("Rebuild recovery sandbox identity is invalid.");
+  }
+  const record = readRecoveryRecord(input.backupManifest.backupPath);
+  if (!record) return false;
+  const identity = {
+    sandboxName: input.sandboxName,
+    agentName: input.agentName,
+    transactionId: input.transactionId ?? record.transactionId,
+  };
+  validateRecoveryIdentity(identity);
+  const manifest = validatedRecoveryManifest(identity, input.backupManifest, deps);
+  if (!recoveryRecordMatches(record, identity, manifest)) return false;
+  return record?.schemaVersion === 3 && record.phase === "cleanup";
+}
+
+/** Persist cleanup-only state before removing the final handoff metadata. */
+export function markRebuildRecoveryCleanupOnly(
+  input: RebuildRecoveryBackupIdentity & { readonly backupManifest: RebuildManifest },
+  deps: RebuildRecoveryBackupDeps = {},
+): void {
+  validateRecoveryIdentity(input);
+  const manifest = validatedRecoveryManifest(input, input.backupManifest, deps);
+  const record = readRecoveryRecord(manifest.backupPath);
+  if (!record || !recoveryRecordMatches(record, input, manifest)) {
+    throw new Error("Rebuild recovery backup record is missing or changed.");
+  }
+  if (record.schemaVersion === 1) {
+    throw new Error("Rebuild recovery backup record lacks cleanup authority.");
+  }
+  if (record.schemaVersion === 3 && record.phase === "cleanup") return;
+  replaceRecoveryRecord(manifest.backupPath, {
+    ...record,
+    schemaVersion: 3,
+    phase: "cleanup",
+  });
 }
 
 /** Find the exact backup bound to an interrupted replacement transaction. */
@@ -338,7 +435,12 @@ export function retireRebuildRecoveryBackup(
     );
   }
 
-  let selected: { manifest: RebuildManifest; record: RebuildRecoveryBackupRecordV2 } | undefined;
+  let selected:
+    | {
+        manifest: RebuildManifest;
+        record: RebuildRecoveryBackupRecordV2 | RebuildRecoveryBackupRecordV3;
+      }
+    | undefined;
   for (const candidate of (deps.listBackups ?? listBackups)(input.sandboxName)) {
     const record = readRecoveryRecord(candidate.backupPath);
     if (record?.transactionId !== input.transactionId) continue;
@@ -347,7 +449,7 @@ export function retireRebuildRecoveryBackup(
         `Rebuild recovery identity does not match sandbox '${input.sandboxName}'. Recovery remains at '${candidate.backupPath}'.`,
       );
     }
-    if (record.schemaVersion !== 2) {
+    if (record.schemaVersion === 1) {
       throw new Error(
         `Rebuild recovery '${input.transactionId}' does not contain recorded gateway authority. Recovery remains at '${candidate.backupPath}'.`,
       );

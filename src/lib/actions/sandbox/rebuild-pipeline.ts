@@ -64,6 +64,8 @@ import {
   clearRebuildRecoveryBackup,
   findRebuildRecoveryBackup,
   fingerprintRebuildRecreateTargetIntent,
+  isRebuildRecoveryCleanupOnly,
+  markRebuildRecoveryCleanupOnly,
   openRebuildRecreateJournal,
   recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
@@ -282,10 +284,68 @@ async function rebuildSandboxUnlocked(
         }
       };
 
+      const reportIncompletePolicyHandoffCleanup = (
+        backupManifest: NonNullable<RebuildBackupManifest>,
+        detail: string,
+      ): boolean => {
+        console.error("");
+        console.error(`  ${detail}`);
+        console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+        console.error(
+          `  Retry \`nemoclaw ${sandboxName} rebuild --yes\`; the accepted replacement will not be restored again.`,
+        );
+        bail("Recovered replacement cleanup is incomplete; the recovery marker was retained.");
+        return false;
+      };
+
+      const completePolicyHandoffCleanup = (
+        transactionId: string,
+        backupManifest: NonNullable<RebuildBackupManifest>,
+      ): boolean => {
+        if (
+          backupManifest.rebuildPolicyHandoff &&
+          !clearRebuildPolicyHandoff(backupManifest, { retainRetirement: true })
+        ) {
+          return reportIncompletePolicyHandoffCleanup(
+            backupManifest,
+            "The rebuild policy handoff could not enter cleanup-only state.",
+          );
+        }
+        try {
+          markRebuildRecoveryCleanupOnly({
+            sandboxName,
+            agentName: rebuildAgent,
+            transactionId,
+            backupManifest,
+          });
+        } catch (error) {
+          return reportIncompletePolicyHandoffCleanup(
+            backupManifest,
+            `The rebuild policy cleanup record could not be updated: ${rebuildFailureDetail(error)}`,
+          );
+        }
+        if (clearRebuildPolicyHandoff(backupManifest)) return true;
+        return reportIncompletePolicyHandoffCleanup(
+          backupManifest,
+          "The retired rebuild policy handoff artifact or metadata could not be removed.",
+        );
+      };
+
       // Policy-handoff retirement is durably recorded before the recovery
-      // marker is removed. If marker cleanup failed after restore, resume only
-      // that cleanup against the already accepted replacement.
-      if (recoveryManifest?.rebuildPolicyHandoff?.retired === true) {
+      // marker is removed. A missing handoff with a retained marker means the
+      // handoff cleanup completed but marker cleanup did not. Resume only that
+      // cleanup against the already accepted replacement.
+      const recoveryCleanupOnly = recoveryManifest
+        ? isRebuildRecoveryCleanupOnly({
+            sandboxName,
+            agentName: rebuildAgent,
+            backupManifest: recoveryManifest,
+          })
+        : false;
+      if (
+        recoveryManifest &&
+        (recoveryCleanupOnly || recoveryManifest.rebuildPolicyHandoff?.retired === true)
+      ) {
         const cleanupManifest = recoveryManifest;
         const cleanupJournal = openRecreateJournal();
         if (!cleanupJournal) return;
@@ -294,11 +354,8 @@ async function rebuildSandboxUnlocked(
             "A retired rebuild policy handoff cannot be cleaned up until the journaled replacement is accepted.",
           );
         }
+        if (!completePolicyHandoffCleanup(cleanupJournal.id, cleanupManifest)) return;
         if (!clearRecoveryMarker(cleanupJournal.id, cleanupManifest)) return;
-        runBestEffortRebuildCleanup(
-          () => clearRebuildPolicyHandoff(cleanupManifest),
-          "  Warning: retired rebuild policy handoff metadata could not be removed.",
-        );
         cleanupJournal.completeAcceptedTarget();
         retainPolicyHandoffForRecovery = false;
         console.log(`  Completed retained recovery cleanup for '${sandboxName}'.`);
@@ -535,17 +592,8 @@ async function rebuildSandboxUnlocked(
           log,
           bail,
         });
-        if (
-          recoveryBackup.rebuildPolicyHandoff &&
-          !clearRebuildPolicyHandoff(recoveryBackup, { retainRetirement: true })
-        ) {
-          return bail("The bounded rebuild policy handoff could not be retired after recovery.");
-        }
+        if (!completePolicyHandoffCleanup(recreateJournal.id, recoveryBackup)) return;
         if (!clearRecoveryMarker(recreateJournal.id, recoveryBackup)) return;
-        runBestEffortRebuildCleanup(
-          () => clearRebuildPolicyHandoff(recoveryBackup),
-          "  Warning: retired rebuild policy handoff metadata could not be removed.",
-        );
         recreateJournal.completeAcceptedTarget();
         retainPolicyHandoffForRecovery = false;
         console.log(`  Recovered the accepted replacement for '${sandboxName}'.`);
@@ -752,17 +800,8 @@ async function rebuildSandboxUnlocked(
         bail,
       });
       if (backup.backupManifest) {
-        if (
-          backup.backupManifest.rebuildPolicyHandoff &&
-          !clearRebuildPolicyHandoff(backup.backupManifest, { retainRetirement: true })
-        ) {
-          return bail("The bounded rebuild policy handoff could not be retired after rebuild.");
-        }
+        if (!completePolicyHandoffCleanup(recreateJournal.id, backup.backupManifest)) return;
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
-        runBestEffortRebuildCleanup(
-          () => clearRebuildPolicyHandoff(backup.backupManifest!),
-          "  Warning: retired rebuild policy handoff metadata could not be removed.",
-        );
       }
       retainPolicyHandoffForRecovery = false;
     } finally {
