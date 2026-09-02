@@ -95,23 +95,40 @@ function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSw
   return undefined;
 }
 
-function createManagedSwapPythonExecutable(
+function createDeepAgentsFixturePythonExecutable(
   fixtureRoot: string,
   configPath: string,
+  legacyConfigPath: string,
   managedSymlinkTarget: string,
-  managedSwap: ManagedSwap,
+  runtimeKind: "v2" | "legacy" | "unknown",
+  managedSwap?: ManagedSwap,
 ): { executablePath: string; scriptPath: string } {
   const executablePath = path.join(fixtureRoot, "managed-swap-python");
   const scriptPath = path.join(fixtureRoot, "managed-swap-wrapper.py");
+  const runtimeConfigPath =
+    runtimeKind === "v2"
+      ? configPath
+      : runtimeKind === "legacy"
+        ? legacyConfigPath
+        : path.join(fixtureRoot, "unknown-runtime-config.json");
+  const runtimePackagePath = path.join(fixtureRoot, "deepagents_code");
+  fs.mkdirSync(runtimePackagePath);
+  fs.writeFileSync(path.join(runtimePackagePath, "__init__.py"), "", { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(runtimePackagePath, "_nemoclaw_managed.py"),
+    `_MCP_CONFIG_FILE = ${JSON.stringify(runtimeConfigPath)}\n`,
+    { mode: 0o600 },
+  );
   const wrapper = [
     "import os",
     "import socket",
     "import sys",
+    `fixture_root = ${JSON.stringify(fixtureRoot)}`,
     `managed_path = ${JSON.stringify(configPath)}`,
     `managed_target = ${JSON.stringify(managedSymlinkTarget)}`,
-    `managed_swap_kind = ${JSON.stringify(managedSwap.kind)}`,
-    `managed_swap_phase = ${JSON.stringify(managedSwap.phase)}`,
-    `managed_swap_content = ${JSON.stringify(managedSwap.content ?? "")}`,
+    `managed_swap_kind = ${JSON.stringify(managedSwap?.kind ?? "")}`,
+    `managed_swap_phase = ${JSON.stringify(managedSwap?.phase ?? "")}`,
+    `managed_swap_content = ${JSON.stringify(managedSwap?.content ?? "")}`,
     "managed_eloop_stage = 0",
     "managed_socket = None",
     "managed_swapped = False",
@@ -170,7 +187,9 @@ function createManagedSwapPythonExecutable(
     "        replace_managed_path()",
     "source = sys.stdin.read()",
     "namespace = {'__name__': '__main__'}",
-    "sys.setprofile(managed_profile)",
+    "sys.path.insert(0, fixture_root)",
+    "if managed_swap_phase:",
+    "    sys.setprofile(managed_profile)",
     "try:",
     "    exec(compile(source, '<nemoclaw-managed-command>', 'exec'), namespace)",
     "finally:",
@@ -251,24 +270,23 @@ export function runDeepAgentsConfigCommand(
   initializeConfig(legacyConfigPath, initialLegacyConfig);
   if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);
   try {
-    const managedSwapPython = managedSwap
-      ? createManagedSwapPythonExecutable(tmp, configPath, managedSymlinkTarget, managedSwap)
-      : null;
+    const fixturePython = createDeepAgentsFixturePythonExecutable(
+      tmp,
+      configPath,
+      legacyConfigPath,
+      managedSymlinkTarget,
+      runtimeKind,
+      managedSwap,
+    );
     const fixtureCommand = command
       .replaceAll(DEEPAGENTS_MCP_CONFIG_PATH, configPath)
       .replaceAll("/sandbox/.deepagents/.mcp.json", legacyConfigPath)
-      .replaceAll("/opt/venv/bin/python3", managedSwapPython?.executablePath ?? "python3")
-      .replace(
-        'runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR',
-        `runtime_kind = "${runtimeKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
-      );
+      .replaceAll("/opt/venv/bin/python3", fixturePython.executablePath);
     const result = spawnSync("bash", ["-c", fixtureCommand], {
       encoding: "utf-8",
       env: {
         ...process.env,
-        ...(managedSwapPython
-          ? { DEEPAGENTS_FIXTURE_PYTHON_WRAPPER: managedSwapPython.scriptPath }
-          : {}),
+        DEEPAGENTS_FIXTURE_PYTHON_WRAPPER: fixturePython.scriptPath,
       },
       timeout: managedOptions.timeoutMs ?? 5000,
     });

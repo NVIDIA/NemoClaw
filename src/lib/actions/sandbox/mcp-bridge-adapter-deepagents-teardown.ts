@@ -42,7 +42,7 @@ export function buildDeepAgentsMcpRemoveCommand(
     ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
-    `runtime_kind = "${adaptiveTeardown ? "auto" : "v2"}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
+    `runtime_kind = "${adaptiveTeardown ? "auto" : "v2"}"`,
     "if runtime_kind == 'auto':",
     "    runtime_kind = 'unknown'",
     "    try:",

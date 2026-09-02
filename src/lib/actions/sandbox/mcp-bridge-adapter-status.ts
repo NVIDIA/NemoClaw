@@ -243,7 +243,7 @@ export function buildDeepAgentsMcpStatusCommand(
     ...DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
-    `runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
+    `runtime_kind = "auto"`,
     "if runtime_kind == 'auto':",
     "    runtime_kind = 'unknown'",
     "    try:",
