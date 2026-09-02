@@ -814,9 +814,11 @@ async function requireFakeApiProxyReady(
 }
 
 type DockerContainerInspect = {
+  BoundingCaps?: unknown;
   Config?: {
     Env?: unknown;
   };
+  EffectiveCaps?: unknown;
   Name?: unknown;
   HostConfig?: {
     CapDrop?: unknown;
@@ -829,6 +831,10 @@ type DockerContainerInspect = {
     Ports?: unknown;
   };
 };
+
+function containerName(record: DockerContainerInspect): string | undefined {
+  return typeof record.Name === "string" ? record.Name.replace(/^\/+/u, "") : undefined;
+}
 
 function containerNetworks(record: DockerContainerInspect): string[] {
   const networks = record.NetworkSettings?.Networks;
@@ -920,11 +926,13 @@ async function requireFakeApiRuntimeTopology(
     containers = JSON.parse(containerInspect.stdout);
     networks = JSON.parse(networkInspect.stdout);
   } catch {
-    throw new Error(`fake ${options.kind} API Docker topology inspection returned invalid JSON`);
+    throw new Error(
+      `fake ${options.kind} API ${runtimeProvider.displayName} topology inspection returned invalid JSON`,
+    );
   }
   const records = Array.isArray(containers) ? (containers as DockerContainerInspect[]) : [];
-  const api = records.find((record) => record.Name === `/${options.apiContainer}`);
-  const proxy = records.find((record) => record.Name === `/${options.proxyContainer}`);
+  const api = records.find((record) => containerName(record) === options.apiContainer);
+  const proxy = records.find((record) => containerName(record) === options.proxyContainer);
   const networkRecord = Array.isArray(networks) && networks.length === 1 ? networks[0] : undefined;
   const apiNetworks = api === undefined ? [] : containerNetworks(api);
   const proxyNetworks = proxy === undefined ? [] : containerNetworks(proxy);
@@ -937,23 +945,35 @@ async function requireFakeApiRuntimeTopology(
   const inspectedProxyEnvironment = proxy?.Config?.Env;
   const proxyEnvironmentValid = isStringArray(inspectedProxyEnvironment);
   const proxyEnvironment = proxyEnvironmentValid ? inspectedProxyEnvironment : [];
-  const networkDriver =
-    networkRecord !== null &&
-    typeof networkRecord === "object" &&
-    typeof (networkRecord as { Driver?: unknown }).Driver === "string"
-      ? (networkRecord as { Driver: string }).Driver
+  const networkFields =
+    networkRecord !== null && typeof networkRecord === "object"
+      ? (networkRecord as {
+          Driver?: unknown;
+          Internal?: unknown;
+          driver?: unknown;
+          internal?: unknown;
+        })
       : undefined;
+  const networkDriver =
+    runtimeProvider.id === "podman" ? networkFields?.driver : networkFields?.Driver;
   const networkInternal =
-    networkRecord !== null &&
-    typeof networkRecord === "object" &&
-    (networkRecord as { Internal?: unknown }).Internal === true;
+    runtimeProvider.id === "podman"
+      ? networkFields?.internal === true
+      : networkFields?.Internal === true;
+  const proxyCapabilitiesDropped =
+    runtimeProvider.id === "podman"
+      ? proxyCapabilityDrops.length > 0 &&
+        proxy?.EffectiveCaps === null &&
+        proxy?.BoundingCaps === null
+      : proxyCapabilityDrops.includes("ALL");
+  const defaultNetwork = runtimeProvider.id === "podman" ? "podman" : "bridge";
   if (
     api === undefined ||
     proxy === undefined ||
     networkDriver !== "bridge" ||
     !networkInternal ||
     JSON.stringify(apiNetworks) !== JSON.stringify([options.network]) ||
-    JSON.stringify(proxyNetworks) !== JSON.stringify(["bridge", options.network].sort()) ||
+    JSON.stringify(proxyNetworks) !== JSON.stringify([defaultNetwork, options.network].sort()) ||
     apiBindings.length !== 0 ||
     JSON.stringify(observedContainerPorts) !== JSON.stringify(expectedContainerPorts) ||
     proxyBindings.some(
@@ -961,7 +981,7 @@ async function requireFakeApiRuntimeTopology(
         hostAddress !== options.proxyPublishAddress || !/^\d+$/u.test(hostPort),
     ) ||
     proxy?.HostConfig?.ReadonlyRootfs !== true ||
-    !proxyCapabilityDrops.includes("ALL") ||
+    !proxyCapabilitiesDropped ||
     !proxySecurityOptions.includes("no-new-privileges") ||
     !proxyEnvironmentValid ||
     environmentContainsCredential(proxyEnvironment, options.redactionValues) ||
