@@ -38,6 +38,7 @@ describe("Hermes portable onboarding readiness timeout", () => {
       liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
     };
     let nowMs = 0;
+    let created = false;
     let classificationObservations = 0;
     const boundedBudgets: Array<{ budgetMs: number; remainingMs: number }> = [];
     const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
@@ -45,14 +46,12 @@ describe("Hermes portable onboarding readiness timeout", () => {
       const classification = timeoutBudgetMs === undefined;
       classificationObservations += Number(classification);
       boundedBudgets.push({ budgetMs, remainingMs: 90_000 - nowMs });
-      const observed = classification
-        ? classificationObservations <= 2
-          ? { kind: "absent" as const }
-          : present
-        : nowMs >= 61_000
+      const observed = !created
+        ? { kind: "absent" as const }
+        : classification || nowMs >= 61_000
           ? present
           : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" };
-      nowMs += classification ? 0 : Math.min(budgetMs, Math.max(0, 61_000 - nowMs));
+      nowMs += !created || classification ? 0 : Math.min(budgetMs, Math.max(0, 61_000 - nowMs));
       return observed;
     });
     const delaySandboxReadyPublicationPoll = async (milliseconds: number) => {
@@ -60,6 +59,10 @@ describe("Hermes portable onboarding readiness timeout", () => {
     };
     const fixture = createHermesPortableTransactionFixture(currentInput, {
       observeSandbox,
+      createSandbox: async () => {
+        created = true;
+        return { ready: true };
+      },
       delaySandboxReadyPublicationPoll,
       readSandboxReadyPublicationClockMs: () => nowMs,
     });

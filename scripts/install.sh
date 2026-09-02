@@ -5403,6 +5403,31 @@ express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 
+# Select the accepted N1x WSL llama.cpp candidate only when Windows product
+# identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
+# all match. Later readiness still requires container GPU proof before launch.
+express_wsl_can_use_n1x_managed_llama_cpp() {
+  express_wsl_can_use_windows_host_ollama || return 1
+  [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
+  command_exists timeout || return 1
+  command_exists powershell.exe || return 1
+  command_exists nvidia-smi || return 1
+
+  local product_name=""
+  local memory_mb=""
+  product_name="$(timeout 10s powershell.exe -NoProfile -NonInteractive -Command '(Get-CimInstance Win32_ComputerSystem).Model' 2>/dev/null | tr -d '\r' | head -n 1)"
+  case "$product_name" in
+    *"RTX Spark N1X"*) ;;
+    *) return 1 ;;
+  esac
+
+  memory_mb="$(timeout 10s nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  case "$memory_mb" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$memory_mb" -ge 48000 ]
+}
+
 # True when a readable Docker configuration decides the context but no Node.js can
 # parse it yet. The express prompt runs before install_nodejs, so treating that
 # window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
@@ -5418,8 +5443,14 @@ express_wsl_docker_context_needs_node() {
 
 # Choose between Windows-host and WSL-local Ollama, or defer when only the
 # missing Node.js runtime blocks the decision.
-select_express_wsl_ollama_provider() {
+select_express_wsl_provider() {
   _EXPRESS_WSL_PROVIDER_PENDING=""
+  unset NEMOCLAW_LLAMACPP_RECIPE
+  if express_wsl_can_use_n1x_managed_llama_cpp; then
+    export NEMOCLAW_PROVIDER=install-llama-cpp
+    export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
+    return 0
+  fi
   if express_wsl_can_use_windows_host_ollama; then
     export NEMOCLAW_PROVIDER=install-windows-ollama
     return 0
@@ -5436,13 +5467,18 @@ select_express_wsl_ollama_provider() {
 resolve_pending_express_wsl_provider() {
   [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
   _EXPRESS_WSL_PROVIDER_PENDING=""
-  if express_wsl_can_use_windows_host_ollama; then
-    export NEMOCLAW_PROVIDER=install-windows-ollama
-    info "Express install will configure Windows-host Ollama through host.docker.internal."
-  else
-    export NEMOCLAW_PROVIDER=install-ollama
-    info "Express install will configure WSL-local Ollama."
-  fi
+  select_express_wsl_provider
+  case "${NEMOCLAW_PROVIDER:-}" in
+    install-llama-cpp)
+      info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
+      ;;
+    install-windows-ollama)
+      info "Express install will configure Windows-host Ollama through host.docker.internal."
+      ;;
+    *)
+      info "Express install will configure WSL-local Ollama."
+      ;;
+  esac
 }
 
 select_spark_express_inference() {
@@ -5528,7 +5564,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      select_express_wsl_ollama_provider
+      select_express_wsl_provider
       ;;
   esac
 }
@@ -6010,10 +6046,14 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      if express_wsl_can_use_windows_host_ollama; then
+      if express_wsl_can_use_n1x_managed_llama_cpp; then
+        show_hf_authentication="1"
+        inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
+        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
+      elif express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
       elif express_wsl_docker_context_needs_node; then
-        inference_summary="local Ollama, selected once the installed Node.js runtime reads the Docker configuration"
+        inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
       fi
