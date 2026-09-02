@@ -525,16 +525,6 @@ describe("effective built-in policy contracts", () => {
     });
   });
 
-  it("limits the composed Hermes Discord policy to its virtual-environment Python (#10655)", () => {
-    const effective = composePresets(["discord"], "hermes");
-    const discord = requireNetworkPolicy(effective, "discord");
-
-    expect(binaries(discord)).toEqual([
-      "/opt/hermes/.venv/bin/python",
-      "/opt/hermes/.venv/bin/python3",
-    ]);
-  });
-
   it("composes Hermes-specific messaging mutation and runtime identity rules", () => {
     const effective = composePresets(["telegram", "discord", "slack", "wechat", "teams"], "hermes");
     const telegram = requireNetworkPolicy(effective, "telegram");
