@@ -59,7 +59,7 @@ import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   MAX_ONBOARD_LOCK_BYTES,
   openRegularFileNoFollow,
-  reclaimStaleMcpLifecycleLockGenerationSync,
+  reclaimLockFileGenerationSync,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
@@ -1545,11 +1545,9 @@ function closeAndDiscardIncompleteOnboardLockGeneration(fd: number): void {
   }
   if (observation === null) return;
   try {
-    reclaimStaleMcpLifecycleLockGenerationSync(
+    reclaimLockFileGenerationSync(
       LOCK_FILE,
       observation,
-      undefined,
-      MAX_ONBOARD_LOCK_BYTES,
     );
   } catch (cleanupError) {
     process.emitWarning(
@@ -1632,12 +1630,7 @@ function acquireOnboardLockGeneration(command: string | null): LockResult {
       // Atomically move the canonical path, then verify the exact observed
       // generation before deleting it. A replacement raced into the path is
       // restored without overwriting a newer owner.
-      reclaimStaleMcpLifecycleLockGenerationSync(
-        LOCK_FILE,
-        observation,
-        undefined,
-        MAX_ONBOARD_LOCK_BYTES,
-      );
+      reclaimLockFileGenerationSync(LOCK_FILE, observation);
       continue;
     }
 
@@ -1738,12 +1731,7 @@ export function releaseOnboardLock(): void {
     }
     if (snapshot.disposition.state !== "held") return;
     if (snapshot.disposition.record.pid !== process.pid) return;
-    reclaimStaleMcpLifecycleLockGenerationSync(
-      LOCK_FILE,
-      snapshot.observation,
-      undefined,
-      MAX_ONBOARD_LOCK_BYTES,
-    );
+    reclaimLockFileGenerationSync(LOCK_FILE, snapshot.observation);
   } catch {
     return;
   }

@@ -294,7 +294,7 @@ describe("onboard lock ownership", () => {
     }
   });
 
-  it("restores an oversized replacement without reading it during atomic stale reclamation", () => {
+  it("restores then rejects an oversized replacement raced into stale reclamation", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
     const staleRecord = {
       ...lockHolder.createOnboardLockRecord(
@@ -320,7 +320,7 @@ describe("onboard lock ownership", () => {
 
     try {
       expect(() => session.acquireOnboardLock("nemoclaw onboard --resume")).toThrow(
-        /exceeds the 65536-byte observation limit/u,
+        /exceeds the 65536-byte (?:observation|read) limit/u,
       );
       expect(readSpy).not.toHaveBeenCalled();
       expect(fs.statSync(session.LOCK_FILE).ino).toBe(replacementInode);

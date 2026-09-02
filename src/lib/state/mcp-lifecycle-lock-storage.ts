@@ -7,16 +7,22 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import {
+  classifyMcpLifecycleLock,
   isMcpLifecycleLockOwner,
   type LockObservation,
   type McpLifecycleLockOwner,
 } from "./mcp-lifecycle-lock-identity";
+import {
+  reclaimLockFileGeneration,
+  reclaimLockFileGenerationSync,
+} from "./lock-generation/storage";
 import { resolveNemoclawStateDir } from "./paths";
 
 export { resolveNemoclawStateDir } from "./paths";
 
 export const MCP_LIFECYCLE_LOCK_DIRNAME = "mcp-lifecycle-locks";
 export const MAX_MCP_LIFECYCLE_LOCK_BYTES = 64 * 1024;
+const MAX_RETAINED_CANDIDATES_PER_LOCK = 64;
 
 export class LockObservationTooLargeError extends Error {
   readonly lockPath: string;
@@ -52,9 +58,50 @@ function lifecycleLockCandidatePath(lockPath: string, pid: number, token: string
 function reportRetainedLifecycleLockCandidate(candidatePath: string, error: unknown): void {
   const detail = error instanceof Error ? error.message : String(error);
   process.emitWarning(
-    `Lifecycle lock candidate '${candidatePath}' could not be removed and was retained for generation-verified recovery: ${detail}`,
+    `Lifecycle lock candidate '${candidatePath}' could not be removed and was retained for generation-verified recovery: ${detail}. ` +
+      "If no lifecycle operation owns it, retry the operation; remove only this candidate after verifying it is unlinked from the canonical lock.",
     { code: "NEMOCLAW_MCP_LOCK_CANDIDATE_RETAINED" },
   );
+}
+
+function retainedCandidatePrefix(lockPath: string): string {
+  return `${path.basename(lockPath)}.candidate-`;
+}
+
+async function retainedCandidateNames(lockPath: string): Promise<string[]> {
+  const prefix = retainedCandidatePrefix(lockPath);
+  const directory = await fs.promises.opendir(path.dirname(lockPath));
+  const names: string[] = [];
+  for await (const entry of directory) {
+    if (entry.name.startsWith(prefix)) names.push(entry.name);
+    if (names.length > MAX_RETAINED_CANDIDATES_PER_LOCK) break;
+  }
+  return names.sort();
+}
+
+function retainedCandidateNamesSync(lockPath: string): string[] {
+  const prefix = retainedCandidatePrefix(lockPath);
+  const directory = fs.opendirSync(path.dirname(lockPath));
+  const names: string[] = [];
+  try {
+    for (;;) {
+      const entry = directory.readSync();
+      if (entry === null) break;
+      if (entry.name.startsWith(prefix)) names.push(entry.name);
+      if (names.length > MAX_RETAINED_CANDIDATES_PER_LOCK) break;
+    }
+  } finally {
+    directory.closeSync();
+  }
+  return names.sort();
+}
+
+function candidateMatchesOwnerPath(
+  candidatePath: string,
+  lockPath: string,
+  owner: McpLifecycleLockOwner,
+): boolean {
+  return candidatePath === lifecycleLockCandidatePath(lockPath, owner.pid, owner.token);
 }
 
 export async function readMcpLifecycleLockObservation(
@@ -274,30 +321,6 @@ export function safelyReleaseMcpLifecycleLockSync(lockPath: string, token: strin
   reclaimStaleMcpLifecycleLockGenerationSync(lockPath, observation);
 }
 
-async function restoreClaimedMcpLifecycleLockGeneration(
-  targetPath: string,
-  quarantinePath: string,
-): Promise<void> {
-  try {
-    await fs.promises.link(quarantinePath, targetPath);
-    await fs.promises.rm(quarantinePath, { force: true });
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
-  }
-}
-
-function restoreClaimedMcpLifecycleLockGenerationSync(
-  targetPath: string,
-  quarantinePath: string,
-): void {
-  try {
-    fs.linkSync(quarantinePath, targetPath);
-    fs.rmSync(quarantinePath, { force: true });
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
-  }
-}
-
 async function reclaimStaleMcpLifecycleLockGenerationInternal(
   targetPath: string,
   expected: LockObservation,
@@ -305,74 +328,41 @@ async function reclaimStaleMcpLifecycleLockGenerationInternal(
   maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
   recoverCandidate = true,
 ): Promise<boolean> {
-  const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
+  let reclaimed: boolean;
   try {
-    // Rename is the atomic claim. Another waiter may have already removed the
-    // stale generation and published a replacement after our earlier read, so
-    // the moved file must be verified before it is ever deleted.
-    await fs.promises.rename(targetPath, quarantinePath);
+    reclaimed = await reclaimLockFileGeneration(targetPath, expected, {
+      inspectClaimed: async (claimedPath) =>
+        await readMcpLifecycleLockObservation(claimedPath, maxObservationBytes),
+      assertAfterClaim,
+    });
   } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return false;
-    throw error;
-  }
-
-  let claimed: LockObservation | null;
-  try {
-    claimed = await readMcpLifecycleLockObservation(quarantinePath, maxObservationBytes);
-  } catch (error) {
-    await restoreClaimedMcpLifecycleLockGeneration(targetPath, quarantinePath);
     if (error instanceof LockObservationTooLargeError) {
       throw new LockObservationTooLargeError(targetPath, maxObservationBytes);
     }
     throw error;
   }
-  const expectedToken = expected.owner?.token ?? null;
-  const claimedExpectedGeneration =
-    expectedToken === null
-      ? claimed !== null &&
-        claimed.owner === null &&
-        claimed.dev === expected.dev &&
-        claimed.ino === expected.ino
-      : claimed?.owner?.token === expectedToken;
-  if (claimedExpectedGeneration) {
+  if (reclaimed && recoverCandidate && expected.owner) {
+    let recoveryError: unknown = new Error(
+      "the candidate is still linked to a canonical or changed generation",
+    );
+    let recovered = false;
     try {
-      assertAfterClaim?.();
-    } catch (error) {
-      await restoreClaimedMcpLifecycleLockGeneration(targetPath, quarantinePath);
-      throw error;
-    }
-    await fs.promises.rm(quarantinePath, { force: true, recursive: true });
-    if (recoverCandidate && claimed?.owner) {
-      let recoveryError: unknown = new Error(
-        "the candidate is still linked to a canonical or changed generation",
+      recovered = await recoverOrphanedMcpLifecycleLockCandidate(
+        targetPath,
+        expected.owner.pid,
+        expected.owner.token,
       );
-      let recovered = false;
-      try {
-        recovered = await recoverOrphanedMcpLifecycleLockCandidate(
-          targetPath,
-          claimed.owner.pid,
-          claimed.owner.token,
-        );
-      } catch (error) {
-        recoveryError = error;
-      }
-      if (!recovered) {
-        reportRetainedLifecycleLockCandidate(
-          lifecycleLockCandidatePath(targetPath, claimed.owner.pid, claimed.owner.token),
-          recoveryError,
-        );
-      }
+    } catch (error) {
+      recoveryError = error;
     }
-    return true;
+    if (!recovered) {
+      reportRetainedLifecycleLockCandidate(
+        lifecycleLockCandidatePath(targetPath, expected.owner.pid, expected.owner.token),
+        recoveryError,
+      );
+    }
   }
-
-  // We raced a replacement owner. Restore the exact moved inode with a hard
-  // link (which cannot overwrite a newer generation), then drop only our
-  // quarantine name. If another generation already occupies the canonical
-  // path, preserve the displaced owner record for diagnosis rather than ever
-  // deleting an owner we did not claim.
-  await restoreClaimedMcpLifecycleLockGeneration(targetPath, quarantinePath);
-  return false;
+  return reclaimed;
 }
 
 export async function reclaimStaleMcpLifecycleLockGeneration(
@@ -396,66 +386,41 @@ function reclaimStaleMcpLifecycleLockGenerationSyncInternal(
   maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
   recoverCandidate = true,
 ): boolean {
-  const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
+  let reclaimed: boolean;
   try {
-    fs.renameSync(targetPath, quarantinePath);
+    reclaimed = reclaimLockFileGenerationSync(targetPath, expected, {
+      inspectClaimed: (claimedPath) =>
+        readMcpLifecycleLockObservationSync(claimedPath, maxObservationBytes),
+      assertAfterClaim,
+    });
   } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return false;
-    throw error;
-  }
-
-  let claimed: LockObservation | null;
-  try {
-    claimed = readMcpLifecycleLockObservationSync(quarantinePath, maxObservationBytes);
-  } catch (error) {
-    restoreClaimedMcpLifecycleLockGenerationSync(targetPath, quarantinePath);
     if (error instanceof LockObservationTooLargeError) {
       throw new LockObservationTooLargeError(targetPath, maxObservationBytes);
     }
     throw error;
   }
-  const expectedToken = expected.owner?.token ?? null;
-  const claimedExpectedGeneration =
-    expectedToken === null
-      ? claimed !== null &&
-        claimed.owner === null &&
-        claimed.dev === expected.dev &&
-        claimed.ino === expected.ino
-      : claimed?.owner?.token === expectedToken;
-  if (claimedExpectedGeneration) {
+  if (reclaimed && recoverCandidate && expected.owner) {
+    let recoveryError: unknown = new Error(
+      "the candidate is still linked to a canonical or changed generation",
+    );
+    let recovered = false;
     try {
-      assertAfterClaim?.();
-    } catch (error) {
-      restoreClaimedMcpLifecycleLockGenerationSync(targetPath, quarantinePath);
-      throw error;
-    }
-    fs.rmSync(quarantinePath, { force: true, recursive: true });
-    if (recoverCandidate && claimed?.owner) {
-      let recoveryError: unknown = new Error(
-        "the candidate is still linked to a canonical or changed generation",
+      recovered = recoverOrphanedMcpLifecycleLockCandidateSync(
+        targetPath,
+        expected.owner.pid,
+        expected.owner.token,
       );
-      let recovered = false;
-      try {
-        recovered = recoverOrphanedMcpLifecycleLockCandidateSync(
-          targetPath,
-          claimed.owner.pid,
-          claimed.owner.token,
-        );
-      } catch (error) {
-        recoveryError = error;
-      }
-      if (!recovered) {
-        reportRetainedLifecycleLockCandidate(
-          lifecycleLockCandidatePath(targetPath, claimed.owner.pid, claimed.owner.token),
-          recoveryError,
-        );
-      }
+    } catch (error) {
+      recoveryError = error;
     }
-    return true;
+    if (!recovered) {
+      reportRetainedLifecycleLockCandidate(
+        lifecycleLockCandidatePath(targetPath, expected.owner.pid, expected.owner.token),
+        recoveryError,
+      );
+    }
   }
-
-  restoreClaimedMcpLifecycleLockGenerationSync(targetPath, quarantinePath);
-  return false;
+  return reclaimed;
 }
 
 export function reclaimStaleMcpLifecycleLockGenerationSync(
@@ -472,10 +437,125 @@ export function reclaimStaleMcpLifecycleLockGenerationSync(
   );
 }
 
+async function recoverRetainedMcpLifecycleLockCandidates(
+  lockPath: string,
+  sandboxName: string,
+): Promise<void> {
+  let names: string[];
+  try {
+    names = await retainedCandidateNames(lockPath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return;
+    reportRetainedLifecycleLockCandidate(`${lockPath}.candidate-*`, error);
+    return;
+  }
+  if (names.length > MAX_RETAINED_CANDIDATES_PER_LOCK) {
+    const firstUninspected = names[MAX_RETAINED_CANDIDATES_PER_LOCK] ?? "candidate-overflow";
+    reportRetainedLifecycleLockCandidate(
+      path.join(path.dirname(lockPath), firstUninspected),
+      new Error(`candidate discovery is limited to ${String(MAX_RETAINED_CANDIDATES_PER_LOCK)}`),
+    );
+  }
+  for (const name of names.slice(0, MAX_RETAINED_CANDIDATES_PER_LOCK)) {
+    const candidatePath = path.join(path.dirname(lockPath), name);
+    try {
+      const candidate = await readMcpLifecycleLockObservation(candidatePath);
+      if (!candidate) continue;
+      if (
+        !candidate.owner ||
+        candidate.owner.sandboxName !== sandboxName ||
+        !candidateMatchesOwnerPath(candidatePath, lockPath, candidate.owner)
+      ) {
+        reportRetainedLifecycleLockCandidate(
+          candidatePath,
+          new Error("candidate ownership could not be verified"),
+        );
+        continue;
+      }
+      const canonical = await readMcpLifecycleLockObservation(lockPath);
+      if (canonical && canonical.dev === candidate.dev && canonical.ino === candidate.ino) continue;
+      if (classifyMcpLifecycleLock(candidate, sandboxName, Date.now(), 0) !== "stale") continue;
+      const recovered = await reclaimStaleMcpLifecycleLockGenerationInternal(
+        candidatePath,
+        candidate,
+        undefined,
+        MAX_MCP_LIFECYCLE_LOCK_BYTES,
+        false,
+      );
+      if (!recovered) {
+        reportRetainedLifecycleLockCandidate(
+          candidatePath,
+          new Error("candidate generation changed during recovery"),
+        );
+      }
+    } catch (error) {
+      reportRetainedLifecycleLockCandidate(candidatePath, error);
+    }
+  }
+}
+
+function recoverRetainedMcpLifecycleLockCandidatesSync(
+  lockPath: string,
+  sandboxName: string,
+): void {
+  let names: string[];
+  try {
+    names = retainedCandidateNamesSync(lockPath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return;
+    reportRetainedLifecycleLockCandidate(`${lockPath}.candidate-*`, error);
+    return;
+  }
+  if (names.length > MAX_RETAINED_CANDIDATES_PER_LOCK) {
+    const firstUninspected = names[MAX_RETAINED_CANDIDATES_PER_LOCK] ?? "candidate-overflow";
+    reportRetainedLifecycleLockCandidate(
+      path.join(path.dirname(lockPath), firstUninspected),
+      new Error(`candidate discovery is limited to ${String(MAX_RETAINED_CANDIDATES_PER_LOCK)}`),
+    );
+  }
+  for (const name of names.slice(0, MAX_RETAINED_CANDIDATES_PER_LOCK)) {
+    const candidatePath = path.join(path.dirname(lockPath), name);
+    try {
+      const candidate = readMcpLifecycleLockObservationSync(candidatePath);
+      if (!candidate) continue;
+      if (
+        !candidate.owner ||
+        candidate.owner.sandboxName !== sandboxName ||
+        !candidateMatchesOwnerPath(candidatePath, lockPath, candidate.owner)
+      ) {
+        reportRetainedLifecycleLockCandidate(
+          candidatePath,
+          new Error("candidate ownership could not be verified"),
+        );
+        continue;
+      }
+      const canonical = readMcpLifecycleLockObservationSync(lockPath);
+      if (canonical && canonical.dev === candidate.dev && canonical.ino === candidate.ino) continue;
+      if (classifyMcpLifecycleLock(candidate, sandboxName, Date.now(), 0) !== "stale") continue;
+      const recovered = reclaimStaleMcpLifecycleLockGenerationSyncInternal(
+        candidatePath,
+        candidate,
+        undefined,
+        MAX_MCP_LIFECYCLE_LOCK_BYTES,
+        false,
+      );
+      if (!recovered) {
+        reportRetainedLifecycleLockCandidate(
+          candidatePath,
+          new Error("candidate generation changed during recovery"),
+        );
+      }
+    } catch (error) {
+      reportRetainedLifecycleLockCandidate(candidatePath, error);
+    }
+  }
+}
+
 export async function writeMcpLifecycleLockCandidateAndLink(
   lockPath: string,
   owner: McpLifecycleLockOwner,
 ): Promise<boolean> {
+  await recoverRetainedMcpLifecycleLockCandidates(lockPath, owner.sandboxName);
   const candidatePath = lifecycleLockCandidatePath(lockPath, process.pid, owner.token);
   try {
     const handle = await fs.promises.open(candidatePath, "wx", 0o600);
@@ -526,6 +606,7 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
   lockPath: string,
   owner: McpLifecycleLockOwner,
 ): boolean {
+  recoverRetainedMcpLifecycleLockCandidatesSync(lockPath, owner.sandboxName);
   const candidatePath = lifecycleLockCandidatePath(lockPath, process.pid, owner.token);
   try {
     const fd = fs.openSync(candidatePath, "wx", 0o600);

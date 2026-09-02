@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+export { reclaimLockFileGenerationSync } from "../lock-generation/storage";
 export type { LockObservation } from "../mcp-lifecycle-lock-identity";
-export { reclaimStaleMcpLifecycleLockGenerationSync } from "../mcp-lifecycle-lock-storage";
 export {
   classifyOnboardLockContents,
   createOnboardLockRecord,

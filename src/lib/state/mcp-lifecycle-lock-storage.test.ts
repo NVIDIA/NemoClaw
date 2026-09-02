@@ -228,4 +228,78 @@ describe("MCP lifecycle lock storage", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("removes a departed-process candidate without changing a replacement lock", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    const abandoned = {
+      ...createMcpLifecycleLockOwner("alpha", "abandoned-async-owner"),
+      pid: 2_147_483_647,
+    };
+    const abandonedPath = `${lockPath}.candidate-${String(abandoned.pid)}-${abandoned.token}`;
+    const replacement = createMcpLifecycleLockOwner("alpha", "replacement-owner");
+    const contender = createMcpLifecycleLockOwner("alpha", "async-contender");
+    try {
+      fs.writeFileSync(abandonedPath, `${JSON.stringify(abandoned)}\n`);
+      fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
+
+      await expect(writeMcpLifecycleLockCandidateAndLink(lockPath, contender)).resolves.toBe(false);
+
+      expect(fs.existsSync(abandonedPath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+        token: replacement.token,
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a departed-process candidate before synchronous acquisition", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    const abandoned = {
+      ...createMcpLifecycleLockOwner("alpha", "abandoned-sync-owner"),
+      pid: 2_147_483_647,
+    };
+    const abandonedPath = `${lockPath}.candidate-${String(abandoned.pid)}-${abandoned.token}`;
+    const contender = createMcpLifecycleLockOwner("alpha", "sync-contender");
+    try {
+      fs.writeFileSync(abandonedPath, `${JSON.stringify(abandoned)}\n`);
+
+      expect(writeMcpLifecycleLockCandidateAndLinkSync(lockPath, contender)).toBe(true);
+
+      expect(fs.existsSync(abandonedPath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({
+        token: contender.token,
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a retained candidate that still links to the canonical lock", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    const published = {
+      ...createMcpLifecycleLockOwner("alpha", "linked-departed-owner"),
+      pid: 2_147_483_647,
+    };
+    const candidatePath = `${lockPath}.candidate-${String(published.pid)}-${published.token}`;
+    const contender = createMcpLifecycleLockOwner("alpha", "linked-contender");
+    try {
+      fs.writeFileSync(candidatePath, `${JSON.stringify(published)}\n`);
+      fs.linkSync(candidatePath, lockPath);
+
+      expect(writeMcpLifecycleLockCandidateAndLinkSync(lockPath, contender)).toBe(false);
+
+      const candidate = fs.statSync(candidatePath);
+      const canonical = fs.statSync(lockPath);
+      expect({ dev: candidate.dev, ino: candidate.ino }).toEqual({
+        dev: canonical.dev,
+        ino: canonical.ino,
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });
