@@ -144,7 +144,7 @@ async function waitForFile(path: string): Promise<void> {
   await vi.waitFor(() => expect(existsSync(path)).toBe(true), { timeout: 2_000, interval: 10 });
 }
 describe("CI failure classifier process", () => {
-  test("classifies known failures, redacts secrets, and leaves unknown output unclassified", () => {
+  test("redacts credentials from classified diagnostic output", () => {
     const secrets = [
       "Authorization: Bearer full authorization value with spaces",
       "> X-API-Key: x-header-secret",
@@ -161,9 +161,6 @@ describe("CI failure classifier process", () => {
     const known = fixture(`${secrets}\nAssertionError: expected true`);
     const r = run(known.env);
     expect(r.status).toBe(0);
-    const v = JSON.parse(r.stdout);
-    expect(v.result).toBe("classified");
-    expect(v.categories).toContain("test-failure");
     expect(r.stdout).not.toMatch(
       /full authorization|x-header-secret|api-header-secret|user:password|AKIAEXAMPLE|token-value|secret-value|password-value|api-key-value|ghp_alpha|gho_beta|ghu_gamma|ghs_delta|ghr_epsilon|github_pat_zeta/,
     );
@@ -171,8 +168,20 @@ describe("CI failure classifier process", () => {
     expect(r.stdout).toContain("request: Api-Key: [REDACTED]");
     expect(r.stdout).toContain("unrelated diagnostic text");
     expect(r.stdout.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(10);
-    const unknown = fixture("ordinary unrelated output");
-    expect(JSON.parse(run(unknown.env).stdout).result).toBe("unclassified");
+  });
+  test("classifies an AssertionError as a test failure", () => {
+    const item = fixture("AssertionError: expected true");
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(value.result).toBe("classified");
+    expect(value.categories).toContain("test-failure");
+  });
+  test("returns unclassified when output has no failure signature", () => {
+    const item = fixture("ordinary unrelated output");
+    const result = run(item.env);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).result).toBe("unclassified");
   });
   test.each(REDACTION_CASES)(
     "redacts a standalone %s from returned process logs",
@@ -411,6 +420,25 @@ describe("CI failure classifier process", () => {
     expect(value.artifact.failures[0].exitCode).toBe(1);
   });
 
+  test("ignores a string false timeout and retains a boolean true timeout", () => {
+    const archive = artifactZip([
+      {
+        name: "string-false.result.json",
+        contents: JSON.stringify({ exitCode: 0, timedOut: "false" }),
+      },
+      {
+        name: "boolean-true.result.json",
+        contents: JSON.stringify({ exitCode: 0, timedOut: true }),
+      },
+    ]);
+    const item = fixture("ordinary output", undefined, archive);
+    const result = run(item.env, ["--artifact-name", "results"]);
+    expect(result.status, result.stderr).toBe(0);
+    const failures = JSON.parse(result.stdout).artifact.failures;
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ path: "boolean-true.result.json", timedOut: true });
+  });
+
   test("rejects ambiguous same-name artifacts before downloading a ZIP", () => {
     const item = fixture("SIGKILL");
     item.env.DUPLICATE_ARTIFACTS = "1";
@@ -485,6 +513,56 @@ describe("CI failure classifier process", () => {
     expect(result).toEqual({ code: 143, signal: null });
     expect(readFileSync(signals, "utf8").trim().split("\n")).toEqual(["SIGTERM"]);
   });
+  test("reports a redacted fixed-root removal command when cancellation cleanup fails", async () => {
+    const item = fixture("AssertionError: retained tail");
+    const marker = join(item.root, "blocked");
+    const instrument = join(item.root, "fail-cancellation-cleanup.mjs");
+    writeFileSync(
+      instrument,
+      [
+        'import fs from "node:fs";',
+        'import { syncBuiltinESMExports } from "node:module";',
+        'import path from "node:path";',
+        "const realRmSync = fs.rmSync.bind(fs);",
+        "fs.rmSync = (target, options) =>",
+        "  path.basename(String(target)).startsWith('nemoclaw-ci-log.')",
+        "    ? (() => { throw new Error('BUILD_TOKEN=cancellation-cleanup-secret'); })()",
+        "    : realRmSync(target, options);",
+        "syncBuiltinESMExports();",
+      ].join("\n"),
+    );
+    item.env.BLOCK_LOG = "1";
+    item.env.BLOCK_MARKER = marker;
+    item.env.NODE_OPTIONS = `--import=${instrument}`;
+    const child = spawn(process.execPath, classifierArgs(), {
+      env: item.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    await waitForFile(marker);
+    child.kill("SIGTERM");
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) =>
+        child.once("close", (code, closeSignal) => resolve({ code, signal: closeSignal })),
+    );
+    expect(result).toEqual({ code: 143, signal: null });
+    const generatedName = stderr.match(
+      /Cancellation cleanup failure for (nemoclaw-ci-log\.[A-Za-z0-9]{6})/,
+    )?.[1];
+    expect(generatedName).toBeDefined();
+    expect(stderr).toContain(
+      `Remove it directly with: rm -rf -- /tmp/nemoclaw-ci-classifier-${uid}/${generatedName}`,
+    );
+    expect(stderr).toContain("BUILD_TOKEN=[REDACTED]");
+    expect(stderr).not.toContain("cancellation-cleanup-secret");
+    expect(stderr.length).toBeLessThanOrEqual(2001);
+    rmSync(`/tmp/nemoclaw-ci-classifier-${uid}/${generatedName}`, { recursive: true, force: true });
+  });
+
   test.each([
     ["metadata", "BLOCK_METADATA", [], "SIGTERM", 143, false],
     ["log", "BLOCK_LOG", [], "SIGINT", 130, true],

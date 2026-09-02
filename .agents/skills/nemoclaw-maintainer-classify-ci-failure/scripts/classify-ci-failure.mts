@@ -290,13 +290,29 @@ class TemporaryDirectoryManager {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     for (const group of groups) forceTerminatingGroup(group);
     await Promise.all(groups.map((group) => group.drained));
+    const cleanupFailures: { dir: string; error: unknown }[] = [];
     for (const dir of this.#tracked) {
       try {
         rmSync(dir, { recursive: true, force: true });
         this.#tracked.delete(dir);
-      } catch {
-        // Cancellation cleanup is best effort; the fixed root keeps manual recovery actionable.
+      } catch (error) {
+        cleanupFailures.push({ dir, error });
       }
+    }
+    for (const { dir, error } of cleanupFailures) {
+      const generatedName = basename(dir);
+      const detail = redact(error instanceof Error ? error.message : String(error));
+      const diagnostic = projectText({
+        lines: [
+          `Cancellation cleanup failure for ${generatedName}: ${detail}. Remove it directly with: rm -rf -- ${join(TEMPORARY_ROOT, generatedName)}`,
+        ],
+        clipMode: "tail",
+        lineClipMode: "tail",
+        maxLines: 1,
+        maxCharacters: 2000,
+        maxLineCharacters: 2000,
+      });
+      process.stderr.write(diagnostic.text + "\n");
     }
     process.exit(code);
   }
@@ -315,28 +331,6 @@ const normalizeArtifactName = (value: string | undefined): string => {
 // Internal trust boundary: callers select only these fixed gh, Bash, and coreutils
 // operations. Artifact contents are parsed as data and are never executed. Process-group
 // management therefore contains these trusted children; it is not an untrusted workload sandbox.
-const runtime = {
-  project_diagnostic_text: async (input: Parameters<typeof projectText>[0]) => projectText(input),
-  run_github_cli: async (input: { workdir: string; args: string[]; timeoutMs: number }) => {
-    const result = await execute("gh", input.args, input.workdir, input.timeoutMs);
-    if (result.exitCode !== 0) throw new Error(result.stderr.text || result.stdout.text);
-    return { stdout: result.stdout.text, stderr: result.stderr.text };
-  },
-  bash: async (input: {
-    command: string;
-    workdir: string;
-    description?: string;
-    timeoutMs: number;
-  }) => execute("bash", ["-c", input.command], input.workdir, input.timeoutMs),
-  read: async (input: { file_path: string; limit: number }) => {
-    const lines = readFileSync(input.file_path, "utf8").split(/\r?\n/u);
-    if (lines.at(-1) === "") lines.pop();
-    return {
-      lines: lines.slice(0, input.limit).map((text, index) => ({ number: index + 1, text })),
-      totalLines: lines.length,
-    };
-  },
-};
 
 function selectUniqueArtifact(
   artifacts: Record<string, unknown>[],
@@ -378,7 +372,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     maxCharacters: number,
     maxLineCharacters: number = maxCharacters,
   ) =>
-    runtime.project_diagnostic_text({
+    projectText({
       lines: [String(value)],
       clipMode: "tail",
       lineClipMode: "tail",
@@ -391,15 +385,13 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     return new Error(safe.slice(0, 2000) || "Diagnostic unavailable");
   };
   const github = async (args: string[], timeoutMs = 30000) => {
-    try {
-      return await runtime.run_github_cli({ workdir: input.workdir, args, timeoutMs });
-    } catch (error) {
-      throw await diagnosticError(error instanceof Error ? error.message : String(error));
-    }
+    const result = await execute("gh", args, input.workdir, timeoutMs);
+    if (result.exitCode !== 0)
+      throw await diagnosticError(result.stderr.text || result.stdout.text);
+    return { stdout: result.stdout.text, stderr: result.stderr.text };
   };
-  const run = async (command: string, description: string, timeoutMs = 30000) => {
-    const result = await runtime.bash({ command, workdir: input.workdir, description, timeoutMs });
-    if (result.kind !== "foreground") throw new Error("Unexpected background result");
+  const run = async (command: string, timeoutMs = 30000) => {
+    const result = await execute("bash", ["-c", command], input.workdir, timeoutMs);
     const detail = (result.stderr.text + "\n" + result.stdout.text).toLowerCase();
     if (
       result.exitCode !== 0 &&
@@ -472,7 +464,6 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     const boundedPath = logDir + "/job.tail.log";
     const downloaded = await run(
       `set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} | tail -c 4000000 > ${q(rawPath)}; statuses=("\${PIPESTATUS[@]}"); bytes=$(stat -c %s -- ${q(rawPath)}) || exit 1; printf '%s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$bytes"`,
-      "Stream bounded GitHub Actions job log",
       60000,
     );
     const [githubStatus, captureStatus, byteText] = downloaded.stdout.text.trim().split(/\s+/, 3);
@@ -488,7 +479,6 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
     if (logCode === 0) {
       const bounded = await run(
         `tail -n 20000 -- ${q(rawPath)} > ${q(boundedPath)}; lines=$(wc -l < ${q(rawPath)}); printf '%s' "$lines"`,
-        "Bound GitHub Actions job log lines",
       );
       if (bounded.exitCode !== 0)
         throw await diagnosticError(
@@ -498,9 +488,8 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
       sourceTruncated =
         (Number.isFinite(byteCount) && byteCount >= 4000000) ||
         (Number.isFinite(lineCount) && lineCount > 20000);
-      const content = await runtime.read({ file_path: boundedPath, limit: 20000 });
-      logLines = content.lines.map((line) => line.text);
-      sourceTruncated ||= content.totalLines > content.lines.length;
+      logLines = readFileSync(boundedPath, "utf8").split(/\r?\n/u);
+      if (logLines.at(-1) === "") logLines.pop();
     }
   } catch (error) {
     logFailure = error;
@@ -527,7 +516,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
   const selectedLines = [...selectedIndexes]
     .sort((left, right) => left - right)
     .map((index) => logLines[index]);
-  const projected = await runtime.project_diagnostic_text({
+  const projected = projectText({
     lines: selectedLines,
     clipMode,
     maxLines,
@@ -633,7 +622,6 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
         const archive = dir + "/artifact.zip";
         const download = await run(
           `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; dd bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
-          "Download selected artifact ZIP",
           60000,
         );
         const [downloadStatus, readerStatus, downloadState, downloadBytesText] =
@@ -686,7 +674,7 @@ export async function classifyCiFailure(input: Input): Promise<Record<string, un
             typeof result.signal === "string" && Object.hasOwn(osConstants.signals, result.signal)
               ? result.signal
               : null;
-          const timedOut = Boolean(result.timedOut);
+          const timedOut = result.timedOut === true;
           const error = result.error
             ? (await project(String(result.error), 1000, 1000)).text || null
             : null;
