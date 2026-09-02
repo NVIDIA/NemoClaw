@@ -33,7 +33,7 @@ import {
   type OllamaRuntimeModelStatus,
   probeOllamaRuntimeModelStatus,
 } from "../../../inference/ollama-runtime-context";
-import { runCaptureEx } from "../../../runner";
+import { redact, redactFull, runCaptureEx } from "../../../runner";
 
 export interface OllamaRestartRecoveryRoute {
   provider?: string | null;
@@ -193,10 +193,9 @@ function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-
   }
 }
 
-function boundedWarmFailureDetail(value: unknown, fallback: string): string {
-  const detail = String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
+export function boundedOllamaRestartRecoveryDetail(value: unknown, fallback: string): string {
+  const raw = value instanceof Error ? value.message : String(value ?? "");
+  const detail = redactFull(redact(raw)).replace(/\s+/g, " ").trim();
   return (detail || fallback).slice(0, 300);
 }
 
@@ -261,7 +260,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
         timedOut: true,
         reason: "timeout",
         endpoint: rawEndpoint,
-        detail: boundedWarmFailureDetail(
+        detail: boundedOllamaRestartRecoveryDetail(
           result.stderr,
           `warm-up exceeded ${OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS} seconds`,
         ),
@@ -274,7 +273,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
         timedOut: false,
         reason: "command-failed",
         endpoint: rawEndpoint,
-        detail: boundedWarmFailureDetail(
+        detail: boundedOllamaRestartRecoveryDetail(
           result.stderr || result.stdout,
           `warm-up exited ${String(result.exitCode)}`,
         ),
@@ -305,7 +304,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
         timedOut: false,
         reason: response,
         endpoint: rawEndpoint,
-        detail: boundedWarmFailureDetail(result.stdout, `Ollama returned ${response}`),
+        detail: boundedOllamaRestartRecoveryDetail(result.stdout, `Ollama returned ${response}`),
       };
     }
     return { kind: "warmed", ok: true, timedOut: false };
@@ -316,7 +315,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
       timedOut: false,
       reason: "spawn-failed",
       endpoint: rawEndpoint,
-      detail: boundedWarmFailureDetail(
+      detail: boundedOllamaRestartRecoveryDetail(
         error instanceof Error ? error.message : error,
         "warm-up process could not start",
       ),

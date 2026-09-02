@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  boundedOllamaRestartRecoveryDetail,
   maybeWarmOllamaAfterDaemonRestart,
   OLLAMA_LOCAL_PROVIDER,
   type OllamaRestartRecoveryFailureReason,
@@ -17,6 +18,11 @@ export type OllamaRestartRecoveryFn = (
 
 export interface OllamaRestartRecoveryProcess {
   stderr: { write(s: string): unknown };
+}
+
+function recordedEndpointLabel(route: OllamaRestartRecoveryRoute): string {
+  const endpoint = boundedOllamaRestartRecoveryDetail(route.endpointUrl, "");
+  return endpoint ? `at the recorded endpoint ${endpoint}` : "at the saved local Ollama endpoint";
 }
 
 function describeWarmFailure(reason: OllamaRestartRecoveryFailureReason): string {
@@ -100,9 +106,14 @@ export function runOllamaRestartRecovery(
   proc.stderr.write("  Checking whether the Ollama model is loaded...\n");
   try {
     reportRecovery(route, recoverOllama(route), proc);
-  } catch {
+  } catch (error) {
+    const model = String(route.model ?? "").trim() || "the registered model";
+    const endpoint = recordedEndpointLabel(route);
+    const detail = boundedOllamaRestartRecoveryDetail(error, "unknown recovery error");
     proc.stderr.write(
-      "  Ollama restart recovery failed unexpectedly; continuing to OpenClaw dispatch.\n",
+      `  Ollama restart recovery for '${model}' ${endpoint} failed unexpectedly: ${detail}. ` +
+        `OpenClaw dispatch will continue. Restore Ollama access to that endpoint, confirm it ` +
+        `serves '${model}', then rerun this command.\n`,
     );
   }
 }
