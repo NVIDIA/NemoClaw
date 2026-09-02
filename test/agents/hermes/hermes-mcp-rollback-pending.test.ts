@@ -32,6 +32,7 @@ def load(name, path):
 
 transaction = load("rollback_pending_transaction", sys.argv[1])
 guard = load("rollback_pending_guard", sys.argv[2])
+transaction.os.environ["FAKE_TOKEN"] = "openshell:resolve:env:FAKE_TOKEN"
 with tempfile.TemporaryDirectory(prefix="hermes-mcp-rollback-pending-") as root:
     hermes = os.path.join(root, ".hermes")
     os.mkdir(hermes)

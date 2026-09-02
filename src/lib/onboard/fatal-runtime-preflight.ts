@@ -24,12 +24,12 @@ import {
 } from "../readiness/onboard-admission";
 import { composeSystemReadinessReport } from "../readiness/system";
 import type { ReadinessEvidence, SystemReadinessReport } from "../readiness/types";
-import { assertDockerBridgeAndContainerDnsHealthy } from "./bridge-dns-preflight";
 import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
 } from "./docker-driver-platform";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
+import { assertConfiguredRuntimeProviderHealthy } from "./machine/runtime-effectful-preflight";
 import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight";
 import {
   printCdiSpecUnavailableError,
@@ -38,6 +38,7 @@ import {
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
+import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 import {
   exitOnSandboxGpuConfigErrors,
   printJetsonNvidiaRuntimeUnavailableError,
@@ -70,7 +71,7 @@ export interface FatalRuntimePreflightContext {
    */
   detectGpu?: typeof detectGpu;
   warnIfHostProxyMissesLoopback?: typeof warnIfHostProxyMissesLoopback;
-  assertDockerBridgeAndContainerDnsHealthy?: typeof assertDockerBridgeAndContainerDnsHealthy;
+  assertRuntimeProviderHealthy?: typeof assertConfiguredRuntimeProviderHealthy;
   validateSandboxGpuPreflight?: typeof validateSandboxGpuPreflight;
   now?: () => Date;
 }
@@ -179,10 +180,28 @@ export function assertOnboardSystemReadiness(
   options: OnboardHostReadinessOptions,
 ): SystemReadinessReport {
   const exitProcess = options.exitProcess ?? exitProcessByDefault;
+  const portable = isPortableExperimentalProfile();
+  const managedLocalGatewayEnabled =
+    host.platform === "linux" && isLinuxDockerDriverGatewayEnabled("linux");
+  const selectedRuntimeUsesProviderHostRoute =
+    !portable && managedLocalGatewayEnabled
+      ? (() => {
+          const provider = resolveConfiguredRuntimeProvider("linux");
+          return (
+            provider.gateway.supported &&
+            provider.gateway.prepareHostRuntime({
+              environment: process.env,
+              platform: "linux",
+            }).sandboxHostAddress !== null
+          );
+        })()
+      : false;
   const admission = evaluateOnboardReadinessAdmission(readinessReport, {
     explicitlyOptedOutGpuPassthrough: options.explicitlyOptedOutGpuPassthrough,
     allowUnsupportedRuntime:
-      isPortableExperimentalProfile() || !isLinuxDockerDriverGatewayEnabled(),
+      portable ||
+      selectedRuntimeUsesProviderHostRoute ||
+      !managedLocalGatewayEnabled,
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:
@@ -310,7 +329,10 @@ function collectOnboardHostReadiness(
     wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
     now,
   });
-  const readinessReport = projectHostReadiness(snapshot, { ...getBuildIdentity(), now });
+  const readinessReport = projectHostReadiness(snapshot, {
+    ...getBuildIdentity(),
+    now,
+  });
   assertOnboardSystemReadiness(readinessReport, host, {
     explicitlyOptedOutGpuPassthrough:
       sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
@@ -329,7 +351,9 @@ function collectOnboardHostReadiness(
       readinessReport,
       sandboxGpuConfig,
       ...(runtimeGpu?.gpuTrustGateRejection || gpuTrustGateRejection
-        ? { gpuTrustGateRejection: runtimeGpu?.gpuTrustGateRejection ?? gpuTrustGateRejection }
+        ? {
+            gpuTrustGateRejection: runtimeGpu?.gpuTrustGateRejection ?? gpuTrustGateRejection,
+          }
         : {}),
     },
     snapshot,
@@ -381,7 +405,9 @@ async function collectAdmittedReadinessPair(
   assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
 
   let evaluatedAt = now();
-  let gateway = projectGatewayReadiness(collectedGateway.snapshot, { now: () => evaluatedAt });
+  let gateway = projectGatewayReadiness(collectedGateway.snapshot, {
+    now: () => evaluatedAt,
+  });
   assertOnboardGatewayReadiness(gateway, exitProcess);
   let host = projectCollectedHostReadiness(collectedHost, evaluatedAt);
 
@@ -395,7 +421,9 @@ async function collectAdmittedReadinessPair(
     collectedGateway = await context.collectGatewayReadiness();
     assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
     evaluatedAt = now();
-    gateway = projectGatewayReadiness(collectedGateway.snapshot, { now: () => evaluatedAt });
+    gateway = projectGatewayReadiness(collectedGateway.snapshot, {
+      now: () => evaluatedAt,
+    });
     assertOnboardGatewayReadiness(gateway, exitProcess);
     host = projectCollectedHostReadiness(host, evaluatedAt);
   }
@@ -483,18 +511,27 @@ export function runOnboardRuntimeEffectfulPreflightChecks(
 ): void {
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
   exitOnSandboxGpuConfigErrors(result.sandboxGpuConfig, exitProcess);
-  console.log("  ✓ Docker is running");
   (context.warnIfHostProxyMissesLoopback ?? warnIfHostProxyMissesLoopback)();
-  (context.validateSandboxGpuPreflight ?? validateSandboxGpuPreflight)(
-    result.sandboxGpuConfig,
-    {},
-    exitProcess,
-  );
-  (context.assertDockerBridgeAndContainerDnsHealthy ?? assertDockerBridgeAndContainerDnsHealthy)(
-    result.host,
-    context.nonInteractive,
-    exitProcess,
-  );
+  const assertRuntimeProviderHealthy = context.assertRuntimeProviderHealthy;
+  if (assertRuntimeProviderHealthy) {
+    assertRuntimeProviderHealthy(
+      result.host,
+      result.sandboxGpuConfig,
+      context.nonInteractive,
+      exitProcess,
+    );
+  } else {
+    assertConfiguredRuntimeProviderHealthy(
+      result.host,
+      result.sandboxGpuConfig,
+      context.nonInteractive,
+      exitProcess,
+      {
+        validatePortableSandboxGpuPreflight:
+          context.validateSandboxGpuPreflight ?? validateSandboxGpuPreflight,
+      },
+    );
+  }
   if (result.host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${result.host.runtime}`);
   }

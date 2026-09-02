@@ -104,6 +104,7 @@ export function createGpuFlowDeps(
       capture: (args, options) => {
         const stdout = runCaptureOpenshell(args, {
           ignoreError: true,
+          killProcessTreeOnTimeout: true,
           timeout: options.timeout,
         });
         return { status: 0, output: stdout, stdout, stderr: "" };
@@ -175,7 +176,7 @@ export function resetGpuFlowMocks(): void {
 }
 
 export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof vi.fn>>) {
-  const readyCheckOptions = { ignoreError: true, timeout: 5_000 };
+  const readyCheckOptions = { ignoreError: true, killProcessTreeOnTimeout: true, timeout: 5_000 };
   const failedProof: SandboxGpuProofResult = {
     status: "failed",
     cudaVerified: false,

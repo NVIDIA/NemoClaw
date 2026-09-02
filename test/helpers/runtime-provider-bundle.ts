@@ -108,6 +108,7 @@ export function createInMemoryRuntimeProviderBundle({
         status: "ok",
         detail: "ready",
       }),
+      validateSandboxGpu: () => undefined,
       preflightLifecycle: () => null,
     },
     gateway: {
@@ -115,6 +116,32 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      prepareHostRuntime: () => ({
+        providerId,
+        openShellDriver: "memory",
+        bindAddress: "127.0.0.1",
+        grpcHost: "127.0.0.1",
+        sshGatewayHost: "127.0.0.1",
+        portCheckHost: "127.0.0.1",
+        socketPath: null,
+        requiredServerIpSans: [],
+        sandboxHostAddress: null,
+        usesHostGatewayRoute: false,
+        resourceOwnership: { label: "test.managed", value: providerId },
+        gatewayConfig: {
+          sandboxNamespace: "scoped",
+          hostGatewayIp: null,
+          includeSupervisorBin: true,
+          processOwnership: "scoped-namespace",
+        },
+        network: {
+          sandboxSourceCidrs: () => [],
+          inspect: () => undefined,
+          usesHostGatewayRoute: () => false,
+          run: () => ({ status: 0 }),
+          ensureProbeImageCached: () => ({ ok: true, alreadyCached: true }),
+        },
+      }),
     },
     workload: {
       providerId,
@@ -151,6 +178,18 @@ export function createInMemoryRuntimeProviderBundle({
       providerId,
       supported: true,
       channelStopTransport: "openshell",
+      privilegedSandboxControl: {
+        resolveTarget: ({ sandboxName }) => ({
+          providerId,
+          resourceHandle: `in-memory:${sandboxName}`,
+        }),
+        execute: () => ({
+          status: 0,
+          signal: null,
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.alloc(0),
+        }),
+      },
       start(input: RuntimeProviderLifecycleInput) {
         state.running.add(input.sandboxName);
         event("start", input.sandboxName);
@@ -230,6 +269,7 @@ export function createInMemoryRuntimeProviderBundle({
         { operation: "sandbox-lifecycle", engineId: "memory", displayName: "In-memory" },
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],
+      capture: () => ({ status: 0, stdout: "", stderr: "" }),
     },
   };
 }

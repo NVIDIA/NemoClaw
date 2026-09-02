@@ -11,6 +11,13 @@ import {
 
 type CaptureResult = ReturnType<RotateTokenDeps["captureOpenshellCommand"]>;
 type RunResult = ReturnType<RotateTokenDeps["runOpenshellCommand"]>;
+const EXACT_OPENAI_PROFILE = JSON.stringify({
+  id: "openai",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
 
 function loadRotateTokenFixture(input: { providerType: string; captureResults: CaptureResult[] }) {
   const queuedCaptureResults = [...input.captureResults];
@@ -63,6 +70,12 @@ describe("config rotate-token OpenAI provider profile", () => {
       captureResults: [
         { status: 1, output: "", stdout: "", stderr: "provider profile not found" },
         { status: 0, output: "Imported", stdout: "Imported", stderr: "" },
+        {
+          status: 0,
+          output: EXACT_OPENAI_PROFILE,
+          stdout: EXACT_OPENAI_PROFILE,
+          stderr: "",
+        },
       ],
     });
 
@@ -71,13 +84,14 @@ describe("config rotate-token OpenAI provider profile", () => {
     expect(fixture.captureOpenshellCommand.mock.calls.map(([, args]) => args)).toEqual([
       ["provider", "profile", "export", "openai", "--output", "json"],
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
+      ["provider", "profile", "export", "openai", "--output", "json"],
     ]);
     expect(fixture.captureOpenshellCommand.mock.calls[0]?.[2]).toMatchObject({
       ignoreError: true,
       includeStreams: true,
       timeout: 30_000,
     });
-    expect(fixture.captureOpenshellCommand.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(fixture.captureOpenshellCommand.mock.invocationCallOrder[2]).toBeLessThan(
       fixture.saveCredential.mock.invocationCallOrder[0]!,
     );
     expect(fixture.saveCredential.mock.invocationCallOrder[0]).toBeLessThan(

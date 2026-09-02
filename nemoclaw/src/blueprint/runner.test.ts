@@ -66,6 +66,10 @@ vi.mock("./ssrf.js", async (importOriginal) => {
     validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
+vi.mock("./private-networks.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./private-networks.js")>()),
+  isPrivateHostname: () => false,
+}));
 
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
@@ -390,7 +394,6 @@ describe("runner", () => {
       );
       expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
-
   });
 
   describe("actionPlan", () => {
@@ -586,15 +589,7 @@ describe("runner", () => {
         const merged = [...store.entries()].find(([path]) => path.endsWith("policy-update.yaml"));
         return YAML.parse(merged?.[1].content ?? TEST_SANDBOX_POLICY);
       });
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        args.join(" ") === "policy get -g test-gateway --base test-sandbox"
-          ? {
-              exitCode: 0,
-              stdout: ["Version: 1", "Hash: sha256:test", "---", TEST_SANDBOX_POLICY].join("\n"),
-              stderr: "",
-            }
-          : commandResult(args),
-      );
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => commandResult(args));
 
       await actionApply(
         "default",
@@ -661,7 +656,7 @@ describe("runner", () => {
           /Failed to create inference provider 'my-provider'.*provider setup failed/i,
         );
         expect((error as Error).message).toContain("OPENAI_API_KEY=<REDACTED>");
-        expect((error as Error).message).toContain("Authorization: Bearer <REDACTED>");
+        expect((error as Error).message).toContain("Authorization: <REDACTED>");
         expect((error as Error).message).not.toContain(credential);
         expect((error as Error).message).not.toContain("opaque-bearer");
         expect(hasPlanJson()).toBe(true);

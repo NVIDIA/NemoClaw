@@ -83,15 +83,22 @@ function scriptKind(file: string): ts.ScriptKind {
   return /\.[cm]?js$/i.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
 }
 
+const parsedTestSources = new Map<string, Map<ts.ScriptKind, ts.SourceFile>>();
+
+function parseTestSource(file: string, source: string): ts.SourceFile {
+  const kind = scriptKind(file);
+  const cached = parsedTestSources.get(source)?.get(kind);
+  if (cached) return cached;
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
+  const byKind = parsedTestSources.get(source) ?? new Map();
+  byKind.set(kind, sourceFile);
+  parsedTestSources.set(source, byKind);
+  return sourceFile;
+}
+
 function countIfStatements(file: string, source: string | null): number {
   if (source === null) return 0;
-  const sourceFile = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    scriptKind(file),
-  );
+  const sourceFile = parseTestSource(file, source);
   let count = 0;
   function visit(node: ts.Node): void {
     if (ts.isIfStatement(node)) count += 1;
@@ -175,13 +182,7 @@ function thinCallbackForwardingLoop(node: ts.FunctionLikeDeclaration): LoopState
 
 function countTestLoops(file: string, source: string | null): number {
   if (source === null) return 0;
-  const sourceFile = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    scriptKind(file),
-  );
+  const sourceFile = parseTestSource(file, source);
   type LexicalScope = ts.SourceFile | ts.Block;
   const localFunctions = new Map<LexicalScope, Map<string, ts.FunctionLikeDeclaration>>();
   function enclosingScope(node: ts.Node): LexicalScope | null {

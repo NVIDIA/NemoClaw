@@ -56,7 +56,7 @@ runAgentTurnLatencyTest(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, inference, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
     const results: Record<string, unknown> = {
       model: inference.model,
       maxTurnSeconds: MAX_TURN_SECONDS,
@@ -106,13 +106,10 @@ runAgentTurnLatencyTest(
       await cleanupTurnSandbox(host, OPENCLAW_SANDBOX, "openclaw", inference, progress);
     });
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "docker-info",
-      env: buildAvailabilityProbeEnv(),
-      onOutput: progress.onOutput,
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "runtime-info",
+      scenarioLabel: "agent-turn latency",
     });
-    expect(docker.exitCode, resultText(docker)).toBe(0);
 
     const cleanBeforeRetry = () => cleanupTurnSandboxes(host, sandbox, inference, progress);
     await cleanupTurnSandboxes(host, sandbox, inference, progress);

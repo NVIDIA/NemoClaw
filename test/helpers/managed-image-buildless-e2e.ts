@@ -458,6 +458,10 @@ runner.run = (command, options = {}) => {
   }
   return createdSandbox.run(command) ?? { status: 0, stdout: "", stderr: "" };
 };
+const doctorHostCommand = require(${source("src/lib/actions/sandbox/doctor-host-command.ts")});
+replace(doctorHostCommand, "captureHostCommand", (command, args) =>
+  runner.run([command, ...args]),
+);
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
