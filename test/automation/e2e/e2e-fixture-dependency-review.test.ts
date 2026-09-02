@@ -16,6 +16,7 @@ const REVIEW_PATH = path.join(
   "security-reviews",
   "e2e-weather-plugin-fixture-dependency-review.md",
 );
+const WEATHER_LOCK_PATH = path.join(FIXTURES_ROOT, "plugins", "weather", "package-lock.json");
 
 describe("E2E fixture dependency review", () => {
   const review = fs.readFileSync(REVIEW_PATH, "utf8");
@@ -32,6 +33,25 @@ describe("E2E fixture dependency review", () => {
       .sort();
     expect(lockfiles.length).toBeGreaterThan(0);
     expect(lockfiles.every((lockfile) => review.includes(`- \`${lockfile}\``))).toBe(true);
+  });
+
+  it("binds the weather fixture review to its patched dependency lock", () => {
+    const lockBytes = fs.readFileSync(WEATHER_LOCK_PATH);
+    const lock = JSON.parse(lockBytes.toString("utf8"));
+
+    expect(createHash("sha256").update(lockBytes).digest("hex")).toBe(
+      "36f8e08c8dca622017c943e4b41d1758651b2911e6c44b96e26cba4ea05b2556",
+    );
+    expect(lock.packages["node_modules/openclaw"]).toMatchObject({ version: "2026.7.1" });
+    expect(lock.packages["node_modules/openclaw/node_modules/fast-uri"]).toMatchObject({
+      integrity:
+        "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==",
+      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz",
+      version: "3.1.6",
+    });
+    expect(review).toContain("`openclaw@2026.7.1`");
+    expect(review).toContain("`fast-uri` is absent from the advisory report");
+    expect(review).toContain("`36f8e08c8dca622017c943e4b41d1758651b2911e6c44b96e26cba4ea05b2556`");
   });
 
   it.each([
