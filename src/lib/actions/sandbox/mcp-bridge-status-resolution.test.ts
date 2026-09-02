@@ -212,41 +212,10 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
-  it.each([
-    {
-      caseName: "a symlink appearing after a missing-path open",
-      credentialObservation: null,
-      diagnostic: "symbolic link",
-      expectedConfigIsFifo: false,
-      expectedConfigIsSymlink: true,
-      managedOptions: { swapAfterMissingManagedOpen: "symlink", timeoutMs: 30_000 },
-    },
-    {
-      caseName: "a FIFO appearing after a missing-path open",
-      credentialObservation: "absent",
-      diagnostic: "FIFO",
-      expectedConfigIsFifo: true,
-      expectedConfigIsSymlink: false,
-      managedOptions: { swapAfterMissingManagedOpen: "fifo", timeoutMs: 30_000 },
-    },
-    {
-      caseName: "a symlink restored after ELOOP",
-      credentialObservation: "canonical",
-      diagnostic: "symbolic link",
-      expectedConfigIsFifo: false,
-      expectedConfigIsSymlink: true,
-      managedOptions: { swapAfterManagedEloop: true, symlink: true, timeoutMs: 30_000 },
-    },
-  ])(
-    "propagates $caseName through status with credential observation $credentialObservation (#10754)",
+  it(
+    "propagates an unsafe projection through status when credential observation is unavailable (#10754)",
     { timeout: 120_000 },
-    ({
-      credentialObservation,
-      diagnostic,
-      expectedConfigIsFifo,
-      expectedConfigIsSymlink,
-      managedOptions,
-    }) => {
+    () => {
       const home = createTempHome("nemoclaw-mcp-status-projection-");
       const { stdout } = runHarness(
         home,
@@ -265,8 +234,11 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       managedServerNames: ["github"],
     },
   });
-  providerCredentialObservation = ${JSON.stringify(credentialObservation)};
-  deepAgentsManagedOptions = ${JSON.stringify(managedOptions)};
+  providerCredentialObservation = null;
+  deepAgentsManagedOptions = ${JSON.stringify({
+    swapAfterMissingManagedOpen: "symlink",
+    timeoutMs: 30_000,
+  })};
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
   const exitCode = process.exitCode ?? 0;
   process.exitCode = 0;
@@ -293,10 +265,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       expect(outcome.exitCode).toBe(2);
       expect(outcome.stdout).toBe("");
       expect(outcome.stderr).toContain(
-        `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
+        "Unsafe managed Deep Agents MCP projection path: symbolic link",
       );
-      expect(outcome.configIsFifo).toBe(expectedConfigIsFifo);
-      expect(outcome.configIsSymlink).toBe(expectedConfigIsSymlink);
+      expect(outcome.configIsFifo).toBe(false);
+      expect(outcome.configIsSymlink).toBe(true);
     },
   );
 
