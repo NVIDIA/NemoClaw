@@ -3,34 +3,18 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Verification and mistake-proofing
+# Verification evidence
 
 ## Purpose
 
-Determine whether checked-in evidence detects a plausible defect at the correct boundary.
+Determine whether checked-in evidence independently proves changed behavior and detects plausible regressions at the correct boundary.
 
 ## Review method
 
-For each changed invariant or test, identify the claimed behavior, trigger, action, observable result, independent oracle, and one plausible defect. Confirm that the evidence fails for that defect.
+For every changed behavior, invariant, risk-plan obligation, selector, test, fixture, helper, workflow assertion, or claimed proof, identify trigger, action, observable result, oracle, side effects, and a plausible defect. Trace evidence to the production or automation path and determine whether that defect makes it fail.
 
-## Own
+Compare parent and proposed states. Distinguish newly added or weakened evidence from inherited gaps. Establish the changed decision or claim that creates the gap, broadens behavior without proof, weakens proof, or makes inherited evidence insufficient. Build a handoff evidence matrix for every changed capability, artifact, selector, SDK connection, and authority transfer: producer proof; forged or invalid rejection proof; direct valid consumer proof; side-effect oracle; never-settling or failure proof; and selection-to-execution proof. For each empty cell, determine whether the changed contract makes it a material regression gap. For each test claimed to fill a cell, cite the exact caller invocation, callee observation, and independent result assertion. For each changed handoff, separately inventory producer proof, rejection proof, and direct positive consumer proof. Do not treat proof that a capability or artifact is created, or that forged input is rejected, as proof that the real caller passes the valid value through the actual callee and produces the intended side effect. Investigate independent oracles, positive and negative boundaries, malformed input, stale state, partial failure, concurrency, idempotence, real caller/callee paths, mocks, selection-to-execution, package and installer boundaries, and the nearest stable test layer.
 
-- Independent oracles and assertions on contract results and side effects.
-- Positive, negative, absence, and non-mutation evidence.
-- Stable public or component boundaries.
-- The zero-budget source-shape test policy and base-branch exceptions.
-- Readable tests, fixtures, helpers, hooks, and matrices.
-- Duplicate, speculative, and obsolete coverage.
-- Risk-plan invariants, test-layer choice, and E2E coverage guidance.
+## Findings
 
-## Do not own
-
-Do not report the production defect when the test correctly exposes it. Do not request tests for hypothetical behavior or report external test execution status.
-
-## Review principles
-
-Detect defects at the nearest stable boundary and provide fast feedback. Prefer the smallest proof that prevents escape. Remove repeated inspection that adds no distinct evidence.
-
-## Report a finding when
-
-A test can pass without exercising its claim, uses a self-derived oracle, asserts a non-contract detail, misses a required negative result, inspects shipped source shape without an existing exception, or duplicates evidence without protecting another risk. Name the plausible missed defect or harmless change, the faulty evidence, and the smallest replacement proof.
+For each verification defect, identify the changed behavior or claim, parent state, plausible escaping regression, why evidence passes or does not execute, exact citations, and smallest stronger proof. Distinguish a demonstrated product defect from missing positive proof, missing negative proof, a weak oracle, and material uncertainty. Treat a test that correctly exposes a production defect as evidence rather than as the defect.

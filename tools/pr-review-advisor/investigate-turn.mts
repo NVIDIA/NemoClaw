@@ -103,6 +103,8 @@ Treat code growth as suspect and compare it with direct modification, reuse, con
 
 Assess checked-in regression evidence and choose only supported E2E selectors. Never claim a job ran or turn E2E guidance into a finding without a checked-in defect.
 
-Return a concise specialist review with evidence-backed issues, exact citations, remedies, verification hints, positives, and limitations.`,
+Before forming findings, enumerate the complete changed-file set and inspect the relevant changed hunks. For each candidate finding, compare the relevant parent state with the proposed state. Establish whether a changed line, changed omission, newly affected consumer, or changed contract introduces, worsens, exposes, expands, or materially relies on the problem. Repository-wide evidence can establish a call path or consequence, but its mere presence does not make an inherited condition attributable to this pull request. Verify production references through direct calls, qualified calls, imports, re-exports, wrappers, dependency injection, and selected immutable revisions where applicable. Distinguish a demonstrated behavior defect from missing evidence and from material uncertainty.
+
+Return a specialist review with evidence-backed issues, exact citations, remedies, verification hints, positives, and limitations.`,
   };
 }
