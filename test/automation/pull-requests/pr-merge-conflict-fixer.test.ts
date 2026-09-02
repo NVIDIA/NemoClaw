@@ -551,8 +551,7 @@ describe("PR merge conflict fixer", () => {
         "terra",
         "--model",
         "azure/openai/gpt-5.6-terra",
-        "--timeout",
-        "900",
+        "--no-verify",
       ],
       expect.anything(),
     );
