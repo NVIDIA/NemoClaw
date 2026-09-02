@@ -51,6 +51,10 @@ export interface ArtifactDownloadOptions {
   timeoutMs?: number;
 }
 
+export interface ArtifactIdentityOptions {
+  maxArchiveBytes?: number;
+}
+
 /** Require an untrusted metadata value to be a plain JSON record. */
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -82,6 +86,7 @@ export function bindNamedExactArtifact(
   value: unknown,
   expected: ExactArtifactExpectation,
   expectedName: string,
+  options: ArtifactIdentityOptions = {},
 ): BoundArtifactIdentity {
   positiveInteger(expected.runId, "expected run id");
   positiveInteger(expected.runAttempt, "expected run attempt");
@@ -116,7 +121,15 @@ export function bindNamedExactArtifact(
   if (typeof artifact.digest !== "string" || !DIGEST_PATTERN.test(artifact.digest)) {
     throw new Error("artifact digest is invalid");
   }
-  if (size > MAX_ARCHIVE_BYTES) throw new Error("artifact size exceeds the archive limit");
+  const maxArchiveBytes = options.maxArchiveBytes ?? MAX_ARCHIVE_BYTES;
+  if (
+    !Number.isSafeInteger(maxArchiveBytes) ||
+    maxArchiveBytes < 1 ||
+    maxArchiveBytes > 128 * 1024 * 1024
+  ) {
+    throw new Error("artifact archive limit is invalid");
+  }
+  if (size > maxArchiveBytes) throw new Error("artifact size exceeds the archive limit");
   if (archiveUrl.origin !== API_ROOT || archiveUrl.pathname !== archivePath) {
     throw new Error("artifact archive URL does not match artifact id");
   }

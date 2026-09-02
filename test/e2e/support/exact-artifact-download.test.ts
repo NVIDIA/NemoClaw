@@ -95,6 +95,17 @@ describe("exact artifact download (#9340)", () => {
     });
   });
 
+  it("requires an explicit bounded allowance for larger evidence archives", () => {
+    const bytes = archive();
+    const name = "managed-runtime-evidence-7001-2";
+    const value = metadata(bytes, { name, size_in_bytes: 2 * 1024 * 1024 });
+
+    expect(() => bindNamedExactArtifact(value, EXPECTED, name)).toThrow("archive limit");
+    expect(
+      bindNamedExactArtifact(value, EXPECTED, name, { maxArchiveBytes: 4 * 1024 * 1024 }),
+    ).toMatchObject({ name, size: 2 * 1024 * 1024 });
+  });
+
   it("derives and materializes the bound managed-image cohort artifact", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cohort-artifact-"));
     const bytes = artifactZip([{ name: "cohort.json", contents: '{"contractVersion":2}\n' }]);
