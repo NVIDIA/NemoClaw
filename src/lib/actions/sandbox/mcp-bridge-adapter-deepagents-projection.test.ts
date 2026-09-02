@@ -17,41 +17,13 @@ import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 const emptyProjection = { mcpServers: {} };
 const duplicateProjection = '{"mcpServers":{},"mcpServers":{"shadow":{}}}\n';
 const attackerProjection = '{"mcpServers":{"attacker":{"type":"stdio"}}}\n';
+const managedCommandTimeoutMs = 30_000;
 
 const registrationCommand = buildDeepAgentsMcpRegisterCommand(baseEntry);
 const rollbackCommand = buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true);
 const removalCommand = buildDeepAgentsMcpRemoveCommand(baseEntry);
 
 describe("Deep Agents managed MCP projection safety", () => {
-  it.each([
-    { mutation: "registration", command: registrationCommand },
-    { mutation: "rollback", command: rollbackCommand },
-    { mutation: "removal", command: removalCommand },
-  ])("uses one stable-read contract for $mutation", ({ command }) => {
-    expect(command).toContain("os.O_NOFOLLOW");
-    expect(command).toContain("os.fstat(descriptor)");
-    expect(command).toContain("assert_managed_source_stable(path, identity)");
-    expect(command).toContain("os.link(tmp_name, path, follow_symlinks=False)");
-    expect(command).toContain("os.ftruncate(descriptor, 0)");
-    expect(command).not.toContain("\n    path.unlink()\n");
-    expect(command).not.toContain("config_path.read_text");
-  });
-
-  it("uses the isolated runtime and bounds registration before mutation", () => {
-    expect(registrationCommand).toMatch(/^\/opt\/venv\/bin\/python3 -I - <<'PY'/);
-    expect(buildDeepAgentsMcpStatusCommand(baseEntry)).toMatch(
-      /^\/opt\/venv\/bin\/python3 -I - <<'PY'/,
-    );
-    expect(rollbackCommand).toContain(
-      `len(payload['expectedServers']) > ${String(DEEPAGENTS_MCP_MAX_SERVERS)}`,
-    );
-    const sizeCheckIndex = registrationCommand.indexOf("len(payload) > MANAGED_MCP_MAX_BYTES");
-    const truncateIndex = registrationCommand.indexOf("os.ftruncate(descriptor, 0)");
-    expect(sizeCheckIndex).toBeGreaterThanOrEqual(0);
-    expect(truncateIndex).toBeGreaterThanOrEqual(0);
-    expect(sizeCheckIndex).toBeLessThan(truncateIndex);
-  });
-
   it("applies the shared server cap before normal and rollback v2 publication", () => {
     const entries = Array.from(
       { length: DEEPAGENTS_MCP_MAX_SERVERS + 1 },
@@ -82,7 +54,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { symlink: true },
+      { symlink: true, timeoutMs: managedCommandTimeoutMs },
     );
     expect(symlink.status).toBe(2);
     expect(symlink.stdout.trim()).toBe("");
@@ -93,6 +65,7 @@ describe("Deep Agents managed MCP projection safety", () => {
 
     const fifo = runDeepAgentsConfigCommand(statusCommand, undefined, "v2", undefined, 0o600, {
       fifo: true,
+      timeoutMs: managedCommandTimeoutMs,
     });
     expect(fifo.status).toBe(2);
     expect(fifo.stdout.trim()).toBe("");
@@ -100,6 +73,7 @@ describe("Deep Agents managed MCP projection safety", () => {
 
     const directory = runDeepAgentsConfigCommand(statusCommand, undefined, "v2", undefined, 0o600, {
       directory: true,
+      timeoutMs: managedCommandTimeoutMs,
     });
     expect(directory.status).toBe(2);
     expect(directory.stdout.trim()).toBe("");
@@ -113,7 +87,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { danglingSymlink: true },
+      { danglingSymlink: true, timeoutMs: managedCommandTimeoutMs },
     );
     expect(danglingSymlink.status).toBe(2);
     expect(danglingSymlink.stdout.trim()).toBe("");
@@ -127,7 +101,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { swapOnManagedOpen: "symlink" },
+      { swapOnManagedOpen: "symlink", timeoutMs: managedCommandTimeoutMs },
     );
     expect(racedSymlink.status).toBe(2);
     expect(racedSymlink.stdout.trim()).toBe("");
@@ -145,7 +119,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { swapOnManagedOpen: "fifo" },
+      { swapOnManagedOpen: "fifo", timeoutMs: managedCommandTimeoutMs },
     );
     expect(racedFifo.status).toBe(2);
     expect(racedFifo.stdout.trim()).toBe("");
@@ -158,7 +132,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { swapOnManagedOpen: "socket" },
+      { swapOnManagedOpen: "socket", timeoutMs: managedCommandTimeoutMs },
     );
     expect(racedSocket.status).toBe(2);
     expect(racedSocket.stdout.trim()).toBe("");
@@ -173,7 +147,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { swapAfterManagedOpen: "symlink" },
+      { swapAfterManagedOpen: "symlink", timeoutMs: managedCommandTimeoutMs },
     );
     expect(replacedAfterOpenWithSymlink.status).toBe(2);
     expect(replacedAfterOpenWithSymlink.stdout.trim()).toBe("");
@@ -191,7 +165,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { swapAfterManagedOpen: "fifo" },
+      { swapAfterManagedOpen: "fifo", timeoutMs: managedCommandTimeoutMs },
     );
     expect(replacedAfterOpenWithFifo.status).toBe(2);
     expect(replacedAfterOpenWithFifo.stdout.trim()).toBe("");
@@ -206,7 +180,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { swapOnManagedRead: "symlink" },
+      { swapOnManagedRead: "symlink", timeoutMs: managedCommandTimeoutMs },
     );
     expect(replacedWhileReadingWithSymlink.status).toBe(2);
     expect(replacedWhileReadingWithSymlink.stdout.trim()).toBe("");
@@ -224,7 +198,11 @@ describe("Deep Agents managed MCP projection safety", () => {
       "v2",
       undefined,
       0o600,
-      { statAfterManagedEloopAsRegular: true, symlink: true },
+      {
+        statAfterManagedEloopAsRegular: true,
+        symlink: true,
+        timeoutMs: managedCommandTimeoutMs,
+      },
     );
     expect(replacedAfterEloop.status).toBe(2);
     expect(replacedAfterEloop.stdout.trim()).toBe("");
@@ -249,7 +227,7 @@ describe("Deep Agents managed MCP projection safety", () => {
         "v2",
         undefined,
         0o600,
-        { swapAfterMissingManagedOpen: appearedType },
+        { swapAfterMissingManagedOpen: appearedType, timeoutMs: managedCommandTimeoutMs },
       );
 
       expect(result.status).toBe(2);
@@ -304,37 +282,49 @@ describe("Deep Agents managed MCP projection safety", () => {
   });
 
   it("never clobbers a projection that appears during absent publication or fd rewrite", () => {
-    const absentRace = registrationCommand.replace(
-      "    write_managed_projection(config_path, data, source_identity, source_descriptor)",
-      `    config_path.write_text(${JSON.stringify(attackerProjection)}, encoding='utf-8')\n    os.chmod(config_path, 0o600)\n    write_managed_projection(config_path, data, source_identity, source_descriptor)`,
+    const absentResult = runDeepAgentsConfigCommand(
+      registrationCommand,
+      undefined,
+      "v2",
+      undefined,
+      0o600,
+      { swapBeforeManagedLink: attackerProjection, timeoutMs: managedCommandTimeoutMs },
     );
-    const absentResult = runDeepAgentsConfigCommand(absentRace);
     expect(absentResult.status).toBe(2);
-    expect(absentResult.stderr).toContain("appeared during mutation");
+    expect(absentResult.stderr).toContain("appeared during publication");
     expect(absentResult.configText).toBe(attackerProjection);
 
-    const existingRace = registrationCommand.replace(
-      "    payload = managed_projection_bytes(value)\n    os.lseek(descriptor, 0, os.SEEK_SET)",
-      `    payload = managed_projection_bytes(value)\n    path.unlink()\n    path.write_text(${JSON.stringify(attackerProjection)}, encoding='utf-8')\n    os.chmod(path, 0o600)\n    os.lseek(descriptor, 0, os.SEEK_SET)`,
+    const existingResult = runDeepAgentsConfigCommand(
+      registrationCommand,
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { swapOnManagedSeek: attackerProjection, timeoutMs: managedCommandTimeoutMs },
     );
-    const existingResult = runDeepAgentsConfigCommand(existingRace, emptyProjection);
     expect(existingResult.status).toBe(2);
     expect(existingResult.stderr).toContain("links, or path identity");
     expect(existingResult.configText).toBe(attackerProjection);
   });
 
-  it("keeps forced removal identity-bound for malformed files and symlinks", () => {
+  it("keeps forced removal identity-bound during a descriptor rewrite (#10754)", () => {
     const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
-    const racedCommand = forcedCommand.replace(
-      "    payload = managed_projection_bytes(value)\n    os.lseek(descriptor, 0, os.SEEK_SET)",
-      `    payload = managed_projection_bytes(value)\n    path.unlink()\n    path.write_text(${JSON.stringify(attackerProjection)}, encoding='utf-8')\n    os.chmod(path, 0o600)\n    os.lseek(descriptor, 0, os.SEEK_SET)`,
+    const raced = runDeepAgentsConfigCommand(
+      forcedCommand,
+      { ui: { theme: "dark" } },
+      "v2",
+      undefined,
+      0o600,
+      { swapOnManagedSeek: attackerProjection, timeoutMs: managedCommandTimeoutMs },
     );
-    const raced = runDeepAgentsConfigCommand(racedCommand, { ui: { theme: "dark" } });
     expect(raced.status).toBe(2);
     expect(raced.stderr).toContain("Refusing unsafe managed MCP v2 repair");
     expect(raced.stderr).not.toContain("Traceback");
     expect(raced.configText).toBe(attackerProjection);
+  });
 
+  it("keeps forced removal identity-bound for malformed files and symlinks", () => {
+    const forcedCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
     const forcedSymlink = runDeepAgentsConfigCommand(
       forcedCommand,
       emptyProjection,

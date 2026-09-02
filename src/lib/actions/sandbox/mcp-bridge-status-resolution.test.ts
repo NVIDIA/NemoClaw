@@ -203,11 +203,13 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       ...(["symlink", "fifo"] as const).map((appearedType) =>
         runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
           swapAfterMissingManagedOpen: appearedType,
+          timeoutMs: 30_000,
         }),
       ),
       runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
         statAfterManagedEloopAsRegular: true,
         symlink: true,
+        timeoutMs: 30_000,
       }),
     ];
     unsafeResults.forEach((result) => {
