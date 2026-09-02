@@ -86,7 +86,7 @@ function Invoke-BoundedProcess {
     if (-not $SuppressProofOutput) {
         Write-Host "PS> $Label :: $(Split-Path -Leaf $FilePath) $($argumentList -join ' ')"
     }
-    $process = Start-Process -FilePath $FilePath -ArgumentList $argumentList -PassThru -ErrorAction Stop
+    $process = Start-Process -FilePath $FilePath -ArgumentList $argumentList -PassThru -NoNewWindow -ErrorAction Stop
     try {
         if (-not $process.WaitForExit($script:OperationTimeoutMilliseconds)) {
             $process.Kill()

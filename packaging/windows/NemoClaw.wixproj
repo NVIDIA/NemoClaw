@@ -10,6 +10,10 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot)</DefineConstants>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Locked npm graphs contain three versionless native payloads. They remain
+         MSI-hashed, exact-manifest-qualified, repairable files; suppress only
+         ICE60's optional PE version/language metadata rule. -->
+    <SuppressIces>ICE60</SuppressIces>
     <DebugType>none</DebugType>
   </PropertyGroup>
   <ItemGroup>

@@ -159,6 +159,7 @@ const required = (name) => {
 const node = required("NEMOCLAW_MXC_NODE");
 const entry = required("NEMOCLAW_MXC_OPENCLAW_ENTRY");
 const home = required("NEMOCLAW_MXC_HOME");
+const token = required("NEMOCLAW_MXC_TOKEN");
 const resultPath = required("NEMOCLAW_MXC_RESULT");
 const mockPort = Number(required("NEMOCLAW_MXC_MOCK_PORT"));
 const gatewayPort = Number(required("NEMOCLAW_MXC_OPENCLAW_PORT"));
@@ -166,7 +167,7 @@ const env = {
   ...process.env,
   HOME: home,
   OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:" + gatewayPort,
-  OPENCLAW_GATEWAY_TOKEN: "qualification-only-token",
+  OPENCLAW_GATEWAY_TOKEN: token,
   USERPROFILE: home,
 };
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -360,10 +361,11 @@ async function main() {
   );
   let passed = false;
   let result = null;
+  let cliEnvironment = gatewayEnvironment;
   try {
     console.log("NEMOCLAW> Starting installed OpenShell MXC gateway");
     await waitForPort(gatewayPort, gateway);
-    const cliEnvironment = allowlistedWindowsEnvironment({
+    cliEnvironment = allowlistedWindowsEnvironment({
       ...gatewayEnvironment,
       OPENSHELL_GATEWAY: undefined,
     });
@@ -383,6 +385,7 @@ async function main() {
       NEMOCLAW_MXC_NODE: node,
       NEMOCLAW_MXC_OPENCLAW_ENTRY: openClawEntry,
       NEMOCLAW_MXC_HOME: home,
+      NEMOCLAW_MXC_TOKEN: randomBytes(32).toString("base64url"),
       NEMOCLAW_MXC_RESULT: resultPath,
       NEMOCLAW_MXC_MOCK_PORT: String(mockPort),
       NEMOCLAW_MXC_OPENCLAW_PORT: String(openClawPort),
@@ -436,7 +439,7 @@ async function main() {
         await run(
           openshell,
           ["sandbox", "delete", sandboxName],
-          gatewayEnvironment,
+          cliEnvironment,
           "Failure cleanup sandbox delete",
           30_000,
         );
