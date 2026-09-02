@@ -864,7 +864,7 @@ jobs:
           name: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/managed-pr-contract/contract.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
   pr-openclaw-mcp-discovery:
     name: PR exact OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
