@@ -22,14 +22,6 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 type JsonRecord = Record<string, unknown>;
 
-export interface ManagedImageCohortIdentity {
-  readonly cohort: string;
-  readonly receipt: ManagedImageCohortReceipt;
-  readonly revision: string;
-  readonly runAttempt: number;
-  readonly runId: number;
-}
-
 export interface ManagedImageCohortReceipt {
   readonly kind: "nemoclaw-managed-image-cohort-receipt-v1";
   readonly cohort: string;
@@ -261,7 +253,7 @@ function validatePlatformEvidence(
 export function validateManagedImageCohort(
   value: unknown,
   expected: { readonly revision: string; readonly runAttempt: number; readonly runId: number },
-): ManagedImageCohortIdentity {
+): ManagedImageCohortReceipt {
   if (!SHA_PATTERN.test(expected.revision)) throw new Error("expected cohort revision is invalid");
   positiveInteger(expected.runId, "expected cohort run id");
   positiveInteger(expected.runAttempt, "expected cohort run attempt");
@@ -316,21 +308,13 @@ export function validateManagedImageCohort(
     }
     images[agent] = platformImages;
   }
-  const receipt: ManagedImageCohortReceipt = {
+  return {
     kind: "nemoclaw-managed-image-cohort-receipt-v1",
     cohort: cohortIdentity,
     revision: expected.revision,
     runAttempt: boundedCohort.attempt,
     runId: expected.runId,
     images,
-  };
-
-  return {
-    cohort: cohortIdentity,
-    receipt,
-    revision: expected.revision,
-    runAttempt: expected.runAttempt,
-    runId: expected.runId,
   };
 }
 
@@ -341,18 +325,15 @@ function requiredInteger(value: string | undefined, label: string): number {
 
 export function main(argv = process.argv.slice(2), env = process.env): void {
   if (argv.length !== 1) throw new Error("expected one managed-image cohort contract path");
-  const identity = validateManagedImageCohort(
-    JSON.parse(readFileSync(argv[0], "utf8")) as unknown,
-    {
-      revision: env.PUBLICATION_HEAD_SHA ?? "",
-      runAttempt: requiredInteger(env.PUBLICATION_RUN_ATTEMPT, "PUBLICATION_RUN_ATTEMPT"),
-      runId: requiredInteger(env.PUBLICATION_RUN_ID, "PUBLICATION_RUN_ID"),
-    },
-  );
+  const receipt = validateManagedImageCohort(JSON.parse(readFileSync(argv[0], "utf8")) as unknown, {
+    revision: env.PUBLICATION_HEAD_SHA ?? "",
+    runAttempt: requiredInteger(env.PUBLICATION_RUN_ATTEMPT, "PUBLICATION_RUN_ATTEMPT"),
+    runId: requiredInteger(env.PUBLICATION_RUN_ID, "PUBLICATION_RUN_ID"),
+  });
   if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
   appendFileSync(
     env.GITHUB_OUTPUT,
-    `cohort=${identity.cohort}\nreceipt=${JSON.stringify(identity.receipt)}\nrevision=${identity.revision}\nrun_attempt=${identity.runAttempt}\nrun_id=${identity.runId}\n`,
+    `receipt=${JSON.stringify(receipt)}\nrevision=${receipt.revision}\n`,
     "utf8",
   );
 }

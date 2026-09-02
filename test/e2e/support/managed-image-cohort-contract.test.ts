@@ -165,28 +165,22 @@ describe("managed-image cohort publication contract", () => {
         runId: RUN_ID,
       }),
     ).toEqual({
+      kind: "nemoclaw-managed-image-cohort-receipt-v1",
       cohort: COHORT,
-      receipt: {
-        kind: "nemoclaw-managed-image-cohort-receipt-v1",
-        cohort: COHORT,
-        revision: REVISION,
-        runAttempt: RUN_ATTEMPT,
-        runId: RUN_ID,
-        images: Object.fromEntries(
-          EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => [
-            agent,
-            Object.fromEntries(
-              PLATFORMS.map((platform, platformIndex) => [
-                platform,
-                `${image}@${digest(agentIndex + platformIndex + 10)}`,
-              ]),
-            ),
-          ]),
-        ),
-      },
       revision: REVISION,
       runAttempt: RUN_ATTEMPT,
       runId: RUN_ID,
+      images: Object.fromEntries(
+        EXPECTED_AGENT_IMAGES.map(({ agent, image }, agentIndex) => [
+          agent,
+          Object.fromEntries(
+            PLATFORMS.map((platform, platformIndex) => [
+              platform,
+              `${image}@${digest(agentIndex + platformIndex + 10)}`,
+            ]),
+          ),
+        ]),
+      ),
     });
   });
 
@@ -225,8 +219,7 @@ describe("managed-image cohort publication contract", () => {
       }),
     ).toMatchObject({
       cohort: `ghrun-${RUN_ID}-1`,
-      receipt: { cohort: `ghrun-${RUN_ID}-1`, runAttempt: 1 },
-      runAttempt,
+      runAttempt: 1,
       runId: RUN_ID,
     });
   });
@@ -327,6 +320,22 @@ describe("managed-image cohort publication contract", () => {
         runId: RUN_ID,
       }),
     ).toThrow("revision must be");
+  });
+
+  it("rejects SLSA provenance bound to a different immutable base image", () => {
+    const value = cohortContract();
+    platformPublication(
+      value,
+    ).publicationEvidence.attestations.slsa.statement.bindings.baseReference =
+      `ghcr.io/nvidia/nemoclaw/base@${digest(14)}`;
+
+    expect(() =>
+      validateManagedImageCohort(value, {
+        revision: REVISION,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+      }),
+    ).toThrow("base reference binding must be");
   });
 
   it.each([
