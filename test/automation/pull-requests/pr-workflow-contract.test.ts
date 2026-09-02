@@ -886,12 +886,15 @@ describe("pull request and main workflow contracts", () => {
 
     const qualificationPackageJob = managedRuntimeWorkflow.jobs["package-openshell-sdk"];
     const candidateActivation = managedRuntimeWorkflow.jobs["candidate-activation"];
+    const baseActivation = managedRuntimeWorkflow.jobs["exact-base-activation"];
     expect(qualificationPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
     expect(candidateActivation.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(baseActivation.permissions).toEqual({ actions: "read", contents: "read" });
     expect(candidateActivation.needs).toEqual([
       "authenticate-candidate",
       "package-openshell-sdk",
     ]);
+    expect(baseActivation.needs).toEqual(["authenticate-candidate", "package-openshell-sdk"]);
     const qualificationCheckout = requiredWorkflowStep(
       qualificationPackageJob,
       "Check out exact base-controlled package verifier",
@@ -925,6 +928,11 @@ describe("pull request and main workflow contracts", () => {
       name: "managed-runtime-openshell-sdk-${{ github.run_id }}-${{ github.run_attempt }}",
       path: "${{ runner.temp }}/openshell-sdk",
     });
+    const baseDownload = requiredWorkflowStep(
+      baseActivation,
+      "Download reviewed OpenShell SDK archive",
+    );
+    expect(baseDownload).toEqual(candidateDownload);
   });
 
   // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates

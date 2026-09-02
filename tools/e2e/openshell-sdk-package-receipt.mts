@@ -293,7 +293,7 @@ function selectSuccessfulRun(
   if (!Array.isArray(page.workflow_runs) || page.total_count !== page.workflow_runs.length) {
     throw new Error("OpenShell SDK workflow run listing is incomplete");
   }
-  const successful: Array<{ id: number; attempt: number }> = [];
+  let selected: { id: number; attempt: number } | null = null;
   const ids = new Set<number>();
   for (const raw of page.workflow_runs) {
     const run = record(raw, "OpenShell SDK workflow run");
@@ -328,14 +328,15 @@ function selectSuccessfulRun(
     const pullHead = record(pull.head, "OpenShell SDK workflow pull request source");
     exactString(pullHead.sha, expected.candidateSha, "OpenShell SDK workflow pull request source");
     const attempt = positiveInteger(run.run_attempt, "OpenShell SDK workflow run attempt");
-    if (run.status === "completed" && run.conclusion === "success") {
-      successful.push({ id, attempt });
+    if (
+      run.status === "completed" &&
+      run.conclusion === "success" &&
+      (selected === null || id > selected.id)
+    ) {
+      selected = { id, attempt };
     }
   }
-  if (successful.length > 1) {
-    throw new Error("OpenShell SDK producer is ambiguous");
-  }
-  return successful[0] ?? null;
+  return selected;
 }
 
 function materializeProducerArchive(

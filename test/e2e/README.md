@@ -130,8 +130,8 @@ coverage retains that assertion for environments with supervisor-authoritative D
 
 The `E2E / Exact Base Managed Runtime` workflow runs automatically for relevant same-repository
 pull-request changes. A maintainer can also dispatch it from `main` with the open PR number,
-candidate SHA, and base SHA. Both the candidate managed-image run ID and its attempt can be
-supplied as an optional replay pair. The controller executes from the exact PR base, authenticates
+candidate SHA, and base SHA. For a replay, provide both the candidate managed-image run ID and
+attempt. Otherwise, leave both empty. The controller executes from the exact PR base, authenticates
 the current PR, and waits
 for the exact successful managed-image producer before candidate code executes. Historical run
 metadata about the PR base is not authority for the comparison.

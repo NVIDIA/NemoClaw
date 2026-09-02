@@ -33,7 +33,7 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-function producerReceipt(): OpenShellSdkProducerReceipt {
+function producerReceipt(runId = RUN_ID, runAttempt = RUN_ATTEMPT): OpenShellSdkProducerReceipt {
   const directory = temporaryDirectory();
   const archivePath = path.join(directory, "reviewed-sdk.tgz");
   fs.writeFileSync(archivePath, "reviewed SDK package");
@@ -43,8 +43,8 @@ function producerReceipt(): OpenShellSdkProducerReceipt {
     candidateSha: CANDIDATE_SHA,
     checkedOutSha: BASE_SHA,
     pullRequest: PR_NUMBER,
-    runAttempt: RUN_ATTEMPT,
-    runId: RUN_ID,
+    runAttempt,
+    runId,
     workflowSha: BASE_SHA,
   });
 }
@@ -76,11 +76,12 @@ function workflowRun(id = RUN_ID): Record<string, unknown> {
 function resolverFixture(
   options: {
     artifactDigest?: string;
-    receipt?: OpenShellSdkProducerReceipt;
     runs?: Record<string, unknown>[];
+    selectedRunId?: number;
   } = {},
 ) {
-  const receipt = options.receipt ?? producerReceipt();
+  const selectedRunId = options.selectedRunId ?? RUN_ID;
+  const receipt = producerReceipt(selectedRunId);
   const packageBytes = fs.readFileSync(
     path.join(temporaryDirectories.at(-1)!, receipt.package.fileName),
   );
@@ -88,7 +89,7 @@ function resolverFixture(
     { name: receipt.package.fileName, contents: packageBytes.toString("utf8") },
     { name: "receipt.json", contents: `${JSON.stringify(receipt)}\n` },
   ]);
-  const artifactName = `openshell-sdk-${CANDIDATE_SHA}-${RUN_ID}-${RUN_ATTEMPT}`;
+  const artifactName = `openshell-sdk-${CANDIDATE_SHA}-${selectedRunId}-${RUN_ATTEMPT}`;
   const artifactId = 9001;
   const runs = options.runs ?? [workflowRun()];
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&head_sha=${CANDIDATE_SHA}&per_page=100&page=1`;
@@ -113,7 +114,7 @@ function resolverFixture(
     ],
     [runsPath, { total_count: runs.length, workflow_runs: runs }],
     [
-      `/repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=${encodeURIComponent(artifactName)}&per_page=100`,
+      `/repos/${REPOSITORY}/actions/runs/${selectedRunId}/artifacts?name=${encodeURIComponent(artifactName)}&per_page=100`,
       {
         total_count: 1,
         artifacts: [
@@ -126,7 +127,7 @@ function resolverFixture(
               options.artifactDigest ??
               `sha256:${createHash("sha256").update(archive).digest("hex")}`,
             archive_download_url: `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${artifactId}/zip`,
-            workflow_run: { id: RUN_ID, head_sha: CANDIDATE_SHA },
+            workflow_run: { id: selectedRunId, head_sha: CANDIDATE_SHA },
           },
         ],
       },
@@ -250,25 +251,34 @@ describe("OpenShell SDK producer receipts", () => {
     ).toThrow();
   });
 
-  it("rejects two successful producers for the same candidate", async () => {
-    const fixture = resolverFixture({ runs: [workflowRun(), workflowRun(RUN_ID + 1)] });
-    await expect(
-      resolveOpenShellSdkPackage(
-        {
-          baseSha: BASE_SHA,
-          candidateSha: CANDIDATE_SHA,
-          outputDirectory: temporaryDirectory(),
-          pullRequest: PR_NUMBER,
-          selectionPath: path.join(temporaryDirectory(), "selection.json"),
-          token: "test-token",
-        },
-        {
-          request: fixture.request,
-          downloadArtifact: async () => fixture.archive,
-          waitMilliseconds: 0,
-        },
-      ),
-    ).rejects.toThrow("ambiguous");
+  it("selects and validates the newest of two successful producers", async () => {
+    const newestRunId = RUN_ID + 1;
+    const fixture = resolverFixture({
+      runs: [workflowRun(), workflowRun(newestRunId)],
+      selectedRunId: newestRunId,
+    });
+    const output = temporaryDirectory();
+
+    const selection = await resolveOpenShellSdkPackage(
+      {
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        outputDirectory: output,
+        pullRequest: PR_NUMBER,
+        selectionPath: path.join(temporaryDirectory(), "selection.json"),
+        token: "test-token",
+      },
+      {
+        request: fixture.request,
+        downloadArtifact: async () => fixture.archive,
+        waitMilliseconds: 0,
+      },
+    );
+
+    expect(selection.run).toEqual({ id: newestRunId, attempt: RUN_ATTEMPT });
+    expect(fs.readFileSync(path.join(output, "reviewed-sdk.tgz"), "utf8")).toBe(
+      "reviewed SDK package",
+    );
   });
 
   it("rejects a missing producer", async () => {
