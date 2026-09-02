@@ -7,6 +7,7 @@ import {
   addedJavaScriptViolations,
   conditionalGrowthViolations,
   diagnostics,
+  dockerfileSetupGrowthViolations,
   loopGrowthViolations,
   onboardGrowthViolations,
   testOnly as checkTestOnly,
@@ -51,6 +52,11 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.onboard(violations)).toEqual([]);
   });
 
+  it("does not grow deprecated stock Dockerfile setup steps", async () => {
+    const violations = await dockerfileSetupGrowthViolations(diff);
+    expect(violations, diagnostics.dockerfileSetup(violations)).toEqual([]);
+  });
+
   it("keeps changed test files within the size budget", async () => {
     const violations = await testSizeViolations(diff);
     expect(violations, diagnostics.size(violations)).toEqual([]);
@@ -61,14 +67,10 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
   });
 
-  it(
-    "does not add test loops directly, through one-use helpers, or through callback-forwarding helpers",
-    async () => {
-      const violations = await loopGrowthViolations(diff);
-      expect(violations, diagnostics.loops(violations)).toEqual([]);
-    },
-    60_000,
-  );
+  it("does not add test loops directly, through one-use helpers, or through callback-forwarding helpers", async () => {
+    const violations = await loopGrowthViolations(diff);
+    expect(violations, diagnostics.loops(violations)).toEqual([]);
+  }, 60_000);
 });
 
 describe("codebase growth guardrail test support", () => {
@@ -105,6 +107,51 @@ describe("codebase growth guardrail test support", () => {
       { "src/lib/onboard.ts": "first\nsecond\n" },
     );
     expect(await onboardGrowthViolations(diff)).toEqual(["src/lib/onboard.ts grew by 1 line(s)"]);
+  });
+
+  it("rejects growth in deprecated stock Dockerfile setup steps", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN true\n" },
+      { Dockerfile: "FROM scratch\nRUN true\nCOPY setup /setup\nRUN /setup\n" },
+    );
+    expect(await dockerfileSetupGrowthViolations(diff)).toEqual([
+      "Dockerfile setup instructions increased from 2 to 4",
+      "Dockerfile setup instruction lines increased from 2 to 4",
+    ]);
+  });
+
+  it("rejects added setup commands hidden inside an existing Dockerfile instruction", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      { Dockerfile: "FROM scratch\nRUN first\n" },
+      { Dockerfile: ["FROM scratch", "RUN first \\", "  && second", ""].join("\n") },
+    );
+    expect(await dockerfileSetupGrowthViolations(diff)).toEqual([
+      "Dockerfile setup instruction lines increased from 2 to 3",
+    ]);
+  });
+
+  it("allows Dockerfile setup shrinkage and documentation growth", async () => {
+    const diff = fixtureDiff(
+      [{ filename: "Dockerfile", status: "modified" }],
+      {
+        Dockerfile: ["FROM scratch", "RUN first \\", "  && second", "COPY setup /setup", ""].join(
+          "\n",
+        ),
+      },
+      {
+        Dockerfile:
+          "# Dockerfile stock setup is deprecated; use managed-image startup.\nFROM scratch\nRUN first\n",
+      },
+    );
+    expect(await dockerfileSetupGrowthViolations(diff)).toEqual([]);
+  });
+
+  it("directs deprecated Dockerfile setup growth to managed setup", () => {
+    const message = diagnostics.dockerfileSetup(["Dockerfile setup instructions increased"]);
+    expect(message).toContain("Dockerfile-based stock setup is deprecated");
+    expect(message).toContain("managed-image startup profile, bootstrap, or runtime-provider path");
   });
 
   it("rejects a larger default test file budget", async () => {
