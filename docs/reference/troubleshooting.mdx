@@ -480,13 +480,13 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2. Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
 
-If onboarding reports that Docker is missing or unreachable, fix Docker first and retry onboarding:
+If onboarding reports that the default Docker provider is missing or unreachable, fix Docker first and retry onboarding:
 
 ```bash
 $$nemoclaw onboard
 ```
 
-Podman is not a tested runtime. If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
+For explicitly selected native Podman, retain `NEMOCLAW_GATEWAY_RUNTIME=podman` and follow [Podman](#podman). An auto-detected Podman compatibility socket without that selector is rejected instead of silently changing providers.
 
 ### Cluster fails with `overlayfs snapshotter cannot be enabled` on Docker 26+
 
@@ -2991,7 +2991,19 @@ For additional troubleshooting, refer to the [Windows Setup](../get-started/addi
 
 ## Podman
 
-Podman is not a tested runtime. OpenShell officially documents Docker-based runtimes only. If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+NemoClaw has two independent Podman paths: the native managed runtime provider and the portable experimental profile.
+
+For native rootless Podman on Linux, select the provider explicitly:
+
+```bash
+NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard
+```
+
+Native preflight fails closed unless the current-user Podman socket and service, rootless engine, cgroups v2 hierarchy, bridge networking, DNS, host architecture, and exact managed-image contract are all qualified.
+Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
+Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
+
+The portable experimental profile is separate and unchanged.
 
 The portable experimental profile uses the `docker` command to drive rootless Podman. Before you run this profile, make sure a Docker-compatible CLI is available on `PATH`. On a Podman-only host, install the `podman-docker` shim for your distribution:
 

@@ -157,10 +157,8 @@ export async function restoreMcpAfterRebuild(
     await restoreMcpBridgesAfterRebuild(sandboxName, entries);
     console.log(`  ${G}✓${R} MCP bridges restored`);
     return true;
-  } catch (error) {
-    console.error(
-      `  ${YW}⚠${R} MCP bridge restore incomplete: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  } catch {
+    console.error(`  ${YW}⚠${R} MCP bridge restore incomplete; inspect redacted diagnostics.`);
     return false;
   }
 }

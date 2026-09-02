@@ -8,7 +8,10 @@ import YAML from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadMessagingChannelPolicyPreset } from "../../messaging";
-
+import { getMessagingPolicyKeysByChannel } from "../../messaging/channels";
+import * as policies from "../../policy";
+import { getCredentialBindingProviders } from "../initial-policy";
+import { allMessagingChannelPolicyPresets } from "../messaging-policy-presets";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
@@ -364,8 +367,8 @@ network_policies:
 
   it("uses active channel preset sources without copying unrequested keys", () => {
     const merged = mergeReplacementPolicyAccess(
-      "version: 1\nnetwork_policies:\n  host_edit: {}\n",
-      "version: 1\nnetwork_policies: {}\n",
+      "version: 1\nnetwork_policies:\n  host_edit: {}\n  googlechat_hermes: {name: googlechat_hermes}\n",
+      "version: 1\nnetwork_policies:\n  googlechat_hermes: {name: generic_googlechat}\n",
       ["googlechat_hermes"],
       [],
       [
@@ -381,6 +384,21 @@ network_policies:
       host_edit: {},
       googlechat_hermes: { name: "googlechat_hermes" },
     });
+  });
+
+  it("rejects conflicting active channel sources for one required policy key", () => {
+    expect(() =>
+      mergeReplacementPolicyAccess(
+        "version: 1\nnetwork_policies: {}\n",
+        "version: 1\nnetwork_policies: {}\n",
+        ["slack"],
+        [],
+        [
+          "version: 1\nnetwork_policies:\n  slack: {name: slack_a}\n",
+          "version: 1\nnetwork_policies:\n  slack: {name: slack_b}\n",
+        ],
+      ),
+    ).toThrow("required network policy 'slack' has conflicting replacement sources");
   });
 
   it("materializes one private handoff and cleans it with the generated replacement source", () => {
@@ -466,4 +484,204 @@ network_policies:
       "host-added-provider",
     ]);
   });
+
+  it("drops OpenShell provider-composed entries before rebuild authorization", () => {
+    const livePath = tempPolicy(
+      "live-provider-composed.yaml",
+      `version: 1
+network_policies:
+  host_edit: {name: host_edit}
+  _provider_disabled_channel:
+    endpoints:
+      - credential_binding: {provider: disabled-channel-provider}
+`,
+    );
+    const replacementPath = tempPolicy(
+      "replacement-provider-composed.yaml",
+      "version: 1\nnetwork_policies: {}\n",
+    );
+
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: {
+        policyPath: replacementPath,
+        appliedPresets: [],
+      },
+    });
+
+    expect(YAML.parse(fs.readFileSync(handoff.policyPath, "utf8")).network_policies).toEqual({
+      host_edit: { name: "host_edit" },
+    });
+    expect(handoff.credentialBindingProviders).toEqual([]);
+    expect(handoff.cleanup?.()).toBe(true);
+  });
+
+  it("removes the Teams-owned Outlook login binding when Teams is disabled", () => {
+    const merged = mergeReplacementPolicyAccess(
+      `version: 1
+network_policies:
+  teams:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: alpha-teams-bridge}
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: alpha-teams-bridge}
+`,
+      `version: 1
+network_policies:
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+`,
+      [],
+      ["teams"],
+      [],
+      "alpha",
+    );
+
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      outlook_graph: {
+        endpoints: [{ host: "login.microsoftonline.com", port: 443 }],
+      },
+    });
+  });
+
+  it("restores the Teams-owned Outlook login binding when Teams is re-enabled", () => {
+    const merged = mergeReplacementPolicyAccess(
+      `version: 1
+network_policies:
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+`,
+      "version: 1\nnetwork_policies: {}\n",
+      ["teams"],
+      [],
+      [
+        `version: 1
+network_policies:
+  teams:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: alpha-teams-bridge}
+`,
+      ],
+      "alpha",
+    );
+
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      outlook_graph: {
+        endpoints: [
+          {
+            host: "login.microsoftonline.com",
+            port: 443,
+            credential_binding: { provider: "alpha-teams-bridge" },
+          },
+        ],
+      },
+      teams: {
+        endpoints: [
+          {
+            host: "login.microsoftonline.com",
+            port: 443,
+            credential_binding: { provider: "alpha-teams-bridge" },
+          },
+        ],
+      },
+    });
+  });
+
+  it.each(["openclaw", "hermes"] as const)(
+    "preserves the complete %s messaging policy lifecycle across rebuilds",
+    (agent) => {
+      const channels = [
+        "telegram",
+        "discord",
+        "wechat",
+        "slack",
+        "whatsapp",
+        "teams",
+        "googlechat",
+      ];
+      const removedChannels = ["wechat", "teams", "googlechat"];
+      const remainingChannels = ["telegram", "discord", "slack", "whatsapp"];
+      const sandboxName = `lifecycle-${agent}`;
+      const baseSource = fs.readFileSync(
+        path.join(process.cwd(), "agents", agent, "policy-permissive.yaml"),
+        "utf8",
+      );
+      const keysByChannel = getMessagingPolicyKeysByChannel({ agent });
+      const keysFor = (selected: string[]) =>
+        selected.flatMap((channel) => [...(keysByChannel[channel] ?? [])]);
+      const compose = (selected: string[]) =>
+        policies.mergePresetNamesIntoPolicy(
+          baseSource,
+          allMessagingChannelPolicyPresets(selected),
+          { agent, sandboxName, credentialBoundMessagingChannels: selected },
+        ).policy;
+
+      const activeDocument = YAML.parse(compose(channels));
+      activeDocument.network_policies.github.endpoints[0].host = "host-maintained.example.com";
+      const activeSource = YAML.stringify(activeDocument);
+      expect(getCredentialBindingProviders(activeSource)).toContain(
+        `${sandboxName}-teams-bridge`,
+      );
+
+      const stopped = mergeReplacementPolicyAccess(
+        activeSource,
+        baseSource,
+        [],
+        keysFor(channels),
+        [],
+        sandboxName,
+      ).source;
+      expect(getCredentialBindingProviders(stopped)).toEqual([]);
+
+      const reenabled = mergeReplacementPolicyAccess(
+        stopped,
+        compose(channels),
+        keysFor(channels),
+        [],
+        [],
+        sandboxName,
+      ).source;
+      expect(getCredentialBindingProviders(reenabled)).toContain(
+        `${sandboxName}-teams-bridge`,
+      );
+
+      const selectedRemoved = mergeReplacementPolicyAccess(
+        reenabled,
+        compose(remainingChannels),
+        keysFor(remainingChannels),
+        keysFor(removedChannels),
+        [],
+        sandboxName,
+      ).source;
+      expect(getCredentialBindingProviders(selectedRemoved)).not.toContain(
+        `${sandboxName}-teams-bridge`,
+      );
+
+      expect(YAML.parse(stopped).network_policies.github.endpoints[0].host).toBe(
+        "host-maintained.example.com",
+      );
+      expect(YAML.parse(reenabled).network_policies.github.endpoints[0].host).toBe(
+        "host-maintained.example.com",
+      );
+      expect(YAML.parse(selectedRemoved).network_policies.github.endpoints[0].host).toBe(
+        "host-maintained.example.com",
+      );
+      const finalPolicies = YAML.parse(selectedRemoved).network_policies;
+      expect(Object.keys(finalPolicies)).not.toEqual(
+        expect.arrayContaining(keysFor(removedChannels)),
+      );
+      expect(Object.keys(finalPolicies)).toEqual(expect.arrayContaining(keysFor(remainingChannels)));
+    },
+  );
 });
