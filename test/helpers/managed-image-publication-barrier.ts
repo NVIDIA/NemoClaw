@@ -183,33 +183,6 @@ export const reuseOpenclawAmd64FromAttemptOne: CandidateMutation = (candidateSet
     };
   });
 
-export function runManagedImageBaseRestore(
-  script: string,
-  contract: string,
-): { restored: boolean; status: number | null; stderr: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-base-restore-"));
-  try {
-    const result = spawnSync("bash", ["-c", script], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        AGENT: "openclaw",
-        DCODE_CONTRACT_BASE64: contract,
-        HERMES_CONTRACT_BASE64: contract,
-        OPENCLAW_CONTRACT_BASE64: contract,
-        RUNNER_TEMP: root,
-      },
-    });
-    return {
-      restored: fs.existsSync(path.join(root, "managed-base-contract", "contract.json")),
-      status: result.status,
-      stderr: result.stderr,
-    };
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-}
-
 export function runPublicationBarrier(
   script: string,
   mutate: CandidateMutation = (value) => value,

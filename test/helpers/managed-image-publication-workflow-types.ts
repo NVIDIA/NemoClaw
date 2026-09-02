@@ -12,11 +12,6 @@ export type Step = {
   "working-directory"?: string;
 };
 
-export type Action = {
-  outputs?: Record<string, { description?: string; value?: string }>;
-  runs?: { steps?: Step[] };
-};
-
 export type MatrixEntry = {
   agent?: string;
   arch?: string;

@@ -162,11 +162,6 @@ jobs:
           name: managed-pr-image-${{ needs.authenticate-source.outputs.source_run_id }}-${{ needs.authenticate-source.outputs.source_run_attempt }}-${{ matrix.agent }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/managed-pr-image
 
-      - id: bundle
-        name: Validate the authenticated OCI artifact without executing it
-        run: >-
-          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-pr-image-publisher.mts validate "${RUNNER_TEMP}/managed-pr-image"
-
       - name: Reject production OpenClaw build arguments
         run: trusted/scripts/check-production-build-args.sh
 
@@ -174,25 +169,14 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Log in only inside the trusted publisher
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - id: publish
-        name: Publish the validated OCI artifact by digest
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: trusted
-          file: trusted/tools/e2e/managed-pr-image-publisher.Dockerfile
-          platforms: ${{ matrix.platform }}
-          build-contexts: candidate=oci-layout://${{ steps.bundle.outputs.oci_reference }}
-          outputs: type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true
-          provenance: false
-          sbom: false
+        name: Validate, authenticate, and publish through the trusted boundary
+        env:
+          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+          REGISTRY_PASSWORD: ${{ github.token }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+        run: >-
+          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-pr-image-publisher.mts publish "${RUNNER_TEMP}/managed-pr-image"
 
       - name: Remove trusted publisher credentials
         if: always()
@@ -201,7 +185,7 @@ jobs:
       - name: Validate the exact public digest and write its contract
         env:
           PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}
-          RELEASE: ${{ steps.bundle.outputs.release }}
+          RELEASE: ${{ steps.publish.outputs.release }}
         run: |
           set -euo pipefail
           [[ "$PUBLISHED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -411,7 +395,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/.managed-runtime-candidate/mcp/pass-${{ matrix.pass }}
       E2E_JOB: "1"
       E2E_TARGET_ID: mcp-bridge
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/candidate/bin/nemoclaw.js
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/.managed-runtime-candidate/mcp/nemoclaw
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: ${{ github.workspace }}/.managed-runtime-candidate/mcp/catalog.json
       NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
@@ -534,7 +518,7 @@ jobs:
           sudo dpkg -i "$cloudflared_deb"
 
       - name: Generate MCP test TLS
-        working-directory: candidate
+        working-directory: trusted
         run: bash test/e2e/setup-mcp-test-tls.sh
 
       - name: Install trusted OpenShell CLI
@@ -543,23 +527,108 @@ jobs:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
         run: env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN bash scripts/install-openshell.sh
 
-      - name: Run exact OpenClaw managed-image MCP discovery
-        working-directory: candidate
+      - name: Isolate the candidate MCP product from trusted state
         run: |
           set -euo pipefail
-          test "$(git rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
+          test -s candidate/dist/nemoclaw.js
+          sudo install -o root -g root -m 0555 trusted/bin/nemoclaw.js candidate/bin/nemoclaw.js
+          sudo groupadd --system nemoclaw-runtime
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --gid nemoclaw-runtime nemoclaw-candidate
+          sudo usermod --append --groups nemoclaw-runtime "$USER"
+          mkdir -p "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell"
+          sudo chown -R root:nemoclaw-runtime \
+            "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell"
+          sudo chmod -R u+rwX,g+rwX,o-rwx \
+            "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell"
+          sudo find "$HOME/.nemoclaw" "$HOME/.config/nemoclaw" "$HOME/.config/openshell" \
+            -type d -exec chmod 2770 {} +
+          mkdir -p "$E2E_ARTIFACT_DIR" "$(dirname "$NEMOCLAW_CLI_BIN")"
+          chmod 0700 "$E2E_ARTIFACT_DIR"
+          chmod 0444 "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG"
+          chmod 0555 "$(dirname "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG")"
+          sudo chown -R root:root trusted candidate
+          sudo chmod -R a-w trusted candidate
+          trusted_digest="sha256:$(sudo find trusted -xdev -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          printf 'TRUSTED_MCP_CONTROLLER_DIGEST=%s\n' "$trusted_digest" >> "$GITHUB_ENV"
+          sudo tee "$NEMOCLAW_CLI_BIN" >/dev/null <<EOF
+          #!/usr/bin/env bash
+          umask 0007
+          exec sudo --preserve-env -u nemoclaw-candidate -- \
+            /usr/bin/env HOME="$HOME" PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin" \
+            /usr/bin/node "$GITHUB_WORKSPACE/candidate/bin/nemoclaw.js" "\$@"
+          EOF
+          sudo chown root:root "$NEMOCLAW_CLI_BIN"
+          sudo chmod 0555 "$NEMOCLAW_CLI_BIN"
+
+      - name: Reject candidate writes to MCP controller and evidence
+        run: |
+          set -euo pipefail
+          if sudo -u nemoclaw-candidate -- touch "$GITHUB_WORKSPACE/trusted/.candidate-tamper"; then
+            echo "ERROR: candidate user can mutate the trusted MCP controller." >&2
+            exit 1
+          fi
+          if sudo -u nemoclaw-candidate -- touch "$E2E_ARTIFACT_DIR/.candidate-tamper"; then
+            echo "ERROR: candidate user can mutate trusted MCP evidence." >&2
+            exit 1
+          fi
+          test ! -e "$GITHUB_WORKSPACE/trusted/.candidate-tamper"
+          test ! -e "$E2E_ARTIFACT_DIR/.candidate-tamper"
+
+      - id: runtime
+        name: Record the MCP OpenShell runtime identity
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          version="$("$OPENSHELL_BIN" --version)"
+          [[ "$version" != *$'\n'* && "$version" != *$'\r'* && -n "$version" ]]
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - id: mcp
+        name: Run controller-owned OpenClaw managed-image MCP discovery
+        working-directory: trusted
+        run: |
+          set -euo pipefail
+          test "$(git -C ../candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           OPENSHELL_BIN="$(command -v openshell)"
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx --no-install tsx ../trusted/tools/e2e/live-vitest-invocation.mts run \
-            --test-path test/e2e/live/mcp-bridge.test.ts
+          sg nemoclaw-runtime -c \
+            'npx --no-install tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts'
+
+      - id: integrity
+        name: Prove candidate MCP execution could not mutate trusted state
+        if: always()
+        run: |
+          set -euo pipefail
+          test ! -w trusted
+          test ! -w candidate
+          test "sha256:$(sudo find trusted -xdev -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')" = \
+            "$TRUSTED_MCP_CONTROLLER_DIGEST"
+          test "$(stat -c '%U:%a' "$E2E_ARTIFACT_DIR")" = "runner:700"
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
         if: always()
         working-directory: trusted
         run: npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
+
+      - name: Record protected MCP discovery evidence
+        if: ${{ always() && steps.integrity.outcome == 'success' && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+        env:
+          BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MANAGED_MCP_CATALOG: ${{ env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG }}
+          MANAGED_MCP_CONTROLLER_DIGEST: ${{ env.TRUSTED_MCP_CONTROLLER_DIGEST }}
+          MANAGED_MCP_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
+          MANAGED_MCP_JOB: Trusted candidate OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
+          MANAGED_MCP_OUTCOME: ${{ steps.mcp.outcome }}
+          MANAGED_MCP_PASS: ${{ matrix.pass }}
+          OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
+        run: >-
+          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-runtime-comparison.mts record-mcp "${RUNNER_TEMP}/managed-runtime-mcp-receipt-pass-${{ matrix.pass }}/receipt.json"
 
       - name: Upload exact MCP discovery evidence
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
@@ -569,6 +638,83 @@ jobs:
           path: ${{ env.E2E_ARTIFACT_DIR }}/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload protected MCP discovery receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-mcp-receipt-${{ github.run_id }}-${{ github.run_attempt }}-pass-${{ matrix.pass }}
+          path: ${{ runner.temp }}/managed-runtime-mcp-receipt-pass-${{ matrix.pass }}/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  authenticate-mcp-discovery:
+    name: Authenticate managed-image MCP discovery evidence
+    needs: [authenticate-source, trusted-candidate-mcp-discovery]
+    if: always() && needs.authenticate-source.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out trusted MCP evidence controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+
+      - name: Download protected MCP discovery receipts
+        id: receipts
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-runtime-mcp-receipt-${{ github.run_id }}-${{ github.run_attempt }}-pass-*
+          path: ${{ runner.temp }}/managed-runtime-mcp/receipts
+          merge-multiple: false
+
+      - name: Download protected MCP discovery evidence
+        id: evidence
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-runtime-mcp-${{ github.run_id }}-${{ github.run_attempt }}-pass-*
+          path: ${{ runner.temp }}/managed-runtime-mcp/evidence
+          merge-multiple: false
+
+      - id: classify
+        name: Classify authenticated MCP discovery receipts
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
+          SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
+        run: >-
+          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts classify-mcp "${RUNNER_TEMP}/managed-runtime-mcp/receipts" "${RUNNER_TEMP}/managed-runtime-mcp/evidence" "${RUNNER_TEMP}/managed-runtime-mcp/comparison.json"
+
+      - name: Preserve authenticated MCP discovery comparison
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-mcp-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-runtime-mcp/comparison.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Propagate the MCP discovery classification
+        if: steps.classify.outcome != 'success'
+        run: |
+          echo "ERROR: managed-image MCP discovery did not pass; inspect the comparison receipt." >&2
+          exit 1
 
   trusted-candidate-activation:
     name: Trusted candidate all-agent managed runtime activation (${{ matrix.arch }})
@@ -1085,7 +1231,6 @@ jobs:
     name: Classify candidate and exact-base evidence
     needs:
       - authenticate-source
-      - trusted-candidate-mcp-discovery
       - trusted-candidate-activation
       - authenticate-candidate-evidence
       - exact-base-activation
@@ -1127,7 +1272,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          MCP_JOB_CONCLUSION: ${{ needs.trusted-candidate-mcp-discovery.result }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/managed-runtime-comparison/platforms"
@@ -1150,7 +1294,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          QUALIFICATION_CANCELLED: ${{ needs.trusted-candidate-mcp-discovery.result == 'cancelled' || needs.trusted-candidate-activation.result == 'cancelled' || needs.authenticate-candidate-evidence.result == 'cancelled' || needs.exact-base-activation.result == 'cancelled' }}
+          QUALIFICATION_CANCELLED: ${{ needs.trusted-candidate-activation.result == 'cancelled' || needs.authenticate-candidate-evidence.result == 'cancelled' || needs.exact-base-activation.result == 'cancelled' }}
         run: |
           set -euo pipefail
           comparison="$RUNNER_TEMP/managed-runtime-comparison/comparison.json"

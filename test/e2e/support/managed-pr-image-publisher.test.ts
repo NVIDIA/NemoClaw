@@ -9,9 +9,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  main,
   managedPrImageContract,
   type ManagedPrImageExpectedIdentity,
+  publishManagedPrImageBundle,
   validateManagedPrImageBundle,
 } from "../../../tools/e2e/managed-pr-image-publisher.mts";
 
@@ -142,6 +142,46 @@ describe("trusted managed PR image publisher", () => {
     },
   );
 
+  it("publishes only after validation and then removes registry credentials", async () => {
+    const fixture = imageBundle("linux/amd64");
+    const calls: string[] = [];
+    const registry = {
+      login: vi.fn(() => {
+        calls.push("login");
+      }),
+      logout: vi.fn(() => {
+        calls.push("logout");
+      }),
+      publish: vi.fn(() => {
+        calls.push("publish");
+        return `sha256:${"c".repeat(64)}`;
+      }),
+    };
+
+    await expect(
+      publishManagedPrImageBundle(fixture.root, fixture.expected, registry),
+    ).resolves.toEqual({ digest: `sha256:${"c".repeat(64)}`, release: "v1.2.3" });
+    expect(calls).toEqual(["login", "publish", "logout"]);
+  });
+
+  it("removes registry credentials when publication fails", async () => {
+    const fixture = imageBundle("linux/amd64");
+    const registry = {
+      login: vi.fn(),
+      logout: vi.fn(),
+      publish: vi.fn(() => {
+        throw new Error("registry rejected publication");
+      }),
+    };
+
+    await expect(
+      publishManagedPrImageBundle(fixture.root, fixture.expected, registry),
+    ).rejects.toThrow("registry rejected publication");
+    expect(registry.login).toHaveBeenCalledOnce();
+    expect(registry.publish).toHaveBeenCalledOnce();
+    expect(registry.logout).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when the artifact receipt names another candidate", async () => {
     const fixture = imageBundle("linux/amd64", { receiptRevision: "b".repeat(40) });
     await expect(validateManagedPrImageBundle(fixture.root, fixture.expected)).rejects.toThrow(
@@ -156,25 +196,29 @@ describe("trusted managed PR image publisher", () => {
     );
   });
 
-  it("blocks publication when the authenticated artifact contains unreferenced content", async () => {
+  it("rejects unreferenced artifact content", async () => {
     const fixture = imageBundle("linux/amd64");
     fs.writeFileSync(path.join(fixture.root, "layout", "blobs", "sha256", "f".repeat(64)), "x");
-    const publishWithPackageAuthority = vi.fn();
-    const trustedPublisherBoundary = async (): Promise<void> => {
-      await main(["validate", fixture.root], {
-        AGENT: fixture.expected.agent,
-        CANDIDATE_SHA: fixture.expected.candidateSha,
-        GITHUB_OUTPUT: path.join(fixture.root, "publisher-output"),
-        IMAGE: fixture.expected.image,
-        PLATFORM: fixture.expected.platform,
-        SOURCE_RUN_ATTEMPT: fixture.expected.runAttempt,
-        SOURCE_RUN_ID: fixture.expected.runId,
-      });
-      publishWithPackageAuthority();
+    await expect(validateManagedPrImageBundle(fixture.root, fixture.expected)).rejects.toThrow(
+      "unreferenced or missing file",
+    );
+  });
+
+  it("blocks registry authentication and publication for an invalid artifact", async () => {
+    const fixture = imageBundle("linux/amd64");
+    fs.writeFileSync(path.join(fixture.root, "layout", "blobs", "sha256", "f".repeat(64)), "x");
+    const registry = {
+      login: vi.fn(),
+      logout: vi.fn(),
+      publish: vi.fn(() => `sha256:${"c".repeat(64)}`),
     };
 
-    await expect(trustedPublisherBoundary()).rejects.toThrow("unreferenced or missing file");
-    expect(publishWithPackageAuthority).not.toHaveBeenCalled();
+    await expect(
+      publishManagedPrImageBundle(fixture.root, fixture.expected, registry),
+    ).rejects.toThrow("unreferenced or missing file");
+    expect(registry.login).not.toHaveBeenCalled();
+    expect(registry.publish).not.toHaveBeenCalled();
+    expect(registry.logout).not.toHaveBeenCalled();
   });
 
   it("writes an immutable contract for only the authenticated source identity", () => {

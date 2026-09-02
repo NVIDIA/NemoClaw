@@ -27,6 +27,11 @@ const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 const SCENARIO_ID = "managed-runtime-activation-v1";
 const TEST_PATH = "test/e2e/live/managed-image-activation-e2e.test.ts";
 const RECEIPT_KIND = "nemoclaw-managed-runtime-activation-v1";
+const MCP_SCENARIO_ID = "managed-image-mcp-discovery-v1";
+const MCP_TEST_PATH = "test/e2e/live/mcp-bridge.test.ts";
+const MCP_RECEIPT_KIND = "nemoclaw-managed-image-mcp-discovery-v1";
+const MCP_COMPARISON_KIND = "nemoclaw-managed-image-mcp-comparison-v1";
+const MCP_PASSES = [1, 2] as const;
 const SOURCE_SELECTION_KIND = "nemoclaw-managed-runtime-source-selection-v1";
 const SELECTION_KIND = "nemoclaw-managed-runtime-candidate-selection-v1";
 const COMPARISON_KIND = "nemoclaw-managed-runtime-comparison-v1";
@@ -44,6 +49,8 @@ type JsonRecord = Record<string, unknown>;
 type Role = "base" | "candidate";
 type Platform = (typeof PLATFORMS)[number];
 type StepOutcome = "cancelled" | "failure" | "skipped" | "success";
+type McpPass = (typeof MCP_PASSES)[number];
+type McpClassification = "failure" | "infrastructure-failure" | "pass";
 type ComparisonClassification =
   | "base-failure"
   | "candidate-failure"
@@ -105,6 +112,54 @@ export interface ManagedRuntimeReceipt {
     };
   };
   readonly outcome: StepOutcome;
+}
+
+export interface ManagedMcpDiscoveryReceipt {
+  readonly kind: typeof MCP_RECEIPT_KIND;
+  readonly candidateSha: string;
+  readonly baseSha: string;
+  readonly candidateSource: {
+    readonly workflowPath: typeof SOURCE_WORKFLOW_PATH;
+    readonly runId: number;
+    readonly runAttempt: number;
+  };
+  readonly scenario: {
+    readonly id: typeof MCP_SCENARIO_ID;
+    readonly testPath: typeof MCP_TEST_PATH;
+    readonly pass: McpPass;
+  };
+  readonly workflow: {
+    readonly repository: typeof REPOSITORY;
+    readonly path: typeof BASE_WORKFLOW_PATH;
+    readonly sha: string;
+    readonly runId: number;
+    readonly runAttempt: number;
+    readonly job: string;
+    readonly controllerDigest: string;
+  };
+  readonly runtime: {
+    readonly openshellVersion: string;
+    readonly catalogDigest: string;
+    readonly image: {
+      readonly agent: "openclaw";
+      readonly reference: string;
+      readonly sourceRevision: string;
+      readonly cohort: string;
+    };
+  };
+  readonly evidence: ManagedRuntimeReceipt["evidence"];
+  readonly outcome: StepOutcome;
+}
+
+export interface ManagedMcpDiscoveryComparison {
+  readonly kind: typeof MCP_COMPARISON_KIND;
+  readonly classification: McpClassification;
+  readonly reason: string;
+  readonly passes: ReadonlyArray<{
+    readonly pass: McpPass;
+    readonly outcome: StepOutcome | null;
+    readonly evidenceError: string | null;
+  }>;
 }
 
 export interface ManagedRuntimeSourceSelection {
@@ -174,7 +229,6 @@ export interface ManagedRuntimeComparison {
 export interface ManagedRuntimeMultiarchComparison {
   readonly kind: typeof MULTIARCH_COMPARISON_KIND;
   readonly classification: ComparisonClassification;
-  readonly mcpDiscoveryConclusion: StepOutcome;
   readonly platforms: Readonly<Record<Platform, ManagedRuntimeComparison>>;
 }
 
@@ -377,6 +431,51 @@ function cleanupEvidence(root: string, files: ReadonlyArray<{ path: string }>) {
   } catch {
     return { path: cleanupPath, proven: false, failures: -1 };
   }
+}
+
+function parseEvidence(value: unknown, label: string): ManagedRuntimeReceipt["evidence"] {
+  const evidence = record(value, label);
+  exactKeys(evidence, ["cleanup", "files"], label);
+  if (!Array.isArray(evidence.files) || evidence.files.length > MAX_EVIDENCE_FILES) {
+    throw new Error(`${label} file list is invalid`);
+  }
+  const evidencePaths = new Set<string>();
+  let evidenceBytes = 0;
+  for (const rawFile of evidence.files) {
+    const file = record(rawFile, `${label} file`);
+    exactKeys(file, ["digest", "path", "size"], `${label} file`);
+    digest(file.digest, `${label} file digest`);
+    const size = nonnegativeInteger(file.size, `${label} file size`);
+    if (
+      typeof file.path !== "string" ||
+      !/^[A-Za-z0-9._/-]+$/u.test(file.path) ||
+      file.path.includes("..")
+    ) {
+      throw new Error(`${label} file path is invalid`);
+    }
+    if (evidencePaths.has(file.path)) throw new Error(`${label} file paths must be unique`);
+    evidencePaths.add(file.path);
+    evidenceBytes += size;
+    if (evidenceBytes > MAX_EVIDENCE_BYTES) throw new Error(`${label} exceeds the receipt limit`);
+  }
+  const cleanup = record(evidence.cleanup, `${label} cleanup`);
+  exactKeys(cleanup, ["failures", "path", "proven"], `${label} cleanup`);
+  if (
+    cleanup.path !== null &&
+    (typeof cleanup.path !== "string" || !cleanup.path.endsWith("/cleanup.json"))
+  ) {
+    throw new Error(`${label} cleanup receipt path is invalid`);
+  }
+  if (typeof cleanup.proven !== "boolean" || !Number.isSafeInteger(cleanup.failures)) {
+    throw new Error(`${label} cleanup is invalid`);
+  }
+  if (cleanup.path !== null && !evidencePaths.has(cleanup.path)) {
+    throw new Error(`${label} cleanup receipt is absent from the file list`);
+  }
+  if (cleanup.proven !== (cleanup.path !== null && cleanup.failures === 0)) {
+    throw new Error(`${label} cleanup verdict does not match its evidence`);
+  }
+  return evidence as unknown as ManagedRuntimeReceipt["evidence"];
 }
 
 export function createManagedRuntimeReceipt(input: {
@@ -612,53 +711,297 @@ export function parseManagedRuntimeReceipt(
   if (new Set(images.map(({ cohort }) => cohort)).size !== 1) {
     throw new Error("managed runtime image cohorts do not match");
   }
-  const evidence = record(receipt.evidence, "managed runtime evidence");
-  exactKeys(evidence, ["cleanup", "files"], "managed runtime evidence");
-  if (!Array.isArray(evidence.files) || evidence.files.length > MAX_EVIDENCE_FILES) {
-    throw new Error("managed runtime evidence file list is invalid");
-  }
-  const evidencePaths = new Set<string>();
-  let evidenceBytes = 0;
-  for (const rawFile of evidence.files) {
-    const file = record(rawFile, "managed runtime evidence file");
-    exactKeys(file, ["digest", "path", "size"], "managed runtime evidence file");
-    digest(file.digest, "managed runtime evidence file digest");
-    const size = nonnegativeInteger(file.size, "managed runtime evidence file size");
-    if (
-      typeof file.path !== "string" ||
-      !/^[A-Za-z0-9._/-]+$/u.test(file.path) ||
-      file.path.includes("..")
-    ) {
-      throw new Error("managed runtime evidence file path is invalid");
-    }
-    if (evidencePaths.has(file.path)) {
-      throw new Error("managed runtime evidence file paths must be unique");
-    }
-    evidencePaths.add(file.path);
-    evidenceBytes += size;
-    if (evidenceBytes > MAX_EVIDENCE_BYTES) {
-      throw new Error("managed runtime evidence exceeds the receipt limit");
-    }
-  }
-  const cleanup = record(evidence.cleanup, "managed runtime cleanup evidence");
-  exactKeys(cleanup, ["failures", "path", "proven"], "managed runtime cleanup evidence");
-  if (
-    cleanup.path !== null &&
-    (typeof cleanup.path !== "string" || !cleanup.path.endsWith("/cleanup.json"))
-  ) {
-    throw new Error("managed runtime cleanup receipt path is invalid");
-  }
-  if (typeof cleanup.proven !== "boolean" || !Number.isSafeInteger(cleanup.failures)) {
-    throw new Error("managed runtime cleanup evidence is invalid");
-  }
-  if (cleanup.path !== null && !evidencePaths.has(cleanup.path)) {
-    throw new Error("managed runtime cleanup receipt is absent from the evidence list");
-  }
-  if (cleanup.proven !== (cleanup.path !== null && cleanup.failures === 0)) {
-    throw new Error("managed runtime cleanup verdict does not match its evidence");
-  }
+  parseEvidence(receipt.evidence, "managed runtime evidence");
   stepOutcome(receipt.outcome, "managed runtime receipt outcome");
   return receipt as unknown as ManagedRuntimeReceipt;
+}
+
+function mcpPass(value: unknown, label: string): McpPass {
+  if (!MCP_PASSES.includes(value as McpPass)) throw new Error(`${label} is invalid`);
+  return value as McpPass;
+}
+
+function mcpJob(pass: McpPass): string {
+  return `Trusted candidate OpenClaw managed-image MCP discovery (pass ${pass})`;
+}
+
+export function createManagedMcpDiscoveryReceipt(input: {
+  readonly baseSha: string;
+  readonly candidateSha: string;
+  readonly candidateSourceRunAttempt: number;
+  readonly candidateSourceRunId: number;
+  readonly catalogPath: string;
+  readonly controllerDigest: string;
+  readonly evidenceDirectory: string;
+  readonly job: string;
+  readonly openshellVersion: string;
+  readonly outcome: StepOutcome;
+  readonly pass: McpPass;
+  readonly runAttempt: number;
+  readonly runId: number;
+  readonly workflowSha: string;
+}): ManagedMcpDiscoveryReceipt {
+  const candidateSha = sha(input.candidateSha, "MCP candidate SHA");
+  const baseSha = sha(input.baseSha, "MCP base SHA");
+  const pass = mcpPass(input.pass, "MCP pass");
+  exactString(input.job, mcpJob(pass), "MCP workflow job");
+  if (!VERSION_PATTERN.test(input.openshellVersion)) {
+    throw new Error("MCP OpenShell runtime version is invalid");
+  }
+  const candidateSourceRunId = positiveInteger(
+    input.candidateSourceRunId,
+    "MCP candidate source run id",
+  );
+  const candidateSourceRunAttempt = positiveInteger(
+    input.candidateSourceRunAttempt,
+    "MCP candidate source run attempt",
+  );
+  const catalog = readCatalog(
+    input.catalogPath,
+    "candidate",
+    candidateSha,
+    candidateSha,
+    candidateSourceRunId,
+    candidateSourceRunAttempt,
+    "linux/amd64",
+  );
+  const image = catalog.images.find(({ agent }) => agent === "openclaw");
+  if (!image || image.agent !== "openclaw") throw new Error("MCP OpenClaw image is missing");
+  const files = evidenceFiles(input.evidenceDirectory);
+  return {
+    kind: MCP_RECEIPT_KIND,
+    candidateSha,
+    baseSha,
+    candidateSource: {
+      workflowPath: SOURCE_WORKFLOW_PATH,
+      runId: candidateSourceRunId,
+      runAttempt: candidateSourceRunAttempt,
+    },
+    scenario: { id: MCP_SCENARIO_ID, testPath: MCP_TEST_PATH, pass },
+    workflow: {
+      repository: REPOSITORY,
+      path: BASE_WORKFLOW_PATH,
+      sha: sha(input.workflowSha, "MCP workflow SHA"),
+      runId: positiveInteger(input.runId, "MCP run id"),
+      runAttempt: positiveInteger(input.runAttempt, "MCP run attempt"),
+      job: mcpJob(pass),
+      controllerDigest: digest(input.controllerDigest, "MCP controller digest"),
+    },
+    runtime: {
+      openshellVersion: input.openshellVersion,
+      catalogDigest: catalog.digest,
+      image: {
+        agent: "openclaw",
+        reference: image.reference,
+        sourceRevision: image.sourceRevision,
+        cohort: image.cohort,
+      },
+    },
+    evidence: {
+      files,
+      cleanup: cleanupEvidence(path.resolve(input.evidenceDirectory), files),
+    },
+    outcome: stepOutcome(input.outcome, "MCP outcome"),
+  };
+}
+
+export function parseManagedMcpDiscoveryReceipt(
+  value: unknown,
+  expected: {
+    readonly baseSha: string;
+    readonly candidateSha: string;
+    readonly candidateSourceRunAttempt: number;
+    readonly candidateSourceRunId: number;
+    readonly pass: McpPass;
+    readonly runAttempt: number;
+    readonly runId: number;
+    readonly workflowSha: string;
+  },
+): ManagedMcpDiscoveryReceipt {
+  const receipt = record(value, "MCP discovery receipt");
+  exactKeys(
+    receipt,
+    [
+      "baseSha",
+      "candidateSource",
+      "candidateSha",
+      "evidence",
+      "kind",
+      "outcome",
+      "runtime",
+      "scenario",
+      "workflow",
+    ],
+    "MCP discovery receipt",
+  );
+  exactString(receipt.kind, MCP_RECEIPT_KIND, "MCP discovery receipt kind");
+  exactString(receipt.candidateSha, expected.candidateSha, "MCP candidate SHA");
+  exactString(receipt.baseSha, expected.baseSha, "MCP base SHA");
+  const source = record(receipt.candidateSource, "MCP candidate source");
+  exactKeys(source, ["runAttempt", "runId", "workflowPath"], "MCP candidate source");
+  exactString(source.workflowPath, SOURCE_WORKFLOW_PATH, "MCP source workflow path");
+  if (
+    source.runId !== expected.candidateSourceRunId ||
+    source.runAttempt !== expected.candidateSourceRunAttempt
+  ) {
+    throw new Error("MCP receipt does not match the candidate source attempt");
+  }
+  const pass = mcpPass(expected.pass, "expected MCP pass");
+  const scenario = record(receipt.scenario, "MCP scenario");
+  exactKeys(scenario, ["id", "pass", "testPath"], "MCP scenario");
+  exactString(scenario.id, MCP_SCENARIO_ID, "MCP scenario id");
+  exactString(scenario.testPath, MCP_TEST_PATH, "MCP scenario test");
+  if (scenario.pass !== pass) throw new Error("MCP scenario pass does not match");
+  const workflow = record(receipt.workflow, "MCP workflow");
+  exactKeys(
+    workflow,
+    ["controllerDigest", "job", "path", "repository", "runAttempt", "runId", "sha"],
+    "MCP workflow",
+  );
+  exactString(workflow.repository, REPOSITORY, "MCP workflow repository");
+  exactString(workflow.path, BASE_WORKFLOW_PATH, "MCP workflow path");
+  exactString(workflow.sha, expected.workflowSha, "MCP workflow SHA");
+  exactString(workflow.job, mcpJob(pass), "MCP workflow job");
+  if (workflow.runId !== expected.runId || workflow.runAttempt !== expected.runAttempt) {
+    throw new Error("MCP receipt does not match the workflow attempt");
+  }
+  digest(workflow.controllerDigest, "MCP controller digest");
+  const runtime = record(receipt.runtime, "MCP runtime identity");
+  exactKeys(runtime, ["catalogDigest", "image", "openshellVersion"], "MCP runtime identity");
+  digest(runtime.catalogDigest, "MCP catalog digest");
+  if (
+    typeof runtime.openshellVersion !== "string" ||
+    !VERSION_PATTERN.test(runtime.openshellVersion)
+  ) {
+    throw new Error("MCP OpenShell runtime version is invalid");
+  }
+  const image = record(runtime.image, "MCP image identity");
+  exactKeys(image, ["agent", "cohort", "reference", "sourceRevision"], "MCP image identity");
+  exactString(image.agent, "openclaw", "MCP image agent");
+  if (typeof image.reference !== "string" || !/@sha256:[0-9a-f]{64}$/u.test(image.reference)) {
+    throw new Error("MCP image reference is mutable");
+  }
+  exactString(image.sourceRevision, expected.candidateSha, "MCP image source revision");
+  if (typeof image.cohort !== "string" || !/^ghrun-[1-9][0-9]*-[1-9][0-9]*$/u.test(image.cohort)) {
+    throw new Error("MCP image cohort is invalid");
+  }
+  parseEvidence(receipt.evidence, "MCP evidence");
+  stepOutcome(receipt.outcome, "MCP outcome");
+  return receipt as unknown as ManagedMcpDiscoveryReceipt;
+}
+
+function verifyMcpEvidenceDirectory(root: string, receipt: ManagedMcpDiscoveryReceipt): void {
+  const files = evidenceFiles(root);
+  if (JSON.stringify(files) !== JSON.stringify(receipt.evidence.files)) {
+    throw new Error("MCP evidence files do not match the protected receipt");
+  }
+  if (
+    JSON.stringify(cleanupEvidence(path.resolve(root), files)) !==
+    JSON.stringify(receipt.evidence.cleanup)
+  ) {
+    throw new Error("MCP cleanup evidence does not match the protected receipt");
+  }
+}
+
+export function classifyManagedMcpDiscovery(
+  passes: ReadonlyArray<{
+    readonly pass: McpPass;
+    readonly receipt: ManagedMcpDiscoveryReceipt | null;
+    readonly evidenceError: string | null;
+  }>,
+): ManagedMcpDiscoveryComparison {
+  const summaries = MCP_PASSES.map((pass) => {
+    const matches = passes.filter((entry) => entry.pass === pass);
+    if (matches.length !== 1)
+      return { pass, outcome: null, evidenceError: "pass evidence is missing or ambiguous" };
+    const entry = matches[0]!;
+    return { pass, outcome: entry.receipt?.outcome ?? null, evidenceError: entry.evidenceError };
+  });
+  const infrastructure = (reason: string): ManagedMcpDiscoveryComparison => ({
+    kind: MCP_COMPARISON_KIND,
+    classification: "infrastructure-failure",
+    reason,
+    passes: summaries,
+  });
+  if (summaries.some(({ evidenceError, outcome }) => evidenceError || !outcome)) {
+    return infrastructure("MCP discovery evidence is missing, ambiguous, or invalid");
+  }
+  const receipts = MCP_PASSES.map((pass) => passes.find((entry) => entry.pass === pass)!.receipt!);
+  if (receipts.some(({ outcome }) => outcome === "cancelled" || outcome === "skipped")) {
+    return infrastructure("MCP discovery was cancelled or skipped");
+  }
+  if (receipts.some(({ evidence }) => !evidence.cleanup.proven)) {
+    return infrastructure("MCP discovery cleanup is not proven");
+  }
+  const [first, second] = receipts;
+  if (
+    first!.candidateSha !== second!.candidateSha ||
+    first!.baseSha !== second!.baseSha ||
+    JSON.stringify(first!.candidateSource) !== JSON.stringify(second!.candidateSource) ||
+    first!.workflow.sha !== second!.workflow.sha ||
+    first!.workflow.runId !== second!.workflow.runId ||
+    first!.workflow.runAttempt !== second!.workflow.runAttempt ||
+    first!.workflow.controllerDigest !== second!.workflow.controllerDigest ||
+    first!.runtime.openshellVersion !== second!.runtime.openshellVersion ||
+    first!.runtime.catalogDigest !== second!.runtime.catalogDigest ||
+    JSON.stringify(first!.runtime.image) !== JSON.stringify(second!.runtime.image)
+  ) {
+    return infrastructure("MCP discovery passes use different authenticated identities");
+  }
+  if (receipts.some(({ outcome }) => outcome === "failure")) {
+    return {
+      kind: MCP_COMPARISON_KIND,
+      classification: "failure",
+      reason: "one or more authenticated MCP discovery passes failed",
+      passes: summaries,
+    };
+  }
+  if (receipts.some(({ outcome }) => outcome !== "success")) {
+    return infrastructure("MCP discovery outcomes are not classifiable");
+  }
+  return {
+    kind: MCP_COMPARISON_KIND,
+    classification: "pass",
+    reason: "both authenticated MCP discovery passes passed",
+    passes: summaries,
+  };
+}
+
+export function classifyCurrentMcpDiscovery(
+  receiptRoot: string,
+  evidenceRoot: string,
+  expected: {
+    readonly baseSha: string;
+    readonly candidateSha: string;
+    readonly candidateSourceRunAttempt: number;
+    readonly candidateSourceRunId: number;
+    readonly runAttempt: number;
+    readonly runId: number;
+    readonly workflowSha: string;
+  },
+): ManagedMcpDiscoveryComparison {
+  const passes = MCP_PASSES.map((pass) => {
+    try {
+      const receiptPath = path.join(
+        receiptRoot,
+        `managed-runtime-mcp-receipt-${expected.runId}-${expected.runAttempt}-pass-${pass}`,
+        RECEIPT_FILE,
+      );
+      const receipt = parseManagedMcpDiscoveryReceipt(
+        JSON.parse(fs.readFileSync(receiptPath, "utf8")) as unknown,
+        { ...expected, pass },
+      );
+      const evidenceDirectory = path.join(
+        evidenceRoot,
+        `managed-runtime-mcp-${expected.runId}-${expected.runAttempt}-pass-${pass}`,
+      );
+      verifyMcpEvidenceDirectory(evidenceDirectory, receipt);
+      return { pass, receipt, evidenceError: null };
+    } catch {
+      return { pass, receipt: null, evidenceError: "receipt or evidence validation failed" };
+    }
+  });
+  return classifyManagedMcpDiscovery(passes);
 }
 
 function validateWorkflow(
@@ -1092,7 +1435,6 @@ export function classifyManagedRuntimeComparison(input: {
 
 export function combineManagedRuntimeComparisons(
   comparisons: readonly ManagedRuntimeComparison[],
-  mcpDiscoveryConclusion: StepOutcome = "success",
 ): ManagedRuntimeMultiarchComparison {
   if (comparisons.length !== PLATFORMS.length) {
     throw new Error("managed runtime multiarch comparison requires every platform exactly once");
@@ -1135,22 +1477,16 @@ export function combineManagedRuntimeComparisons(
     "base-failure": 2,
     "infrastructure-failure": 3,
   };
-  let classification = comparisons.reduce<ComparisonClassification>(
+  const classification = comparisons.reduce<ComparisonClassification>(
     (overall, comparison) =>
       precedence[comparison.classification] > precedence[overall]
         ? comparison.classification
         : overall,
     "pass",
   );
-  if (mcpDiscoveryConclusion === "cancelled" || mcpDiscoveryConclusion === "skipped") {
-    classification = "infrastructure-failure";
-  } else if (mcpDiscoveryConclusion === "failure" && classification === "pass") {
-    classification = "candidate-failure";
-  }
   return {
     kind: MULTIARCH_COMPARISON_KIND,
     classification,
-    mcpDiscoveryConclusion,
     platforms: Object.fromEntries(
       PLATFORMS.map((selectedPlatform) => [selectedPlatform, byPlatform.get(selectedPlatform)!]),
     ) as Record<Platform, ManagedRuntimeComparison>,
@@ -1493,6 +1829,50 @@ export async function publishManagedRuntimeCommitStatus(
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
+  if (argv[0] === "record-mcp") {
+    if (argv.length !== 2) throw new Error("expected one MCP discovery receipt path");
+    writeJsonExclusive(
+      argv[1],
+      createManagedMcpDiscoveryReceipt({
+        baseSha: env.BASE_SHA ?? "",
+        candidateSha: env.CANDIDATE_SHA ?? "",
+        candidateSourceRunAttempt: requiredInteger(env.SOURCE_RUN_ATTEMPT, "SOURCE_RUN_ATTEMPT"),
+        candidateSourceRunId: requiredInteger(env.SOURCE_RUN_ID, "SOURCE_RUN_ID"),
+        catalogPath: env.MANAGED_MCP_CATALOG ?? "",
+        controllerDigest: env.MANAGED_MCP_CONTROLLER_DIGEST ?? "",
+        evidenceDirectory: env.MANAGED_MCP_EVIDENCE_DIRECTORY ?? "",
+        job: env.MANAGED_MCP_JOB ?? "",
+        openshellVersion: env.OPENSHELL_VERSION ?? "",
+        outcome: stepOutcome(env.MANAGED_MCP_OUTCOME, "MANAGED_MCP_OUTCOME"),
+        pass: mcpPass(
+          requiredInteger(env.MANAGED_MCP_PASS, "MANAGED_MCP_PASS"),
+          "MANAGED_MCP_PASS",
+        ),
+        runAttempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
+        runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
+        workflowSha: env.GITHUB_WORKFLOW_SHA ?? "",
+      }),
+    );
+    return;
+  }
+  if (argv[0] === "classify-mcp") {
+    if (argv.length !== 4) {
+      throw new Error("expected MCP receipt directory, evidence directory, and comparison path");
+    }
+    const comparison = classifyCurrentMcpDiscovery(argv[1], argv[2], {
+      baseSha: sha(env.BASE_SHA, "BASE_SHA"),
+      candidateSha: sha(env.CANDIDATE_SHA, "CANDIDATE_SHA"),
+      candidateSourceRunAttempt: requiredInteger(env.SOURCE_RUN_ATTEMPT, "SOURCE_RUN_ATTEMPT"),
+      candidateSourceRunId: requiredInteger(env.SOURCE_RUN_ID, "SOURCE_RUN_ID"),
+      runAttempt: requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT"),
+      runId: requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID"),
+      workflowSha: sha(env.GITHUB_WORKFLOW_SHA, "GITHUB_WORKFLOW_SHA"),
+    });
+    writeJsonExclusive(argv[3], comparison);
+    if (comparison.classification === "infrastructure-failure") process.exitCode = 2;
+    if (comparison.classification === "failure") process.exitCode = 4;
+    return;
+  }
   if (argv[0] === "record") {
     if (argv.length !== 2) throw new Error("expected one managed runtime receipt path");
     writeJsonExclusive(
@@ -1588,10 +1968,10 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     if (argv.length !== 4) {
       throw new Error("expected amd64, arm64, and multiarch comparison paths");
     }
-    const comparison = combineManagedRuntimeComparisons(
-      [readManagedRuntimeComparison(argv[1]), readManagedRuntimeComparison(argv[2])],
-      stepOutcome(env.MCP_JOB_CONCLUSION, "MCP_JOB_CONCLUSION"),
-    );
+    const comparison = combineManagedRuntimeComparisons([
+      readManagedRuntimeComparison(argv[1]),
+      readManagedRuntimeComparison(argv[2]),
+    ]);
     writeJsonExclusive(argv[3], comparison);
     if (comparison.classification === "infrastructure-failure") process.exitCode = 2;
     if (comparison.classification === "base-failure") process.exitCode = 3;
@@ -1635,7 +2015,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     return;
   }
   throw new Error(
-    "expected classify, combine, publish-status, record, select-candidate, or select-source",
+    "expected classify, classify-mcp, combine, publish-status, record, record-mcp, select-candidate, or select-source",
   );
 }
 

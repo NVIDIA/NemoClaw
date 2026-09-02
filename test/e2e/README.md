@@ -129,17 +129,19 @@ The managed-image PR workflow produces credential-free OCI candidate bundles for
 `linux/amd64` and `linux/arm64`; no job that executes candidate build inputs can write packages.
 After source authentication, a separate base-controlled job validates each bundle's bounded OCI
 layout, source identity, platform, labels, blob digests, and absence of `ONBUILD` commands before it
-receives registry credentials and publishes the exact digest. An isolated untrusted build job
-produces only a bounded candidate CLI archive. The trusted activation jobs download the
+uses registry credentials to authenticate and publish the exact digest. An isolated untrusted build
+job produces only a bounded candidate CLI archive. The trusted activation jobs download the
 platform-specific contracts, validate and assemble them with base-controlled code, make the
 controller and evidence boundaries non-writable, and execute the candidate product as an
 unprivileged user. A regression probe attempts candidate-user writes to both protected paths before
 either native scenario can run.
 
 The same trusted workflow runs the OpenClaw managed-image MCP discovery twice against the
-authenticated amd64 candidate catalog. Each pass uses a fresh runner and sandbox, records the
-discovery diagnostics, scans the evidence for fixture credentials, and must pass. These are two
-required acceptance executions, not retries; either failure produces a candidate failure.
+authenticated amd64 candidate catalog. Base-controlled test code invokes the candidate CLI as an
+unprivileged user that cannot change the controller or evidence directory. Each pass uses a fresh
+runner and sandbox, records the discovery diagnostics, and scans the evidence for fixture
+credentials. A separate job verifies both protected receipts and evidence archives. These are two
+required acceptance executions, not retries; either failure fails the MCP discovery check.
 
 Each protected controller records the candidate and base SHAs, source and qualification attempts,
 trusted workflow revision, platform, OpenShell version, complete immutable image identity,
@@ -159,7 +161,8 @@ The comparison has four outcomes:
   scenarios differ, or cleanup is not proven.
 
 An infrastructure failure does not produce a product verdict. This workflow covers the managed
-runtime activation scenario only; it does not qualify the Hermes dependency lane.
+runtime activation scenario only; it does not classify the separate MCP discovery check or qualify
+the Hermes dependency lane.
 
 The trusted workflow publishes `NemoClaw / Exact-base managed runtime` as a pending status on the
 candidate after source authentication, then replaces it with success, failure, or error from the

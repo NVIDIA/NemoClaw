@@ -9,16 +9,21 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  classifyCurrentMcpDiscovery,
   classifyCurrentRun,
+  classifyManagedMcpDiscovery,
   classifyManagedRuntimeComparison,
   combineManagedRuntimeComparisons,
   commitStatusForClassification,
   coordinationCommitStatus,
+  createManagedMcpDiscoveryReceipt,
   createManagedRuntimeReceipt,
+  parseManagedMcpDiscoveryReceipt,
   parseManagedRuntimeReceipt,
   publishManagedRuntimeCommitStatus,
   selectManagedRuntimeCandidate,
   selectManagedRuntimeSource,
+  type ManagedMcpDiscoveryReceipt,
   type ManagedRuntimeCandidateSelection,
   type ManagedRuntimeReceipt,
 } from "../../../tools/e2e/managed-runtime-comparison.mts";
@@ -31,6 +36,7 @@ const CANDIDATE_RUN_ID = 33_569_187_156;
 const BASE_RUN_ID = 33_600_000_001;
 const RUN_ATTEMPT = 1;
 const PR_NUMBER = 10_790;
+const CONTROLLER_DIGEST = `sha256:${"e".repeat(64)}`;
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const REPOSITORIES = {
   openclaw: "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
@@ -123,6 +129,66 @@ function receipt(
     workflowPath: ".github/workflows/managed-runtime-base-qualification.yaml",
     workflowSha: BASE_SHA,
   });
+}
+
+function mcpFixture(
+  pass: 1 | 2,
+  outcome: "cancelled" | "failure" | "success" = "success",
+  cleanupFailures = 0,
+): { receipt: ManagedMcpDiscoveryReceipt; evidenceDirectory: string } {
+  const evidenceDirectory = evidence(cleanupFailures);
+  return {
+    evidenceDirectory,
+    receipt: createManagedMcpDiscoveryReceipt({
+      baseSha: BASE_SHA,
+      candidateSha: CANDIDATE_SHA,
+      candidateSourceRunAttempt: RUN_ATTEMPT,
+      candidateSourceRunId: CANDIDATE_RUN_ID,
+      catalogPath: catalog(CANDIDATE_SHA),
+      controllerDigest: CONTROLLER_DIGEST,
+      evidenceDirectory,
+      job: `Trusted candidate OpenClaw managed-image MCP discovery (pass ${pass})`,
+      openshellVersion: "openshell 0.0.116",
+      outcome,
+      pass,
+      runAttempt: RUN_ATTEMPT,
+      runId: BASE_RUN_ID,
+      workflowSha: BASE_SHA,
+    }),
+  };
+}
+
+function mcpExpected(pass: 1 | 2) {
+  return {
+    baseSha: BASE_SHA,
+    candidateSha: CANDIDATE_SHA,
+    candidateSourceRunAttempt: RUN_ATTEMPT,
+    candidateSourceRunId: CANDIDATE_RUN_ID,
+    pass,
+    runAttempt: RUN_ATTEMPT,
+    runId: BASE_RUN_ID,
+    workflowSha: BASE_SHA,
+  } as const;
+}
+
+function stageMcpDownloads(fixtures: ReadonlyArray<ReturnType<typeof mcpFixture>>) {
+  const receiptRoot = temporaryDirectory();
+  const evidenceRoot = temporaryDirectory();
+  fixtures.forEach((fixture, index) => {
+    const pass = (index + 1) as 1 | 2;
+    const receiptDirectory = path.join(
+      receiptRoot,
+      `managed-runtime-mcp-receipt-${BASE_RUN_ID}-${RUN_ATTEMPT}-pass-${pass}`,
+    );
+    const evidenceDirectory = path.join(
+      evidenceRoot,
+      `managed-runtime-mcp-${BASE_RUN_ID}-${RUN_ATTEMPT}-pass-${pass}`,
+    );
+    fs.mkdirSync(receiptDirectory, { recursive: true });
+    fs.writeFileSync(path.join(receiptDirectory, "receipt.json"), JSON.stringify(fixture.receipt));
+    fs.cpSync(fixture.evidenceDirectory, evidenceDirectory, { recursive: true });
+  });
+  return { evidenceRoot, receiptRoot };
 }
 
 function artifact(name: string, id: number) {
@@ -420,6 +486,88 @@ afterEach(() => {
 });
 
 describe("managed runtime comparison receipts", () => {
+  it("passes the separate MCP check when both authenticated executions pass", () => {
+    const first = mcpFixture(1);
+    const second = mcpFixture(2);
+
+    expect(
+      classifyManagedMcpDiscovery([
+        { pass: 1, receipt: first.receipt, evidenceError: null },
+        { pass: 2, receipt: second.receipt, evidenceError: null },
+      ]),
+    ).toMatchObject({ classification: "pass" });
+  });
+
+  it("fails the separate MCP check when one authenticated execution fails", () => {
+    const first = mcpFixture(1);
+    const second = mcpFixture(2, "failure");
+
+    expect(
+      classifyManagedMcpDiscovery([
+        { pass: 1, receipt: first.receipt, evidenceError: null },
+        { pass: 2, receipt: second.receipt, evidenceError: null },
+      ]),
+    ).toMatchObject({ classification: "failure" });
+  });
+
+  it("reports MCP infrastructure failure when protected evidence is incomplete", () => {
+    const first = mcpFixture(1);
+
+    expect(
+      classifyManagedMcpDiscovery([
+        { pass: 1, receipt: first.receipt, evidenceError: null },
+        { pass: 2, receipt: null, evidenceError: "receipt missing" },
+      ]),
+    ).toMatchObject({ classification: "infrastructure-failure" });
+  });
+
+  it("rejects MCP passes with different controller identities", () => {
+    const first = mcpFixture(1);
+    const second = mcpFixture(2);
+    const altered = {
+      ...second.receipt,
+      workflow: { ...second.receipt.workflow, controllerDigest: `sha256:${"f".repeat(64)}` },
+    };
+
+    expect(
+      classifyManagedMcpDiscovery([
+        { pass: 1, receipt: first.receipt, evidenceError: null },
+        { pass: 2, receipt: altered, evidenceError: null },
+      ]),
+    ).toMatchObject({ classification: "infrastructure-failure" });
+  });
+
+  it("rejects an invalid protected MCP controller digest", () => {
+    const fixture = mcpFixture(1);
+    const altered = {
+      ...fixture.receipt,
+      workflow: { ...fixture.receipt.workflow, controllerDigest: "untrusted" },
+    };
+
+    expect(() => parseManagedMcpDiscoveryReceipt(altered, mcpExpected(1))).toThrow(
+      "controller digest",
+    );
+  });
+
+  it("rejects MCP evidence changed after its protected receipt was recorded", () => {
+    const first = mcpFixture(1);
+    const second = mcpFixture(2);
+    const staged = stageMcpDownloads([first, second]);
+    fs.appendFileSync(
+      path.join(
+        staged.evidenceRoot,
+        `managed-runtime-mcp-${BASE_RUN_ID}-${RUN_ATTEMPT}-pass-2`,
+        "managed-runtime-activation",
+        "target.json",
+      ),
+      "tampered",
+    );
+
+    expect(
+      classifyCurrentMcpDiscovery(staged.receiptRoot, staged.evidenceRoot, mcpExpected(1)),
+    ).toMatchObject({ classification: "infrastructure-failure" });
+  });
+
   it("publishes the fixed status request through the shared GitHub client", async () => {
     const requests: Array<{ path: string; token: string; options: unknown }> = [];
     await publishManagedRuntimeCommitStatus(
@@ -849,23 +997,12 @@ describe("managed runtime comparison receipts", () => {
     expect(combined).toMatchObject({
       kind: "nemoclaw-managed-runtime-multiarch-comparison-v1",
       classification: "base-failure",
-      mcpDiscoveryConclusion: "success",
       platforms: {
         "linux/amd64": { classification: "pass" },
         "linux/arm64": { classification: "base-failure" },
       },
     });
-  });
-
-  it.each([
-    { outcome: "failure", classification: "candidate-failure" },
-    { outcome: "cancelled", classification: "infrastructure-failure" },
-  ] as const)("maps MCP $outcome to $classification", ({ outcome, classification }) => {
-    const combined = combineManagedRuntimeComparisons(
-      [compare({}), compare({ platform: "linux/arm64" })],
-      outcome,
-    );
-    expect(combined).toMatchObject({ classification, mcpDiscoveryConclusion: outcome });
+    expect(combined).not.toHaveProperty("mcpDiscoveryConclusion");
   });
 
   it("maps cancellation to a terminal status with a runnable recovery action", () => {

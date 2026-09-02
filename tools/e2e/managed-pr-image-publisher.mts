@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -48,6 +49,22 @@ export interface ValidatedManagedPrImageBundle {
   readonly cohort: string;
   readonly layoutReference: string;
   readonly manifestDigest: string;
+  readonly release: string;
+}
+
+export interface ManagedPrImagePublication {
+  readonly expected: ManagedPrImageExpectedIdentity;
+  readonly validated: ValidatedManagedPrImageBundle;
+}
+
+export interface ManagedPrImageRegistryClient {
+  login(): Promise<void> | void;
+  logout(): Promise<void> | void;
+  publish(publication: ManagedPrImagePublication): Promise<string> | string;
+}
+
+export interface PublishedManagedPrImage {
+  readonly digest: string;
   readonly release: string;
 }
 
@@ -358,6 +375,23 @@ export async function validateManagedPrImageBundle(
   };
 }
 
+/** Validate the authenticated artifact before the registry client can receive package authority. */
+export async function publishManagedPrImageBundle(
+  bundleRoot: string,
+  expected: ManagedPrImageExpectedIdentity,
+  registry: ManagedPrImageRegistryClient,
+): Promise<PublishedManagedPrImage> {
+  const validated = await validateManagedPrImageBundle(bundleRoot, expected);
+  try {
+    await registry.login();
+    const digest = await registry.publish({ expected, validated });
+    if (!DIGEST_PATTERN.test(digest)) throw new Error("published image digest is invalid");
+    return { digest, release: validated.release };
+  } finally {
+    await registry.logout();
+  }
+}
+
 export function managedPrImageContract(
   expected: ManagedPrImageExpectedIdentity,
   digest: string,
@@ -384,6 +418,89 @@ export function managedPrImageContract(
   };
 }
 
+function requiredEnvironment(env: NodeJS.ProcessEnv, name: string): string {
+  const value = env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function runDocker(args: string[], input?: string): void {
+  const result = spawnSync("docker", args, {
+    encoding: "utf8",
+    input,
+    stdio: input === undefined ? "inherit" : ["pipe", "inherit", "inherit"],
+  });
+  if (result.error) {
+    throw new Error(
+      `docker ${args.slice(0, 2).join(" ")} could not start: ${result.error.message}`,
+    );
+  }
+  if (result.status !== 0) {
+    throw new Error(`docker ${args.slice(0, 2).join(" ")} failed with status ${result.status}`);
+  }
+}
+
+class DockerManagedPrImageRegistryClient implements ManagedPrImageRegistryClient {
+  readonly #env: NodeJS.ProcessEnv;
+
+  constructor(env: NodeJS.ProcessEnv) {
+    this.#env = env;
+  }
+
+  login(): void {
+    runDocker(
+      [
+        "login",
+        "ghcr.io",
+        "--username",
+        requiredEnvironment(this.#env, "REGISTRY_USERNAME"),
+        "--password-stdin",
+      ],
+      `${requiredEnvironment(this.#env, "REGISTRY_PASSWORD")}\n`,
+    );
+  }
+
+  logout(): void {
+    runDocker(["logout", "ghcr.io"]);
+  }
+
+  publish(publication: ManagedPrImagePublication): string {
+    const repositoryRoot = path.resolve(import.meta.dirname, "../..");
+    const metadataRoot = fs.mkdtempSync(
+      path.join(requiredEnvironment(this.#env, "RUNNER_TEMP"), "managed-pr-publisher-"),
+    );
+    const metadataFile = path.join(metadataRoot, "build-metadata.json");
+    try {
+      runDocker([
+        "buildx",
+        "build",
+        "--builder",
+        requiredEnvironment(this.#env, "BUILDX_BUILDER"),
+        "--platform",
+        publication.expected.platform,
+        "--file",
+        path.join(repositoryRoot, "tools/e2e/managed-pr-image-publisher.Dockerfile"),
+        "--build-context",
+        `candidate=oci-layout://${publication.validated.layoutReference}`,
+        "--output",
+        `type=image,name=${publication.expected.image},push-by-digest=true,name-canonical=true,push=true`,
+        "--provenance=false",
+        "--sbom=false",
+        "--metadata-file",
+        metadataFile,
+        repositoryRoot,
+      ]);
+      const metadata = record(
+        boundedJson(metadataFile, "managed-image publication metadata"),
+        "managed-image publication metadata",
+      );
+      return String(metadata["containerimage.digest"]);
+    } finally {
+      fs.rmSync(metadataRoot, { force: true, recursive: true });
+    }
+  }
+}
+
 function expectedFromEnvironment(env: NodeJS.ProcessEnv): ManagedPrImageExpectedIdentity {
   return {
     agent: String(env.AGENT) as Agent,
@@ -397,12 +514,16 @@ function expectedFromEnvironment(env: NodeJS.ProcessEnv): ManagedPrImageExpected
 
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   const expected = expectedFromEnvironment(env);
-  if (argv[0] === "validate" && argv.length === 2) {
-    const validated = await validateManagedPrImageBundle(argv[1]!, expected);
+  if (argv[0] === "publish" && argv.length === 2) {
+    const published = await publishManagedPrImageBundle(
+      argv[1]!,
+      expected,
+      new DockerManagedPrImageRegistryClient(env),
+    );
     if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
     fs.appendFileSync(
       env.GITHUB_OUTPUT,
-      `oci_reference=${validated.layoutReference}\nrelease=${validated.release}\n`,
+      `digest=${published.digest}\nrelease=${published.release}\n`,
     );
     return;
   }
@@ -420,7 +541,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     });
     return;
   }
-  throw new Error("expected validate <bundle-directory> or contract <output-path>");
+  throw new Error("expected publish <bundle-directory> or contract <output-path>");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
