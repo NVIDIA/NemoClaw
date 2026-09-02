@@ -43,6 +43,26 @@ function diagnostic(error: unknown): string {
     error instanceof Error ? error.message : "Unknown non-Error failure",
   );
 }
+
+type AdvisorLifecycleTiming = {
+  now?: () => number;
+  write?: (line: string) => void;
+};
+
+async function timeLifecyclePhase<T>(
+  phase: string,
+  timing: AdvisorLifecycleTiming | undefined,
+  action: () => T | Promise<T>,
+): Promise<T> {
+  const now = timing?.now ?? performance.now.bind(performance);
+  const write = timing?.write ?? console.log;
+  const started = now();
+  try {
+    return await action();
+  } finally {
+    write(`PR Review Advisor timing: phase=${phase} duration_ms=${Math.round(now() - started)}`);
+  }
+}
 export const defaultAdvisorSpecialistLifecycle: AdvisorSpecialistLifecycle = {
   prepare: prepareAdvisorSandboxInputs,
   startGateway: startAdvisorOpenShellInference,
@@ -65,6 +85,7 @@ export async function runAdvisorSpecialist(input: {
   validate?: () => void;
   setActiveCleanup?: (cleanup: (() => Promise<void>) | undefined) => void;
   cancelled?: () => boolean;
+  timing?: AdvisorLifecycleTiming;
 }): Promise<"complete" | "cancelled"> {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
   const env = {
@@ -122,47 +143,55 @@ export async function runAdvisorSpecialist(input: {
     if (input.prepare !== false) await lifecycle.prepare(env);
     if (input.cancelled?.()) result = "cancelled";
     stage = "configure";
-    if (result === "complete") gateway = lifecycle.startGateway(env);
-    input.setActiveCleanup?.(cleanup);
-    await gateway?.configure;
+    await timeLifecyclePhase("configure", input.timing, async () => {
+      if (result === "complete") gateway = lifecycle.startGateway(env);
+      input.setActiveCleanup?.(cleanup);
+      await gateway?.configure;
+    });
     if (input.cancelled?.()) result = "cancelled";
     if (result === "complete") {
       stage = "create";
       // The cryptographically unique name is owned by this invocation before creation starts,
       // so cleanup can reconcile a sandbox left by a partially failed create command.
       sandbox = true;
-      lifecycle.create(env);
+      await timeLifecyclePhase("sandbox-create-readiness", input.timing, () =>
+        lifecycle.create(env),
+      );
       stage = "run";
-      execution = lifecycle.run(env) || undefined;
-      if (execution) {
-        const cancellation = new Promise<"cancelled">(
-          (resolve) => (settleCancellation = () => resolve("cancelled")),
-        );
-        const completion = execution.completion.then(
-          () => ({ error: undefined }),
-          (error: unknown) => ({ error }),
-        );
-        const settled = await Promise.race([completion, cancellation]);
-        if (settled === "cancelled" || input.cancelled?.()) result = "cancelled";
-        else {
-          execution = undefined;
-          settleCancellation = undefined;
-          if (settled.error) throw settled.error;
+      await timeLifecyclePhase("pi-run", input.timing, async () => {
+        execution = lifecycle.run(env) || undefined;
+        if (execution) {
+          const cancellation = new Promise<"cancelled">(
+            (resolve) => (settleCancellation = () => resolve("cancelled")),
+          );
+          const completion = execution.completion.then(
+            () => ({ error: undefined }),
+            (error: unknown) => ({ error }),
+          );
+          const settled = await Promise.race([completion, cancellation]);
+          if (settled === "cancelled" || input.cancelled?.()) result = "cancelled";
+          else {
+            execution = undefined;
+            settleCancellation = undefined;
+            if (settled.error) throw settled.error;
+          }
         }
-      }
+      });
       if (input.cancelled?.()) result = "cancelled";
       if (result === "complete") {
         stage = "download";
-        lifecycle.download(env);
-        stage = "validate";
-        input.validate?.();
+        await timeLifecyclePhase("artifact-download-validation", input.timing, () => {
+          lifecycle.download(env);
+          stage = "validate";
+          input.validate?.();
+        });
       }
     }
   } catch (error) {
     primary = failure(stage, env, error);
   } finally {
     try {
-      await cleanup();
+      await timeLifecyclePhase("cleanup", input.timing, cleanup);
     } catch (error) {
       cleanupError = error;
     }

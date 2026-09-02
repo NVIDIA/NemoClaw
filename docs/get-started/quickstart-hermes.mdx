@@ -181,7 +181,10 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
-    NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL`, binds it for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
+    NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL` and passes its hostname to Hermes for browser Host-header validation.
+    The Hermes dashboard service remains bound to loopback.
+    External `CHAT_UI_URL` values must use HTTPS.
+    NemoClaw preserves an external browser URL across rebuild and clone operations.
     Otherwise, leave it unset and use SSH port forwarding for remote access.
 
     ```bash

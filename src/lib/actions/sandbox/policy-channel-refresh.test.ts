@@ -213,6 +213,31 @@ describe("applyExternalPreset refresh contract (--from-file)", () => {
     expect(applyPresetContentMock).not.toHaveBeenCalled();
     expect(refreshSpy).not.toHaveBeenCalled();
   });
+
+  it("rejects a link-local metadata endpoint during --from-file dry-run", async () => {
+    loadPresetFromFileMock.mockReturnValue({
+      presetName: "metadata",
+      content: `preset:
+  name: metadata
+network_policies:
+  metadata:
+    endpoints:
+      - { host: 169.254.169.254, port: 80, protocol: rest }
+`,
+    });
+
+    await expect(
+      captureExit(() => addSandboxPolicy("alpha", { fromFile: tempFile, yes: true, dryRun: true })),
+    ).resolves.toBe(1);
+
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /endpoint host.*is rejected.*explicit trust only for RFC1918, CGNAT, or IPv6 unique local/i,
+      ),
+    );
+    expect(applyPresetContentMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("removeSandboxPolicy refresh contract", () => {

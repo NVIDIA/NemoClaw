@@ -396,8 +396,14 @@ describe("Hermes accepted launch-readiness probe", () => {
         containerStartMs: 102,
         postStartCurrentnessMs: 103,
         execReadyMs: 104,
+        execReadyCurrentnessMs: 41,
+        execReadyCommandMs: 42,
+        execReadySleepMs: 21,
         preHealthCurrentnessMs: 105,
         authenticatedHealthMs: 106,
+        authenticatedHealthPodmanMs: 43,
+        authenticatedHealthOpenShellMs: 44,
+        authenticatedHealthSleepMs: 19,
         startupLaunchMs: 107,
         healthPollCurrentnessMs: 108,
         finalQualificationMs: 109,
@@ -432,7 +438,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(/result=ready/);
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Hermes Portable lifecycle recovery timing: entryQualification=101ms containerStart=102ms postStartCurrentness=103ms execReady=104ms preHealthCurrentness=105ms authenticatedHealth=106ms startupLaunch=107ms healthPollCurrentness=108ms finalQualification=109ms rollback=0ms qualificationCount=2 transactionCurrentnessCount=20 containerInspectionCount=8 containerStartCount=1 execReadyAttempts=1 authenticatedHealthCount=1 startupLaunchCount=0 rollbackCount=0 total=938ms containerAction=started result=recovered",
+      "Hermes Portable lifecycle recovery timing: entryQualification=101ms containerStart=102ms postStartCurrentness=103ms execReady=104ms execReadyCurrentness=41ms execReadyCommand=42ms execReadySleep=21ms preHealthCurrentness=105ms authenticatedHealth=106ms authenticatedHealthPodman=43ms authenticatedHealthOpenShell=44ms authenticatedHealthSleep=19ms startupLaunch=107ms healthPollCurrentness=108ms finalQualification=109ms rollback=0ms qualificationCount=2 transactionCurrentnessCount=20 containerInspectionCount=8 containerStartCount=1 execReadyAttempts=1 authenticatedHealthCount=1 startupLaunchCount=0 rollbackCount=0 total=938ms containerAction=started result=recovered",
     );
   });
 
