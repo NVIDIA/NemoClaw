@@ -128,7 +128,7 @@ export function readPidNamespaceIdentity(): string | null {
 
 /**
  * Read the host process generation used by lifecycle locks. Linux combines
- * the kernel boot identity with process start ticks. Other POSIX hosts use a
+ * the kernel boot identity with process start ticks. Other platforms use a
  * bounded `ps` fallback unless the caller disables it.
  */
 export function readProcessIdentity(

@@ -370,20 +370,45 @@ describe("MCP lifecycle lock acquisition", () => {
 
   it("restarts abandoned-timer grace when a replacement generation appears", async () => {
     const operation = vi.fn(() => "entered");
-    writeTimerMarker("a".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
-    const pending = withMcpLifecycleLock(SANDBOX_NAME, operation, {
-      ...options(),
-      recoverAbandonedExpiredTimer: true,
-      pollIntervalMs: 15,
-      timeoutMs: 5_000,
-      corruptLockGraceMs: 80,
+    const tokenA = "a".repeat(32);
+    const tokenB = "b".repeat(32);
+    const expiredAt = new Date(Date.now() - 1_000).toISOString();
+    writeTimerMarker(tokenA, expiredAt, 2_147_483_647);
+    const snapA = { token: tokenA, key: `${tokenA}:2147483647:` };
+    const snapB = { token: tokenB, key: `${tokenB}:2147483647:` };
+    const observations = [snapA, snapA, snapB, snapB, snapB, snapB];
+    const readActions = [
+      () => expect(operation).not.toHaveBeenCalled(),
+      () => expect(operation).not.toHaveBeenCalled(),
+      () => {
+        writeTimerMarker(tokenB, expiredAt, 2_147_483_647);
+        expect(operation).not.toHaveBeenCalled();
+      },
+      () => expect(operation).not.toHaveBeenCalled(),
+      () => undefined,
+      () => undefined,
+    ];
+    let reads = 0;
+    vi.spyOn(localAbandonedTimerGeneration, "read").mockImplementation(() => {
+      const readIndex = Math.min(reads, observations.length - 1);
+      const observation = observations[readIndex]!;
+      readActions[readIndex]!();
+      reads += 1;
+      return observation;
     });
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    writeTimerMarker("b".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(operation).not.toHaveBeenCalled();
-    await expect(pending).resolves.toBe("entered");
+    let monotonicNow = 0;
+
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, operation, {
+        ...options(),
+        recoverAbandonedExpiredTimer: true,
+        corruptLockGraceMs: 4,
+        monotonicNow: () => monotonicNow++,
+      }),
+    ).resolves.toBe("entered");
+
     expect(operation).toHaveBeenCalledTimes(1);
+    expect(reads).toBeGreaterThanOrEqual(6);
   });
 
   it("restarts asynchronous recovery grace after confirmation observes a replacement generation (#10066)", async () => {
