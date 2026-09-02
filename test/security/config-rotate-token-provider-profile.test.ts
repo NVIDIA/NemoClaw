@@ -107,9 +107,9 @@ describe("config rotate-token OpenAI provider profile", () => {
       includeStreams: true,
       timeout: 30_000,
     });
-    expect(fixture.captureOpenshellCommand.mock.invocationCallOrder[2]).toBeLessThan(
-      fixture.saveCredential.mock.invocationCallOrder[0]!,
-    );
+    expect(
+      fixture.captureOpenshellCommand.mock.invocationCallOrder[2],
+    ).toBeLessThan(fixture.saveCredential.mock.invocationCallOrder[0]!);
     expect(fixture.saveCredential.mock.invocationCallOrder[0]).toBeLessThan(
       fixture.runOpenshellCommand.mock.invocationCallOrder[0]!,
     );
