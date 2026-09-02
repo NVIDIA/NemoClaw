@@ -68,7 +68,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence. The PR E2E controller separately dispatches every listed job without consuming advisor output.
 
-Risk plan version 19 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
+Risk plan version 20 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
 
 The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
 and checked-in evidence:
