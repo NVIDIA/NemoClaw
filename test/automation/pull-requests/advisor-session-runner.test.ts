@@ -274,6 +274,7 @@ import {
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../../../tools/advisors/session.mts";
+import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const tempDirs: string[] = [];
 
@@ -553,22 +554,33 @@ describe("advisor session runner", () => {
     const siblingPath = path.join(siblingDirectory, "sibling.patch");
     fs.writeFileSync(diffPath, "prepared specialist diff\n", "utf8");
     fs.writeFileSync(siblingPath, "not trusted\n", "utf8");
-    const turn = (requiredPath: string): AdvisorPromptTurn => ({
-      name: "specialist-diff",
-      prompt: `Inspect the prepared diff.\n\nRequired files:\n- ${requiredPath}`,
-      activeToolNames: ["read"],
-      requireAssistantText: true,
+    const productionTurn = buildSpecialistInvestigateTurn("customer-value-behavior", {
+      scopeRisk: {},
+      diffPath,
+      controlledWords: "",
+      terminology: {},
+      correctness: {},
+      security: {},
+      tests: {},
+      operations: {},
+      reconciliation: {},
+      metadata: "{}",
     });
+    const turn: AdvisorPromptTurn = {
+      ...productionTurn,
+      contextToolResults: undefined,
+      requiredToolNames: undefined,
+      requireToolsBeforeText: undefined,
+    };
 
-    const result = await run([turn(diffPath)], undefined, [contextDirectory]);
+    const result = await run([turn], undefined, [contextDirectory]);
 
     expect(result.turnErrors).toEqual([]);
     expect(sdk.state.readContents).toContain("prepared specialist diff\n");
 
-    await run([turn(siblingPath)], undefined, [contextDirectory]);
-    expect(sdk.state.readErrors).toContain(
-      `Advisor read-only path is outside the workspace: ${siblingPath}`,
-    );
+    await expect(
+      run([{ ...turn, requiredReadPaths: [siblingPath] }], undefined, [contextDirectory]),
+    ).rejects.toThrow(`Advisor read-only path is outside the workspace: ${siblingPath}`);
   });
 
   it("deduplicates relative aliases before required-read preparation (#9963)", async () => {

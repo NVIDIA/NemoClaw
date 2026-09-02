@@ -184,8 +184,12 @@ function createRepoPathGuard(cwd: string, additionalRoots: string[] = []): RepoP
   };
 }
 
-export async function canonicalRepoReadPath(cwd: string, candidate: string): Promise<string> {
-  return createRepoPathGuard(cwd).resolveExisting(candidate);
+export async function canonicalRepoReadPath(
+  cwd: string,
+  candidate: string,
+  additionalRoots: string[] = [],
+): Promise<string> {
+  return createRepoPathGuard(cwd, additionalRoots).resolveExisting(candidate);
 }
 
 function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {

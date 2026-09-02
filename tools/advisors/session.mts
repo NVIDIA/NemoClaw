@@ -355,7 +355,7 @@ export async function runReadOnlyAdvisor(
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
-  await canonicalizeRequiredReadPaths(promptTurns, options.cwd);
+  await canonicalizeRequiredReadPaths(promptTurns, options.cwd, options.additionalReadRoots);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
@@ -807,13 +807,14 @@ function errorText(error: unknown): string {
 async function canonicalizeRequiredReadPaths(
   promptTurns: AdvisorPromptTurn[],
   cwd: string,
+  additionalReadRoots: string[] = [],
 ): Promise<void> {
   await Promise.all(
     promptTurns.map(async (turn) => {
       if (turn.requiredReadPaths === undefined) return;
       const canonicalPaths = await Promise.all(
         [...new Set(turn.requiredReadPaths)].map((candidate) =>
-          canonicalRepoReadPath(cwd, candidate),
+          canonicalRepoReadPath(cwd, candidate, additionalReadRoots),
         ),
       );
       turn.requiredReadPaths = [...new Set(canonicalPaths)];

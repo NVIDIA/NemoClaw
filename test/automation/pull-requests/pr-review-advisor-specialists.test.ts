@@ -202,6 +202,7 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requiredToolNames).toEqual(contextToolNames);
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
+      expect(turn.requiredReadPaths).toEqual([context.diffPath]);
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBeUndefined();
     },

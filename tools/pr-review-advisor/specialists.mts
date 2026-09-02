@@ -85,6 +85,7 @@ export function buildSpecialistInvestigateTurn(
     ...fullTurn,
     name: `investigate-${interest}`,
     activeToolNames: specialistToolNames(interest),
+    requiredReadPaths: [context.diffPath],
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}
