@@ -656,7 +656,7 @@ describe("runner", () => {
           /Failed to create inference provider 'my-provider'.*provider setup failed/i,
         );
         expect((error as Error).message).toContain("OPENAI_API_KEY=<REDACTED>");
-        expect((error as Error).message).toContain("Authorization: Bearer <REDACTED>");
+        expect((error as Error).message).toContain("Authorization: <REDACTED>");
         expect((error as Error).message).not.toContain(credential);
         expect((error as Error).message).not.toContain("opaque-bearer");
         expect(hasPlanJson()).toBe(true);
