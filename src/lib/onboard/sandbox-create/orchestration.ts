@@ -1181,6 +1181,22 @@ async function runForNewSandboxCreateAsync(
   if (!resuming) await operation();
 }
 
+export async function runSandboxCreateWithProviderEffects<T>(input: {
+  readonly resumingVerifiedCreate: boolean;
+  readonly providerEffectBoundary: Pick<
+    ProviderEffectBoundary,
+    "publishBeforeCreate" | "runAfterVerifiedCreate"
+  >;
+  readonly create: (
+    runAfterVerifiedCreate: ProviderEffectBoundary["runAfterVerifiedCreate"],
+  ) => Promise<T>;
+}): Promise<T> {
+  await runForNewSandboxCreateAsync(input.resumingVerifiedCreate, () =>
+    input.providerEffectBoundary.publishBeforeCreate(),
+  );
+  return input.create(input.providerEffectBoundary.runAfterVerifiedCreate);
+}
+
 function assertCreateLifecycleJournal(input: {
   readonly portableLifecycle: boolean;
   readonly runtimeGeneration: string | null;
@@ -2876,13 +2892,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           buildContextPath,
           effectivePolicySourcePath,
         ) =>
-          runCreateFlow(
-            [...attemptArgv],
-            readyCapture,
-            readyRunner,
-            buildContextPath,
-            effectivePolicySourcePath,
-          ),
+          runSandboxCreateWithProviderEffects({
+            resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+            providerEffectBoundary,
+            create: (runAfterVerifiedCreate) =>
+              runCreateFlow(
+                [...attemptArgv],
+                readyCapture,
+                readyRunner,
+                buildContextPath,
+                effectivePolicySourcePath,
+                runAfterVerifiedCreate,
+              ),
+          }),
         readRegistry: () => registry.getSandbox(sandboxName),
         revalidatePendingCreateRegistry: () =>
           revalidateVerifiedCreateIdentity(
@@ -2921,17 +2943,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      await runForNewSandboxCreateAsync(Boolean(resumeVerifiedCreateInput), () =>
-        providerEffectBoundary.publishBeforeCreate(),
-      );
-      const created = await runCreateFlow(
-        createArgv,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        providerEffectBoundary.runAfterVerifiedCreate,
-      );
+      const created = await runSandboxCreateWithProviderEffects({
+        resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+        providerEffectBoundary,
+        create: (runAfterVerifiedCreate) =>
+          runCreateFlow(
+            createArgv,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            runAfterVerifiedCreate,
+          ),
+      });
       try {
         await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
           async () => {
