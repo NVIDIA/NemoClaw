@@ -240,6 +240,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   );
   delete require.cache[requireSource.resolve("../../adapters/openshell/sandbox-identity-cli.js")];
   delete require.cache[requireSource.resolve("./destroy-execution.js")];
+  delete require.cache[requireSource.resolve("./destroy-preflight.js")];
   const destroyGateway = requireSource("./destroy-gateway.js");
   const credentialStore = requireSource("../../credentials/store.js");
   const sandboxProviderCleanup = requireSource("../../onboard/sandbox-provider-cleanup.js");
