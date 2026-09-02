@@ -121,6 +121,7 @@ const {
   restoreStateDirLockPosture,
   restoreStateDirStartupAccess,
   stateLockPlanCompatibilityIssues,
+  verifyStateDirMutablePosture,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
 const {
   OPENCLAW_CONFIG_DIR,
@@ -1459,47 +1460,15 @@ function runHermesProviderProtectionTransition(
 }
 
 function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentConfigTarget): void {
-  const issues: string[] = [];
-  for (const file of [target.configPath, ...(target.sensitiveFiles || [])]) {
-    try {
-      const [mode, owner] = privilegedSandboxExecCapture(sandboxName, [
-        "stat",
-        "-c",
-        "%a %U:%G",
-        file,
-      ]).split(" ");
-      if (mode !== "640") issues.push(`${file} mode=${mode} (expected 640)`);
-      if (owner !== "sandbox:sandbox") {
-        issues.push(`${file} owner=${owner} (expected sandbox:sandbox)`);
-      }
-      const [flags] = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", file])
-        .trim()
-        .split(/\s+/, 1);
-      if (flags.includes("i")) issues.push(`${file} immutable bit still set`);
-    } catch (error) {
-      issues.push(
-        `${file} verification failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  try {
-    const [mode, owner] = privilegedSandboxExecCapture(sandboxName, [
-      "stat",
-      "-c",
-      "%a %U:%G",
+  const issues = [
+    ...verifyStateDirMutablePosture(
+      stateDirLockExec(sandboxName),
       target.configDir,
-    ]).split(" ");
-    if (mode !== "700" && mode !== "3770") {
-      issues.push(`${target.configDir} mode=${mode} (expected 700 or 3770)`);
-    }
-    if (owner !== "sandbox:sandbox") {
-      issues.push(`${target.configDir} owner=${owner} (expected sandbox:sandbox)`);
-    }
-  } catch (error) {
-    issues.push(
-      `${target.configDir} verification failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+      requireStateLockPlan(target),
+      target.stateLockPlanInImage,
+      [target.configPath, ...(target.sensitiveFiles || [])],
+    ),
+  ];
   if (issues.length > 0) throw new Error(`Config not unlocked: ${issues.join(", ")}`);
 }
 
@@ -6177,8 +6146,6 @@ function verifyHermesProviderMutableStatus(
       assertFreshShieldsDownAuthority(sandboxName, marker, transition, "active");
     };
 
-    assertTimedAuthority();
-    runHermesProviderProtectionTransition(sandboxName, target, "mutable", "mutable");
     assertTimedAuthority();
     verifyHermesProviderMutablePosture(sandboxName, target);
     assertTimedAuthority();

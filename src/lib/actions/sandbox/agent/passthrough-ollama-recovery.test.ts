@@ -55,12 +55,17 @@ describe("runOllamaRestartRecovery", () => {
       ok: false,
       timedOut: true,
       reason: "timeout",
+      endpoint: "http://host.docker.internal:11434",
+      detail: "curl timed out after 300 seconds",
     }));
 
     const stderr = writes.join("");
-    expect(stderr).toContain("Checking Ollama model readiness after daemon restart");
-    expect(stderr).toContain("Ollama warm-up for 'qwen3.6:35b' timed out");
-    expect(stderr).toContain("continuing to OpenClaw dispatch");
+    expect(stderr).toContain("Checking whether the Ollama model is loaded");
+    expect(stderr).toContain("Ollama warm-up for 'qwen3.6:35b'");
+    expect(stderr).toContain("timed out");
+    expect(stderr).toContain("at http://host.docker.internal:11434");
+    expect(stderr).toContain("OpenClaw dispatch will continue");
+    expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
   });
 
   it.each([
@@ -76,16 +81,22 @@ describe("runOllamaRestartRecovery", () => {
       ok: false,
       timedOut: false,
       reason,
+      endpoint: "http://host.docker.internal:11434",
+      detail: "bounded failure detail",
     }));
 
-    expect(writes.join("")).toContain(message);
+    const stderr = writes.join("");
+    expect(stderr).toContain(message);
+    expect(stderr).toContain("http://host.docker.internal:11434");
+    expect(stderr).toContain("OpenClaw dispatch will continue");
+    expect(stderr).toContain("confirm that it serves 'qwen3.6:35b'");
   });
 
   it.each([
     ["already-loaded", "Ollama model 'qwen3.6:35b' is already loaded"],
-    ["unreachable", "Ollama was unreachable during the restart check"],
+    ["unreachable", "Ollama was unreachable during the model check"],
     ["missing-model", "No Ollama model is recorded for this sandbox"],
-    ["not-ollama", "Checking Ollama model readiness after daemon restart"],
+    ["not-ollama", "Checking whether the Ollama model is loaded"],
   ] as const)("handles the %s skip reason", (reason, message) => {
     const { writes, proc } = makeProcMock();
 
@@ -125,7 +136,7 @@ describe("runOllamaRestartRecovery", () => {
     expect(stderr).not.toContain("Ollama was unreachable during the restart check");
   });
 
-  it("contains an unexpected recovery exception", () => {
+  it("continues OpenClaw dispatch when Ollama recovery throws", () => {
     const { writes, proc } = makeProcMock();
 
     expect(() =>

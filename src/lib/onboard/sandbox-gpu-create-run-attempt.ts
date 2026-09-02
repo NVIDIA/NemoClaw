@@ -23,7 +23,10 @@ import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-re
 import { isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
-import { reportSandboxCreateFailure } from "./created-sandbox-failure";
+import {
+  formatRetainedSandboxRecoveryMessage,
+  reportSandboxCreateFailure,
+} from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
@@ -460,26 +463,29 @@ export function createSandboxGpuCreateAttemptRunner(
       if (!persist) {
         throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
       }
-      const identityEvidence = sandboxIdentityFingerprint
-        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before identity verification completed. `
-        : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
-      const message =
-        `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
-        identityEvidence +
-        "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+      const message = formatRetainedSandboxRecoveryMessage({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        createAttemptLabel: `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`,
+        sandboxIdentityFingerprint,
+      });
       let persisted = false;
+      let persistenceCause: unknown;
       try {
         persisted = sandboxIdentityFingerprint
           ? persist(message, sandboxIdentityFingerprint, createAttemptNonce)
           : persist(message, undefined, createAttemptNonce);
-      } catch {
-        persisted = false;
+      } catch (error) {
+        persistenceCause = error;
       }
       console.error(`  ${message}`);
       if (!persisted) {
+        const persistenceFailureMessage =
+          "NemoClaw could not save the retained sandbox recovery record for this create attempt.";
         console.error(
-          "  NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+          `  ${persistenceFailureMessage} Preserve the terminal output for an OpenShell administrator.`,
         );
+        throw new Error(persistenceFailureMessage, { cause: persistenceCause });
       }
     };
     const waitForCreatedSandboxPublication = (sandboxId: string): void => {
@@ -625,8 +631,8 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       return sandboxId;
     };
-    const streamCreate = () =>
-      streamSandboxCreateWithPublicImageCredentialIsolation(
+    const streamCreate = async () => {
+      const createResult = await streamSandboxCreateWithPublicImageCredentialIsolation(
         managedBootstrap != null,
         input.sandboxName,
         input.sandboxEnv,
@@ -664,7 +670,9 @@ export function createSandboxGpuCreateAttemptRunner(
                 return failReadyCheckCreatedIdentity("selector-identity-changed");
               }
               readyCheckCreatedSandboxId = observation.sandboxId;
-              return observation.state === "matched";
+              // End only the create-client handoff. Strict metadata settlement still
+              // runs before any post-create effect.
+              return true;
             },
             ...(deferPostCreateEffects
               ? {}
@@ -687,6 +695,22 @@ export function createSandboxGpuCreateAttemptRunner(
                 : undefined,
           }),
       );
+      if (createResult.readyTerminationTimedOut) {
+        if (createAttemptNonce) {
+          persistIdentitySettlementRecovery(
+            readyCheckCreatedSandboxId
+              ? fingerprintSandboxRecreateValue(readyCheckCreatedSandboxId)
+              : null,
+          );
+        }
+        throw new Error(
+          createAttemptNonce
+            ? `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`
+            : `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw blocked post-create effects. No create-attempt identity was available for retained recovery. Preserve the sandbox for identity-bound OpenShell administrator recovery; do not delete it by mutable name.`,
+        );
+      }
+      return createResult;
+    };
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let resumedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;

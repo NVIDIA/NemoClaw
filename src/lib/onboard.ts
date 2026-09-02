@@ -207,7 +207,6 @@ const {
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
-  getOllamaWarmupCommand,
   validateLocalProvider,
 } = localInference;
 const resolveNonInteractiveModel = localInference.resolveNonInteractiveOllamaModel;
@@ -1675,8 +1674,8 @@ const {
   readRecordedInferenceRoute,
   readRecordedProviderEndpoints,
 } = providerRecovery.createProviderRecoveryHelpers({
-  parseGatewayInference,
-  runCaptureOpenshell,
+  captureOpenshell,
+  selectedGatewayName: () => GATEWAY_NAME,
   warn: (message) => console.warn(message),
 });
 
@@ -2453,7 +2452,6 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     getLocalProviderBaseUrl,
     run,
     vllmLocalCredentialEnv: VLLM_LOCAL_CREDENTIAL_ENV,
-    getOllamaWarmupCommand,
     shouldFrontOllamaWithProxy,
     ensureOllamaAuthProxy,
     isProxyHealthy,

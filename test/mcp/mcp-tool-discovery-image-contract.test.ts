@@ -204,7 +204,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "d77b6d5465f651bf60eed9d978de14e72ebb0db35bb5a691c3eab84d554e3f9a",
+      expectedHash: "dac2be15941e6d3ee5092719d712d122b2cfbe0a159fdb70c11cb7bafa597d33",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {

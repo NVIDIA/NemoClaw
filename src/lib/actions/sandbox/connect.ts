@@ -32,6 +32,7 @@ import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
+  buildGatewayInferenceGetArgs,
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
   planInferenceRouteReconcile,
@@ -67,7 +68,6 @@ import {
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
-  buildGatewayInferenceGetArgs,
   buildGatewayInferenceSetArgs,
 } from "./connect-inference-gateway";
 import {
@@ -733,7 +733,7 @@ function writeHermesPortableLifecycleRecoveryTiming(
   evidence: HermesPortableLifecycleRecoveryTimingEvidence,
 ): void {
   console.log(
-    `  Hermes Portable lifecycle recovery timing: entryQualification=${String(evidence.entryQualificationMs)}ms containerStart=${String(evidence.containerStartMs)}ms postStartCurrentness=${String(evidence.postStartCurrentnessMs)}ms execReady=${String(evidence.execReadyMs)}ms preHealthCurrentness=${String(evidence.preHealthCurrentnessMs)}ms authenticatedHealth=${String(evidence.authenticatedHealthMs)}ms startupLaunch=${String(evidence.startupLaunchMs)}ms healthPollCurrentness=${String(evidence.healthPollCurrentnessMs)}ms finalQualification=${String(evidence.finalQualificationMs)}ms rollback=${String(evidence.rollbackMs)}ms qualificationCount=${String(evidence.qualificationCount)} transactionCurrentnessCount=${String(evidence.transactionCurrentnessCount)} containerInspectionCount=${String(evidence.containerInspectionCount)} containerStartCount=${String(evidence.containerStartCount)} execReadyAttempts=${String(evidence.execReadyAttempts)} authenticatedHealthCount=${String(evidence.authenticatedHealthCount)} startupLaunchCount=${String(evidence.startupLaunchCount)} rollbackCount=${String(evidence.rollbackCount)} total=${String(evidence.totalMs)}ms containerAction=${evidence.containerAction} result=${evidence.result}`,
+    `  Hermes Portable lifecycle recovery timing: entryQualification=${String(evidence.entryQualificationMs)}ms containerStart=${String(evidence.containerStartMs)}ms postStartCurrentness=${String(evidence.postStartCurrentnessMs)}ms execReady=${String(evidence.execReadyMs)}ms execReadyCurrentness=${String(evidence.execReadyCurrentnessMs)}ms execReadyCommand=${String(evidence.execReadyCommandMs)}ms execReadySleep=${String(evidence.execReadySleepMs)}ms preHealthCurrentness=${String(evidence.preHealthCurrentnessMs)}ms authenticatedHealth=${String(evidence.authenticatedHealthMs)}ms authenticatedHealthPodman=${String(evidence.authenticatedHealthPodmanMs)}ms authenticatedHealthOpenShell=${String(evidence.authenticatedHealthOpenShellMs)}ms authenticatedHealthSleep=${String(evidence.authenticatedHealthSleepMs)}ms startupLaunch=${String(evidence.startupLaunchMs)}ms healthPollCurrentness=${String(evidence.healthPollCurrentnessMs)}ms finalQualification=${String(evidence.finalQualificationMs)}ms rollback=${String(evidence.rollbackMs)}ms qualificationCount=${String(evidence.qualificationCount)} transactionCurrentnessCount=${String(evidence.transactionCurrentnessCount)} containerInspectionCount=${String(evidence.containerInspectionCount)} containerStartCount=${String(evidence.containerStartCount)} execReadyAttempts=${String(evidence.execReadyAttempts)} authenticatedHealthCount=${String(evidence.authenticatedHealthCount)} startupLaunchCount=${String(evidence.startupLaunchCount)} rollbackCount=${String(evidence.rollbackCount)} total=${String(evidence.totalMs)}ms containerAction=${evidence.containerAction} result=${evidence.result}`,
   );
 }
 
