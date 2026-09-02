@@ -160,6 +160,7 @@ Use these details when your first-run path needs more control.
     Keep the profile limited to the HTTPS ingestion origin and `/api/public/**` paths.
     Store only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
     Do not use the cloud profile for a self-hosted host because OpenShell will correctly refuse to resolve its credentials there.
+    Use the same exact-host profile process when a hosted Langfuse project uses an origin other than `cloud.langfuse.com`.
   </Accordion>
 
   <Accordion title="Automate or repeat onboarding">
