@@ -42,7 +42,7 @@ For a trusted private server, status resolves the endpoint without changing mana
 On a LangChain Deep Agents Code image with managed MCP capability v2, `mcp status` checks the final path type before it reads `/sandbox/.deepagents/.nemoclaw-mcp.json`.
 It does not follow a final symbolic link or read from a FIFO.
 If the final entry is a symbolic link, FIFO, or another non-regular object, the command writes no standard output and exits with status `2`.
-The standard error line starts with `Unsafe managed Deep Agents MCP projection path:`.
+The standard error line starts with two spaces followed by `Unsafe managed Deep Agents MCP projection path:`.
 It ends with `symbolic link`, `FIFO`, or `non-regular file`.
 A Deep Agents v1 image reads the legacy `.deepagents/.mcp.json` path and does not expose these type-specific diagnostics.
 
