@@ -25,14 +25,14 @@ Do not reconstruct the checks manually.
 
 ## What the Inspector Validates
 
-The inspector selects the newest successful `Exact staging Brev Launchable` job whose
-workflow run meets these conditions:
+The inspector selects the newest completed `Exact staging Brev Launchable` job whose
+workflow run meets these conditions. It accepts evidence only when that job succeeded:
 
 - `head_sha` equals the candidate SHA;
 - `path` is `.github/workflows/e2e.yaml`;
 - `head_branch` is `main`;
 - `event` is `workflow_dispatch`; and
-- the job completed successfully.
+- the job is completed.
 
 The artifact name binds the candidate, run, and attempt:
 
@@ -99,8 +99,12 @@ Only a maintainer with access to the repository's Brev organization may perform 
    organization owner.
 4. The Brev CLI supports only name-bound deletion. Do not issue `brev delete` during manual recovery,
    because a different workspace could reuse the validated name before deletion. Record cleanup as
-   unresolved and escalate the reported name and ID to the Brev organization owner. The owner may use
-   an ID-bound conditional deletion mechanism if one is available.
+   unresolved and open a repository security escalation for the Brev organization owner. Include the
+   run and job URLs, artifact name, candidate SHA, workspace name and ID, last inventory result, and
+   credential-removal actions. The owner must acknowledge cleanup ownership and set a deletion or
+   investigation deadline. Close the escalation only after two consecutive inventories confirm that
+   both the reported name and ID are absent, or after the owner records why the workspace must remain.
+   The owner may use an approved ID-bound conditional deletion mechanism when available.
 5. After an ID-bound deletion, read `brev ls --json` every 15 seconds for at most 10 minutes. Stop
    after two consecutive successful inventories contain no row with either the reported name or ID.
    If the deadline expires, keep cleanup unresolved and record the last inventory result.

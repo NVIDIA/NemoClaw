@@ -5,6 +5,7 @@ import {
   artifactDownloadArgs,
   inspectLaunchableEvidence,
   runCli,
+  workflowJobsApiArgs,
   workflowJobsFromPages,
   workflowRunsApiArgs,
   workflowRunsFromPages,
@@ -113,6 +114,20 @@ describe("Launchable evidence inspection", () => {
       `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=PRESENT checkedAt=2026-06-01T01:00:00Z`,
     );
   });
+  it("rejects a mismatched artifact candidate (#10798)", () => {
+    const artifact = files(),
+      launchable = JSON.parse(artifact["launchable-e2e.json"] ?? "{}");
+    launchable.candidateSha = IMAGE_SHA;
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        reader(undefined, undefined, {
+          ...artifact,
+          "launchable-e2e.json": JSON.stringify(launchable),
+        }),
+      ),
+    ).toThrow("launchable candidate does not match candidate");
+  });
   it("rejects a mismatched workspace (#10798)", () =>
     expect(() =>
       inspectLaunchableEvidence(
@@ -146,6 +161,8 @@ describe("Launchable evidence inspection", () => {
     ]);
     expect(workflowRunsApiArgs(SHA)).toEqual([
       "api",
+      "--hostname",
+      "github.com",
       "--paginate",
       "--slurp",
       `repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${SHA}`,
@@ -177,6 +194,22 @@ describe("Launchable evidence inspection", () => {
       ),
     ).toThrow("run=11 attempt=2 job=21");
   });
+  it.each(["cancelled", "timed_out", null])(
+    "rejects newest %s job instead of accepting older success (#10798)",
+    (conclusion) => {
+      expect(() =>
+        inspectLaunchableEvidence(
+          { candidate: SHA },
+          reader([run(10, "2026-06-01T00:00:00Z"), run(11, "2026-07-01T00:00:00Z")], {
+            "10:2": [job()],
+            "11:2": [job(21, { conclusion })],
+          }),
+        ),
+      ).toThrow(
+        `conclusion ${conclusion ?? "<missing>"} cannot provide release evidence: run=11 attempt=2 job=21`,
+      );
+    },
+  );
   it("rejects malformed eligible workflow timestamps (#10798)", () =>
     expect(() =>
       inspectLaunchableEvidence({ candidate: SHA }, reader([run(10, "not-a-time")])),
@@ -187,6 +220,16 @@ describe("Launchable evidence inspection", () => {
       { workflow_runs: [run()] },
     ]);
     expect(inspectLaunchableEvidence({ candidate: SHA }, reader(runs)).run.id).toBe(10);
+  });
+  it("pins workflow-job inventory to github.com (#10798)", () => {
+    expect(workflowJobsApiArgs(10, 2)).toEqual([
+      "api",
+      "--hostname",
+      "github.com",
+      "--paginate",
+      "--slurp",
+      "repos/NVIDIA/NemoClaw/actions/runs/10/attempts/2/jobs?per_page=100",
+    ]);
   });
   it("merges workflow-job pages before selecting evidence (#10798)", () => {
     expect(
@@ -224,7 +267,7 @@ describe("Launchable evidence inspection", () => {
       new Map([
         ["--name", "artifact"],
         ["--dir", "/tmp/output"],
-        ["--repo", "NVIDIA/NemoClaw"],
+        ["--repo", "github.com/NVIDIA/NemoClaw"],
       ]),
     );
   });

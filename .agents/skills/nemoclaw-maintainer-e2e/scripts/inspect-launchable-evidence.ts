@@ -128,12 +128,7 @@ function selectNewestJob(
   jobs: (run: WorkflowRun) => WorkflowJob[],
 ): Selection | undefined {
   for (const run of candidateRuns(candidate, runs)) {
-    const job = jobs(run).find(
-      (value) =>
-        value.name === JOB &&
-        value.status === "completed" &&
-        (value.conclusion === "success" || value.conclusion === "failure"),
-    );
+    const job = jobs(run).find((value) => value.name === JOB && value.status === "completed");
     if (job) return { run, job };
   }
   return undefined;
@@ -250,7 +245,9 @@ export function inspectLaunchableEvidence(options: Options, reader: EvidenceRead
       reader.readArtifact(selection.run.id, artifactName),
     );
   if (selection.job.conclusion !== "success")
-    fail("failed staging Brev Launchable job cannot provide release evidence");
+    fail(
+      `staging Brev Launchable job conclusion ${selection.job.conclusion ?? "<missing>"} cannot provide release evidence: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName}`,
+    );
   return receipt;
 }
 function gh(args: string[]): unknown {
@@ -268,7 +265,7 @@ export function artifactDownloadArgs(runId: number, name: string, directory: str
     "--dir",
     directory,
     "--repo",
-    REPOSITORY,
+    `github.com/${REPOSITORY}`,
   ];
 }
 
@@ -290,9 +287,22 @@ export function workflowRunsApiArgs(candidate: string): string[] {
   if (!SHA.test(candidate)) fail("candidate must be a lowercase 40-character SHA");
   return [
     "api",
+    "--hostname",
+    "github.com",
     "--paginate",
     "--slurp",
     `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100&head_sha=${candidate}`,
+  ];
+}
+
+export function workflowJobsApiArgs(runId: number, attempt: number): string[] {
+  return [
+    "api",
+    "--hostname",
+    "github.com",
+    "--paginate",
+    "--slurp",
+    `repos/${REPOSITORY}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
   ];
 }
 
@@ -303,14 +313,7 @@ export function createGitHubReader(): EvidenceReader {
       return workflowRunsFromPages(pages);
     },
     listJobs(runId, attempt) {
-      return workflowJobsFromPages(
-        gh([
-          "api",
-          "--paginate",
-          "--slurp",
-          `repos/${REPOSITORY}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
-        ]),
-      );
+      return workflowJobsFromPages(gh(workflowJobsApiArgs(runId, attempt)));
     },
     readArtifact(runId, name) {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-launchable-evidence-"));
