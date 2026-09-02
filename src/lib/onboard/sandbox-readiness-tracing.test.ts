@@ -79,6 +79,7 @@ describe("createSandboxReadyWaiter", () => {
       observer,
       target: TARGET,
       isLinuxDockerDriverGatewayEnabled: () => true,
+      now: () => 0,
       sleep,
     });
 
