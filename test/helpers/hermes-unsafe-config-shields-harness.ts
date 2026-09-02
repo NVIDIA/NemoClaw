@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { expect, type MockInstance, vi } from "vitest";
 import {
+  bindPolicySubmissionConfirmation,
   bindTypedPolicyReader,
   bindTypedPolicyWriter,
   livePolicyMutationContext,
@@ -289,6 +290,7 @@ export function createHermesUnsafeConfigHarness(
       vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext);
       vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext);
       vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
+      bindPolicySubmissionConfirmation(policy);
       vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(hermesTarget);
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),

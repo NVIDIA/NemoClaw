@@ -9,6 +9,7 @@ import path from "node:path";
 import { type MockInstance, vi } from "vitest";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 import {
+  bindPolicySubmissionConfirmation,
   bindTypedPolicyReader,
   bindTypedPolicyWriter,
   livePolicyMutationContext,
@@ -303,10 +304,9 @@ export function createHermesShieldsProviderConsumerHarness(
     ),
     bindTypedPolicyReader(policyAdapter, () => "version: 1\nnetwork_policies:\n  test: {}\n"),
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
-    vi.spyOn(policy, "confirmAppliedPolicySetSubmission").mockImplementation(() => undefined),
+    bindPolicySubmissionConfirmation(policy),
     registrySpy,
     vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")

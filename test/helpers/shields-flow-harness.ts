@@ -33,11 +33,21 @@ export function bindLivePolicyMutationContext(
       ? [bindTypedPolicyReader(policyAdapter, () => livePolicyMutationContext.basePolicyDocument)]
       : []),
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
-    vi.spyOn(policy, "confirmAppliedPolicySetSubmission").mockImplementation(() => undefined),
+    bindPolicySubmissionConfirmation(policy),
   ];
+}
+
+export function bindPolicySubmissionConfirmation(
+  policy: typeof import("../../src/lib/policy"),
+): MockInstance {
+  return vi
+    .spyOn(policy, "confirmAppliedPolicySetSubmission")
+    .mockImplementation((submission, sandboxName, desiredPolicyDocument, previous, operation) => {
+      policy.rejectFinalPolicySetSubmission(submission, operation);
+      policy.verifyAppliedPolicyDocument(sandboxName, desiredPolicyDocument, previous);
+    });
 }
 
 export type ShieldsFlowHarness = {
