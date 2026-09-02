@@ -286,7 +286,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
   });
 
-  it("refreshes the source policy after deleting a --force destination and before clone creation", async () => {
+  it("refreshes the source policy before deleting a --force destination and clone creation", async () => {
     const initialPolicy = "version: 1\nnetwork_policies:\n  initial: {}\n";
     const latestPolicy = "version: 1\nnetwork_policies:\n  host_edit: {}\n";
     f.readSandboxPolicyMock
@@ -333,6 +333,63 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(f.readSandboxPolicyMock).toHaveBeenCalledTimes(2);
     expect(createdPolicy.trim()).toBe(latestPolicy.trim());
     expect(createdPolicy).not.toContain("initial");
+  });
+
+  it("keeps a --force destination when the final pre-delete policy read fails", async () => {
+    f.readSandboxPolicyMock
+      .mockReturnValueOnce({
+        ok: true,
+        value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: null },
+      })
+      .mockReturnValue({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "OpenShell policy refresh failed",
+        },
+      });
+    f.getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "openclaw",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      dashboardPort: name === "alpha" ? 18790 : 18791,
+    }));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const secureTempFile = vi.spyOn(tempFiles, "secureTempFile");
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    const failure = await runSandboxSnapshot("alpha", {
+      kind: "restore",
+      to: "beta",
+      force: true,
+      yes: true,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      name: "SnapshotCommandError",
+      lines: expect.arrayContaining([
+        "Cannot read the live OpenShell policy for source sandbox 'alpha'.",
+        "OpenShell policy refresh failed",
+      ]),
+    });
+    expect(f.readSandboxPolicyMock).toHaveBeenCalledTimes(2);
+    expect(secureTempFile).toHaveBeenCalledOnce();
+    expect(fs.existsSync(String(secureTempFile.mock.results[0]?.value))).toBe(false);
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
   });
 
   it("gives a Hermes clone its own API port instead of the source's (#8543)", async () => {
