@@ -7,7 +7,7 @@
 
 Review date: 2026-07-21
 
-Last updated: 2026-08-21
+Last updated: 2026-09-02
 
 ## Decision
 
@@ -103,7 +103,7 @@ whose amd64 config reports Node `22.23.1`.
 - `brace-expansion@5.0.9` (OpenClaw locked-runtime remediation)
   - `sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==`
   - `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz`
-- `fast-uri@3.1.6` (OpenClaw, mcporter, and MCP discovery remediation)
+- `fast-uri@3.1.6` (OpenClaw and mcporter locked-runtime remediation)
   - `sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==`
   - `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz`
   - `BSD-3-Clause`; no dependencies
@@ -201,9 +201,7 @@ The reviewed upstream OpenClaw shrinkwrap resolves `3.1.2`, and
 `GHSA-v2hh-gcrm-f6hx` affects releases through `3.1.3`.
 The initial remediation selected `3.1.4` for that advisory.
 The high-severity `GHSA-7p8r-x3mc-p8w7` later affected that release.
-The later `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`,
-`GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp` findings affect the
-previous `3.1.5` selection. Every active lock now selects first-patched `3.1.6`.
+All four audited production graphs now select reviewed `3.1.6`, the first release outside `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp`.
 
 The OpenClaw core package manifest and shrinkwrap directly pin `undici@8.5.0`.
 The published `@openclaw/discord@2026.7.1` archive also pins that version in
