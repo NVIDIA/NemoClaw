@@ -247,6 +247,7 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
       const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
       expect(laneLog).toContain(`gateway-child-bind ${expectedCategory}`);
       expect(laneLog).not.toContain(marker);
+      expect(emittedOutput(result, workDir)).not.toContain(marker);
     },
   );
 
