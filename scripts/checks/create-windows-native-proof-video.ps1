@@ -302,7 +302,8 @@ if (-not $qualification.repairRestoredDigest -or
     $qualification.nativeTurn.verdict -cne 'pass' -or
     $qualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
     $qualification.nativeTurn.sandboxDeleted -ne $true -or
-    @($qualification.nativeExecutions).Count -ne 2 -or
+    @($qualification.nativeExecutions).Count -ne 3 -or
+    @($qualification.applicationExecutions).Count -ne 2 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
     @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0) {
     Fail-ProofVideo 'Initial package qualification receipt is not a complete passing lifecycle.'
