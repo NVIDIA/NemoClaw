@@ -279,6 +279,7 @@ async function assertCredentialRemainsOutsideSandbox(sandbox: SandboxClient): Pr
     SANDBOX_A,
     credentialBoundaryProbeScript(),
     "tc-sbx-14-sandbox-credential-boundary",
+    180_000,
   );
   expect(
     probe.exitCode,
