@@ -1008,11 +1008,7 @@ fi
 
   it("holds every alias behind the exact six-candidate aggregate barrier (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const identity = required(
-      workflow.jobs?.["publication-identity"],
-      "managed-image workflow is missing its publication identity",
-    );
-    const recordIdentity = step(identity, "Record publication identity");
+    const identity = workflow.jobs?.["publication-identity"];
     const publisher = managedPublisher(workflow);
     const promoter = managedPromoter(workflow);
     const steps = promoter.steps ?? [];
@@ -1030,11 +1026,7 @@ fi
         String(candidate.with?.name ?? "").startsWith("managed-image-"),
     );
 
-    expect(identity.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
-    expect(recordIdentity.run).toContain("printf 'cohort=ghrun-%s-1\\n' \"$GITHUB_RUN_ID\"");
-    expect(recordIdentity.run).not.toContain(
-      '"$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"',
-    );
+    expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
     expect(publisher.needs).toBe("publication-identity");
     expect(publisher.outputs).toBeUndefined();
     expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(

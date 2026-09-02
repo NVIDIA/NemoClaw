@@ -14,6 +14,9 @@ import {
   type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 
+// Runtime trust boundary invoked by `.github/workflows/e2e.yaml` and emitted by
+// `operations-workflow-boundary.mts`. Its GITHUB_OUTPUT receipt authorizes the
+// managed-image cohort selected by downstream E2E jobs.
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
