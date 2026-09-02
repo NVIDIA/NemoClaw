@@ -111,34 +111,47 @@ fi
 # -------------------------------------------------------
 info "4. Verify blueprint runner plan command"
 # -------------------------------------------------------
-cd /opt/nemoclaw-blueprint
-# Runner will fail at openshell prereq check (expected in test container).
-# Use 'ncp' profile (empty endpoint skips SSRF DNS lookup in sandbox).
-# Catch only the expected error — anything else propagates as a real failure.
-NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
-  const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
-  try {
-    await main(['plan', '--profile', 'ncp', '--dry-run']);
-  } catch (err) {
-    if (!err.message.includes('openshell CLI not found')) throw err;
-    console.log('EXPECTED_ERROR: ' + err.message);
-  }
-" 2>&1 | tee /tmp/plan-output.txt
-if grep -q "RUN_ID:" /tmp/plan-output.txt; then
+# Runner will fail at the OpenShell prerequisite check (expected in this image).
+# Use an independent minimal blueprint so shipped policy changes cannot mask
+# the missing-CLI behavior under test.
+PLAN_OUTPUT=$(mktemp)
+trap 'rm -f "$PLAN_OUTPUT"' EXIT
+(
+  plan_blueprint=$(mktemp -d)
+  trap 'rm -rf "$plan_blueprint"' EXIT
+  cat >"$plan_blueprint/blueprint.yaml" <<'YAML'
+components:
+  inference:
+    profiles:
+      default: {}
+YAML
+  NEMOCLAW_BLUEPRINT_PATH="$plan_blueprint" node --input-type=module -e "
+    const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
+    try {
+      await main(['plan', '--profile', 'default', '--dry-run']);
+    } catch (err) {
+      if (!err.message.includes('openshell CLI not found')) throw err;
+      console.log('EXPECTED_ERROR: ' + err.message);
+    }
+  "
+) 2>&1 | tee "$PLAN_OUTPUT"
+if grep -q "RUN_ID:" "$PLAN_OUTPUT"; then
   pass "Blueprint plan generates run ID"
 else
   fail "No run ID in plan output"
 fi
-if grep -q "Validating blueprint" /tmp/plan-output.txt; then
+if grep -q "Validating blueprint" "$PLAN_OUTPUT"; then
   pass "Blueprint runner validates before execution"
 else
   fail "No validation step"
 fi
-if grep -q "EXPECTED_ERROR: openshell CLI not found" /tmp/plan-output.txt; then
+if grep -q "EXPECTED_ERROR: openshell CLI not found" "$PLAN_OUTPUT"; then
   pass "Plan fails with expected openshell error (not silently)"
 else
   fail "Plan did not produce expected openshell error"
 fi
+rm -f "$PLAN_OUTPUT"
+trap - EXIT
 
 # -------------------------------------------------------
 info "4b. Verify blueprint runner apply smoke test"
