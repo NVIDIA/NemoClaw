@@ -1312,7 +1312,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.configYamlContent).toBe("model: test\n");
   });
 
-  it("repair_hermes_log_permissions rejects log files hard-linked to config.yaml or .env and preserves config/env owner, mode, and content", () => {
+  it("repair_hermes_log_permissions rejects log files hard-linked to config.yaml or .env and preserves config/env mode and content", () => {
     const [configRun, envRun] = (["hardlink-to-config", "hardlink-to-env"] as const).map(
       (preExistingLogFile) =>
         runHermesGatewayRuntimeCleanup({ staleLock: false, stalePid: false, preExistingLogFile }),

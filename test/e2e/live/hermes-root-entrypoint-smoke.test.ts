@@ -572,6 +572,41 @@ cat /tmp/nemoclaw-hardlink-start.log`;
   expect(wait.stdout.trim(), resultText(wait)).toBe("0");
 }
 
+async function runNonRootHistoryOwnershipRefusalVariant(
+  probe: DockerProbe,
+  image: string,
+  runId: string,
+  containers: string[],
+): Promise<void> {
+  const container = `nemoclaw-hermes-nonroot-history-owner-${runId}`;
+  const bootstrap = `set -euo pipefail
+chown sandbox:root /sandbox/.hermes/.hermes_history
+chmod 660 /sandbox/.hermes/.hermes_history
+stat -c '%U:%G %a' /sandbox/.hermes/.hermes_history >/tmp/nemoclaw-history.stat
+set +e
+/usr/bin/timeout 30s /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-history-owner-start.log 2>&1
+startup_status=$?
+set -e
+test "$startup_status" -ne 0
+test "$startup_status" -ne 124
+test "$(stat -c '%U:%G %a' /sandbox/.hermes/.hermes_history)" = "$(cat /tmp/nemoclaw-history.stat)"
+grep -F 'has group gid' /tmp/nemoclaw-history-owner-start.log
+grep -F 'Hermes pre-launch layout repair failed at history file' /tmp/nemoclaw-history-owner-start.log
+cat /tmp/nemoclaw-history-owner-start.log`;
+
+  await probe.expect(
+    ["run", "-d", "--name", container, "--entrypoint", "/bin/bash", image, "-lc", bootstrap],
+    { artifactName: "start-nonroot-history-owner-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
+  );
+  containers.push(container);
+  const wait = await probe.run(["wait", container], {
+    artifactName: "wait-nonroot-history-owner-refusal-container",
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
+  expect(wait.exitCode, resultText(wait)).toBe(0);
+  expect(wait.stdout.trim(), resultText(wait)).toBe("0");
+}
+
 test(
   "hermes root-entrypoint smoke preserves runtime layout and restored state migration",
   {
@@ -584,6 +619,7 @@ test(
         "validate locked-root history recovery",
         "validate root history hard-link refusal",
         "validate root log hard-link refusal",
+        "validate non-root history ownership refusal",
       ],
     },
   },
@@ -621,6 +657,7 @@ test(
         "legacy dashboard profile state is moved into profiles/dashboard-home",
         "locked-root startup recreates protected group-writable Hermes history without changing sealed config",
         "root startup rejects history and log hard links without changing the protected inode",
+        "non-root startup rejects a mode-correct history file with an unusable group",
       ],
     });
 
@@ -650,6 +687,8 @@ test(
       await runHardLinkRefusalVariant(probe, image, runId, containers, "history");
       progress.phase("validate root log hard-link refusal");
       await runHardLinkRefusalVariant(probe, image, runId, containers, "logs");
+      progress.phase("validate non-root history ownership refusal");
+      await runNonRootHistoryOwnershipRefusalVariant(probe, image, runId, containers);
     } catch (error) {
       for (const container of containers) {
         await dumpContainerDiagnostics(probe, container);
@@ -674,6 +713,7 @@ test(
         legacyDashboardProfileMigrationVerified: true,
         lockedRootHistoryRecoveryVerified: true,
         rootHardLinkRefusalVerified: true,
+        nonRootHistoryOwnershipRefusalVerified: true,
       },
     });
   },

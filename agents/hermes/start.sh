@@ -1464,6 +1464,22 @@ try:
     if stat.S_IMODE(st.st_mode) != mode:
         print(f"[SECURITY] Refusing Hermes layout repair because {path} has mode {stat.S_IMODE(st.st_mode):04o}, not {mode:04o}, after repair", file=sys.stderr)
         sys.exit(1)
+    if os.geteuid() == 0:
+        allowed_uids = {uid}
+        expected_gid = gid
+    else:
+        allowed_uids = {os.geteuid()}
+        try:
+            allowed_uids.add(pwd.getpwnam("gateway").pw_uid)
+            expected_gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError:
+            expected_gid = None
+    if st.st_uid not in allowed_uids:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has unexpected owner uid {st.st_uid}", file=sys.stderr)
+        sys.exit(1)
+    if expected_gid is not None and st.st_gid != expected_gid:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has group gid {st.st_gid}, expected sandbox gid {expected_gid}", file=sys.stderr)
+        sys.exit(1)
     try:
         current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
     except OSError as exc:
