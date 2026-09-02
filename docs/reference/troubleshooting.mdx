@@ -2342,8 +2342,6 @@ In that case:
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
 
-<AgentOnly variant="openclaw">
-
 ### Discord preset validation behind a proxy
 
 The built-in Discord policy preset allows the OpenClaw Node.js runtime and does not allow `curl`. As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
@@ -2387,8 +2385,6 @@ NODE
 ```
 
 Any HTTP status from these probes means the Node.js process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset. Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
-
-</AgentOnly>
 
 ### Messaging bridge appears running but no messages arrive
 
