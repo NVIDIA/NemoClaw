@@ -60,7 +60,7 @@ function Resolve-RequiredFile {
 
 function ConvertTo-BoundedConsoleLines {
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Lines,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
         [Parameter(Mandatory)][int]$MaximumCharacters
     )
 
@@ -83,7 +83,7 @@ function ConvertTo-BoundedConsoleLines {
 function Save-ConsoleFrame {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Lines,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
         [Parameter(Mandatory)][int]$FrameNumber,
         [Parameter(Mandatory)][long]$ElapsedMilliseconds
     )
