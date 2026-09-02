@@ -168,7 +168,7 @@ comparison receipt. Cancellation after that pending update leaves the status pen
 before source authentication publishes no status. For recovery, rerun the exact failed
 qualification attempt. To dispatch
 the workflow manually from `main`, set `pr_number` to the still-open PR number, `candidate_sha` to
-its current head SHA, `base_sha` to its current base SHA, and `candidate_run_id` plus
+the latest PR commit SHA, `base_sha` to the PR base SHA, and `candidate_run_id` plus
 `candidate_run_attempt` to the failed managed-image workflow run ID and attempt. That source run
 must belong to the same open PR and current candidate SHA. If the comparison reports
 `base evidence validation failed`, use the retained receipt and evidence artifact IDs plus the
