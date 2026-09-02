@@ -269,11 +269,12 @@ try {
     }
 
     $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
-    $windowsWinMd = @(Get-ChildItem `
-        -LiteralPath (Join-Path $programFilesX86 'Windows Kits\10\UnionMetadata') `
-        -Filter 'Windows.winmd' `
-        -Recurse `
-        -File | Sort-Object FullName -Descending | Select-Object -First 1)
+    $unionMetadataRoot = Join-Path $programFilesX86 'Windows Kits\10\UnionMetadata'
+    $windowsWinMd = @(Get-ChildItem -LiteralPath $unionMetadataRoot -Directory | Where-Object {
+        $_.Name -cmatch '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+    } | Sort-Object { [version]$_.Name } -Descending | ForEach-Object {
+        Get-Item -LiteralPath (Join-Path $_.FullName 'Windows.winmd') -ErrorAction SilentlyContinue
+    } | Select-Object -First 1)
     if ($windowsWinMd.Count -ne 1) {
         Fail-ProofVideo 'Windows SDK metadata for Media Foundation is missing.'
     }
