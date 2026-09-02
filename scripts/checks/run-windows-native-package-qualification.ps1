@@ -86,7 +86,7 @@ function Invoke-BoundedProcess {
     if (-not $SuppressProofOutput) {
         Write-Host "PS> $Label :: $(Split-Path -Leaf $FilePath) $($argumentList -join ' ')"
     }
-    $process = Start-Process -FilePath $FilePath -ArgumentList $argumentList -PassThru -NoNewWindow -ErrorAction Stop
+    $process = Start-Process -FilePath $FilePath -ArgumentList $argumentList -PassThru -ErrorAction Stop
     try {
         if (-not $process.WaitForExit($script:OperationTimeoutMilliseconds)) {
             $process.Kill()
@@ -489,11 +489,13 @@ try {
         -Label 'Prepare ephemeral runner for native MXC qualification' `
         -AllowedExitCodes @(0) | Out-Null
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
-    Invoke-BoundedProcess `
-        -FilePath $nemoclawLauncherPath `
-        -Arguments @('debug', '--native-windows-turn', '--artifact-directory', $nativeTurnArtifacts) `
-        -Label 'Installed NemoClaw native MXC agent turn' `
-        -AllowedExitCodes @(0) | Out-Null
+    Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
+    & $nemoclawLauncherPath debug --native-windows-turn --artifact-directory $nativeTurnArtifacts
+    $nativeTurnExitCode = $LASTEXITCODE
+    if ($nativeTurnExitCode -ne 0) {
+        Fail-PackageQualification "Installed NemoClaw native MXC agent turn failed with exit code $nativeTurnExitCode."
+    }
+    Write-Host "[PASS] Installed NemoClaw native MXC agent turn exit=$nativeTurnExitCode"
     $nativeTurnReceipts = @(Get-ChildItem -LiteralPath $nativeTurnArtifacts -Filter 'native-windows-turn-*.json' -File)
     if ($nativeTurnReceipts.Count -ne 1) {
         Fail-PackageQualification 'Installed NemoClaw native turn did not publish exactly one receipt.'
