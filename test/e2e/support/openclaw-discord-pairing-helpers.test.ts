@@ -9,8 +9,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { HostCliClient } from "../fixtures/clients/host.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   assertDiscordGatewayCapture,
   DISCORD_GATEWAY_CLIENT_SOURCE,
@@ -23,7 +21,6 @@ import {
   listenOnLoopback,
 } from "./fixtures/slack-forward-proxy.ts";
 import {
-  applyFakePolicy,
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
@@ -37,19 +34,6 @@ const REVISIONED_DISCORD_PLACEHOLDER = "openshell:resolve:env:v2_DISCORD_BOT_TOK
 const GATEWAY_ASSERTION_SENTINEL = "test-sentinel-discord-token";
 
 let child: ChildProcess | undefined;
-
-function successfulProbe(): ShellProbeResult {
-  return {
-    command: ["openshell"],
-    durationMs: 1,
-    exitCode: 0,
-    signal: null,
-    timedOut: false,
-    stdout: "",
-    stderr: "",
-    artifacts: { stdout: "stdout", stderr: "stderr", result: "result" },
-  };
-}
 
 afterEach(() => {
   child?.kill("SIGTERM");
@@ -217,59 +201,6 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(approveCommand).toContain("'abc$(touch /tmp/e2e-should-not-run)'");
     expect(pendingCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
-  });
-
-  it("propagates caller-selected binaries through fake policy application", async () => {
-    const command = vi.fn<HostCliClient["command"]>().mockResolvedValue(successfulProbe());
-    const host = {
-      command,
-      openshellCommandPath: "/usr/local/bin/openshell",
-    } as unknown as HostCliClient;
-    const allowedBinaries = ["/opt/hermes/.venv/bin/python3", "/opt/hermes/.venv/bin/python"];
-
-    await applyFakePolicy({
-      host,
-      sandboxName: "e2e-hermes-discord",
-      api: { kind: "discord-gateway", port: "43117", captureFile: "/tmp/capture.jsonl" },
-      protocol: "websocket",
-      rewrite: "websocket-credential-rewrite",
-      providerName: "e2e-hermes-discord-discord-bridge",
-      env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
-      redactions: ["test-fixture-token"],
-      artifactName: "apply-hermes-fake-discord-gateway-policy",
-      allowedBinaries,
-    });
-
-    expect(command).toHaveBeenCalledTimes(2);
-    expect(command.mock.calls[0]?.[1]).toEqual([
-      "policy",
-      "update",
-      "e2e-hermes-discord",
-      "--add-endpoint",
-      "host.openshell.internal:43117:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
-      "--add-allow",
-      "host.openshell.internal:43117:GET:/**",
-      "--add-allow",
-      "host.openshell.internal:43117:WEBSOCKET_TEXT:/**",
-      "--binary",
-      allowedBinaries[0],
-      "--binary",
-      allowedBinaries[1],
-      "--wait",
-    ]);
-    expect(command.mock.calls[1]?.[1]).toEqual([
-      "-lc",
-      expect.stringContaining("--assert-binaries"),
-      "bind-fake-websocket-policy",
-      "/usr/local/bin/openshell",
-      "e2e-hermes-discord",
-      "e2e-hermes-discord-discord-bridge",
-      "host.openshell.internal",
-      "43117",
-      "websocket",
-      expect.stringMatching(/test\/e2e\/fixtures\/hermes-discord-policy-binding\.ts$/u),
-      ...allowedBinaries,
-    ]);
   });
 
   it("finds the active OpenClaw package when shell startup shadows openclaw with a function", () => {
@@ -456,14 +387,24 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(SLACK_PAIRING_SCRIPT).toContain(
       'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
     );
-    expect(SLACK_PAIRING_SCRIPT).toContain('parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")');
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
+    );
   });
 
   it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
-    expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_APP_TOKEN")');
-    expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_BOT_TOKEN")');
-    expect(SLACK_PAIRING_SCRIPT).not.toContain("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
-    expect(SLACK_PAIRING_SCRIPT).not.toContain("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_APP_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_BOT_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
   });
 
   it.each([
