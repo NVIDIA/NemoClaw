@@ -453,6 +453,10 @@ COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies
 COPY agents/hermes/agent-browser-runtime/package.json \
     agents/hermes/agent-browser-runtime/package-lock.json \
     /tmp/nemoclaw-agent-browser-runtime/
+COPY scripts/checks/materialize-locked-npm-cache-seed.mts /tmp/nemoclaw-agent-browser-cache/checks/
+COPY scripts/lib/reviewed-npm-archive.mts \
+    scripts/lib/seed-reviewed-npm-cache.mts \
+    /tmp/nemoclaw-agent-browser-cache/lib/
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
 RUN mkdir -p /opt/hermes \
@@ -647,7 +651,16 @@ RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
         /usr/local/bin/npm ci \
             --prefix /tmp/nemoclaw-agent-browser-runtime \
             --ignore-scripts --no-audit --no-fund \
-    && rm -rf /tmp/nemoclaw-agent-browser-runtime/node_modules
+    && HOME=/sandbox \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /usr/local/bin/node --experimental-strip-types \
+            /tmp/nemoclaw-agent-browser-cache/lib/seed-reviewed-npm-cache.mts \
+            --packuments-only \
+            --lockfile /tmp/nemoclaw-agent-browser-runtime/package-lock.json \
+            --cache /sandbox/.npm \
+            --registry-origin https://registry.npmjs.org/ \
+    && rm -rf /tmp/nemoclaw-agent-browser-runtime/node_modules \
+        /tmp/nemoclaw-agent-browser-cache
 RUN --network=none agent_browser_version="$( \
         HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
             npm_config_registry=https://registry.npmjs.org/ \

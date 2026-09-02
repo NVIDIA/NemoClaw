@@ -42,6 +42,7 @@ export type ReviewedNpmCacheSeedRequest = Readonly<{
 }>;
 
 type LockedPackage = Readonly<{
+  bin?: Readonly<Record<string, unknown>>;
   bundleDependencies?: readonly string[];
   dependencies?: Readonly<Record<string, unknown>>;
   hasShrinkwrap?: true;
@@ -55,7 +56,7 @@ type LockedPackage = Readonly<{
 }>;
 
 const INSTALL_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
-const REVIEWED_CI_NPM_VERSIONS = new Set(["10.9.4", "10.9.8", "11.17.0"]);
+const REVIEWED_CI_NPM_VERSIONS = new Set(["10.9.4", "10.9.8", "11.17.0", "11.18.0"]);
 
 function packageNameFromLockLocation(location: string): string {
   const marker = "node_modules/";
@@ -127,6 +128,7 @@ function readLockedPackages(
         : requireObject(value, `reviewed npm cache seed ${packageSpec} ${field}`);
     };
     locked.push({
+      bin: optionalRecord("bin"),
       ...(bundleDependencies ? { bundleDependencies: bundleDependencies as string[] } : {}),
       dependencies: optionalRecord("dependencies"),
       ...(record.hasShrinkwrap === true ? { hasShrinkwrap: true as const } : {}),
@@ -208,7 +210,7 @@ function loadCachePut(): CachePut {
   const npmVersion = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
   if (!REVIEWED_CI_NPM_VERSIONS.has(npmVersion)) {
     throw new Error(
-      `reviewed npm cache seed does not support npm@${npmVersion}; expected npm@10.9.4, npm@10.9.8, or npm@11.17.0`,
+      `reviewed npm cache seed does not support npm@${npmVersion}; expected npm@10.9.4, npm@10.9.8, npm@11.17.0, or npm@11.18.0`,
     );
   }
   const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
@@ -293,6 +295,7 @@ export async function seedReviewedNpmCache(
 
     if (!request.tarballsOnly) {
       const version = {
+        ...(entry.bin ? { bin: entry.bin } : {}),
         ...(entry.bundleDependencies ? { bundleDependencies: entry.bundleDependencies } : {}),
         ...(entry.dependencies ? { dependencies: entry.dependencies } : {}),
         dist: { integrity: entry.integrity, tarball: entry.resolved },

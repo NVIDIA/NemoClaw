@@ -44,6 +44,7 @@ function fixture() {
       packages: {
         "": { dependencies: { [PACKAGE_NAME]: "1.2.3" } },
         [`node_modules/${PACKAGE_NAME}`]: {
+          bin: { reviewed: "bin/reviewed.js" },
           bundleDependencies: ["bundled-child"],
           hasShrinkwrap: true,
           integrity,
@@ -136,6 +137,7 @@ describe("reviewed npm cache seed", () => {
     ).toBe(true);
     expect(calls[2]?.data.toString()).toContain(`"integrity":"${input.integrity}"`);
     expect(calls[2]?.data.toString()).toContain(`"tarball":"${TARBALL_URL}"`);
+    expect(calls[2]?.data.toString()).toContain('"bin":{"reviewed":"bin/reviewed.js"}');
     expect(calls[2]?.data.toString()).toContain('"hasShrinkwrap":true');
     expect(calls[2]?.data.toString()).toContain('"bundleDependencies":["bundled-child"]');
   });
@@ -217,7 +219,7 @@ describe("reviewed npm cache seed", () => {
     vi.stubEnv("NPM_TRACE", tracePath);
 
     await expect(seedReviewedNpmCache(request(input))).rejects.toThrow(
-      "reviewed npm cache seed does not support npm@99.0.0; expected npm@10.9.4, npm@10.9.8, or npm@11.17.0",
+      "reviewed npm cache seed does not support npm@99.0.0; expected npm@10.9.4, npm@10.9.8, npm@11.17.0, or npm@11.18.0",
     );
     expect(fs.readFileSync(tracePath, "utf8")).toBe("--version\n");
   });

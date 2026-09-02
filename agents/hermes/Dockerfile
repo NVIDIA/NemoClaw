@@ -87,6 +87,7 @@ COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemocl
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py
+COPY agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/finalize-image-layout.sh
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
@@ -580,7 +581,7 @@ ARG NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256=8b8def1d9cb8088d4de7dd3d920d31fb0d
 ARG NEMOCLAW_HERMES_CRON_JOBS_SOURCE_SHA256=dd5c7c601e23e5058e93d824b17ff426ed2cc5113c20d431ea4937274be59923
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256=6d1c20afd6d0030a4d7c0fcc5a82dea1a9d9b912886aff1343597cfe74be1c8a
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256=30a36097a525449bc9d3b721ba3c3047b1c4f2d8a19da8027bb280867c2d6823
-ARG NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256=fcdb54593fa9e484e16c9f14b8d543aff42da0819327ee7db838e10c568409e7
+ARG NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256=03aa96f0ac2ad4b255b6b4ba5e7f682cc0b0a85ea1fcce685909c45c30a82e52
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
@@ -1068,78 +1069,18 @@ USER root
 # must never enter a Hermes final image. OpenShell starts the sandbox as the
 # sandbox user, so the .hermes-data migration cannot rely on root privileges
 # inside the pod.
+ARG NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256=775c82aaad35ee9e788b85ed624e837507c1e7ba86e775260b356a03a7d0ac86
 # hadolint ignore=DL4006
 RUN set -eu; \
-    config_dir=/sandbox/.hermes; \
-    data_dir=/sandbox/.hermes-data; \
-    openclaw_dir=/sandbox/.openclaw; \
-    if [ -e "$openclaw_dir" ] || [ -L "$openclaw_dir" ]; then \
-        echo "ERROR: Hermes base image contains retired OpenClaw state: $openclaw_dir" >&2; \
-        exit 1; \
-    fi; \
-    mkdir -p "$config_dir"; \
-    if [ -L "$data_dir" ]; then \
-        echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
-        exit 1; \
-    fi; \
-    if [ -d "$data_dir" ]; then \
-        legacy_link="$(find "$data_dir" -type l -print -quit)"; \
-        if [ -n "$legacy_link" ]; then \
-            echo "ERROR: refusing legacy layout cleanup because $legacy_link is a symlink" >&2; \
-            exit 1; \
-        fi; \
-        for entry in "$data_dir"/*; do \
-            [ -e "$entry" ] || [ -L "$entry" ] || continue; \
-            name="$(basename "$entry")"; \
-            target="$config_dir/$name"; \
-            if [ -L "$target" ]; then \
-                rm -f "$target"; \
-            fi; \
-            if [ -d "$entry" ]; then \
-                mkdir -p "$target"; \
-                cp -a "$entry"/. "$target"/; \
-            elif [ ! -e "$target" ]; then \
-                cp -a "$entry" "$target"; \
-            fi; \
-        done; \
-        data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
-        while :; do \
-            replaced_marker="$(mktemp)"; \
-            rm -f "$replaced_marker"; \
-            find "$config_dir" -type l -print | while IFS= read -r link; do \
-                raw_target="$(readlink "$link" 2>/dev/null || true)"; \
-                resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
-                legacy_target=0; \
-                case "$raw_target" in "$data_real"/* | "$data_dir"/*) legacy_target=1 ;; esac; \
-                case "$resolved_target" in "$data_real"/* | "$data_dir"/*) legacy_target=1 ;; esac; \
-                if [ "$legacy_target" -eq 1 ]; then \
-                    copy_target="$resolved_target"; \
-                    if [ -z "$copy_target" ] || { [ ! -e "$copy_target" ] && [ ! -L "$copy_target" ]; }; then \
-                        copy_target="$raw_target"; \
-                    fi; \
-                    if [ -d "$copy_target" ] && [ ! -L "$copy_target" ]; then \
-                            rm -f "$link"; \
-                            mkdir -p "$link"; \
-                            cp -a "$copy_target"/. "$link"/; \
-                    elif [ -e "$copy_target" ] || [ -L "$copy_target" ]; then \
-                            rm -f "$link"; \
-                            cp -a "$copy_target" "$link"; \
-                    else \
-                        echo "ERROR: legacy symlink target missing: $link -> ${raw_target:-$resolved_target}" >&2; \
-                        exit 1; \
-                    fi; \
-                    : > "$replaced_marker"; \
-                fi; \
-            done; \
-            if [ ! -e "$replaced_marker" ]; then \
-                rm -f "$replaced_marker"; \
-                break; \
-            fi; \
-            rm -f "$replaced_marker"; \
-        done; \
-        rm -rf "$data_dir"; \
-    fi; \
-    mkdir -p "$config_dir/memories" \
+    printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256" /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
+    | sha256sum -c - \
+    || { echo "ERROR: finalize-image-layout.sh hash mismatch (update NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256)" >&2; exit 1; }; \
+    /bin/bash /opt/nemoclaw-hermes-config/finalize-image-layout.sh /sandbox \
+    && rm /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
+    && config_dir=/sandbox/.hermes \
+    && data_dir=/sandbox/.hermes-data \
+    && mkdir -p "$config_dir/memories" \
         "$config_dir/sessions" \
         "$config_dir/skills" \
         "$config_dir/plugins" \
@@ -1498,6 +1439,7 @@ RUN check_metadata() { \
     }; \
     check_absent /opt/hermes/tests \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
+    && check_absent /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \

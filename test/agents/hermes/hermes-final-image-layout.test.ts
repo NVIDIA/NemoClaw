@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerRunCommandBetween, runDockerShell } from "../../helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
-const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
+const FINALIZE_IMAGE_LAYOUT = path.join(ROOT, "agents", "hermes", "finalize-image-layout.sh");
 
 type LegacyDataFixture =
   | "none"
@@ -81,7 +81,6 @@ function runFinalLayout({
   legacyData?: LegacyDataFixture;
   openclaw?: OpenClawFixture;
 } = {}) {
-  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-final-layout-"));
   const sandboxRoot = path.join(tmp, "sandbox");
   const hermesDir = path.join(sandboxRoot, ".hermes");
@@ -104,16 +103,24 @@ function runFinalLayout({
   legacyDataSetups[legacyData](fixturePaths);
   openclawSetups[openclaw](fixturePaths);
 
-  const layoutCommand = dockerRunCommandBetween(
-    dockerfile,
-    "# Flatten stale published base images",
-    "# Pin config hash at build time",
-  ).replaceAll("/root/.cache/pip", path.join(tmp, "root-cache", "pip"));
-  const { result } = runDockerShell(layoutCommand, sandboxRoot);
+  const result = spawnSync("bash", [FINALIZE_IMAGE_LAYOUT, sandboxRoot], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
   return { hermesDir, legacyTarget, openclawTarget, result, sandboxRoot, tmp };
 }
 
 describe("Hermes final image layout", () => {
+  it("rejects the filesystem root as the image layout root", () => {
+    const result = spawnSync("bash", [FINALIZE_IMAGE_LAYOUT, "/"], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("image layout root must not be /");
+  });
+
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
     try {
