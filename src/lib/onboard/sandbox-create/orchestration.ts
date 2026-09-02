@@ -1049,7 +1049,8 @@ export function createProviderEffectBoundary(input: {
       throw new Error(
         `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
           `NemoClaw retained the incomplete sandbox on gateway '${input.gatewayName}'. ` +
-          `Do not delete it by mutable sandbox name. Run '${cliName()} ${input.sandboxName} destroy' so NemoClaw can use the retained identity.`,
+          `Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure. ` +
+          `After OpenShell confirms the retained sandbox is absent, run '${cliName()} ${input.sandboxName} destroy --yes' to reconcile residual local resources and its recovery record.`,
       );
     },
   };

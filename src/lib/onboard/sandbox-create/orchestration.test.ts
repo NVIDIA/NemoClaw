@@ -532,18 +532,22 @@ describe("deferred provider effect authority", () => {
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
     expect(runAfterVerifiedCreate).toBeTypeOf("function");
 
-    await expect(
-      runAfterVerifiedCreate?.({
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        gatewayPort: 18790,
-        lifecycleGeneration: "generation-1",
-        lifecycleLiveIdentityFingerprint: "a".repeat(64),
-        route: "direct" as never,
-        revalidateSandboxIdentity,
-      }),
-    ).rejects.toThrow(
-      "OpenShell cannot attach providers to the immutable identity of sandbox 'alpha'. NemoClaw retained the incomplete sandbox on gateway 'nemoclaw'. Do not delete it by mutable sandbox name. Run 'nemoclaw alpha destroy' so NemoClaw can use the retained identity.",
+    const error = await runAfterVerifiedCreate!({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 18790,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "direct" as never,
+      revalidateSandboxIdentity,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure.",
+    );
+    expect((error as Error).message).toContain(
+      "After OpenShell confirms the retained sandbox is absent, run 'nemoclaw alpha destroy --yes' to reconcile residual local resources and its recovery record.",
     );
 
     expect(runOpenshell).not.toHaveBeenCalledWith(
