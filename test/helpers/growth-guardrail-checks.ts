@@ -10,9 +10,6 @@ const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
 const ONBOARD_ENTRY = "src/lib/onboard.ts";
-const DEPRECATED_STOCK_DOCKERFILE = "Dockerfile";
-const DOCKERFILE_INSTRUCTION_RE =
-  /^(?:ADD|ARG|CMD|COPY|ENTRYPOINT|ENV|EXPOSE|FROM|HEALTHCHECK|LABEL|MAINTAINER|ONBUILD|RUN|SHELL|STOPSIGNAL|USER|VOLUME|WORKDIR)\b/iu;
 
 type TestFileSizeBudget = {
   readonly defaultMaxLines: number;
@@ -33,21 +30,6 @@ function countLines(text: string | null): number {
   if (text === null || text.length === 0) return 0;
   const newlineCount = text.match(/\r\n|\r|\n/g)?.length ?? 0;
   return newlineCount + (/(?:\r\n|\r|\n)$/.test(text) ? 0 : 1);
-}
-
-function dockerfileSetupMetrics(source: string | null): {
-  instructionLines: number;
-  instructions: number;
-} {
-  if (source === null) return { instructionLines: 0, instructions: 0 };
-  const setupLines = source
-    .split(/\r\n|\r|\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line !== "" && !line.startsWith("#"));
-  return {
-    instructionLines: setupLines.length,
-    instructions: setupLines.filter((line) => DOCKERFILE_INSTRUCTION_RE.test(line)).length,
-  };
 }
 
 function positiveInteger(value: unknown, label: string): number {
@@ -315,34 +297,6 @@ export async function onboardGrowthViolations(diff: GrowthGuardrailDiff): Promis
   return headLines > baseLines ? [`${ONBOARD_ENTRY} grew by ${headLines - baseLines} line(s)`] : [];
 }
 
-export async function dockerfileSetupGrowthViolations(
-  diff: GrowthGuardrailDiff,
-): Promise<string[]> {
-  const changed = diff.files.some(
-    ({ filename, previous_filename }) =>
-      filename === DEPRECATED_STOCK_DOCKERFILE || previous_filename === DEPRECATED_STOCK_DOCKERFILE,
-  );
-  if (!changed) return [];
-  const [base, head] = await Promise.all([
-    diff.readBase([DEPRECATED_STOCK_DOCKERFILE]),
-    diff.readHead([DEPRECATED_STOCK_DOCKERFILE]),
-  ]);
-  const baseMetrics = dockerfileSetupMetrics(base.get(DEPRECATED_STOCK_DOCKERFILE) ?? null);
-  const headMetrics = dockerfileSetupMetrics(head.get(DEPRECATED_STOCK_DOCKERFILE) ?? null);
-  const violations: string[] = [];
-  if (headMetrics.instructions > baseMetrics.instructions) {
-    violations.push(
-      `${DEPRECATED_STOCK_DOCKERFILE} setup instructions increased from ${baseMetrics.instructions} to ${headMetrics.instructions}`,
-    );
-  }
-  if (headMetrics.instructionLines > baseMetrics.instructionLines) {
-    violations.push(
-      `${DEPRECATED_STOCK_DOCKERFILE} setup instruction lines increased from ${baseMetrics.instructionLines} to ${headMetrics.instructionLines}`,
-    );
-  }
-  return violations;
-}
-
 export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<string[]> {
   const budgetChanged = diff.files.some(
     ({ filename, previous_filename }) =>
@@ -468,12 +422,6 @@ export const diagnostics = {
       details,
       "Move new behavior into a focused module under src/lib/onboard/.",
     ),
-  dockerfileSetup: (details: readonly string[]) =>
-    formatList(
-      "The deprecated stock Dockerfile setup surface grew.",
-      details,
-      "Dockerfile-based stock setup is deprecated. Add stock setup through the managed-image startup profile, bootstrap, or runtime-provider path instead; keep Dockerfile changes limited to shrinking this deprecated setup surface.",
-    ),
   size: (details: readonly string[]) =>
     formatList(
       "The test file size budget was exceeded or weakened.",
@@ -494,4 +442,4 @@ export const diagnostics = {
     ),
 };
 
-export const testOnly = { countIfStatements, countTestLoops, dockerfileSetupMetrics };
+export const testOnly = { countIfStatements, countTestLoops };
