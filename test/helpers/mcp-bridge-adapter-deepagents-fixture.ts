@@ -216,7 +216,7 @@ function createDeepAgentsFixturePythonExecutable(
     "        return",
     "    if managed_swap_phase == 'before-open' and event == 'c_call' and target is os.open:",
     "        replace_managed_path()",
-    "    elif managed_swap_phase == 'after-open' and event == 'c_return' and target is os.open:",
+    "    elif managed_swap_phase == 'after-open' and event == 'c_return' and target is os.open and _frame.f_code.co_name == 'open_managed_projection':",
     "        replace_managed_path()",
     "    elif managed_swap_phase == 'after-missing-open' and event == 'c_exception' and target is os.open:",
     "        replace_managed_path()",
