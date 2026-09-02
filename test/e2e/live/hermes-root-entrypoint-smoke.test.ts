@@ -605,11 +605,14 @@ async function runMutableLayoutSwapRefusalVariant(
 ): Promise<void> {
   const container = `nemoclaw-hermes-root-layout-swap-${runId}`;
   const bootstrap = String.raw`set -euo pipefail
-real_python="$(command -v python3)"
-install -d -m 755 /tmp/nemoclaw-layout-swap-bin /tmp/nemoclaw-layout-external
+startup_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+python_path="$(PATH="$startup_path" command -v python3)"
+real_python="$python_path.nemoclaw-test-real"
+mv "$python_path" "$real_python"
+install -d -m 755 /tmp/nemoclaw-layout-external
 printf 'outside sentinel\n' >/tmp/nemoclaw-layout-external/sentinel.txt
 chmod 640 /tmp/nemoclaw-layout-external/sentinel.txt
-cat >/tmp/nemoclaw-layout-swap-bin/python3 <<'WRAPPER'
+cat >"$python_path" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
 if [ "$(printenv NEMOCLAW_HERMES_LAYOUT_DIR_NAME || true)" != "." ]; then
@@ -634,12 +637,12 @@ with open(script, encoding="utf-8") as stream:
     exec(compile(stream.read(), script, "exec"))
 '
 WRAPPER
-chmod 755 /tmp/nemoclaw-layout-swap-bin/python3
+chmod 755 "$python_path"
 export NEMOCLAW_TEST_REAL_PYTHON="$real_python"
 stat -c '%U:%G %a %s' /tmp/nemoclaw-layout-external /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.stat
 sha256sum /tmp/nemoclaw-layout-external/sentinel.txt >/tmp/nemoclaw-layout-external.sha256
 set +e
-PATH="/tmp/nemoclaw-layout-swap-bin:$PATH" /usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-layout-swap-start.log 2>&1
+/usr/bin/timeout 30s /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start >/tmp/nemoclaw-layout-swap-start.log 2>&1
 startup_status=$?
 set -e
 test "$startup_status" -ne 0
