@@ -15,6 +15,18 @@ let session: OnboardSessionModule;
 let lockHolder: LockHolderModule;
 let tmpDir: string;
 
+function readFileSnapshot(filePath: string): { ino: number; contents: string } {
+  const descriptor = fs.openSync(filePath, "r");
+  try {
+    return {
+      ino: fs.fstatSync(descriptor).ino,
+      contents: fs.readFileSync(descriptor, "utf8"),
+    };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lock-ownership-"));
   vi.stubEnv("HOME", tmpDir);
@@ -156,7 +168,7 @@ describe("onboard lock ownership", () => {
     const owner = makeOwner(localRecord);
     const contents = JSON.stringify(owner.record);
     fs.writeFileSync(session.LOCK_FILE, contents, { mode: 0o600 });
-    const inode = fs.statSync(session.LOCK_FILE).ino;
+    const inode = readFileSnapshot(session.LOCK_FILE).ino;
 
     const result = session.acquireOnboardLock("nemoclaw onboard --resume");
 
@@ -166,8 +178,7 @@ describe("onboard lock ownership", () => {
       holderIdentityVerified: false,
       holderProvenance: owner.provenance,
     });
-    expect(fs.statSync(session.LOCK_FILE).ino).toBe(inode);
-    expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(contents);
+    expect(readFileSnapshot(session.LOCK_FILE)).toEqual({ ino: inode, contents });
     const contention = session.describeOnboardLockContention(result);
     expect(contention.reason).toContain(session.LOCK_FILE);
     expect(contention.reason).toContain(owner.reason);
@@ -282,8 +293,10 @@ describe("onboard lock ownership", () => {
         holderProvenance: provenance,
       });
       expect(renameSpy).toHaveBeenCalledOnce();
-      expect(fs.statSync(session.LOCK_FILE).ino).toBe(replacementInode);
-      expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(replacementContents);
+      expect(readFileSnapshot(session.LOCK_FILE)).toEqual({
+        ino: replacementInode,
+        contents: replacementContents,
+      });
       expect(
         fs
           .readdirSync(path.dirname(session.LOCK_FILE))
