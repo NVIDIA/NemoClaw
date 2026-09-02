@@ -277,6 +277,37 @@ describe("PR review advisor specialist lifecycle", () => {
     expect(calls).toEqual(["create", "run", "download", "remove"]);
   });
 
+  it("reports deterministic specialist lifecycle phase durations", async () => {
+    const timingLines: string[] = [];
+    const timestamps = [0, 11, 11, 34, 34, 71, 71, 76, 76, 83];
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => undefined,
+      run: () => undefined,
+      download: () => undefined,
+      remove: () => undefined,
+    };
+
+    await runAdvisorSpecialist({
+      env: {},
+      lifecycle,
+      validate: () => undefined,
+      timing: {
+        now: () => timestamps.shift() as number,
+        write: (line) => timingLines.push(line),
+      },
+    });
+
+    expect(timingLines).toEqual([
+      "PR Review Advisor timing: phase=configure duration_ms=11",
+      "PR Review Advisor timing: phase=sandbox-create-readiness duration_ms=23",
+      "PR Review Advisor timing: phase=pi-run duration_ms=37",
+      "PR Review Advisor timing: phase=artifact-download-validation duration_ms=5",
+      "PR Review Advisor timing: phase=cleanup duration_ms=7",
+    ]);
+  });
+
   it.each([
     { failedStage: "configure", expectedDownload: false },
     { failedStage: "create", expectedDownload: false },
