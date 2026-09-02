@@ -25,10 +25,10 @@ import { filterEnabledPlanEntries } from "./plan-filter";
 import type {
   MessagingCredentialApplyOptions,
   MessagingCredentialApplyResult,
-  MessagingCredentialProviderDefinition,
+  MessagingCredentialProviderEphemeralInput,
   MessagingProviderCleanupOptions,
   MessagingProviderCleanupResult,
-  MessagingProviderRefreshDefinition,
+  MessagingProviderRefreshEphemeralInput,
 } from "./types";
 
 type MessagingCredentialApplyEntry = MessagingCredentialApplyResult["upserted"][number];
@@ -305,7 +305,7 @@ export async function cleanupProvidersAtOpenShell(
 function definitionsFromPlan(
   env: NodeJS.ProcessEnv,
   bindings: readonly SandboxMessagingCredentialBindingPlan[],
-): MessagingCredentialProviderDefinition[] {
+): MessagingCredentialProviderEphemeralInput[] {
   const profile = {
     profilePath: messagingCredentialProviderProfilePath(REPOSITORY_ROOT),
     profileType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -323,7 +323,7 @@ function definitionsFromPlan(
 }
 
 function assertUniqueDefinitions(
-  definitions: readonly MessagingCredentialProviderDefinition[],
+  definitions: readonly MessagingCredentialProviderEphemeralInput[],
 ): void {
   const names = new Set<string>();
   const profilePaths = new Map<string, string>();
@@ -354,8 +354,8 @@ function assertUniqueDefinitions(
 }
 
 function assertRefreshDefinitions(
-  refreshes: readonly MessagingProviderRefreshDefinition[],
-  definitions: readonly MessagingCredentialProviderDefinition[],
+  refreshes: readonly MessagingProviderRefreshEphemeralInput[],
+  definitions: readonly MessagingCredentialProviderEphemeralInput[],
 ): void {
   const definitionsByName = new Map(
     definitions.map((definition) => [definition.providerName, definition]),
@@ -397,7 +397,7 @@ function assertAuthorizedAttachment(options: MessagingCredentialApplyOptions): v
 }
 
 async function prepareProfiles(
-  definitions: readonly MessagingCredentialProviderDefinition[],
+  definitions: readonly MessagingCredentialProviderEphemeralInput[],
   target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
 ): Promise<void> {
@@ -422,7 +422,7 @@ function readCredentialEnv(env: NodeJS.ProcessEnv, envKey: string): string | nul
 }
 
 function toReuseEntry(
-  definition: MessagingCredentialProviderDefinition,
+  definition: MessagingCredentialProviderEphemeralInput,
 ): MessagingCredentialReuseEntry {
   return {
     channelId: definition.channelId,
@@ -433,7 +433,7 @@ function toReuseEntry(
 }
 
 function toMissingEntry(
-  definition: MessagingCredentialProviderDefinition,
+  definition: MessagingCredentialProviderEphemeralInput,
 ): MessagingMissingCredentialEntry {
   return {
     channelId: definition.channelId,
@@ -445,7 +445,7 @@ function toMissingEntry(
 
 function classifyProviderDefinition(
   result: OpenShellProviderResult<OpenShellProviderMetadata>,
-  definition: MessagingCredentialProviderDefinition,
+  definition: MessagingCredentialProviderEphemeralInput,
 ): ProviderBindingState {
   if (!result.ok) {
     return result.error.kind === "command" && result.error.reason === "not_found"
@@ -456,6 +456,7 @@ function classifyProviderDefinition(
   const actualCredentialKeys = [...result.value.credentialKeys].sort();
   return result.value.name === definition.providerName &&
     result.value.type === definition.providerType &&
+    result.value.configKeys.length === 0 &&
     actualCredentialKeys.length === expectedCredentialKeys.length &&
     actualCredentialKeys.every((key, index) => key === expectedCredentialKeys[index])
     ? "exact"
@@ -469,7 +470,7 @@ function providerFailureMessage(
 }
 
 function bindingConflict(
-  definition: MessagingCredentialProviderDefinition,
+  definition: MessagingCredentialProviderEphemeralInput,
 ): MessagingProviderApplyError {
   return new MessagingProviderApplyError({
     message:
@@ -538,7 +539,7 @@ async function deleteProviderForReplacement(
 }
 
 async function configureRefreshes(
-  refreshes: readonly MessagingProviderRefreshDefinition[],
+  refreshes: readonly MessagingProviderRefreshEphemeralInput[],
   options: MessagingCredentialApplyOptions,
   providerAdapter: OpenShellProviderAdapter,
 ): Promise<void> {

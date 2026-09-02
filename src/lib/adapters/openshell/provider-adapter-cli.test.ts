@@ -439,6 +439,34 @@ describe("CLI OpenShell provider adapter", () => {
     expect(JSON.stringify([attached, configured, status])).not.toContain(refreshSecret);
   });
 
+  it("redacts refresh secrets from failed command diagnostics (#9806)", async () => {
+    const refreshSecret = "refresh-secret-value";
+    const run = vi.fn<RunProviderCommand>(() =>
+      captured(1, "", `provider refresh rejected ${refreshSecret}`),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    const result = await adapter.configureProviderRefresh({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+      credentialKey: "TAVILY_API_KEY",
+      strategy: "test-refresh",
+      material: [{ key: "scope", value: "search" }],
+      secretMaterial: [{ key: "private_key", value: refreshSecret }],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "provider refresh rejected <REDACTED>",
+      },
+    });
+    expect(run.mock.calls.flatMap(([args]) => args)).not.toContain(refreshSecret);
+    expect(JSON.stringify(result)).not.toContain(refreshSecret);
+  });
+
   it("updates a provider without placing credential values in argv (#9806)", async () => {
     const run = vi.fn<RunProviderCommand>(() => captured(0));
     const adapter = createCliOpenShellProviderAdapter({ run });

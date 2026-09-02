@@ -79,7 +79,12 @@ export type MessagingCredentialProviderProfile = Readonly<{
   profileType: string;
 }>;
 
-export type MessagingCredentialProviderDefinition = Readonly<{
+/**
+ * Ephemeral provider adapter input. Credential values may be present only while
+ * applying the provider and must never enter a serializable plan, persisted
+ * state, diagnostic, log message, or applier result.
+ */
+export type MessagingCredentialProviderEphemeralInput = Readonly<{
   channelId: MessagingChannelId;
   credentialId: string;
   providerName: string;
@@ -88,7 +93,12 @@ export type MessagingCredentialProviderDefinition = Readonly<{
   profile: MessagingCredentialProviderProfile;
 }>;
 
-export type MessagingProviderRefreshDefinition = Readonly<{
+/**
+ * Ephemeral refresh adapter input. `secretMaterial` is process-memory-only and
+ * must reach OpenShell through the child environment, never argv, serialized
+ * plans, persisted state, diagnostics, log messages, or applier results.
+ */
+export type MessagingProviderRefreshEphemeralInput = Readonly<{
   channelId: MessagingChannelId;
   providerName: string;
   credentialKey: string;
@@ -105,8 +115,8 @@ export type MessagingCredentialApplyOptions = MessagingSetupEnvOptions &
   MessagingCredentialProviderBoundary &
   Readonly<{
     target?: OpenShellGatewayTarget;
-    definitions?: readonly MessagingCredentialProviderDefinition[];
-    refreshes?: readonly MessagingProviderRefreshDefinition[];
+    definitions?: readonly MessagingCredentialProviderEphemeralInput[];
+    refreshes?: readonly MessagingProviderRefreshEphemeralInput[];
     replaceExisting?: boolean;
     allowedSandboxes?: readonly string[];
     attachToSandbox?: string;

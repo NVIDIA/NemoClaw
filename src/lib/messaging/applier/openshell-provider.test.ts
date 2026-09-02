@@ -14,8 +14,8 @@ import {
   type MessagingProviderApplyError,
 } from "./openshell-provider";
 import type {
-  MessagingCredentialProviderDefinition,
-  MessagingProviderRefreshDefinition,
+  MessagingCredentialProviderEphemeralInput,
+  MessagingProviderRefreshEphemeralInput,
 } from "./types";
 
 const target = namedOpenShellGateway("nemoclaw");
@@ -35,8 +35,8 @@ const plan: SandboxMessagingPlan = {
 };
 
 function definition(
-  overrides: Partial<MessagingCredentialProviderDefinition> = {},
-): MessagingCredentialProviderDefinition {
+  overrides: Partial<MessagingCredentialProviderEphemeralInput> = {},
+): MessagingCredentialProviderEphemeralInput {
   return {
     channelId: "telegram",
     credentialId: "TELEGRAM_BOT_TOKEN",
@@ -48,7 +48,7 @@ function definition(
   };
 }
 
-function metadata(input: MessagingCredentialProviderDefinition) {
+function metadata(input: MessagingCredentialProviderEphemeralInput) {
   return {
     name: input.providerName,
     type: input.providerType,
@@ -133,27 +133,33 @@ describe("messaging OpenShell provider application", () => {
     });
   });
 
-  it("rejects a provider collision before profile or provider mutation (#9806)", async () => {
-    const expected = definition();
-    const adapter = providerAdapter({
-      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
-        ok: true,
-        value: { ...metadata(expected), type: "generic" },
-      }),
-    });
+  it.each([
+    ["provider type", { type: "generic" }],
+    ["configuration keys", { configKeys: ["BASE_URL"] }],
+  ])(
+    "rejects a %s collision before profile or provider mutation (#9806)",
+    async (_field, conflictingMetadata) => {
+      const expected = definition();
+      const adapter = providerAdapter({
+        getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+          ok: true,
+          value: { ...metadata(expected), ...conflictingMetadata },
+        }),
+      });
 
-    const failure = await applyCredentialsAtOpenShell(plan, {
-      providerAdapter: adapter,
-      target,
-      definitions: [expected],
-    }).catch((error: unknown) => error);
+      const failure = await applyCredentialsAtOpenShell(plan, {
+        providerAdapter: adapter,
+        target,
+        definitions: [expected],
+      }).catch((error: unknown) => error);
 
-    expect(isMessagingProviderBindingConflict(failure)).toBe(true);
-    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
-    expect(adapter.createProvider).not.toHaveBeenCalled();
-    expect(adapter.updateProvider).not.toHaveBeenCalled();
-    expect(adapter.deleteProvider).not.toHaveBeenCalled();
-  });
+      expect(isMessagingProviderBindingConflict(failure)).toBe(true);
+      expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+      expect(adapter.createProvider).not.toHaveBeenCalled();
+      expect(adapter.updateProvider).not.toHaveBeenCalled();
+      expect(adapter.deleteProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects replacement when any attachment is outside the authorized sandbox (#9806)", async () => {
     const expected = definition();
@@ -344,13 +350,13 @@ describe("messaging OpenShell provider application", () => {
     });
   });
 
-  it("keeps provider and refresh secrets out of results and diagnostics (#9806)", async () => {
+  it("keeps provider and refresh secrets out of successful results (#9806)", async () => {
     const credentialSecret = "credential-secret-value";
     const refreshSecret = "refresh-secret-value";
     const expected = definition({
       credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: credentialSecret }],
     });
-    const refresh: MessagingProviderRefreshDefinition = {
+    const refresh: MessagingProviderRefreshEphemeralInput = {
       channelId: "telegram",
       providerName: expected.providerName,
       credentialKey: "TELEGRAM_BOT_TOKEN",
@@ -386,7 +392,7 @@ describe("messaging OpenShell provider application", () => {
     "reports %s refresh failure with mutation evidence (#9806)",
     async (failureKind) => {
       const expected = definition();
-      const refresh: MessagingProviderRefreshDefinition = {
+      const refresh: MessagingProviderRefreshEphemeralInput = {
         channelId: "telegram",
         providerName: expected.providerName,
         credentialKey: "TELEGRAM_BOT_TOKEN",

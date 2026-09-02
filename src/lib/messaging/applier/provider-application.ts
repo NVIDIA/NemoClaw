@@ -15,8 +15,8 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../provider-profile";
 import type {
-  MessagingCredentialProviderDefinition,
-  MessagingProviderRefreshDefinition,
+  MessagingCredentialProviderEphemeralInput,
+  MessagingProviderRefreshEphemeralInput,
 } from "./types";
 
 export interface BuildMessagingProviderApplicationInput {
@@ -30,16 +30,17 @@ export interface BuildMessagingProviderApplicationInput {
   readonly profiles?: readonly MessagingBridgeProfile[];
 }
 
-export interface MessagingProviderApplicationPlan {
+/** Process-memory-only inputs for one immediate provider application. */
+export interface MessagingProviderEphemeralInputs {
   readonly messagingTokenDefs: readonly MessagingTokenDef[];
   readonly otherTokenDefs: readonly MessagingTokenDef[];
-  readonly definitions: readonly MessagingCredentialProviderDefinition[];
-  readonly refreshes: readonly MessagingProviderRefreshDefinition[];
+  readonly definitions: readonly MessagingCredentialProviderEphemeralInput[];
+  readonly refreshes: readonly MessagingProviderRefreshEphemeralInput[];
 }
 
 export function buildMessagingProviderApplication(
   input: BuildMessagingProviderApplicationInput,
-): MessagingProviderApplicationPlan {
+): MessagingProviderEphemeralInputs {
   const profiles = messagingBridgeProfilesForAgent(
     input.agent,
     input.profiles ?? listMessagingBridgeProfiles({ root: input.root }),
@@ -47,8 +48,8 @@ export function buildMessagingProviderApplication(
   const profilesByType = new Map(profiles.map((profile) => [profile.profileId, profile]));
   const messagingTokenDefs: MessagingTokenDef[] = [];
   const otherTokenDefs: MessagingTokenDef[] = [];
-  const definitions: MessagingCredentialProviderDefinition[] = [];
-  const refreshes: MessagingProviderRefreshDefinition[] = [];
+  const definitions: MessagingCredentialProviderEphemeralInput[] = [];
+  const refreshes: MessagingProviderRefreshEphemeralInput[] = [];
 
   for (const tokenDef of input.tokenDefs) {
     const providerType = tokenDef.providerType ?? "generic";
@@ -98,7 +99,7 @@ function buildRefreshDefinition(
   tokenDef: MessagingTokenDef,
   profile: RefreshingMessagingBridgeProfile,
   input: BuildMessagingProviderApplicationInput,
-): MessagingProviderRefreshDefinition {
+): MessagingProviderRefreshEphemeralInput {
   const secret = resolveMessagingBridgeSecret(profile.sourceSecretEnv, {
     getCredential: input.getCredential,
     env: input.env,
