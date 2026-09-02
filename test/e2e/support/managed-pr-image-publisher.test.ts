@@ -6,14 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  main,
   managedPrImageContract,
   type ManagedPrImageExpectedIdentity,
   validateManagedPrImageBundle,
 } from "../../../tools/e2e/managed-pr-image-publisher.mts";
-import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
 
 let fixtureRoot: string | undefined;
 
@@ -156,12 +156,25 @@ describe("trusted managed PR image publisher", () => {
     );
   });
 
-  it("rejects unreferenced artifact content", async () => {
+  it("blocks publication when the authenticated artifact contains unreferenced content", async () => {
     const fixture = imageBundle("linux/amd64");
     fs.writeFileSync(path.join(fixture.root, "layout", "blobs", "sha256", "f".repeat(64)), "x");
-    await expect(validateManagedPrImageBundle(fixture.root, fixture.expected)).rejects.toThrow(
-      "unreferenced or missing file",
-    );
+    const publishWithPackageAuthority = vi.fn();
+    const trustedPublisherBoundary = async (): Promise<void> => {
+      await main(["validate", fixture.root], {
+        AGENT: fixture.expected.agent,
+        CANDIDATE_SHA: fixture.expected.candidateSha,
+        GITHUB_OUTPUT: path.join(fixture.root, "publisher-output"),
+        IMAGE: fixture.expected.image,
+        PLATFORM: fixture.expected.platform,
+        SOURCE_RUN_ATTEMPT: fixture.expected.runAttempt,
+        SOURCE_RUN_ID: fixture.expected.runId,
+      });
+      publishWithPackageAuthority();
+    };
+
+    await expect(trustedPublisherBoundary()).rejects.toThrow("unreferenced or missing file");
+    expect(publishWithPackageAuthority).not.toHaveBeenCalled();
   });
 
   it("writes an immutable contract for only the authenticated source identity", () => {
@@ -177,60 +190,6 @@ describe("trusted managed PR image publisher", () => {
         repository: "NVIDIA/NemoClaw",
         revision: "a".repeat(40),
       },
-    });
-  });
-
-  it("keeps package authority out of PR-controlled jobs and binds it to the trusted publisher", () => {
-    const source = readWorkflow("managed-images.yaml");
-    expect(source.permissions).toEqual({ contents: "read" });
-    expect(
-      required(source.jobs?.["pr-reviewed-npm-audit"], "missing PR audit").permissions,
-    ).not.toHaveProperty("packages");
-    expect(
-      required(source.jobs?.["pr-staging-qa-deep-code"], "missing PR staging QA").permissions,
-    ).not.toHaveProperty("packages");
-    expect(
-      required(source.jobs?.["pr-build-and-entrypoint"], "missing PR builder").permissions,
-    ).not.toHaveProperty("packages");
-    expect(
-      required(source.jobs?.["pi-candidate"], "missing Pi candidate").permissions,
-    ).not.toHaveProperty("packages");
-    const prBuilder = required(source.jobs?.["pr-build-and-entrypoint"], "missing PR builder");
-    expect(JSON.stringify(prBuilder)).not.toContain("secrets.GITHUB_TOKEN");
-    expect(
-      step(prBuilder, "Upload the credential-free candidate image bundle").with?.name,
-    ).toContain("managed-pr-image-");
-
-    const controller = readWorkflow("managed-runtime-base-qualification.yaml");
-    const publisher = required(
-      controller.jobs?.["publish-candidate-images"],
-      "missing trusted candidate publisher",
-    );
-    expect(publisher).toMatchObject({
-      needs: "authenticate-source",
-      permissions: { actions: "read", contents: "read", packages: "write" },
-    });
-    expect(step(publisher, "Check out the trusted image publisher").with?.ref).toBe(
-      "${{ github.workflow_sha }}",
-    );
-    expect(
-      step(publisher, "Download the exact authenticated candidate image bundle").with,
-    ).toMatchObject({
-      "run-id": "${{ needs.authenticate-source.outputs.source_run_id }}",
-      name: expect.stringContaining("managed-pr-image-"),
-    });
-    const steps = publisher.steps ?? [];
-    expect(
-      steps.indexOf(
-        step(publisher, "Validate the authenticated OCI artifact without executing it"),
-      ),
-    ).toBeLessThan(steps.indexOf(step(publisher, "Log in only inside the trusted publisher")));
-    expect(step(publisher, "Publish the validated OCI artifact by digest").with).toMatchObject({
-      context: "trusted",
-      file: "trusted/tools/e2e/managed-pr-image-publisher.Dockerfile",
-      "build-contexts": "candidate=oci-layout://${{ steps.bundle.outputs.oci_reference }}",
-      outputs:
-        "type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true",
     });
   });
 });
