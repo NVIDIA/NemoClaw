@@ -65,11 +65,9 @@ else
 fi
 
 # -------------------------------------------------------
-info "3b. Verify blueprint profile validation from compiled TypeScript"
+info "3b. Verify blueprint profile and policy YAML contracts"
 # -------------------------------------------------------
-# Independent backstop for validate-blueprint.test.ts — exercises the same
-# checks from the compiled TS inside the Docker container so a vitest
-# loading bug cannot hide a broken blueprint.
+# Direct YAML backstop for profile declarations, definitions, and base policy.
 if node --input-type=module -e "
   import { createRequire } from 'node:module';
   import { readFileSync } from 'node:fs';
@@ -103,9 +101,9 @@ if node --input-type=module -e "
 
   console.log('Validated ' + declared.length + ' profiles: ' + declared.join(', '));
 "; then
-  pass "Blueprint validation from compiled TS inside Docker"
+  pass "Blueprint profile and policy YAML contracts are valid"
 else
-  fail "Blueprint validation from compiled TS failed"
+  fail "Blueprint profile or policy YAML contract is invalid"
 fi
 
 # -------------------------------------------------------
