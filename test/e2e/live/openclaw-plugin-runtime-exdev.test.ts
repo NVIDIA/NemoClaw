@@ -552,7 +552,10 @@ test(
     });
     const crossDeviceInstallText = resultText(crossDeviceInstall);
     expect(crossDeviceInstall.exitCode, crossDeviceInstallText).toBe(0);
-    expect(crossDeviceInstallText).toMatch(/source_device=\d+ target_device=\d+/);
+    const deviceMatch = /source_device=(\d+) target_device=(\d+)/.exec(crossDeviceInstallText);
+    expect(deviceMatch, crossDeviceInstallText).not.toBeNull();
+    const [, sourceDevice, targetDevice] = deviceMatch!;
+    expect(sourceDevice, crossDeviceInstallText).not.toBe(targetDevice);
 
     progress.phase("restart the gateway and confirm the installed payload");
     const restart = await host.command(
@@ -623,7 +626,7 @@ test(
       assertions: {
         crossDevicePayloadSurvivedRestart: weatherAfterRestart === "v1-exdev",
         recreationInstalledV2: weatherAfterRecreate === "v2",
-        distinctDevices: /source_device=\d+ target_device=\d+/.test(crossDeviceInstallText),
+        distinctDevices: sourceDevice !== targetDevice,
         productionInstallCompleted: crossDeviceInstall.exitCode === 0,
       },
     });
