@@ -433,7 +433,7 @@ function runHermesRootStartupMutableRootPreflight() {
       extractShellFunctionFromSource(src, "ensure_hermes_mutable_layout_dir"),
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
-      'dir_mode() { stat -c "%a" "$HERMES_DIR" 2>/dev/null || stat -f "%Lp" "$HERMES_DIR"; }',
+      'dir_mode() { python3 -I -c "import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o7777)[2:])" "$HERMES_DIR"; }',
       'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
       'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
@@ -1493,7 +1493,7 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     expect(run.result.status).toBe(0);
     expect(run.result.stdout).toContain("verify mode=750");
     expect(run.result.stdout).toContain("lazy mode=750");
-    expect(run.result.stdout).toContain("api-key mode=770");
+    expect(run.result.stdout).toContain("api-key mode=3770");
     expect(run.result.stdout).toContain("tirith-state=0");
     expect(run.hermesDirMode).toBe("3770");
   });
