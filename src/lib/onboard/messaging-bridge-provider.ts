@@ -20,6 +20,7 @@ import path from "node:path";
 import YAML from "yaml";
 
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
+import { importCliOpenShellProviderProfile } from "../adapters/openshell/provider-adapter-cli";
 import {
   exportedProviderProfileMatchesContract,
   parseCheckedInProviderProfileContract,
@@ -444,68 +445,24 @@ export function ensureMessagingBridgeProfiles(
   };
 
   for (const profile of active) {
-    // Onboard registers each bridge provider twice: once up front so an
-    // interrupted run can resume, then again during create-plan materialization.
-    // Probe first and skip the re-import so the second pass never hits OpenShell's
-    // "already exists" error. A fresh gateway answers the probe with a harmless
-    // "not found" that suppressOutput hides — only the exit status says whether
-    // the profile already exists.
-    const alreadyRegistered = deps.runOpenshell(
-      ["provider", "profile", "export", profile.profileId, "--output", "json"],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    // This is the synchronous implementation behind
+    // OpenShellProviderAdapter.importProviderProfile. It verifies an existing
+    // profile first and imports only after a strict not-found response.
+    const result = importCliOpenShellProviderProfile(
+      {
+        profilePath: profile.profilePath,
+        target: { kind: "selected" },
+        timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+      },
+      { readProfileFile: readFileSync, run: deps.runOpenshell },
     );
-    if (alreadyRegistered.status === 0) {
-      if (
-        !profileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(alreadyRegistered.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedProfile(profile);
-        return;
-      }
-      continue;
-    }
-    // Probe failed for something other than "not found" (gateway down, auth, …):
-    // surface it instead of masking a real problem.
-    const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
-      alreadyRegistered.stdout,
-    )}`;
-    if (probeDiagnostic.trim() && !/not found/i.test(probeDiagnostic)) {
-      errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} provider profile:`);
-      const probeText = compactText(deps.redact(probeDiagnostic));
-      if (probeText) errorLog(`    ${probeText.slice(0, 500)}`);
+    if (result.ok) continue;
+    if (result.error.kind === "command" && result.error.reason === "profile_incompatible") {
+      rejectMismatchedProfile(profile);
+      return;
     }
 
-    const result = deps.runOpenshell(
-      ["provider", "profile", "import", "--file", profile.profilePath],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (result.status === 0) continue;
-
-    // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
-    const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-    if (/already exists/i.test(rawDiagnostic)) {
-      const racedProfile = deps.runOpenshell(
-        ["provider", "profile", "export", profile.profileId, "--output", "json"],
-        { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      if (
-        racedProfile.status !== 0 ||
-        !profileMatchesCheckedInBoundary(
-          profile,
-          bufferOrStringToText(racedProfile.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedProfile(profile);
-        return;
-      }
-      continue;
-    }
-
-    const diagnostic = compactText(deps.redact(rawDiagnostic));
+    const diagnostic = compactText(deps.redact(result.error.message));
     errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
     if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
     errorLog("    Inspect the preceding OpenShell error.");
@@ -513,7 +470,7 @@ export function ensureMessagingBridgeProfiles(
       "    If OpenShell does not support this provider profile, update OpenShell with scripts/install-openshell.sh.",
     );
     errorLog("    Then re-run onboarding.");
-    exit(result.status || 1);
+    exit(1);
     return;
   }
 }

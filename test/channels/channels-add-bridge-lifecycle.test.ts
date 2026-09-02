@@ -11,7 +11,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import YAML from "yaml";
 import {
   addSandboxChannel,
   removeSandboxChannel,
@@ -45,15 +44,51 @@ const GOOGLECHAT_ENV = {
   GOOGLECHAT_AUDIENCE: "https://bot.example.com/googlechat",
   GOOGLECHAT_APP_PRINCIPAL: "123456789012345678901",
 };
-const GOOGLECHAT_PROFILE_DOC = YAML.parse(
-  fs.readFileSync(
-    path.join(
-      process.cwd(),
-      "src/lib/messaging/channels/googlechat/provider-profile/openclaw.yaml",
-    ),
-    "utf-8",
-  ),
-) as Record<string, unknown>;
+const GOOGLECHAT_PROFILE_DOC = {
+  id: "google-chat-bridge",
+  credentials: [
+    {
+      name: "access_token",
+      env_vars: ["GOOGLE_CHAT_ACCESS_TOKEN"],
+      required: true,
+      auth_style: "bearer",
+      header_name: "Authorization",
+      query_param: "",
+      refresh: {
+        strategy: "google-service-account-jwt",
+        scopes: ["https://www.googleapis.com/auth/chat.bot"],
+        material: [
+          {
+            name: "client_email",
+            description: "Service-account client email (JWT issuer)",
+            required: true,
+          },
+          {
+            name: "private_key",
+            description: "Service-account RSA private key (PEM); signs the JWT assertion",
+            required: true,
+            secret: true,
+          },
+          {
+            name: "scope",
+            description: "OAuth scope(s) to mint the token for",
+          },
+        ],
+      },
+    },
+  ],
+  endpoints: [
+    {
+      host: "chat.googleapis.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+  inference_capable: false,
+} as const;
 const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
 
 // Why this mock exists: the real googlechat tunnel/audience gate needs a human

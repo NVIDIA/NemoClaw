@@ -139,7 +139,7 @@ export function exportedProviderProfileMatchesContract(
   }
 }
 
-function isMissingProviderProfile(output: string, profileId: string): boolean {
+export function isMissingProviderProfile(output: string, profileId: string): boolean {
   const normalized = output
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "")
     .replace(/\r/gu, "")

@@ -334,7 +334,6 @@ describe("CLI OpenShell provider adapter", () => {
   it("treats an existing provider profile as already present (#9806)", async () => {
     const run = vi
       .fn<RunProviderCommand>()
-      .mockReturnValueOnce(captured(1, "", "provider profile already exists"))
       .mockReturnValueOnce(captured(0, JSON.stringify(TAVILY_PROFILE)));
     const adapter = createCliOpenShellProviderAdapter({
       run,
@@ -348,15 +347,15 @@ describe("CLI OpenShell provider adapter", () => {
       }),
     ).resolves.toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
       ["provider", "profile", "export", "tavily", "--output", "json"],
     ]);
-    expect(run.mock.calls[1]?.[1]).toMatchObject({ suppressOutput: true });
+    expect(run.mock.calls[0]?.[1]).toMatchObject({ suppressOutput: true, timeout: 30_000 });
   });
 
   it("validates a newly imported provider profile before returning success (#9806)", async () => {
     const run = vi
       .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile 'tavily' not found"))
       .mockReturnValueOnce(captured(0))
       .mockReturnValueOnce(captured(0, JSON.stringify(TAVILY_PROFILE)));
     const adapter = createCliOpenShellProviderAdapter({
@@ -371,7 +370,29 @@ describe("CLI OpenShell provider adapter", () => {
       }),
     ).resolves.toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", "tavily", "--output", "json"],
       ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
+      ["provider", "profile", "export", "tavily", "--output", "json"],
+    ]);
+    expect(run.mock.calls.every(([, options]) => options.timeout === 30_000)).toBe(true);
+  });
+
+  it("does not import after an authorization failure while inspecting a profile (#9806)", async () => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "permission denied"));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      readProfileFile: () => TAVILY_PROFILE_YAML,
+    });
+
+    await expect(
+      adapter.importProviderProfile({
+        target: selectedOpenShellGateway(),
+        profilePath: "/repo/profile.yaml",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { kind: "authentication" } });
+    expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "profile", "export", "tavily", "--output", "json"],
     ]);
   });
@@ -408,7 +429,6 @@ describe("CLI OpenShell provider adapter", () => {
   ])("rejects an existing profile with a widened %s boundary (#9806)", async (_field, profile) => {
     const run = vi
       .fn<RunProviderCommand>()
-      .mockReturnValueOnce(captured(1, "", "provider profile already exists"))
       .mockReturnValueOnce(captured(0, JSON.stringify(profile)));
     const adapter = createCliOpenShellProviderAdapter({
       run,
@@ -434,6 +454,7 @@ describe("CLI OpenShell provider adapter", () => {
   it("rejects a malformed exported profile after import (#9806)", async () => {
     const run = vi
       .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile 'tavily' not found"))
       .mockReturnValueOnce(captured(0))
       .mockReturnValueOnce(captured(0, "not-json"));
     const adapter = createCliOpenShellProviderAdapter({
@@ -455,6 +476,7 @@ describe("CLI OpenShell provider adapter", () => {
   it("rejects a missing exported profile after import (#9806)", async () => {
     const run = vi
       .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile 'tavily' not found"))
       .mockReturnValueOnce(captured(0))
       .mockReturnValueOnce(captured(1, "", "provider profile not found"));
     const adapter = createCliOpenShellProviderAdapter({
