@@ -8,16 +8,31 @@ const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
 const RUNNER_PATH = require.resolve("../../runner");
 const LOCAL_INFERENCE_PATH = require.resolve("../local");
-const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
 
 function commandText(command: string | string[]): string {
   return Array.isArray(command) ? command.join(" ") : String(command);
 }
 
+function isWindowsOllamaTagsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.hostname === "host.docker.internal" &&
+      url.port === "11434" &&
+      url.pathname === "/api/tags" &&
+      url.search === "" &&
+      url.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isDockerTagsRequest(command: string | string[]): boolean {
-  return (
-    Array.isArray(command) && command[0] === "docker" && command.includes(WINDOWS_OLLAMA_TAGS_URL)
-  );
+  return Array.isArray(command) && command[0] === "docker" && command.some(isWindowsOllamaTagsUrl);
 }
 
 function loadWindowsOllamaWithMocks(
