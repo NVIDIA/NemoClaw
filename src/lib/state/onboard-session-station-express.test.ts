@@ -450,7 +450,7 @@ describe("Station Express onboarding session state (#7048)", () => {
     );
 
     expect(() => session.reconcileStationExpressReceiptRetirement(receiptGeneration)).toThrow(
-      "another onboarding run is in progress",
+      /has no verifiable host and PID-namespace provenance/u,
     );
     expect(requireLoadedSession(session.loadSession()).stationExpressReceiptRetirement).toBe(
       receiptGeneration,

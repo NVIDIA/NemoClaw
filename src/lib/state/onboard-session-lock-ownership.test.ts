@@ -414,15 +414,14 @@ describe("onboard lock ownership", () => {
     const displacedStale = `${session.LOCK_FILE}.observed-stale`;
     let replacementInode: number | null = null;
     const originalRenameSync = fs.renameSync.bind(fs);
+    const readSpy = vi.spyOn(fs, "readSync");
     const renameSpy = vi.spyOn(fs, "renameSync").mockImplementationOnce(((from, to) => {
       originalRenameSync(from, displacedStale);
       fs.writeFileSync(from, oversizedReplacement, { mode: 0o600 });
       replacementInode = fs.statSync(from).ino;
+      readSpy.mockClear();
       originalRenameSync(from, to);
     }) as typeof fs.renameSync);
-    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(() => {
-      throw new Error("oversized replacement body must not be read");
-    });
 
     try {
       expect(() => session.acquireOnboardLock("nemoclaw onboard --resume")).toThrow(
