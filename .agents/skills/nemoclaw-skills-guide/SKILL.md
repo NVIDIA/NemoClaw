@@ -25,7 +25,7 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers routing human users' AI agents to the canonical NemoClaw Markdown documentation.
 
-### `nemoclaw-maintainer-*` (21 skills)
+### `nemoclaw-maintainer-*`
 
 For project maintainers.
 Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, CI failure classification, CI performance analysis, pull request value-stream analysis, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
@@ -99,10 +99,10 @@ Ask the user which role best describes them:
 
 Skills are cumulative. Each role includes the skills from the roles above it:
 
-| Role | Skills included | Count | Start with |
-|------|----------------|-------|------------|
-| User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 7 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 28 | `nemoclaw-maintainer-morning` |
+| Role | Skills included | Start with |
+|------|----------------|------------|
+| User | `nemoclaw-user-*` | `nemoclaw-user-guide` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | `nemoclaw-contributor-onboard` |
+| Maintainer | All skills | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.
