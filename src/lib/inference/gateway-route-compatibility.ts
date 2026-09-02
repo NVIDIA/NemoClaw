@@ -1,16 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  canonicalEndpoint,
-  type EndpointFlavor,
-  unsafeEndpointUrlViolation,
-} from "../core/url-utils";
+import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
-import {
-  isPublishedSandboxRegistration,
-  isRouteOnlySandboxReservation,
-} from "../state/registry/route-reservation";
+import { isSharedGatewayRouteParticipant } from "../state/registry/route-reservation";
 import type { SandboxEntry } from "../state/registry";
 
 export type GatewayInferenceRoute = Pick<
@@ -104,13 +97,6 @@ function endpointFlavor(provider: string): EndpointFlavor {
   return provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai";
 }
 
-export function safePersistedCompatibleEndpointUrl(
-  value: string | null | undefined,
-): string | null {
-  if (typeof value !== "string" || unsafeEndpointUrlViolation(value)) return null;
-  return value.trim() || null;
-}
-
 function normalizedInferenceApi(value: unknown): string | null {
   const api = nonEmptyString(value);
   return api && SUPPORTED_INFERENCE_APIS.has(api) ? api : null;
@@ -157,11 +143,7 @@ export function preflightGatewayRouteDiscovery(
   const peers: SandboxEntry[] = [];
   const discoveryConflicts: GatewayRouteConflict[] = [];
   for (const sandbox of request.sandboxes) {
-    if (
-      !isPublishedSandboxRegistration(sandbox) &&
-      !isRouteOnlySandboxReservation(sandbox)
-    )
-      continue;
+    if (!isSharedGatewayRouteParticipant(sandbox)) continue;
     if (sandbox.name === request.sandboxName) continue;
     let recordedGatewayName: string;
     try {
@@ -282,11 +264,7 @@ export function checkGatewayRouteCompatibility(
 
   const conflicts: GatewayRouteConflict[] = [];
   for (const sandbox of request.sandboxes) {
-    if (
-      !isPublishedSandboxRegistration(sandbox) &&
-      !isRouteOnlySandboxReservation(sandbox)
-    )
-      continue;
+    if (!isSharedGatewayRouteParticipant(sandbox)) continue;
     if (sandbox.name === request.sandboxName) continue;
     let recordedGatewayName: string;
     try {

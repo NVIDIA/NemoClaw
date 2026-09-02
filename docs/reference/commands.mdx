@@ -3082,7 +3082,10 @@ $$nemoclaw inference get --json
 Text output adds `Endpoint` for `compatible-endpoint` and `compatible-anthropic-endpoint` under that condition.
 JSON output adds `endpointUrl` under the same condition.
 Managed providers keep the existing provider-and-model output.
-NemoClaw omits a persisted URL that contains userinfo, a query, a fragment, or control characters.
+Unpublished sandbox rows do not participate in endpoint selection.
+When participating metadata is missing, invalid, conflicting, or has an invalid gateway binding, text output reports a non-secret `Endpoint: unavailable` reason, up to five affected sandbox names, and recovery guidance.
+JSON output adds a bounded `endpointDiagnostic` object with `reason`, `affectedSandboxNames`, `additionalAffectedSandboxCount`, and `recovery`; it never includes a rejected endpoint or gateway binding.
+Run the reported status command, then repair the recorded gateway binding or remove and re-onboard the affected sandbox.
 If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error and directs you to the applicable `status` command.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.

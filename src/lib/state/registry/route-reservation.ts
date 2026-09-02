@@ -178,6 +178,14 @@ export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?
   return entry.pendingRouteReservation !== true;
 }
 
+/** True when an entry participates in the inference route shared by its gateway. */
+export function isSharedGatewayRouteParticipant(entry: {
+  pendingRouteReservation?: true;
+  createdAt?: string;
+}): boolean {
+  return isPublishedSandboxRegistration(entry) || isRouteOnlySandboxReservation(entry);
+}
+
 /** Return true only when the pending inference route reservation belongs to the exact onboarding session. */
 export function isPendingReservationForSession(
   entry: {
