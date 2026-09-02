@@ -328,9 +328,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/nemoclaw-native-runtime-payload
-          key: windows-native-runtime-v1-${{ runner.os }}-${{ runner.arch }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/openshell-2721-node-ui.patch') }}
-          restore-keys: |
-            windows-native-runtime-v1-${{ runner.os }}-${{ runner.arch }}-openshell-bcd517bbe08c-
+          key: windows-native-runtime-v2-${{ runner.os }}-${{ runner.arch }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/openshell-2721-node-ui.patch') }}
 
       - name: Assemble the native NemoClaw runtime payload
         shell: powershell
