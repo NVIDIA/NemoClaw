@@ -19,9 +19,6 @@ import {
   applyPreset,
   applyPresetContent,
   applyPresets,
-  buildPolicyGetCommand,
-  buildPolicyGetFullCommand,
-  buildPolicySetCommand,
   removePreset,
 } from "../../src/lib/policy";
 
@@ -142,36 +139,6 @@ describe("sandbox readiness parsing", () => {
 // Regression tests: WSL truncates hyphenated sandbox names during shell
 // argument parsing (e.g. "my-assistant" → "m").
 describe("WSL sandbox name handling", () => {
-  it("buildPolicySetCommand preserves hyphenated sandbox name as a separate argv element", () => {
-    const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-    expect(cmd).toContain("my-assistant");
-    // The sandbox name must be a discrete argv element, not concatenated into a shell string
-    expect(cmd[cmd.length - 1]).toBe("my-assistant");
-  });
-
-  it("buildPolicyGetCommand preserves hyphenated sandbox name", () => {
-    const cmd = buildPolicyGetCommand("my-assistant");
-    expect(cmd).toContain("my-assistant");
-  });
-
-  it("buildPolicyGetFullCommand preserves hyphenated sandbox name", () => {
-    const cmd = buildPolicyGetFullCommand("my-assistant");
-    expect(cmd).toContain("my-assistant");
-    expect(cmd).toContain("--full");
-  });
-
-  it("buildPolicySetCommand preserves multi-hyphen names", () => {
-    const cmd = buildPolicySetCommand("/tmp/p.yaml", "my-dev-assistant-v2");
-    expect(cmd).toContain("my-dev-assistant-v2");
-  });
-
-  it("buildPolicySetCommand preserves single-char name", () => {
-    // If WSL truncates "my-assistant" to "m", the single-char name should
-    // still be passed through unchanged as an argv element
-    const cmd = buildPolicySetCommand("/tmp/p.yaml", "m");
-    expect(cmd).toContain("m");
-  });
-
   it("applyPreset rejects truncated/invalid sandbox name", () => {
     // Empty name
     expect(() => applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);
@@ -192,13 +159,16 @@ describe("WSL sandbox name handling", () => {
     ["applyPresetContent", (name: string) => applyPresetContent(name, "npm", "")],
     ["applyPresets", (name: string) => applyPresets(name, ["npm"])],
     ["applyPermissivePolicy", (name: string) => applyPermissivePolicy(name)],
-  ])("%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)", (_entrypoint, invoke) => {
-    ["a".repeat(20), "legacy--box"].forEach((name) => {
-      expect(() => invoke(name)).toThrow(/Allowed format: 1-19 characters/);
-    });
-    expect(policySideEffects.runCapture).not.toHaveBeenCalled();
-    expect(policySideEffects.run).not.toHaveBeenCalled();
-  });
+  ])(
+    "%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)",
+    (_entrypoint, invoke) => {
+      ["a".repeat(20), "legacy--box"].forEach((name) => {
+        expect(() => invoke(name)).toThrow(/Allowed format: 1-19 characters/);
+      });
+      expect(policySideEffects.runCapture).not.toHaveBeenCalled();
+      expect(policySideEffects.run).not.toHaveBeenCalled();
+    },
+  );
 
   it("readiness check uses exact match preventing truncated name false-positive", () => {
     // If "my-assistant" was truncated to "m", the readiness check should

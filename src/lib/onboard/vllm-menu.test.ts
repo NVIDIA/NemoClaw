@@ -99,7 +99,7 @@ describe("buildVllmMenuEntries", () => {
     assert.equal(entries[0].label, "Start vLLM (DGX Station)");
   });
 
-  it("labels only the N1x managed install entry as a Deferred preview (#8574)", () => {
+  it("keeps the Deferred label scoped to the pre-admission N1x managed entry (#8574)", () => {
     const install = buildVllmMenuEntries({
       vllmRunning: false,
       vllmProfile: { name: "N1x" },
@@ -119,6 +119,9 @@ describe("buildVllmMenuEntries", () => {
       log: () => {},
     });
 
+    // N1x readiness rejects the running-server state without explicit managed
+    // intent. If this lower-level helper sees that state in isolation, it must
+    // not mislabel an operator-managed server as the Deferred managed preview.
     assert.equal(install[0].label, "Install vLLM (N1x) [Deferred preview]");
     assert.equal(running[0].label, "Local vLLM (localhost:8000) — running");
     assert.doesNotMatch(running[0].label, /Deferred preview/);
@@ -207,6 +210,25 @@ describe("buildVllmMenuEntries", () => {
     assert.match(logs[0], /NEMOCLAW_PROVIDER=install-vllm requested/);
     assert.match(logs[0], /already running on localhost:8000/);
     assert.match(logs[0], /selecting the running instance/);
+  });
+
+  it("preserves managed install intent when a running server conflicts with GPU selection", () => {
+    const logs: string[] = [];
+    const entries = buildVllmMenuEntries({
+      vllmRunning: true,
+      vllmProfile: { name: "DGX Station" },
+      experimental: false,
+      platform: "station",
+      hasVllmImage: true,
+      env: {
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_VLLM_GPU_DEVICE: "2",
+      },
+      log: (message) => logs.push(message),
+    });
+
+    assert.equal(entries[0].key, "install-vllm");
+    assert.deepEqual(logs, []);
   });
 
   it("does not log the override note when the user did not request install-vllm", () => {

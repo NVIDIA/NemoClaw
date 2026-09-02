@@ -448,6 +448,30 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.stderr).not.toContain("Refusing WeChat provider placeholder refresh");
   });
 
+  it("leaves an intentionally removed managed WeChat tree absent", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
+    const openclawDir = path.join(tmpDir, ".openclaw");
+    const configPath = path.join(openclawDir, "openclaw.json");
+    fs.mkdirSync(openclawDir);
+    fs.writeFileSync(configPath, `${JSON.stringify(wechatConfig(true), null, 2)}\n`);
+
+    try {
+      const result = spawnSync("python3", ["-I", REFRESH_HELPER, configPath], {
+        encoding: "utf-8",
+        env: {
+          PATH: process.env.PATH || "",
+          WECHAT_BOT_TOKEN: "openshell:resolve:env:v42_WECHAT_BOT_TOKEN",
+        },
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(path.join(openclawDir, "openclaw-weixin"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [
       "symlinked",

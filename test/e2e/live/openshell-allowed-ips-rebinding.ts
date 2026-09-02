@@ -7,7 +7,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
+import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary";
 import { setPolicyDocument } from "../../../src/lib/policy";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -294,14 +294,10 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     try {
       if (policyMutationAttempted && basePolicyPath) {
         expect(
-          setPolicyDocument(
-            options.sandboxName,
-            fs.readFileSync(basePolicyPath, "utf8"),
-            {
-              nonFatal: true,
-              operation: "restore the raw OpenShell allowed_ips rebinding proof policy",
-            },
-          ),
+          setPolicyDocument(options.sandboxName, fs.readFileSync(basePolicyPath, "utf8"), {
+            nonFatal: true,
+            operation: "restore the raw OpenShell allowed_ips rebinding proof policy",
+          }),
           "raw-openshell-rebinding-policy-restore",
         ).toBe(true);
         await new Promise((resolve) => setTimeout(resolve, options.policySettleMs));
