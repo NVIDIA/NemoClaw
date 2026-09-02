@@ -228,7 +228,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("The peer address is not recorded.");
     expect(review).toContain("The `mcp-session-id` value is never emitted.");
     expect(review).toContain("inert unless `OPENSHELL_SANDBOX=1`");
-    expect(review).toContain("test/agents/openclaw/openclaw-managed-transport-diagnostics-patch.test.ts");
+    expect(review).toContain(
+      "test/agents/openclaw/openclaw-managed-transport-diagnostics-patch.test.ts",
+    );
     expect(review).toContain("executes that exact helper");
     expect(review).toContain("local 32-character hexadecimal `diagnostic_id`");
     expect(review).toContain("not a distributed trace identifier");
@@ -274,8 +276,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`2.0.11`");
     expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
     expect(review).toContain("GHSA-7p8r-x3mc-p8w7");
+    expect(review).toContain("GHSA-f65p-4m7j-42xc");
+    expect(review).toContain("GHSA-jqff-g426-hqxp");
     expect(review).toContain("fast-uri@^3.0.1");
-    expect(review).toContain("`3.1.5`");
+    expect(review).toContain("`3.1.7`");
     expect(review).toContain("GHSA-8xcm-r25x-g524");
     expect(review).toContain("GHSA-4cwx-7wf7-3272");
     expect(review).toContain("undici@8.10.0");
@@ -549,7 +553,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("fails closed on unknown or ambiguous formatter shapes");
     expect(review).toContain('OPENCLAW_VERSION="${OPENCLAW_VERSION}"');
     expect(review).toContain("test/runtime/messaging/messaging-build-applier-integrity.test.ts");
-    expect(review).toContain("test/runtime/messaging/messaging-build-applier-render-safety.test.ts");
+    expect(review).toContain(
+      "test/runtime/messaging/messaging-build-applier-render-safety.test.ts",
+    );
     expect(review).toContain("test/onboarding/onboard-resume-provider-recovery.test.ts");
   });
 

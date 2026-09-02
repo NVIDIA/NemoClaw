@@ -19,11 +19,11 @@ const PACKAGE_SPEC = "openclaw@2026.7.1";
 const INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
-const LOCK_SHA256 = "60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665";
+const LOCK_SHA256 = "6b7c5ca0337f93f067f6aebffe71d136ec4325043993b2099626f8b56fd7e390";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
 const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
-  "bc7e34d9eb1f72cf3016c8b88c72d3b7682a4f234903cb93b9476b10d7e954eb";
+  "cd1470ac69456da681654c399fc970fef16b9befed1106af226c0bf549557439";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -177,7 +177,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verified).toHaveLength(307);
     expect(verified).toContain(PACKAGE_SPEC);
     expect(verified).toContain("brace-expansion@5.0.9");
-    expect(verified).toContain("fast-uri@3.1.5");
+    expect(verified).toContain("fast-uri@3.1.7");
     expect(verified).toContain("hono@4.12.34");
     expect(verified).toContain("ip-address@10.3.1");
     expect(verified).toContain("tar@7.5.21");
@@ -307,5 +307,4 @@ describe("locked OpenClaw production installation (#5896)", () => {
   it("allows npm to omit an incompatible optional package", () => {
     expect(verifyInstalledNpmLock(installedFixture({ omit: true, optional: true }))).toEqual([]);
   });
-
 });

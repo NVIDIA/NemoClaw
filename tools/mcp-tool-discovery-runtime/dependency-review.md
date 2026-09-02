@@ -15,12 +15,20 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
 - Security overrides:
   - `@hono/node-server@2.0.12`: `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`
-  - `fast-uri@3.1.5`: `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
+  - `fast-uri@3.1.7`: `sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==`
   - `hono@4.12.34`: `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
   - `ip-address@10.3.1`: `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
 
 OpenClaw's `mcporter` dependency graph also resolves the official SDK but remains separately locked. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
-The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter or its `hono` and `ip-address` dependencies, but those packages remain part of the installed production graph that the reviewed npm audit CI check evaluates. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the installed graph outside the affected ranges for `GHSA-7p8r-x3mc-p8w7`, `GHSA-8j4g-w8fx-2239`, `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` without changing the SDK client pin.
+The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter or its `hono` and `ip-address` dependencies, but those packages remain part of the installed production graph that the reviewed npm audit CI check evaluates. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the installed graph outside the affected ranges for `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, `GHSA-jqff-g426-hqxp`, `GHSA-8j4g-w8fx-2239`, `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` without changing the SDK client pin.
+
+## 2026-09-02 security refresh
+
+Live advisory drift made the required audit reject `fast-uri@3.1.5` in the root, OpenClaw, mcporter, and MCP discovery graphs. Four high-severity advisories cover host confusion, malformed IPv6 normalization, repeated hostname decoding, and percent-encoded scheme normalization. No audit exception is used.
+
+Registry metadata binds the outgoing `3.1.5` package to source commit `5e179cbb4636d5f773ed21126e5bd3068e87e94e` and the selected `3.1.7` package to `412e40abd4eb8beabfb952d80abf949a2baf27a3`. The adjacent range contains 20 commits. Version `3.1.6` introduces the advisory fixes and URI serialization regressions; `3.1.7` adds port and IP-literal validation. Both releases retain the BSD-3-Clause license, no-dependency package shape, and v3 API boundary. The selected archive is `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz` with integrity `sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==`.
+
+- `MCP-AUDIT-5` — `fast-uri@3.1.5` accepts URI forms that can normalize to a different authority or host. Surface: executable AJV format validation in the bundled client. Failure mode: attacker-controlled schema input can cross a URI validation boundary with a confused host identity. Resolution: pin `3.1.7` in every active lock and exact override, regenerate the reviewed bundle and license inventory, and keep the existing MCP session contract. Validation: exact lock and bundle identities, runtime test, typecheck, bundle reproduction check, direct production audits, and registry-signature verification.
 
 ## 2026-08-03 security refresh
 
@@ -104,6 +112,14 @@ Security refresh evidence on 2026-08-03:
 - `npm test` and `npm run typecheck`: passed
 - `npm run bundle`: emitted the same 11-package client bundle with `fast-uri@3.1.5`; `hono` and `ip-address` remain outside the executable bundle
 - `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
+
+Security refresh evidence on 2026-09-02:
+
+- `npm ci --ignore-scripts`: installed the exact 98-package lock
+- `npm audit signatures --omit=dev`: verified 93 registry signatures and 9 provenance attestations
+- `npm test` and `npm run typecheck`: passed
+- `npm run bundle:reviewed`: regenerated the exact 11-package client bundle with `fast-uri@3.1.7`
+- `npm audit --omit=dev --package-lock-only`: 1 moderate, 0 high, and 0 critical findings
 
 ## Updating
 
