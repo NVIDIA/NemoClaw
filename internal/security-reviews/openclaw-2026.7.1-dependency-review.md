@@ -24,7 +24,7 @@ release in both committed production locks. Do not add an audit exception.
 
 The production OpenClaw install uses the authoritative committed lock at
 `agents/openclaw/openclaw-runtime/package-lock.json`, with SHA-256
-`60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665`.
+`248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9`.
 NemoClaw derives that lock from the SRI-verified `openclaw@2026.7.1` archive
 after applying the reviewed dependency remediation.
 The committed `nemoclaw/package-lock.json` has SHA-256

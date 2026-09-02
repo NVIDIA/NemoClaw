@@ -31,7 +31,7 @@ Issue #8177 records the source, build run, failure receipt, and resume condition
 
 Registry metadata binds each audited range:
 
-- `fast-uri`: `3.1.4` at `6aeece669e4166b2446a89f17c07a3b15dfb7ed4` to `3.1.6` at `5e179cbb4636d5f773ed21126e5bd3068e87e94e`, one patch release
+- `fast-uri`: `3.1.4` at `6aeece669e4166b2446a89f17c07a3b15dfb7ed4` to `3.1.6` at `6f970b2951fd896aa0f3a7ff28eeb6640c137d33`, two patch releases
 - Hono: `4.12.30` at `b2ae3a2204a48ce15a26448fd746d39745eb1837` to `4.12.34` at `734755ace341607628219ea1dd8ca17f01bf1a5c`, four patch releases
 - `ip-address`: `10.2.0` at `80fccaae984618f35dc941efab55cf2440ab37e8` to `10.3.1` at `be7e626c0d49fccb518899f520a3fb64ee189741`, four release increments that cross the `10.3.0` minor boundary
 

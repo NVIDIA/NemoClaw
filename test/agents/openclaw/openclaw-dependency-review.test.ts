@@ -275,7 +275,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
     expect(review).toContain("GHSA-7p8r-x3mc-p8w7");
     expect(review).toContain("fast-uri@^3.0.1");
-    expect(review).toContain("`3.1.5`");
+    expect(review).toContain("`3.1.6`");
     expect(review).toContain("GHSA-8xcm-r25x-g524");
     expect(review).toContain("GHSA-4cwx-7wf7-3272");
     expect(review).toContain("undici@8.10.0");
