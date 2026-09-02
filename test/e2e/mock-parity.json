@@ -370,12 +370,14 @@
     {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
+        "src/lib/messaging/channels/openclaw-bridge-health.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/channels/channels-add-preset.test.ts",
         "test/channels/channels-remove-full-teardown.test.ts",
         "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/runtime/messaging/telegram-diagnostics.test.ts"
       ]
     },
     {
