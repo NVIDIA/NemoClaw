@@ -856,11 +856,9 @@ describe("Hermes portable lifecycle", () => {
     let observerAttempts = 0;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
       args.includes("observe-startup-ready")
-        ? {
-            status: (observerAttempts += 1) >= 2 ? 0 : 10,
-            stdout: "",
-            stderr: "",
-          }
+        ? ((observerAttempts += 1),
+          (now = observerAttempts >= 2 ? 90_000 : now),
+          { status: observerAttempts >= 2 ? 0 : 10, stdout: "", stderr: "" })
         : args.includes("python3")
           ? {
               status: 0,

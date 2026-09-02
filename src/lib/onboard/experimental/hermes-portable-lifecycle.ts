@@ -744,7 +744,9 @@ function waitUntil(
   while (now() < deadline) {
     const remaining = deadline - now();
     if (probe(remaining)) return true;
-    const operation = () => sleep(Math.min(POLL_INTERVAL_MS, remaining));
+    const afterProbeRemaining = deadline - now();
+    if (afterProbeRemaining <= 0) return false;
+    const operation = () => sleep(Math.min(POLL_INTERVAL_MS, afterProbeRemaining));
     if (measureSleep) measureSleep(operation);
     else operation();
   }
