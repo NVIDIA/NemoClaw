@@ -232,6 +232,46 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-reconcile-workflow-boundary.test.ts",
+      "test": "is manual-only, serialized with Phase 1, and never invokes a model or Pi (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-reconcile-workflow-boundary.test.ts",
+      "test": "binds one original validation artifact and resumes only inside the protected publisher (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-reconcile-workflow-boundary.test.ts",
+      "test": "references only outputs declared by the producing job (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-reconcile-workflow-boundary.test.ts",
+      "test": "pins every third-party action and uses credential-free trusted checkouts (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow-boundary.test.ts",
+      "test": "is manual-only, kill-switched, and splits model use from publication (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow-boundary.test.ts",
+      "test": "pins trusted code and binds every handoff to artifact IDs from the same run (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow-boundary.test.ts",
+      "test": "isolates the model credential and gives Pi no bash or test tool (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow-boundary.test.ts",
+      "test": "validates in a separate read-only job and never names an E2E lane (#10791)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
       "category": "security"

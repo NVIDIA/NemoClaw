@@ -31,7 +31,7 @@ Every privileged job limits its trusted workflow-code checkout to reviewed autom
 
 Before enabling Phase 1, configure `advisor-repair-publication` as a protected GitHub environment that requires maintainer approval and permits deployments only from `main`. The workflow's `environment` field selects that environment; it does not configure the repository protection rules. Set the repository variable `ADVISOR_REPAIR_PHASE1_ENABLED` to `true` only after confirming those rules.
 
-Start an attempt through **Automation / PR Review Advisor Repair** with:
+Select the `main` branch in the workflow-dispatch form, then start an attempt through **Automation / PR Review Advisor Repair** with:
 
 - the PR number and its full current head SHA;
 - the successful Advisor run ID for that head;
@@ -42,7 +42,9 @@ Start an attempt through **Automation / PR Review Advisor Repair** with:
 - a JSON array of exact canonical Advisor finding IDs from the selected run; and
 - `repository_egress_authorized` set to `true` for this dispatch.
 
-Do not rerun the repair generation workflow. A new PR head requires a new maintainer dispatch and creates a different attempt identity. If a validated attempt is interrupted during or after publication, manually dispatch **Automation / PR Review Advisor Repair Reconciliation** with the original run ID, its short-lived validation artifact ID, PR number, and original source head SHA. Reconciliation never runs Pi again.
+Do not rerun the repair generation workflow. A new PR head requires a new maintainer dispatch and creates a different attempt identity. If a validated attempt is interrupted during or after publication, select the `main` branch and manually dispatch **Automation / PR Review Advisor Repair Reconciliation** with the original run ID, its short-lived validation artifact ID, PR number, and original source head SHA. Reconciliation never runs Pi again.
+
+If generated-head validation fails after publication, the verification job uploads a durable receipt bound to the original source head, generated commit, base, attempt, failure class, and canonical failed gate when available. The workflow does not retry or revert automatically. For a failure proven to be infrastructure-only, rerun only the failed exact workflow in GitHub, then dispatch reconciliation from `main` with the original inputs. For a code, policy, or ambiguous evidence failure, leave reconciliation stopped and add a normal human-owned follow-up commit to the PR. Reconciliation and every later publication step compare the live head with the recorded source or generated commit, so neither recovery path can overwrite a contributor update.
 
 ## Rollout and kill switch
 
@@ -67,7 +69,8 @@ Each workflow dispatch can emit:
 - `selection.json`, `selection-authority.json`, `artifact-manifest.json`, and `repair-context.json`, bound to the live PR, exact Advisor artifact digests, canonical finding ledgers, and review-thread state; the repair job derives a commit-blind `repair-input.json` for Pi and never uploads `selection.json` into the sandbox;
 - `proposal.json` and the trusted-host-generated `repair.patch`;
 - `validation-receipt.json` and, only after successful validation, `validated.patch`;
-- `publication-receipt.json`, including the source head, validated tree, verified commit, branch, and reconciled exact-head workflows.
+- `publication-receipt.json`, including the source head, validated tree, verified commit, branch, and reconciled exact-head workflows;
+- `generated-head-verification-receipt.json`, including the source head, generated commit, base, attempt identity, outcome, bounded failure class, and canonical failed gate when available.
 
 Downstream jobs consume the exact `artifact-id` outputs from their producers. Same-run handoffs use the current run implicitly rather than accepting repository or run overrides; only the intentional cross-run Advisor input names its verified source run. Artifact names are labels for humans, not trust anchors.
 

@@ -157,7 +157,7 @@ export function bindReconciliationBundle(input: {
 }
 
 export function formatReconciliationBindingOutput(receipt: ValidationReceipt): string {
-  return `attempt_key=${receipt.attemptKey}\nbase_sha=${receipt.baseSha}\nhead_ref=${receipt.headRef}\n`;
+  return `attempt_key=${receipt.attemptKey}\nbase_sha=${receipt.baseSha}\nhead_ref=${receipt.headRef}\nsource_head_sha=${receipt.sourceHeadSha}\n`;
 }
 
 async function main(env: NodeJS.ProcessEnv): Promise<void> {

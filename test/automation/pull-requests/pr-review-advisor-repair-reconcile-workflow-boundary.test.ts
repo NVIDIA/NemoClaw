@@ -1,17 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
+import { readRepoText, readYaml } from "../../helpers/e2e-workflow-contract";
 
-const root = path.resolve(import.meta.dirname, "../../..");
-const source = fs.readFileSync(
-  path.join(root, ".github", "workflows", "pr-review-advisor-repair-reconcile.yaml"),
-  "utf8",
+const source = readRepoText(".github/workflows/pr-review-advisor-repair-reconcile.yaml");
+const workflow = readYaml<Record<string, unknown>>(
+  ".github/workflows/pr-review-advisor-repair-reconcile.yaml",
 );
-const workflow = YAML.parse(source) as Record<string, unknown>;
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -35,6 +31,7 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
   const publish = record(jobs.publish);
   const verify = record(jobs["verify-generated-head"]);
 
+  // source-shape-contract: security -- Reconciliation must remain manual and credential-free without invoking another model attempt
   it("is manual-only, serialized with Phase 1, and never invokes a model or Pi (#10791)", () => {
     expect(Object.keys(record(workflow.on))).toEqual(["workflow_dispatch"]);
     expect(workflow.permissions).toEqual({});
@@ -71,6 +68,7 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
     ).toContain("$RUNNER_TEMP");
   });
 
+  // source-shape-contract: security -- Recovery must bind the original validation artifact before entering the protected publisher
   it("binds one original validation artifact and resumes only inside the protected publisher (#10791)", () => {
     expect(collect.permissions).toEqual({ actions: "read", contents: "read" });
     expect(publish.permissions).toEqual({
@@ -133,6 +131,7 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
     ).toContain("publish.mts");
   });
 
+  // source-shape-contract: security -- Every recovery handoff must reference an output declared by its trusted producer
   it("references only outputs declared by the producing job (#10791)", () => {
     const declared = new Map(
       Object.entries(jobs).map(([name, job]) => [name, Object.keys(record(record(job).outputs))]),
@@ -148,6 +147,7 @@ describe("PR Review Advisor repair reconciliation workflow boundary", () => {
     expect(violations).toEqual([]);
   });
 
+  // source-shape-contract: security -- Recovery actions and trusted checkouts must remain pinned and credential-free
   it("pins every third-party action and uses credential-free trusted checkouts (#10791)", () => {
     const actionSteps = Object.values(jobs).map(record).flatMap(steps);
     const actions = actionSteps

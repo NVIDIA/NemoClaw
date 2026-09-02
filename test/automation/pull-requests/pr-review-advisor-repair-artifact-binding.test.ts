@@ -7,7 +7,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  ADVISOR_FINDING_EXCLUSIONS,
   buildAdvisorFindingLedger,
   writeAdvisorFindingLedger,
   type AdvisorFindingLedger,
@@ -217,39 +216,32 @@ describe("PR Review Advisor repair artifact binding", () => {
     ).toThrow("bounded regular file");
   });
 
-  it("keeps fixed repair schemas aligned with canonical Advisor inventories (#10791)", () => {
-    const selectionSchema = JSON.parse(
-      fs.readFileSync(
-        path.resolve("tools/pr-review-advisor-repair/schemas/selection-input.schema.json"),
-        "utf8",
-      ),
-    );
-    const validationSchema = JSON.parse(
-      fs.readFileSync(
-        path.resolve("tools/pr-review-advisor-repair/schemas/validation-receipt.schema.json"),
-        "utf8",
-      ),
-    );
-    const artifactCount = expectedAdvisorArtifactNames(700, 2).length;
+  it("rejects missing or extra Advisor artifacts at the runtime boundary (#10791)", () => {
+    const run = { id: 700, attempt: 2, workflowSha: "c".repeat(40) };
+    const names = expectedAdvisorArtifactNames(run.id, run.attempt);
+    const artifacts = names.map((name, index) => ({
+      id: index + 100,
+      name,
+      expired: false,
+      size_in_bytes: 1024,
+      digest: `sha256:${String(index).padStart(64, "0")}`,
+      workflow_run: { id: run.id, head_sha: run.workflowSha },
+    }));
 
-    expect(selectionSchema.properties.advisor.properties.artifactIds).toMatchObject({
-      minItems: artifactCount,
-      maxItems: artifactCount,
-    });
-    expect(selectionSchema.properties.advisor.properties.artifactDigests).toMatchObject({
-      minItems: artifactCount,
-      maxItems: artifactCount,
-    });
-    expect(validationSchema.properties.advisor.properties.artifactIds).toMatchObject({
-      minItems: artifactCount,
-      maxItems: artifactCount,
-    });
-    expect(validationSchema.properties.advisor.properties.artifactDigests).toMatchObject({
-      minItems: artifactCount,
-      maxItems: artifactCount,
-    });
-    expect(selectionSchema.$defs.finding.properties.exclusions.items.enum).toEqual(
-      ADVISOR_FINDING_EXCLUSIONS,
-    );
+    expect(() =>
+      validateAdvisorArtifacts(
+        { total_count: artifacts.length - 1, artifacts: artifacts.slice(1) },
+        run,
+      ),
+    ).toThrow("exact ten-artifact contract");
+    expect(() =>
+      validateAdvisorArtifacts(
+        {
+          total_count: artifacts.length + 1,
+          artifacts: [...artifacts, { ...artifacts[0], id: 999, name: "unexpected" }],
+        },
+        run,
+      ),
+    ).toThrow("exact ten-artifact contract");
   });
 });

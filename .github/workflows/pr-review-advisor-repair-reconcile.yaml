@@ -42,6 +42,7 @@ jobs:
       attempt_key: ${{ steps.bind.outputs.attempt_key }}
       base_sha: ${{ steps.bind.outputs.base_sha }}
       head_ref: ${{ steps.bind.outputs.head_ref }}
+      source_head_sha: ${{ steps.bind.outputs.source_head_sha }}
       validation_artifact_id: ${{ steps.source.outputs.validation_artifact_id }}
     env:
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
@@ -220,10 +221,23 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Bind the generated-head verification receipt directory
+        run: printf '%s\n' "VERIFICATION_OUTPUT_DIR=$RUNNER_TEMP/generated-head-verification" >> "$GITHUB_ENV"
+
       - name: Wait for the exact required checks, CodeQL, and Advisor run
         env:
           ATTEMPT_KEY: ${{ needs.collect.outputs.attempt_key }}
           BASE_SHA: ${{ needs.collect.outputs.base_sha }}
           COMMIT_SHA: ${{ needs.publish.outputs.commit_sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_HEAD_SHA: ${{ needs.collect.outputs.source_head_sha }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/verify-generated-head.mts"
+
+      - name: Upload the generated-head verification receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-advisor-repair-phase1-reconciliation-generated-head-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.VERIFICATION_OUTPUT_DIR }}/generated-head-verification-receipt.json
+          if-no-files-found: error
+          retention-days: 14

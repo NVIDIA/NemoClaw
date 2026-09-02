@@ -47,7 +47,10 @@ import {
   expectedAdvisorArtifactNames,
   type GitHubRequest as SelectionGitHubRequest,
 } from "../../../tools/pr-review-advisor-repair/select.mts";
-import { verifyGeneratedHeadOnce } from "../../../tools/pr-review-advisor-repair/verify-generated-head.mts";
+import {
+  verifyGeneratedHeadOnce,
+  verifyGeneratedHeadWithReceipt,
+} from "../../../tools/pr-review-advisor-repair/verify-generated-head.mts";
 
 function finding(): FindingInput {
   return {
@@ -591,7 +594,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     const bundle = selection();
     const receipt = validationReceipt(bundle, Buffer.from("validated patch"));
     expect(formatReconciliationBindingOutput(receipt)).toBe(
-      `attempt_key=${receipt.attemptKey}\nbase_sha=${receipt.baseSha}\nhead_ref=${receipt.headRef}\n`,
+      `attempt_key=${receipt.attemptKey}\nbase_sha=${receipt.baseSha}\nhead_ref=${receipt.headRef}\nsource_head_sha=${receipt.sourceHeadSha}\n`,
     );
   });
 
@@ -1414,6 +1417,45 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         request: request as NonNullable<Parameters<typeof verifyGeneratedHeadOnce>[0]["request"]>,
       }),
     ).rejects.toThrow("checks failed generated-head validation");
+  });
+
+  it("records exact manual recovery evidence when a generated-head gate fails (#10791)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-generated-head-recovery-test-"));
+    try {
+      const bundle = selection();
+      const commitSha = "d".repeat(40);
+      const request = generatedHeadEvidenceRequest(bundle, commitSha, { failedJob: "checks" });
+
+      await expect(
+        verifyGeneratedHeadWithReceipt({
+          commitSha,
+          sourceHeadSha: bundle.input.sourceHeadSha,
+          baseSha: bundle.input.baseSha,
+          attemptKey: bundle.attemptKey,
+          token: "token",
+          outputDirectory: root,
+          request: request as NonNullable<
+            Parameters<typeof verifyGeneratedHeadWithReceipt>[0]["request"]
+          >,
+        }),
+      ).rejects.toThrow("checks failed generated-head validation");
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(root, "generated-head-verification-receipt.json"), "utf8"),
+        ),
+      ).toEqual({
+        version: 1,
+        attemptKey: bundle.attemptKey,
+        sourceHeadSha: bundle.input.sourceHeadSha,
+        baseSha: bundle.input.baseSha,
+        commitSha,
+        outcome: "manual-remediation-required",
+        failureClass: "gate-failed",
+        failedGate: "checks",
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("fails closed on ambiguous duplicate trusted-main workflow evidence (#10791)", async () => {

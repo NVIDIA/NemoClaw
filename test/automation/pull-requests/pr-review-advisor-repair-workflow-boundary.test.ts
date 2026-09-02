@@ -1,39 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 import { GENERATED_HEAD_VALIDATIONS } from "../../../tools/pr-review-advisor-repair/generated-head-validation.mts";
+import { readRepoText, readYaml } from "../../helpers/e2e-workflow-contract";
 
-const root = path.resolve(import.meta.dirname, "../../..");
-const workflowSource = fs.readFileSync(
-  path.join(root, ".github", "workflows", "pr-review-advisor-repair.yaml"),
-  "utf8",
+const workflowSource = readRepoText(".github/workflows/pr-review-advisor-repair.yaml");
+const workflow = readYaml<Record<string, unknown>>(
+  ".github/workflows/pr-review-advisor-repair.yaml",
 );
-const workflow = YAML.parse(workflowSource) as Record<string, unknown>;
-const policy = YAML.parse(
-  fs.readFileSync(path.join(root, "tools", "pr-review-advisor-repair", "policy.yaml"), "utf8"),
-) as Record<string, unknown>;
-const validationPolicy = YAML.parse(
-  fs.readFileSync(
-    path.join(root, "tools", "pr-review-advisor-repair", "validation-policy.yaml"),
-    "utf8",
-  ),
-) as Record<string, unknown>;
-const resolverSource = fs.readFileSync(
-  path.join(root, "tools", "pr-review-advisor-repair", "resolve.mts"),
-  "utf8",
+const policy = readYaml<Record<string, unknown>>("tools/pr-review-advisor-repair/policy.yaml");
+const validationPolicy = readYaml<Record<string, unknown>>(
+  "tools/pr-review-advisor-repair/validation-policy.yaml",
 );
-const validatorSource = fs.readFileSync(
-  path.join(root, "tools", "pr-review-advisor-repair", "validate.mts"),
-  "utf8",
-);
-const publisherSource = fs.readFileSync(
-  path.join(root, "tools", "pr-review-advisor-repair", "publish.mts"),
-  "utf8",
-);
+const resolverSource = readRepoText("tools/pr-review-advisor-repair/resolve.mts");
+const validatorSource = readRepoText("tools/pr-review-advisor-repair/validate.mts");
+const publisherSource = readRepoText("tools/pr-review-advisor-repair/publish.mts");
 const generatedHeadWorkflowFiles = [
   "pr.yaml",
   "commit-lint.yaml",
@@ -44,11 +26,14 @@ const generatedHeadWorkflowFiles = [
 const generatedHeadWorkflowSources = Object.fromEntries(
   [...generatedHeadWorkflowFiles, "pr-review-advisor.yaml"].map((file) => [
     file,
-    fs.readFileSync(path.join(root, ".github", "workflows", file), "utf8"),
+    readRepoText(`.github/workflows/${file}`),
   ]),
 ) as Record<string, string>;
 const generatedHeadWorkflows = Object.fromEntries(
-  Object.entries(generatedHeadWorkflowSources).map(([file, source]) => [file, YAML.parse(source)]),
+  Object.keys(generatedHeadWorkflowSources).map((file) => [
+    file,
+    readYaml(`.github/workflows/${file}`),
+  ]),
 ) as Record<string, Record<string, unknown>>;
 
 function record(value: unknown): Record<string, unknown> {
@@ -83,6 +68,7 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
   const publish = record(jobs.publish);
   const verify = record(jobs["verify-generated-head"]);
 
+  // source-shape-contract: security -- Workflow permissions and triggers keep model credentials separate from repository write authority
   it("is manual-only, kill-switched, and splits model use from publication (#10791)", () => {
     expect(Object.keys(record(workflow.on))).toEqual(["workflow_dispatch"]);
     expect(
@@ -158,6 +144,7 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     ).toContain("$RUNNER_TEMP");
   });
 
+  // source-shape-contract: security -- Trusted checkouts and artifact identities prevent pull request code from crossing authority boundaries
   it("pins trusted code and binds every handoff to artifact IDs from the same run (#10791)", () => {
     const actionReferences = Object.values(jobs)
       .map(record)
@@ -308,6 +295,7 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     ]);
   });
 
+  // source-shape-contract: security -- The model credential and restricted Pi tools must remain confined to the repair job
   it("isolates the model credential and gives Pi no bash or test tool (#10791)", () => {
     const configure = namedStep(repair, "Configure host-side OpenShell inference");
     const pi = namedStep(repair, "Run the bounded two-turn Pi repair without shell or test tools");
@@ -336,6 +324,7 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
     });
   });
 
+  // source-shape-contract: security -- Independent secret-free validation must not execute live end-to-end test lanes
   it("validates in a separate read-only job and never names an E2E lane (#10791)", () => {
     expect(repair.permissions).toEqual({ actions: "read", contents: "read" });
     expect(validate.permissions).toEqual({

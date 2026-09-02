@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { githubApi } from "../advisors/github.mts";
@@ -64,6 +66,23 @@ type RequiredCheckEvidence = {
 
 type VerificationState = "pending" | "success";
 
+export type GeneratedHeadVerificationReceipt = {
+  version: 1;
+  attemptKey: string;
+  sourceHeadSha: string;
+  baseSha: string;
+  commitSha: string;
+  outcome: "success" | "manual-remediation-required";
+  failureClass: "none" | "gate-failed" | "evidence-invalid" | "timed-out";
+  failedGate: string | null;
+};
+
+class GeneratedHeadGateError extends RepairContractError {
+  constructor(readonly gate: string) {
+    super(`${gate} failed generated-head validation`);
+  }
+}
+
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) throw new RepairContractError(`${name} is required`);
@@ -81,7 +100,7 @@ function completedSuccessfully(
 ): boolean {
   if (item.status !== "completed") return false;
   if (item.conclusion !== "success") {
-    throw new RepairContractError(`${name} failed generated-head validation`);
+    throw new GeneratedHeadGateError(name);
   }
   return true;
 }
@@ -264,18 +283,87 @@ export async function waitForGeneratedHeadValidation(input: {
   throw new RepairContractError("generated-head validation did not complete within ninety minutes");
 }
 
+function verificationFailure(
+  error: unknown,
+): Pick<GeneratedHeadVerificationReceipt, "failureClass" | "failedGate"> {
+  if (error instanceof GeneratedHeadGateError) {
+    return { failureClass: "gate-failed", failedGate: error.gate };
+  }
+  if (
+    error instanceof RepairContractError &&
+    error.message === "generated-head validation did not complete within ninety minutes"
+  ) {
+    return { failureClass: "timed-out", failedGate: null };
+  }
+  return { failureClass: "evidence-invalid", failedGate: null };
+}
+
+function writeVerificationReceipt(
+  outputDirectory: string,
+  receipt: GeneratedHeadVerificationReceipt,
+): void {
+  fs.mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    path.join(outputDirectory, "generated-head-verification-receipt.json"),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
+}
+
+export async function verifyGeneratedHeadWithReceipt(input: {
+  commitSha: string;
+  sourceHeadSha: string;
+  baseSha: string;
+  attemptKey: string;
+  token: string;
+  outputDirectory: string;
+  request?: GitHubRequest;
+  wait?: (milliseconds: number) => Promise<void>;
+}): Promise<GeneratedHeadVerificationReceipt> {
+  try {
+    await waitForGeneratedHeadValidation(input);
+  } catch (error) {
+    const receipt: GeneratedHeadVerificationReceipt = {
+      version: 1,
+      attemptKey: input.attemptKey,
+      sourceHeadSha: input.sourceHeadSha,
+      baseSha: input.baseSha,
+      commitSha: input.commitSha,
+      outcome: "manual-remediation-required",
+      ...verificationFailure(error),
+    };
+    writeVerificationReceipt(input.outputDirectory, receipt);
+    throw error;
+  }
+  const receipt: GeneratedHeadVerificationReceipt = {
+    version: 1,
+    attemptKey: input.attemptKey,
+    sourceHeadSha: input.sourceHeadSha,
+    baseSha: input.baseSha,
+    commitSha: input.commitSha,
+    outcome: "success",
+    failureClass: "none",
+    failedGate: null,
+  };
+  writeVerificationReceipt(input.outputDirectory, receipt);
+  return receipt;
+}
+
 async function main(env: NodeJS.ProcessEnv): Promise<void> {
   const commitSha = fullSha(required(env, "COMMIT_SHA"), "COMMIT_SHA");
+  const sourceHeadSha = fullSha(required(env, "SOURCE_HEAD_SHA"), "SOURCE_HEAD_SHA");
   const baseSha = fullSha(required(env, "BASE_SHA"), "BASE_SHA");
   const attemptKey = required(env, "ATTEMPT_KEY");
   if (!/^sha256:[0-9a-f]{64}$/u.test(attemptKey)) {
     throw new RepairContractError("ATTEMPT_KEY is malformed");
   }
-  await waitForGeneratedHeadValidation({
+  await verifyGeneratedHeadWithReceipt({
     commitSha,
+    sourceHeadSha,
     baseSha,
     attemptKey,
     token: required(env, "GITHUB_TOKEN"),
+    outputDirectory: required(env, "VERIFICATION_OUTPUT_DIR"),
   });
   appendGeneratedHeadJobSummary(env.GITHUB_STEP_SUMMARY, attemptKey, commitSha);
 }
