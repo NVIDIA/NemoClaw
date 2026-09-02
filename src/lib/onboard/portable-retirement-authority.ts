@@ -595,7 +595,7 @@ export function printPortableOnboardLockContention(
   displayName: string,
   lockResult: LockResult,
 ): void {
-  if (lockResult.reclamationGuard) {
+  if (lockResult.reclamationGuard || lockResult.holderIdentityVerified === false) {
     const contention = describeOnboardLockContention(lockResult);
     console.error(`  ${contention.reason}`);
     console.error(`  ${contention.remediation}`);

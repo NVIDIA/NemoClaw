@@ -221,6 +221,32 @@ describe("rebuild preflight guards", () => {
     expect(output).not.toContain("remove the stale lock");
   });
 
+  it("does not call an unverified live PID the owner of an onboarding run", () => {
+    const lockFile = "/tmp/nemoclaw-onboard.lock";
+    vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+      acquired: false,
+      lockFile,
+      stale: false,
+      holderPid: 4242,
+      holderIdentityVerified: false,
+    });
+    const release = vi
+      .spyOn(onboardSession, "releaseOnboardLock")
+      .mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    expect(acquireRebuildOnboardLock("alpha", bail)).toBeNull();
+
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain(lockFile);
+    expect(output).toContain("records live PID 4242");
+    expect(output).toContain("cannot confirm that PID owns an onboarding run");
+    expect(output).toContain(`remove only '${lockFile}', then rerun rebuild`);
+    expect(output).not.toContain("another nemoclaw onboarding run");
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it("reports the guard path and says not to remove a foreign reclamation guard", () => {
     const guardFile = "/tmp/onboard.lock.reclamation-guard";
     vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({

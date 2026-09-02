@@ -358,11 +358,13 @@ export function acquireRebuildOnboardLock(
   );
   if (!lock.acquired) {
     const contention = onboardSession.describeOnboardLockContention(lock);
+    const detailedContention =
+      lock.reclamationGuard !== undefined || lock.holderIdentityVerified === false;
     const remediation = lock.reclamationGuard
       ? contention.remediation
       : contention.remediation.replace("then retry", "then rerun rebuild");
     printRebuildPreflightFailure(
-      lock.reclamationGuard
+      detailedContention
         ? contention.reason
         : `another ${CLI_NAME} onboarding run is already in progress.`,
       remediation,

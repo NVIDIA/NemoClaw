@@ -240,7 +240,7 @@ describe("cross-process onboard lock", () => {
         .mockImplementation((message) => messages.push(String(message)));
       try {
         authority.printPortableOnboardLockContention("NemoClaw", acquired);
-        expect(messages.join("\n")).toContain("Wait for the active onboarding run to finish");
+        expect(messages.join("\n")).toContain(String(child.pid));
         expect(messages.join("\n")).not.toContain("rm -f");
       } finally {
         errorSpy.mockRestore();
@@ -279,6 +279,31 @@ describe("cross-process onboard lock", () => {
       expect(output).toContain(guardFile);
       expect(output).toContain("owner PID 4242");
       expect(output).toContain("Do not remove the guard if you cannot confirm this");
+      expect(output).not.toContain("Another NemoClaw onboarding run");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("prints guarded recovery for a live PID without verified process identity", async () => {
+    const authority = await import("../onboard/portable-retirement-authority");
+    const messages: string[] = [];
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation((message) => messages.push(String(message)));
+    try {
+      authority.printPortableOnboardLockContention("NemoClaw", {
+        acquired: false,
+        lockFile: session.LOCK_FILE,
+        stale: false,
+        holderPid: 4242,
+        holderIdentityVerified: false,
+      });
+      const output = messages.join("\n");
+      expect(output).toContain(session.LOCK_FILE);
+      expect(output).toContain("records live PID 4242");
+      expect(output).toContain("cannot confirm that PID owns an onboarding run");
+      expect(output).toContain(`remove only '${session.LOCK_FILE}', then retry`);
       expect(output).not.toContain("Another NemoClaw onboarding run");
     } finally {
       errorSpy.mockRestore();

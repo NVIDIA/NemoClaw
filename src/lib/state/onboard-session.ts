@@ -349,6 +349,7 @@ export interface LockResult {
   holderPid?: number;
   holderStartedAt?: string | null;
   holderCommand?: string | null;
+  holderIdentityVerified?: boolean;
   reclamationGuard?: OnboardLockReclamationGuardContention;
 }
 
@@ -392,6 +393,19 @@ export function describeOnboardLockContention(lock: LockResult): OnboardLockCont
         "Wait briefly and retry. If the guard remains, confirm on its reported host and PID " +
         "namespace that the owner no longer uses it. Do not remove the guard if you cannot " +
         `confirm this; ask that host's administrator to resolve '${guardFile}', then retry.`,
+    };
+  }
+
+  if (lock.holderIdentityVerified === false) {
+    const pid =
+      lock.holderPid === undefined ? "an unknown PID" : `live PID ${String(lock.holderPid)}`;
+    return {
+      reason:
+        `Onboarding lock '${lock.lockFile}' records ${pid}, but NemoClaw cannot confirm ` +
+        "that PID owns an onboarding run.",
+      remediation:
+        "Verify that no onboarding run is active. If none is active, remove only " +
+        `'${lock.lockFile}', then retry.`,
     };
   }
 
@@ -1548,6 +1562,7 @@ function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
           holderPid: disposition.record.pid,
           holderStartedAt: disposition.record.startedAt,
           holderCommand: disposition.record.command,
+          holderIdentityVerified: disposition.identityVerified,
         };
       }
 

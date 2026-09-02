@@ -125,6 +125,15 @@ function retryRetainedCandidateCleanup(candidatePath: string): RetainedCandidate
   return { status: "not-retained" };
 }
 
+function releaseReclamationGuard(guardPath: string, token: string): void {
+  try {
+    safelyReleaseMcpLifecycleLockSync(guardPath, token, MAX_GUARD_ARTIFACT_BYTES);
+  } catch (error) {
+    if (error instanceof McpLifecycleLockObservationTooLargeError) return;
+    throw error;
+  }
+}
+
 type GuardObservationResult =
   | { readonly status: "read"; readonly observation: LockObservation | null }
   | { readonly status: "blocked"; readonly contention: OnboardLockReclamationGuardContention };
@@ -288,7 +297,10 @@ export function withOnboardLockReclamationGuard<T>(
       try {
         return { status: "completed", value: operation() };
       } finally {
-        safelyReleaseMcpLifecycleLockSync(guardPath, token);
+        // A replacement that appears during the operation remains fail-closed.
+        // Its cleanup state is reported on the next bounded acquisition rather
+        // than masking the already-completed protected operation.
+        releaseReclamationGuard(guardPath, token);
         if (retainedCandidatePath !== null) {
           retryRetainedCandidateCleanup(retainedCandidatePath);
         }

@@ -205,10 +205,19 @@ export async function safelyReleaseMcpLifecycleLock(
   await reclaimStaleMcpLifecycleLockGeneration(lockPath, observation);
 }
 
-export function safelyReleaseMcpLifecycleLockSync(lockPath: string, token: string): void {
-  const observation = readMcpLifecycleLockObservationSync(lockPath);
+export function safelyReleaseMcpLifecycleLockSync(
+  lockPath: string,
+  token: string,
+  maxObservationBytes = Number.POSITIVE_INFINITY,
+): void {
+  const observation = readMcpLifecycleLockObservationSync(lockPath, maxObservationBytes);
   if (!observation || observation.owner?.token !== token) return;
-  reclaimStaleMcpLifecycleLockGenerationSync(lockPath, observation);
+  reclaimStaleMcpLifecycleLockGenerationSync(
+    lockPath,
+    observation,
+    undefined,
+    maxObservationBytes,
+  );
 }
 
 async function restoreClaimedMcpLifecycleLockGeneration(

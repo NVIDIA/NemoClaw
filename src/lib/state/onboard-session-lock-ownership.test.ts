@@ -11,7 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMcpLifecycleLockOwner } from "./mcp-lifecycle-lock-identity";
 
 type OnboardSessionModule = typeof import("./onboard-session");
+type ReclamationGuardModule = typeof import("./onboard-session/reclamation-guard");
 let session: OnboardSessionModule;
+let reclamationGuard: ReclamationGuardModule;
 let tmpDir: string;
 
 beforeEach(async () => {
@@ -19,6 +21,7 @@ beforeEach(async () => {
   vi.stubEnv("HOME", tmpDir);
   vi.resetModules();
   session = await import("./onboard-session");
+  reclamationGuard = await import("./onboard-session/reclamation-guard");
   session.releaseOnboardLock();
 });
 
@@ -61,6 +64,40 @@ describe("onboard lock ownership", () => {
     session.releaseOnboardLock();
 
     expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
+  });
+
+  it("gives guarded recovery for a live PID without verified process identity", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.LOCK_FILE,
+      JSON.stringify({
+        pid: process.pid,
+        processStartIdentity: null,
+        startedAt: "2026-09-02T00:00:00.000Z",
+        command: "unverified onboarding owner",
+      }),
+      { mode: 0o600 },
+    );
+
+    const result = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(result).toMatchObject({
+      acquired: false,
+      holderIdentityVerified: false,
+      holderPid: process.pid,
+      lockFile: session.LOCK_FILE,
+    });
+    const contention = session.describeOnboardLockContention(result);
+    expect(contention.reason).toContain(
+      `Onboarding lock '${session.LOCK_FILE}' records live PID ${String(process.pid)}`,
+    );
+    expect(contention.reason).toContain("NemoClaw cannot confirm that PID owns an onboarding run");
+    expect(contention.reason).not.toContain("Another onboarding run owns");
+    expect(contention.remediation).toBe(
+      "Verify that no onboarding run is active. If none is active, remove only " +
+        `'${session.LOCK_FILE}', then retry.`,
+    );
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
   });
 
   it("refuses cleanup authority after the acquired lock path is replaced (#9833)", () => {
@@ -294,22 +331,77 @@ describe("onboard lock ownership", () => {
     renameSpy.mockRestore();
   });
 
-  it("retries a failed local guard-candidate cleanup before the next acquisition", () => {
+  it("removes a retained local guard candidate during the next acquisition", () => {
+    const originalRenameSync = fs.renameSync.bind(fs);
     let retainedCandidatePath: string | null = null;
+    let cleanupAllowed = false;
+    const denied = () => Object.assign(new Error("candidate cleanup denied"), { code: "EACCES" });
     const rmSpy = vi.spyOn(fs, "rmSync").mockImplementationOnce(((target) => {
       retainedCandidatePath = String(target);
-      throw Object.assign(new Error("candidate cleanup denied"), { code: "EACCES" });
+      throw denied();
     }) as typeof fs.rmSync);
+    const renameSpy = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementation(
+        ((from, to) =>
+          from === retainedCandidatePath && !cleanupAllowed
+            ? (() => {
+                throw denied();
+              })()
+            : originalRenameSync(from, to)) as typeof fs.renameSync,
+      );
 
     try {
       expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
       session.releaseOnboardLock();
       expect(retainedCandidatePath).not.toBeNull();
-      expect(fs.existsSync(retainedCandidatePath!)).toBe(false);
+      expect(fs.existsSync(retainedCandidatePath!)).toBe(true);
 
+      cleanupAllowed = true;
       expect(session.acquireOnboardLock("nemoclaw onboard --retry").acquired).toBe(true);
+      expect(fs.existsSync(retainedCandidatePath!)).toBe(false);
     } finally {
+      renameSpy.mockRestore();
       rmSpy.mockRestore();
+    }
+  });
+
+  it("bounds release when the canonical guard is replaced by an oversized matching owner", () => {
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    let readSpy: ReturnType<typeof vi.spyOn> | null = null;
+    const operation = vi.fn(() => {
+      const owner = JSON.parse(fs.readFileSync(guardFile, "utf8"));
+      fs.rmSync(guardFile);
+      fs.writeFileSync(guardFile, `${JSON.stringify(owner)}${" ".repeat(65_537)}`, {
+        mode: 0o600,
+      });
+      readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+        throw new Error("oversized replacement body must not be read");
+      });
+      return "completed";
+    });
+
+    try {
+      expect(reclamationGuard.withOnboardLockReclamationGuard(guardFile, operation)).toEqual({
+        status: "completed",
+        value: "completed",
+      });
+      expect(operation).toHaveBeenCalledOnce();
+      expect(readSpy).not.toBeNull();
+      expect(readSpy!).not.toHaveBeenCalled();
+      expect(fs.statSync(guardFile).size).toBeGreaterThan(65_536);
+
+      const blockedOperation = vi.fn();
+      expect(
+        reclamationGuard.withOnboardLockReclamationGuard(guardFile, blockedOperation),
+      ).toEqual({
+        status: "blocked",
+        contention: { guardFile },
+      });
+      expect(blockedOperation).not.toHaveBeenCalled();
+      expect(fs.statSync(guardFile).size).toBeGreaterThan(65_536);
+    } finally {
+      readSpy?.mockRestore();
     }
   });
 
