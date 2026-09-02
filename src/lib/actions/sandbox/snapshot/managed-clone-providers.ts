@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { cloneAndDeepFreeze } from "../../../core/immutable";
 import { REPOSITORY_ROOT } from "../../../core/repository-root";
+import { normalizeCredentialValue } from "../../../credentials/store";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import {
   ensureMessagingCredentialProviderProfile,
@@ -17,9 +18,19 @@ import {
   matchesGatewayCredentialOnlyProviderBinding,
   parseGatewayProviderMetadata,
 } from "../../../onboard/gateway-provider-metadata";
+import { collectRequiredMessagingProviderBindings } from "../../../onboard/checkpoint-replay";
 import type { ManagedStartupProfile } from "../../../onboard/managed-startup/profile";
+import {
+  configureMessagingBridgeRefreshes,
+  ensureMessagingBridgeProfiles,
+  listMessagingBridgeProfiles,
+  MESSAGING_BRIDGE_PENDING_VALUE,
+  messagingBridgeProfilesForAgent,
+  type MessagingBridgeProfile,
+} from "../../../onboard/messaging-bridge-provider";
 import { normalizeRuntimeProviderIdentity } from "../../../onboard/runtime-provider/registry";
 import { deleteProviderWithRecovery } from "../../../onboard/sandbox-provider-cleanup";
+import { redactFullWithUrls } from "../../../security/redact";
 import type { PreparedManagedWorkloadCloneHandoff } from "../../../onboard/workload/clone";
 import {
   captureSandboxRebuildAuthority,
@@ -61,6 +72,8 @@ export interface ManagedCloneProviderBinding {
   readonly providerName: string;
   readonly providerType: string;
   readonly providerEnvKey: string;
+  /** Host-only source material for a gateway-refreshed provider credential. */
+  readonly sourceCredentialEnvKey?: string;
   /** Provider-neutral contribution owner, for diagnostics only. */
   readonly source: string;
 }
@@ -204,6 +217,12 @@ function validatedBinding(binding: ManagedCloneProviderBinding): ManagedClonePro
     fail(`provider '${binding.providerName}' has an invalid credential binding`);
   }
   if (
+    binding.sourceCredentialEnvKey !== undefined &&
+    !PROVIDER_ENV_KEY_PATTERN.test(binding.sourceCredentialEnvKey)
+  ) {
+    fail(`provider '${binding.providerName}' has an invalid source credential binding`);
+  }
+  if (
     typeof binding.source !== "string" ||
     binding.source.trim() === "" ||
     binding.source !== binding.source.trim() ||
@@ -224,7 +243,8 @@ function mergeBindings(
     if (
       existing &&
       (existing.providerType !== binding.providerType ||
-        existing.providerEnvKey !== binding.providerEnvKey)
+        existing.providerEnvKey !== binding.providerEnvKey ||
+        existing.sourceCredentialEnvKey !== binding.sourceCredentialEnvKey)
     ) {
       fail(`provider '${binding.providerName}' has conflicting desired bindings`);
     }
@@ -233,27 +253,43 @@ function mergeBindings(
   return [...merged.values()];
 }
 
-function activeMessagingCredentialBindings(
+function validatedMessagingPlan(
   plan: SandboxMessagingPlan | null | undefined,
   expectedSandboxName: string,
   expectedAgent: string | null | undefined,
-): readonly SandboxMessagingPlan["credentialBindings"][number][] {
-  if (!plan) return [];
+): SandboxMessagingPlan | null {
+  if (!plan) return null;
   if (
     plan.sandboxName !== expectedSandboxName ||
     (expectedAgent !== null && expectedAgent !== undefined && plan.agent !== expectedAgent)
   ) {
     fail(`messaging provider ownership does not belong to '${expectedSandboxName}'`);
   }
-  const activeChannels = new Set(
-    plan.channels
-      .filter(
-        (channel) =>
-          channel.active && !channel.disabled && !plan.disabledChannels.includes(channel.channelId),
-      )
-      .map((channel) => channel.channelId),
+  return plan;
+}
+
+function messagingBindings(
+  plan: SandboxMessagingPlan | null | undefined,
+  expectedSandboxName: string,
+  expectedAgent: string | null | undefined,
+): readonly ManagedCloneProviderBinding[] {
+  const validated = validatedMessagingPlan(plan, expectedSandboxName, expectedAgent);
+  if (!validated) return [];
+  const profiles = messagingBridgeProfilesForAgent(
+    validated.agent,
+    listMessagingBridgeProfiles({ root: REPOSITORY_ROOT }),
   );
-  return plan.credentialBindings.filter((binding) => activeChannels.has(binding.channelId));
+  const profilesByType = new Map(profiles.map((profile) => [profile.profileId, profile]));
+  return collectRequiredMessagingProviderBindings(expectedSandboxName, validated).map((binding) => {
+    const profile = profilesByType.get(binding.type);
+    return {
+      providerName: binding.name,
+      providerType: binding.type,
+      providerEnvKey: binding.credentialEnv,
+      ...(profile?.strategy ? { sourceCredentialEnvKey: profile.sourceSecretEnv } : {}),
+      source: "messaging",
+    };
+  });
 }
 
 function applicationBindings(input: {
@@ -261,16 +297,9 @@ function applicationBindings(input: {
   readonly messagingPlan: SandboxMessagingPlan | null | undefined;
   readonly sandboxName: string;
 }): readonly ManagedCloneProviderBinding[] {
-  const bindings: ManagedCloneProviderBinding[] = activeMessagingCredentialBindings(
-    input.messagingPlan,
-    input.sandboxName,
-    input.profile.agent,
-  ).map((binding) => ({
-    providerName: binding.providerName,
-    providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    providerEnvKey: binding.providerEnvKey,
-    source: "messaging",
-  }));
+  const bindings: ManagedCloneProviderBinding[] = [
+    ...messagingBindings(input.messagingPlan, input.sandboxName, input.profile.agent),
+  ];
   if (
     input.profile.agentConfig.agent === "openclaw" ||
     input.profile.agentConfig.agent === "hermes"
@@ -292,16 +321,9 @@ function applicationBindings(input: {
 }
 
 function destinationOwnedBindings(entry: SandboxEntry): readonly ManagedCloneProviderBinding[] {
-  const bindings: ManagedCloneProviderBinding[] = activeMessagingCredentialBindings(
-    entry.messaging?.plan,
-    entry.name,
-    entry.agent,
-  ).map((binding) => ({
-    providerName: binding.providerName,
-    providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    providerEnvKey: binding.providerEnvKey,
-    source: "messaging",
-  }));
+  const bindings: ManagedCloneProviderBinding[] = [
+    ...messagingBindings(entry.messaging?.plan, entry.name, entry.agent),
+  ];
   if (entry.webSearchEnabled === true && entry.webSearchProvider) {
     bindings.push({
       providerName: `${entry.name}-${entry.webSearchProvider}-search`,
@@ -323,7 +345,8 @@ function sameBinding(
   return (
     left.providerName === right.providerName &&
     left.providerType === right.providerType &&
-    left.providerEnvKey === right.providerEnvKey
+    left.providerEnvKey === right.providerEnvKey &&
+    left.sourceCredentialEnvKey === right.sourceCredentialEnvKey
   );
 }
 
@@ -407,10 +430,11 @@ export function prepareManagedCloneProviderTransaction(input: {
   const environment = input.environment ?? process.env;
   const providers: PreparedManagedCloneProvider[] = [];
   for (const binding of desired) {
-    if (!hasCredential(environment, binding.providerEnvKey)) {
+    const requiredCredentialEnvKey = binding.sourceCredentialEnvKey ?? binding.providerEnvKey;
+    if (!hasCredential(environment, requiredCredentialEnvKey)) {
       fail(
         `${binding.source} provider '${binding.providerName}' requires an explicit clone ` +
-          `credential in ${binding.providerEnvKey}`,
+          `credential in ${requiredCredentialEnvKey}`,
       );
     }
     const inspection = inspectProvider(binding, input.runOpenshell);
@@ -509,6 +533,52 @@ function issueReceipt(
   return receipt;
 }
 
+function messagingProfileTokenDefs(
+  providers: readonly PreparedManagedCloneProvider[],
+  profiles: readonly MessagingBridgeProfile[],
+): readonly { readonly name: string; readonly providerType: string; readonly token: string }[] {
+  const profileTypes = new Set(profiles.map((profile) => profile.profileId));
+  return providers
+    .filter(
+      (provider) =>
+        provider.binding.source === "messaging" && profileTypes.has(provider.binding.providerType),
+    )
+    .map((provider) => ({
+      name: provider.binding.providerName,
+      providerType: provider.binding.providerType,
+      token: MESSAGING_BRIDGE_PENDING_VALUE,
+    }));
+}
+
+function configureCreatedMessagingRefreshes(
+  confirmed: readonly ManagedCloneProviderOwnershipReceipt[],
+  profiles: readonly MessagingBridgeProfile[],
+  environment: NodeJS.ProcessEnv,
+  runOpenshell: ManagedCloneProviderRunner,
+): void {
+  const tokenDefs = confirmed
+    .filter(
+      (provider) =>
+        provider.disposition === "created" && provider.binding.sourceCredentialEnvKey !== undefined,
+    )
+    .map((provider) => ({
+      name: provider.binding.providerName,
+      providerType: provider.binding.providerType,
+      token: MESSAGING_BRIDGE_PENDING_VALUE,
+    }));
+  if (tokenDefs.length === 0) return;
+  const result = configureMessagingBridgeRefreshes(tokenDefs, {
+    runOpenshell,
+    redact: redactFullWithUrls,
+    getCredential: (envKey) => normalizeCredentialValue(environment[envKey]) || null,
+    env: environment,
+    normalizeCredentialValue: (value) =>
+      normalizeCredentialValue(typeof value === "string" ? value : null),
+    profiles,
+  });
+  if (!result.ok) fail("could not configure gateway token minting for a messaging bridge");
+}
+
 /**
  * Materialize missing providers under one process-local ownership ledger.
  * A non-zero create followed by an exact provider is explicitly ambiguous:
@@ -533,6 +603,7 @@ export function provisionManagedCloneProviderTransaction(
   try {
     // Fence every shared gateway mutation, including provider profile import.
     revalidateManagedCloneMutationAuthority(prepared, input);
+    const messagingProfiles = listMessagingBridgeProfiles({ root: REPOSITORY_ROOT });
     if (
       prepared.providers.some(
         (provider) => provider.binding.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -543,6 +614,15 @@ export function provisionManagedCloneProviderTransaction(
         runOpenshell: input.runOpenshell,
       });
     }
+    ensureMessagingBridgeProfiles(
+      messagingProfileTokenDefs(prepared.providers, messagingProfiles),
+      {
+        root: REPOSITORY_ROOT,
+        runOpenshell: input.runOpenshell,
+        profiles: messagingProfiles,
+        exit: () => fail("could not register an OpenShell messaging provider profile"),
+      },
+    );
     for (const provider of prepared.providers) {
       revalidateManagedCloneMutationAuthority(prepared, input);
       const current = inspectProvider(provider.binding, input.runOpenshell);
@@ -559,12 +639,18 @@ export function provisionManagedCloneProviderTransaction(
       if (current.kind !== "missing") {
         fail(`provider '${provider.binding.providerName}' appeared after preflight`);
       }
-      const resolved = input.resolveCredential?.(provider.binding, environment);
-      const credential = (
-        resolved === undefined ? environment[provider.binding.providerEnvKey] : resolved
-      )
-        ?.replace(/\r/gu, "")
-        .trim();
+      const sourceCredential = provider.binding.sourceCredentialEnvKey;
+      if (sourceCredential && !hasCredential(environment, sourceCredential)) {
+        fail(`credential ${sourceCredential} disappeared before provider creation`);
+      }
+      const resolved = sourceCredential
+        ? undefined
+        : input.resolveCredential?.(provider.binding, environment);
+      const credential = sourceCredential
+        ? MESSAGING_BRIDGE_PENDING_VALUE
+        : normalizeCredentialValue(
+            resolved === undefined ? environment[provider.binding.providerEnvKey] : resolved,
+          );
       if (!credential) {
         fail(`credential ${provider.binding.providerEnvKey} disappeared before provider creation`);
       }
@@ -611,6 +697,13 @@ export function provisionManagedCloneProviderTransaction(
       }
       confirmed.push({ binding: provider.binding, disposition: "created" });
     }
+    revalidateManagedCloneMutationAuthority(prepared, input);
+    configureCreatedMessagingRefreshes(
+      confirmed,
+      messagingProfiles,
+      environment,
+      input.runOpenshell,
+    );
     return issueReceipt(prepared, confirmed);
   } catch (cause) {
     const partialReceipt = issueReceipt(prepared, confirmed);
