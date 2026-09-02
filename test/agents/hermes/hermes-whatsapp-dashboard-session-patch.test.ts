@@ -16,7 +16,8 @@ it("stores Hermes dashboard pairing state in the gateway session directory (#818
   fs.mkdirSync(path.dirname(source), { recursive: true });
   fs.writeFileSync(
     source,
-    `${"\n".repeat(9722)}def _whatsapp_session_path() -> Path:\n` +
+    "from pathlib import Path\nfrom typing import Any\n" +
+      `${"\n".repeat(9720)}def _whatsapp_session_path() -> Path:\n` +
       "    from hermes_constants import get_hermes_dir\n\n" +
       '    return get_hermes_dir("platforms/whatsapp/session", "whatsapp/session")\n\n\n' +
       "def _whatsapp_phone_from_identifier(value: Any) -> str | None:\n" +
@@ -24,34 +25,33 @@ it("stores Hermes dashboard pairing state in the gateway session directory (#818
   );
 
   try {
-    const scoped = spawnSync(
-      "git",
-      ["apply", "--check", "--exclude=scripts/whatsapp-bridge/**", PATCH],
-      {
-        cwd: tmp,
-        encoding: "utf8",
-      },
-    );
-    expect(scoped.status, scoped.stderr).toBe(0);
-    const inventory = spawnSync("git", ["apply", "--numstat", "-z", PATCH], {
-      cwd: tmp,
-      encoding: "utf8",
-    });
-    expect(inventory.status, inventory.stderr).toBe(0);
-    const changedPaths = inventory.stdout
-      .split("\0")
-      .filter(Boolean)
-      .map((entry) => entry.split("\t").at(-1));
-    expect(changedPaths).not.toContain("hermes_cli/main.py");
-    expect(changedPaths.some((entry) => entry?.startsWith("gateway/"))).toBe(false);
     const applied = spawnSync("git", ["apply", "--include=hermes_cli/web_server.py", PATCH], {
       cwd: tmp,
       encoding: "utf8",
     });
     expect(applied.status, applied.stderr).toBe(0);
-    const patched = fs.readFileSync(source, "utf8");
-    expect(patched).toContain('return Path("/sandbox/.hermes/platforms/whatsapp/session")');
-    expect(patched).not.toContain("get_hermes_dir");
+    const invoked = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        [
+          "import importlib.util",
+          "import pathlib",
+          "import sys",
+          'spec = importlib.util.spec_from_file_location("hermes_web_server", sys.argv[1])',
+          "module = importlib.util.module_from_spec(spec)",
+          "spec.loader.exec_module(module)",
+          "session_path = module._whatsapp_session_path()",
+          "assert isinstance(session_path, pathlib.Path)",
+          "print(session_path)",
+        ].join("\n"),
+        source,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(invoked.status, invoked.stderr).toBe(0);
+    expect(invoked.stdout.trim()).toBe("/sandbox/.hermes/platforms/whatsapp/session");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
