@@ -59,6 +59,16 @@ export type CliOpenShellProviderAdapterDeps = Readonly<{
   environment?: OpenShellGatewayEndpointEnvironment;
 }>;
 
+export type CliOpenShellProviderAdapter = Omit<
+  OpenShellProviderAdapter,
+  "importProviderProfile"
+> &
+  Readonly<{
+    importProviderProfile(
+      request: ImportOpenShellProviderProfileRequest,
+    ): OpenShellProviderMutationResult;
+  }>;
+
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/u;
 const TERMINAL_OSC_RE = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/gu;
 const TERMINAL_STRING_RE = /(?:\x1B[PX^_]|[\x90\x98\x9E\x9F])[\s\S]*?(?:\x1B\\|\x9C|$)/gu;
@@ -246,7 +256,7 @@ function parseProfileCredentialKeys(output: string, expectedProfileId: string): 
 
 export function createCliOpenShellProviderAdapter(
   deps: CliOpenShellProviderAdapterDeps = {},
-): OpenShellProviderAdapter {
+): CliOpenShellProviderAdapter {
   const run = deps.run ?? runOpenshellProviderCommand;
   const environment = deps.environment ?? process.env;
   const timeoutFor = (request: OpenShellProviderRequest) =>
@@ -319,7 +329,7 @@ export function createCliOpenShellProviderAdapter(
     return error ? failure(error) : mutationSuccess();
   };
 
-  const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = (
+  const importProviderProfile: CliOpenShellProviderAdapter["importProviderProfile"] = (
     request: ImportOpenShellProviderProfileRequest,
   ) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);

@@ -94,7 +94,7 @@ export interface OpenShellProviderAdapter {
 
   importProviderProfile(
     request: ImportOpenShellProviderProfileRequest,
-  ): OpenShellProviderMutationResult;
+  ): OpenShellProviderMutationResult | Promise<OpenShellProviderMutationResult>;
 
   inspectProviderProfile(
     request: InspectOpenShellProviderProfileRequest,

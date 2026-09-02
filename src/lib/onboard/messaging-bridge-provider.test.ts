@@ -762,7 +762,10 @@ describe("ensureMessagingBridgeProfiles", () => {
   it.each(["connection refused", "authentication failed"])(
     "does not import when the profile probe fails with %s",
     (diagnostic) => {
-      const runOpenshell = vi.fn(() => ({ status: 1, stderr: diagnostic }));
+      const runOpenshell = vi.fn((_args: string[], _options: unknown) => ({
+        status: 1,
+        stderr: diagnostic,
+      }));
       const exit = vi.fn(() => undefined as never);
       ensureMessagingBridgeProfiles([BRIDGE_DEF], {
         ...baseDeps(),

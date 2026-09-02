@@ -36,7 +36,7 @@ function providerAdapter(
   const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
     ok: true,
   });
-  const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = () => ({
+  const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
     ok: true,
   });
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async () => ({
@@ -447,7 +447,7 @@ describe("credential actions use typed OpenShell provider results", () => {
 
   it("does not create an OpenAI provider after profile import fails (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = () => ({
+    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
       ok: false,
       error: {
         kind: "command",
@@ -477,7 +477,7 @@ describe("credential actions use typed OpenShell provider results", () => {
 
   it("does not create a provider from an incompatible bundled profile (#9806)", async () => {
     vi.stubEnv("TAVILY_API_KEY", "host-only-value");
-    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = () => ({
+    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
       ok: false,
       error: {
         kind: "command",
@@ -549,7 +549,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     async (_case, error, recoveryLines) => {
       vi.stubEnv("OPENAI_API_KEY", "host-only-value");
       const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] =
-        () => ({
+        async () => ({
           ok: false,
           error,
         });
