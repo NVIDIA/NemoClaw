@@ -499,6 +499,7 @@ function retainForwardRecovery(
   input: HermesPortableForwardRecoveryInput,
   touchedPorts: readonly number[],
   result: HermesPortableForwardRecoveryResult,
+  timing: ReturnType<typeof createForwardTimingRecorder>,
 ): PreparedHermesPortableForwardRecovery {
   let state: "prepared" | "released" | "rolled-back" = "prepared";
   return Object.freeze({
@@ -506,12 +507,17 @@ function retainForwardRecovery(
     release: () => {
       if (state !== "prepared") failure("recovery-failed");
       state = "released";
+      timing.finish("proved");
       return result;
     },
     rollback: () => {
       if (state !== "prepared") failure("restoration-unproved");
       state = "rolled-back";
-      if (touchedPorts.length > 0) rollbackTouchedPorts(input, touchedPorts);
+      try {
+        if (touchedPorts.length > 0) rollbackTouchedPorts(input, touchedPorts, timing);
+      } finally {
+        timing.finish("failed");
+      }
     },
   });
 }
@@ -529,8 +535,12 @@ export function prepareHermesPortableLaunchForwards(
     const missing = input.ports.filter((port) => initial.get(port) !== "healthy");
     if (missing.length === 0) {
       requireCurrent(input, false, timing);
-      timing.finish("proved");
-      return retainForwardRecovery(input, touchedPorts, { kind: "verified", restoredPorts: [] });
+      return retainForwardRecovery(
+        input,
+        touchedPorts,
+        { kind: "verified", restoredPorts: [] },
+        timing,
+      );
     }
 
     const requiredHealthy = new Set(input.ports.filter((port) => initial.get(port) === "healthy"));
@@ -568,11 +578,15 @@ export function prepareHermesPortableLaunchForwards(
       failure("recovery-failed");
     }
     requireCurrent(input, false, timing);
-    timing.finish("proved");
-    return retainForwardRecovery(input, touchedPorts, {
-      kind: "restored",
-      restoredPorts: [...missing],
-    });
+    return retainForwardRecovery(
+      input,
+      touchedPorts,
+      {
+        kind: "restored",
+        restoredPorts: [...missing],
+      },
+      timing,
+    );
   } catch (error) {
     let normalized = normalizeFailure(error);
     try {

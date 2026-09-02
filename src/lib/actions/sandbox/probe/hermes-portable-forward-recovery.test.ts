@@ -217,6 +217,27 @@ describe("Hermes Portable probe-only forward recovery", () => {
     });
   });
 
+  it("reports retained recovery failure only after rollback completes (#10822)", () => {
+    const fixture = createRecoveryFixture();
+    const onComplete = vi.fn();
+    Object.assign(fixture.input, { timing: { onComplete } });
+
+    const prepared = prepareHermesPortableLaunchForwards(fixture.input);
+
+    expect(onComplete).not.toHaveBeenCalled();
+    prepared.rollback();
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: "failed",
+        rollbackCount: 1,
+        portOutcomes: [
+          { port: 18_789, observationCount: 3, reachabilityCount: 3, outcome: "absent" },
+        ],
+      }),
+    );
+  });
+
   it("reports only bounded numeric and fixed-enum timing metadata (#10822)", () => {
     const fixture = createRecoveryFixture({
       listOutput: "SANDBOX BIND PORT PID STATUS\nsecret-sandbox 127.0.0.1 18789 12345 running",
