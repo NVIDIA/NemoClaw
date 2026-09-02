@@ -301,6 +301,7 @@ export function runDeepAgentsConfigCommand(
   initialLegacyConfig?: Record<string, unknown> | string,
   initialLegacyMode = 0o600,
   managedOptions: DeepAgentsManagedFixtureOptions = {},
+  runtimeEnvironment: NodeJS.ProcessEnv = {},
 ): DeepAgentsConfigCommandResult {
   const managedSwap = resolveManagedSwap(managedOptions);
   const fixtureRoot = managedSwap?.kind === "socket" ? "/tmp" : os.tmpdir();
@@ -395,10 +396,17 @@ export function runDeepAgentsConfigCommand(
       .replaceAll(DEEPAGENTS_MCP_CONFIG_PATH, configPath)
       .replaceAll("/sandbox/.deepagents/.mcp.json", legacyConfigPath)
       .replaceAll("/opt/venv/bin/python3", fixturePython.executablePath);
+    const canonicalEnvironment = Object.fromEntries(
+      [...command.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(
+        ([, name]) => [name!, `openshell:resolve:env:${name!}`],
+      ),
+    );
     const result = spawnSync("bash", ["-c", fixtureCommand], {
       encoding: "utf-8",
       env: {
         ...process.env,
+        ...canonicalEnvironment,
+        ...runtimeEnvironment,
         DEEPAGENTS_FIXTURE_PYTHON_WRAPPER: fixturePython.scriptPath,
       },
       timeout: managedOptions.timeoutMs ?? 5000,

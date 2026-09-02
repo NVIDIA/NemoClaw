@@ -5,7 +5,7 @@
     "maxByFile": {
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 25,
       "src/lib/actions/sandbox/process-recovery.ts": 27,
-      "src/lib/adapters/docker/index.ts": 43,
+      "src/lib/adapters/docker/index.ts": 42,
       "src/lib/adapters/openshell/client.ts": 20,
       "src/lib/adapters/openshell/resolve.ts": 27,
       "src/lib/adapters/openshell/runtime.ts": 55,
@@ -43,7 +43,7 @@
       "src/lib/actions/sandbox/gateway-state.ts": 21,
       "src/lib/actions/sandbox/status-snapshot.ts": 19,
       "src/lib/actions/sandbox/policy-channel.ts": 30,
-      "src/lib/actions/sandbox/process-recovery.ts": 21,
+      "src/lib/actions/sandbox/process-recovery.ts": 20,
       "src/lib/actions/sandbox/rebuild-pipeline.ts": 29,
       "src/lib/actions/sandbox/snapshot.ts": 38,
       "src/lib/actions/uninstall/run-plan.ts": 25,
@@ -53,8 +53,8 @@
       "src/lib/onboard.ts": 193,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/policy/index.ts": 23,
-      "src/lib/sandbox/config.ts": 22,
-      "src/lib/shields/index.ts": 25
+      "src/lib/sandbox/config.ts": 21,
+      "src/lib/shields/index.ts": 24
     }
   },
   "allowedCycles": [],

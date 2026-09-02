@@ -184,6 +184,15 @@ describe("sandbox workload preparation", () => {
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",
           NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: "b".repeat(40),
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+          NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: REVISION,
+        }),
+      ).toEqual({ path: catalogPath, revision: REVISION });
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
         }),
@@ -223,7 +232,7 @@ describe("sandbox workload preparation", () => {
     }
   });
 
-  it("rejects an embedded catalog without an exact candidate revision (#9464)", () => {
+  it("rejects an embedded catalog without an exact publication revision (#9464)", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
@@ -234,7 +243,7 @@ describe("sandbox workload preparation", () => {
           NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
         }),
-      ).toThrow("requires an exact candidate revision");
+      ).toThrow("requires an exact publication revision");
       expect(() =>
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",

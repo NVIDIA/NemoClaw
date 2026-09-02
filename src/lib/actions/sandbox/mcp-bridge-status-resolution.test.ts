@@ -159,6 +159,12 @@ registry.registerSandbox({
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const logLines = [];
 const errorLines = [];
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+const writeHarnessResult = (value) => originalStdoutWrite(value);
+process.stdout.write = (value) => {
+  logLines.push(String(value).trimEnd());
+  return true;
+};
 console.log = (...parts) => logLines.push(parts.join(" "));
 console.error = (...parts) => errorLines.push(parts.join(" "));
 `;
@@ -240,7 +246,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       process.exitCode = 0;
     }
   }
-  process.stdout.write(JSON.stringify(outcomes));
+  writeHarnessResult(JSON.stringify(outcomes));
 `,
       );
       const outcomes = JSON.parse(stdout) as Array<{
@@ -268,7 +274,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--json"]);
   const status = JSON.parse(logLines.join("\n"));
-  process.stdout.write(JSON.stringify({
+  writeHarnessResult(JSON.stringify({
     status,
     probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
     exitCode: process.exitCode ?? 0,
@@ -321,7 +327,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       credentialObservationCount,
     });
   }
-  process.stdout.write(JSON.stringify(outcomes));
+  writeHarnessResult(JSON.stringify(outcomes));
 `,
     );
     const outcomes = JSON.parse(stdout) as Array<{
@@ -379,7 +385,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       probed: executedSandboxCommands.some((command) => command.includes("NEMOCLAW_MCP_PROBE")),
     });
   }
-  process.stdout.write(JSON.stringify(outcomes));
+  writeHarnessResult(JSON.stringify(outcomes));
 `,
     );
     const outcomes = JSON.parse(stdout) as Array<{
@@ -456,7 +462,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     resolution: wrongProvider.provider.credentialResolution,
     probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
   });
-  process.stdout.write(JSON.stringify(outcomes));
+  writeHarnessResult(JSON.stringify(outcomes));
 `,
     );
     const outcomes = JSON.parse(stdout) as Array<{
@@ -484,7 +490,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github"]);
-  process.stdout.write(JSON.stringify({ lines: logLines }));
+  writeHarnessResult(JSON.stringify({ lines: logLines }));
 `,
     );
     const payload = JSON.parse(stdout) as { lines: string[] };
@@ -503,7 +509,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--json"]);
   const status = JSON.parse(logLines.join("\n"));
-  process.stdout.write(JSON.stringify({ warnings: status.warnings }));
+  writeHarnessResult(JSON.stringify({ warnings: status.warnings }));
 `,
       { probeHttpStatus: 400 },
     );
@@ -527,7 +533,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   logLines.length = 0;
   await bridge.dispatchMcpBridgeCommand("alpha", ["list", "--json"]);
   const list = JSON.parse(logLines.join("\n"));
-  process.stdout.write(JSON.stringify({
+  writeHarnessResult(JSON.stringify({
     probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
     bareStatusResolution: bareStatus.bridges[0].provider.credentialResolution ?? null,
     listResolution: list.bridges[0].provider.credentialResolution ?? null,
@@ -555,7 +561,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   logLines.length = 0;
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "--probe", "--json"]);
   const forced = JSON.parse(logLines.join("\n"));
-  process.stdout.write(JSON.stringify({
+  writeHarnessResult(JSON.stringify({
     probesAfterSkip,
     skippedResolution: skipped.provider.credentialResolution ?? null,
     forcedResolution: forced.bridges[0].provider.credentialResolution ?? null,
@@ -584,7 +590,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--probe", "--no-probe"]);
   const observedExitCode = process.exitCode ?? 0;
   process.exitCode = 0;
-  process.stdout.write(JSON.stringify({ errorLines, exitCode: observedExitCode }));
+  writeHarnessResult(JSON.stringify({ errorLines, exitCode: observedExitCode }));
 `,
     );
     const payload = JSON.parse(stdout) as { errorLines: string[]; exitCode: number };
@@ -599,7 +605,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--json"]);
   const status = JSON.parse(logLines.join("\n"));
-  process.stdout.write(JSON.stringify({
+  writeHarnessResult(JSON.stringify({
     status,
     probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
     discovered: executedSandboxCommands.some((c) => c.includes("mcp-tool-discovery-runtime")),
@@ -675,7 +681,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       (command) => command.includes("mcp-tool-discovery-runtime"),
     ).length,
   });
-  process.stdout.write(JSON.stringify(outcomes));
+  writeHarnessResult(JSON.stringify(outcomes));
 `,
     );
     expect(JSON.parse(stdout)).toEqual([
@@ -734,7 +740,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--probe", "--json"]);
   const status = JSON.parse(logLines.join("\n"));
-  process.stdout.write(JSON.stringify({
+  writeHarnessResult(JSON.stringify({
     hasResolution: !!status.provider.credentialResolution,
     hasDiscovery: !!status.toolDiscovery,
     probeCommands: executedSandboxCommands.filter((c) => c.includes("NEMOCLAW_MCP_PROBE")).length,
@@ -762,7 +768,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   errorLines.length = 0;
   logLines.length = 0;
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools"]);
-  process.stdout.write(JSON.stringify({ rejectedExitCode, rejection, rendered: logLines }));
+  writeHarnessResult(JSON.stringify({ rejectedExitCode, rejection, rendered: logLines }));
 `,
     );
     const payload = JSON.parse(stdout) as {
@@ -788,7 +794,7 @@ describe("MCP add post-add credential-resolution probe", () => {
   await bridge.dispatchMcpBridgeCommand("alpha", [
     "add", "github", "--url", "https://api.githubcopilot.com/mcp/", "--env", "GITHUB_TOKEN",
   ]);
-  process.stdout.write(JSON.stringify({
+  writeHarnessResult(JSON.stringify({
     logLines,
     errorLines,
     probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
@@ -844,7 +850,7 @@ describe("MCP add post-add credential-resolution probe", () => {
       exitCode: process.exitCode ?? 0,
     });
   }
-  process.stdout.write(JSON.stringify(outcomes));
+  writeHarnessResult(JSON.stringify(outcomes));
 `,
     );
     const outcomes = JSON.parse(stdout) as Array<{
@@ -872,7 +878,7 @@ describe("MCP add post-add credential-resolution probe", () => {
   await bridge.dispatchMcpBridgeCommand("alpha", [
     "add", "github", "--url", "https://api.githubcopilot.com/mcp/", "--env", "GITHUB_TOKEN",
   ]);
-  process.stdout.write(JSON.stringify({ errorLines, exitCode: process.exitCode ?? 0 }));
+  writeHarnessResult(JSON.stringify({ errorLines, exitCode: process.exitCode ?? 0 }));
 `,
       { probeHttpStatus: 400 },
     );
@@ -895,7 +901,7 @@ describe("MCP add post-add credential-resolution probe", () => {
   await bridge.dispatchMcpBridgeCommand("alpha", [
     "add", "github", "--url", "https://api.githubcopilot.com/mcp/", "--env", "GITHUB_TOKEN", "--no-probe",
   ]);
-  process.stdout.write(JSON.stringify({
+  writeHarnessResult(JSON.stringify({
     errorLines,
     probed: executedSandboxCommands.some((c) => c.includes("NEMOCLAW_MCP_PROBE")),
     exitCode: process.exitCode ?? 0,

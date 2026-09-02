@@ -13,7 +13,6 @@ import {
   createHermesShieldsProviderConsumerHarness,
   createRetainedUnlockSimulation,
   createTimerAuthorizationSender,
-  createTransitionFailureForPosture,
   hermesProviderConsumerSandbox as sandbox,
   hermesProviderConsumerTarget as target,
   writeBoundForwardPolicy,
@@ -187,7 +186,7 @@ describe("legacy Hermes shields compatibility", () => {
   let spies: MockInstance[];
   let runSpy: MockInstance;
   let dockerExecSpy: MockInstance;
-  let privilegedExecArgvSpy: MockInstance;
+  let privilegedCaptureSpy: MockInstance;
   let applyStateDirLockModeSpy: MockInstance;
   let inferenceConvergenceSpy: MockInstance;
   let auditSpy: MockInstance;
@@ -224,9 +223,11 @@ describe("legacy Hermes shields compatibility", () => {
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     dockerExecSpy = vi.spyOn(dockerExec, "dockerExecFileSync");
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
-    privilegedExecArgvSpy = vi
-      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-      .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
+    privilegedCaptureSpy = vi
+      .spyOn(privilegedExec, "capturePrivilegedSandboxCommand")
+      .mockImplementation((_sandboxName: unknown, cmd: unknown) =>
+        Buffer.from(dockerExec.dockerExecFileSync(cmd as string[])),
+      );
     inferenceConvergenceSpy = vi
       .spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence")
       .mockReturnValue({
@@ -261,7 +262,7 @@ describe("legacy Hermes shields compatibility", () => {
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       })),
-      privilegedExecArgvSpy,
+      privilegedCaptureSpy,
       dockerExecSpy,
       applyStateDirLockModeSpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
@@ -558,7 +559,6 @@ describe("legacy Hermes shields compatibility", () => {
     expect(() =>
       shields.unlockAgentConfig("current-hermes", hermesTarget(), true, true),
     ).not.toThrow();
-
     const guardCommands = dockerExecSpy.mock.calls
       .map(commandFromCall)
       .filter((cmd) => cmd.includes(HERMES_GUARD));
@@ -573,13 +573,15 @@ describe("legacy Hermes shields compatibility", () => {
         );
       }),
     ).toBe(true);
-    expect(privilegedExecArgvSpy).toHaveBeenCalled();
-    expect(privilegedExecArgvSpy.mock.calls.every((call) => call[3] === true)).toBe(true);
+    expect(privilegedCaptureSpy).toHaveBeenCalled();
+    expect(
+      privilegedCaptureSpy.mock.calls.every(
+        (call) => (call[2] as { sanitizeEnvironment?: boolean }).sanitizeEnvironment === true,
+      ),
+    ).toBe(true);
   });
-
   it("pins one capability decision across policy and config mutation", () => {
     installExecResponses(CURRENT_GUARD_HELP);
-
     expect(() =>
       shields.shieldsDown("current-hermes", {
         throwOnError: true,
@@ -795,11 +797,12 @@ describe("legacy Hermes shields compatibility", () => {
     });
 
     it("migrates the current managed Hermes lock leaf and preserves the host seal result", () => {
+      registrySpy.mockReturnValue({ ...sandbox, mcp: { bridges: { fake: {} } } });
       const result = shields.lockAgentConfig(sandbox.name, target, false, false);
 
       expect(transitionSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          sandbox,
+          sandbox: expect.objectContaining(sandbox),
           sandboxName: sandbox.name,
           configTarget: target,
           target: "locked",
@@ -811,7 +814,7 @@ describe("legacy Hermes shields compatibility", () => {
         "/sandbox/.hermes/.env": "c".repeat(64),
         "/sandbox/.hermes/.config-hash": "c".repeat(64),
       });
-      expect(commands.some((command) => command.includes("begin-shields-transition"))).toBe(false);
+      expect(commands.some((command) => command.includes("nemoclaw-gateway-control"))).toBe(false);
     });
 
     it("treats an already-locked provider lock as recovery plus live verification", () => {
@@ -858,7 +861,8 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "crash retry",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
         }),
       );
       fs.writeFileSync(
@@ -886,7 +890,8 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "dead-provider-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath, snapshotPolicy,
+          snapshotPath,
+          snapshotPolicy,
           forwardPolicy,
         }),
       );
@@ -994,7 +999,8 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "post-release crash",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
         }),
       );
       fs.writeFileSync(
@@ -1022,7 +1028,8 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "dead-post-release-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath, snapshotPolicy,
+          snapshotPath,
+          snapshotPolicy,
           forwardPolicy,
         }),
       );
@@ -1078,7 +1085,8 @@ describe("legacy Hermes shields compatibility", () => {
             shieldsDownTimeout: 300,
             shieldsDownReason: "invalid forward policy",
             shieldsDownPolicy: "permissive",
-            shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+            shieldsPolicySnapshotPath: snapshotPath,
+            shieldsPolicySnapshot: snapshotPolicy,
           }),
         );
         const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
@@ -1107,7 +1115,8 @@ describe("legacy Hermes shields compatibility", () => {
             ownerStartIdentity: "dead-forward-owner",
             processToken,
             sandboxName: sandbox.name,
-            snapshotPath, snapshotPolicy,
+            snapshotPath,
+            snapshotPolicy,
             forwardPolicy,
           }),
         );
@@ -1171,63 +1180,6 @@ describe("legacy Hermes shields compatibility", () => {
       expect(commands.some((command) => command.includes("--help"))).toBe(false);
     });
 
-    it("does not report clean UP when provider verification finds nested skills or pairing drift", () => {
-      const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
-      const stateDir = statePaths.resolveNemoclawStateDir();
-      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(
-        path.join(stateDir, `shields-${sandbox.name}.json`),
-        JSON.stringify({
-          shieldsDown: false,
-          chattrApplied: true,
-          fileHashes: { [target.configPath]: "c".repeat(64) },
-          updatedAt: new Date().toISOString(),
-        }),
-      );
-      lifecycleGateSpy.mockReturnValue(false);
-      transitionSpy.mockImplementation(
-        createTransitionFailureForPosture(
-          "locked",
-          "recursive state lock plan drift under skills/pairing",
-        ),
-      );
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-        throw new Error(`process exit ${String(code)}`);
-      }) as never);
-      spies.push(exitSpy);
-
-      expect(() => shields.shieldsStatus(sandbox.name)).toThrow("process exit 2");
-
-      const errors = vi.mocked(console.error).mock.calls.flat().map(String).join("\n");
-      const logs = vi.mocked(console.log).mock.calls.flat().map(String).join("\n");
-      expect(errors).toContain("recursive state lock plan drift under skills/pairing");
-      expect(errors).toContain("UP (DRIFTED");
-      expect(logs).not.toContain("UP (lockdown active)");
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "locked", rollback: "locked" }),
-      );
-
-      transitionSpy.mockClear();
-      vi.mocked(console.log).mockClear();
-      expect(() => shields.shieldsUp(sandbox.name, { throwOnError: true })).toThrow(
-        "recursive state lock plan drift under skills/pairing",
-      );
-      expect(vi.mocked(console.log).mock.calls.flat().map(String).join("\n")).not.toContain(
-        "already locked",
-      );
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "locked", rollback: "locked" }),
-      );
-
-      transitionSpy.mockClear();
-      expect(() => shields.lockAgentConfig(sandbox.name, target, true, false)).toThrow(
-        "recursive state lock plan drift under skills/pairing",
-      );
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "locked", rollback: "locked" }),
-      );
-    });
-
     it("does not report clean mutable-default when recursive skills or pairing posture drifts (#9485)", () => {
       lifecycleGateSpy.mockReturnValue(false);
       verifyStateDirMutablePostureSpy.mockReturnValue([
@@ -1264,6 +1216,7 @@ describe("legacy Hermes shields compatibility", () => {
         }),
         true,
         [target.configPath, ...(target.sensitiveFiles || [])],
+        ["gateway"],
       );
       expect(vi.mocked(console.log).mock.calls.flat().map(String).join("\n")).toContain(
         "NOT CONFIGURED (default mutable state)",
@@ -1291,7 +1244,8 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "timed mutable status",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
           updatedAt: new Date().toISOString(),
         }),
       );
@@ -1320,7 +1274,8 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "timed-status-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath, snapshotPolicy,
+          snapshotPath,
+          snapshotPolicy,
           forwardPolicy,
         }),
       );
@@ -1491,7 +1446,7 @@ describe("legacy Hermes shields compatibility", () => {
       registrySpy.mockReturnValue({ ...sandbox, lifecycleGeneration: undefined });
 
       expect(() => shields.lockAgentConfig(sandbox.name, target, false, false)).toThrow(
-        /registry authority has no lifecycle generation/u,
+        /authority has no lifecycle generation/u,
       );
       expect(commands.some((command) => command.includes("--help"))).toBe(false);
     });

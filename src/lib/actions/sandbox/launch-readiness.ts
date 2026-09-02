@@ -24,6 +24,10 @@ import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
 } from "../../onboard/sandbox-recreate-probe";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  resolveRuntimeProviderBundle,
+} from "../../onboard/runtime-provider/access";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import {
@@ -39,8 +43,8 @@ import {
 } from "../../state/launch-readiness-lease";
 import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry";
+import { normalizeSandboxMcpState } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { normalizeSandboxMcpState } from "../../state/registry-mcp";
 import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
@@ -80,7 +84,6 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
-const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
 
 export type LaunchReadinessPerformanceStage =
   | "storage-read"
@@ -180,6 +183,10 @@ export interface OpenClawPairingSettlementTarget {
   readonly lifecycleLiveIdentityFingerprint: string;
   readonly stateDirectory: string;
   readonly version: string;
+}
+
+export interface OrdinaryOpenClawPairingSettlementTarget extends OpenClawPairingSettlementTarget {
+  readonly openshellDriver: string;
 }
 
 type LaunchReadinessPublicationValidationCategory = Extract<
@@ -520,7 +527,9 @@ export function buildLaunchReadinessRegistryProjection(
   portableRuntimeAuthoritySha256: string | null = null,
 ): unknown {
   const driver = normalizedString(entry.openshellDriver)?.toLowerCase() ?? null;
-  if (!driver || !ALLOWED_OPENSHELL_DRIVERS.has(driver)) throw new ObservationError("config");
+  if (!driver || !resolveRuntimeProviderBundle(driver, CURRENT_RUNTIME_PROVIDER_BUNDLES)) {
+    throw new ObservationError("config");
+  }
   const openshellVersion = normalizedString(entry.openshellVersion);
   const gatewayPort = entry.gatewayPort;
   if (!openshellVersion || openshellVersion.length > 128) throw new ObservationError("config");
@@ -1004,16 +1013,19 @@ function resolveOpenClawPairingSettlementTarget(
 export function resolveOrdinaryOpenClawPairingTarget(
   sandboxName: string,
   deps: LaunchReadinessDeps = {},
-): OpenClawPairingSettlementTarget | null {
+): OrdinaryOpenClawPairingSettlementTarget | null {
   try {
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
-    return resolveOpenClawPairingSettlementTarget(
+    const entry = getSandbox(sandboxName);
+    const target = resolveOpenClawPairingSettlementTarget(
       sandboxName,
-      getSandbox(sandboxName),
+      entry,
       deps,
       undefined,
       true,
     );
+    const openshellDriver = normalizedString(entry?.openshellDriver);
+    return target && openshellDriver ? { ...target, openshellDriver } : null;
   } catch {
     return null;
   }

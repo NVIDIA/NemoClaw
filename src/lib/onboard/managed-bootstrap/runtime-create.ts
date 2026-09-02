@@ -3,6 +3,10 @@
 
 import type { SandboxGpuProofResult } from "../../state/registry";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import type {
+  ManagedStartupStateRoot,
+  ManagedStartupWorkspaceRoot,
+} from "../managed-startup/state-roots";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type {
   ManagedBootstrapAdapter,
@@ -85,11 +89,14 @@ export interface ManagedBootstrapRuntimePatch {
 
 export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly providerId: string;
+  readonly environment: NodeJS.ProcessEnv;
   readonly stateRoot: string;
   readonly bootstrapIdentity: string;
   readonly request: ManagedStartupRootApplyRequest;
   readonly image: ManagedBootstrapImageIdentity;
   readonly agentIdentity: ManagedBootstrapAgentIdentity;
+  readonly workspaceRoot: ManagedStartupWorkspaceRoot;
+  readonly managedStateRoots: readonly ManagedStartupStateRoot[];
   readonly intendedWorkloadArgv: readonly string[];
   readonly expectedSupervisorArgv: readonly string[];
   readonly launchArgv: readonly string[];
@@ -109,6 +116,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
     readonly inferenceProvider: string;
     readonly gatewayUsesContainerBridge: boolean;
     readonly gatewayPort: number;
+    readonly reverifyBridgeReachability: () => void | Promise<void>;
   };
   readonly dependencies: ManagedBootstrapRuntimeDependencies;
 }
