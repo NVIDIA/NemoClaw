@@ -28,5 +28,6 @@
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-exec.exe')" Text="The MXC executor is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The MXC host preparation utility is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\config\mxc-gateway.toml')" Text="The OpenShell MXC gateway configuration is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-turn.mts')" Text="The installed native turn qualification entrypoint is missing." />
   </Target>
 </Project>

@@ -102,5 +102,9 @@
   {
     "name": "NEMOCLAW_VLLM_GPU_DEVICE",
     "reason": "Internal command-scoped handoff for the public --vllm-gpu-device flag. NemoClaw validates, persists, scopes, and restores it; users should set the CLI flag instead."
+  },
+  {
+    "name": "NEMOCLAW_NATIVE_INSTALL_ROOT",
+    "reason": "Internal launcher-owned path identifying the MSI installation root for the hidden native Windows qualification turn. The installed nemoclaw.cmd sets it; users must not set it."
   }
 ]

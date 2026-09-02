@@ -419,7 +419,8 @@ foreach ($requiredPayload in @(
     'openclaw\node_modules\openclaw\openclaw.mjs',
     'mxc\wxc-exec.exe',
     'mxc\wxc-host-prep.exe',
-    'config\mxc-gateway.toml'
+    'config\mxc-gateway.toml',
+    'qualification\run-installed-native-turn.mts'
 )) {
     if (-not $payloadHashes.ContainsKey($requiredPayload) -or
         $payloadHashes[$requiredPayload] -cnotmatch '^[a-f0-9]{64}$') {
@@ -435,6 +436,8 @@ $nodePath = Join-Path $installBin 'node.exe'
 $nemoclawEntryPath = Join-Path $installRoot 'nemoclaw\app\bin\nemoclaw.js'
 $openClawEntryPath = Join-Path $installRoot 'openclaw\node_modules\openclaw\openclaw.mjs'
 $wxcExecPath = Join-Path $installRoot 'mxc\wxc-exec.exe'
+$wxcHostPrepPath = Join-Path $installRoot 'mxc\wxc-host-prep.exe'
+$nemoclawLauncherPath = Join-Path $installBin 'nemoclaw.cmd'
 $bundleInstallLog = Join-Path $artifactRoot 'bundle-install.log'
 $msiRepairLog = Join-Path $artifactRoot 'msi-repair.log'
 $msiReinstallLog = Join-Path $artifactRoot 'msi-reinstall.log'
@@ -480,6 +483,27 @@ try {
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $nemoclawEntryPath -ExpectedVersion $ProductVersion -Label 'Installed NemoClaw CLI'
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $openClawEntryPath -ExpectedVersion '2026.7.1' -Label 'Installed OpenClaw runtime'
     )
+    Invoke-BoundedProcess `
+        -FilePath $wxcHostPrepPath `
+        -Arguments @('prepare-system-drive') `
+        -Label 'Prepare ephemeral runner for native MXC qualification' `
+        -AllowedExitCodes @(0) | Out-Null
+    $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
+    Invoke-BoundedProcess `
+        -FilePath $nemoclawLauncherPath `
+        -Arguments @('debug', '--native-windows-turn', '--artifact-directory', $nativeTurnArtifacts) `
+        -Label 'Installed NemoClaw native MXC agent turn' `
+        -AllowedExitCodes @(0) | Out-Null
+    $nativeTurnReceipts = @(Get-ChildItem -LiteralPath $nativeTurnArtifacts -Filter 'native-windows-turn-*.json' -File)
+    if ($nativeTurnReceipts.Count -ne 1) {
+        Fail-PackageQualification 'Installed NemoClaw native turn did not publish exactly one receipt.'
+    }
+    $nativeTurnReceipt = Get-Content -LiteralPath $nativeTurnReceipts[0].FullName -Raw | ConvertFrom-Json
+    if ($nativeTurnReceipt.verdict -cne 'pass' -or $nativeTurnReceipt.exactReply -cne 'CHAT_OK' -or
+        $nativeTurnReceipt.sandboxDeleted -ne $true) {
+        Fail-PackageQualification 'Installed NemoClaw native turn receipt is incomplete.'
+    }
+    Write-Host '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
     $msiArp = @(Get-ArpEntries -DisplayName $script:MsiDisplayName)
     $bundleArp = @(Get-ArpEntries -DisplayName $script:BundleDisplayName)
     if ($msiArp.Count -ne 1 -or $msiArp[0].displayVersion -cne $ProductVersion) {
@@ -596,6 +620,7 @@ try {
         }
         nativeExecutions = $nativeEvidence
         applicationExecutions = $applicationEvidence
+        nativeTurn = $nativeTurnReceipt
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $true

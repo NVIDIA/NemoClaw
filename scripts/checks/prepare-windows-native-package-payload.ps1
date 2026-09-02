@@ -123,6 +123,9 @@ $workRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-native-payload-' + [guid]::New
 $candidateVersionPath = Join-Path $candidate '.version'
 $candidateRevisionPath = Join-Path $candidate '.source-revision'
 $createdCandidateIdentityFiles = $false
+$candidatePackageJsonPath = Join-Path $candidate 'package.json'
+$candidatePackageJsonBytes = [IO.File]::ReadAllBytes($candidatePackageJsonPath)
+$candidatePackageJsonTemporarilyModified = $false
 
 try {
     Invoke-Checked -FilePath $npm -Arguments @('ci', '--ignore-scripts', '--no-audit', '--no-fund') -Label 'NemoClaw dependency restore' -WorkingDirectory $candidate
@@ -147,8 +150,21 @@ try {
     [IO.File]::WriteAllText($candidateRevisionPath, "$candidateRevision`n", [Text.UTF8Encoding]::new($false))
     $createdCandidateIdentityFiles = $true
 
-    $packOutput = & $npm pack --ignore-scripts --json --pack-destination $workRoot $candidate | Out-String
+    $packManifest = Get-Content -LiteralPath $candidatePackageJsonPath -Raw | ConvertFrom-Json
+    if ($null -eq $packManifest.scripts -or [string]::IsNullOrWhiteSpace([string]$packManifest.scripts.prepare)) {
+        Fail-PayloadPreparation 'Candidate package does not expose the expected prepare lifecycle.'
+    }
+    $packManifest.scripts.PSObject.Properties.Remove('prepare')
+    [IO.File]::WriteAllText(
+        $candidatePackageJsonPath,
+        (($packManifest | ConvertTo-Json -Depth 100) + [Environment]::NewLine),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $candidatePackageJsonTemporarilyModified = $true
+    $packOutput = & $npm pack --json --pack-destination $workRoot $candidate | Out-String
     if ($LASTEXITCODE -ne 0) { Fail-PayloadPreparation 'NemoClaw npm package creation failed.' }
+    [IO.File]::WriteAllBytes($candidatePackageJsonPath, $candidatePackageJsonBytes)
+    $candidatePackageJsonTemporarilyModified = $false
     $packReceipt = @($packOutput | ConvertFrom-Json)
     if ($packReceipt.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$packReceipt[0].filename)) {
         Fail-PayloadPreparation 'NemoClaw npm pack output was invalid.'
@@ -168,6 +184,7 @@ try {
     $nemoclawRoot = Join-Path $output 'nemoclaw'
     [IO.Directory]::CreateDirectory($nemoclawRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $nemoclawExtract 'package') -Destination (Join-Path $nemoclawRoot 'app') -Recurse
+    [IO.File]::WriteAllBytes((Join-Path $nemoclawRoot 'app\package.json'), $candidatePackageJsonBytes)
     Copy-Item -LiteralPath (Join-Path $nemoclawProduction 'node_modules') -Destination (Join-Path $nemoclawRoot 'node_modules') -Recurse
 
     $openClawRoot = Join-Path $output 'openclaw'
@@ -205,7 +222,7 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\MXC-LICENSE.txt') -Destination (Join-Path $output 'MXC-LICENSE.txt')
 
-    $launcher = "@echo off`r`n`"%~dp0node.exe`" `"%~dp0..\nemoclaw\app\bin\nemoclaw.js`" %*`r`n"
+    $launcher = "@echo off`r`nset `"NEMOCLAW_NATIVE_INSTALL_ROOT=%~dp0..`"`r`n`"%~dp0node.exe`" `"%~dp0..\nemoclaw\app\bin\nemoclaw.js`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'nemoclaw.cmd'), $launcher, [Text.ASCIIEncoding]::new())
     $openClawLauncher = "@echo off`r`n`"%~dp0node.exe`" `"%~dp0..\openclaw\node_modules\openclaw\openclaw.mjs`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $binRoot 'openclaw.cmd'), $openClawLauncher, [Text.ASCIIEncoding]::new())
@@ -222,6 +239,9 @@ pc_capabilities = ["privateNetworkClientServer"]
 debug = false
 "@
     [IO.File]::WriteAllText((Join-Path $configRoot 'mxc-gateway.toml'), $gatewayConfig, [Text.UTF8Encoding]::new($false))
+    $qualificationRoot = Join-Path $output 'qualification'
+    [IO.Directory]::CreateDirectory($qualificationRoot) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'LICENSE') -Destination (Join-Path $output 'LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\NATIVE-PREVIEW.txt') -Destination (Join-Path $output 'NATIVE-PREVIEW.txt')
 
@@ -238,7 +258,8 @@ debug = false
         'bin\nemoclaw.cmd',
         'nemoclaw\app\bin\nemoclaw.js',
         'openclaw\node_modules\openclaw\openclaw.mjs',
-        'config\mxc-gateway.toml'
+        'config\mxc-gateway.toml',
+        'qualification\run-installed-native-turn.mts'
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
             Fail-PayloadPreparation "Prepared payload is incomplete: $required"
@@ -264,6 +285,9 @@ debug = false
     }
     throw
 } finally {
+    if ($candidatePackageJsonTemporarilyModified) {
+        [IO.File]::WriteAllBytes($candidatePackageJsonPath, $candidatePackageJsonBytes)
+    }
     if ($createdCandidateIdentityFiles) {
         Remove-Item -LiteralPath $candidateVersionPath, $candidateRevisionPath -Force -ErrorAction SilentlyContinue
     }

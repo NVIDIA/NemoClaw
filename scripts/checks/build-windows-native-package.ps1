@@ -103,6 +103,7 @@ foreach ($requiredPayload in @(
     'mxc\wxc-exec.exe',
     'mxc\wxc-host-prep.exe',
     'config\mxc-gateway.toml',
+    'qualification\run-installed-native-turn.mts',
     'LICENSE.txt',
     'NATIVE-PREVIEW.txt'
 )) {
