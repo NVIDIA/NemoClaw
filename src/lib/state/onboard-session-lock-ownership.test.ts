@@ -197,6 +197,29 @@ describe("onboard lock ownership", () => {
     });
   });
 
+  it("warns without masking the result when owned-lock release fails", () => {
+    expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw new Error("release denied");
+    });
+
+    const operationResult = (() => {
+      try {
+        return "operation completed";
+      } finally {
+        session.releaseOnboardLock();
+      }
+    })();
+
+    expect(operationResult).toBe("operation completed");
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringMatching(/onboard\.lock.*release denied.*remove only/u),
+      { code: "NEMOCLAW_ONBOARD_LOCK_CLEANUP_FAILED" },
+    );
+  });
+
   it("refuses cleanup authority after the acquired lock gains a hard link (#9833)", () => {
     expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);
     const linkedLock = `${session.LOCK_FILE}.linked`;

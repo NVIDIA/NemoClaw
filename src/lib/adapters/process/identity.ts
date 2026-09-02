@@ -3,7 +3,6 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import { performance } from "node:perf_hooks";
 
 import { isErrnoException } from "../../core/errno";
@@ -77,7 +76,7 @@ export function processIsAlive(pid: number): boolean {
 }
 
 /** Stable machine evidence for lock records shared across host boundaries. */
-export function readHostIdentity(): string {
+export function readHostIdentity(): string | null {
   if (process.platform === "linux") {
     for (const candidate of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
       try {
@@ -88,7 +87,23 @@ export function readHostIdentity(): string {
       }
     }
   }
-  return `${process.platform}:${os.hostname() || "unknown-host"}`;
+  if (process.platform === "darwin") {
+    try {
+      const platform = execFileSync("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], {
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1_000,
+        maxBuffer: 64 * 1024,
+      }).toString();
+      const platformUuid =
+        /"IOPlatformUUID"\s*=\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/iu.exec(
+          platform,
+        )?.[1];
+      return platformUuid ? `darwin:${platformUuid.toLowerCase()}` : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /** Linux PID namespace evidence, or null when the host cannot provide it. */

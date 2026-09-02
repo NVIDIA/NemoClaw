@@ -1559,6 +1559,14 @@ function closeAndDiscardIncompleteOnboardLockGeneration(fd: number): void {
   }
 }
 
+function warnOnboardLockReleaseFailure(error: unknown): void {
+  process.emitWarning(
+    `Failed to release owned onboarding lock '${LOCK_FILE}': ${String(error)}. ` +
+      `Verify that no onboarding run is active. If none is active, remove only '${LOCK_FILE}', then retry.`,
+    { code: "NEMOCLAW_ONBOARD_LOCK_CLEANUP_FAILED" },
+  );
+}
+
 function acquireOnboardLockGeneration(command: string | null): LockResult {
   const payload = JSON.stringify(
     createOnboardLockRecord(typeof command === "string" ? command : null, new Date().toISOString()),
@@ -1692,7 +1700,7 @@ export function releaseOnboardLock(): void {
           fs.unlinkSync(LOCK_FILE);
         } catch (unlinkError) {
           if (!(isErrnoException(unlinkError) && unlinkError.code === "ENOENT")) {
-            // Best effort — surfacing this would mask the real error.
+            warnOnboardLockReleaseFailure(unlinkError);
           }
         }
       }

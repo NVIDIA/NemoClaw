@@ -11,8 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   classifyMcpLifecycleLock,
   isMcpLifecycleLockOwner,
-  readMcpLockHostIdentity,
-  readMcpLockPidNamespaceIdentity,
+  processIsAlive,
   type LockObservation,
   type McpLifecycleLockIdentityProbes,
   type McpLifecycleLockOwner,
@@ -96,8 +95,6 @@ function probes(
 
 describe("MCP lifecycle lock identity properties", () => {
   it("reclaims a zombie local owner without treating its PID as live", () => {
-    const localHostIdentity = readMcpLockHostIdentity();
-    const localPidNamespaceIdentity = readMcpLockPidNamespaceIdentity();
     const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const readFileSync = vi.spyOn(fs, "readFileSync").mockImplementation((filePath) => {
       expect(filePath).toBe("/proc/4242/stat");
@@ -110,13 +107,18 @@ describe("MCP lifecycle lock identity properties", () => {
         classifyMcpLifecycleLock(
           observation(
             owner(4242, "linux:test-boot:10", {
-              hostIdentity: localHostIdentity,
-              pidNamespaceIdentity: localPidNamespaceIdentity,
+              hostIdentity: "host:test",
+              pidNamespaceIdentity: LOCAL_NAMESPACE,
             }),
           ),
           SANDBOX_NAME,
           0,
           30_000,
+          probes({
+            localHostIdentity: "host:test",
+            localPidNamespaceIdentity: LOCAL_NAMESPACE,
+            processIsAlive,
+          }),
         ),
       ).toBe("stale");
       expect(kill).not.toHaveBeenCalled();
@@ -357,6 +359,32 @@ describe("MCP lifecycle lock identity properties", () => {
       ),
       { numRuns: PROPERTY_RUNS },
     );
+  });
+
+  it("never reaps a same-hostname owner when stable host identity is unavailable", () => {
+    const processIsAlive = vi.fn(() => true);
+    const readProcessIdentity = vi.fn(() => "linux:boot-b:100");
+    const result = classifyMcpLifecycleLock(
+      observation(
+        owner(202, "linux:boot-a:100", {
+          hostIdentity: null,
+          pidNamespaceIdentity: LOCAL_NAMESPACE,
+        }),
+      ),
+      SANDBOX_NAME,
+      0,
+      30_000,
+      probes({
+        localHostIdentity: null,
+        localPidNamespaceIdentity: LOCAL_NAMESPACE,
+        processIsAlive,
+        readProcessIdentity,
+      }),
+    );
+
+    expect(result).toBe("active");
+    expect(processIsAlive).not.toHaveBeenCalled();
+    expect(readProcessIdentity).not.toHaveBeenCalled();
   });
 
   it("never probes or reaps an owner from a different PID namespace", () => {

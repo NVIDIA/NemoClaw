@@ -53,7 +53,7 @@ export type McpLifecycleLockDisposition = "active" | "stale" | "wait";
 
 /** Injectable OS evidence keeps ownership classification deterministic under test. */
 export interface McpLifecycleLockIdentityProbes {
-  localHostIdentity: string;
+  localHostIdentity: string | null;
   localPidNamespaceIdentity: string | null;
   processIsAlive(pid: number): boolean;
   readProcessIdentity(pid: number, fresh?: boolean): string | null;
@@ -129,6 +129,17 @@ const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
   readProcessIdentity: readMcpLockProcessIdentity,
 };
 
+/** Require stable host evidence before treating an owner as exactly local. */
+export function mcpLifecycleLockOwnerHasLocalProvenance(
+  owner: McpLifecycleLockOwner,
+): boolean {
+  return (
+    LOCAL_HOST_IDENTITY !== null &&
+    owner.hostIdentity === LOCAL_HOST_IDENTITY &&
+    owner.pidNamespaceIdentity === LOCAL_PID_NAMESPACE_IDENTITY
+  );
+}
+
 export function createMcpLifecycleLockOwner(
   sandboxName: string,
   token: string,
@@ -166,7 +177,13 @@ export function classifyMcpLifecycleLock(
   // wait for operator/distributed-lease resolution instead of risking overlap.
   // Legacy or incomplete records have unknown provenance. Treat them as
   // foreign instead of using this host's PID table to reap them.
-  if (!owner.hostIdentity || owner.hostIdentity !== probes.localHostIdentity) return "active";
+  if (
+    !owner.hostIdentity ||
+    probes.localHostIdentity === null ||
+    owner.hostIdentity !== probes.localHostIdentity
+  ) {
+    return "active";
+  }
   if (
     (probes.localPidNamespaceIdentity !== null && !owner.pidNamespaceIdentity) ||
     (owner.pidNamespaceIdentity !== null &&

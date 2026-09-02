@@ -9,7 +9,7 @@ import {
 } from "../../adapters/process/identity";
 
 export interface OnboardLockIdentityProbes extends ProcessIdentityProbes {
-  readonly localHostIdentity: string;
+  readonly localHostIdentity: string | null;
   readonly localPidNamespaceIdentity: string | null;
 }
 
@@ -48,7 +48,7 @@ function onboardLockHolderProvenance(
   lock: OnboardLockHolderIdentity,
   probes: OnboardLockIdentityProbes,
 ): "foreign" | "local" | "unknown" {
-  if (lock.hostIdentity === null) return "unknown";
+  if (lock.hostIdentity === null || probes.localHostIdentity === null) return "unknown";
   if (lock.hostIdentity !== probes.localHostIdentity) return "foreign";
   if (probes.localPidNamespaceIdentity !== null) {
     if (lock.pidNamespaceIdentity === null) return "unknown";

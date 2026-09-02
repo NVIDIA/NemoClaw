@@ -55,7 +55,7 @@ describe("process identity adapter", () => {
     expect(readPidNamespaceIdentity()).toBe("pid:[4026531836]");
   });
 
-  it("falls back to hostname identity and reports unavailable namespace evidence", () => {
+  it("reports host and namespace evidence unavailable instead of trusting a hostname", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     vi.spyOn(fs, "readFileSync").mockImplementation(() => {
       throw new Error("machine identity unavailable");
@@ -63,10 +63,25 @@ describe("process identity adapter", () => {
     vi.spyOn(fs, "readlinkSync").mockImplementation(() => {
       throw new Error("PID namespace unavailable");
     });
-    vi.spyOn(os, "hostname").mockReturnValue("test-host");
+    const hostname = vi.spyOn(os, "hostname").mockReturnValue("shared-hostname");
 
-    expect(readHostIdentity()).toBe("linux:test-host");
+    expect(readHostIdentity()).toBeNull();
     expect(readPidNamespaceIdentity()).toBeNull();
+    expect(hostname).not.toHaveBeenCalled();
+  });
+
+  it("uses a stable macOS platform UUID instead of a hostname", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    childProcessMocks.execFileSync.mockReturnValue(
+      '"IOPlatformUUID" = "0E317BE6-1968-5AD9-A7B4-65B82FC8B648"\n',
+    );
+
+    expect(readHostIdentity()).toBe("darwin:0e317be6-1968-5ad9-a7b4-65b82fc8b648");
+    expect(childProcessMocks.execFileSync).toHaveBeenCalledWith(
+      "ioreg",
+      ["-rd1", "-c", "IOPlatformExpertDevice"],
+      expect.objectContaining({ timeout: 1_000, maxBuffer: 64 * 1024 }),
+    );
   });
 
   it("combines Linux boot identity and process start ticks", () => {

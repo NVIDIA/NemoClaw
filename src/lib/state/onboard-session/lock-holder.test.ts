@@ -170,6 +170,35 @@ describe("onboarding lock classification", () => {
     });
   });
 
+  it("holds a same-hostname owner when stable host identity is unavailable", () => {
+    const isAlive = vi.fn(() => true);
+    const readStrongIdentity = vi.fn(() => "linux:boot-b:100");
+    const probes: OnboardLockIdentityProbes = {
+      currentPid: 101,
+      localHostIdentity: null,
+      localPidNamespaceIdentity: "pid:[100]",
+      isAlive,
+      readStrongIdentity,
+    };
+    const contents = JSON.stringify({
+      pid: 202,
+      processStartIdentity: "linux:boot-a:100",
+      hostIdentity: null,
+      pidNamespaceIdentity: probes.localPidNamespaceIdentity,
+      startedAt: "2026-09-01T00:00:00.000Z",
+      command: "nemoclaw onboard",
+    });
+
+    expect(classifyOnboardLockContents(contents, 99_999, 100_000, probes)).toMatchObject({
+      state: "held",
+      identityVerified: false,
+      provenance: "unknown",
+      record: { pid: 202 },
+    });
+    expect(isAlive).not.toHaveBeenCalled();
+    expect(readStrongIdentity).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "foreign host",

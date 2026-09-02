@@ -8,11 +8,6 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
-  readHostIdentity,
-  readPidNamespaceIdentity,
-} from "../adapters/process/identity";
-
-import {
   isShieldsTimerDeadlineAbandoned,
   isShieldsTimerDeadlineExpired,
   readShieldsTimerMarker,
@@ -28,6 +23,7 @@ import {
 import {
   classifyMcpLifecycleLock,
   createMcpLifecycleLockOwner,
+  mcpLifecycleLockOwnerHasLocalProvenance,
   type LockObservation,
   type McpLifecycleLockOwner,
   readMcpLockProcessIdentity,
@@ -342,8 +338,7 @@ function isExactStaleCompletedAutoRestoreOwner(
     owner?.sandboxName === sandboxName &&
     (ownerPid === undefined || owner.pid === ownerPid) &&
     Boolean(owner.processIdentity) &&
-    owner.hostIdentity === readHostIdentity() &&
-    owner.pidNamespaceIdentity === readPidNamespaceIdentity() &&
+    mcpLifecycleLockOwnerHasLocalProvenance(owner) &&
     owner.shieldsTakeoverToken === takeoverToken &&
     classifyMcpLifecycleLock(observation, sandboxName, observation.mtimeMs, 0) === "stale"
   );
@@ -1188,8 +1183,7 @@ function selfOwnedDeadlineMainToken(
     owner.pid === process.pid &&
     Boolean(processIdentity) &&
     owner.processIdentity === processIdentity &&
-    owner.hostIdentity === readHostIdentity() &&
-    owner.pidNamespaceIdentity === readPidNamespaceIdentity() &&
+    mcpLifecycleLockOwnerHasLocalProvenance(owner) &&
     owner.shieldsTakeoverToken === takeoverToken &&
     owner.token === expectedToken
     ? owner.token
@@ -1634,8 +1628,7 @@ async function clearDeadlineProtectedPath(
     const exactLocalOwner =
       owner?.sandboxName === sandboxName &&
       Boolean(owner.processIdentity) &&
-      owner.hostIdentity === readHostIdentity() &&
-      owner.pidNamespaceIdentity === readPidNamespaceIdentity();
+      mcpLifecycleLockOwnerHasLocalProvenance(owner);
     const exactCurrentOrdinaryOwner =
       !targetPath.endsWith(".reaper") &&
       decision.kind === "wait" &&
@@ -1747,8 +1740,7 @@ function clearDeadlineProtectedPathSync(
     const exactLocalOwner =
       owner?.sandboxName === sandboxName &&
       Boolean(owner.processIdentity) &&
-      owner.hostIdentity === readHostIdentity() &&
-      owner.pidNamespaceIdentity === readPidNamespaceIdentity();
+      mcpLifecycleLockOwnerHasLocalProvenance(owner);
     const currentProcessIdentity =
       exactLocalOwner && owner?.pid === process.pid
         ? readMcpLockProcessIdentity(process.pid, true)
