@@ -12,6 +12,10 @@ import {
   summarizeReliability,
 } from "../../../tools/e2e/same-commit-reliability.mts";
 import { readValidatedArtifactZipEntries } from "../../../scripts/scorecard/read-artifact-zip.mts";
+import {
+  RETRY_FAILURE_CLASSES,
+  type RetryFailureClass,
+} from "../../../tools/e2e/retry-evidence.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
 
 const SHA_A = "a".repeat(40);
@@ -445,6 +449,72 @@ describe("same-commit E2E reliability", () => {
     });
     expect(JSON.stringify(result)).not.toContain(secret);
   });
+
+  it.each(RETRY_FAILURE_CLASSES)(
+    "processes canonical retry failure class %s as complete evidence",
+    async (failureClass: RetryFailureClass) => {
+      const dispatch = artifactZip([
+        {
+          name: "dispatch.json",
+          contents: JSON.stringify({
+            kind: "nemoclaw-e2e-dispatch-v2",
+            repository: REPOSITORY,
+            eventName: "workflow_dispatch",
+            workflowRunId: "101",
+            workflowRunAttempt: 1,
+            candidateSha: SHA_A,
+          }),
+        },
+      ]);
+      const evidence = artifactZip([
+        terminalEvidence(SHA_A, "failure"),
+        {
+          name: "e2e-artifacts/live/example/retry/provider.json",
+          contents: JSON.stringify({
+            schemaVersion: 1,
+            operation: "provider.readiness",
+            owner: "provider",
+            idempotence: "read-only",
+            maxAttempts: 1,
+            outcome: "failed-no-retry",
+            attempts: [
+              {
+                attempt: 1,
+                outcome: "failed",
+                failureClass,
+                retryScheduled: false,
+              },
+            ],
+          }),
+        },
+      ]);
+      const archives = new Map([
+        [1, dispatch],
+        [2, evidence],
+      ]);
+
+      const result = await normalizeReliabilityRun(workflowRun(), {
+        requestJson: async () => ({
+          total_count: 2,
+          artifacts: [
+            {
+              id: 1,
+              name: "e2e-dispatch-101-1",
+              size_in_bytes: dispatch.length,
+              expired: false,
+            },
+            { id: 2, name: "e2e-example", size_in_bytes: evidence.length, expired: false },
+          ],
+        }),
+        requestArchive: async (artifactId) => archives.get(artifactId)!,
+      });
+
+      expect(result).toMatchObject({
+        failureClasses: [failureClass],
+        failureClassEvidence: "complete",
+      });
+    },
+  );
 
   it("keeps missing or malformed manual identity evidence unclassified", async () => {
     const missing = await normalizeReliabilityRun(workflowRun({ conclusion: "success" }), {

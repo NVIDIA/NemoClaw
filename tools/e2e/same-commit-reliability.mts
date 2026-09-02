@@ -6,7 +6,11 @@
 import { pathToFileURL } from "node:url";
 
 import { readValidatedArtifactZipEntries } from "../../scripts/scorecard/read-artifact-zip.mts";
-import type { RetryEvidence, RetryFailureClass } from "../../test/e2e/fixtures/retry-policy.ts";
+import {
+  RETRY_FAILURE_CLASSES,
+  type RetryEvidence,
+  type RetryFailureClass,
+} from "./retry-evidence.mts";
 import {
   parseClassificationLine,
   TERMINAL_CLASSIFICATIONS,
@@ -22,16 +26,6 @@ const MAX_RUNS = 50;
 const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024;
 const MAX_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024;
 
-const RETRY_FAILURE_CLASSES: readonly RetryFailureClass[] = [
-  "authentication",
-  "authorization",
-  "cleanup",
-  "deterministic",
-  "malformed-input",
-  "policy-denial",
-  "transient-external",
-  "ambiguous-mutation",
-];
 const RELIABILITY_FAILURE_CLASSES = new Set<string>([
   ...RETRY_FAILURE_CLASSES,
   ...TERMINAL_CLASSIFICATIONS,

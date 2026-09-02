@@ -1,35 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export type RetryFailureClass =
-  | "authentication"
-  | "authorization"
-  | "cleanup"
-  | "deterministic"
-  | "malformed-input"
-  | "policy-denial"
-  | "transient-external"
-  | "ambiguous-mutation";
+import {
+  RETRY_FAILURE_CLASSES,
+  type RetryAttemptEvidence,
+  type RetryEvidence,
+  type RetryFailureClass,
+  type RetryIdempotence,
+} from "../../../tools/e2e/retry-evidence.mts";
 
-export type RetryIdempotence = "read-only" | "idempotent" | "reconciled-mutation";
-
-export interface RetryAttemptEvidence {
-  attempt: number;
-  outcome: "failed" | "passed";
-  failureClass?: RetryFailureClass;
-  reconciled?: boolean;
-  retryScheduled: boolean;
-}
-
-export interface RetryEvidence {
-  schemaVersion: 1;
-  operation: string;
-  owner: string;
-  idempotence: RetryIdempotence;
-  maxAttempts: number;
-  outcome: "failed-no-retry" | "exhausted" | "passed-after-retry" | "passed-first-attempt";
-  attempts: RetryAttemptEvidence[];
-}
+export { RETRY_FAILURE_CLASSES } from "../../../tools/e2e/retry-evidence.mts";
+export type {
+  RetryAttemptEvidence,
+  RetryEvidence,
+  RetryFailureClass,
+  RetryIdempotence,
+} from "../../../tools/e2e/retry-evidence.mts";
 
 export class RetryPolicyError extends Error {
   constructor(
@@ -136,6 +122,12 @@ export async function runBoundedRetry<T>(
     }
 
     const classification = options.classify(value, error);
+    if (
+      classification.outcome === "failed" &&
+      !RETRY_FAILURE_CLASSES.includes(classification.failureClass)
+    ) {
+      throw new Error("retry classifier returned an unsupported failure class");
+    }
     if (classification.outcome === "passed") {
       if (error !== undefined) throw new Error("retry classifier reported success after an error");
       if (value === undefined) throw new Error("retry classifier reported success without a value");

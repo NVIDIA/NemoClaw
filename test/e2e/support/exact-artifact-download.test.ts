@@ -315,12 +315,22 @@ describe("exact artifact download (#9340)", () => {
 
   it("stops an unbounded response stream before retaining oversized content", async () => {
     const bytes = archive();
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(bytes));
+        controller.enqueue(new Uint8Array([0x78]));
+      },
+      cancel,
+    });
     const fetchImpl = vi
       .fn<(input: string, init: RequestInit) => Promise<Response>>()
-      .mockResolvedValue(new Response(new Uint8Array(Buffer.concat([bytes, Buffer.from("x")]))));
+      .mockResolvedValue(new Response(body));
+
     await expect(downloadBoundArtifact(identity(bytes), "token", { fetchImpl })).rejects.toThrow(
       "content size",
     );
+    expect(cancel).toHaveBeenCalledOnce();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
