@@ -10,7 +10,7 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 
 describe("rebuildSandbox DCode flow: mutation edge", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });

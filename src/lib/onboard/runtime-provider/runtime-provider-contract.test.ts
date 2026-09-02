@@ -122,8 +122,12 @@ function expectSupportedSurface<T extends { readonly supported: boolean }>(
 }
 
 describe("RuntimeProviderBundle registry contract", () => {
-  it("keeps the production selectable set limited to complete Docker and Kubernetes bundles", () => {
-    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
+  it("registers every production-selectable provider as one complete bundle", () => {
+    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([
+      "docker",
+      "kubernetes",
+      "podman",
+    ]);
     Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES).forEach(([providerId, bundle]) => {
       expect(bundle.identity.id).toBe(providerId);
       expect(
@@ -146,13 +150,14 @@ describe("RuntimeProviderBundle registry contract", () => {
           ] as const
         ).every((surface) => Object.is(bundle[surface].providerId, providerId)),
       ).toBe(true);
-      expect(bundle.bootstrap).toMatchObject({ supported: providerId === "docker" });
+      const managedLocalProvider = providerId === "docker" || providerId === "podman";
+      expect(bundle.bootstrap).toMatchObject({ supported: managedLocalProvider });
       expect(bundle.stateMutation).toMatchObject({
-        supported: providerId === "docker",
-        ...(providerId === "docker" ? { contractVersion: 2 } : {}),
+        supported: managedLocalProvider,
+        ...(managedLocalProvider ? { contractVersion: 2 } : {}),
       });
       expect(bundle.snapshot).toMatchObject(
-        providerId === "docker"
+        managedLocalProvider
           ? {
               supported: true,
               capabilities: {
@@ -163,7 +168,7 @@ describe("RuntimeProviderBundle registry contract", () => {
             }
           : { supported: false },
       );
-      expect(bundle.recovery).toMatchObject({ supported: false });
+      expect(bundle.recovery).toMatchObject({ supported: providerId === "podman" });
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
@@ -570,6 +575,23 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(/lifecycle\.verifyStarted must be a function/u);
   });
 
+  it("rejects an invalid provider-owned container mutation timeout", () => {
+    const bundle = mxcBundle();
+    expectSupportedSurface(bundle.lifecycle);
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "lifecycle", {
+            ...bundle.lifecycle,
+            containerMutationTimeoutMs: 0,
+          }),
+        ],
+      ]),
+    ).toThrow(/invalid container mutation timeout/u);
+  });
+
   it("rejects cleanup without a side-effect-free ownership plan", () => {
     const bundle = mxcBundle();
     expectSupportedSurface(bundle.cleanup);
@@ -611,6 +633,12 @@ describe("RuntimeProviderBundle registry contract", () => {
 
   it("rejects capability/surface drift and duplicate operation-scoped engine identities", () => {
     const bundle = mxcBundle();
+    const { capture: _capture, ...containerEngineWithoutCapture } = bundle.containerEngine;
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "containerEngine", containerEngineWithoutCapture)],
+      ]),
+    ).toThrow(/containerEngine.*capture/u);
     expect(() =>
       createRuntimeProviderBundleRegistry([
         [

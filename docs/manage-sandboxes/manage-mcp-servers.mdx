@@ -116,7 +116,13 @@ The raw value passes only through the OpenShell provider command's process envir
 
 If the provider was deleted, restart recreates it from the exported value.
 
-When the host variable is unset, restart reuses an existing provider whose current ID and credential-key metadata match the registry and whose type is `nemoclaw-mcp-v1`. If the provider is missing, export the recorded variable before retrying. If the provider has the profile-less legacy `generic` type, remove the server and add it again with the recorded variable exported. Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
+When the host variable is unset, restart reuses an existing provider only when its current ID and credential-key metadata match the registry, its type is `nemoclaw-mcp-v1`, and the credential-resolution probe verifies the stored credential.
+Restart checks every selected server before it reapplies a policy, updates a provider, or changes an agent adapter.
+If credential verification fails or is inconclusive, restart exits without those changes.
+Export the recorded variable and retry to replace the stored credential.
+If the provider is missing, export the recorded variable before retrying.
+If the provider has the profile-less legacy `generic` type, remove the server and add it again with the recorded variable exported.
+Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
 
 Running restart without a server name refreshes every managed server. Export only the variables whose credentials you intend to replace.
 
@@ -156,7 +162,11 @@ If cleanup leaves a residual, the command exits nonzero and preserves the regist
 
 ## Rebuild with Managed MCP State
 
-`rebuild` preserves providers that match the recorded ID and credential-key metadata and the active `nemoclaw-mcp-v1` type. It removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. It does not substitute the provider resource version for the credential revision. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild. Restoration applies the credential-free policy, reattaches each provider, applies the endpoint-bound policy, waits for credential readiness, and restores adapters. For a trusted-private entry, the restored policy uses the recorded exact address pins and does not widen them from current DNS answers. Public entries continue to resolve and validate their endpoint addresses during restoration.
+`rebuild` preserves providers that match the recorded ID and credential-key metadata and the active `nemoclaw-mcp-v1` type. Before it changes an adapter, policy, or provider, NemoClaw captures the current round-trippable OpenShell base policy for the replacement and refuses a handoff that contains a literal credential value. Managed provider entries are restored through the MCP lifecycle rather than copied into that base-policy handoff. If capture of the current live policy finds a literal credential before replacement begins, replace it with a supported OpenShell credential binding or resolver placeholder, then retry.
+
+If rebuild instead reports a retained credential-bearing policy handoff, do not edit that handoff or retry rebuild. Follow the [unsafe retained policy handoff recovery](../operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
+
+After this check, rebuild removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. It does not substitute the provider resource version for the credential revision. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild. Restoration applies the credential-free policy, reattaches each provider, applies the endpoint-bound policy, waits for credential readiness, and restores adapters. For a trusted-private entry, the restored policy uses the recorded exact address pins and does not widen them from current DNS answers. Public entries continue to resolve and validate their endpoint addresses during restoration.
 
 <AgentOnly variant="deepagents">
 NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.

@@ -6,9 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
-import {
-  ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
-} from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
@@ -125,9 +123,10 @@ function ready(overrides: Partial<EnvironmentReady> = {}): EnvironmentReady {
     runtime: "docker-running",
     onboarding: "cloud-openclaw",
     cliPath: "nemoclaw",
-    docker: {
+    runtimeProvider: {
       id: "docker-running",
       expectation: "required",
+      providerId: "docker",
       available: true,
       result: shellResult(0),
     },
@@ -371,10 +370,15 @@ describe("onboarding phase fixture", () => {
     await expect(
       onboard.from(
         ready({
-          docker: { id: "docker-running", expectation: "required", available: false },
+          runtimeProvider: {
+            id: "docker-running",
+            expectation: "required",
+            providerId: "docker",
+            available: false,
+          },
         }),
       ),
-    ).rejects.toThrow(/requires an available Docker runtime/);
+    ).rejects.toThrow(/requires an available managed runtime provider/);
   });
 
   it("rejects invalid sandbox names before cloud OpenClaw side effects", async () => {
@@ -432,7 +436,12 @@ describe("onboarding phase fixture", () => {
       ready({
         runtime: "docker-missing",
         onboarding: "cloud-openclaw-no-docker",
-        docker: { id: "docker-missing", expectation: "missing", available: true },
+        runtimeProvider: {
+          id: "docker-missing",
+          expectation: "missing",
+          providerId: "docker",
+          available: true,
+        },
       }),
       { sandboxName: "e2e-no-docker" },
     );
@@ -558,7 +567,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: true },
+          runtimeProvider: {
+            id: "docker-missing",
+            expectation: "missing",
+            providerId: "docker",
+            available: true,
+          },
         }),
         { sandboxName: "e2e-no-docker" },
       );
@@ -589,7 +603,12 @@ describe("onboarding phase fixture", () => {
       ready({
         runtime: "docker-missing",
         onboarding: "cloud-openclaw-no-docker",
-        docker: { id: "docker-missing", expectation: "missing", available: false },
+        runtimeProvider: {
+          id: "docker-missing",
+          expectation: "missing",
+          providerId: "docker",
+          available: false,
+        },
       }),
       { sandboxName: "e2e-no-docker" },
     );
@@ -630,7 +649,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: false },
+          runtimeProvider: {
+            id: "docker-missing",
+            expectation: "missing",
+            providerId: "docker",
+            available: false,
+          },
         }),
         { sandboxName: "e2e-no-docker" },
       );
@@ -667,7 +691,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: false },
+          runtimeProvider: {
+            id: "docker-missing",
+            expectation: "missing",
+            providerId: "docker",
+            available: false,
+          },
         }),
         { sandboxName: "e2e-no-docker-ok" },
       ),
@@ -700,7 +729,12 @@ describe("onboarding phase fixture", () => {
         ready({
           runtime: "docker-missing",
           onboarding: "cloud-openclaw-no-docker",
-          docker: { id: "docker-missing", expectation: "missing", available: false },
+          runtimeProvider: {
+            id: "docker-missing",
+            expectation: "missing",
+            providerId: "docker",
+            available: false,
+          },
         }),
         { sandboxName: "e2e-no-docker" },
       ),
@@ -759,16 +793,21 @@ describe("onboarding phase fixture", () => {
       await expect(
         onboard.from(
           ready({
-            docker: { id: "docker-running", expectation: "required", available: false },
+            runtimeProvider: {
+              id: "docker-running",
+              expectation: "required",
+              providerId: "docker",
+              available: false,
+            },
           }),
         ),
-      ).rejects.toThrow(/requires an available Docker runtime/);
+      ).rejects.toThrow(/requires an available managed runtime provider/);
 
       expect(readJson(path.join(tmp, "onboarding.result.json"))).toMatchObject({
         phase: "onboarding",
         status: "failed",
         onboarding: "cloud-openclaw",
-        error: "cloud-openclaw onboarding requires an available Docker runtime.",
+        error: "cloud-openclaw onboarding requires an available managed runtime provider.",
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

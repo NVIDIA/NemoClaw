@@ -8,11 +8,12 @@ import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 const mocks = vi.hoisted(() => ({
   assertMcpDestroyNotPending: vi.fn(),
   bridgeState: vi.fn(),
+  detachProvider: vi.fn(),
   discardSafeIncompleteMcpAdds: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn(),
   getBridgeAdapter: vi.fn(),
   getSandboxAgent: vi.fn(),
-  getSandboxPolicy: vi.fn(),
+  captureRecordedSandboxBasePolicy: vi.fn(),
   getSandboxOrThrow: vi.fn(),
   inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
@@ -42,7 +43,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertMcpProviderRecoverable: vi.fn(),
   assertNoProviderCredentialCollisions: vi.fn(),
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
-  detachProvider: vi.fn(),
+  detachProvider: mocks.detachProvider,
   inspectMcpProvider: mocks.inspectMcpProvider,
   preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
   waitForDetachedMcpCredential: vi.fn(),
@@ -63,8 +64,9 @@ vi.mock("./mcp-bridge-policy", () => ({
   removeGeneratedPolicy: mocks.removeGeneratedPolicy,
 }));
 
-vi.mock("./policy-get", () => ({
-  getSandboxPolicy: mocks.getSandboxPolicy,
+vi.mock("../../policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../policy")>()),
+  captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
 }));
 
 vi.mock("./mcp-bridge-restart", () => ({
@@ -112,14 +114,14 @@ const entry: McpBridgeEntry = {
 describe("MCP adapter teardown rollback", () => {
   beforeEach(() => {
     mocks.bridgeState.mockReset().mockReturnValue({ github: entry });
+    mocks.detachProvider.mockReset().mockReturnValue("detached");
     mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(sandbox);
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
     mocks.getSandboxAgent.mockReset().mockReturnValue("hermes");
-    mocks.getSandboxPolicy.mockReset().mockReturnValue({
-      raw: "",
-      yaml: "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
-    });
+    mocks.captureRecordedSandboxBasePolicy
+      .mockReset()
+      .mockReturnValue("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n");
     mocks.getSandboxOrThrow.mockReset().mockReturnValue(sandbox);
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
@@ -164,6 +166,27 @@ describe("MCP adapter teardown rollback", () => {
       expect(mocks.restoreExistingMcpBridgeRuntime).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects a credential-bearing MCP rebuild capture before teardown side effects", async () => {
+    mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
+      [
+        "version: 1",
+        "network_policies:",
+        "  mcp_bridge_github: {}",
+        "process:",
+        "  environment:",
+        "    SERVICE_API_KEY: opaque-late-policy-credential",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(prepareMcpBridgesForRebuild("alpha")).rejects.toThrow(
+      "Cannot prepare the MCP rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value.",
+    );
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+  });
 
   it("does not derive a Hermes credential revision from an exact provider resource version", () => {
     mocks.observeMcpCredentialRevision.mockReturnValue("absent");
