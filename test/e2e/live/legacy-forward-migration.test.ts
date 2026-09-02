@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import net from "node:net";
-
-import { isLocalForwardReachable } from "../../../src/lib/actions/sandbox/forward-health.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -13,6 +11,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-legacy-forward-migration";
 const DASHBOARD_PORT = Number(process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
+const UNREGISTERED_PORT = 19_789;
 const GATEWAY_NAME = "nemoclaw";
 const TEST_TIMEOUT_MS = 45 * 60_000;
 
@@ -59,49 +58,68 @@ function hasLegacyForward(output: string, sandboxName: string, port: number): bo
   );
 }
 
-async function unusedLoopbackPort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("could not allocate an unrelated legacy forward port"));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => (error ? reject(error) : resolve(port)));
-    });
-  });
-}
-
-async function waitForPort(port: number, reachable: boolean): Promise<void> {
-  for (let attempt = 1; attempt <= 60; attempt += 1) {
-    if (isLocalForwardReachable(port) === reachable) return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error(
-    `host port ${String(port)} did not become ${reachable ? "reachable" : "released"}`,
+async function waitForPort(
+  host: HostCliClient,
+  port: number,
+  reachable: boolean,
+  artifactName: string,
+): Promise<void> {
+  const probe = await host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set -e
+port="$1"
+expected="$2"
+for _ in $(seq 1 60); do
+  node -e '
+    const net = require("node:net");
+    const socket = net.createConnection({ host: "127.0.0.1", port: Number(process.argv[1]) });
+    socket.setTimeout(1000);
+    socket.once("connect", () => { socket.destroy(); process.exit(0); });
+    socket.once("error", () => process.exit(1));
+    socket.once("timeout", () => { socket.destroy(); process.exit(1); });
+  ' "$port" && actual=1 || actual=0
+  [ "$actual" = "$expected" ] && exit 0
+  sleep 0.5
+done
+exit 1`,
+      "legacy-forward-wait-port",
+      String(port),
+      reachable ? "1" : "0",
+    ],
+    { artifactName, env: env(), timeoutMs: 90_000 },
+  );
+  assertExitZero(
+    probe,
+    `wait for host port ${String(port)} to become ${reachable ? "reachable" : "released"}`,
   );
 }
 
-async function waitForSandboxReady(sandbox: SandboxClient): Promise<void> {
-  let lastOutput = "";
-  for (let attempt = 1; attempt <= 60; attempt += 1) {
-    const result = await sandbox.openshell(
-      ["sandbox", "get", SANDBOX_NAME, "--gateway", GATEWAY_NAME],
-      {
-        artifactName: `legacy-forward-wait-sandbox-ready-${attempt}`,
-        env: env(),
-        timeoutMs: 30_000,
-      },
-    );
-    lastOutput = resultText(result);
-    if (result.exitCode === 0 && /\bReady\b/iu.test(lastOutput)) return;
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-  }
-  throw new Error(`sandbox did not return to Ready after gateway restart: ${lastOutput}`);
+async function waitForSandboxReady(host: HostCliClient): Promise<void> {
+  const ready = await host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set -e
+sandbox_name="$1"
+for _ in $(seq 1 60); do
+  output="$(openshell sandbox get "$sandbox_name" --gateway nemoclaw 2>&1)" && status=0 || status=$?
+  [ "$status" -eq 0 ] && printf '%s\n' "$output" | grep -Eiq '\bReady\b' && exit 0
+  sleep 2
+done
+printf '%s\n' "$output" >&2
+exit 1`,
+      "legacy-forward-wait-sandbox",
+      SANDBOX_NAME,
+    ],
+    {
+      artifactName: "legacy-forward-wait-sandbox-ready",
+      env: env(),
+      timeoutMs: 150_000,
+    },
+  );
+  assertExitZero(ready, "wait for legacy migration sandbox Ready phase");
 }
 
 async function listLegacyForwards(sandbox: SandboxClient, artifactName: string): Promise<string> {
@@ -115,6 +133,7 @@ async function listLegacyForwards(sandbox: SandboxClient, artifactName: string):
 }
 
 async function startLegacyForward(
+  host: HostCliClient,
   sandbox: SandboxClient,
   port: number,
   artifactName: string,
@@ -124,7 +143,7 @@ async function startLegacyForward(
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
   assertExitZero(result, `openshell forward start ${String(port)} ${SANDBOX_NAME}`);
-  await waitForPort(port, true);
+  await waitForPort(host, port, true, `${artifactName}-local-port-reachable`);
 }
 
 test(
@@ -141,7 +160,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, lifecycle, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const redactionValues = [hosted.apiKey];
 
@@ -164,14 +183,7 @@ test(
       env: env(),
       timeoutMs: 30_000,
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `Docker is required for legacy forward migration E2E: ${resultText(docker)}`,
-        );
-      }
-      skip("Docker is required for legacy forward migration E2E");
-    }
+    expect(docker.exitCode, `Docker is required for legacy forward migration E2E`).toBe(0);
 
     await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
       artifactName: "legacy-forward-precleanup-nemoclaw-sandbox",
@@ -180,6 +192,12 @@ test(
     await host
       .cleanupForward(DASHBOARD_PORT, {
         artifactName: "legacy-forward-precleanup-dashboard-forward",
+        env: env(),
+      })
+      .catch(() => undefined);
+    await host
+      .cleanupForward(UNREGISTERED_PORT, {
+        artifactName: "legacy-forward-precleanup-unregistered-forward",
         env: env(),
       })
       .catch(() => undefined);
@@ -227,7 +245,7 @@ test(
       timeoutMs: 25 * 60_000,
     });
     assertExitZero(install, "install and onboard legacy migration sandbox");
-    await waitForPort(DASHBOARD_PORT, true);
+    await waitForPort(host, DASHBOARD_PORT, true, "legacy-forward-onboard-dashboard-reachable");
     cleanup.trackForward(host, DASHBOARD_PORT, {
       artifactName: "legacy-forward-cleanup-dashboard-forward",
       env: env(),
@@ -237,29 +255,34 @@ test(
     progress.phase("restart the gateway and seed tracked legacy forwards");
     await lifecycle.restartGatewayRuntime({ delayMs: 3_000 });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 2_000 });
-    await waitForSandboxReady(sandbox);
-    await waitForPort(DASHBOARD_PORT, false);
+    await waitForSandboxReady(host);
+    await waitForPort(
+      host,
+      DASHBOARD_PORT,
+      false,
+      "legacy-forward-direct-service-released-after-gateway-restart",
+    );
 
-    let unrelatedPort = await unusedLoopbackPort();
-    while (unrelatedPort === DASHBOARD_PORT) unrelatedPort = await unusedLoopbackPort();
-    cleanup.trackForward(host, unrelatedPort, {
+    cleanup.trackForward(host, UNREGISTERED_PORT, {
       artifactName: "legacy-forward-cleanup-unregistered-forward",
       env: env(),
       timeoutMs: 60_000,
     });
     await startLegacyForward(
+      host,
       sandbox,
       DASHBOARD_PORT,
       "legacy-forward-seed-registered-dashboard-forward",
     );
     await startLegacyForward(
+      host,
       sandbox,
-      unrelatedPort,
+      UNREGISTERED_PORT,
       "legacy-forward-seed-unregistered-sandbox-forward",
     );
     const seeded = await listLegacyForwards(sandbox, "legacy-forward-list-seeded");
     expect(hasLegacyForward(seeded, SANDBOX_NAME, DASHBOARD_PORT), seeded).toBe(true);
-    expect(hasLegacyForward(seeded, SANDBOX_NAME, unrelatedPort), seeded).toBe(true);
+    expect(hasLegacyForward(seeded, SANDBOX_NAME, UNREGISTERED_PORT), seeded).toBe(true);
 
     progress.phase("recover through the production migration path");
     const recover = await host.nemoclaw([SANDBOX_NAME, "recover"], {
@@ -273,16 +296,26 @@ test(
     progress.phase("verify exact migration and unrelated forward preservation");
     const migrated = await listLegacyForwards(sandbox, "legacy-forward-list-after-migration");
     expect(hasLegacyForward(migrated, SANDBOX_NAME, DASHBOARD_PORT), migrated).toBe(false);
-    expect(hasLegacyForward(migrated, SANDBOX_NAME, unrelatedPort), migrated).toBe(true);
-    await waitForPort(DASHBOARD_PORT, true);
-    await waitForPort(unrelatedPort, true);
+    expect(hasLegacyForward(migrated, SANDBOX_NAME, UNREGISTERED_PORT), migrated).toBe(true);
+    await waitForPort(host, DASHBOARD_PORT, true, "legacy-forward-service-replacement-reachable");
+    await waitForPort(
+      host,
+      UNREGISTERED_PORT,
+      true,
+      "legacy-forward-unregistered-listener-preserved",
+    );
 
     const stopUnrelated = await sandbox.openshell(
-      ["forward", "stop", String(unrelatedPort), SANDBOX_NAME, "--gateway", GATEWAY_NAME],
+      ["forward", "stop", String(UNREGISTERED_PORT), SANDBOX_NAME, "--gateway", GATEWAY_NAME],
       { artifactName: "legacy-forward-stop-unregistered-forward", env: env(), timeoutMs: 60_000 },
     );
     assertExitZero(stopUnrelated, "stop unrelated legacy forward");
-    await waitForPort(unrelatedPort, false);
+    await waitForPort(
+      host,
+      UNREGISTERED_PORT,
+      false,
+      "legacy-forward-unregistered-listener-released",
+    );
 
     progress.phase("stop the sandbox and verify natural port release");
     const stop = await host.nemoclaw([SANDBOX_NAME, "stop"], {
@@ -292,7 +325,12 @@ test(
       timeoutMs: 5 * 60_000,
     });
     assertExitZero(stop, "stop migrated sandbox");
-    await waitForPort(DASHBOARD_PORT, false);
+    await waitForPort(
+      host,
+      DASHBOARD_PORT,
+      false,
+      "legacy-forward-service-released-after-sandbox-stop",
+    );
 
     await artifacts.target.complete({
       id: "legacy-forward-migration",
