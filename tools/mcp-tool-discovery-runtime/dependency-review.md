@@ -15,7 +15,7 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
 - Security overrides:
   - `@hono/node-server@2.0.12`: `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`
-  - `fast-uri@3.1.7`: `sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==`
+  - `fast-uri@3.1.6`: `sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==`
   - `hono@4.12.34`: `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
   - `ip-address@10.3.1`: `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
 
@@ -26,9 +26,9 @@ The client bundle includes the SDK's AJV validation path, including `ajv-formats
 
 Live advisory drift made the required audit reject `fast-uri@3.1.5` in the root, OpenClaw, mcporter, and MCP discovery graphs. Four high-severity advisories cover host confusion, malformed IPv6 normalization, repeated hostname decoding, and percent-encoded scheme normalization. No audit exception is used.
 
-Registry metadata binds the outgoing `3.1.5` package to source commit `5e179cbb4636d5f773ed21126e5bd3068e87e94e` and the selected `3.1.7` package to `412e40abd4eb8beabfb952d80abf949a2baf27a3`. The adjacent range contains 20 commits. Version `3.1.6` introduces the advisory fixes and URI serialization regressions; `3.1.7` adds port and IP-literal validation. Both releases retain the BSD-3-Clause license, no-dependency package shape, and v3 API boundary. The selected archive is `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz` with integrity `sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==`.
+Registry metadata binds the outgoing `3.1.5` package to source commit `5e179cbb4636d5f773ed21126e5bd3068e87e94e` and the selected `3.1.6` package to `6f970b2951fd896aa0f3a7ff28eeb6640c137d33`. The adjacent range contains 17 commits. Version `3.1.6` introduces the advisory fixes and retains the BSD-3-Clause license, no-dependency package shape, and v3 API boundary. The selected archive is `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz` with integrity `sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==`.
 
-- `MCP-AUDIT-5` — `fast-uri@3.1.5` accepts URI forms that can normalize to a different authority or host. Surface: executable AJV format validation in the bundled client. Failure mode: attacker-controlled schema input can cross a URI validation boundary with a confused host identity. Resolution: pin `3.1.7` in every active lock and exact override, regenerate the reviewed bundle and license inventory, and keep the existing MCP session contract. Validation: exact lock and bundle identities, runtime test, typecheck, bundle reproduction check, direct production audits, and registry-signature verification.
+- `MCP-AUDIT-5` — `fast-uri@3.1.5` accepts URI forms that can normalize to a different authority or host. Surface: executable AJV format validation in the bundled client. Failure mode: attacker-controlled schema input can cross a URI validation boundary with a confused host identity. Resolution: pin first-patched `3.1.6` in every active lock and exact override, regenerate the reviewed bundle and license inventory, and keep the existing MCP session contract. Validation: exact lock and bundle identities, runtime test, typecheck, bundle reproduction check, direct production audits, and registry-signature verification.
 
 ## 2026-08-03 security refresh
 
@@ -118,7 +118,7 @@ Security refresh evidence on 2026-09-02:
 - `npm ci --ignore-scripts`: installed the exact 98-package lock
 - `npm audit signatures --omit=dev`: verified 93 registry signatures and 9 provenance attestations
 - `npm test` and `npm run typecheck`: passed
-- `npm run bundle:reviewed`: regenerated the exact 11-package client bundle with `fast-uri@3.1.7`
+- `npm run bundle:reviewed`: regenerated the exact 11-package client bundle with `fast-uri@3.1.6`
 - `npm audit --omit=dev --package-lock-only`: 1 moderate, 0 high, and 0 critical findings
 
 ## Updating

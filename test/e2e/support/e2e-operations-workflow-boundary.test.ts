@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  type OperationsWorkflow,
   readE2eOperationsWorkflow,
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
@@ -21,12 +22,32 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
 ) => (...args: unknown[]) => Promise<unknown>;
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
+const MANUAL_PR_REFERENCE_PATH = join(
+  process.cwd(),
+  ".agents/skills/nemoclaw-maintainer-e2e/references/manual-pr.md",
+);
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
   const step = workflow.jobs[jobName]?.steps?.find((candidate) => candidate.name === stepName);
   expect(step?.with?.script).toEqual(expect.any(String));
   return step?.with?.script as string;
+}
+
+function authenticationConditionWorkflow(condition: string): OperationsWorkflow {
+  return {
+    jobs: {
+      "generate-matrix": {
+        steps: [
+          {
+            id: "candidate_authorization",
+            name: "Authenticate manual PR dispatch",
+            if: condition,
+          },
+        ],
+      },
+    },
+  };
 }
 
 describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
@@ -281,20 +302,35 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   });
 
   it("runs authentication when any candidate identity input is present and skips it when all are empty", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate manual PR dispatch",
-    )!;
     const validationError =
       "Manual PR authentication must run when any candidate identity input is present";
+    const requiredCondition =
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}";
 
-    expect(validateE2eOperationsWorkflow(workflow)).not.toContain(validationError);
-    expect(authentication.if).toBe(
-      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
+    expect(
+      validateE2eOperationsWorkflow(authenticationConditionWorkflow(requiredCondition)),
+    ).not.toContain(validationError);
+    expect(
+      validateE2eOperationsWorkflow(
+        authenticationConditionWorkflow("${{ inputs.checkout_sha != '' }}"),
+      ),
+    ).toContain(validationError);
+  });
+
+  it("keeps manual PR head and base replay selectors identical", () => {
+    const reference = readFileSync(MANUAL_PR_REFERENCE_PATH, "utf8");
+    const gatewayRuntimeDispatches = reference.match(
+      /-f "gateway_runtimes=\$\{E2E_GATEWAY_RUNTIMES\}"/gu,
+    );
+    const trustedMainDispatches = reference.match(/--ref main/gu);
+    const externalPrGuidance = reference.match(
+      /- An external PR[\s\S]*?Jetson and Launchable runs/u,
     );
 
-    authentication.if = "${{ inputs.checkout_sha != '' }}";
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(validationError);
+    expect(reference).toContain('E2E_GATEWAY_RUNTIMES="${E2E_GATEWAY_RUNTIMES:-docker}"');
+    expect(gatewayRuntimeDispatches).toHaveLength(2);
+    expect(trustedMainDispatches).toHaveLength(2);
+    expect(externalPrGuidance?.[0]).not.toContain("native-runtime-qualification-producer");
   });
 
   it("pins the trusted planner checkout to the workflow repository", () => {
@@ -468,16 +504,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   });
 
   it.each([
-    [
-      "an exact PR base revision",
-      "NVIDIA/NemoClaw",
-      "b",
-      "b",
-      "c",
-      "refs/heads/main",
-      0,
-      "",
-    ],
+    ["an exact PR base revision", "NVIDIA/NemoClaw", "b", "b", "c", "refs/heads/main", 0, ""],
     [
       "an invalid source repository name",
       "invalid-repository",
@@ -515,8 +542,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "b",
       "c",
       "refs/heads/pr-controlled-workflow",
-      0,
-      "",
+      1,
+      "::error::Manual PR E2E must be dispatched from the trusted main branch\n",
     ],
   ] as const)(
     "handles manual PR authentication for %s",

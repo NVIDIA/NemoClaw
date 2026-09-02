@@ -23,15 +23,13 @@ archive remediation to select `tar@7.5.21`, and select the same first patched
 release in both committed production locks. Do not add an audit exception.
 
 On September 2, 2026, advisory drift exposed four high-severity `fast-uri`
-findings in every active graph that selected `3.1.5`. Select reviewed `3.1.7`
-in the root, OpenClaw, mcporter, and MCP discovery locks. Version `3.1.6` is
-the first release outside the affected ranges; `3.1.7` adds the adjacent port
-and IP-literal validation fixes. Regenerate the reviewed MCP bundle and use no
-audit exception.
+findings in every active graph that selected `3.1.5`. Select first-patched
+`3.1.6` in the root, OpenClaw, mcporter, and MCP discovery locks. Regenerate
+the reviewed MCP bundle and use no audit exception.
 
 The production OpenClaw install uses the authoritative committed lock at
 `agents/openclaw/openclaw-runtime/package-lock.json`, with SHA-256
-`6b7c5ca0337f93f067f6aebffe71d136ec4325043993b2099626f8b56fd7e390`.
+`248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9`.
 NemoClaw derives that lock from the SRI-verified `openclaw@2026.7.1` archive
 after applying the reviewed dependency remediation.
 The committed `nemoclaw/package-lock.json` has SHA-256
@@ -39,7 +37,7 @@ The committed `nemoclaw/package-lock.json` has SHA-256
 The protected managed-image build's locked npm cache seed binds that same lock
 digest and the exact `tar@7.5.21` archive.
 The remediation replaces `brace-expansion@5.0.7` with `5.0.9`.
-It also replaces `fast-uri@3.1.2` with `3.1.7` and `ip-address@10.2.0` with
+It also replaces `fast-uri@3.1.2` with `3.1.6` and `ip-address@10.2.0` with
 `10.3.1` in the OpenClaw core graph.
 It replaces `tar@7.5.19` with `7.5.21` in the core manifest and shrinkwrap,
 including the `@openclaw/fs-safe@0.4.1` optional dependency edge.
@@ -54,7 +52,7 @@ the npm upgrade. Each completed image reasserts the idempotent repair at its
 final filesystem boundary.
 The same reviewed `undici@8.10.0` replacement applies to the OpenClaw core
 dependency and the Discord manifest, shrinkwrap, and bundled package tree.
-The committed mcporter lock also selects `fast-uri@3.1.7` and
+The committed mcporter lock also selects `fast-uri@3.1.6` and
 `ip-address@10.3.1`.
 Both committed runtime locks select `hono@4.12.34`.
 Image builds verify the lock digest and installed production graph before they
@@ -75,7 +73,7 @@ whose amd64 config reports Node `22.23.1`.
 - `openclaw@2026.7.1`
   - `sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==`
   - `https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz`
-  - remediated package tree: `sha512-M1+jhOljB0En/AM97Ij6cWyToRMbQotfF/lwNkDURFk2KdVpFa/pTXbKWM1rULHKtzVBa/PMZ+C5qZ6/YDN8Xw==`
+  - remediated package tree: `sha512-PzF1Lyw0yIo3mr7mNGql7azYoioDP+jQ47gERww6vgb9iyKnEWcscScsvv1IOt9yCp6BJTLxcRYYe7X0s95BnA==`
 - `@openclaw/diagnostics-otel@2026.7.1`
   - `sha512-XXhMifYWTgoR6yFN4T3JkHxdPvQCe8k1cNZjVIgXNmk1svCdBWuALfQQicmpemlmWwauIQuHYgBURY6k63e+rw==`
 - `@openclaw/brave-plugin@2026.7.1`
@@ -105,11 +103,11 @@ whose amd64 config reports Node `22.23.1`.
 - `brace-expansion@5.0.9` (OpenClaw locked-runtime remediation)
   - `sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==`
   - `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz`
-- `fast-uri@3.1.7` (OpenClaw, mcporter, and MCP discovery remediation)
-  - `sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==`
-  - `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz`
+- `fast-uri@3.1.6` (OpenClaw, mcporter, and MCP discovery remediation)
+  - `sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==`
+  - `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz`
   - `BSD-3-Clause`; no dependencies
-  - source commit: `412e40abd4eb8beabfb952d80abf949a2baf27a3`
+  - source commit: `6f970b2951fd896aa0f3a7ff28eeb6640c137d33`
 - `undici@8.10.0` (OpenClaw core and Discord remediation)
   - `sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==`
   - `https://registry.npmjs.org/undici/-/undici-8.10.0.tgz`
@@ -124,9 +122,9 @@ whose amd64 config reports Node `22.23.1`.
   - `https://registry.npmjs.org/hono/-/hono-4.12.34.tgz`
   - `MIT`; no dependencies; Node.js `>=16.9.0`
 - `mcporter@0.7.3` committed runtime lock
-  - SHA-256: `c387e62372cba539d24725e70d26b32093a7bb6f001cd16a473ba74404a4e0f9`
+  - SHA-256: `720c0e3ec2efcccd2c820ce2a39d733f7bd5bf9d3e6fb95310e7f6cd369db83c`
 
-`fast-uri@3.1.7` has a valid npm registry signature and no registry attestation.
+`fast-uri@3.1.6` has a valid npm registry signature and no registry attestation.
 `undici@8.10.0` has a valid npm registry signature and SLSA provenance.
 `ip-address@10.3.1` has two valid npm registry signatures and SLSA provenance.
 
@@ -157,7 +155,7 @@ threshold.
 The September 2 package-lock re-audit with npm `10.9.4` reports `0` high and
 `0` critical findings in all four changed graphs. The root graph has no known
 vulnerabilities, OpenClaw has three moderate findings, and mcporter and MCP
-discovery each have one moderate finding. The exact `fast-uri@3.1.7` registry
+discovery each have one moderate finding. The exact `fast-uri@3.1.6` registry
 signature verifies in both the mcporter and MCP discovery graphs. The
 remediated OpenClaw archive reproduces the recorded tree integrity.
 
@@ -205,7 +203,7 @@ The initial remediation selected `3.1.4` for that advisory.
 The high-severity `GHSA-7p8r-x3mc-p8w7` later affected that release.
 The later `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`,
 `GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp` findings affect the
-previous `3.1.5` selection. Every active lock now selects reviewed `3.1.7`.
+previous `3.1.5` selection. Every active lock now selects first-patched `3.1.6`.
 
 The OpenClaw core package manifest and shrinkwrap directly pin `undici@8.5.0`.
 The published `@openclaw/discord@2026.7.1` archive also pins that version in

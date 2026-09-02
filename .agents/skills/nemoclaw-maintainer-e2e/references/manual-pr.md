@@ -63,8 +63,8 @@ Choose the selection from the source owner:
   every default-enabled E2E. Any supported job or target selector is allowed.
 - An external PR keeps the credential-free controller selection. Empty selectors run the trusted
   default PR selection. The controller also permits `jobs=inference-routing`,
-  `jobs=managed-image-protected-runtime`, `jobs=native-runtime-qualification-producer`, or the
-  documented credential-free target selectors.
+  `jobs=managed-image-protected-runtime`, or the documented credential-free target selectors.
+  Native-runtime qualification requires an NVIDIA-owned branch in `NVIDIA/NemoClaw`.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
@@ -76,6 +76,7 @@ cannot silently change the selected behavior:
 ```bash
 E2E_JOBS="${E2E_JOBS:-}"
 E2E_TARGETS="${E2E_TARGETS:-}"
+E2E_GATEWAY_RUNTIMES="${E2E_GATEWAY_RUNTIMES:-docker}"
 ALLOW_JETSON_DISPATCH="${ALLOW_JETSON_DISPATCH:-false}"
 INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:-false}"
 HEAD_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -84,6 +85,7 @@ gh workflow run .github/workflows/e2e.yaml \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
@@ -160,8 +162,9 @@ unresolved and may proceed to the exact-base replay below.
 ## Replay an Unresolved Failure Against the Exact Base
 
 Before dispatch, prove that the PR still has the head and base captured for the failed head run.
-Use the same trusted workflow SHA, jobs, targets, inference mode, and opt-in flags. The only selected
-source changes from the PR head repository and SHA to the PR base repository and SHA.
+Use the same trusted workflow SHA, jobs, targets, gateway runtimes, inference mode, and opt-in
+flags. The only selected source changes from the PR head repository and SHA to the PR base
+repository and SHA.
 
 ```bash
 set -euo pipefail
@@ -179,6 +182,7 @@ gh workflow run .github/workflows/e2e.yaml \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
@@ -212,8 +216,8 @@ Report exactly one outcome:
   evidence does not support one of the outcomes above.
 
 The report must include both workflow URLs, `HEAD_SHA`, `BASE_SHA`, `WORKFLOW_SHA`, the identical
-selectors, and the classifier result. Do not automatically dispatch the base run, retry either run,
-or publish a custom commit status.
+job, target, and gateway-runtime selectors, and the classifier result. Do not automatically
+dispatch the base run, retry either run, or publish a custom commit status.
 
 Return:
 

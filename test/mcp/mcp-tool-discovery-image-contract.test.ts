@@ -208,15 +208,15 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
-      expectedHash: "724e7d681c32d786dab45d392c43311aff5083470f763bb385d428826f4393b0",
+      expectedHash: "1ff9641d9bba01bd16459fc76b777b3719d2ffa0743c4d23874ccc955ee017f8",
       relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
     },
     {
-      expectedHash: "3aff9216ba63fa3238e0db9d907b8ef0bf68243445031247f1b3b0a58a022283",
+      expectedHash: "9713deef264ef0faea967655e497c73fa6889057e9df827092722d6f00da8987",
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "636a6b0f130ed3247429a3343e7f9cf26e5c3ead6a4c7073169bc2138c7b7f8a",
+      expectedHash: "47b9c1f7f1f5b6c9d5bf304953701b2cff107a81ced8a9646ea66ec12bc6b7f1",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {

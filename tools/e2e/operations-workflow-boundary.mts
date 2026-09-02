@@ -296,11 +296,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   for (const fragment of ["inputs.checkout_sha", "inputs.base_sha", "inputs.pr_number"]) {
     if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must include ${fragment}`);
   }
-  for (const fragment of [
-    "format('E2E PR #{0} base ({1})'",
-    "format('E2E PR #{0} head ({1})'",
-  ]) {
-    if (!runName.includes(fragment)) errors.push(`Manual PR E2E run name must distinguish ${fragment}`);
+  for (const fragment of ["format('E2E PR #{0} base ({1})'", "format('E2E PR #{0} head ({1})'"]) {
+    if (!runName.includes(fragment))
+      errors.push(`Manual PR E2E run name must distinguish ${fragment}`);
   }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");
   if (
@@ -398,7 +396,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == refs/heads/*',
+    '"$WORKFLOW_REF" == "refs/heads/main"',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
