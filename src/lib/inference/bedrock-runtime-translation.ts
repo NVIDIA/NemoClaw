@@ -401,7 +401,8 @@ export function buildBedrockConverseRequest(request: OpenAiChatRequest): Convers
 
 function finishReason(stopReason: string | undefined, hasToolCalls: boolean): string {
   if (hasToolCalls || stopReason === "tool_use") return "tool_calls";
-  if (stopReason === "max_tokens") return "length";
+  if (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded")
+    return "length";
   if (stopReason === "stop_sequence" || stopReason === "end_turn") return "stop";
   return "stop";
 }

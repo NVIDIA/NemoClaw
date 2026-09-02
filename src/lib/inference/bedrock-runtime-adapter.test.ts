@@ -151,6 +151,27 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
   });
 
+  it.each([
+    ["stop_sequence", "stop"],
+    ["max_tokens", "length"],
+    ["model_context_window_exceeded", "length"],
+  ] as const)("maps Bedrock stopReason %s to finish_reason %s", async (stopReason, expected) => {
+    const send = vi.fn(async () => ({
+      output: { message: { content: [{ text: "OK" }] } },
+      stopReason,
+    }));
+
+    const response = await createOpenAiChatCompletion(
+      {
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        messages: [{ role: "user", content: "hello" }],
+      },
+      { send },
+    );
+
+    expect(response.choices[0].finish_reason).toBe(expected);
+  });
+
   it("streams text deltas as OpenAI chat completion chunks", async () => {
     async function* stream() {
       yield { messageStart: { role: "assistant" } };
