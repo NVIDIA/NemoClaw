@@ -16,6 +16,10 @@ type WindowsOllamaInstallResult =
   | { ok: false; path: string; reason: "install" | "readiness" }
   | { ok: true; path: string; commit: () => void; rollback: () => void };
 
+type WindowsOllamaSetupResult =
+  | { ok: false }
+  | { ok: true; commit: () => void; rollback: () => void };
+
 type SetupNimOllamaDeps = {
   OLLAMA_PORT: number;
   OLLAMA_PROXY_PORT: number;
@@ -59,7 +63,7 @@ type SetupNimOllamaDeps = {
   setupWindowsOllamaWith0000Binding: (args: {
     announceStop?: boolean;
     installedPath?: string | null;
-  }) => boolean;
+  }) => WindowsOllamaSetupResult;
   printWindowsOllamaTimeoutDiagnostics: () => void;
   resetOllamaHostCache: () => void;
   installOllamaOnMacOS: (args: {
@@ -221,7 +225,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       : !(await deps.prompt(promptMsg)).trim().toLowerCase().startsWith("n");
     if (!proceed) return "retry-selection";
 
-    let installSession: Extract<WindowsOllamaInstallResult, { ok: true }> | null = null;
+    let mutationSession: { commit: () => void; rollback: () => void } | null = null;
     try {
       if (isSwitch) {
         state.revalidateSandboxIdentity?.("switch to the Windows Ollama runtime");
@@ -243,33 +247,33 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
           if (deps.isNonInteractive()) deps.process.exit(1);
           return "retry-selection";
         }
-        installSession = installResult;
+        mutationSession = installResult;
         console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
       } else {
         state.revalidateSandboxIdentity?.("start the Windows Ollama runtime");
-        if (
-          !deps.setupWindowsOllamaWith0000Binding({
-            announceStop: isRestart,
-            installedPath: winOllamaInstalledPath || undefined,
-          })
-        ) {
+        const setupResult = deps.setupWindowsOllamaWith0000Binding({
+          announceStop: isRestart,
+          installedPath: winOllamaInstalledPath || undefined,
+        });
+        if (!setupResult.ok) {
           deps.printWindowsOllamaTimeoutDiagnostics();
           if (deps.isNonInteractive()) deps.process.exit(1);
           return "retry-selection";
         }
+        mutationSession = setupResult;
         console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
       }
 
       const result = await selectModel(gpu, state, requestedModel, null, lockedModel);
       if (result === "retry-selection") {
-        installSession?.rollback();
+        mutationSession?.rollback();
         deps.resetOllamaHostCache();
       } else {
-        installSession?.commit();
+        mutationSession?.commit();
       }
       return result;
     } catch (error) {
-      installSession?.rollback();
+      mutationSession?.rollback();
       throw error;
     }
   }

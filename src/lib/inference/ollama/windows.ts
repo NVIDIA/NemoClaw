@@ -328,9 +328,16 @@ type WindowsOllamaInstallOperations = WindowsOllamaSetupOperations & {
   awaitReady: () => boolean;
 };
 
+type WindowsOllamaMutationSession = {
+  commit: () => void;
+  rollback: () => void;
+};
+
 type WindowsOllamaInstallResult =
   | { ok: false; path: string; reason: "install" | "readiness" }
-  | { ok: true; path: string; commit: () => void; rollback: () => void };
+  | ({ ok: true; path: string } & WindowsOllamaMutationSession);
+
+type WindowsOllamaSetupResult = { ok: false } | ({ ok: true } & WindowsOllamaMutationSession);
 
 function registerWindowsOllamaInterruptHandler(
   handler: (signal: WindowsOllamaInterruptSignal) => void,
@@ -489,20 +496,19 @@ async function installOllamaOnWindowsHost(
 function setupWindowsOllamaWith0000Binding(
   opts: { announceStop?: boolean; installedPath?: string } = {},
   operations: WindowsOllamaSetupOperations = WINDOWS_OLLAMA_SETUP_OPERATIONS,
-): boolean {
+): WindowsOllamaSetupResult {
   const snapshot = operations.captureSnapshot();
   if (!snapshot) {
     console.error("  Could not capture the existing Windows Ollama state; leaving it unchanged.");
-    return false;
+    return { ok: false };
   }
   const mutation = beginWindowsOllamaMutation(snapshot, operations);
   try {
     if (!applyWindowsOllamaBinding(opts, snapshot, operations, mutation.markMutated)) {
       mutation.rollback();
-      return false;
+      return { ok: false };
     }
-    mutation.commit();
-    return true;
+    return { ok: true, commit: mutation.commit, rollback: mutation.rollback };
   } catch (error) {
     mutation.rollback();
     throw error;

@@ -204,7 +204,9 @@ function captureDefaultWindowsRollbackInvocation(userHost: string | null) {
   );
 
   try {
-    expect(windows.setupWindowsOllamaWith0000Binding({ installedPath: daemonPath })).toBe(false);
+    expect(windows.setupWindowsOllamaWith0000Binding({ installedPath: daemonPath })).toEqual({
+      ok: false,
+    });
   } finally {
     restore();
     logSpy.mockRestore();
@@ -313,9 +315,13 @@ describe("Windows Ollama helper", () => {
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
 
     try {
-      expect(
-        windows.setupWindowsOllamaWith0000Binding({ installedPath }, boundary.operations),
-      ).toBe(true);
+      const result = windows.setupWindowsOllamaWith0000Binding(
+        { installedPath },
+        boundary.operations,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected successful Windows Ollama setup");
+      result.commit();
       expect(boundary.state.events).toEqual([
         "snapshot",
         "persist",
@@ -353,7 +359,7 @@ describe("Windows Ollama helper", () => {
           { installedPath: daemonPath },
           boundary.operations,
         ),
-      ).toBe(false);
+      ).toEqual({ ok: false });
     } finally {
       restore();
       logSpy.mockRestore();
@@ -380,7 +386,9 @@ describe("Windows Ollama helper", () => {
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
 
     try {
-      expect(windows.setupWindowsOllamaWith0000Binding({}, boundary.operations)).toBe(false);
+      expect(windows.setupWindowsOllamaWith0000Binding({}, boundary.operations)).toEqual({
+        ok: false,
+      });
     } finally {
       restore();
       logSpy.mockRestore();
@@ -582,7 +590,7 @@ describe("Windows Ollama helper", () => {
           { installedPath: daemonPath },
           boundary.operations,
         ),
-      ).toBe(false);
+      ).toEqual({ ok: false });
     } finally {
       restore();
       logSpy.mockRestore();

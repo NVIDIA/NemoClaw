@@ -261,7 +261,7 @@ windows.installOllamaOnWindowsHost = async () => {
 };
 windows.setupWindowsOllamaWith0000Binding = () => {
   console.error("WINDOWS_SETUP_CALLED");
-  return true;
+  return { ok: true, commit: () => {}, rollback: () => {} };
 };
 windows.switchToWindowsOllamaHost = () => {
   console.error("WINDOWS_SWITCH_CALLED");

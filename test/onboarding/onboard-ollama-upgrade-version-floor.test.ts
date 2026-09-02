@@ -108,7 +108,11 @@ function makeOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): SetupNimOl
       commit: () => {},
       rollback: () => {},
     }),
-    setupWindowsOllamaWith0000Binding: () => true,
+    setupWindowsOllamaWith0000Binding: () => ({
+      ok: true,
+      commit: () => {},
+      rollback: () => {},
+    }),
     printWindowsOllamaTimeoutDiagnostics: () => {},
     resetOllamaHostCache: () => {},
     installOllamaOnMacOS: () => ({ ok: true }),

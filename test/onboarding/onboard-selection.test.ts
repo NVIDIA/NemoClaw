@@ -76,6 +76,7 @@ const CREDENTIAL_RETRY_PROMPT_RE =
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
+const WINDOWS_SETUP_SUCCESS = { ok: true as const, commit: () => {}, rollback: () => {} };
 const repoRoot = path.join(import.meta.dirname, "../..");
 const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 const credentialsPath = JSON.stringify(
@@ -486,12 +487,10 @@ function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): Se
     printOllamaExposureWarning: () => {},
     switchToWindowsOllamaHost: () => {},
     installOllamaOnWindowsHost: async () => ({
-      ok: true,
+      ...WINDOWS_SETUP_SUCCESS,
       path: "C:/Ollama/ollama.exe",
-      commit: () => {},
-      rollback: () => {},
     }),
-    setupWindowsOllamaWith0000Binding: () => true,
+    setupWindowsOllamaWith0000Binding: () => WINDOWS_SETUP_SUCCESS,
     printWindowsOllamaTimeoutDiagnostics: () => {},
     resetOllamaHostCache: () => {},
     installOllamaOnMacOS: () => ({ ok: true }),
@@ -3957,7 +3956,7 @@ const { setupNim } = require(${onboardPath});
       path: "",
       reason: "install" as const,
     }));
-    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const setup = vi.fn((_args?: unknown) => WINDOWS_SETUP_SUCCESS);
     const lines: string[] = [];
     const log = vi.spyOn(console, "log").mockImplementation((...args) => {
       lines.push(args.join(" "));
@@ -4014,7 +4013,7 @@ const { setupNim } = require(${onboardPath});
       path: "",
       reason: "install" as const,
     }));
-    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const setup = vi.fn((_args?: unknown) => WINDOWS_SETUP_SUCCESS);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const state = makeOllamaSelectionState();
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
@@ -4065,7 +4064,7 @@ const { setupNim } = require(${onboardPath});
       path: "",
       reason: "install" as const,
     }));
-    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const setup = vi.fn((_args?: unknown) => WINDOWS_SETUP_SUCCESS);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const state = makeOllamaSelectionState();
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(

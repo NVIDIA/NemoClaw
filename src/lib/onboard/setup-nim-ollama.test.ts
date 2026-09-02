@@ -55,7 +55,11 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
       commit: () => {},
       rollback: () => {},
     }),
-    setupWindowsOllamaWith0000Binding: () => true,
+    setupWindowsOllamaWith0000Binding: () => ({
+      ok: true,
+      commit: () => {},
+      rollback: () => {},
+    }),
     printWindowsOllamaTimeoutDiagnostics: () => {},
     resetOllamaHostCache: () => {},
     installOllamaOnMacOS: () => ({ ok: true }),
@@ -274,7 +278,11 @@ describe("createSetupNimOllamaHandlers", () => {
       commit: () => {},
       rollback: () => {},
     }));
-    const restart = vi.fn(() => true);
+    const restart = vi.fn(() => ({
+      ok: true as const,
+      commit: () => {},
+      rollback: () => {},
+    }));
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
         switchToWindowsOllamaHost: switchHost,
@@ -310,7 +318,11 @@ describe("createSetupNimOllamaHandlers", () => {
       commit: () => {},
       rollback: () => {},
     }));
-    const start = vi.fn(() => true);
+    const start = vi.fn(() => ({
+      ok: true as const,
+      commit: () => {},
+      rollback: () => {},
+    }));
     const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
         installOllamaOnWindowsHost: install,
@@ -408,6 +420,66 @@ describe("createSetupNimOllamaHandlers", () => {
     expect(commit).not.toHaveBeenCalled();
     expect(rollback).toHaveBeenCalledOnce();
     expect(resetHost).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back a Windows Ollama restart when model selection returns", async () => {
+    const commit = vi.fn();
+    const rollback = vi.fn();
+    const restart = vi.fn(() => ({ ok: true as const, commit, rollback }));
+    const resetHost = vi.fn();
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        isNonInteractive: () => false,
+        resetOllamaHostCache: resetHost,
+        selectAndValidateOllamaModel: async () => ({ outcome: "back-to-selection" }),
+        setupWindowsOllamaWith0000Binding: restart,
+      }),
+    );
+
+    await expect(
+      handleWindowsHostOllamaSelection(
+        null,
+        "start-windows-ollama",
+        "qwen3:8b",
+        false,
+        true,
+        "C:/Ollama/ollama.exe",
+        makeState(),
+      ),
+    ).resolves.toBe("retry-selection");
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(resetHost).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back a Windows Ollama restart when model selection throws", async () => {
+    const rollback = vi.fn();
+    const restart = vi.fn(() => ({ ok: true as const, commit: vi.fn(), rollback }));
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        selectAndValidateOllamaModel: async () => {
+          throw new Error("model selection failed");
+        },
+        setupWindowsOllamaWith0000Binding: restart,
+      }),
+    );
+
+    await expect(
+      handleWindowsHostOllamaSelection(
+        null,
+        "start-windows-ollama",
+        "qwen3:8b",
+        false,
+        true,
+        "C:/Ollama/ollama.exe",
+        makeState(),
+      ),
+    ).rejects.toThrow("model selection failed");
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(rollback).toHaveBeenCalledOnce();
   });
 
   it("preserves accepted tools-incompatible state for running Ollama", async () => {
