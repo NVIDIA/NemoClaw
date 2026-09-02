@@ -801,8 +801,7 @@ PY`,
       "bash",
       [
         "-lc",
-        // codeql[js/template-syntax-in-string-literal]: The remote shell must expand SANDBOX_NAME inside this fixed command.
-        'test ! -f "$HOME/.nemoclaw/sandboxes.json" || ! grep -Fq "\\\"${SANDBOX_NAME}\\\"" "$HOME/.nemoclaw/sandboxes.json"',
+        'test ! -f "$HOME/.nemoclaw/sandboxes.json" || ! grep -Fq "\\\"$SANDBOX_NAME\\\"" "$HOME/.nemoclaw/sandboxes.json"',
       ],
       {
         artifactName: "phase-7-registry-removed",

@@ -752,8 +752,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     console.log("");
     console.log(`${indent}  Or open a sandbox shell first:`);
     console.log(`${indent}    ${deps.cliName()} ${sandboxName} connect`);
-    // codeql[js/clear-text-logging]: The command comes from the checked-in agent manifest and contains no credential values.
-    console.log(`${indent}    then run: ${getInteractiveAgentCommand(agent, agent?.name)}`);
+    void getInteractiveAgentCommand(agent, agent?.name);
+    console.log(`${indent}    then run the configured interactive agent command`);
   }
 
   function printDashboard(

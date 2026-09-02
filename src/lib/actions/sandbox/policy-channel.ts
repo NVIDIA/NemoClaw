@@ -26,7 +26,6 @@ import {
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
   createMessagingPreEnableHookInputs,
-  formatSupportedMessagingAgentIds,
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
@@ -621,21 +620,12 @@ export function listSandboxChannels(sandboxName: string) {
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   if (availableChannels.length === 0) {
-    // codeql[js/clear-text-logging]: Agent names are validated checked-in manifest identifiers.
-    console.log(`    (none supported by agent '${agent.name}')`);
+    console.log("    (none supported by this agent)");
   }
   for (const manifest of availableChannels) {
     console.log(`    ${manifest.id} — ${manifest.description ?? manifest.displayName}`);
   }
   console.log("");
-}
-
-function formatAvailableChannelsForAgent(agent: AgentDefinition): string {
-  return (
-    availableManifestChannelsForAgent(agent)
-      .map((manifest) => manifest.id)
-      .join(", ") || "(none)"
-  );
 }
 
 // Map a channel + token-env-key to the OpenShell provider name onboarding
@@ -907,11 +897,7 @@ async function applyChannelAddToGatewayAndRegistry(
       return null;
     }
   } catch (err) {
-    console.error(
-      `  ✗ Failed to register '${channelName}' providers with the gateway: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    console.error("  ✗ Failed to register channel providers with the gateway.");
     if (
       policyChannelDependencies.isMessagingProviderBindingConflict(err) ||
       policyChannelDependencies.isMessagingProviderMutationFailure(err)
@@ -931,14 +917,10 @@ async function applyChannelAddToGatewayAndRegistry(
         (providerName) => !createdProviders.has(providerName),
       );
       if (updatedProviderNames.length > 0) {
-        console.error(
-          `  ${YW}⚠${R} Updated provider state remains for ${updatedProviderNames.join(", ")}; resolve the conflicting provider, then rerun '${CLI_NAME} ${sandboxName} channels add ${channelName}'.`,
-        );
+        console.error(`  ${YW}⚠${R} Updated provider state remains; resolve it and retry.`);
       }
       if (cleanupFailures.length > 0) {
-        console.error(
-          `  ${YW}⚠${R} Could not remove newly created providers ${cleanupFailures.join(", ")}; rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}'.`,
-        );
+        console.error(`  ${YW}⚠${R} Could not remove newly created providers; retry cleanup.`);
       }
       cleanupCredentialFreePolicy?.();
       process.exit(1);
@@ -1316,12 +1298,7 @@ function assertAddChannelPlanActive(
   const missing =
     channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
   if (missing.length > 0) {
-    // codeql[js/clear-text-logging]: Missing-input diagnostics render schema names only and never credential values.
-    console.error(
-      `  Missing required input(s) for channel '${manifest.id}': ${missing
-        .map(formatMissingInput)
-        .join(", ")}.`,
-    );
+    console.error("  Missing required inputs for this channel.");
     if (
       manifest.auth.mode === "host-qr" &&
       getMessagingToken(manifest.credentials[0]?.providerEnvKey)
@@ -1344,10 +1321,6 @@ function inputAvailable(input: SandboxMessagingChannelPlan["inputs"][number]): b
   if (input.kind === "secret") return input.credentialAvailable === true;
   if (input.value === undefined) return false;
   return typeof input.value === "string" ? input.value.trim().length > 0 : true;
-}
-
-function formatMissingInput(input: SandboxMessagingChannelPlan["inputs"][number]): string {
-  return input.sourceEnv ? `${input.inputId} (${input.sourceEnv})` : input.inputId;
 }
 
 function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
@@ -1431,18 +1404,7 @@ async function addSandboxChannelUnlocked(
 
   const agent = resolveAgentForSandbox(sandboxName);
   if (!channelSupportedByAgent(manifest, agent)) {
-    // codeql[js/clear-text-logging]: Channel and agent values are validated manifest identifiers.
-    console.error(
-      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
-    );
-    // codeql[js/clear-text-logging]: Supported-agent output is checked-in manifest metadata.
-    console.error(
-      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
-    );
-    // codeql[js/clear-text-logging]: Available-channel output is checked-in manifest metadata.
-    console.error(
-      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
-    );
+    console.error("  This channel does not support the configured agent.");
     process.exit(1);
   }
 
@@ -2070,18 +2032,7 @@ async function sandboxChannelsSetEnabled(
   const agent = resolveAgentForSandbox(sandboxName);
   const availableChannels = availableManifestChannelsForAgent(agent);
   if (!availableChannels.some((candidate) => candidate.id === canonical)) {
-    // codeql[js/clear-text-logging]: Channel and agent values are validated manifest identifiers.
-    console.error(
-      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
-    );
-    // codeql[js/clear-text-logging]: Supported-agent output is checked-in manifest metadata.
-    console.error(
-      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
-    );
-    // codeql[js/clear-text-logging]: Available-channel output is checked-in manifest metadata.
-    console.error(
-      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
-    );
+    console.error("  This channel does not support the configured agent.");
     process.exit(1);
   }
 

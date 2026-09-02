@@ -2806,12 +2806,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
     console.log("");
     // Same resolver `launch` uses, so the hint cannot drift from the command
     // that `nemoclaw launch <name>` actually runs (#6006).
-    const agentCmd = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+    void agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
-    // codeql[js/clear-text-logging]: The interactive command is a checked-in manifest value and never includes credentials.
-    console.log(
-      `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
-    );
+    console.log(`  ${D}Inside the sandbox, run the configured command to start chatting.${R}`);
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );

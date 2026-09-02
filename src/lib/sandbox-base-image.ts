@@ -282,12 +282,7 @@ function validatePulledCandidate(
     glibcVersion = check.version;
     if (!check.ok) {
       if (warn) {
-        // codeql[js/clear-text-logging]: Image refs and labels are validated OCI identifiers, not credential-bearing URLs.
-        console.warn(
-          `  Warning: ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
-            `${glibcVersion || "unknown"}; OpenShell sandbox supervisor requires ` +
-            `glibc >= ${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
-        );
+        console.warn("  Warning: sandbox base image does not meet the required glibc version.");
       }
       return null;
     }
@@ -295,11 +290,7 @@ function validatePulledCandidate(
 
   if (options.validateImage && !options.validateImage(imageRef)) {
     if (warn) {
-      // codeql[js/clear-text-logging]: Image refs and capability labels are validated non-secret identifiers.
-      console.warn(
-        `  Warning: ${options.label || "sandbox base image"} ${imageRef} lacks ` +
-          `${options.validationDescription || "a required runtime capability"}.`,
-      );
+      console.warn("  Warning: sandbox base image lacks a required runtime capability.");
     }
     return null;
   }
@@ -436,21 +427,12 @@ function resolveLocalCandidate(
     ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
     : { ok: true, version: null };
   if (!check.ok) {
-    // codeql[js/clear-text-logging]: The local image ref and ABI label are validated non-secret build identifiers.
-    console.error(
-      `  Local ${label} ${imageRef} has glibc ` +
-        `${check.version || "unknown"}; expected >= ` +
-        `${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
-    );
+    console.error("  Local sandbox base image does not meet the required glibc version.");
     return null;
   }
 
   if (options.validateImage && !options.validateImage(imageRef)) {
-    // codeql[js/clear-text-logging]: The local image ref and capability label cannot contain credential material.
-    console.error(
-      `  Local ${label} ${imageRef} lacks ` +
-        `${options.validationDescription || "a required runtime capability"}.`,
-    );
+    console.error("  Local sandbox base image lacks a required runtime capability.");
     return null;
   }
 
