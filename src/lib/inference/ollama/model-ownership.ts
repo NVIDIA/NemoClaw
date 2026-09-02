@@ -5,12 +5,17 @@ import path from "node:path";
 
 import type { SandboxEntry } from "../../state/registry";
 import {
+  isLocalOllamaRouteOwner,
   readLocalAdapterJsonFile,
   removeLocalAdapterFile,
   resolveSharedLocalAdapterStateRoot,
+  type OllamaHostRoute,
   writeLocalAdapterJsonFile,
 } from "../local-adapter-lifecycle";
 import { ollamaModelRefsMatch } from "./model-discovery";
+
+export { isLocalOllamaRouteOwner } from "../local-adapter-lifecycle";
+export type { OllamaHostRoute, OllamaRouteHolder } from "../local-adapter-lifecycle";
 
 const PENDING_CLEANUP_DIRECTORY = "ollama-pending-model-cleanup";
 const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -88,7 +93,9 @@ export function clearPendingOllamaModelCleanup(
 }
 
 /** The registry fields an Ollama GPU-release decision reads. */
-export type OllamaModelHolder = Pick<SandboxEntry, "name" | "provider" | "model">;
+export type OllamaModelHolder = Pick<SandboxEntry, "name" | "provider" | "model" | "endpointUrl">;
+
+export type OllamaModelRoute = Pick<SandboxEntry, "provider" | "model" | "endpointUrl">;
 
 export type OllamaModelOwnershipDecision =
   | { readonly kind: "missing-model" }
@@ -115,13 +122,14 @@ export type OllamaModelOwnershipDecision =
 export function matchingOllamaModelPeers<T extends OllamaModelHolder>(
   sandbox: OllamaModelHolder,
   peers: readonly T[],
+  selectedHost: OllamaHostRoute | null = null,
 ): T[] {
   const model = sandbox.model?.trim();
   if (!model) return [];
   return peers.filter(
     (peer) =>
       peer.name !== sandbox.name &&
-      !!peer.provider?.includes("ollama") &&
+      isLocalOllamaRouteOwner(peer, selectedHost) &&
       !!peer.model &&
       ollamaModelRefsMatch(peer.model, model),
   );
@@ -131,11 +139,12 @@ export function decideOllamaModelOwnership(
   sandbox: OllamaModelHolder,
   peers: readonly OllamaModelHolder[],
   activeSandboxNames: ReadonlySet<string>,
+  selectedHost: OllamaHostRoute | null = null,
 ): OllamaModelOwnershipDecision {
   const model = sandbox.model?.trim();
   if (!model) return { kind: "missing-model" };
 
-  const matchingPeers = matchingOllamaModelPeers(sandbox, peers);
+  const matchingPeers = matchingOllamaModelPeers(sandbox, peers, selectedHost);
   const activePeers = matchingPeers
     .filter((peer) => activeSandboxNames.has(peer.name))
     .map((peer) => peer.name)
@@ -157,11 +166,13 @@ export function decideOllamaModelOwnership(
 export function exclusivelyHeldOllamaModel(
   sandbox: OllamaModelHolder,
   peers: readonly OllamaModelHolder[],
+  selectedHost: OllamaHostRoute | null = null,
 ): string | null {
   const decision = decideOllamaModelOwnership(
     sandbox,
     peers,
     new Set(peers.map((peer) => peer.name)),
+    selectedHost,
   );
   return decision.kind === "exclusive" ? decision.model : null;
 }
@@ -180,13 +191,16 @@ export function exclusivelyHeldOllamaModel(
  */
 export function supersededOllamaModel(
   previous: OllamaModelHolder | null,
-  nextModel: string,
+  next: OllamaModelRoute,
   peers: readonly OllamaModelHolder[],
+  selectedHost: OllamaHostRoute | null = null,
 ): string | null {
-  if (!previous?.provider?.includes("ollama")) return null;
-  const next = nextModel?.trim();
-  if (!next) return null;
-  const held = exclusivelyHeldOllamaModel(previous, peers);
+  if (!previous || !isLocalOllamaRouteOwner(previous, selectedHost)) return null;
+  const nextModel = next.model?.trim();
+  if (!nextModel) return null;
+  const held = exclusivelyHeldOllamaModel(previous, peers, selectedHost);
   if (!held) return null;
-  return ollamaModelRefsMatch(held, next) ? null : held;
+  return isLocalOllamaRouteOwner(next, selectedHost) && ollamaModelRefsMatch(held, nextModel)
+    ? null
+    : held;
 }

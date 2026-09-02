@@ -259,7 +259,10 @@ export type OllamaDeps = CommonDeps & {
     persistPendingOllamaModelCleanup?(sandboxName: string, models: readonly string[]): void;
     clearPendingOllamaModelCleanup?(sandboxName: string, releasedModels?: readonly string[]): void;
     persistResolvedOllamaHost(): () => void;
-    clearPersistedOllamaHostIfUnused?(providers: readonly (string | null | undefined)[]): boolean;
+    loadPersistedOllamaHost?(): "127.0.0.1" | "host.docker.internal" | null;
+    clearPersistedOllamaHostIfUnused?(
+      routes: readonly { provider?: string | null; endpointUrl?: string | null }[],
+    ): boolean;
   };
   /** Exact provider-owned proof used instead of legacy host warmup/probes. */
   providerOwnedInferenceProof?: {

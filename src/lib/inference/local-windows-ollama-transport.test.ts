@@ -102,7 +102,7 @@ describe("Windows-host Ollama transport", () => {
     try {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
 
-      expect(clearPersistedOllamaHostIfUnused(["nvidia-prod"], stateRoot)).toBe(true);
+      expect(clearPersistedOllamaHostIfUnused([{ provider: "nvidia-prod" }], stateRoot)).toBe(true);
       expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
@@ -114,8 +114,54 @@ describe("Windows-host Ollama transport", () => {
     try {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
 
-      expect(clearPersistedOllamaHostIfUnused(["ollama-local"], stateRoot)).toBe(false);
+      expect(clearPersistedOllamaHostIfUnused([{ provider: "ollama-local" }], stateRoot)).toBe(
+        false,
+      );
       expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("retains the route for a compatible endpoint at the selected local daemon", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-compatible-retain-"));
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+
+      expect(
+        clearPersistedOllamaHostIfUnused(
+          [
+            {
+              provider: "compatible-endpoint",
+              endpointUrl: "http://host.docker.internal:11434/v1",
+            },
+          ],
+          stateRoot,
+        ),
+      ).toBe(false);
+      expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("retires the route when only a remote compatible endpoint remains", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-compatible-remote-"));
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+
+      expect(
+        clearPersistedOllamaHostIfUnused(
+          [
+            {
+              provider: "compatible-endpoint",
+              endpointUrl: "https://ollama.example.com:11434/v1",
+            },
+          ],
+          stateRoot,
+        ),
+      ).toBe(true);
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
@@ -123,7 +169,7 @@ describe("Windows-host Ollama transport", () => {
 
   it("serializes route publication with final ownership retirement", async () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-transition-"));
-    const providers: string[] = [];
+    const routes: Array<{ provider: string }> = [];
     let staged!: () => void;
     let resume!: () => void;
     const stagedRoute = new Promise<void>((resolve) => {
@@ -138,14 +184,14 @@ describe("Windows-host Ollama transport", () => {
         persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
         staged();
         await resumeOnboarding;
-        providers.push("ollama-local");
+        routes.push({ provider: "ollama-local" });
       });
       await stagedRoute;
 
       let retirementEntered = false;
       const retirement = withOllamaModelOwnershipTransaction(() => {
         retirementEntered = true;
-        clearPersistedOllamaHostIfUnused(providers, stateRoot);
+        clearPersistedOllamaHostIfUnused(routes, stateRoot);
       });
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       expect(retirementEntered).toBe(false);

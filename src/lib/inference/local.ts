@@ -31,9 +31,13 @@ import { type CaptureResult, run, runCapture, runCaptureEx, shellQuote } from ".
 import { buildSubprocessEnv } from "../subprocess-env";
 
 import {
+  isLocalOllamaRouteOwner,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  OLLAMA_LOCALHOST,
   readLocalAdapterJsonFile,
   removeLocalAdapterFile,
   resolveSharedLocalAdapterStateRoot,
+  type OllamaRouteHolder,
   writeLocalAdapterJsonFile,
 } from "./local-adapter-lifecycle";
 import { detectNvidiaPlatform } from "./nim";
@@ -134,8 +138,11 @@ export type RunCaptureExFn = (cmd: string[], opts?: { env?: NodeJS.ProcessEnv })
 // Hosts that local-provider discovery may try when probing Ollama. The Windows
 // onboarding path separately checks host.docker.internal from Docker Desktop's
 // network context because the alias may not resolve from the WSL host.
-export const OLLAMA_LOCALHOST = "127.0.0.1";
-export const OLLAMA_HOST_DOCKER_INTERNAL = "host.docker.internal";
+export {
+  isLocalOllamaRouteOwner,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  OLLAMA_LOCALHOST,
+} from "./local-adapter-lifecycle";
 
 /** Build the credential-free Docker Desktop probe for Windows-host Ollama. */
 export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
@@ -271,10 +278,11 @@ export function clearPersistedOllamaHost(
 }
 
 export function clearPersistedOllamaHostIfUnused(
-  providers: readonly (string | null | undefined)[],
+  routes: readonly OllamaRouteHolder[],
   stateRoot: string = resolveSharedLocalAdapterStateRoot(),
 ): boolean {
-  if (providers.some((provider) => provider?.includes("ollama"))) return false;
+  const selectedHost = loadPersistedOllamaHost(stateRoot);
+  if (routes.some((route) => isLocalOllamaRouteOwner(route, selectedHost))) return false;
   clearPersistedOllamaHost(stateRoot);
   return true;
 }

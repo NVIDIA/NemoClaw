@@ -21,6 +21,7 @@ import {
 import { getManagedVllmProviderBinding } from "../inference/local";
 import {
   clearPendingOllamaModelCleanup,
+  isLocalOllamaRouteOwner,
   loadPendingOllamaModelCleanup,
   type OllamaModelHolder,
   persistPendingOllamaModelCleanup,
@@ -523,6 +524,7 @@ function releaseSupersededOllamaModel(
   previous: OllamaModelHolder | null,
   nextProvider: string,
   nextModel: string,
+  nextEndpointUrl: string | null,
   result: SetupInferenceResult,
   deps: SetupInferenceDeps,
   revalidateSandboxIdentity?: (operation: string) => void,
@@ -555,20 +557,23 @@ function releaseSupersededOllamaModel(
     const withOwnershipLock = deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
     withOwnershipLock(() => {
       const peers = deps.listSandboxes?.().sandboxes ?? [];
-      const superseded = supersededOllamaModel(previous, nextModel, peers);
+      const selectedHost = deps.localInference.loadPersistedOllamaHost?.() ?? null;
+      const nextRoute = { provider: nextProvider, model: nextModel, endpointUrl: nextEndpointUrl };
+      const superseded = supersededOllamaModel(previous, nextRoute, peers, selectedHost);
       const pending = loadPending(previous.name);
       const retryablePending = pending.filter((model) =>
         supersededOllamaModel(
-          { name: previous.name, provider: "ollama-local", model },
-          nextModel,
+          { name: previous.name, provider: "ollama-local", model, endpointUrl: null },
+          nextRoute,
           peers,
+          selectedHost,
         ),
       );
       attemptedModels = [...new Set([...(superseded ? [superseded] : []), ...retryablePending])];
       const retireRoute =
-        !!previous.provider?.includes("ollama") &&
-        !nextProvider.includes("ollama") &&
-        !peers.some((peer) => peer.provider?.includes("ollama"));
+        isLocalOllamaRouteOwner(previous, selectedHost) &&
+        !isLocalOllamaRouteOwner(nextRoute, selectedHost) &&
+        !peers.some((peer) => isLocalOllamaRouteOwner(peer, selectedHost));
       if (attemptedModels.length === 0 && !retireRoute) return;
       try {
         revalidateSandboxIdentity?.("release the superseded Ollama model");
@@ -599,7 +604,7 @@ function releaseSupersededOllamaModel(
               `route remains active. ${recoveryAction}. ` +
               (pendingRecordFailure
                 ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually release only ${attemptedModels.join(", ")} at ${cleanup.endpoint}.`
-                : `Re-run onboarding, stop, or destroy '${previous.name}' to retry only: ${attemptedModels.join(", ")}.`);
+                : `Re-run onboarding or destroy '${previous.name}' to retry only: ${attemptedModels.join(", ")}.`);
           } else {
             clearPending(previous.name, attemptedModels);
           }
@@ -613,12 +618,12 @@ function releaseSupersededOllamaModel(
             `route remains active. ` +
             (pendingRecordFailure
               ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually release only ${attemptedModels.join(", ")} from the saved local Ollama endpoint.`
-              : `Re-run onboarding, stop, or destroy '${previous.name}' to retry only the recorded models: ${attemptedModels.join(", ")}.`);
+              : `Re-run onboarding or destroy '${previous.name}' to retry only the recorded models: ${attemptedModels.join(", ")}.`);
         }
       }
       const pendingAfterCleanup = loadPending(previous.name);
       if (retireRoute && !cleanupWarning && pendingAfterCleanup.length === 0) {
-        deps.localInference.clearPersistedOllamaHostIfUnused?.(peers.map((peer) => peer.provider));
+        deps.localInference.clearPersistedOllamaHostIfUnused?.(peers);
       }
     });
   } catch (error) {
@@ -631,7 +636,7 @@ function releaseSupersededOllamaModel(
       `inference route remains active. ` +
       (pendingRecordFailure
         ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually release only ${attemptedModels.join(", ") || "the superseded model"} from the saved local Ollama endpoint.`
-        : `Re-run onboarding, stop, or destroy '${previous.name}' to retry only the recorded models: ${attemptedModels.join(", ") || "none"}.`);
+        : `Re-run onboarding or destroy '${previous.name}' to retry only the recorded models: ${attemptedModels.join(", ") || "none"}.`);
   }
   if (cleanupWarning) console.warn(cleanupWarning);
   if (authorityRefusal) throw authorityRefusal;
@@ -1229,6 +1234,7 @@ export function createSetupInference(
         previousSandbox,
         provider,
         model,
+        endpointUrl,
         result,
         deps,
         revalidateSandboxIdentity,

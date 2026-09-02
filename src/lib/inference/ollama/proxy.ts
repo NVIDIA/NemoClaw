@@ -32,6 +32,7 @@ const {
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
   clearPendingOllamaModelCleanup,
+  isLocalOllamaRouteOwner,
   loadPendingOllamaModelCleanup,
 }: typeof import("./model-ownership") = require("./model-ownership");
 const {
@@ -1721,9 +1722,11 @@ export {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   getOllamaPullTimeoutMs,
+  isLocalOllamaRouteOwner,
   isProxyHealthy,
   killStaleProxy,
   loadPendingOllamaModelCleanup,
+  loadPersistedOllamaHost,
   noAuthProxy,
   ollamaModelRefsMatch,
   persistAndProbeOllamaProxy,
