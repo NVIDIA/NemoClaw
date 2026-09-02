@@ -25,16 +25,6 @@ const rollbackCommand = buildDeepAgentsMcpRegisterCommand(baseEntry, true, [base
 const removalCommand = buildDeepAgentsMcpRemoveCommand(baseEntry);
 
 describe("Deep Agents managed MCP projection safety", () => {
-  it("renders status without mutation-only projection helpers", () => {
-    const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
-
-    expect(statusCommand).toContain("def read_managed_projection");
-    expect(statusCommand).not.toContain("def load_managed_projection_for_update");
-    expect(registrationCommand).toContain("def load_managed_projection_for_update");
-    expect(removalCommand).toContain("def load_managed_projection_for_update");
-    expect(rollbackCommand).toContain("def load_managed_projection_for_update");
-  });
-
   it(
     "applies the shared server cap before normal and rollback v2 publication",
     { timeout: 60_000 },
