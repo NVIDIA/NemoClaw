@@ -221,7 +221,7 @@ describe("rebuild preflight guards", () => {
     expect(output).not.toContain("remove the stale lock");
   });
 
-  it("reports the guard path and safe recovery guidance for a foreign reclamation guard", () => {
+  it("reports the guard path and says not to remove a foreign reclamation guard", () => {
     const guardFile = "/tmp/onboard.lock.reclamation-guard";
     vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
       acquired: false,

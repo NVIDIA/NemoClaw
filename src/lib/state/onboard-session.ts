@@ -363,7 +363,7 @@ function quotedIdentity(value: string): string {
 
 export function describeOnboardLockContention(lock: LockResult): OnboardLockContentionDescription {
   if (lock.reclamationGuard) {
-    const { guardFile, owner } = lock.reclamationGuard;
+    const { cleanupFailure, guardFile, owner } = lock.reclamationGuard;
     const ownerDetails = owner
       ? [
           `owner PID ${String(owner.pid)}`,
@@ -376,6 +376,16 @@ export function describeOnboardLockContention(lock: LockResult): OnboardLockCont
           .filter((detail): detail is string => detail !== null)
           .join(", ")
       : "owner identity unavailable";
+    if (cleanupFailure) {
+      return {
+        reason: `Cleanup of onboarding lock reclamation guard artifact '${guardFile}' failed (${ownerDetails}).`,
+        remediation:
+          "Let the reported NemoClaw process exit, then retry. If the artifact remains, confirm " +
+          "on its reported host and PID namespace that the owner no longer uses it. Do not " +
+          "remove the artifact if you cannot confirm this; ask that host's administrator to " +
+          `resolve '${guardFile}'.`,
+      };
+    }
     return {
       reason: `Onboarding lock reclamation guard '${guardFile}' is blocking this operation (${ownerDetails}).`,
       remediation:

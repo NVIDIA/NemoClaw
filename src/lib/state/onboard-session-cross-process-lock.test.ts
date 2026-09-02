@@ -252,7 +252,7 @@ describe("cross-process onboard lock", () => {
     }
   });
 
-  it("prints the guard path and safe guidance when reclamation guard acquisition is blocked", async () => {
+  it("prints the guard path and says not to remove an unverified reclamation guard", async () => {
     const authority = await import("../onboard/portable-retirement-authority");
     const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
     const messages: string[] = [];

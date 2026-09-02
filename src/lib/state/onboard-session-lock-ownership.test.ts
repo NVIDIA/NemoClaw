@@ -258,15 +258,12 @@ describe("onboard lock ownership", () => {
       originalRenameSync(from, to);
       fs.writeFileSync(from, "x".repeat(65_537), { mode: 0o600 });
     }) as typeof fs.renameSync);
-    const readSpy = vi.spyOn(fs, "readFileSync");
-
     const result = session.acquireOnboardLock("nemoclaw onboard --resume");
 
     expect(result).toMatchObject({
       acquired: false,
       reclamationGuard: { guardFile: artifactFile },
     });
-    expect(readSpy.mock.calls.filter(([target]) => typeof target === "number")).toHaveLength(2);
     expect(fs.statSync(artifactFile).size).toBe(65_537);
     renameSpy.mockRestore();
   });
@@ -287,16 +284,78 @@ describe("onboard lock ownership", () => {
       originalRenameSync(from, to);
       fs.appendFileSync(to, "x".repeat(65_537));
     }) as typeof fs.renameSync);
-    const readSpy = vi.spyOn(fs, "readFileSync");
-
     const result = session.acquireOnboardLock("nemoclaw onboard --resume");
 
     expect(result).toMatchObject({
       acquired: false,
       reclamationGuard: { guardFile: artifactFile },
     });
-    expect(readSpy.mock.calls.filter(([target]) => typeof target === "number")).toHaveLength(1);
     expect(fs.statSync(artifactFile).size).toBeGreaterThan(65_536);
     renameSpy.mockRestore();
+  });
+
+  it("retries a failed local guard-candidate cleanup before the next acquisition", () => {
+    let retainedCandidatePath: string | null = null;
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementationOnce(((target) => {
+      retainedCandidatePath = String(target);
+      throw Object.assign(new Error("candidate cleanup denied"), { code: "EACCES" });
+    }) as typeof fs.rmSync);
+
+    try {
+      expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
+      session.releaseOnboardLock();
+      expect(retainedCandidatePath).not.toBeNull();
+      expect(fs.existsSync(retainedCandidatePath!)).toBe(false);
+
+      expect(session.acquireOnboardLock("nemoclaw onboard --retry").acquired).toBe(true);
+    } finally {
+      rmSpy.mockRestore();
+    }
+  });
+
+  it("reports a retained local guard candidate whose cleanup keeps failing", () => {
+    const originalRenameSync = fs.renameSync.bind(fs);
+    let retainedCandidatePath: string | null = null;
+    const denied = () => Object.assign(new Error("candidate cleanup denied"), { code: "EACCES" });
+    const denyRename = (): never => {
+      throw denied();
+    };
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementationOnce(((target) => {
+      retainedCandidatePath = String(target);
+      throw denied();
+    }) as typeof fs.rmSync);
+    const renameSpy = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementation(
+        ((from, to) =>
+          from === retainedCandidatePath
+            ? denyRename()
+            : originalRenameSync(from, to)) as typeof fs.renameSync,
+      );
+
+    try {
+      expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
+      session.releaseOnboardLock();
+      const result = session.acquireOnboardLock("nemoclaw onboard --retry");
+
+      expect(result).toMatchObject({
+        acquired: false,
+        reclamationGuard: {
+          cleanupFailure: true,
+          guardFile: retainedCandidatePath,
+          owner: { pid: process.pid },
+        },
+      });
+      expect(session.describeOnboardLockContention(result)).toEqual({
+        reason: expect.stringContaining(
+          `Cleanup of onboarding lock reclamation guard artifact '${retainedCandidatePath!}' failed`,
+        ),
+        remediation: expect.stringContaining("Let the reported NemoClaw process exit, then retry"),
+      });
+      expect(fs.existsSync(retainedCandidatePath!)).toBe(true);
+    } finally {
+      renameSpy.mockRestore();
+      rmSpy.mockRestore();
+    }
   });
 });

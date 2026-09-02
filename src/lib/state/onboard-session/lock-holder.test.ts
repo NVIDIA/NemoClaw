@@ -64,33 +64,75 @@ describe("onboarding lock classification", () => {
     ).toEqual({ state: "stale" });
   });
 
-  it.each([
-    ["matching", "proc:100", "proc:100", "held", true],
-    ["reused", "proc:100", "proc:101", "stale", null],
-    ["rebooted", "linux:boot-a:100", "linux:boot-b:100", "stale", null],
-    ["reused current PID", "proc:100", "proc:101", "stale", null],
-    ["unverifiable", "proc:100", null, "held", false],
-  ] as const)(
-    "classifies a live PID from exact process identity evidence [%s]",
-    (_case, recordedIdentity, observedIdentity, expectedState, identityVerified) => {
-      const probes: ProcessIdentityProbes = {
-        currentPid: 101,
-        isAlive: () => true,
-        readStrongIdentity: () => observedIdentity,
-      };
-      const contents = JSON.stringify({
-        pid: _case === "reused current PID" ? probes.currentPid : 202,
-        processStartIdentity: recordedIdentity,
+  it("holds a live PID whose strong process identity matches", () => {
+    const probes: ProcessIdentityProbes = {
+      currentPid: 101,
+      isAlive: () => true,
+      readStrongIdentity: () => "proc:100",
+    };
+    const contents = JSON.stringify({
+      pid: 202,
+      processStartIdentity: "proc:100",
+      startedAt: "2026-09-01T00:00:00.000Z",
+      command: "nemoclaw onboard",
+    });
+
+    expect(classifyOnboardLockContents(contents, 99_999, 100_000, probes)).toEqual({
+      state: "held",
+      identityVerified: true,
+      record: {
+        pid: 202,
+        processStartIdentity: "proc:100",
         startedAt: "2026-09-01T00:00:00.000Z",
         command: "nemoclaw onboard",
-      });
+      },
+    });
+  });
 
-      const disposition = classifyOnboardLockContents(contents, 99_999, 100_000, probes);
-      expect(disposition).toMatchObject(
-        identityVerified === null
-          ? { state: expectedState }
-          : { state: expectedState, identityVerified },
-      );
-    },
-  );
+  it.each([
+    ["reused PID", 202, "proc:100", "proc:101"],
+    ["rebooted host", 202, "linux:boot-a:100", "linux:boot-b:100"],
+    ["reused current PID", liveProbes.currentPid, "proc:100", "proc:101"],
+  ] as const)("marks a live %s generation as stale", (_case, pid, recorded, observed) => {
+    const probes: ProcessIdentityProbes = {
+      currentPid: liveProbes.currentPid,
+      isAlive: () => true,
+      readStrongIdentity: () => observed,
+    };
+    const contents = JSON.stringify({
+      pid,
+      processStartIdentity: recorded,
+      startedAt: "2026-09-01T00:00:00.000Z",
+      command: "nemoclaw onboard",
+    });
+
+    expect(classifyOnboardLockContents(contents, 99_999, 100_000, probes)).toEqual({
+      state: "stale",
+    });
+  });
+
+  it("holds a live PID when strong process identity is unavailable", () => {
+    const probes: ProcessIdentityProbes = {
+      currentPid: 101,
+      isAlive: () => true,
+      readStrongIdentity: () => null,
+    };
+    const contents = JSON.stringify({
+      pid: 202,
+      processStartIdentity: "proc:100",
+      startedAt: "2026-09-01T00:00:00.000Z",
+      command: "nemoclaw onboard",
+    });
+
+    expect(classifyOnboardLockContents(contents, 99_999, 100_000, probes)).toEqual({
+      state: "held",
+      identityVerified: false,
+      record: {
+        pid: 202,
+        processStartIdentity: "proc:100",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        command: "nemoclaw onboard",
+      },
+    });
+  });
 });

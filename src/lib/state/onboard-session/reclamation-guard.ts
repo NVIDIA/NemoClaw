@@ -36,6 +36,7 @@ export interface OnboardLockReclamationGuardOwner {
 export interface OnboardLockReclamationGuardContention {
   readonly guardFile: string;
   readonly owner?: OnboardLockReclamationGuardOwner;
+  readonly cleanupFailure?: boolean;
 }
 
 export type OnboardLockReclamationGuardResult<T> =
@@ -48,6 +49,7 @@ export type OnboardLockReclamationGuardResult<T> =
 function describeContention(
   guardFile: string,
   observation: LockObservation | null,
+  cleanupFailure = false,
 ): OnboardLockReclamationGuardContention {
   const owner = observation?.owner;
   return {
@@ -63,7 +65,64 @@ function describeContention(
           },
         }
       : {}),
+    ...(cleanupFailure ? { cleanupFailure: true } : {}),
   };
+}
+
+const retainedCandidateTokens = new Map<string, string>();
+
+type RetainedCandidateCleanupResult =
+  | { readonly status: "not-retained" | "removed" }
+  | { readonly status: "blocked"; readonly contention: OnboardLockReclamationGuardContention };
+
+function retryRetainedCandidateCleanup(candidatePath: string): RetainedCandidateCleanupResult {
+  const token = retainedCandidateTokens.get(candidatePath);
+  if (token === undefined) return { status: "not-retained" };
+
+  const observed = readGuardObservation(candidatePath);
+  if (observed.status === "blocked") {
+    retainedCandidateTokens.delete(candidatePath);
+    return observed;
+  }
+  const { observation } = observed;
+  if (observation === null) {
+    retainedCandidateTokens.delete(candidatePath);
+    return { status: "removed" };
+  }
+  if (
+    observation.owner?.token !== token ||
+    observation.owner.pid !== process.pid ||
+    observation.owner.sandboxName !== ONBOARD_RECLAMATION_GUARD_OWNER
+  ) {
+    retainedCandidateTokens.delete(candidatePath);
+    return { status: "not-retained" };
+  }
+
+  try {
+    if (
+      reclaimStaleMcpLifecycleLockGenerationSync(
+        candidatePath,
+        observation,
+        undefined,
+        MAX_GUARD_ARTIFACT_BYTES,
+      )
+    ) {
+      retainedCandidateTokens.delete(candidatePath);
+      return { status: "removed" };
+    }
+  } catch (error) {
+    if (error instanceof McpLifecycleLockObservationTooLargeError) {
+      retainedCandidateTokens.delete(candidatePath);
+      return { status: "blocked", contention: describeContention(candidatePath, null) };
+    }
+    return {
+      status: "blocked",
+      contention: describeContention(candidatePath, observation, true),
+    };
+  }
+
+  retainedCandidateTokens.delete(candidatePath);
+  return { status: "not-retained" };
 }
 
 type GuardObservationResult =
@@ -127,6 +186,9 @@ function reconcileGuardArtifacts(guardPath: string): OnboardLockReclamationGuard
 
   for (const name of names) {
     const artifactPath = path.join(directory, name);
+    const retainedCleanup = retryRetainedCandidateCleanup(artifactPath);
+    if (retainedCleanup.status === "removed") continue;
+    if (retainedCleanup.status === "blocked") return retainedCleanup.contention;
     const artifactName = parseGuardArtifactName(guardPath, name);
     if (artifactName === null) return describeContention(artifactPath, null);
 
@@ -201,12 +263,17 @@ export function withOnboardLockReclamationGuard<T>(
   for (let attempt = 0; attempt < MAX_GUARD_ACQUIRE_ATTEMPTS; attempt++) {
     const token = randomUUID();
     const owner = createMcpLifecycleLockOwner(ONBOARD_RECLAMATION_GUARD_OWNER, token);
+    let retainedCandidatePath: string | null = null;
     let acquired: boolean;
     try {
       acquired = writeMcpLifecycleLockCandidateAndLinkSync(
         guardPath,
         owner,
         MAX_GUARD_ARTIFACT_BYTES,
+        (candidatePath) => {
+          retainedCandidatePath = candidatePath;
+          retainedCandidateTokens.set(candidatePath, token);
+        },
       );
     } catch (error) {
       if (error instanceof McpLifecycleLockObservationTooLargeError) {
@@ -214,11 +281,17 @@ export function withOnboardLockReclamationGuard<T>(
       }
       throw error;
     }
+    if (retainedCandidatePath !== null) {
+      retryRetainedCandidateCleanup(retainedCandidatePath);
+    }
     if (acquired) {
       try {
         return { status: "completed", value: operation() };
       } finally {
         safelyReleaseMcpLifecycleLockSync(guardPath, token);
+        if (retainedCandidatePath !== null) {
+          retryRetainedCandidateCleanup(retainedCandidatePath);
+        }
       }
     }
 

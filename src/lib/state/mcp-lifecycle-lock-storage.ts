@@ -369,6 +369,7 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
   lockPath: string,
   owner: McpLifecycleLockOwner,
   maxObservationBytes = Number.POSITIVE_INFINITY,
+  onCandidateCleanupFailure?: (candidatePath: string) => void,
 ): boolean {
   const candidatePath = `${lockPath}.candidate-${process.pid}-${owner.token}`;
   try {
@@ -396,6 +397,7 @@ export function writeMcpLifecycleLockCandidateAndLinkSync(
       fs.rmSync(candidatePath, { force: true });
     } catch {
       // Publication is decided only by LINK plus owner-token reconciliation.
+      onCandidateCleanupFailure?.(candidatePath);
     }
   }
 }
