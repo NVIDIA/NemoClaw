@@ -229,9 +229,10 @@ export function teardownSandboxDashboardForward(
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
     const sandbox = getSandbox(sandboxName);
     if (!sandbox) return true;
+    const registeredAgent = sandbox.agent ? agentRuntime.getRegisteredAgent(sandbox) : null;
+    if (registeredAgent && !agentRuntime.hasGatewayRuntime(registeredAgent)) return true;
     const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
     const primaryPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
-    const registeredAgent = sandbox.agent ? agentRuntime.getRegisteredAgent(sandbox) : null;
     const hermesDashboardPort =
       sandbox.hermesDashboardEnabled === true && isValidPort(sandbox.hermesDashboardPort)
         ? sandbox.hermesDashboardPort

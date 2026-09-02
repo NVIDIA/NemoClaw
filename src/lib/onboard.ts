@@ -461,7 +461,6 @@ const {
 }: typeof import("./onboard/skipped-step-message") = require("./onboard/skipped-step-message");
 const {
   findAvailableDashboardPort,
-  isPortBoundOnHost,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   withDashboardPortReservationScope: withSandboxPortReservationScope,
@@ -887,14 +886,14 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
 });
 
 const registration = credentialProviderRegistration.createCredentialProviderRegistration({
-    root: ROOT,
-    runOpenshell,
-    getGatewayName: () => GATEWAY_NAME,
-    getCredential,
-    updateSession: onboardSession.updateSession,
-    stagedLegacyValues,
-    migratedLegacyKeys,
-    persistMigratedLegacyKeys,
+  root: ROOT,
+  runOpenshell,
+  getGatewayName: () => GATEWAY_NAME,
+  getCredential,
+  updateSession: onboardSession.updateSession,
+  stagedLegacyValues,
+  migratedLegacyKeys,
+  persistMigratedLegacyKeys,
 });
 const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } = registration;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
