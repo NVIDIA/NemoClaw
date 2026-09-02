@@ -27,8 +27,12 @@ import {
 
 export const DELEGATED_CAPABILITY_COMMENT_PREFIX =
   "# TEST-ONLY delegated-capability marker from validated canonical OpenShell: ";
-export const TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR =
-  "/usr/local/share/nemoclaw-e2e/weather-plugin";
+export const TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR = "/usr/local/share/nemoclaw-e2e/weather-plugin";
+
+export type TrustedPluginFixtureImage = {
+  imageId: string;
+  imageRef: string;
+};
 
 export function createTrustedPluginFixtureDockerfile(options: {
   pluginDirName: string;
@@ -36,10 +40,7 @@ export function createTrustedPluginFixtureDockerfile(options: {
   versionSourceName: string;
 }): string {
   const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
-  const runtime = options.source.replace(
-    runtimeAnchor,
-    "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n",
-  );
+  const runtime = options.source.replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
   const extension = String.raw`
 
 # Build the deterministic custom-plugin fixture used by this live contract.
@@ -91,7 +92,7 @@ const TRUSTED_EXDEV_IMAGE_REF_PATTERN = new RegExp(
 );
 
 export type OpenShellTrustedImageWrapper = OpenShellDriverConfigTestWrapper & {
-  selectImage(imageRef: string): void;
+  selectImage(image: TrustedPluginFixtureImage): void;
 };
 
 export function trustedExdevImageRef(tag: string): string {
@@ -102,6 +103,7 @@ export function trustedExdevImageRef(tag: string): string {
 
 export function createOpenShellTrustedImageWrapper(options: {
   driverConfigJson: string;
+  imageInspectorPath?: string;
   realOpenshellPath: string;
 }): OpenShellTrustedImageWrapper {
   const delegated = createOpenShellDriverConfigTestWrapper({
@@ -111,10 +113,11 @@ export function createOpenShellTrustedImageWrapper(options: {
     realOpenshellPath: options.realOpenshellPath,
   });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-image-wrapper-"));
-  const imageRefPath = path.join(directory, "selected-image-ref");
+  const imageInspectorPath = options.imageInspectorPath ?? "docker";
+  const imageSelectionPath = path.join(directory, "selected-image.json");
   const rewriterPath = path.join(directory, "rewrite-from.cjs");
   const executable = path.join(directory, "openshell");
-  fs.writeFileSync(imageRefPath, "\n", { encoding: "utf8", mode: 0o600 });
+  fs.writeFileSync(imageSelectionPath, "{}\n", { encoding: "utf8", mode: 0o600 });
   fs.writeFileSync(
     rewriterPath,
     `const { spawnSync } = require("node:child_process");
@@ -127,12 +130,28 @@ if (args[0] === "sandbox" && args[1] === "create") {
     process.stderr.write("trusted EXDEV image handoff requires exactly one --from value\\n");
     process.exit(64);
   }
-  const imageRef = fs.readFileSync(${JSON.stringify(imageRefPath)}, "utf8").trim();
-  if (!${TRUSTED_EXDEV_IMAGE_REF_PATTERN.toString()}.test(imageRef)) {
+  let selected;
+  try {
+    selected = JSON.parse(fs.readFileSync(${JSON.stringify(imageSelectionPath)}, "utf8"));
+  } catch {}
+  if (!selected || !${TRUSTED_EXDEV_IMAGE_REF_PATTERN.toString()}.test(selected.imageRef)) {
     process.stderr.write("trusted EXDEV image handoff rejected the selected image ref\\n");
     process.exit(64);
   }
-  args[fromIndexes[0] + 1] = imageRef;
+  if (!/^sha256:[0-9a-f]{64}$/.test(selected.imageId)) {
+    process.stderr.write("trusted EXDEV image handoff rejected the selected image ID\\n");
+    process.exit(64);
+  }
+  const inspected = spawnSync(
+    ${JSON.stringify(imageInspectorPath)},
+    ["image", "inspect", "--format", "{{.Id}}", selected.imageRef],
+    { encoding: "utf8" },
+  );
+  if (inspected.error || inspected.status !== 0 || inspected.stdout.trim() !== selected.imageId) {
+    process.stderr.write("trusted EXDEV image handoff detected an immutable identity mismatch\\n");
+    process.exit(64);
+  }
+  args[fromIndexes[0] + 1] = selected.imageRef;
 }
 const result = spawnSync(${JSON.stringify(delegated.executable)}, args, { stdio: "inherit" });
 if (result.error) throw result.error;
@@ -156,9 +175,10 @@ exec ${shellQuote(process.execPath)} ${shellQuote(rewriterPath)} "$@"
   return {
     directory,
     executable,
-    selectImage: (imageRef) => {
-      assert.match(imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
-      fs.writeFileSync(imageRefPath, `${imageRef}\n`, {
+    selectImage: (image) => {
+      assert.match(image.imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
+      assert.match(image.imageId, /^sha256:[0-9a-f]{64}$/);
+      fs.writeFileSync(imageSelectionPath, `${JSON.stringify(image)}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
@@ -249,7 +269,7 @@ export async function buildTrustedPluginFixtureImage(options: {
   images: TrustedPluginFixtureImageCleanup;
   sandboxName: string;
   version: "v1" | "v2";
-}): Promise<string> {
+}): Promise<TrustedPluginFixtureImage> {
   const buildId = `exdev-${options.version}-${randomUUID()}`;
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
@@ -311,5 +331,5 @@ export async function buildTrustedPluginFixtureImage(options: {
     stagedDockerfile,
     version: options.version,
   });
-  return imageRef;
+  return { imageId, imageRef };
 }

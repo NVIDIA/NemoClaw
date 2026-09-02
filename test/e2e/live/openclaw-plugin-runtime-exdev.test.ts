@@ -216,7 +216,6 @@ type GatewayToolInvocation = {
 
 type WeatherRuntimeProof = {
   fixtureVersion: WeatherFixtureVersion;
-  toolInvoked: boolean;
 };
 
 async function assertWeatherPluginRuntime(
@@ -252,7 +251,6 @@ async function assertWeatherPluginRuntime(
 
   return {
     fixtureVersion: expectedFixtureVersion,
-    toolInvoked: true,
   };
 }
 
@@ -613,9 +611,6 @@ test(
       recreateExitCode: recreate.exitCode,
       testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
       assertions: {
-        weatherAfterOnboard: weatherAfterOnboard.toolInvoked,
-        weatherAfterRestart: weatherAfterRestart.toolInvoked,
-        weatherAfterRecreate: weatherAfterRecreate.toolInvoked,
         v1SurvivedRestart:
           weatherAfterOnboard.fixtureVersion === "v1" &&
           weatherAfterRestart.fixtureVersion === "v1",

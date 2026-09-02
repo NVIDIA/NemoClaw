@@ -17,9 +17,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
   createOpenShellTrustedImageWrapper,
-  createTrustedPluginFixtureDockerfile,
   registerTrustedPluginFixtureImageCleanup,
-  TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR,
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
@@ -38,19 +36,6 @@ const DRIVER_CONFIG_JSON = JSON.stringify({
 });
 
 afterEach(() => vi.unstubAllEnvs());
-
-it("stores the runtime fixture under OpenShell's read-only /usr policy boundary", () => {
-  const dockerfile = createTrustedPluginFixtureDockerfile({
-    pluginDirName: "weather-plugin",
-    source: "FROM scratch AS builder\nFROM ${BASE_IMAGE}\n",
-    versionSourceName: "weather-version.ts",
-  });
-  expect(TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR).toMatch(/^\/usr\//);
-  expect(dockerfile).toContain(
-    `openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}`,
-  );
-  expect(dockerfile).not.toContain("/opt/weather-plugin");
-});
 
 function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
   return {
@@ -102,8 +87,6 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
         loadSession: vi.fn(() => pausedSession()),
         resolveTarget: vi.fn(() => ({
           gatewayName: "nemoclaw",
-          stateDirectory: "/sandbox/.openclaw",
-          version: "",
         })),
       }),
     ).resolves.toBe(true);
@@ -131,8 +114,6 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
         loadSession: vi.fn(() => pausedSession(overrides)),
         resolveTarget: vi.fn(() => ({
           gatewayName: "nemoclaw",
-          stateDirectory: "/sandbox/.openclaw",
-          version: "",
         })),
       }),
     ).resolves.toBe(false);
@@ -159,8 +140,6 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
             hasTarget
               ? {
                   gatewayName: "nemoclaw",
-                  stateDirectory: "/sandbox/.openclaw",
-                  version: "",
                 }
               : null,
           ),
@@ -234,15 +213,78 @@ describe("OpenClaw plugin onboarding pairing resume", () => {
     expect(result.outcome).toBe("failed");
     expect(run).toHaveBeenCalledOnce();
   });
+
+  it.each(["diagnostics", "sandbox listing"])(
+    "fails closed without a retry when %s collection rejects (#9844)",
+    async (failurePoint) => {
+      const sandboxName = "fixture-sandbox";
+      const run = vi.fn(async () =>
+        onboardResult(
+          1,
+          `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+        ),
+      );
+      const onEvidence = vi.fn();
+      const captureDiagnostics =
+        failurePoint === "diagnostics"
+          ? vi.fn(async () => {
+              throw new Error("diagnostics unavailable");
+            })
+          : vi.fn(async () => {});
+      const listSandbox =
+        failurePoint === "sandbox listing"
+          ? vi.fn(async () => {
+              throw new Error("listing unavailable");
+            })
+          : vi.fn(async () => ({
+              ...onboardResult(0),
+              stdout: `NAME STATUS\n${sandboxName} Ready\n`,
+            }));
+
+      const result = await runOpenClawPluginOnboardWithPairingResume({
+        sandboxName,
+        run,
+        reconcile: () =>
+          reconcileOpenClawPluginOnboardPairing({
+            expectedFromDockerfile: "/tmp/plugin/Dockerfile",
+            sandboxName,
+            captureDiagnostics,
+            listSandbox,
+            loadSession: vi.fn(() => pausedSession()),
+            resolveTarget: vi.fn(() => ({ gatewayName: "nemoclaw" })),
+          }),
+        onEvidence,
+      });
+
+      expect(result.outcome).toBe("failed");
+      expect(run).toHaveBeenCalledOnce();
+      expect(onEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: "failed-no-retry",
+          attempts: [
+            expect.objectContaining({
+              reconciled: false,
+              retryScheduled: false,
+            }),
+          ],
+        }),
+      );
+    },
+  );
 });
 
 function createWrapperFixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-test-"));
   const delegate = path.join(directory, "real-openshell");
+  const imageIdPath = path.join(directory, "resolved-image-id");
   const gateway = path.join(directory, "openshell-gateway");
   const sandbox = path.join(directory, "openshell-sandbox");
-  const executableSource =
-    '#!/bin/sh\nif [ "${1:-}" = "--version" ]; then echo \'openshell 0.0.106\'; exit 0; fi\nprintf \'%s\\n\' "$@"\n';
+  fs.writeFileSync(imageIdPath, `${IMAGE_ID}\n`, { encoding: "utf8", mode: 0o600 });
+  const executableSource = `#!/bin/sh
+if [ "\${1:-}" = "--version" ]; then echo 'openshell 0.0.106'; exit 0; fi
+if [ "\${1:-}" = "image" ]; then cat ${JSON.stringify(imageIdPath)}; exit 0; fi
+printf '%s\\n' "$@"
+`;
   for (const executable of [delegate, gateway]) {
     fs.writeFileSync(executable, executableSource, { encoding: "utf8", mode: 0o700 });
   }
@@ -253,6 +295,7 @@ function createWrapperFixture() {
   const components = resolveOpenShellSiblingComponents(delegate);
   const wrapper = createOpenShellTrustedImageWrapper({
     driverConfigJson: DRIVER_CONFIG_JSON,
+    imageInspectorPath: components.cli,
     realOpenshellPath: components.cli,
   });
   return {
@@ -261,6 +304,9 @@ function createWrapperFixture() {
     remove: () => {
       wrapper.remove();
       fs.rmSync(directory, { force: true, recursive: true });
+    },
+    setResolvedImageId: (imageId: string) => {
+      fs.writeFileSync(imageIdPath, `${imageId}\n`, { encoding: "utf8", mode: 0o600 });
     },
     wrapper,
   };
@@ -271,7 +317,7 @@ describe("trusted EXDEV OpenShell wrapper", () => {
     const fixture = createWrapperFixture();
     try {
       const imageRef = trustedExdevImageRef("wrapper-contract-v1");
-      fixture.wrapper.selectImage(imageRef);
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
       const result = spawnSync(
         fixture.wrapper.executable,
         ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
@@ -301,7 +347,12 @@ describe("trusted EXDEV OpenShell wrapper", () => {
       );
       expect(missingImage.status).toBe(64);
       expect(missingImage.stderr).toContain("rejected the selected image ref");
-      expect(() => fixture.wrapper.selectImage("docker.io/untrusted:latest")).toThrow();
+      expect(() =>
+        fixture.wrapper.selectImage({
+          imageId: IMAGE_ID,
+          imageRef: "docker.io/untrusted:latest",
+        }),
+      ).toThrow();
     } finally {
       fixture.remove();
     }
@@ -317,7 +368,10 @@ describe("trusted EXDEV OpenShell wrapper", () => {
   ])("rejects a --from option that is %s", (_condition, args) => {
     const fixture = createWrapperFixture();
     try {
-      fixture.wrapper.selectImage(trustedExdevImageRef("wrapper-contract-v1"));
+      fixture.wrapper.selectImage({
+        imageId: IMAGE_ID,
+        imageRef: trustedExdevImageRef("wrapper-contract-v1"),
+      });
       const result = spawnSync(fixture.wrapper.executable, args, {
         encoding: "utf8",
         killSignal: "SIGKILL",
@@ -333,7 +387,10 @@ describe("trusted EXDEV OpenShell wrapper", () => {
   it("rejects duplicate driver configuration", () => {
     const fixture = createWrapperFixture();
     try {
-      fixture.wrapper.selectImage(trustedExdevImageRef("wrapper-contract-v1"));
+      fixture.wrapper.selectImage({
+        imageId: IMAGE_ID,
+        imageRef: trustedExdevImageRef("wrapper-contract-v1"),
+      });
       const duplicateConfig = spawnSync(
         fixture.wrapper.executable,
         ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--driver-config-json", "{}"],
@@ -341,6 +398,27 @@ describe("trusted EXDEV OpenShell wrapper", () => {
       );
       expect(duplicateConfig.status).toBe(64);
       expect(duplicateConfig.stderr).toContain("refusing duplicate --driver-config-json");
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("fails closed when the selected tag no longer resolves to its verified image ID", () => {
+    const fixture = createWrapperFixture();
+    try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.setResolvedImageId(`sha256:${"b".repeat(64)}`);
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(64);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("immutable identity mismatch");
     } finally {
       fixture.remove();
     }

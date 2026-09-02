@@ -20,8 +20,6 @@ type OnboardPairingRetryOptions<T extends CommandExitResult> = {
 
 type PairingTarget = {
   gatewayName: string;
-  stateDirectory: string;
-  version: string;
 };
 
 type OnboardPairingSession = {
@@ -80,10 +78,10 @@ export function runOpenClawPluginOnboardWithPairingResume<T extends CommandExitR
 export async function reconcileOpenClawPluginOnboardPairing<T extends CommandExitResult>(
   options: OnboardPairingReconciliationOptions<T>,
 ): Promise<boolean> {
-  await options.captureDiagnostics();
-  const list = await options.listSandbox();
-  if (list.exitCode !== 0 || !outputContainsReadySandbox(list, options.sandboxName)) return false;
   try {
+    await options.captureDiagnostics();
+    const list = await options.listSandbox();
+    if (list.exitCode !== 0 || !outputContainsReadySandbox(list, options.sandboxName)) return false;
     const target = options.resolveTarget();
     if (!target) return false;
     const session = options.loadSession();
