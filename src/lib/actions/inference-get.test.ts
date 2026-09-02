@@ -161,6 +161,73 @@ describe("runInferenceGet", () => {
     expect(deps.log.mock.calls[0][0]).not.toContain("secret");
   });
 
+  it.each(
+    [
+      {
+        name: "conflicting same-gateway URLs",
+        endpoints: ["https://inference-a.example.test/v1", "https://inference-b.example.test/v1"],
+      },
+      { name: "a non-HTTP URL", endpoints: ["ftp://inference.example.test/v1"] },
+      {
+        name: "a URL containing a control character",
+        endpoints: ["https://inference.example.test/v1\u0007"],
+      },
+    ].flatMap(({ name, endpoints }) => [
+      {
+        name,
+        endpoints,
+        format: "text",
+        json: false,
+        output: ["Provider: compatible-endpoint", "Model:    custom/model"],
+      },
+      {
+        name,
+        endpoints,
+        format: "JSON",
+        json: true,
+        output: [
+          JSON.stringify({ provider: "compatible-endpoint", model: "custom/model" }, null, 2),
+        ],
+      },
+    ]),
+  )("omits $name from $format output", async ({ endpoints, json, output }) => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.listSandboxes.mockReturnValue(
+      endpoints.map((endpointUrl, index) => ({
+        name: `custom-${String(index + 1)}`,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl,
+      })),
+    );
+
+    await expect(runInferenceGet({ json }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual(output);
+  });
+
+  it("fails closed without exposing registry-read details for a compatible route", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+    deps.listSandboxes.mockImplementation(() => {
+      throw new Error("secret registry path and contents");
+    });
+
+    await expect(
+      runInferenceGet({ cliName: "nemoclaw", json: true, sandboxName: "custom" }, deps),
+    ).rejects.toMatchObject({
+      message:
+        "NemoClaw could not read sandbox registry metadata for the compatible inference endpoint on gateway 'nemoclaw-19090'. Run 'nemoclaw custom status' to diagnose the sandbox's registry and recorded gateway.",
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
   it("queries the gateway recorded for the sandbox (#10671)", async () => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",

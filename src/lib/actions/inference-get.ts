@@ -60,6 +60,7 @@ function getPersistedEndpointUrl(
   provider: string | null,
   gatewayName: string,
   sandboxName: string | undefined,
+  cliName: string,
   deps: InferenceGetDeps,
 ): string | null {
   if (!provider || !COMPATIBLE_CUSTOM_PROVIDERS.has(provider)) return null;
@@ -68,7 +69,12 @@ function getPersistedEndpointUrl(
   try {
     sandboxes = deps.listSandboxes();
   } catch {
-    return null;
+    const recovery = sandboxName
+      ? `Run '${cliName} ${sandboxName} status' to diagnose the sandbox's registry and recorded gateway.`
+      : `Run '${cliName} status' to diagnose the selected gateway and sandbox registry.`;
+    throw new InferenceGetError(
+      `NemoClaw could not read sandbox registry metadata for the compatible inference endpoint on gateway '${gatewayName}'. ${recovery}`,
+    );
   }
 
   const matchingEndpoints: Array<string | null> = [];
@@ -120,6 +126,7 @@ export async function runInferenceGet(
     result.inference.provider,
     gatewayName,
     options.sandboxName,
+    options.cliName ?? "nemoclaw",
     deps,
   );
   const payload: InferenceGetResult = {

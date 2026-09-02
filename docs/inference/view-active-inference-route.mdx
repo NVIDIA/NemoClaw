@@ -66,6 +66,7 @@ Endpoint: https://inference.example.com/v1
 
 Managed providers keep the existing provider-and-model output.
 NemoClaw omits the endpoint when registry metadata is absent, conflicting, invalid, or contains userinfo, a query, a fragment, or control characters.
+If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error and directs you to the applicable `status` command.
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.

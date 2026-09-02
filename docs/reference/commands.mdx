@@ -3083,6 +3083,7 @@ Text output adds `Endpoint` for `compatible-endpoint` and `compatible-anthropic-
 JSON output adds `endpointUrl` under the same condition.
 Managed providers keep the existing provider-and-model output.
 NemoClaw omits a persisted URL that contains userinfo, a query, a fragment, or control characters.
+If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error and directs you to the applicable `status` command.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
