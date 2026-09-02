@@ -416,8 +416,12 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-# hadolint ignore=DL3059
-RUN /opt/hermes/.venv/bin/python -I \
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=1fc80ba3b8b1f66e92fb242e48258131a5d4e0faa6d235b0f75d4cc49992b772
+# hadolint ignore=DL3059,DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
+    | sha256sum -c - \
+    && /opt/hermes/.venv/bin/python -I \
     /opt/nemoclaw-hermes-config/image-build-probes.py managed-runtime-capability
 
 # Ensure the NemoClaw plugin for Hermes is readable.
@@ -439,7 +443,6 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=1fc80ba3b8b1f66e92fb242e48258131a5d4e0faa6d235b0f75d4cc49992b772
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -450,13 +453,7 @@ RUN printf '%s  %s\n' \
     && git -C /opt/hermes apply \
         --include=tools/lazy_deps.py \
         /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
-    && rm /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
-    && { \
-        printf '%s  %s\n' \
-            "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
-        | sha256sum -c - \
-        || { echo "ERROR: image-build-probes.py hash mismatch (update NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256)" >&2; exit 1; }; \
-    }
+    && rm /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
 
 COPY --from=hermes-runtime-payload / /
 
@@ -676,7 +673,12 @@ RUN set -eu; \
 # seed title. Patch both pinned source shapes and prove that an automatically
 # titled workspace row renders the latest resumed or continued one-shot turn
 # while a user-authored title remains authoritative.
-RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+ARG NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256=718315e7c36727ca49ac88a1be44f95e4d495ca737ba70d5bb3d5c509fd9a0e2
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
+    | sha256sum -c - \
+    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
     && grep -Fq 'if s.get("title_source") in ("derived", "llm")' /opt/hermes/hermes_cli/sessions_cmd.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
