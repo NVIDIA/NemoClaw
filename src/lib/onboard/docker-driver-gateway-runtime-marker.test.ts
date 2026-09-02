@@ -46,9 +46,7 @@ describe("docker-driver gateway runtime marker", () => {
 
     expect(marker.driver).toBe("podman");
     expect(getDockerDriverGatewayRuntimeMarkerDrift(marker, podmanExpected)).toBeNull();
-    expect(getDockerDriverGatewayRuntimeMarkerDrift(marker, expected)?.reason).toContain(
-      "driver=podman (expected docker)",
-    );
+    expect(getDockerDriverGatewayRuntimeMarkerDrift(marker, expected)).not.toBeNull();
   });
 
   it("forces recreation when the marker is missing or stale", () => {

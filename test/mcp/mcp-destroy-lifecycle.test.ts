@@ -7,9 +7,10 @@ import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as adapterRegistration from "../../src/lib/actions/sandbox/mcp-bridge-adapters";
+import { getRegisteredGeneratedPolicy } from "../../src/lib/actions/sandbox/mcp-bridge-policy";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
 import { restoreEnv } from "../helpers/env-test-helpers";
-import * as mcpPolicyPins from "../helpers/mcp-policy-pins";
+import { lastAppliedMcpPolicyContent, mcpPolicyAllowedIps } from "../helpers/mcp-policy-pins";
 import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
 import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
 
@@ -1271,13 +1272,15 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call)),
     ).toBe(false);
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
-    mcpPolicyPins.expectMcpPolicyAndRegistryPins(
-      "alpha",
-      dnsEntry,
-      ["1.1.1.1", "8.8.4.4"],
-      testState.applyPresetContent.mock.calls,
-      "/usr/local/bin/dcode",
-    );
+    const expectedPins = ["1.1.1.1", "8.8.4.4"];
+    const persistedEntry = registry.getSandbox("alpha")?.mcp?.bridges.github;
+    const policyCalls = testState.applyPresetContent.mock.calls;
+    const activePolicy = lastAppliedMcpPolicyContent(policyCalls, dnsEntry.policyName);
+    const registeredPolicy = getRegisteredGeneratedPolicy("alpha", persistedEntry);
+    expect(persistedEntry?.allowedIps).toEqual(expectedPins);
+    expect(mcpPolicyAllowedIps(activePolicy, dnsEntry.server)).toEqual(expectedPins);
+    expect(activePolicy).toContain("/usr/local/bin/dcode");
+    expect(registeredPolicy?.content).toBe(activePolicy);
   });
   it("reattaches after a rebuild abort with refreshed public policy and registry pins (#10755)", async () => {
     const dnsEntry = {
@@ -1298,14 +1301,15 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     await bridge.reattachMcpProvidersAfterRebuildAbort("alpha", [dnsEntry]);
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
-    mcpPolicyPins.expectMcpPolicyAndRegistryPins(
-      "alpha",
-      dnsEntry,
-      ["1.1.1.1", "8.8.4.4"],
-      testState.applyPresetContent.mock.calls,
-    );
+    const expectedPins = ["1.1.1.1", "8.8.4.4"];
+    const persistedEntry = registry.getSandbox("alpha")?.mcp?.bridges.github;
+    const policyCalls = testState.applyPresetContent.mock.calls;
+    const activePolicy = lastAppliedMcpPolicyContent(policyCalls, dnsEntry.policyName);
+    const registeredPolicy = getRegisteredGeneratedPolicy("alpha", persistedEntry);
+    expect(persistedEntry?.allowedIps).toEqual(expectedPins);
+    expect(mcpPolicyAllowedIps(activePolicy, dnsEntry.server)).toEqual(expectedPins);
+    expect(registeredPolicy?.content).toBe(activePolicy);
   });
-
   it("restores a trusted-private bridge from its recorded pins without ambient DNS (#10755)", async () => {
     const privateEntry = {
       ...bridgeEntries.github,
@@ -1320,16 +1324,16 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       agent: "openclaw",
       mcp: { bridges: { github: privateEntry } },
     });
-
     await bridge.restoreMcpBridgesAfterRebuild("alpha", [privateEntry]);
-
     expect(testState.resolveHostAddresses).not.toHaveBeenCalled();
-    mcpPolicyPins.expectMcpPolicyAndRegistryPins(
-      "alpha",
-      privateEntry,
-      ["10.20.30.40"],
-      testState.applyPresetContent.mock.calls,
-    );
+    const expectedPins = ["10.20.30.40"];
+    const persistedEntry = registry.getSandbox("alpha")?.mcp?.bridges.github;
+    const policyCalls = testState.applyPresetContent.mock.calls;
+    const activePolicy = lastAppliedMcpPolicyContent(policyCalls, privateEntry.policyName);
+    const registeredPolicy = getRegisteredGeneratedPolicy("alpha", persistedEntry);
+    expect(persistedEntry?.allowedIps).toEqual(expectedPins);
+    expect(mcpPolicyAllowedIps(activePolicy, privateEntry.server)).toEqual(expectedPins);
+    expect(registeredPolicy?.content).toBe(activePolicy);
   });
 
   it.each([
