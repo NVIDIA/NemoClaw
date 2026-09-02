@@ -6,19 +6,33 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AdvisorInterest } from "./specialist-catalog.mts";
 import { createTerminologyToolController, TERMINOLOGY_TRACE_TOOL } from "./terminology.mts";
 
+type ToolContext = { baseRef: string; headRef: string; cwd?: string };
+type SpecialistToolPolicy = {
+  name: string;
+  create: (context: ToolContext) => ToolDefinition;
+};
+
 const REPOSITORY_READ_TOOL_NAMES = ["read", "grep", "find", "ls"] as const;
+const SPECIALIST_TOOL_POLICY: Partial<Record<AdvisorInterest, SpecialistToolPolicy[]>> = {
+  "documentation-standard-work": [
+    {
+      name: TERMINOLOGY_TRACE_TOOL,
+      create: (context) => createTerminologyToolController(context).tools[0]!,
+    },
+  ],
+};
+
+function customToolPolicy(interest: AdvisorInterest): SpecialistToolPolicy[] {
+  return SPECIALIST_TOOL_POLICY[interest] ?? [];
+}
 
 export function specialistToolNames(interest: AdvisorInterest): string[] {
-  return interest === "documentation-standard-work"
-    ? [...REPOSITORY_READ_TOOL_NAMES, TERMINOLOGY_TRACE_TOOL]
-    : [...REPOSITORY_READ_TOOL_NAMES];
+  return [...REPOSITORY_READ_TOOL_NAMES, ...customToolPolicy(interest).map(({ name }) => name)];
 }
 
 export function specialistCustomTools(
   interest: AdvisorInterest,
-  { baseRef, headRef, cwd = process.cwd() }: { baseRef: string; headRef: string; cwd?: string },
+  context: ToolContext,
 ): ToolDefinition[] {
-  return interest === "documentation-standard-work"
-    ? createTerminologyToolController({ baseRef, headRef, cwd }).tools
-    : [];
+  return customToolPolicy(interest).map(({ create }) => create(context));
 }

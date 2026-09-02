@@ -83,7 +83,6 @@ export function buildInvestigateTurn(context: InvestigateTurnContext): AdvisorPr
   const requiredToolNames = contextToolResults.map((result) => result.toolName);
   return {
     name: "investigate",
-    activeToolNames: ["read", "grep", "find", "ls"],
     requiredToolNames,
     requireToolsBeforeText: requiredToolNames,
     requireAssistantText: true,

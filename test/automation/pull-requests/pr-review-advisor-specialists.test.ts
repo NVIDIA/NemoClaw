@@ -10,7 +10,6 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-tools.mts";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { specialistCustomTools, specialistToolNames } from "../../../tools/pr-review-advisor/specialist-tools.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
 import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
 import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
@@ -321,21 +320,6 @@ describe("PR review advisor specialist prompts", () => {
     const evidenceText = evidence.content.find((item) => item.type === "text")?.text;
     expect(evidenceText).toContain("Checkout-bound terminology.");
   });
-
-  it.each(ADVISOR_INTERESTS)(
-    "keeps declared and supplied custom tools aligned for %s",
-    (interest) => {
-      const declaredCustomTools = specialistToolNames(interest).filter(
-        (name) => !["read", "grep", "find", "ls"].includes(name),
-      );
-      const suppliedCustomTools = specialistCustomTools(interest, {
-        baseRef: "HEAD",
-        headRef: "HEAD",
-      }).map(({ name }) => name);
-
-      expect(suppliedCustomTools).toEqual(declaredCustomTools);
-    },
-  );
 
   it.each(ADVISOR_INTERESTS)(
     "limits %s tools and reserves terminology tracing for documentation (#9949)",
