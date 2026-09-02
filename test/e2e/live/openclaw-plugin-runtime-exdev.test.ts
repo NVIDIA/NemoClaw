@@ -72,7 +72,6 @@ const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
   },
 });
 type WeatherFixtureVersion = "v1" | "v1-exdev" | "v2";
-type WeatherRuntimeVersion = WeatherFixtureVersion;
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -225,7 +224,7 @@ type GatewayToolInvocation = {
 async function assertWeatherPluginRuntime(
   sandbox: SandboxClient,
   phase: string,
-  expectedFixtureVersion: WeatherRuntimeVersion,
+  expectedFixtureVersion: WeatherFixtureVersion,
 ): Promise<unknown> {
   // Exercise OpenClaw's documented HTTP tool surface with the managed bearer
   // token supplied on stdin so the credential never enters process arguments.
