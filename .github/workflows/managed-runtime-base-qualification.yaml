@@ -49,10 +49,7 @@ jobs:
   authenticate-source:
     name: Authenticate managed-image source attempt
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      ((github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'pull_request') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+      github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -83,19 +80,14 @@ jobs:
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.candidate_run_attempt }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id || inputs.candidate_run_id }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/managed-runtime-comparison.mts
-          select-source
-          "${RUNNER_TEMP}/managed-runtime-source/selection.json"
+          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts select-source "${RUNNER_TEMP}/managed-runtime-source/selection.json"
 
       - name: Mark exact-base qualification pending on the candidate
         env:
           CANDIDATE_SHA: ${{ steps.select.outputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/managed-runtime-comparison.mts
-          publish-status pending
+          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts publish-status pending
 
   package-openshell-sdk:
     name: Resolve reviewed OpenShell SDK from the authenticated producer
@@ -182,8 +174,7 @@ jobs:
     name: Build untrusted candidate CLI in an isolated job
     needs: [authenticate-source, package-openshell-sdk]
     if: >-
-      needs.authenticate-source.result == 'success' &&
-      needs.package-openshell-sdk.result == 'success'
+      needs.authenticate-source.result == 'success' && needs.package-openshell-sdk.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -255,9 +246,7 @@ jobs:
     name: Trusted candidate all-agent managed runtime activation (${{ matrix.arch }})
     needs: [authenticate-source, package-openshell-sdk, build-candidate-cli]
     if: >-
-      needs.authenticate-source.result == 'success' &&
-      needs.package-openshell-sdk.result == 'success' &&
-      needs.build-candidate-cli.result == 'success'
+      needs.authenticate-source.result == 'success' && needs.package-openshell-sdk.result == 'success' && needs.build-candidate-cli.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -276,13 +265,13 @@ jobs:
     env:
       BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
       CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-      E2E_ARTIFACT_DIR: ${{ runner.temp }}/managed-runtime-candidate/evidence
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.managed-runtime-candidate/evidence
       E2E_JOB: "1"
       E2E_TARGET_ID: managed-image-activation
-      NEMOCLAW_CLI_BIN: ${{ runner.temp }}/candidate-cli
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/.managed-runtime-candidate-cli
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
       NEMOCLAW_E2E_SHARD: default
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ runner.temp }}/managed-runtime-candidate/catalog.json
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/.managed-runtime-candidate/catalog.json
       MANAGED_RUNTIME_PLATFORM: ${{ matrix.platform }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -404,7 +393,7 @@ jobs:
           sudo chmod -R a-w trusted candidate
           trusted_digest="$(sudo find trusted -xdev -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
           printf 'TRUSTED_CONTROLLER_DIGEST=%s\n' "$trusted_digest" >> "$GITHUB_ENV"
-          wrapper="$RUNNER_TEMP/candidate-cli"
+          wrapper="$NEMOCLAW_CLI_BIN"
           sudo tee "$wrapper" >/dev/null <<EOF
           #!/usr/bin/env bash
           umask 0007
@@ -483,10 +472,7 @@ jobs:
           MANAGED_RUNTIME_WORKFLOW_PATH: .github/workflows/managed-runtime-base-qualification.yaml
           OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          trusted/tools/e2e/managed-runtime-comparison.mts
-          record
-          "${RUNNER_TEMP}/managed-runtime-candidate-receipt-${{ matrix.arch }}/receipt.json"
+          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-runtime-comparison.mts record "${RUNNER_TEMP}/managed-runtime-candidate-receipt-${{ matrix.arch }}/receipt.json"
 
       - name: Upload trusted candidate activation evidence
         if: always()
@@ -555,10 +541,7 @@ jobs:
           SOURCE_RUN_ATTEMPT: ${{ needs.authenticate-source.outputs.source_run_attempt }}
           SOURCE_RUN_ID: ${{ needs.authenticate-source.outputs.source_run_id }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/managed-runtime-comparison.mts
-          select-candidate
-          "${RUNNER_TEMP}/managed-runtime-candidate/selection-${{ matrix.arch }}.json"
+          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts select-candidate "${RUNNER_TEMP}/managed-runtime-candidate/selection-${{ matrix.arch }}.json"
 
       - name: Fail closed when candidate evidence cannot be authenticated
         if: failure()
@@ -566,9 +549,7 @@ jobs:
           CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/managed-runtime-comparison.mts
-          publish-status error
+          node --experimental-strip-types --no-warnings tools/e2e/managed-runtime-comparison.mts publish-status error
 
       - name: Preserve authenticated candidate selection
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -583,8 +564,7 @@ jobs:
     name: Exact base all-agent managed runtime activation (${{ matrix.arch }})
     needs: [authenticate-source, package-openshell-sdk]
     if: >-
-      needs.authenticate-source.result == 'success' &&
-      needs.package-openshell-sdk.result == 'success'
+      needs.authenticate-source.result == 'success' && needs.package-openshell-sdk.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     permissions:
@@ -603,13 +583,13 @@ jobs:
     env:
       BASE_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
       CANDIDATE_SHA: ${{ needs.authenticate-source.outputs.candidate_sha }}
-      E2E_ARTIFACT_DIR: ${{ runner.temp }}/managed-runtime-base/evidence
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.managed-runtime-base/evidence
       E2E_JOB: "1"
       E2E_TARGET_ID: managed-image-activation
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/base/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-source.outputs.base_sha }}
       NEMOCLAW_E2E_SHARD: default
-      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ runner.temp }}/managed-runtime-base/catalog.json
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ github.workspace }}/.managed-runtime-base/catalog.json
       MANAGED_RUNTIME_PLATFORM: ${{ matrix.platform }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -679,9 +659,7 @@ jobs:
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          ../trusted/tools/e2e/exact-artifact-download.mts
-          "${RUNNER_TEMP}/managed-runtime-base/cohort"
+          node --experimental-strip-types --no-warnings ../trusted/tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-runtime-base/cohort"
 
       - name: Validate the base cohort and materialize its runtime catalog
         working-directory: base
@@ -690,10 +668,7 @@ jobs:
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          ../trusted/tools/e2e/managed-image-cohort-contract.mts
-          "${RUNNER_TEMP}/managed-runtime-base/cohort/cohort.json"
-          "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+          node --experimental-strip-types --no-warnings ../trusted/tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-runtime-base/cohort/cohort.json" "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
 
       - name: Download reviewed OpenShell SDK archive
         if: needs.package-openshell-sdk.outputs.required == 'true'
@@ -762,10 +737,7 @@ jobs:
           MANAGED_RUNTIME_WORKFLOW_PATH: .github/workflows/managed-runtime-base-qualification.yaml
           OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          trusted/tools/e2e/managed-runtime-comparison.mts
-          record
-          "${RUNNER_TEMP}/managed-runtime-base-receipt-${{ matrix.arch }}/receipt.json"
+          node --experimental-strip-types --no-warnings trusted/tools/e2e/managed-runtime-comparison.mts record "${RUNNER_TEMP}/managed-runtime-base-receipt-${{ matrix.arch }}/receipt.json"
 
       - name: Upload exact-base activation evidence
         if: always()
@@ -794,8 +766,7 @@ jobs:
       - authenticate-candidate-evidence
       - exact-base-activation
     if: >-
-      always() && needs.authenticate-source.result == 'success' &&
-      needs.authenticate-candidate-evidence.result == 'success'
+      always() && needs.authenticate-source.result == 'success' && needs.authenticate-candidate-evidence.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
