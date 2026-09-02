@@ -606,7 +606,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
     ).rejects.toThrow("invalid Telegram token");
 
     expect(deps.setupMessagingChannels).toHaveBeenCalledOnce();
-    expect(deps.writePlanToEnv).not.toHaveBeenCalled();
+    expect(deps.writePlanToEnv).toHaveBeenCalledWith(plan);
     expect(plan.credentialBindings[0]?.credentialHash).toBe(hashCredential(previousToken));
   });
 

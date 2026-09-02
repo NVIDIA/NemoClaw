@@ -557,26 +557,6 @@ async function selectionFromRegistryPlan<Agent>(
   registryPlan: SandboxMessagingPlan,
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
-  const activeChannels = filterChannelNamesForCurrentAgent(
-    getActiveChannelsFromPlan(registryPlan),
-    options.agent,
-  );
-  const credentialDriftChannels = messagingChannelsWithCredentialDrift(
-    registryPlan,
-    options.env as NodeJS.ProcessEnv,
-    activeChannels,
-  );
-  if (credentialDriftChannels.length > 0) {
-    options.deps.note(
-      `  [non-interactive] Detected messaging channel inputs for ${credentialDriftChannels.join(", ")}; reconciling reused sandbox messaging plan.`,
-    );
-    return selectionFromMessagingSetup(
-      credentialDriftChannels,
-      { ...options, forceCredentialValidation: true },
-      true,
-      registryPlan,
-    );
-  }
   if (registryPlanRecordsLifecycleSelection(registryPlan)) {
     // A lifecycle command owns which channels the operator asked for, but not
     // whether the host still configures them. Onboarding re-reads the host
@@ -856,6 +836,32 @@ async function selectionFromForcedCredentialValidation<Agent>(
   return selectionFromMessagingSetup(requiredChannels, options, true, validationBaseline);
 }
 
+async function selectionFromCredentialDrift<Agent>(
+  plan: SandboxMessagingPlan | null,
+  options: ReconcileSandboxMessagingOptions<Agent>,
+): Promise<SandboxMessagingSelection | null> {
+  const activeChannels = filterChannelNamesForCurrentAgent(
+    getActiveChannelsFromPlan(plan),
+    options.agent,
+  );
+  const driftedChannels = messagingChannelsWithCredentialDrift(
+    plan,
+    options.env as NodeJS.ProcessEnv,
+    activeChannels,
+  );
+  if (driftedChannels.length === 0 || !plan) return null;
+  options.deps.note(
+    `  [non-interactive] Detected messaging channel inputs for ${driftedChannels.join(", ")}; reconciling reused sandbox messaging plan.`,
+  );
+  options.deps.writePlanToEnv(plan);
+  return selectionFromMessagingSetup(
+    driftedChannels,
+    { ...options, forceCredentialValidation: true },
+    true,
+    plan,
+  );
+}
+
 function stagedPlanFromAuthority(
   authority: ReturnType<typeof resolveMessagingPlanAuthority>,
 ): SandboxMessagingPlan | null {
@@ -898,6 +904,11 @@ export async function reconcileSandboxMessaging<Agent>(
   });
   const forcedValidationSelection = await selectionFromForcedCredentialValidation(resolvedOptions);
   if (forcedValidationSelection) return forcedValidationSelection;
+  const driftValidationSelection = await selectionFromCredentialDrift(
+    authority.plan,
+    resolvedOptions,
+  );
+  if (driftValidationSelection) return driftValidationSelection;
   const messagingDecisionCompleted = resolvedOptions.session?.checkpoint
     ? !isDecisionUnset(resolvedOptions.session.checkpoint.messaging)
     : resolvedOptions.session?.sandboxPromptProgress?.messaging === true;
