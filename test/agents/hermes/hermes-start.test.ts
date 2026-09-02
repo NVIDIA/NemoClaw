@@ -52,8 +52,19 @@ function filesystemFingerprint(entry: string): string {
 function createHermesUnsafeLogFixture(
   tmpDir: string,
   hermesHome: string,
-  kind: "root-symlink" | "nested-symlink",
+  kind: "root-symlink" | "nested-symlink" | "fifo",
 ): { before: string[]; fingerprint: () => string[] } {
+  if (kind === "fifo") {
+    const fifo = path.join(hermesHome, "logs", "curator", "unsafe.fifo");
+    fs.mkdirSync(path.dirname(fifo), { recursive: true });
+    const created = spawnSync("mkfifo", [fifo], { encoding: "utf-8" });
+    if (created.status !== 0) throw new Error(`mkfifo failed: ${created.stderr}`);
+    const fingerprint = () => {
+      const metadata = fs.lstatSync(fifo);
+      return [`${metadata.dev}:${metadata.ino}:${metadata.mode & 0o7777}:${metadata.size}`];
+    };
+    return { before: fingerprint(), fingerprint };
+  }
   const target = path.join(tmpDir, "unsafe-log-target");
   const sentinel = path.join(target, "sentinel.log");
   fs.mkdirSync(target);
@@ -492,7 +503,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   stalePid?: boolean;
   lockedConfigRoot?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
-  unsafeLog?: "root-symlink" | "nested-symlink";
+  unsafeLog?: "root-symlink" | "nested-symlink" | "fifo";
   swapHistoryRoot?: boolean;
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
   unsafeState?: readonly [name: HermesStateDir, kind: "symlink" | "file"];
@@ -1381,8 +1392,9 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   it.each([
     ["root-symlink", "/logs is a symlink"],
     ["nested-symlink", "/logs/curator/nested/sentinel-link is a symlink"],
+    ["fifo", "/logs/curator/unsafe.fifo is not a regular file or directory"],
   ] as const)(
-    "rejects unsafe logs %s without mutating its external target",
+    "rejects unsafe logs %s without mutating the entry or its external target",
     (unsafeLog, message) => {
       const run = runHermesGatewayRuntimeCleanup({ unsafeLog, staleLock: false, stalePid: false });
       expect(run.result.status).not.toBe(0);

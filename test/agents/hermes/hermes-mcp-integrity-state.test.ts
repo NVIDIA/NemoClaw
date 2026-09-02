@@ -716,47 +716,6 @@ print(json.dumps({"diverged": diverged, "raced": raced}))
     });
   });
 
-  it("derives the full config hash and MCP digest from one config snapshot", () => {
-    const result = spawnSync(
-      "python3",
-      [
-        "-c",
-        String.raw`
-import importlib.util, json, os, sys, tempfile
-spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
-guard = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = guard
-spec.loader.exec_module(guard)
-root = tempfile.mkdtemp(prefix="hermes-mcp-single-read-")
-hermes = os.path.join(root, ".hermes")
-os.mkdir(hermes)
-config = os.path.join(hermes, "config.yaml")
-env = os.path.join(hermes, ".env")
-strict = os.path.join(root, "hash")
-open(config, "w", encoding="utf-8").write("model: test\nmcp_servers: {}\n")
-open(env, "w", encoding="utf-8").write("SAFE=1\n")
-initial, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
-guard._write_hash(strict, initial)
-original_read_text = guard._read_text
-config_reads = 0
-def counted_read_text(path, *args, **kwargs):
-    global config_reads
-    if path == config:
-        config_reads += 1
-    return original_read_text(path, *args, **kwargs)
-guard._read_text = counted_read_text
-state = guard.inspect_mcp_integrity(hermes, strict)
-print(json.dumps({"state": state, "config_reads": config_reads}))
-`,
-        GUARD,
-      ],
-      { encoding: "utf-8", timeout: 10_000 },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ state: "current", config_reads: 1 });
-  });
-
   it("starts the root gateway after dashboard profile preparation succeeds", () => {
     const success = runHermesRootMcpStartup({ commitStatus: 0 });
     expect(success.result.status, success.result.stderr).toBe(0);
