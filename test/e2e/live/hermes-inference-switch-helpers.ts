@@ -46,7 +46,7 @@ import {
   runBoundedRetry,
   type RetryEvidence,
   type RetryFailureClass,
-} from "../fixtures/retry-policy.ts";
+} from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -688,11 +688,9 @@ export async function runHermesInferenceSetWithRetry(
     onEvidence: evidenceArtifacts
       ? (evidence) => writeInferenceSwitchRetryEvidence(evidenceArtifacts, evidence)
       : undefined,
-    run: (attempt, verify) =>
-      host.command("node", verify ? args : [...args, "--no-verify"], {
-        artifactName: verify
-          ? `hermes-inference-set-${attempt}`
-          : "hermes-inference-set-no-verify-after-transient-failures",
+    run: (attempt) =>
+      host.command("node", args, {
+        artifactName: `hermes-inference-set-${attempt}`,
         env: env(undefined, compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null)),
         redactionValues,
         timeoutMs: 180_000,
