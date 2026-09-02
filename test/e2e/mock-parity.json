@@ -837,6 +837,7 @@
     {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "fast": [
+        "test/agents/hermes/hermes-sessions-permissions.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
