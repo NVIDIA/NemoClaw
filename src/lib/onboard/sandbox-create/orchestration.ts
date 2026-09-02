@@ -1255,6 +1255,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     managedWorkloadRebuild: import("../workload/rebuild").ManagedWorkloadRebuildHandoff | null,
     tempManagedRuntime: boolean,
     tempManagedRuntimeCatalog: string | null,
+    allowRemovedImmutabilityStateRecord: boolean,
     dashboardPortReservationScope: import("../dashboard-port").DashboardPortReservationScope,
     hermesApiPortReservationScope: import("../../agent/onboard").HermesApiPortReservationScope,
     gpu: ReturnType<typeof import("../../inference/nim").detectGpu>,
@@ -1398,7 +1399,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
       "sandbox name",
     );
-    enforceRemovedImmutabilityMigrationBoundary(sandboxName);
+    enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+      allowStateRecord: allowRemovedImmutabilityStateRecord,
+    });
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
     const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);

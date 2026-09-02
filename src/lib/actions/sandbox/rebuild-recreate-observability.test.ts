@@ -173,6 +173,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     credentialEnv: "NVIDIA_API_KEY",
     baseImagePreflight: { ok: true, imageRef: null, overrideEnvVar: null },
     recoveryRecreate: false,
+    preparedBackupRecovery: false,
     registryRollback: { recordRemoval: vi.fn(), restoreForRetry: vi.fn() },
     backupManifest: null,
     mcpEntries: [],
@@ -211,6 +212,7 @@ describe("runRebuildRecreatePhase handoff", () => {
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
       observedAtOnboard.push(onboardSession.loadSession()?.observabilityEnabled === true);
       expect(options.observabilityEnabled).toBe(true);
+      expect(options.allowRemovedImmutabilityStateRecord).toBeUndefined();
     });
     const input = makeInput();
 
@@ -221,6 +223,16 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(onboardSession.loadSession()?.observabilityRequestedExplicitly).toBe(true);
     expect(input.registryRollback.restoreForRetry).not.toHaveBeenCalled();
     expect(input.bail).not.toHaveBeenCalled();
+  });
+
+  it("allows a removed Shields state record only for prepared-backup recovery", async () => {
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.allowRemovedImmutabilityStateRecord).toBe(true);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(makeInput({ preparedBackupRecovery: true })),
+    ).resolves.toBe(true);
   });
 
   it("retains inherited observability provenance through inner onboard handoff", async () => {

@@ -58,6 +58,7 @@ export interface RebuildRecreatePhaseInput {
   credentialEnv: string | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   recoveryRecreate: boolean;
+  preparedBackupRecovery?: boolean;
   registryRollback: RebuildRegistryRollback;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
@@ -100,6 +101,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     credentialEnv: rebuildCredentialEnv,
     baseImagePreflight: rebuildBaseImagePreflight,
     recoveryRecreate,
+    preparedBackupRecovery = false,
     registryRollback,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
@@ -267,6 +269,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   try {
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
+      ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
       ...(rebuildsHermesSandbox && backupManifest?.preservedEnv

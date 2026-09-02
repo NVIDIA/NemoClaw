@@ -335,6 +335,7 @@ export async function resolvePrManagedImageCatalog(
     readonly baseSha: string;
     readonly candidateRepository: string;
     readonly candidateSha: string;
+    readonly managedImageSha?: string;
     readonly outputPath: string;
     readonly prNumber: number;
     readonly token: string;

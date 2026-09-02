@@ -3228,6 +3228,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   opts.managedWorkloadRebuild ?? null,
                   opts.tempManagedRuntime === true,
                   opts.tempManagedRuntimeCatalog ?? null,
+                  opts.allowRemovedImmutabilityStateRecord === true,
                   dashboardPortReservationScope,
                   hermesApiPortReservationScope,
                   ...createArgs,
