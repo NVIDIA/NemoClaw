@@ -480,13 +480,13 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2. Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
 
-If onboarding reports that Docker is missing or unreachable, fix Docker first and retry onboarding:
+If onboarding reports that the default Docker provider is missing or unreachable, fix Docker first and retry onboarding:
 
 ```bash
 $$nemoclaw onboard
 ```
 
-Podman is not a tested runtime. If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
+For explicitly selected native Podman, retain `NEMOCLAW_GATEWAY_RUNTIME=podman` and follow [Podman](#podman). An auto-detected Podman compatibility socket without that selector is rejected instead of silently changing providers.
 
 ### Cluster fails with `overlayfs snapshotter cannot be enabled` on Docker 26+
 
@@ -2048,7 +2048,10 @@ Onboarding ends with:
 
 On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox. During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready`, as seen on DGX Spark when supervisor restart races the sandbox bootstrap.
 
-NemoClaw polls immediately, starts retrying after 250ms, and backs off to a 2-second cap. It tolerates 30 consecutive `Error` observations by default so this transient recovers on its own. Only `Error` that persists through the debounce count is terminal, unless the overall `NEMOCLAW_SANDBOX_READY_TIMEOUT` deadline expires first. `Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
+NemoClaw polls immediately, starts retrying after 250ms, and backs off to a 2-second cap.
+It tolerates 30 consecutive `Error` observations by default so this transient recovers on its own.
+Only `Error` that persists through the debounce count is terminal, unless the overall `NEMOCLAW_SANDBOX_READY_TIMEOUT` deadline expires first.
+Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately.
 
 If your host needs more observations for slower re-registration, raise the debounce. Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` too if the overall deadline is too short. To fail fast on the first `Error` poll, set the debounce to `1`:
 
@@ -2988,7 +2991,19 @@ For additional troubleshooting, refer to the [Windows Setup](../get-started/addi
 
 ## Podman
 
-Podman is not a tested runtime. OpenShell officially documents Docker-based runtimes only. If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
+NemoClaw has two independent Podman paths: the native managed runtime provider and the portable experimental profile.
+
+For native rootless Podman on Linux, select the provider explicitly:
+
+```bash
+NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard
+```
+
+Native preflight fails closed unless the current-user Podman socket and service, rootless engine, cgroups v2 hierarchy, bridge networking, DNS, host architecture, and exact managed-image contract are all qualified.
+Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
+Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
+
+The portable experimental profile is separate and unchanged.
 
 The portable experimental profile uses the `docker` command to drive rootless Podman. Before you run this profile, make sure a Docker-compatible CLI is available on `PATH`. On a Podman-only host, install the `podman-docker` shim for your distribution:
 
@@ -4616,6 +4631,36 @@ TAVILY_API_KEY=<your-tavily-key> \
 ```
 
 NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes. If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
+
+### Langfuse works with raw keys but not OpenShell placeholders
+
+Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
+That workaround bypasses the sandbox credential boundary.
+
+OpenShell 0.0.106 resolves static credentials only at endpoints declared by their provider profile.
+Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
+
+For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+nemohermes credentials add <sandbox>-langfuse \
+  --type langfuse-hermes-v1 \
+  --credential LANGFUSE_PUBLIC_KEY \
+  --credential LANGFUSE_SECRET_KEY
+unset LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+nemohermes <sandbox> rebuild
+```
+
+If `agent.log` says the keys look like placeholders, the running image does not contain the current Hermes compatibility patch.
+Rebuild onto the current managed image before changing credentials.
+If Hermes accepts the placeholders but OpenShell reports `credential_unavailable` or an endpoint mismatch, inspect the provider type and endpoint profile.
+The provider must expose the exact `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` names and authorize the configured Langfuse host.
+
+For self-hosted Langfuse, import a separate reviewed profile that matches the exact HTTPS origin, including its port, before registering the provider.
+Set only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
+Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved revision-scoped placeholder can shadow the current process-injected revision after rotation or rebuild.
 
 ### Re-onboarding asks every messaging prompt again
 

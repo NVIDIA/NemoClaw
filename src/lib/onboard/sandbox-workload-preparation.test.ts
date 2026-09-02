@@ -28,6 +28,7 @@ import {
   installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   prepareSandboxWorkloadSource,
+  readLiveE2eManagedImageCatalogContracts,
   SandboxWorkloadPreparationError,
 } from "./workload/preparation";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
@@ -182,6 +183,23 @@ describe("sandbox workload preparation", () => {
       expect(
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: "b".repeat(40),
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+          NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: REVISION,
+        }),
+      ).toEqual({ path: catalogPath, revision: REVISION });
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
+        }),
+      ).toEqual({ catalog: CATALOG, revision: REVISION });
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
           GITHUB_WORKSPACE: fixtureRoot,
           NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
@@ -197,6 +215,13 @@ describe("sandbox workload preparation", () => {
       expect(
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: path.join(fixtureRoot, "empty-workspace"),
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+        }),
+      ).toBeNull();
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
           NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: path.join(fixtureRoot, "missing.json"),
@@ -207,7 +232,7 @@ describe("sandbox workload preparation", () => {
     }
   });
 
-  it("rejects an embedded catalog without an exact candidate revision (#9464)", () => {
+  it("rejects an embedded catalog without an exact publication revision (#9464)", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
@@ -218,7 +243,50 @@ describe("sandbox workload preparation", () => {
           NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
         }),
-      ).toThrow("requires an exact candidate revision");
+      ).toThrow("requires an exact publication revision");
+      expect(() =>
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
+        }),
+      ).toThrow("conflicting authorities");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("validates every contract in an inline live E2E catalog", () => {
+    const selected = liveE2eManagedImageCatalog({
+      GITHUB_ACTIONS: "true",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+      NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
+    });
+
+    expect(selected).not.toBeNull();
+    expect(readLiveE2eManagedImageCatalogContracts(selected!)).toEqual(
+      new Map(SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)])),
+    );
+  });
+
+  it("reads a regular live E2E catalog without following a symbolic link", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const symlinkPath = path.join(fixtureRoot, "catalog-link.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    fs.symlinkSync(catalogPath, symlinkPath);
+    try {
+      expect(
+        readLiveE2eManagedImageCatalogContracts({ path: catalogPath, revision: REVISION }),
+      ).toEqual(
+        new Map(SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)])),
+      );
+      expect(() =>
+        readLiveE2eManagedImageCatalogContracts({ path: symlinkPath, revision: REVISION }),
+      ).toThrow("must be a bounded regular file");
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
@@ -362,6 +430,21 @@ describe("sandbox workload preparation", () => {
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
+  });
+
+  it("loads an exact inline all-agent catalog without using the registry resolver", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("hermes"), catalog: CATALOG, expectedCatalogRevision: REVISION },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).not.toHaveBeenCalled();
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      contract: { source: { revision: REVISION } },
+    });
   });
 
   it("rejects a symlinked local managed-image catalog before selection (#7744)", async () => {
@@ -673,7 +756,7 @@ describe("sandbox workload preparation", () => {
         { ...input("pi"), acceptedCandidateContract: contract("pi", 3) },
         { resolveCatalog },
       ),
-    ).rejects.toThrow("requires an exact managed image catalog file");
+    ).rejects.toThrow("requires an exact managed image catalog");
     expect(resolveCatalog).not.toHaveBeenCalled();
   });
 

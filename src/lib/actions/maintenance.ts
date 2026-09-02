@@ -108,7 +108,7 @@ function returnStartedSandboxToStopped(
     "could not return its container to the stopped state; the container was left running";
   const failureMessage = `Backup cleanup failed for '${sandboxName}': ${failureDetail}.`;
   try {
-    if (returnSandboxContainerToStopped(startedForBackup.containerName)) {
+    if (returnSandboxContainerToStopped(startedForBackup)) {
       console.log(`  ${D}Returned '${sandboxName}' to its stopped state.${R}`);
       return null;
     }

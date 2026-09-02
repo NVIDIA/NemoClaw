@@ -35,6 +35,8 @@ export type RebuildFlowSession = Record<string, unknown> & {
   steps: Record<string, RebuildFlowStep>;
 };
 export type RebuildFlowOverrides = {
+  agentName?: string;
+  sessionAgentName?: string | null;
   entryUpdatesAfterVersionCheck?: Record<string, unknown>;
   applyPreset?: (presetName: string) => boolean;
   baseImagePreflight?: {
@@ -79,6 +81,7 @@ export type RebuildFlowOverrides = {
     receipt: Record<string, unknown>,
   ) => { ok: true; receipt: Record<string, unknown> } | { ok: false; message: string };
   sandboxEntry?: Record<string, unknown>;
+  sandboxEntryReads?: Array<Record<string, unknown> | null>;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
   sandboxInventory?: OpenShellSandboxInventory;
@@ -90,6 +93,18 @@ export type RebuildFlowOverrides = {
     manifest: Record<string, unknown>,
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
   managedImageEvidence?: boolean;
+  gatewayPresets?: string[];
+  verificationUnavailableAfterPresetRemoval?: boolean;
+  updateSession?: () => void;
+  dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
+  gatewayRecoveryResult?: Record<string, unknown>;
+  dcodeImageVerificationResults?: boolean[];
+  dcodeBaseImageIds?: string[];
+  dcodeImageResult?:
+    | { ok: true; prepared: Record<string, unknown> & { cleanupBuildCtx: () => boolean } }
+    | { ok: false; detail: string };
+  openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
+  preflightMessagingConflicts?: () => Promise<void> | void;
   staleRecovery?: boolean;
   reconciledSandboxGatewayState?: SandboxGatewayState;
   mcpPreparation?: {
@@ -118,6 +133,16 @@ export type RebuildFlowOverrides = {
     stderr?: string;
     error?: Error;
   };
+  captureResolvedOpenshell?: (
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  };
   backupPreservedEnv?: PreservedEnvFile[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
@@ -137,6 +162,7 @@ export type RebuildFlowHarness = {
   backupPath: string;
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
+  applyPresetContentSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   restartSandboxGatewaySpy: MockInstance;
@@ -145,12 +171,25 @@ export type RebuildFlowHarness = {
   executeSandboxExecCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   ensureRebuildAgentBaseImageSpy: MockInstance;
+  ensureAgentBaseImageSpy: MockInstance;
+  pinTrustedAgentBaseImageOverrideForOperationSpy: MockInstance;
+  pinTrustedAgentRemoteBaseImageOverrideForOperationSpy: MockInstance;
+  restoreTrustedAgentBaseImageOverrideSpy: MockInstance;
+  restoreTrustedAgentRemoteBaseImageOverrideSpy: MockInstance;
+  disposePreparedDcodeRebuildImageSpy: MockInstance;
+  dockerRmiSpy: MockInstance;
   ensureTargetGatewaySpy: MockInstance;
   ensureValidatedBraveSearchCredentialSpy: MockInstance;
   hydrateCredentialEnvSpy: MockInstance;
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
   onboardSpy: MockInstance;
+  openShieldsSpy: MockInstance;
+  preflightAuthoritativeRebuildTargetSpy: MockInstance;
+  preflightMessagingConflictsSpy: MockInstance;
+  preflightDcodeRouteSpy: MockInstance;
+  prepareManagedDcodeRebuildImageSpy: MockInstance;
+  preparedDcodeBuildContext: Record<string, unknown> & { cleanupBuildCtx: MockInstance };
   registryUpdateSpy: MockInstance;
   setDefaultSpy: MockInstance;
   setDefault: (name: string) => boolean;
@@ -164,12 +203,15 @@ export type RebuildFlowHarness = {
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
+  captureResolvedOpenshellSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxRebuildSpy: MockInstance;
   prepareMcpBridgesForRebuildSpy: MockInstance;
   reattachMcpProvidersAfterRebuildAbortSpy: MockInstance;
   removeSandboxRegistryEntryWithReceiptSpy: MockInstance;
+  removeSandboxRegistryEntrySpy: MockInstance;
+  removePresetSpy: MockInstance;
   restoreSandboxEntrySpy: MockInstance;
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;

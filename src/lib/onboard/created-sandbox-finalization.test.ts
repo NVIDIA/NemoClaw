@@ -19,6 +19,7 @@ import {
   finalizeCreatedSandbox,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import { dashboardForwardControlRuntime } from "./dashboard-forward-control";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
@@ -26,6 +27,41 @@ import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 
 const fixtures: string[] = [];
+
+describe("ordinary managed sandbox completion", () => {
+  it.each(["docker", "podman"] as const)(
+    "does not mutate attached provider generations after %s sandbox startup",
+    (openshellDriver) => {
+      const providerExistsInGateway = vi.fn(() => true);
+
+      expect(
+        completeOrdinaryOnboardSandboxCreation(
+          {
+            sandboxName: "alpha",
+            sandboxWasLiveDefault: false,
+            gatewayPort: 8080,
+            runtimeFields: { openshellDriver } as SandboxEntry,
+            messagingProviders: ["alpha-slack", "alpha-slack"],
+            liveExists: true,
+          },
+          {
+            setDefault: vi.fn(),
+            runFile: vi.fn(),
+            scriptsDir: "/tmp/scripts",
+            gatewayName: "nemoclaw",
+            providerExistsInGateway,
+            armCancelRollback: vi.fn(),
+            markCancellationRecovery: vi.fn(),
+            dockerInfoFormat: vi.fn(() => "true"),
+            runCapture: vi.fn(() => ""),
+            revalidateSandboxIdentity: vi.fn(),
+          },
+        ),
+      ).toBe("alpha");
+      expect(providerExistsInGateway).toHaveBeenCalledTimes(2);
+    },
+  );
+});
 
 afterEach(() => {
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -417,16 +453,39 @@ describe("created DCode sandbox finalization", () => {
       reservation: {} as never,
       checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
     } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
-    const runCaptureOpenshell = vi.fn(() =>
-      [
-        "Sandbox:  dcode",
-        "Route:    inference",
-        "Provider: compatible-endpoint",
-        `Model:    openai:${model}`,
-        "Endpoint: https://inference.local/v1",
-        "Runtime:  Deep Agents Code (terminal)",
-      ].join("\n"),
-    );
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(
+        ["SANDBOX BIND PORT PID STATUS", "alpha 127.0.0.1 18789 101 running"].join("\n"),
+      )
+      .mockReturnValue(
+        [
+          "Sandbox:  dcode",
+          "Route:    inference",
+          "Provider: compatible-endpoint",
+          `Model:    openai:${model}`,
+          "Endpoint: https://inference.local/v1",
+          "Runtime:  Deep Agents Code (terminal)",
+        ].join("\n"),
+      );
+    const ensureDashboardForward = vi.fn(() => 8643);
+    const preservedSibling = {
+      bind: "127.0.0.1",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-alpha",
+      lifecycleLiveIdentityFingerprint: "b".repeat(64),
+      openshellDriver: "podman",
+      pid: 101,
+      port: "18789",
+      sandboxName: "alpha",
+    };
+    vi.spyOn(dashboardForwardControlRuntime, "getSandbox").mockReturnValue({
+      name: "alpha",
+      gatewayName: preservedSibling.gatewayName,
+      lifecycleGeneration: preservedSibling.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: preservedSibling.lifecycleLiveIdentityFingerprint,
+      openshellDriver: preservedSibling.openshellDriver,
+    });
     vi.spyOn(process, "exit").mockImplementation((code): never => {
       throw new Error(`exit ${code}`);
     });
@@ -499,7 +558,7 @@ describe("created DCode sandbox finalization", () => {
       "http://127.0.0.1:8643",
       { config: null, enabled: false },
       vi.fn(),
-      vi.fn(),
+      ensureDashboardForward,
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -530,6 +589,10 @@ describe("created DCode sandbox finalization", () => {
       })),
     ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
     const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(["forward", "list"], {
+      ignoreError: true,
+    });
     const created = {
       createResult: { status: 0, output: "", sawProgress: true },
       route: "native",
@@ -559,12 +622,25 @@ describe("created DCode sandbox finalization", () => {
         created,
         null,
         "disabled",
-        false,
+        true,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
       ),
     ).rejects.toThrow("exit 1");
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(ensureDashboardForward).toHaveBeenCalledWith("dcode", "http://127.0.0.1:8643", {
+      rollbackSandboxOnFailure: true,
+      preservedSiblingForwards: [preservedSibling],
+      revalidateSandboxIdentity: expect.any(Function),
+    });
+
+    runCaptureOpenshell.mockClear();
+    const portableCompletionArgs = [...completionArgs] as Parameters<
+      typeof createOnboardCreatedSandboxCompletion
+    >;
+    portableCompletionArgs[9] = true;
+    createOnboardCreatedSandboxCompletion(...portableCompletionArgs);
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
   });
 
   it("does not publish registry metadata when live validation fails (#6311)", () => {
@@ -1114,231 +1190,258 @@ describe("created sandbox completion actions", () => {
   it.each([
     ["ordinary", true, false],
     ["schema-5", false, true],
-  ] as const)("keeps %s dashboard completion ordered and bounded (#9203)", async (_route, manageDashboard, schema5) => {
-    const order: string[] = [];
-    const gpuProof = {
-      status: "verified" as const,
-      cudaVerified: true,
-      at: "2026-08-17T00:00:00.000Z",
-    };
-    const gpuConfig: SandboxGpuConfig = {
-      mode: "1" as const,
-      hostGpuDetected: true,
-      hostGpuPlatform: "linux" as const,
-      sandboxGpuEnabled: true,
-      sandboxGpuDevice: null,
-      errors: [],
-    };
-    const registerCreatedSandbox = vi.fn((input: CreatedSandboxRegistrationInput) => {
-      order.push("registry");
-      return input as unknown as SandboxEntry;
-    });
-    const verifiedCreateBoundary = {
-      sandboxName: "hermes",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: "a".repeat(64),
-      route: "native" as const,
-    };
-    const inferenceRouteReservation = {
-      authority: {
+  ] as const)(
+    "keeps %s dashboard completion ordered and bounded (#9203)",
+    async (_route, manageDashboard, schema5) => {
+      const order: string[] = [];
+      const gpuProof = {
+        status: "verified" as const,
+        cudaVerified: true,
+        at: "2026-08-17T00:00:00.000Z",
+      };
+      const gpuConfig: SandboxGpuConfig = {
+        mode: "1" as const,
+        hostGpuDetected: true,
+        hostGpuPlatform: "linux" as const,
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: null,
+        errors: [],
+      };
+      const registerCreatedSandbox = vi.fn((input: CreatedSandboxRegistrationInput) => {
+        order.push("registry");
+        return input as unknown as SandboxEntry;
+      });
+      const verifiedCreateBoundary = {
         sandboxName: "hermes",
         gatewayName: "nemoclaw",
-        sessionId: "session-1",
-        selection: {
-          provider: "ollama",
-          model: "qwen3-vl:4b",
-          endpointUrl: "http://host.openshell.internal:11436/v1",
-          endpointSource: "onboard" as const,
-          credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
-          preferredInferenceApi: "openai-completions",
-          compatibleEndpointReasoning: null,
-          compatibleEndpointReasoningEffort: null,
-          nimContainer: null,
-        },
-      },
-      entry: { name: "hermes" },
-    } satisfies QualifiedSandboxInferenceRouteReservation;
-    const verifiedCreate = {
-      reservation: inferenceRouteReservation,
-      checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
-    } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
-    const completion = createCreatedSandboxCompletionActions(
-      {
-        finalization: {
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        route: "native" as const,
+      };
+      const inferenceRouteReservation = {
+        authority: {
           sandboxName: "hermes",
-          restoreBackupPath: null,
-          preUpgradeBackup: false,
-          targetAgentType: "hermes",
-          validateManagedDcode: false,
-          provider: "ollama",
-          model: "qwen3-vl:4b",
-          preferredInferenceApi: "openai-completions",
-        },
-        registration: {
-          sandboxName: "hermes",
-          inferenceSelection: {
+          gatewayName: "nemoclaw",
+          sessionId: "session-1",
+          selection: {
             provider: "ollama",
             model: "qwen3-vl:4b",
-            endpointUrl: null,
-            endpointSource: null,
-            credentialEnv: null,
+            endpointUrl: "http://host.openshell.internal:11436/v1",
+            endpointSource: "onboard" as const,
+            credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
             preferredInferenceApi: "openai-completions",
             compatibleEndpointReasoning: null,
             compatibleEndpointReasoningEffort: null,
             nimContainer: null,
           },
-          runtimeFields: {
-            gpuEnabled: true,
-            hostGpuDetected: true,
-            sandboxGpuEnabled: true,
-            sandboxGpuMode: "1",
-            sandboxGpuDevice: null,
-            sandboxGpuProof: null,
-            openshellDriver: "docker",
-            openshellVersion: "0.0.106",
-          },
-          agent: null,
-          agentVersionKnown: true,
-          plannedMessagingState: undefined,
-          hermesToolGateways: [],
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
         },
-        policy: {
-          initialPolicyPath: "/private/initial-policy.yaml",
-          compatibilityPolicyPath: "/private/compatibility-policy.yaml",
-          getVerifiedCreateBoundary: () => verifiedCreateBoundary,
-          getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
-        },
-        gpu: {
-          config: gpuConfig,
-          provider: "ollama",
-          dockerDriverGateway: true,
-          verifyDirectSandboxGpu: () => {
-            order.push("gpu");
-            return gpuProof;
+        entry: { name: "hermes" },
+      } satisfies QualifiedSandboxInferenceRouteReservation;
+      const verifiedCreate = {
+        reservation: inferenceRouteReservation,
+        checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
+      } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
+      const completion = createCreatedSandboxCompletionActions(
+        {
+          finalization: {
+            sandboxName: "hermes",
+            restoreBackupPath: null,
+            preUpgradeBackup: false,
+            targetAgentType: "hermes",
+            validateManagedDcode: false,
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+            preferredInferenceApi: "openai-completions",
           },
-          runCaptureOpenshell: vi.fn(),
-        },
-        dashboard: {
-          chatUiUrl: "http://127.0.0.1:8643",
-          initialHermesState: { config: null, enabled: false },
-          releasePort: async () => {
-            order.push("dashboard-release");
+          registration: {
+            sandboxName: "hermes",
+            inferenceSelection: {
+              provider: "ollama",
+              model: "qwen3-vl:4b",
+              endpointUrl: null,
+              endpointSource: null,
+              credentialEnv: null,
+              preferredInferenceApi: "openai-completions",
+              compatibleEndpointReasoning: null,
+              compatibleEndpointReasoningEffort: null,
+              nimContainer: null,
+            },
+            runtimeFields: {
+              gpuEnabled: true,
+              hostGpuDetected: true,
+              sandboxGpuEnabled: true,
+              sandboxGpuMode: "1",
+              sandboxGpuDevice: null,
+              sandboxGpuProof: null,
+              openshellDriver: "docker",
+              openshellVersion: "0.0.106",
+            },
+            agent: null,
+            agentVersionKnown: true,
+            plannedMessagingState: undefined,
+            hermesToolGateways: [],
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
           },
-          ensureForward: () => {
-            order.push("dashboard-forward");
-            return 8644;
+          policy: {
+            initialPolicyPath: "/private/initial-policy.yaml",
+            compatibilityPolicyPath: "/private/compatibility-policy.yaml",
+            getVerifiedCreateBoundary: () => verifiedCreateBoundary,
+            getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
           },
-          getForwardPort: () => "8643",
-          resolveHermesState: () => ({ config: null, enabled: false }),
-          ensureHermesForward: () => order.push("dashboard-hermes"),
-        },
-        workload: {
-          runtime: {
-            runtimeProvider: null,
-            ensurePreparedWorkload: vi.fn(),
-            ensurePreparedProfile: vi.fn(),
+          gpu: {
+            config: gpuConfig,
+            provider: "ollama",
+            dockerDriverGateway: true,
+            verifyDirectSandboxGpu: () => {
+              order.push("gpu");
+              return gpuProof;
+            },
+            runCaptureOpenshell: vi.fn(),
+          },
+          dashboard: {
+            chatUiUrl: "http://127.0.0.1:8643",
+            initialHermesState: { config: null, enabled: false },
+            preservedSiblingForwards: [
+              {
+                bind: "127.0.0.1",
+                gatewayName: "nemoclaw",
+                lifecycleGeneration: "generation-alpha",
+                lifecycleLiveIdentityFingerprint: "b".repeat(64),
+                openshellDriver: "podman",
+                pid: 101,
+                port: "18789",
+                sandboxName: "alpha",
+              },
+            ],
+            releasePort: async () => {
+              order.push("dashboard-release");
+            },
+            ensureForward: (_sandboxName, _chatUiUrl, options) => {
+              expect(options.preservedSiblingForwards).toEqual([
+                {
+                  bind: "127.0.0.1",
+                  gatewayName: "nemoclaw",
+                  lifecycleGeneration: "generation-alpha",
+                  lifecycleLiveIdentityFingerprint: "b".repeat(64),
+                  openshellDriver: "podman",
+                  pid: 101,
+                  port: "18789",
+                  sandboxName: "alpha",
+                },
+              ]);
+              order.push("dashboard-forward");
+              return 8644;
+            },
+            getForwardPort: () => "8643",
+            resolveHermesState: () => ({ config: null, enabled: false }),
+            ensureHermesForward: () => order.push("dashboard-hermes"),
           },
           workload: {
-            source: {
-              kind: "legacy-dockerfile",
-              dockerfilePath: "/workspace/Dockerfile",
-              reason: "agent-not-managed",
+            runtime: {
+              runtimeProvider: null,
+              ensurePreparedWorkload: vi.fn(),
+              ensurePreparedProfile: vi.fn(),
             },
-            release: null,
-            fallbackDiagnostic: null,
+            workload: {
+              source: {
+                kind: "legacy-dockerfile",
+                dockerfilePath: "/workspace/Dockerfile",
+                reason: "agent-not-managed",
+              },
+              release: null,
+              fallbackDiagnostic: null,
+            },
+            prebuildImageRef: null,
+            buildId: "build-1",
+            extractBuiltImageRef: () => {
+              order.push("workload");
+              return "hermes:test";
+            },
+            resolveSandboxImageTagFromCreateOutput: vi.fn(),
           },
-          prebuildImageRef: null,
-          buildId: "build-1",
-          extractBuiltImageRef: () => {
-            order.push("workload");
-            return "hermes:test";
+        },
+        {
+          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+          restoreRecreatedSandboxState: vi.fn(),
+          getDcodeSelectionDrift: vi.fn(),
+          note: vi.fn(),
+          error: vi.fn(),
+          exitProcess: (code): never => {
+            throw new Error(`unexpected exit ${code}`);
           },
-          resolveSandboxImageTagFromCreateOutput: vi.fn(),
+          registerCreatedSandbox,
         },
-      },
-      {
-        discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-        restoreRecreatedSandboxState: vi.fn(),
-        getDcodeSelectionDrift: vi.fn(),
-        note: vi.fn(),
-        error: vi.fn(),
-        exitProcess: (code): never => {
-          throw new Error(`unexpected exit ${code}`);
-        },
-        registerCreatedSandbox,
-      },
-    );
-    const created = {
-      createResult: { status: 0, output: "", sawProgress: true },
-      route: "native",
-      firstCreateOutput: "",
-      registryImageRef: null,
-      lifecycleRegistrationFields: { lifecycleGeneration: "generation-1" },
-    } as SandboxGpuCreateFlowResult;
-    const lifecycle = {
-      generation: "generation-1",
-      recordExactIdentity: () => ({
-        lifecycleGeneration: "generation-1",
-        lifecycleLiveIdentityFingerprint: "a".repeat(64),
-      }),
-      capture: () => {
-        order.push("lifecycle-capture");
-        return {
+      );
+      const created = {
+        createResult: { status: 0, output: "", sawProgress: true },
+        route: "native",
+        firstCreateOutput: "",
+        registryImageRef: null,
+        lifecycleRegistrationFields: { lifecycleGeneration: "generation-1" },
+      } as SandboxGpuCreateFlowResult;
+      const lifecycle = {
+        generation: "generation-1",
+        recordExactIdentity: () => ({
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
-        };
-      },
-      revalidate: (registration: {
-        lifecycleGeneration: string;
-        lifecycleLiveIdentityFingerprint: string;
-      }) => {
-        order.push("lifecycle-revalidate");
-        return registration;
-      },
-    };
-    const configuredReceipt = schema5
-      ? ({
-          lifecycleGeneration: "generation-1",
-          openshellExecutableAuthority: { version: "0.0.106" },
-          container: { imageId: "hermes:test" },
-        } as unknown as HermesPortableConfiguredReceipt)
-      : null;
-    await completion.complete(
-      schema5 ? null : created,
-      configuredReceipt,
-      "hermes",
-      manageDashboard,
-      () => ({ lifecycleGeneration: "generation-1" }),
-      lifecycle,
-      schema5 ? inferenceRouteReservation : undefined,
-    );
+        }),
+        capture: () => {
+          order.push("lifecycle-capture");
+          return {
+            lifecycleGeneration: "generation-1",
+            lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          };
+        },
+        revalidate: (registration: {
+          lifecycleGeneration: string;
+          lifecycleLiveIdentityFingerprint: string;
+        }) => {
+          order.push("lifecycle-revalidate");
+          return registration;
+        },
+      };
+      const configuredReceipt = schema5
+        ? ({
+            lifecycleGeneration: "generation-1",
+            openshellExecutableAuthority: { version: "0.0.106" },
+            container: { imageId: "hermes:test" },
+          } as unknown as HermesPortableConfiguredReceipt)
+        : null;
+      await completion.complete(
+        schema5 ? null : created,
+        configuredReceipt,
+        "hermes",
+        manageDashboard,
+        () => ({ lifecycleGeneration: "generation-1" }),
+        lifecycle,
+        schema5 ? inferenceRouteReservation : undefined,
+      );
 
-    expect(order).toEqual([
-      "lifecycle-capture",
-      "lifecycle-revalidate",
-      "gpu",
-      ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
-      ...(schema5 ? [] : ["workload"]),
-      "lifecycle-revalidate",
-      "registry",
-    ]);
-    expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
-    expect(registerCreatedSandbox).toHaveBeenCalledWith(
-      expect.objectContaining({
-        imageTag: "hermes:test",
-        hermesPortableLifecycle: schema5,
-        dashboardPort: manageDashboard ? 8644 : 0,
-        lifecycleGeneration: "generation-1",
-        lifecycleLiveIdentityFingerprint: "a".repeat(64),
-        inferenceSelection: inferenceRouteReservation.authority.selection,
-        inferenceRouteReservation,
-        verifiedCreate,
-        runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
-      }),
-    );
-  });
+      expect(order).toEqual([
+        "lifecycle-capture",
+        "lifecycle-revalidate",
+        "gpu",
+        ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
+        ...(schema5 ? [] : ["workload"]),
+        "lifecycle-revalidate",
+        "registry",
+      ]);
+      expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
+      expect(registerCreatedSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          imageTag: "hermes:test",
+          hermesPortableLifecycle: schema5,
+          dashboardPort: manageDashboard ? 8644 : 0,
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          inferenceSelection: inferenceRouteReservation.authority.selection,
+          inferenceRouteReservation,
+          verifiedCreate,
+          runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
+        }),
+      );
+    },
+  );
 });

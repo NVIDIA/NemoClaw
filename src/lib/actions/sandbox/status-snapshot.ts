@@ -13,6 +13,7 @@ import { retryUntilAsync } from "../../core/retry";
 
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
+  buildGatewayInferenceGetArgs,
   type GatewayInference,
   parseGatewayInference,
   planInferenceRouteReconcile,
@@ -32,10 +33,7 @@ import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { getGatewayPresets } from "../../policy";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
-import {
-  buildGatewayInferenceGetArgs,
-  canSandboxGatewayRouteRealign,
-} from "./connect-inference-gateway";
+import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
@@ -47,8 +45,10 @@ import {
 } from "./inference-route-health";
 import {
   getSandboxStatusPreflight,
+  hasLegacyStatusRuntimeObservation,
   type SandboxStatusFailureLayer,
   type SandboxStatusPreflightResult,
+  usesManagedProviderGateway,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
 import {
@@ -424,7 +424,8 @@ export async function collectSandboxStatusSnapshot(
   const dockerRecovered = lookup.recoveredSandbox === true;
   const managedOpenClawDeliveryMustBeProven =
     lookup.state === "present" &&
-    sb?.openshellDriver === "docker" &&
+    sb !== null &&
+    usesManagedProviderGateway(sb) &&
     (sb.agent ?? "openclaw") === "openclaw" &&
     lookup.phase === "Ready" &&
     !opts.preflight?.failure;
@@ -712,7 +713,10 @@ async function buildSandboxStatusReport(
     inferenceHealth,
     terminalRuntimeHealth,
   } = snapshot;
-  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const dockerRuntime =
+    lookup.state === "present" && hasLegacyStatusRuntimeObservation(sb)
+      ? getSandboxDockerRuntime(sandboxName)
+      : null;
   const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,

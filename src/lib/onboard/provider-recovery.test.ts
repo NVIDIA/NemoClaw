@@ -183,8 +183,8 @@ describe("sandbox recovery authority", () => {
 describe("provider recovery persisted routing state", () => {
   function helpers() {
     return createProviderRecoveryHelpers({
-      parseGatewayInference: () => ({ provider: "nvidia-prod", model: null }),
-      runCaptureOpenshell: () => "Gateway inference:",
+      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      selectedGatewayName: () => "nemoclaw",
     });
   }
 
@@ -195,6 +195,57 @@ describe("provider recovery persisted routing state", () => {
     });
 
     expect(helpers().readLiveInference("alpha")).toBeNull();
+  });
+
+  it("reads provider recovery from the selected sandbox gateway (#10671)", () => {
+    vi.spyOn(registry, "listSandboxes").mockReturnValue({
+      defaultSandbox: "alpha",
+      sandboxes: [{ name: "alpha", gatewayPort: 19_090, gatewayName: "nemoclaw-19090" }],
+    });
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
+    }));
+    const recovery = createProviderRecoveryHelpers({
+      captureOpenshell,
+      selectedGatewayName: () => "nemoclaw",
+    });
+
+    expect(recovery.readLiveInference("alpha")).toEqual({
+      provider: "nvidia-prod",
+      model: "selected-model",
+    });
+    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      { ignoreError: true, timeout: undefined },
+    );
+  });
+
+  it("reads the current selected gateway when rebuilding an empty registry (#10671)", () => {
+    vi.spyOn(registry, "listSandboxes").mockReturnValue({
+      defaultSandbox: null,
+      sandboxes: [],
+    });
+    let selectedGatewayName = "nemoclaw";
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
+    }));
+    const recovery = createProviderRecoveryHelpers({
+      captureOpenshell,
+      selectedGatewayName: () => selectedGatewayName,
+    });
+
+    selectedGatewayName = "nemoclaw-19090";
+
+    expect(recovery.readLiveInference("alpha")).toEqual({
+      provider: "nvidia-prod",
+      model: "selected-model",
+    });
+    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      { ignoreError: true, timeout: undefined },
+    );
   });
 
   it("prefers the selected sandbox registry endpoint over session state", () => {
@@ -351,8 +402,8 @@ describe("provider recovery persisted routing state", () => {
     );
     const warn = vi.fn();
     const recovery = createProviderRecoveryHelpers({
-      parseGatewayInference: () => ({ provider: "compatible-endpoint", model: "live-model" }),
-      runCaptureOpenshell: () => "Gateway inference:",
+      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      selectedGatewayName: () => "nemoclaw",
       warn,
     });
 
@@ -397,21 +448,18 @@ describe("provider recovery persisted routing state", () => {
       defaultSandbox: "alpha",
       sandboxes: [{ name: "alpha", provider: "compatible-endpoint" }],
     });
-    const parseGatewayInference = vi.fn(() => ({
-      provider: "compatible-endpoint",
-      model: "gateway-model",
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output:
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: gateway-model\n",
     }));
-    const runCaptureOpenshell = vi.fn(() =>
-      JSON.stringify({ provider: "compatible-endpoint", model: "gateway-model" }),
-    );
     const recovery = createProviderRecoveryHelpers({
-      parseGatewayInference,
-      runCaptureOpenshell,
+      captureOpenshell,
+      selectedGatewayName: () => "nemoclaw",
     });
 
     expect(recovery.readRecordedInferenceRoute("alpha")).toBeNull();
-    expect(runCaptureOpenshell).not.toHaveBeenCalled();
-    expect(parseGatewayInference).not.toHaveBeenCalled();
+    expect(captureOpenshell).not.toHaveBeenCalled();
   });
 
   it("reports every other recorded endpoint for the same global provider", () => {

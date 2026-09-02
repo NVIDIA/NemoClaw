@@ -33,6 +33,33 @@ import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
 
+const policyBoundaryMocks = vi.hoisted(() => ({
+  inspectSandboxPolicy: vi.fn(() => ({
+    ok: true as const,
+    value: {
+      policySource: "sandbox" as const,
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:resume-policy", activeVersion: 1 },
+    },
+  })),
+  readSandboxPolicy: vi.fn(() => ({
+    ok: true as const,
+    value: {
+      document: "version: 1\nnetwork_policies: {}\n",
+      appliedRevision: null,
+    },
+  })),
+}));
+
+vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
+  syncCliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy: policyBoundaryMocks.inspectSandboxPolicy,
+    readSandboxPolicy: policyBoundaryMocks.readSandboxPolicy,
+    readSandboxPolicyRevision: vi.fn(),
+  },
+}));
+
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
 }
@@ -70,9 +97,9 @@ describe("rebuild resume snapshot repair", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     spies.push(
-      vi.spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup").mockImplementation(
-        () => undefined,
-      ),
+      vi
+        .spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup")
+        .mockImplementation(() => undefined),
     );
 
     session = onboardSession.createSession({
@@ -222,6 +249,22 @@ describe("rebuild resume snapshot repair", () => {
         stdout: "",
         stderr: "Error: sandbox alpha not found",
       } as never),
+      vi
+        .spyOn(openshellRuntime, "captureResolvedOpenshell")
+        .mockImplementation((args: string[]) => {
+          const output = args.includes("--output")
+            ? JSON.stringify({
+                scope: "sandbox",
+                sandbox: "alpha",
+                status: "effective",
+                policy_source: "sandbox",
+                hash: "sha256:resume-policy",
+                active_version: 1,
+                policy: { version: 1, network_policies: {} },
+              })
+            : "Version: 1\nActive: 1\n---\nversion: 1\nnetwork_policies: {}\n";
+          return { status: 0, output, stdout: output, stderr: "" } as never;
+        }),
       vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
         entry: {
           name: "alpha",
@@ -255,7 +298,7 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
         raw: "version: 1\nnetwork_policies: {}\n",
         yaml: "version: 1\nnetwork_policies: {}\n",
-      }),
+      } as never),
       vi
         .spyOn(rebuildOnboardDependencies, "onboard")
         .mockImplementation(async (options: unknown) => {

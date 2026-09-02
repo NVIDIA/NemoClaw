@@ -5,6 +5,7 @@ import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/co
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+export { isSandboxPolicyCredentialFree } from "../../../policy/sandbox-policy-validation";
 import type { SandboxEntry } from "../../../state/registry/types";
 
 export {

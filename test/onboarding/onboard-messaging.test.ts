@@ -450,10 +450,8 @@ const { createSandbox } = require(${onboardPath});
             NEMOCLAW_NON_INTERACTIVE: "1",
           },
         });
-
         assert.equal(result.status, 0, result.stderr);
         const payload = parseStdoutJson(result.stdout);
-
         assert.ok(payload.createCommand.command.includes("sandbox create"));
         assert.match(payload.createCommand.command, /--provider my-assistant-slack-bridge/);
         assert.match(payload.createCommand.command, /--provider my-assistant-slack-app/);
@@ -463,6 +461,8 @@ const { createSandbox } = require(${onboardPath});
         assert.deepEqual(payload.slackBinaryPaths, [
           "/usr/local/bin/hermes",
           "/usr/bin/python3*",
+          "/usr/bin/python3.13",
+          "/opt/hermes/.venv/bin/python3",
           "/opt/hermes/.venv/bin/python",
         ]);
         assert.ok(

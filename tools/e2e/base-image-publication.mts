@@ -30,6 +30,10 @@ const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   [".github/actions/ci-reviewed-npm-audit/**", /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u],
   [
+    ".github/actions/publish-managed-image-digest/**",
+    /^[.]github\/actions\/publish-managed-image-digest\/.+$/u,
+  ],
+  [
     ".github/actions/build-base-image-platform/**",
     /^[.]github\/actions\/build-base-image-platform\/.+$/u,
   ],
@@ -38,6 +42,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     /^[.]github\/actions\/publish-base-image-manifest\/.+$/u,
   ],
   ["agents/**", /^agents\/.+$/u],
+  ["ci/pi-agent-qualification-v1-*.json", /^ci\/pi-agent-qualification-v1-[^/]*[.]json$/u],
   ["nemoclaw/**", /^nemoclaw\/.+$/u],
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
   ["scripts/**", /^scripts\/.+$/u],
@@ -45,6 +50,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     "test/e2e/live/managed-image-activation-e2e*.ts",
     /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
   ],
+  ["test/e2e/live/mcp-bridge*.ts", /^test\/e2e\/live\/mcp-bridge[^/]*[.]ts$/u],
   [
     "src/lib/actions/sandbox/mcp-bridge-*.ts",
     /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,
@@ -54,6 +60,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
   ],
   ["src/lib/messaging/**", /^src\/lib\/messaging\/.+$/u],
+  ["src/lib/onboard/**", /^src\/lib\/onboard\/.+$/u],
   [
     "src/lib/onboard/managed-bootstrap/envelope.ts",
     /^src\/lib\/onboard\/managed-bootstrap\/envelope[.]ts$/u,
@@ -135,6 +142,7 @@ export function writePublicationRunOutputs(path: string, run: PublicationRun): v
 }
 
 export interface GithubRequestOptions {
+  authenticated?: boolean;
   additionalRepository?: string;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -804,6 +812,7 @@ export async function githubRequest(
   const now = options.now ?? Date.now;
   const attempts = options.attempts ?? REQUEST_ATTEMPTS;
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const authenticated = options.authenticated ?? true;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > REQUEST_ATTEMPTS) {
     throw new Error(`request attempts must be between 1 and ${REQUEST_ATTEMPTS}`);
   }
@@ -817,7 +826,7 @@ export async function githubRequest(
       response = await fetchImpl(`${API_ROOT}${path}`, {
         headers: {
           Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
+          ...(authenticated ? { Authorization: `Bearer ${token}` } : {}),
           "User-Agent": "NemoClaw-base-image-publication-gate",
           "X-GitHub-Api-Version": "2022-11-28",
         },
