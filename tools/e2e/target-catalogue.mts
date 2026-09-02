@@ -332,7 +332,6 @@ function gatewayUpgradeTarget(
     exposeCliBin: true,
     shard: options.shard,
     owningPaths: [
-      ".github/workflows/pr-self-hosted.yaml",
       "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
       "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
     ],
@@ -1296,10 +1295,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   ...GATEWAY_UPGRADE_TARGETS,
   target("shields-retirement-upgrade", {
     displayName:
-      "Upgrade: retires released Shields posture through a verified rebuild",
+      "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
-      "x86-64 Ubuntu; immutable v0.0.118 release artifacts; local compatible endpoint",
+      "x86-64 Ubuntu; pinned v0.0.115 install and candidate managed image; local compatible endpoint",
     profile: "github-read",
     timeoutMinutes: 120,
     installMode: "none",
@@ -1307,24 +1306,23 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-      "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
       "src/lib/cli/nemoclaw-oclif-command.ts",
       "src/lib/state/migrations/removed-immutability.ts",
       "src/lib/actions/sandbox/rebuild-flow-lifecycle.ts",
       "src/lib/actions/sandbox/rebuild-pipeline.ts",
+      "src/lib/onboard/workload/rebuild.ts",
       "scripts/install.sh",
       "install.sh",
     ],
     environment: {
       ...nonInteractive,
-      NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.118",
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.115",
       NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT:
-        "ec5f13073736597a18ce33f9ef6e322fa9180673",
-      NEMOCLAW_OLD_NEMOCLAW_COMMIT: "c3f309f2f344a4b25e58d204e0b423e54a4cb379",
+        "7503e700808655df1303ddc51888bb596c9afa34",
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: "324a886fd05b01f6756bae0371ea503c651fbd11",
       NEMOCLAW_OLD_INSTALLER_SHA256:
         "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251",
-      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:
-        "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:0c2b7ec8fbf9c04fb73feeca1fe52a9620fee7e1f46d90d04c8aba48145aae68",
       NEMOCLAW_OLD_OPENSHELL_VERSION: "0.0.106",
       NEMOCLAW_OLD_OPENCLAW_VERSION: "2026.7.1",
       NEMOCLAW_SANDBOX_NAME: "e2e-retire-lock",

@@ -13,13 +13,11 @@ describe("Shields retirement upgrade workflow plan", () => {
       profile: "github-read",
       testFile: "test/e2e/live/shields-retirement-upgrade.test.ts",
       environment: {
-        NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.118",
-        NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT: "ec5f13073736597a18ce33f9ef6e322fa9180673",
-        NEMOCLAW_OLD_NEMOCLAW_COMMIT: "c3f309f2f344a4b25e58d204e0b423e54a4cb379",
+        NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.115",
+        NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT: "7503e700808655df1303ddc51888bb596c9afa34",
+        NEMOCLAW_OLD_NEMOCLAW_COMMIT: "324a886fd05b01f6756bae0371ea503c651fbd11",
         NEMOCLAW_OLD_INSTALLER_SHA256:
           "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251",
-        NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:
-          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:0c2b7ec8fbf9c04fb73feeca1fe52a9620fee7e1f46d90d04c8aba48145aae68",
       },
     });
 

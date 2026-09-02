@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * One direct black-box retirement path: install the latest published
- * Shields-capable release, create and lock a real sandbox, switch the host to
- * the exact candidate CLI artifact, then use the documented snapshot/rebuild
- * path. The legacy state file is produced only by the released CLI.
+ * One direct black-box retirement path: install a released Shields-capable
+ * NemoClaw, create and lock a real sandbox, switch the host to
+ * the exact candidate CLI artifact, then run the production sandbox upgrade.
+ * The legacy state file is produced only by the released CLI.
  */
 
 import { createHash } from "node:crypto";
@@ -13,10 +13,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  packReviewedNpmArchive,
-  removeReviewedNpmArchive,
-} from "../../../scripts/lib/reviewed-npm-archive.mts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -24,9 +20,11 @@ import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { assertNoDockerfileBuild, createDockerBuildGuard } from "../fixtures/docker-build-guard.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -37,42 +35,25 @@ import {
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
-  validateLegacyGatewayUpgradeFixture,
 } from "./openshell-gateway-upgrade-helpers.ts";
-import {
-  patchOldInstallerFixture,
-  reviewedOldOpenClawArchive,
-} from "./openshell-gateway-upgrade-old-installer.ts";
 
-const RELEASE_TAG = process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? "v0.0.118";
+const RELEASE_TAG = process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? "v0.0.115";
 const RELEASE_TAG_OBJECT =
-  process.env.NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT ?? "ec5f13073736597a18ce33f9ef6e322fa9180673";
+  process.env.NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT ?? "7503e700808655df1303ddc51888bb596c9afa34";
 const RELEASE_COMMIT =
-  process.env.NEMOCLAW_OLD_NEMOCLAW_COMMIT ?? "c3f309f2f344a4b25e58d204e0b423e54a4cb379";
+  process.env.NEMOCLAW_OLD_NEMOCLAW_COMMIT ?? "324a886fd05b01f6756bae0371ea503c651fbd11";
 const RELEASE_INSTALLER_SHA256 =
   process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
   "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251";
 const RELEASE_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.106";
 const RELEASE_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.7.1";
-const RELEASE_SANDBOX_BASE_IMAGE =
-  process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
-  "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:0c2b7ec8fbf9c04fb73feeca1fe52a9620fee7e1f46d90d04c8aba48145aae68";
-const RELEASE_FIXTURE_IDENTITY = Object.freeze({
-  nemoclawCommit: RELEASE_COMMIT,
-  nemoclawRef: RELEASE_TAG,
-  openclawVersion: RELEASE_OPENCLAW_VERSION,
-});
-const { sandboxBaseDigest: RELEASE_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
-  ...RELEASE_FIXTURE_IDENTITY,
-  installerSha256: RELEASE_INSTALLER_SHA256,
-  sandboxBaseImageRef: RELEASE_SANDBOX_BASE_IMAGE,
-});
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-retire-lock";
 const MARKER_PATH = "/sandbox/.openclaw/workspace/shields-retirement-upgrade-marker.txt";
 const MARKER_CONTENT = `shields-retirement-upgrade-${Date.now()}`;
 const NEMOCLAW_STATE_DIR = path.join(os.homedir(), ".nemoclaw", "state");
 const LEGACY_STATE_RECORD = path.join(NEMOCLAW_STATE_DIR, `shields-${SANDBOX_NAME}.json`);
+const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_STATE_DIR = path.join(
   os.homedir(),
   ".local",
@@ -132,93 +113,6 @@ async function bash(
   });
 }
 
-function writeExecutable(target: string, contents: string): void {
-  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(target, contents, { encoding: "utf8", mode: 0o755 });
-  fs.chmodSync(target, 0o755);
-}
-
-function createReleasedDockerWrapper(artifacts: ArtifactSink): {
-  logFile: string;
-  wrapperDir: string;
-} {
-  const wrapperDir = artifacts.pathFor("released-docker-wrapper");
-  const logFile = artifacts.pathFor("released-docker-wrapper.log");
-  const realDocker = process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker";
-  fs.rmSync(logFile, { force: true });
-  writeExecutable(
-    path.join(wrapperDir, "docker"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-real_docker=${shellQuote(realDocker)}
-base_ref=${shellQuote(RELEASE_SANDBOX_BASE_IMAGE)}
-old_openclaw=${shellQuote(RELEASE_OPENCLAW_VERSION)}
-log_file=${shellQuote(logFile)}
-base_tag="ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
-if [ "\${1:-}" = "pull" ]; then
-  for arg in "$@"; do
-    if [ "$arg" = "$base_tag" ]; then
-      printf 'rewrite pull %s -> %s\n' "$base_tag" "$base_ref" >>"$log_file"
-      "$real_docker" pull "$base_ref"
-      "$real_docker" tag "$base_ref" "$base_tag"
-      exit 0
-    fi
-  done
-fi
-if [ "\${1:-}" != "build" ]; then exec "$real_docker" "$@"; fi
-args=()
-rewrote_openclaw=0
-rewrote_base=0
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --build-arg)
-      if [ "$#" -ge 2 ] && [ "\${2#OPENCLAW_VERSION=}" != "$2" ]; then
-        args+=("--build-arg" "OPENCLAW_VERSION=\${old_openclaw}")
-        rewrote_openclaw=1
-        printf 'rewrite build-arg %s -> OPENCLAW_VERSION=%s\n' "$2" "$old_openclaw" >>"$log_file"
-        shift 2
-        continue
-      fi
-      if [ "$#" -ge 2 ] && [ "\${2#BASE_IMAGE=}" != "$2" ]; then
-        args+=("--build-arg" "BASE_IMAGE=\${base_ref}")
-        rewrote_base=1
-        printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$2" "$base_ref" >>"$log_file"
-        shift 2
-        continue
-      fi
-      ;;
-    --build-arg=OPENCLAW_VERSION=*)
-      args+=("--build-arg=OPENCLAW_VERSION=\${old_openclaw}")
-      rewrote_openclaw=1
-      printf 'rewrite build-arg %s -> OPENCLAW_VERSION=%s\n' "$1" "$old_openclaw" >>"$log_file"
-      shift
-      continue
-      ;;
-    --build-arg=BASE_IMAGE=*)
-      args+=("--build-arg=BASE_IMAGE=\${base_ref}")
-      rewrote_base=1
-      printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$1" "$base_ref" >>"$log_file"
-      shift
-      continue
-      ;;
-  esac
-  args+=("$1")
-  shift
-done
-if [ "$rewrote_openclaw" = "0" ]; then
-  args+=("--build-arg" "OPENCLAW_VERSION=\${old_openclaw}")
-  printf 'add build-arg OPENCLAW_VERSION=%s\n' "$old_openclaw" >>"$log_file"
-fi
-if [ "$rewrote_base" = "0" ]; then
-  args+=("--build-arg" "BASE_IMAGE=\${base_ref}")
-  printf 'add build-arg BASE_IMAGE=%s\n' "$base_ref" >>"$log_file"
-fi
-exec "$real_docker" "\${args[@]}"
-`,
-  );
-  return { logFile, wrapperDir };
-}
-
 async function runReleasedInstaller(
   host: HostCliClient,
   installerArgs: readonly string[],
@@ -257,7 +151,6 @@ async function installReleasedNemoclaw(
 ): Promise<void> {
   const installer = artifacts.pathFor("released-install.sh");
   const installLog = artifacts.pathFor("released-install.log");
-  const { logFile: dockerWrapperLog, wrapperDir } = createReleasedDockerWrapper(artifacts);
   const download = await bash(
     host,
     `curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/${shellQuote(RELEASE_COMMIT)}/install.sh -o ${shellQuote(installer)}`,
@@ -268,45 +161,35 @@ async function installReleasedNemoclaw(
     RELEASE_INSTALLER_SHA256,
   );
   fs.chmodSync(installer, 0o755);
-  patchOldInstallerFixture(installer, RELEASE_FIXTURE_IDENTITY);
-
-  const reviewedOpenClaw = packReviewedNpmArchive(
-    reviewedOldOpenClawArchive(RELEASE_OPENCLAW_VERSION),
+  await runReleasedInstaller(
+    host,
+    oldGatewayUpgradeInstallerArgs(installer),
+    installLog,
+    commandEnv({
+      COMPATIBLE_API_KEY: "dummy",
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: "",
+      E2E_MANAGED_IMAGE_REVISION: "",
+      E2E_WORKLOAD_SOURCE: "",
+      GITHUB_ACTIONS: "",
+      GITHUB_WORKSPACE: "",
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
+      NEMOCLAW_COMPAT_MODEL: "test-model",
+      NEMOCLAW_E2E_EXPECTED_SHA: "",
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "",
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
+      NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
+      NEMOCLAW_IGNORE_RUNTIME_RESOURCES: "1",
+      NEMOCLAW_INSTALL_REF: "",
+      NEMOCLAW_INSTALL_TAG: RELEASE_TAG,
+      NEMOCLAW_POLICY_MODE: "skip",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_RUN_LIVE_E2E: "",
+      NEMOCLAW_SANDBOX_GPU: "0",
+    }),
   );
-  try {
-    await runReleasedInstaller(
-      host,
-      oldGatewayUpgradeInstallerArgs(installer),
-      installLog,
-      commandEnv({
-        COMPATIBLE_API_KEY: "dummy",
-        E2E_MANAGED_IMAGE_COHORT_RECEIPT: "",
-        E2E_MANAGED_IMAGE_REVISION: "",
-        E2E_WORKLOAD_SOURCE: "",
-        NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
-        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "",
-        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
-        NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
-        NEMOCLAW_INSTALL_REF: RELEASE_COMMIT,
-        NEMOCLAW_INSTALL_TAG: RELEASE_COMMIT,
-        NEMOCLAW_OLD_OPENCLAW_ARCHIVE: reviewedOpenClaw.archivePath,
-        NEMOCLAW_OLD_OPENCLAW_VERSION: RELEASE_OPENCLAW_VERSION,
-        NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: RELEASE_SANDBOX_BASE_IMAGE,
-        NEMOCLAW_POLICY_MODE: "skip",
-        NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
-        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: RELEASE_SANDBOX_BASE_IMAGE,
-        PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-      }),
-    );
-  } finally {
-    removeReviewedNpmArchive(reviewedOpenClaw);
-  }
 
-  const dockerEvidence = fs.readFileSync(dockerWrapperLog, "utf8");
-  expect(dockerEvidence).toContain(
-    `BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${RELEASE_SANDBOX_BASE_DIGEST}`,
-  );
-  expect(dockerEvidence).toContain(`OPENCLAW_VERSION=${RELEASE_OPENCLAW_VERSION}`);
   const sourceHead = await bash(host, 'git -C "$HOME/.nemoclaw/source" rev-parse --verify HEAD', {
     artifactName: "released-source-head",
     timeoutMs: 30_000,
@@ -352,6 +235,69 @@ async function candidateNemoclaw(
   });
 }
 
+type ManagedRegistryEntry = {
+  fromDockerfile?: unknown;
+  imageTag?: unknown;
+  workload?: {
+    kind?: unknown;
+    reference?: unknown;
+    release?: unknown;
+    shared?: unknown;
+    sourceCohort?: unknown;
+    sourceRevision?: unknown;
+  };
+};
+
+function registryEntry(): ManagedRegistryEntry {
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, ManagedRegistryEntry>;
+  };
+  const entry = registry.sandboxes?.[SANDBOX_NAME];
+  expect(entry, `managed sandbox '${SANDBOX_NAME}' must be registered`).toEqual(expect.any(Object));
+  return entry!;
+}
+
+function expectCandidateManagedSandbox(): void {
+  const rawCatalog = process.env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim() ?? "";
+  expect(rawCatalog).not.toBe("");
+  const catalog = JSON.parse(rawCatalog) as {
+    openclaw?: {
+      reference?: unknown;
+      source?: { cohort?: unknown; release?: unknown; revision?: unknown };
+    };
+  };
+  const contract = catalog.openclaw;
+  expect(contract).toEqual(expect.any(Object));
+  expect(contract?.source?.revision).toBe(EXPECTED_CANDIDATE_SHA);
+  expect(contract?.reference).toMatch(
+    /^ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}$/u,
+  );
+
+  expect(
+    assertStockManagedImageReceipt({
+      environment: commandEnv(),
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    }),
+  ).toMatchObject({
+    agent: "openclaw",
+    reference: contract?.reference,
+    sourceCohort: contract?.source?.cohort,
+    sourceRevision: EXPECTED_CANDIDATE_SHA,
+  });
+  const entry = registryEntry();
+  expect(entry.fromDockerfile).toBeNull();
+  expect(entry.imageTag).toBe(contract?.reference);
+  expect(entry.workload).toMatchObject({
+    kind: "managed-image",
+    reference: contract?.reference,
+    release: contract?.source?.release,
+    shared: true,
+    sourceCohort: contract?.source?.cohort,
+    sourceRevision: EXPECTED_CANDIDATE_SHA,
+  });
+}
+
 function expectLegacyStateRecord(): void {
   expect(fs.existsSync(LEGACY_STATE_RECORD), `${LEGACY_STATE_RECORD} must exist`).toBe(true);
   const stat = fs.lstatSync(LEGACY_STATE_RECORD);
@@ -385,7 +331,7 @@ test.skipIf(process.platform !== "linux")(
         "write durable user data and prove Shields are up",
         "switch the host to the exact candidate CLI artifact",
         "detect legacy posture and fail closed before mutation",
-        "snapshot and rebuild through the supported migration path",
+        "snapshot and run the production managed sandbox upgrade",
         "verify user data runtime usability and legacy-state retirement",
         "prove the candidate exposes no Shields affordance",
       ],
@@ -401,7 +347,6 @@ test.skipIf(process.platform !== "linux")(
         installerSha256: RELEASE_INSTALLER_SHA256,
         openShellVersion: RELEASE_OPENSHELL_VERSION,
         openClawVersion: RELEASE_OPENCLAW_VERSION,
-        sandboxBaseImage: RELEASE_SANDBOX_BASE_IMAGE,
       },
       candidate: {
         cli: CANDIDATE_CLI,
@@ -516,6 +461,17 @@ test.skipIf(process.platform !== "linux")(
     expectLegacyStateRecord();
 
     progress.phase("switch the host to the exact candidate CLI artifact");
+    expect(process.env.E2E_WORKLOAD_SOURCE).toBe("managed-image");
+    expect(process.env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim()).not.toBe("");
+    const dockerBuildGuard = createDockerBuildGuard();
+    fs.writeFileSync(dockerBuildGuard.tracePath, "", { flag: "wx", mode: 0o600 });
+    const originalPath = process.env.PATH ?? "";
+    expect(originalPath).not.toBe("");
+    process.env.PATH = dockerBuildGuard.env.PATH;
+    cleanup.add("restore PATH and dispose the candidate Dockerfile build guard", () => {
+      process.env.PATH = originalPath;
+      dockerBuildGuard.dispose();
+    });
     expect(fs.existsSync(CANDIDATE_CLI), `${CANDIDATE_CLI} must exist`).toBe(true);
     const candidateIdentity = JSON.parse(
       fs.readFileSync(path.join(REPO_ROOT, "dist", "build-identity.json"), "utf8"),
@@ -568,7 +524,7 @@ test.skipIf(process.platform !== "linux")(
     );
     expectLegacyStateRecord();
 
-    progress.phase("snapshot and rebuild through the supported migration path");
+    progress.phase("snapshot and run the production managed sandbox upgrade");
     const snapshot = await candidateNemoclaw(
       host,
       [SANDBOX_NAME, "snapshot", "create", "--name", "before-shields-retirement"],
@@ -577,15 +533,15 @@ test.skipIf(process.platform !== "linux")(
     );
     expectExitZero(snapshot, "create trusted snapshot before Shields retirement rebuild");
     expectLegacyStateRecord();
-    const rebuild = await candidateNemoclaw(
+    const upgrade = await candidateNemoclaw(
       host,
-      [SANDBOX_NAME, "rebuild", "--yes", "--verbose"],
-      "candidate-rebuild-retired-shields",
+      ["upgrade-sandboxes", "--auto"],
+      "candidate-upgrade-retired-shields",
       50 * 60_000,
     );
-    expectExitZero(rebuild, "candidate rebuild of retired Shields sandbox");
-    expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
-    expect(resultText(rebuild)).not.toContain("post-restore steps were incomplete");
+    expectExitZero(upgrade, "candidate managed upgrade of retired Shields sandbox");
+    expect(resultText(upgrade)).toContain("1 sandbox(es) rebuilt.");
+    expect(resultText(upgrade)).not.toContain("sandbox(es) failed");
 
     progress.phase("verify user data runtime usability and legacy-state retirement");
     const markerRead = await candidateNemoclaw(
@@ -617,6 +573,7 @@ test.skipIf(process.platform !== "linux")(
     expectExitZero(status, "candidate sandbox status after retirement rebuild");
     expect(resultText(status)).not.toMatch(/\bShields\b/iu);
     expect(fs.existsSync(LEGACY_STATE_RECORD)).toBe(false);
+    expectCandidateManagedSandbox();
 
     progress.phase("prove the candidate exposes no Shields affordance");
     const topHelp = await candidateNemoclaw(host, ["--help"], "candidate-top-help");
@@ -654,5 +611,8 @@ test.skipIf(process.platform !== "linux")(
       "candidate-removed-shields-status",
     );
     expectRemovedShieldsCommand(removedStatus, "status");
+    const dockerTrace = fs.readFileSync(dockerBuildGuard.tracePath, "utf8");
+    await artifacts.writeText("docker-build-guard.log", dockerTrace);
+    assertNoDockerfileBuild(dockerTrace);
   },
 );
