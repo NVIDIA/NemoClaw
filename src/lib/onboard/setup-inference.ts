@@ -32,6 +32,7 @@ import {
   startOllamaAuthProxy,
   type OllamaUnloadResult,
   withOllamaModelOwnershipLock,
+  withOllamaModelOwnershipTransaction,
 } from "../inference/ollama/proxy";
 import {
   assertNoOpenShellGatewayEndpointOverride,
@@ -226,6 +227,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   listSandboxes?: typeof import("../state/registry").listSandboxes;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
   withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
+  withOllamaModelOwnershipTransaction?: typeof withOllamaModelOwnershipTransaction;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
   getManagedVllmProviderBinding?: () => {
@@ -1018,44 +1020,50 @@ export function createSetupInference(
               return outcome.result;
             }
           } else if (provider === "ollama-local") {
-            const outcome = await inferenceProviders.setupOllamaLocalInference(
-              {
-                model,
-                provider,
-                allowToolsIncompatible: options.allowToolsIncompatible === true,
-                ...(hostLocalRoute ? {} : { preparedProxyToken: options.preparedOllamaProxyToken }),
-              },
-              {
-                ...commonDeps,
-                validateLocalProvider: hostLocalRoute
-                  ? () => ({ ok: true as const })
-                  : deps.validateLocalProvider,
-                getLocalProviderBaseUrl: hostLocalRoute
-                  ? () => hostLocalRoute.gatewayProviderBaseUrl
-                  : deps.getLocalProviderBaseUrl,
-                applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
-                  hostLocalRoute
-                    ? {
-                        ...deps,
-                        exitProcess: commonDeps.exitProcess,
-                        error: commonDeps.error,
-                      }
-                    : deps,
-                  runGatewayOpenshell,
-                  revalidateSandboxIdentity,
-                ),
-                run: deps.run,
-                shouldFrontOllamaWithProxy: hostLocalRoute
-                  ? () => false
-                  : deps.shouldFrontOllamaWithProxy,
-                ensureOllamaAuthProxy: deps.ensureOllamaAuthProxy,
-                isProxyHealthy: deps.isProxyHealthy,
-                getOllamaProxyToken: deps.getOllamaProxyToken,
-                persistAndProbeOllamaProxy: deps.persistAndProbeOllamaProxy,
-                localInference: deps.localInference,
-                providerOwnedInferenceProof: hostLocalRoute?.receipt.inference,
-                OLLAMA_PROXY_CREDENTIAL_ENV: deps.ollamaProxyCredentialEnv,
-              },
+            const withOwnershipTransaction =
+              deps.withOllamaModelOwnershipTransaction ?? withOllamaModelOwnershipTransaction;
+            const outcome = await withOwnershipTransaction(() =>
+              inferenceProviders.setupOllamaLocalInference(
+                {
+                  model,
+                  provider,
+                  allowToolsIncompatible: options.allowToolsIncompatible === true,
+                  ...(hostLocalRoute
+                    ? {}
+                    : { preparedProxyToken: options.preparedOllamaProxyToken }),
+                },
+                {
+                  ...commonDeps,
+                  validateLocalProvider: hostLocalRoute
+                    ? () => ({ ok: true as const })
+                    : deps.validateLocalProvider,
+                  getLocalProviderBaseUrl: hostLocalRoute
+                    ? () => hostLocalRoute.gatewayProviderBaseUrl
+                    : deps.getLocalProviderBaseUrl,
+                  applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
+                    hostLocalRoute
+                      ? {
+                          ...deps,
+                          exitProcess: commonDeps.exitProcess,
+                          error: commonDeps.error,
+                        }
+                      : deps,
+                    runGatewayOpenshell,
+                    revalidateSandboxIdentity,
+                  ),
+                  run: deps.run,
+                  shouldFrontOllamaWithProxy: hostLocalRoute
+                    ? () => false
+                    : deps.shouldFrontOllamaWithProxy,
+                  ensureOllamaAuthProxy: deps.ensureOllamaAuthProxy,
+                  isProxyHealthy: deps.isProxyHealthy,
+                  getOllamaProxyToken: deps.getOllamaProxyToken,
+                  persistAndProbeOllamaProxy: deps.persistAndProbeOllamaProxy,
+                  localInference: deps.localInference,
+                  providerOwnedInferenceProof: hostLocalRoute?.receipt.inference,
+                  OLLAMA_PROXY_CREDENTIAL_ENV: deps.ollamaProxyCredentialEnv,
+                },
+              ),
             );
             if (outcome.done) {
               if (hostLocalRoute && hostLocalGatewayMutation && hostLocalSelection) {

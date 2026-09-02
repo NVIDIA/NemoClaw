@@ -134,6 +134,11 @@ function withOllamaModelOwnershipLock<T>(operation: () => T): T {
   return withMcpLifecycleLockSync(OLLAMA_MODEL_OWNERSHIP_LOCK, operation);
 }
 
+/** Serialize async host-route publication with final ownership retirement. */
+function withOllamaModelOwnershipTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withMcpLifecycleLock(OLLAMA_MODEL_OWNERSHIP_LOCK, operation);
+}
+
 function withOllamaProxyLifecycleTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
   // Async setup steps can call the synchronous helpers below while retaining
   // this lock through the shared re-entrant lifecycle-lock context.
@@ -1731,5 +1736,6 @@ export {
   startOllamaAuthProxy,
   unloadOllamaModels,
   withOllamaModelOwnershipLock,
+  withOllamaModelOwnershipTransaction,
   withOllamaProxyLifecycleTransaction,
 };

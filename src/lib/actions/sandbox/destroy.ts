@@ -22,7 +22,10 @@ import {
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
 import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
-import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
+import {
+  type OllamaUnloadResult,
+  withOllamaModelOwnershipTransaction,
+} from "../../inference/ollama/proxy";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -1072,13 +1075,15 @@ async function destroySandboxUnlocked(
     }
     if (sandbox?.provider?.includes("ollama")) {
       try {
-        const remainingSandboxes = registry.listSandboxes().sandboxes;
-        const { clearPersistedOllamaHostIfUnused } = require("../../inference/local") as {
-          clearPersistedOllamaHostIfUnused(
-            providers: readonly (string | null | undefined)[],
-          ): boolean;
-        };
-        clearPersistedOllamaHostIfUnused(remainingSandboxes.map(({ provider }) => provider));
+        await withOllamaModelOwnershipTransaction(() => {
+          const remainingSandboxes = registry.listSandboxes().sandboxes;
+          const { clearPersistedOllamaHostIfUnused } = require("../../inference/local") as {
+            clearPersistedOllamaHostIfUnused(
+              providers: readonly (string | null | undefined)[],
+            ): boolean;
+          };
+          clearPersistedOllamaHostIfUnused(remainingSandboxes.map(({ provider }) => provider));
+        });
       } catch (error) {
         console.warn(
           `  ${YW}⚠${R} Failed to retire the final local Ollama route receipt: ${redactDestroyError(error)}`,

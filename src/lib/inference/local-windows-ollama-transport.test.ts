@@ -27,6 +27,7 @@ import {
   validateLocalProvider,
   validateOllamaModel,
 } from "./local";
+import { withOllamaModelOwnershipTransaction } from "./ollama/proxy";
 
 function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
   return vi.fn((command: readonly string[]) => {
@@ -114,6 +115,46 @@ describe("Windows-host Ollama transport", () => {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
 
       expect(clearPersistedOllamaHostIfUnused(["ollama-local"], stateRoot)).toBe(false);
+      expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes route publication with final ownership retirement", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-transition-"));
+    const providers: string[] = [];
+    let staged!: () => void;
+    let resume!: () => void;
+    const stagedRoute = new Promise<void>((resolve) => {
+      staged = resolve;
+    });
+    const resumeOnboarding = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+
+    try {
+      const onboarding = withOllamaModelOwnershipTransaction(async () => {
+        persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+        staged();
+        await resumeOnboarding;
+        providers.push("ollama-local");
+      });
+      await stagedRoute;
+
+      let retirementEntered = false;
+      const retirement = withOllamaModelOwnershipTransaction(() => {
+        retirementEntered = true;
+        clearPersistedOllamaHostIfUnused(providers, stateRoot);
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(retirementEntered).toBe(false);
+
+      resume();
+      await onboarding;
+      await retirement;
+
+      expect(retirementEntered).toBe(true);
       expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
