@@ -3,32 +3,26 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Delivery flow
+# Delivery and workflow causality
 
 ## Purpose
 
-Determine whether the change moves evidence from commit to maintainer decision without avoidable delay or rework.
+Determine how this pull request changes the path from a repository event or source change to trustworthy evidence and a maintainer decision.
 
 ## Review method
 
-Follow changed CI, build, test, artifact, publication, and release work as a value stream. Identify each queue, dependency, batch, handoff, repeated operation, cancellation boundary, and feedback point.
+Establish the parent-state workflow from parent versions of changed files and connected reusable workflows, actions, scripts, selectors, artifacts, and tests. Reconstruct the proposed state and compare the execution graphs.
+
+Trace each material change from trigger and changed-file classification through conditions, dependencies, fan-out, concurrency, cancellation, work, artifact transport, evidence retention, publication, and the consuming decision. Resolve what each expression, output, artifact, immutable action revision, or status actually controls. Classify behavior as introduced, worsened, removed, exposed, or unchanged.
 
 ## Own
 
-- CI and workflow dependencies, fan-out, concurrency, and cancellation.
-- Duplicate builds, tests, downloads, and artifact production.
-- Artifact handoffs, cache use, and publication flow.
-- Failure localization, retained diagnostics, and feedback latency.
-- Superseded work, unnecessary batching, waiting, transport, and work in progress.
-
-## Do not own
-
-Do not report deployment recovery, product runtime performance, security boundaries, generic workflow style, or hypothetical scale concerns. Do not report external CI status.
-
-## Review principles
-
-Map the value stream. Remove waiting, batching, transport, repeated work, and excess work in progress. Prefer early deterministic feedback and direct evidence flow.
+- Trigger, path-selection, matrix, conditional, dependency, fan-out, concurrency, cancellation, and supersession behavior.
+- Relationships between production changes, selected verification, generated plans, and required evidence.
+- Duplicate or displaced builds, tests, installation, downloads, packaging, uploads, and reconstruction.
+- Artifact identity, provenance handoffs, availability, retention, and consumption.
+- Failure localization, diagnostic preservation, feedback ordering, queues, waiting, and handoffs.
 
 ## Report a finding when
 
-Checked-in workflow or tooling causes a present avoidable delay, repeated operation, unnecessary handoff, broad fan-out, stale work, or late failure signal. Name the affected evidence path, current waste, measurable or structurally certain effect, and smallest flow-preserving change.
+A changed workflow, selector, action, script, configuration, or delivery contract causally introduces or worsens delay, repeated or stale work, an unnecessary handoff, incorrect dependency, missing or late evidence, loss of diagnostics, overly broad fan-out, or an artifact path that no longer reaches its decision. Cite the changed control point, parent behavior, proposed behavior, downstream effect, and flow-preserving correction.

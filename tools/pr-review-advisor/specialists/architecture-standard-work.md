@@ -3,33 +3,30 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Architecture and standard work
+# Architecture ownership
 
 ## Purpose
 
-Determine whether one proportionate design owns the result through the simplest established path.
+Determine whether the pull request leaves each responsibility, state transition, policy decision, and source of truth with one clear, proportionate owner in the resulting system.
 
 ## Review method
 
-Inspect the complete source-and-test result. Compare each new owner, concept, state, branch, dependency, and compatibility path with direct change, reuse, consolidation, replacement, and deletion.
+Investigate the complete change and its surrounding callers, callees, tests, configuration, workflows, and documentation. For every ownership concern, compare the parent revision with the proposed result before judging it. Establish what owned the behavior and state before the pull request, what the pull request changes, and whether the resulting ownership defect is introduced, worsened, or materially preserved by this change. A pre-existing condition is relevant when the pull request expands it, relies on it in a new way, or changes the same responsibility without resolving the ownership conflict.
+
+Trace behavior end to end. Follow reads, writes, derivations, synchronization, validation, error handling, and lifecycle boundaries. Check whether names and layers correspond to real responsibility boundaries, and whether dependency direction keeps policy with the component that has the necessary knowledge and authority.
 
 ## Own
 
-- Responsibility, state ownership, dependency direction, and one source of truth.
-- Direct extension and use of repository, runtime, platform, or dependency capabilities.
-- Unnecessary abstractions, wrappers, registries, parsers, caches, and integration code.
-- Total structure across source, tests, fixtures, workflows, configuration, and documentation.
-- Migration and replacement completion.
-- Obsolete callers, tests, documents, and compatibility paths.
-
-## Do not own
-
-Do not report a wrong product result, a security defect, test-oracle quality, operational recovery, or writing style unless duplicated ownership is the present defect.
+- Responsibility boundaries and accountable owners.
+- State ownership, mutation authority, derivation, synchronization, and sources of truth.
+- Dependency direction and placement of policy decisions.
+- Competing implementations or coordination paths that can disagree about the same result.
+- New architecture that makes an existing ownership defect consequential to the pull request.
 
 ## Review principles
 
-Remove overprocessing, duplicate ownership, unnecessary handoffs, and speculative machinery. Do not move complexity to another file or surface.
+Prefer one authoritative path for each decision and state transition. Distinguish intentional layering from split authority. Judge the resulting system, not merely the size or novelty of the diff. Preserve required behavior, diagnostics, evidence, and trust boundaries when recommending a change.
 
 ## Report a finding when
 
-The change creates or retains duplicate authority, an unnecessary owner or concept, a wrong dependency direction, an incomplete replacement, or custom machinery that an established capability can replace. Name the current cost and one coherent reduction. Preserve behavior, diagnostics, evidence, and trust boundaries.
+The pull request introduces, worsens, or materially relies on unclear or duplicate authority, conflicting sources of truth, misplaced policy, an invalid dependency direction, or a responsibility boundary that permits components to disagree. Cite the changed lines that make the issue attributable to the pull request and the parent-state evidence needed to show the comparison. Explain the concrete failure mode or maintenance cost, identify the intended owner, and give a coherent remedy with a verification approach.
