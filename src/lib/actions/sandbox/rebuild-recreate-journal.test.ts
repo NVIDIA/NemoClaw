@@ -24,6 +24,7 @@ vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
   resolveGatewayRebuildAuthority: mocks.resolveGatewayRebuildAuthority,
 }));
 
+import { fingerprintSandboxRecreateValue } from "../../onboard/sandbox-recreate-transaction";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -265,6 +266,9 @@ describe("rebuild replacement journal", () => {
       session = mutator(session) ?? session;
       return session;
     });
+    vi.spyOn(onboardSession, "compareAndSwapSession").mockImplementation((matches, mutator) => {
+      return matches(session) ? ((session = mutator(session) ?? session), "updated") : "mismatch";
+    });
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
@@ -279,9 +283,9 @@ describe("rebuild replacement journal", () => {
     vi.restoreAllMocks();
   });
 
-  function open() {
+  function open(target = NON_DEFAULT_TARGET) {
     return openRebuildRecreateJournal({
-      target: NON_DEFAULT_TARGET,
+      target,
       expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       agentName: "langchain-deepagents-code",
       targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
@@ -370,10 +374,80 @@ describe("rebuild replacement journal", () => {
     expect(session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint).toBeNull();
   });
 
+  it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(SANDBOX_ID),
+    } as registry.SandboxEntry);
+    const stranded = open();
+    onboardSession.updateSession((current) => {
+      const checkpoint = current.checkpoint as NonNullable<Session["checkpoint"]>;
+      const transaction = checkpoint.sandboxRecreate as NonNullable<
+        typeof checkpoint.sandboxRecreate
+      >;
+      current.checkpoint = {
+        ...checkpoint,
+        sandboxRecreate: { ...transaction, phase: "deleted" },
+      };
+      return current;
+    });
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      phase: "deleted",
+    });
+
+    const restarted = open();
+
+    expect(restarted.id).not.toBe(stranded.id);
+    expect(restarted.acceptedTarget).toBe(false);
+    expect(restarted.sourceConfirmedAbsent).toBe(false);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: restarted.id,
+      phase: "planned",
+      revision: 0,
+    });
+  });
+
+  it("keeps a stranded journal when the matching source is on another gateway (#10473)", () => {
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    const stranded = open();
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      gatewayName: "nemoclaw-9090",
+      phase: "deleted",
+    });
+
+    // Same sandbox name and same live identity, but the row and the probe now
+    // describe a sandbox on a different gateway. The journal may still own an
+    // unregistered replacement on nemoclaw-9090, so it must survive.
+    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw-7070",
+      gatewayPort: 7070,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: fingerprintSandboxRecreateValue(SANDBOX_ID),
+    } as registry.SandboxEntry);
+
+    expect(() =>
+      open({ sandboxName: "alpha", gatewayName: "nemoclaw-7070", gatewayPort: 7070 }),
+    ).toThrow(/different recreate transaction in progress/);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      id: stranded.id,
+      gatewayName: "nemoclaw-9090",
+      phase: "deleted",
+    });
+  });
+
   it("records the delete boundary before and after the destructive command", () => {
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleting");
 
     mocks.captureOpenshell.mockReturnValue(absentProbe());
@@ -385,14 +459,14 @@ describe("rebuild replacement journal", () => {
     mocks.captureOpenshell.mockReturnValue(absentProbe());
     const journal = open();
 
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
   });
 
   it("stops before the next mutation when the source outlives its delete", () => {
     const journal = open();
-    journal.markDeleting();
+    journal.beginDelete();
 
     expect(() => journal.confirmDeleted()).toThrow(
       /OpenShell still reports the journaled source after delete/,
