@@ -1053,14 +1053,19 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
-  it("fails closed when gateway startup is not supervised (#10791)", () => {
+  it("fails closed when gateway startup is not supervised (#10791)", async () => {
     const env = advisorEnvironment();
     const tools = advisorTools();
-    vi.mocked(tools.start).mockReturnValue(undefined);
+    const stop = vi.fn(async () => undefined) as OpenShellStop;
+    vi.mocked(tools.start).mockReturnValue(stop);
+    const inference = startAdvisorOpenShellInference(env, tools);
 
-    expect(() => startAdvisorOpenShellInference(env, tools)).toThrow(
+    await expect(inference.configure).rejects.toThrow(
       "did not return a supervised process handle",
     );
+    expect(stop).toHaveBeenCalledOnce();
+    await inference.stop();
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", async () => {

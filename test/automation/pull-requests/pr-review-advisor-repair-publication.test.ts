@@ -342,6 +342,19 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     ).rejects.toThrow("changed during pagination");
   });
 
+  it("rejects duplicate repair-claim IDs within one page (#10791)", async () => {
+    const bundle = selection();
+    const request = vi.fn().mockResolvedValue({
+      total_count: 2,
+      check_runs: [{ id: 7 }, { id: 7 }],
+    });
+
+    await expect(
+      claimRepairAttempt(bundle, "token", "https://example.test/run", request),
+    ).rejects.toThrow("changed during pagination");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("aggregates every generated-head workflow run page (#10791)", async () => {
     const firstPage = Array.from({ length: 100 }, (_value, index) => ({ id: index + 1 }));
     const request = vi.fn(async (apiPath: string) =>
@@ -998,8 +1011,13 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     ).rejects.toThrow("did not confirm the atomic repair ref update");
   });
 
-  it("reconstructs and publishes the validated tree through deterministic GitHub calls (#10791)", async () => {
+  it("reconstructs and publishes the validated tree through hardened Git boundaries (#10791)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-advisor-publisher-test-"));
+    const originalPath = process.env.PATH;
+    const restorePath =
+      originalPath === undefined
+        ? () => Reflect.deleteProperty(process.env, "PATH")
+        : () => void (process.env.PATH = originalPath);
     try {
       const repository = path.join(root, "source");
       fs.mkdirSync(repository);
@@ -1070,6 +1088,16 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
         outcome: "validated",
         reason: null,
       };
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      const gitShimDirectory = path.join(root, "git-shim");
+      const gitEnvironmentLog = path.join(root, "git-environment.log");
+      write(
+        gitShimDirectory,
+        "git",
+        `#!/bin/sh\nprintf '%s|%s|%s\\n' "$GIT_LFS_SKIP_SMUDGE" "$GIT_OPTIONAL_LOCKS" "$GIT_TERMINAL_PROMPT" >> ${JSON.stringify(gitEnvironmentLog)}\nexec ${JSON.stringify(realGit)} "$@"\n`,
+      );
+      fs.chmodSync(path.join(gitShimDirectory, "git"), 0o755);
+      process.env.PATH = [gitShimDirectory, originalPath].filter(Boolean).join(path.delimiter);
       expect(() =>
         reconstructValidatedTree({
           sourceCheckout: repository,
@@ -1256,7 +1284,11 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
           ],
         }),
       });
+      const gitEnvironments = fs.readFileSync(gitEnvironmentLog, "utf8").trim().split("\n");
+      expect(gitEnvironments.length).toBeGreaterThan(0);
+      expect(new Set(gitEnvironments)).toEqual(new Set(["1|0|0"]));
     } finally {
+      restorePath();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

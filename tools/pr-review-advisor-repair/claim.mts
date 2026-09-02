@@ -71,15 +71,13 @@ async function listRepairClaims(
       throw new RepairContractError("repair attempt check listing changed during pagination");
     }
     const pageCheckRuns = listing.check_runs as CheckRun[];
-    const pageCheckRunIds = pageCheckRuns.map(({ id }) => id);
-    if (
-      pageCheckRunIds.some(
-        (id) => !Number.isSafeInteger(id) || Number(id) < 1 || seenCheckRunIds.has(Number(id)),
-      )
-    ) {
-      throw new RepairContractError("repair attempt check listing changed during pagination");
+    for (const { id } of pageCheckRuns) {
+      const checkRunId = Number(id);
+      if (!Number.isSafeInteger(id) || checkRunId < 1 || seenCheckRunIds.has(checkRunId)) {
+        throw new RepairContractError("repair attempt check listing changed during pagination");
+      }
+      seenCheckRunIds.add(checkRunId);
     }
-    pageCheckRunIds.forEach((id) => seenCheckRunIds.add(Number(id)));
     checkRuns.push(...pageCheckRuns);
     if (checkRuns.length === expectedTotal) return checkRuns;
     if (checkRuns.length > expectedTotal || listing.check_runs.length === 0) break;

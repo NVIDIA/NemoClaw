@@ -34,9 +34,13 @@ const publisherSource = fs.readFileSync(
   path.join(root, "tools", "pr-review-advisor-repair", "publish.mts"),
   "utf8",
 );
-const generatedHeadWorkflowFiles = GENERATED_HEAD_VALIDATIONS.map(
-  ({ workflow }) => workflow,
-).filter((workflow) => workflow !== "pr-review-advisor.yaml");
+const generatedHeadWorkflowFiles = [
+  "pr.yaml",
+  "commit-lint.yaml",
+  "dco-check.yaml",
+  "installer-hash-check.yaml",
+  "code-scanning.yaml",
+] as const;
 const generatedHeadWorkflowSources = Object.fromEntries(
   [...generatedHeadWorkflowFiles, "pr-review-advisor.yaml"].map((file) => [
     file,
@@ -68,6 +72,13 @@ describe("PR Review Advisor repair Phase 1 workflow boundary", () => {
   const collect = record(jobs.collect);
   const claim = record(jobs.claim);
   const repair = record(jobs.repair);
+
+  it("keeps every required generated-head workflow in the canonical inventory (#10791)", () => {
+    expect(GENERATED_HEAD_VALIDATIONS.map(({ workflow }) => workflow)).toEqual([
+      ...generatedHeadWorkflowFiles,
+      "pr-review-advisor.yaml",
+    ]);
+  });
   const validate = record(jobs.validate);
   const publish = record(jobs.publish);
   const verify = record(jobs["verify-generated-head"]);

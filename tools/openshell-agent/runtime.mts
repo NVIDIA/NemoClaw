@@ -356,24 +356,35 @@ function startOpenShellGateway(
     }),
     { mode: 0o600 },
   );
-  const stopGateway = tools.start("openshell-gateway", ["--config", configurationPath], {
+  const rawStopGateway = tools.start("openshell-gateway", ["--config", configurationPath], {
     env: commandEnv,
     logPath: path.join(gatewayDirectory, "gateway.log"),
   });
-  if (!stopGateway?.exit || !stopGateway.isRunning) {
-    throw new OpenShellAgentError(
-      "openshell-gateway start did not return a supervised process handle",
-    );
-  }
+  let stopPromise: Promise<void> | undefined;
+  const stopGateway = Object.assign(
+    async (): Promise<void> => {
+      if (!rawStopGateway) return;
+      stopPromise ??= Promise.resolve().then(rawStopGateway);
+      await stopPromise;
+    },
+    { exit: rawStopGateway?.exit, isRunning: rawStopGateway?.isRunning },
+  ) satisfies OpenShellStop;
   const gatewayExit = stopGateway.exit;
   const gatewayIsRunning = stopGateway.isRunning;
 
   let exited: OpenShellProcessExit | undefined;
-  void gatewayExit.then((value) => {
-    exited = value;
-  });
+  if (gatewayExit) {
+    void gatewayExit.then((value) => {
+      exited = value;
+    });
+  }
   const ready = (async (): Promise<void> => {
     try {
+      if (!gatewayExit || !gatewayIsRunning) {
+        throw new OpenShellAgentError(
+          "openshell-gateway start did not return a supervised process handle",
+        );
+      }
       let lastFailure: unknown;
       for (let attempt = 0; attempt < 30; attempt += 1) {
         if (exited) throw gatewayExitError(exited);
