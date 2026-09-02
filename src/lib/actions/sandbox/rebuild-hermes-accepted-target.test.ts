@@ -184,8 +184,7 @@ describe("Hermes accepted replacement recovery", () => {
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",
       completeAcceptedTarget,
-      markDeleting: vi.fn(),
-      observeSourceForDelete: vi.fn(),
+      beginDelete: vi.fn(),
       confirmDeleted: vi.fn(),
     });
   });
