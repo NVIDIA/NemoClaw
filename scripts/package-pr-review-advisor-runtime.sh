@@ -9,7 +9,7 @@ rm -rf -- "$out"
 mkdir -p -- "$out/stage/bin"
 cp -a -- "$ADVISOR_DIR/node_modules" "$out/stage/node_modules"
 for name in rg fdfind; do
-  source_path="$(command -v "$name")"
+  source_path="$(readlink -f "$(command -v "$name")")"
   test -f "$source_path" && test ! -L "$source_path"
   cp -- "$source_path" "$out/stage/bin/$name"
 done
