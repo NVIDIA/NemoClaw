@@ -347,6 +347,31 @@ async function expectRevisionScopedTelegramCredential(
   expect(result.stdout.trim(), resultText(result)).toBe("revision-scoped");
 }
 
+async function expectTelegramCredentialAbsent(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "node",
+      "-e",
+      [
+        'const present = Boolean(process.env.TELEGRAM_BOT_TOKEN)',
+        'console.log(present ? "present" : "missing")',
+        "process.exit(present ? 1 : 0)",
+      ].join("; "),
+    ],
+    {
+      artifactName,
+      env: sandboxAccessEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    },
+  );
+  assertExitZero(result, "removed Telegram runtime credential");
+  expect(result.stdout.trim(), resultText(result)).toBe("missing");
+}
+
 async function expectTelegramGatewayCredentialReady(
   sandbox: SandboxClient,
   artifactName: string,
@@ -675,6 +700,10 @@ test(
       pluginEnabled: false,
       pluginPresent: false,
     });
+    await expectTelegramCredentialAbsent(
+      sandbox,
+      "phase-6-telegram-runtime-credential-after-remove",
+    );
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
     const policyAfterChannelLifecycle = await sandbox.openshell(
