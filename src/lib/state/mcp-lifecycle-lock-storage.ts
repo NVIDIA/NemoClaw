@@ -16,6 +16,7 @@ import { resolveNemoclawStateDir } from "./paths";
 export { resolveNemoclawStateDir } from "./paths";
 
 export const MCP_LIFECYCLE_LOCK_DIRNAME = "mcp-lifecycle-locks";
+export const MAX_MCP_LIFECYCLE_LOCK_BYTES = 64 * 1024;
 
 export class LockObservationTooLargeError extends Error {
   readonly lockPath: string;
@@ -46,6 +47,7 @@ function ownerFileContent(owner: McpLifecycleLockOwner): string {
 
 export async function readMcpLifecycleLockObservation(
   lockPath: string,
+  maxBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
 ): Promise<LockObservation | null> {
   let handle: fs.promises.FileHandle;
   try {
@@ -84,6 +86,9 @@ export async function readMcpLifecycleLockObservation(
         reclaimable: !stat.isDirectory(),
       };
     }
+    if (stat.size > maxBytes) {
+      throw new LockObservationTooLargeError(lockPath, maxBytes);
+    }
     try {
       const parsed: unknown = JSON.parse(await handle.readFile("utf8"));
       return {
@@ -109,7 +114,7 @@ export async function readMcpLifecycleLockObservation(
 
 export function readMcpLifecycleLockObservationSync(
   lockPath: string,
-  maxBytes = Number.POSITIVE_INFINITY,
+  maxBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
 ): LockObservation | null {
   let fd: number;
   try {
@@ -239,6 +244,7 @@ export async function reclaimStaleMcpLifecycleLockGeneration(
   targetPath: string,
   expected: LockObservation,
   assertAfterClaim?: () => void,
+  maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
 ): Promise<boolean> {
   const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
   try {
@@ -251,7 +257,16 @@ export async function reclaimStaleMcpLifecycleLockGeneration(
     throw error;
   }
 
-  const claimed = await readMcpLifecycleLockObservation(quarantinePath);
+  let claimed: LockObservation | null;
+  try {
+    claimed = await readMcpLifecycleLockObservation(quarantinePath, maxObservationBytes);
+  } catch (error) {
+    await restoreClaimedMcpLifecycleLockGeneration(targetPath, quarantinePath);
+    if (error instanceof LockObservationTooLargeError) {
+      throw new LockObservationTooLargeError(targetPath, maxObservationBytes);
+    }
+    throw error;
+  }
   const expectedToken = expected.owner?.token ?? null;
   const claimedExpectedGeneration =
     expectedToken === null
@@ -284,7 +299,7 @@ export function reclaimStaleMcpLifecycleLockGenerationSync(
   targetPath: string,
   expected: LockObservation,
   assertAfterClaim?: () => void,
-  maxObservationBytes = Number.POSITIVE_INFINITY,
+  maxObservationBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
 ): boolean {
   const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
   try {

@@ -23,7 +23,10 @@ import {
   readMcpLockHostIdentity,
   readMcpLockPidNamespaceIdentity,
 } from "./mcp-lifecycle-lock-identity";
-import { getMcpLifecycleLockPath } from "./mcp-lifecycle-lock-storage";
+import {
+  getMcpLifecycleLockPath,
+  MAX_MCP_LIFECYCLE_LOCK_BYTES,
+} from "./mcp-lifecycle-lock-storage";
 
 const SANDBOX_NAME = "alpha";
 let stateDir: string;
@@ -262,6 +265,26 @@ describe("MCP lifecycle lock acquisition", () => {
     });
   });
 
+  it.each([
+    ["main", ""],
+    ["deadline", ".deadline"],
+    ["reaper", ".reaper"],
+    ["containment", ".containment"],
+  ])("reports the path of an oversized asynchronous %s generation", async (_label, suffix) => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const oversizedPath = `${lockPath}${suffix}`;
+    const operation = vi.fn(() => "must not enter");
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(oversizedPath, Buffer.alloc(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1, "x"));
+
+    await expect(withMcpLifecycleLock(SANDBOX_NAME, operation, options())).rejects.toThrow(
+      `Lock '${oversizedPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
+    );
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.statSync(oversizedPath).size).toBe(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1);
+  });
+
   it("keeps ordinary acquisition closed after an unpublished timer deadline", async () => {
     const operation = vi.fn(() => "must not enter");
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
@@ -285,9 +308,14 @@ describe("MCP lifecycle lock acquisition", () => {
       await fs.promises.rm(targetPath);
       writeOwnerAt(String(targetPath), "replacement-generation");
     });
+    let now = 0;
 
     await expect(
-      withMcpLifecycleLock(SANDBOX_NAME, operation, { ...options(), timeoutMs: 10 }),
+      withMcpLifecycleLock(SANDBOX_NAME, operation, {
+        ...options(),
+        timeoutMs: 10,
+        monotonicNow: () => now++,
+      }),
     ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
 
     expect(operation).not.toHaveBeenCalled();
@@ -406,9 +434,14 @@ describe("MCP lifecycle lock acquisition", () => {
       fs.rmSync(targetPath);
       writeOwnerAt(String(targetPath), "replacement-generation");
     });
+    let now = 0;
 
     expect(() =>
-      withMcpLifecycleLockSync(SANDBOX_NAME, operation, { ...options(), timeoutMs: 10 }),
+      withMcpLifecycleLockSync(SANDBOX_NAME, operation, {
+        ...options(),
+        timeoutMs: 10,
+        monotonicNow: () => now++,
+      }),
     ).toThrow("Timed out waiting for sandbox mutation lock");
 
     expect(operation).not.toHaveBeenCalled();
