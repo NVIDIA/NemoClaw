@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,29 @@ afterEach(() => {
 });
 
 describe("onboard lock ownership", () => {
+  it("refuses an oversized onboard lock without reading its body", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(session.LOCK_FILE, "x".repeat(65_537), { mode: 0o600 });
+    const readSpy = vi.spyOn(fs, "readSync");
+    try {
+      expect(() => session.acquireOnboardLock("nemoclaw onboard --resume")).toThrow(
+        /regular file exceeds the 65536-byte read limit/u,
+      );
+      expect(readSpy).not.toHaveBeenCalled();
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a FIFO onboard lock without blocking", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    execFileSync("mkfifo", [session.LOCK_FILE]);
+
+    expect(() => session.acquireOnboardLock("nemoclaw onboard --resume")).toThrow(
+      /path is not a regular file/u,
+    );
+  });
+
   it("reports ownership only while this process holds the acquired lock (#9833)", () => {
     expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
     expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);

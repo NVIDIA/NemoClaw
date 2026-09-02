@@ -8,10 +8,11 @@ import {
 
 export interface OnboardLockHolderIdentity {
   readonly pid: number;
-  readonly startedAt: string | null;
+  readonly processStartIdentity: string | null;
 }
 
 export interface OnboardLockRecord extends OnboardLockHolderIdentity {
+  readonly startedAt: string | null;
   readonly command: string | null;
 }
 
@@ -21,39 +22,49 @@ export type OnboardLockDisposition =
   | { readonly state: "stale" };
 
 export const ONBOARD_LOCK_SETTLING_MS = 30_000;
+export const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
 
 /**
  * Confirm that a live PID still names the process that wrote an onboarding
- * lock. Linux process start metadata distinguishes a reused PID; platforms
- * without that metadata stay fail-closed and continue to treat it as held.
+ * lock. Process-start metadata distinguishes a reused PID; unavailable
+ * metadata stays fail-closed and continues to treat it as held.
  */
 export function onboardLockHolderStillMatches(
   lock: OnboardLockHolderIdentity,
   probes: ProcessIdentityProbes = hostProcessIdentityProbes,
 ): boolean {
   if (!probes.isAlive(lock.pid)) return false;
-  if (lock.pid === probes.currentPid) return true;
-
-  const lockStartedMs = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
-  if (!Number.isFinite(lockStartedMs)) return true;
-
-  const processStartMs = probes.readStartedAtMs(lock.pid);
-  if (processStartMs === null) return true;
-
-  // The original lock holder must have started before it wrote the lock. If
-  // the currently-live PID started after the lock timestamp, the PID was reused
-  // and the lock is stale even though kill(pid, 0) succeeds.
-  return processStartMs <= lockStartedMs + 1000;
+  if (lock.processStartIdentity === null) return true;
+  const currentIdentity = probes.readStartIdentity(lock.pid);
+  return currentIdentity === null || currentIdentity === lock.processStartIdentity;
 }
 
 function parseOnboardLockRecord(value: unknown): OnboardLockRecord | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const { pid, startedAt, command } = value as Record<string, unknown>;
+  const { pid, startedAt, command, processStartIdentity } = value as Record<string, unknown>;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   return {
     pid,
+    processStartIdentity:
+      typeof processStartIdentity === "string" && processStartIdentity.length > 0
+        ? processStartIdentity
+        : null,
     startedAt: typeof startedAt === "string" ? startedAt : null,
     command: typeof command === "string" ? command : null,
+  };
+}
+
+/** Build the persisted owner record with exact process-start identity evidence. */
+export function createOnboardLockRecord(
+  command: string | null,
+  startedAt: string,
+  probes: ProcessIdentityProbes = hostProcessIdentityProbes,
+): OnboardLockRecord {
+  return {
+    pid: probes.currentPid,
+    processStartIdentity: probes.readStartIdentity(probes.currentPid),
+    startedAt,
+    command,
   };
 }
 

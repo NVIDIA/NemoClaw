@@ -1115,7 +1115,8 @@ describe("onboard session", () => {
       session.LOCK_FILE,
       JSON.stringify({
         pid: reusedPid,
-        startedAt: "1970-01-01T00:20:00.000Z",
+        processStartIdentity: "proc:12000",
+        startedAt: "2026-09-01T00:00:00.100Z",
         command: "nemoclaw onboard",
       }),
       { mode: 0o600 },
@@ -1132,9 +1133,6 @@ describe("onboard session", () => {
           return "0";
         }).join(" ");
         return `${reusedPid} (node) ${fieldsAfterComm}`;
-      }
-      if (fileName === "/proc/stat") {
-        return "cpu  1 2 3 4\nbtime 1000\n";
       }
       return originalReadFileSync(file, options);
     }) as typeof fs.readFileSync);

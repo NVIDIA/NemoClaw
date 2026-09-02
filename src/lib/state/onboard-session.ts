@@ -55,7 +55,10 @@ import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   classifyOnboardLockContents,
+  createOnboardLockRecord,
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
+  MAX_ONBOARD_LOCK_BYTES,
+  openRegularFileNoFollow,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
@@ -1334,21 +1337,28 @@ interface LockFileSnapshot {
 }
 
 function readLockFileSnapshot(): LockFileSnapshot {
-  const fd = fs.openSync(LOCK_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const lockFile = openRegularFileNoFollow(LOCK_FILE);
   try {
-    const stat = fs.fstatSync(fd, { bigint: true });
-    if (!stat.isFile()) {
-      return { disposition: { state: "settling" }, inode: stat.ino };
+    const stat = lockFile.stat();
+    let contents: string;
+    try {
+      contents = lockFile.readBytes(MAX_ONBOARD_LOCK_BYTES).toString("utf8");
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("regular file changed") ||
+          error.message.startsWith("short read from regular file"))
+      ) {
+        return { disposition: { state: "settling" }, inode: BigInt(stat.ino) };
+      }
+      throw error;
     }
     return {
-      disposition: classifyOnboardLockContents(
-        String(fs.readFileSync(fd, "utf8")),
-        Number(stat.mtimeMs),
-      ),
-      inode: stat.ino,
+      disposition: classifyOnboardLockContents(contents, stat.mtimeMs),
+      inode: BigInt(stat.ino),
     };
   } finally {
-    fs.closeSync(fd);
+    lockFile.close();
   }
 }
 
@@ -1417,11 +1427,7 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
   const payload = JSON.stringify(
-    {
-      pid: process.pid,
-      startedAt: new Date().toISOString(),
-      command: typeof command === "string" ? command : null,
-    },
+    createOnboardLockRecord(typeof command === "string" ? command : null, new Date().toISOString()),
     null,
     2,
   );

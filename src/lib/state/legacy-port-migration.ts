@@ -19,6 +19,7 @@ import {
 import {
   classifyOnboardLockContents,
   listRetainedSandboxRecoveryRecords,
+  MAX_ONBOARD_LOCK_BYTES,
   retainedSandboxRecoveryFile,
   type OnboardLockDisposition,
   type OnboardLockRecord,
@@ -38,7 +39,6 @@ const MIGRATION_LOCK_STALE_MS = 10_000;
 const STALE_MIGRATION_INTENT_PATTERN =
   /^\.gateway-state-migration\.(?:preparing|completed)\.[1-9][0-9]*\.[1-9][0-9]*$/;
 const MAX_MIGRATABLE_JSON_BYTES = 16 * 1024 * 1024;
-const MAX_ONBOARD_LOCK_BYTES = 64 * 1024;
 const LEGACY_BUNDLE_ENTRIES = [
   "backups",
   "blueprints",
@@ -743,21 +743,10 @@ type ObservedOnboardLockDisposition =
   | Exclude<OnboardLockDisposition, { readonly state: "stale" }>;
 
 /**
- * Decide what a leftover onboard.lock proves about the run that wrote it.
- *
- * An interrupted onboarding run cannot release its own lock, so the file
- * outliving its owner says nothing about whether a run is still going (#10779).
- * The recorded holder decides that instead. A body carrying no usable owner is
- * either a concurrent mid-write or debris from the window between the writer's
- * atomic create and its payload write, so it stays authoritative only while it
- * is still changing; acquireOnboardLock ages the same debris out after the same
- * grace.
- *
- * Every state that refuses here is a state the previous presence-only check
- * also refused, and every state that clears is one acquireOnboardLock would
- * itself reclaim. The lock is never unlinked from this side: the onboard writer
- * reclaims it under an inode check, and unlinking a foreign path here would
- * reopen the race that check closes.
+ * Use the recorded holder because an interrupted run can leave a stale lock.
+ * Treat an owner-less lock as active during its grace period because its writer
+ * can still be updating it. Do not unlink stale locks here: the onboarding
+ * writer verifies the inode before removal.
  */
 function classifyOnboardLock(home: string, activeLock: string): ObservedOnboardLockDisposition {
   const stat = lstatNoFollow(home, activeLock);

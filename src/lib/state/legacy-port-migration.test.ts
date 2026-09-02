@@ -30,9 +30,14 @@ const ONBOARD_LOCK_ROOTS: readonly [string, (shared: string, selected: string) =
   ["selected", (_shared: string, selected: string) => selected],
 ];
 
-function onboardLockBody(pid: number, startedAt = "2026-09-01T00:00:00.000Z"): string {
+function onboardLockBody(
+  pid: number,
+  startedAt = "2026-09-01T00:00:00.000Z",
+  processStartIdentity: string | null = null,
+): string {
   return JSON.stringify({
     pid,
+    processStartIdentity,
     startedAt,
     command: "onboard",
   });
@@ -492,15 +497,14 @@ describe("legacy non-default gateway state migration", () => {
     const selected = path.join(shared, "gateways", "9123");
     recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
     const reusedPid = 424_242;
-    writeOnboardLock(shared, onboardLockBody(reusedPid, "1970-01-01T00:20:00.000Z"));
+    writeOnboardLock(shared, onboardLockBody(reusedPid, "2026-09-01T00:00:00.100Z", "proc:12000"));
     const procFields = Array.from({ length: 50 }, () => "0");
     procFields[0] = "S";
     procFields[19] = "23000";
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
     const readSpy = vi
       .spyOn(fs, "readFileSync")
-      .mockImplementationOnce(() => `${String(reusedPid)} (node) ${procFields.join(" ")}`)
-      .mockImplementationOnce(() => "cpu  1 2 3 4\nbtime 1000\n");
+      .mockImplementationOnce(() => `${String(reusedPid)} (node) ${procFields.join(" ")}`);
 
     try {
       const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
@@ -537,7 +541,7 @@ describe("legacy non-default gateway state migration", () => {
     },
   );
 
-  it("reclaims an onboarding lock whose owner record never landed and stopped changing", () => {
+  it("migrates recovery state when an owner-less onboarding lock has settled", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
@@ -548,6 +552,7 @@ describe("legacy non-default gateway state migration", () => {
     const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
 
     expect(result.warnings).toEqual([]);
+    expect(fs.existsSync(path.join(shared, "retained-sandbox-recovery.json"))).toBe(false);
     expect(
       listRetainedSandboxRecoveryRecords(path.join(selected, "retained-sandbox-recovery.json")).map(
         (record) => record.sandboxName,

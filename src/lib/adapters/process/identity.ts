@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
 import { isErrnoException } from "../../core/errno";
@@ -9,21 +9,7 @@ import { isErrnoException } from "../../core/errno";
 export interface ProcessIdentityProbes {
   readonly currentPid: number;
   isAlive(pid: number): boolean;
-  readStartedAtMs(pid: number): number | null;
-}
-
-let cachedClockTicksPerSecond: number | null | undefined;
-
-function readClockTicksPerSecond(): number | null {
-  if (cachedClockTicksPerSecond !== undefined) return cachedClockTicksPerSecond;
-  const result = spawnSync("/usr/bin/getconf", ["CLK_TCK"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 1_000,
-  });
-  const value = result.status === 0 ? Number(result.stdout.trim()) : NaN;
-  cachedClockTicksPerSecond = Number.isFinite(value) && value > 0 ? value : null;
-  return cachedClockTicksPerSecond;
+  readStartIdentity(pid: number): string | null;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -36,26 +22,35 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function readProcessStartedAtMs(pid: number): number | null {
+/**
+ * Read a process-start identity as Linux start ticks, with a bounded portable
+ * `ps` fallback. Callers compare the opaque identity without wall-clock
+ * conversion or timestamp tolerance.
+ */
+export function readProcessStartIdentity(pid: number, timeoutMs = 5_000): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
     const statText = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
-    const btimeLine = fs
-      .readFileSync("/proc/stat", "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("btime "));
-    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
     const closeParen = statText.lastIndexOf(")");
-    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
-
-    const fieldsAfterComm = statText
-      .slice(closeParen + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = Number(fieldsAfterComm[19]);
-    const clockTicksPerSecond = readClockTicksPerSecond();
-    if (!Number.isFinite(startTicks) || clockTicksPerSecond === null) return null;
-
-    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
+    if (closeParen >= 0) {
+      const fieldsAfterComm = statText
+        .slice(closeParen + 2)
+        .trim()
+        .split(/\s+/);
+      if (fieldsAfterComm[19]) return `proc:${fieldsAfterComm[19]}`;
+    }
+  } catch {
+    // Fall through to the portable ps identity.
+  }
+  try {
+    const timeout = Math.max(1, Math.floor(timeoutMs));
+    const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout,
+    })
+      .toString()
+      .trim();
+    return started ? `ps:${started}` : null;
   } catch {
     return null;
   }
@@ -65,5 +60,5 @@ function readProcessStartedAtMs(pid: number): number | null {
 export const hostProcessIdentityProbes: ProcessIdentityProbes = {
   currentPid: process.pid,
   isAlive: isProcessAlive,
-  readStartedAtMs: readProcessStartedAtMs,
+  readStartIdentity: readProcessStartIdentity,
 };

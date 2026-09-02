@@ -9,7 +9,7 @@ import { classifyOnboardLockContents } from "./lock-holder";
 const liveProbes: ProcessIdentityProbes = {
   currentPid: 101,
   isAlive: () => true,
-  readStartedAtMs: () => null,
+  readStartIdentity: () => null,
 };
 
 const departedProbes: ProcessIdentityProbes = {
@@ -45,6 +45,7 @@ describe("onboarding lock classification", () => {
       state: "held",
       record: {
         pid: liveProbes.currentPid,
+        processStartIdentity: null,
         startedAt: "2026-09-01T00:00:00.000Z",
         command: "nemoclaw onboard",
       },
@@ -61,4 +62,30 @@ describe("onboarding lock classification", () => {
       ),
     ).toEqual({ state: "stale" });
   });
+
+  it.each([
+    ["matching", "proc:100", "proc:100", "held"],
+    ["reused", "proc:100", "proc:101", "stale"],
+    ["reused current PID", "proc:100", "proc:101", "stale"],
+    ["unverifiable", "proc:100", null, "held"],
+  ] as const)(
+    "classifies a live foreign PID from exact process identity evidence [%s]",
+    (_case, recordedIdentity, observedIdentity, expectedState) => {
+      const probes: ProcessIdentityProbes = {
+        currentPid: 101,
+        isAlive: () => true,
+        readStartIdentity: () => observedIdentity,
+      };
+      const contents = JSON.stringify({
+        pid: _case === "reused current PID" ? probes.currentPid : 202,
+        processStartIdentity: recordedIdentity,
+        startedAt: "2026-09-01T00:00:00.000Z",
+        command: "nemoclaw onboard",
+      });
+
+      expect(classifyOnboardLockContents(contents, 99_999, 100_000, probes).state).toBe(
+        expectedState,
+      );
+    },
+  );
 });

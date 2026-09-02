@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { readProcessStartIdentity } from "../../adapters/process/identity";
 import { isObjectRecord } from "../../core/json-types";
 import { isValidName, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { processIsAlive } from "../mcp-lifecycle-lock-identity";
@@ -289,32 +289,7 @@ export function readTimerProcessStartIdentity(
   pid: number,
   timeoutMs = DEFAULT_TIMER_IDENTITY_TIMEOUT_MS,
 ): string | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try {
-    const raw = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf-8");
-    const closingParen = raw.lastIndexOf(")");
-    if (closingParen >= 0) {
-      const fields = raw
-        .slice(closingParen + 2)
-        .trim()
-        .split(/\s+/);
-      if (fields[19]) return `proc:${fields[19]}`;
-    }
-  } catch {
-    // Fall through to the portable ps identity.
-  }
-  try {
-    const timeout = Math.max(1, Math.floor(timeoutMs));
-    const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout,
-    })
-      .toString()
-      .trim();
-    return started ? `ps:${started}` : null;
-  } catch {
-    return null;
-  }
+  return readProcessStartIdentity(pid, timeoutMs);
 }
 
 export const localTimerProcessStartIdentity = {
