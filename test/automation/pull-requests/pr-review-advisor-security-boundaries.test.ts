@@ -5,11 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deleteBotOwnedStickyComments, upsertStickyComment } from "../../../tools/advisors/github.mts";
+import {
+  deleteBotOwnedStickyComments,
+  upsertStickyComment,
+} from "../../../tools/advisors/github.mts";
 import { runReadOnlyAdvisor } from "../../../tools/advisors/session.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
-
 
 describe("PR review advisor security boundaries", () => {
   afterEach(() => {
@@ -19,6 +21,7 @@ describe("PR review advisor security boundaries", () => {
   it("removes the model credential from the tool environment after in-memory setup", async () => {
     const credentialEnv = "PR_REVIEW_ADVISOR_TEST_API_KEY";
     vi.stubEnv(credentialEnv, "test-secret");
+    vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
 
     try {
@@ -192,5 +195,4 @@ describe("PR review advisor security boundaries", () => {
     ).resolves.toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
-
 });
