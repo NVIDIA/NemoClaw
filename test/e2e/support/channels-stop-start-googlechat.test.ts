@@ -3,28 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { credentialProviderRegistrationDependencies } from "../../../src/lib/onboard/credential-provider-registration.ts";
 import {
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
+  createGooglechatCredentialFixture,
   GOOGLECHAT_E2E_ACCESS_TOKEN,
-  installGooglechatCredentialFixture,
   rebuildGooglechatForChannelsStopStartLiveE2e,
 } from "../live/channels-stop-start-helpers.ts";
 
 type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
-type FixtureProviderDependencies = {
-  upsertMessagingProviders(
-    tokenDefs: Parameters<
-      (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"]["upsertMessagingProviders"]
-    >[0],
-    run: FixtureRunner,
-    options?: {
-      readonly replaceExisting?: boolean;
-      readonly revalidateSandboxIdentity?: (operation: string) => void;
-    },
-  ): string[];
-};
-
 type FixtureChannelDependencies = Pick<
   (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"],
   "runGatewayOpenshell" | "upsertMessagingProviders"
@@ -43,15 +29,14 @@ describe("channels stop/start Google Chat live composition", () => {
         return { status: args[1] === "get" ? 1 : 0 } as never;
       }),
     };
-    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
+    const fixture = createGooglechatCredentialFixture(sandboxName, "openclaw", {
       channelDependencies,
       ensureProfiles: vi.fn(),
-      providerDependencies: { upsertMessagingProviders: vi.fn(() => []) },
       root: "/repo",
     });
 
     expect(
-      restore.upsertMessagingProviders(
+      fixture.upsertMessagingProviders(
         [
           {
             name: expectedName,
@@ -76,59 +61,12 @@ describe("channels stop/start Google Chat live composition", () => {
       "--credential",
       "GOOGLE_CHAT_ACCESS_TOKEN",
     ]);
-
-    restore();
-    expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
-  });
-
-  it("temporarily routes rebuild registration through the live fixture", () => {
-    const sandboxName = "e2e-oc-ch-cycle";
-    const expectedName = `${sandboxName}-googlechat-bridge`;
-    const runMock = vi.fn((args: string[]) => ({
-      status: args[1] === "get" ? 1 : 0,
-      stdout: "",
-      stderr: "",
-    }));
-    const run = runMock as unknown as FixtureRunner;
-    const originalUpsert = credentialProviderRegistrationDependencies.upsertMessagingProviders;
-    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
-      ensureProfiles: vi.fn(),
-      root: "/repo",
-      run,
-    });
-    try {
-      expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).not.toBe(
-        originalUpsert,
-      );
-      expect(
-        credentialProviderRegistrationDependencies.upsertMessagingProviders(
-          [
-            {
-              name: expectedName,
-              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-              token: null,
-              providerType: "google-chat-bridge",
-            },
-          ],
-          run,
-          {},
-        ),
-      ).toEqual([expectedName]);
-      expect(runMock.mock.calls.some(([args]) => args[1] === "create")).toBe(true);
-      expect(runMock.mock.calls.some(([args]) => args.includes("refresh"))).toBe(false);
-    } finally {
-      restore();
-    }
-    expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).toBe(
-      originalUpsert,
-    );
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {
     const addSandboxChannel = vi.fn(async () => {});
     const rebuildSandbox = vi.fn(async () => {});
-    const restore = vi.fn();
-    const installCredentialFixture = vi.fn(() => restore);
+    const createCredentialFixture = vi.fn(() => ({}));
 
     await addAndRebuildGooglechatForChannelsStopStartLiveE2e(
       {
@@ -136,10 +74,10 @@ describe("channels stop/start Google Chat live composition", () => {
         agent: "openclaw",
         audience: "  https://e2e-fake.trycloudflare.com/googlechat  ",
       },
-      { addSandboxChannel, installCredentialFixture, rebuildSandbox },
+      { addSandboxChannel, createCredentialFixture, rebuildSandbox },
     );
 
-    expect(installCredentialFixture).toHaveBeenCalledWith("e2e-oc-ch-cycle", "openclaw");
+    expect(createCredentialFixture).toHaveBeenCalledWith("e2e-oc-ch-cycle", "openclaw");
     expect(addSandboxChannel).toHaveBeenCalledWith(
       "e2e-oc-ch-cycle",
       { channel: "googlechat" },
@@ -150,14 +88,12 @@ describe("channels stop/start Google Chat live composition", () => {
       },
     );
     expect(rebuildSandbox).toHaveBeenCalledWith("e2e-oc-ch-cycle", ["--yes"]);
-    expect(restore).toHaveBeenCalledOnce();
   });
 
   it("adds Hermes Google Chat without the OpenClaw audience capability", async () => {
     const addSandboxChannel = vi.fn(async () => {});
     const rebuildSandbox = vi.fn(async () => {});
-    const restore = vi.fn();
-    const installCredentialFixture = vi.fn(() => restore);
+    const createCredentialFixture = vi.fn(() => ({}));
 
     await addAndRebuildGooglechatForChannelsStopStartLiveE2e(
       {
@@ -165,22 +101,21 @@ describe("channels stop/start Google Chat live composition", () => {
         agent: "hermes",
         audience: "https://e2e-fake.trycloudflare.com/googlechat",
       },
-      { addSandboxChannel, installCredentialFixture, rebuildSandbox },
+      { addSandboxChannel, createCredentialFixture, rebuildSandbox },
     );
 
-    expect(installCredentialFixture).toHaveBeenCalledWith("e2e-hm-ch-cycle", "hermes");
+    expect(createCredentialFixture).toHaveBeenCalledWith("e2e-hm-ch-cycle", "hermes");
     expect(addSandboxChannel).toHaveBeenCalledWith(
       "e2e-hm-ch-cycle",
       { channel: "googlechat" },
       {},
     );
     expect(rebuildSandbox).toHaveBeenCalledWith("e2e-hm-ch-cycle", ["--yes"]);
-    expect(restore).toHaveBeenCalledOnce();
   });
 
   it("refuses to grant the capability outside the destructive live-test sandbox namespace", async () => {
     const addSandboxChannel = vi.fn(async () => {});
-    const installCredentialFixture = vi.fn(() => vi.fn());
+    const createCredentialFixture = vi.fn(() => ({}));
 
     await expect(
       addAndRebuildGooglechatForChannelsStopStartLiveE2e(
@@ -189,16 +124,16 @@ describe("channels stop/start Google Chat live composition", () => {
           agent: "openclaw",
           audience: "https://example.com/googlechat",
         },
-        { addSandboxChannel, installCredentialFixture },
+        { addSandboxChannel, createCredentialFixture },
       ),
     ).rejects.toThrow(/only accepts openclaw sandbox names with prefix e2e-oc-ch-/);
     expect(addSandboxChannel).not.toHaveBeenCalled();
-    expect(installCredentialFixture).not.toHaveBeenCalled();
+    expect(createCredentialFixture).not.toHaveBeenCalled();
   });
 
   it("refuses an empty live-test audience", async () => {
     const addSandboxChannel = vi.fn(async () => {});
-    const installCredentialFixture = vi.fn(() => vi.fn());
+    const createCredentialFixture = vi.fn(() => ({}));
 
     await expect(
       addAndRebuildGooglechatForChannelsStopStartLiveE2e(
@@ -207,18 +142,18 @@ describe("channels stop/start Google Chat live composition", () => {
           agent: "openclaw",
           audience: " ",
         },
-        { addSandboxChannel, installCredentialFixture },
+        { addSandboxChannel, createCredentialFixture },
       ),
     ).rejects.toThrow(/GOOGLECHAT_AUDIENCE is required/);
     expect(addSandboxChannel).not.toHaveBeenCalled();
-    expect(installCredentialFixture).not.toHaveBeenCalled();
+    expect(createCredentialFixture).not.toHaveBeenCalled();
   });
 
-  it("restores the provider boundary when channel add fails", async () => {
+  it("does not rebuild when channel add fails", async () => {
     const addSandboxChannel = vi.fn(async () => {
       throw new Error("planned add failed");
     });
-    const restore = vi.fn();
+    const rebuildSandbox = vi.fn(async () => {});
 
     await expect(
       addAndRebuildGooglechatForChannelsStopStartLiveE2e(
@@ -229,17 +164,17 @@ describe("channels stop/start Google Chat live composition", () => {
         },
         {
           addSandboxChannel,
-          installCredentialFixture: () => restore,
-          rebuildSandbox: async () => {},
+          createCredentialFixture: () => ({}),
+          rebuildSandbox,
         },
       ),
     ).rejects.toThrow("planned add failed");
-    expect(restore).toHaveBeenCalledOnce();
+    expect(rebuildSandbox).not.toHaveBeenCalled();
   });
 
-  it("keeps the provider fixture installed across add and rebuild", async () => {
+  it("limits the provider fixture to channel add and hides the source credential from rebuild", async () => {
+    vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "fake-service-account");
     const events: string[] = [];
-    const restore = vi.fn(() => events.push("restore"));
 
     await addAndRebuildGooglechatForChannelsStopStartLiveE2e(
       {
@@ -248,26 +183,29 @@ describe("channels stop/start Google Chat live composition", () => {
         audience: "https://e2e-fake.trycloudflare.com/googlechat",
       },
       {
-        installCredentialFixture: () => {
-          events.push("install");
-          return restore;
+        createCredentialFixture: () => {
+          events.push("create-fixture");
+          return {};
         },
         addSandboxChannel: async () => {
+          expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBe("fake-service-account");
           events.push("add");
         },
         rebuildSandbox: async (_sandboxName, args) => {
           expect(args).toEqual(["--yes"]);
+          expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBeUndefined();
           events.push("rebuild");
         },
       },
     );
 
-    expect(events).toEqual(["install", "add", "rebuild", "restore"]);
-    expect(restore).toHaveBeenCalledOnce();
+    expect(events).toEqual(["create-fixture", "add", "rebuild"]);
+    expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBe("fake-service-account");
+    vi.unstubAllEnvs();
   });
 
-  it("restores the provider fixture when rebuild fails", async () => {
-    const restore = vi.fn();
+  it("restores the source credential when rebuild fails", async () => {
+    vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "fake-service-account");
 
     await expect(
       addAndRebuildGooglechatForChannelsStopStartLiveE2e(
@@ -277,38 +215,41 @@ describe("channels stop/start Google Chat live composition", () => {
           audience: "https://e2e-fake.trycloudflare.com/googlechat",
         },
         {
-          installCredentialFixture: () => restore,
+          createCredentialFixture: () => ({}),
           addSandboxChannel: async () => {},
           rebuildSandbox: async () => {
+            expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBeUndefined();
             throw new Error("planned rebuild failed");
           },
         },
       ),
     ).rejects.toThrow("planned rebuild failed");
-    expect(restore).toHaveBeenCalledOnce();
+    expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBe("fake-service-account");
+    vi.unstubAllEnvs();
   });
 
-  it("keeps the provider fixture installed across a later lifecycle rebuild", async () => {
+  it("reuses the gateway credential without creating a fixture for a later rebuild", async () => {
+    vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "fake-service-account");
     const events: string[] = [];
-    const restore = vi.fn(() => events.push("restore"));
+    const createCredentialFixture = vi.fn(() => ({}));
 
     await rebuildGooglechatForChannelsStopStartLiveE2e(
       { sandboxName: "e2e-oc-ch-cycle", agent: "openclaw" },
       {
-        installCredentialFixture: () => {
-          events.push("install");
-          return restore;
-        },
+        createCredentialFixture,
         addSandboxChannel: async () => {},
         rebuildSandbox: async (_sandboxName, args) => {
           expect(args).toEqual(["--yes"]);
+          expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBeUndefined();
           events.push("rebuild");
         },
       },
     );
 
-    expect(events).toEqual(["install", "rebuild", "restore"]);
-    expect(restore).toHaveBeenCalledOnce();
+    expect(events).toEqual(["rebuild"]);
+    expect(createCredentialFixture).not.toHaveBeenCalled();
+    expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBe("fake-service-account");
+    vi.unstubAllEnvs();
   });
 
   it.each([
@@ -325,23 +266,26 @@ describe("channels stop/start Google Chat live composition", () => {
         providerType: "nemoclaw-mcp-v1",
       };
       const originalUpsert = vi.fn(() => [delegatedName]);
-      const providerDependencies: FixtureProviderDependencies = {
+      const runGatewayOpenshell = vi.fn(
+        (
+          _gatewayName: string,
+          args: string[],
+          _options?: Parameters<FixtureChannelDependencies["runGatewayOpenshell"]>[2],
+        ) => ({ status: args[1] === "get" ? 1 : 0 }),
+      );
+      const channelDependencies: FixtureChannelDependencies = {
         upsertMessagingProviders: originalUpsert,
+        runGatewayOpenshell: runGatewayOpenshell as never,
       };
       const ensureProfiles = vi.fn();
-      const runMock = vi.fn((args: string[], _options?: { env?: NodeJS.ProcessEnv }) => ({
-        status: args[1] === "get" ? 1 : 0,
-      }));
-      const run = runMock as unknown as FixtureRunner;
-      const revalidateSandboxIdentity = vi.fn();
 
-      const restore = installGooglechatCredentialFixture(sandboxName, agent, {
+      const fixture = createGooglechatCredentialFixture(sandboxName, agent, {
+        channelDependencies,
         ensureProfiles,
-        providerDependencies,
         root: "/repo",
-        run,
       });
-      const providerNames = providerDependencies.upsertMessagingProviders(
+      const options = { bestEffort: true, requireExactBindings: true };
+      const providerNames = fixture.upsertMessagingProviders(
         [
           delegatedTokenDef,
           {
@@ -351,14 +295,12 @@ describe("channels stop/start Google Chat live composition", () => {
             providerType,
           },
         ],
-        run,
-        { revalidateSandboxIdentity },
+        "nemoclaw",
+        options,
       );
 
       expect(providerNames).toEqual([delegatedName, `${sandboxName}-googlechat-bridge`]);
-      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], run, {
-        revalidateSandboxIdentity,
-      });
+      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], "nemoclaw", options);
       expect(ensureProfiles).toHaveBeenCalledOnce();
       const profileDependencies = ensureProfiles.mock.calls[0]?.[1] as {
         redact: (value: string) => string;
@@ -366,12 +308,10 @@ describe("channels stop/start Google Chat live composition", () => {
         runOpenshell: FixtureRunner;
       };
       expect(profileDependencies.root).toBe("/repo");
-      expect(profileDependencies.runOpenshell).not.toBe(run);
       expect(profileDependencies.redact(GOOGLECHAT_E2E_ACCESS_TOKEN)).toBe("[redacted]");
-      expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
 
-      const createCall = runMock.mock.calls.find(([args]) => args[1] === "create");
-      expect(createCall?.[0]).toEqual([
+      const createCall = runGatewayOpenshell.mock.calls.find(([, args]) => args[1] === "create");
+      expect(createCall?.[1]).toEqual([
         "provider",
         "create",
         "--name",
@@ -381,68 +321,12 @@ describe("channels stop/start Google Chat live composition", () => {
         "--credential",
         "GOOGLE_CHAT_ACCESS_TOKEN",
       ]);
-      expect(createCall?.[0]).not.toContain(GOOGLECHAT_E2E_ACCESS_TOKEN);
-      expect(createCall?.[1]?.env).toMatchObject({
+      expect(createCall?.[1]).not.toContain(GOOGLECHAT_E2E_ACCESS_TOKEN);
+      expect(createCall?.[2]?.env).toMatchObject({
         GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN,
       });
-
-      restore();
-      expect(providerDependencies.upsertMessagingProviders).toBe(originalUpsert);
     },
   );
-
-  it("intercepts both registration and legacy provider boundaries during rebuild", () => {
-    const sandboxName = "e2e-oc-ch-cycle";
-    const expectedName = `${sandboxName}-googlechat-bridge`;
-    const delegatedName = `${sandboxName}-slack-bridge`;
-    const registrationOriginal = vi.fn(() => []);
-    const legacyOriginal = vi.fn(() => [delegatedName]);
-    const providerDependencies: FixtureProviderDependencies = {
-      upsertMessagingProviders: registrationOriginal,
-    };
-    const legacyProviderDependencies: FixtureProviderDependencies = {
-      upsertMessagingProviders: legacyOriginal,
-    };
-    const run = vi.fn((args: string[]) => ({
-      status: args[1] === "get" ? 1 : 0,
-    })) as unknown as FixtureRunner;
-    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
-      ensureProfiles: vi.fn(),
-      providerDependencies,
-      legacyProviderDependencies,
-      root: "/repo",
-      run,
-    });
-
-    expect(providerDependencies.upsertMessagingProviders).toBe(
-      legacyProviderDependencies.upsertMessagingProviders,
-    );
-    expect(
-      providerDependencies.upsertMessagingProviders(
-        [
-          {
-            name: delegatedName,
-            envKey: "SLACK_BOT_TOKEN",
-            token: "e2e-fake-slack-token",
-            providerType: "nemoclaw-mcp-v1",
-          },
-          {
-            name: expectedName,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType: "google-chat-bridge",
-          },
-        ],
-        run,
-      ),
-    ).toEqual([delegatedName, expectedName]);
-    expect(registrationOriginal).not.toHaveBeenCalled();
-    expect(legacyOriginal).toHaveBeenCalledOnce();
-
-    restore();
-    expect(providerDependencies.upsertMessagingProviders).toBe(registrationOriginal);
-    expect(legacyProviderDependencies.upsertMessagingProviders).toBe(legacyOriginal);
-  });
 
   it.each([
     [
@@ -478,22 +362,21 @@ describe("channels stop/start Google Chat live composition", () => {
   ] as const)(
     "reconciles an existing fixture provider with options %o",
     (options, expectedCalls) => {
-      const providerDependencies: FixtureProviderDependencies = {
-        upsertMessagingProviders: vi.fn(() => []),
-      };
       const calls: string[][] = [];
-      const run = ((args: string[]) => {
+      const runGatewayOpenshell = vi.fn((_gatewayName: string, args: string[]) => {
         calls.push(args);
         return { status: 0 };
-      }) as unknown as FixtureRunner;
-      const restore = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
+      });
+      const fixture = createGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
+        channelDependencies: {
+          upsertMessagingProviders: vi.fn(() => []),
+          runGatewayOpenshell: runGatewayOpenshell as never,
+        },
         ensureProfiles: vi.fn(),
-        providerDependencies,
         root: "/repo",
-        run,
       });
 
-      providerDependencies.upsertMessagingProviders(
+      fixture.upsertMessagingProviders(
         [
           {
             name: "e2e-oc-ch-cycle-googlechat-bridge",
@@ -502,12 +385,11 @@ describe("channels stop/start Google Chat live composition", () => {
             providerType: "google-chat-bridge",
           },
         ],
-        run,
+        "nemoclaw",
         options,
       );
 
       expect(calls).toEqual(expectedCalls);
-      restore();
     },
   );
 });

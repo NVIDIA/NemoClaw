@@ -12,17 +12,6 @@ import { createGatewayScopedOpenshellRunner } from "./setup-inference";
 
 const providers = require("./providers");
 
-/** Late-bound provider upsert seam used by live credential fixtures. */
-export const credentialProviderRegistrationDependencies = {
-  upsertMessagingProviders(
-    tokenDefs: MessagingTokenDef[],
-    runOpenshell: OpenshellCliHelpers["runOpenshell"],
-    options: MessagingProviderRegistrationOptions,
-  ): string[] {
-    return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
-  },
-};
-
 export interface StageSandboxCredentialProvidersInput<Agent> {
   sandboxName: string;
   enabledChannels: readonly string[];
@@ -191,11 +180,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
-    const upserted = credentialProviderRegistrationDependencies.upsertMessagingProviders(
+    const upserted = providers.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
       options,
-    );
+    ) as string[];
     recordMigratedLegacyMessagingCredentials(
       tokenDefs,
       upserted,
