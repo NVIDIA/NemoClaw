@@ -9,11 +9,13 @@ application extension are pinned in the project files.
 
 The package uses only standard Windows Installer and Burn authoring. It has no
 custom actions and does not invoke PowerShell, WSL, Bash, Ubuntu, Docker, or a
-Linux virtual machine. The package installs the exact ARM64 OpenShell payload
-provided at build time under `%ProgramFiles%\NVIDIA\NemoClaw`, registers normal
-Add/Remove Programs metadata, and adds the installed `bin` directory to the
-machine PATH.
+Linux virtual machine. The package installs the exact assembled ARM64 NemoClaw
+runtime payload under `%ProgramFiles%\NVIDIA\NemoClaw`. That payload contains
+the NemoClaw CLI, pinned Node.js and OpenClaw runtimes, NVIDIA/OpenShell#2721 CLI
+and gateway binaries, and pinned Microsoft MXC tools. Windows Installer
+registers normal Add/Remove Programs metadata and adds the installed `bin`
+directory to the machine PATH.
 
-The package is a preview distribution boundary, not a runtime activation
-boundary. `wxc-exec.exe`, real MXC execution, service registration, NemoClaw
-CLI/onboarding, and production signing are deliberately absent.
+The package is a preview distribution boundary. Host qualification, supported
+onboarding, managed inference, service registration, production activation, and
+production signing remain separate gates.

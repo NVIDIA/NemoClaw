@@ -91,10 +91,28 @@ if (-not (Test-Path -LiteralPath $outputParent -PathType Container)) {
     Fail-WindowsPackageBuild 'OutputDirectory parent must exist.'
 }
 
-$openshell = Join-Path $payload 'openshell.exe'
-$gateway = Join-Path $payload 'openshell-gateway.exe'
+$openshell = Join-Path $payload 'bin\openshell.exe'
+$gateway = Join-Path $payload 'bin\openshell-gateway.exe'
 Assert-Arm64PortableExecutable -Path $openshell -Label 'openshell.exe payload'
 Assert-Arm64PortableExecutable -Path $gateway -Label 'openshell-gateway.exe payload'
+foreach ($requiredPayload in @(
+    'bin\node.exe',
+    'bin\nemoclaw.cmd',
+    'nemoclaw\app\bin\nemoclaw.js',
+    'openclaw\node_modules\openclaw\openclaw.mjs',
+    'mxc\wxc-exec.exe',
+    'mxc\wxc-host-prep.exe',
+    'config\mxc-gateway.toml',
+    'LICENSE.txt',
+    'NATIVE-PREVIEW.txt'
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $payload $requiredPayload) -PathType Leaf)) {
+        Fail-WindowsPackageBuild "Required NemoClaw runtime payload is missing: $requiredPayload"
+    }
+}
+Assert-Arm64PortableExecutable -Path (Join-Path $payload 'bin\node.exe') -Label 'node.exe payload'
+Assert-Arm64PortableExecutable -Path (Join-Path $payload 'mxc\wxc-exec.exe') -Label 'wxc-exec.exe payload'
+Assert-Arm64PortableExecutable -Path (Join-Path $payload 'mxc\wxc-host-prep.exe') -Label 'wxc-host-prep.exe payload'
 
 $authoringText = @(
     [IO.File]::ReadAllText((Join-Path $sourceRoot 'packaging\windows\Product.wxs')),
@@ -202,23 +220,22 @@ foreach ($package in @($msiPath, $setupPath)) {
 }
 Assert-Arm64PortableExecutable -Path $setupPath -Label $setupName
 
+$payloadManifest = @(Get-ChildItem -LiteralPath $payload -Recurse -File | ForEach-Object {
+    [pscustomobject]@{
+        relativePath = $_.FullName.Substring($payload.Length + 1)
+        sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        size = $_.Length
+    }
+} | Sort-Object relativePath)
+
 $manifest = [pscustomobject]@{
-    schemaVersion = 1
+    schemaVersion = 2
     classification = 'native-windows-candidate-preview'
     productVersion = $ProductVersion
     architecture = 'arm64'
     dotnetSdk = $dotnetVersion
     wixToolset = $script:ExpectedWixVersion
-    payload = @(
-        [pscustomobject]@{
-            file = 'openshell.exe'
-            sha256 = (Get-FileHash -LiteralPath $openshell -Algorithm SHA256).Hash.ToLowerInvariant()
-        },
-        [pscustomobject]@{
-            file = 'openshell-gateway.exe'
-            sha256 = (Get-FileHash -LiteralPath $gateway -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-    )
+    payload = $payloadManifest
     packages = @(
         [pscustomobject]@{
             file = $msiName

@@ -19,7 +19,14 @@
     <Error Condition="'$(ProductVersion)' == ''" Text="ProductVersion is required." />
     <Error Condition="'$(PayloadRoot)' == ''" Text="PayloadRoot is required." />
     <Error Condition="'$(SourceRoot)' == ''" Text="SourceRoot is required." />
-    <Error Condition="!Exists('$(PayloadRoot)\openshell.exe')" Text="The ARM64 openshell.exe payload is missing." />
-    <Error Condition="!Exists('$(PayloadRoot)\openshell-gateway.exe')" Text="The ARM64 openshell-gateway.exe payload is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\openshell.exe')" Text="The ARM64 openshell.exe payload is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\openshell-gateway.exe')" Text="The ARM64 openshell-gateway.exe payload is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\node.exe')" Text="The ARM64 Node.js runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\nemoclaw.cmd')" Text="The NemoClaw launcher is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\nemoclaw\app\bin\nemoclaw.js')" Text="The NemoClaw CLI package is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\openclaw\node_modules\openclaw\openclaw.mjs')" Text="The OpenClaw runtime package is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-exec.exe')" Text="The MXC executor is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The MXC host preparation utility is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\config\mxc-gateway.toml')" Text="The OpenShell MXC gateway configuration is missing." />
   </Target>
 </Project>

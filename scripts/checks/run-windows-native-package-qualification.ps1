@@ -157,6 +157,61 @@ function Invoke-NativeVersionProbe {
     }
 }
 
+function Invoke-NodeCliVersionProbe {
+    param(
+        [Parameter(Mandatory)][string]$NodePath,
+        [Parameter(Mandatory)][string]$EntryPath,
+        [Parameter(Mandatory)][string]$ExpectedVersion,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    Assert-Arm64PortableExecutable -Path $NodePath -Label 'Installed node.exe'
+    if (-not (Test-Path -LiteralPath $EntryPath -PathType Leaf)) {
+        Fail-PackageQualification "$Label entrypoint is missing."
+    }
+    Write-Host "PS> $Label :: node.exe $(Split-Path -Leaf $EntryPath) --version"
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $NodePath
+    $startInfo.ArgumentList.Add($EntryPath)
+    $startInfo.ArgumentList.Add('--version')
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            Fail-PackageQualification "$Label could not start."
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            $process.WaitForExit()
+            Fail-PackageQualification "$Label exceeded its version-probe timeout."
+        }
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+        $output = (@($stdoutTask.GetAwaiter().GetResult().Trim(), $stderrTask.GetAwaiter().GetResult().Trim()) | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }) -join [Environment]::NewLine
+    } finally {
+        $process.Dispose()
+    }
+    if ($exitCode -ne 0 -or $output -notmatch [regex]::Escape($ExpectedVersion) -or $output.Length -gt 4096) {
+        Fail-PackageQualification "$Label did not report expected version $ExpectedVersion."
+    }
+    Write-Host "OUTPUT> $($output -replace '[\r\n]+', ' | ')"
+    Write-Host "[PASS] $Label exit=$exitCode"
+    return [pscustomobject]@{
+        file = $EntryPath.Substring($installRoot.Length + 1)
+        exitCode = $exitCode
+        output = $output
+        sha256 = (Get-FileHash -LiteralPath $EntryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function Get-ArpEntries {
     param([Parameter(Mandatory)][string]$DisplayName)
 
@@ -212,16 +267,18 @@ function Test-MachinePathContains {
 function Assert-InstalledTree {
     param(
         [Parameter(Mandatory)][string]$Root,
-        [Parameter(Mandatory)][string]$Phase
+        [Parameter(Mandatory)][string]$Phase,
+        [Parameter(Mandatory)][string[]]$ExpectedFiles
     )
 
-    $expectedFiles = @(
-        'bin\openshell-gateway.exe',
-        'bin\openshell.exe',
-        'LICENSE.txt',
-        'NATIVE-PREVIEW.txt'
-    ) | Sort-Object
-    $expectedDirectories = @('bin')
+    $expectedFiles = @($ExpectedFiles | Sort-Object)
+    $expectedDirectories = @($expectedFiles | ForEach-Object {
+        $parent = [IO.Path]::GetDirectoryName($_)
+        while (-not [string]::IsNullOrEmpty($parent)) {
+            $parent
+            $parent = [IO.Path]::GetDirectoryName($parent)
+        }
+    } | Sort-Object -Unique)
     $observed = @(Get-ChildItem -LiteralPath $Root -Recurse -Force)
     foreach ($item in $observed) {
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -343,10 +400,27 @@ if ($manifest.productVersion -cne $ProductVersion -or $manifest.architecture -cn
     Fail-PackageQualification 'Package manifest identity is invalid.'
 }
 $payloadHashes = @{}
+$expectedPayloadFiles = @()
 foreach ($entry in @($manifest.payload)) {
-    $payloadHashes[[string]$entry.file] = [string]$entry.sha256
+    $relativePath = [string]$entry.relativePath
+    if ($relativePath -notmatch '^[^:\x00-\x1f]+$' -or [IO.Path]::IsPathRooted($relativePath) -or
+        $relativePath.Split('\') -contains '..' -or $payloadHashes.ContainsKey($relativePath)) {
+        Fail-PackageQualification 'Package manifest contains an invalid payload path.'
+    }
+    $payloadHashes[$relativePath] = [string]$entry.sha256
+    $expectedPayloadFiles += $relativePath
 }
-foreach ($requiredPayload in @('openshell.exe', 'openshell-gateway.exe')) {
+foreach ($requiredPayload in @(
+    'bin\openshell.exe',
+    'bin\openshell-gateway.exe',
+    'bin\node.exe',
+    'bin\nemoclaw.cmd',
+    'nemoclaw\app\bin\nemoclaw.js',
+    'openclaw\node_modules\openclaw\openclaw.mjs',
+    'mxc\wxc-exec.exe',
+    'mxc\wxc-host-prep.exe',
+    'config\mxc-gateway.toml'
+)) {
     if (-not $payloadHashes.ContainsKey($requiredPayload) -or
         $payloadHashes[$requiredPayload] -cnotmatch '^[a-f0-9]{64}$') {
         Fail-PackageQualification "Package manifest is missing $requiredPayload authority."
@@ -357,6 +431,10 @@ $installRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolde
 $installBin = Join-Path $installRoot 'bin'
 $openshellPath = Join-Path $installBin 'openshell.exe'
 $gatewayPath = Join-Path $installBin 'openshell-gateway.exe'
+$nodePath = Join-Path $installBin 'node.exe'
+$nemoclawEntryPath = Join-Path $installRoot 'nemoclaw\app\bin\nemoclaw.js'
+$openClawEntryPath = Join-Path $installRoot 'openclaw\node_modules\openclaw\openclaw.mjs'
+$wxcExecPath = Join-Path $installRoot 'mxc\wxc-exec.exe'
 $bundleInstallLog = Join-Path $artifactRoot 'bundle-install.log'
 $msiRepairLog = Join-Path $artifactRoot 'msi-repair.log'
 $msiReinstallLog = Join-Path $artifactRoot 'msi-reinstall.log'
@@ -385,15 +463,22 @@ try {
         -not (Test-Path -LiteralPath $gatewayPath -PathType Leaf)) {
         Fail-PackageQualification 'Bundle installation did not publish both payload executables.'
     }
-    Assert-InstalledTree -Root $installRoot -Phase 'Initial bundle install'
-    if ((Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['openshell.exe'] -or
-        (Get-FileHash -LiteralPath $gatewayPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['openshell-gateway.exe']) {
+    Assert-InstalledTree -Root $installRoot -Phase 'Initial bundle install' -ExpectedFiles $expectedPayloadFiles
+    if ((Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['bin\openshell.exe'] -or
+        (Get-FileHash -LiteralPath $gatewayPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['bin\openshell-gateway.exe'] -or
+        (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['bin\node.exe'] -or
+        (Get-FileHash -LiteralPath $wxcExecPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['mxc\wxc-exec.exe']) {
         Fail-PackageQualification 'Installed payload digests do not match the package manifest.'
     }
-    Write-Host '[PASS] Setup installed the exact MSI-owned four-file tree'
+    Write-Host "[PASS] Setup installed the exact MSI-owned NemoClaw runtime tree ($($expectedPayloadFiles.Count) files)"
     $nativeEvidence = @(
         Invoke-NativeVersionProbe -Path $openshellPath -Label 'Installed openshell.exe'
         Invoke-NativeVersionProbe -Path $gatewayPath -Label 'Installed openshell-gateway.exe'
+        Invoke-NativeVersionProbe -Path $nodePath -Label 'Installed node.exe'
+    )
+    $applicationEvidence = @(
+        Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $nemoclawEntryPath -ExpectedVersion $ProductVersion -Label 'Installed NemoClaw CLI'
+        Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $openClawEntryPath -ExpectedVersion '2026.7.1' -Label 'Installed OpenClaw runtime'
     )
     $msiArp = @(Get-ArpEntries -DisplayName $script:MsiDisplayName)
     $bundleArp = @(Get-ArpEntries -DisplayName $script:BundleDisplayName)
@@ -415,10 +500,10 @@ try {
         -Arguments @('/fa', $msi, '/qn', '/norestart', '/l*v', $msiRepairLog) `
         -Label 'MSI repair' `
         -AllowedExitCodes @(0, 3010) | Out-Null
-    if ((Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['openshell.exe']) {
+    if ((Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['bin\openshell.exe']) {
         Fail-PackageQualification 'MSI repair did not restore the corrupted OpenShell CLI.'
     }
-    Assert-InstalledTree -Root $installRoot -Phase 'MSI repair'
+    Assert-InstalledTree -Root $installRoot -Phase 'MSI repair' -ExpectedFiles $expectedPayloadFiles
     Write-Host '[PASS] MSI repair restored the deliberately corrupted openshell.exe digest'
 
     Invoke-BoundedProcess `
@@ -429,7 +514,7 @@ try {
     if (@(Get-ArpEntries -DisplayName $script:MsiDisplayName).Count -ne 1) {
         Fail-PackageQualification 'MSI reinstall did not preserve one product registration.'
     }
-    Assert-InstalledTree -Root $installRoot -Phase 'MSI reinstall'
+    Assert-InstalledTree -Root $installRoot -Phase 'MSI reinstall' -ExpectedFiles $expectedPayloadFiles
     Write-Host '[PASS] MSI reinstall preserved exactly one product registration'
 
     Invoke-BoundedProcess `
@@ -510,6 +595,7 @@ try {
             authenticodeStatus = (Get-AuthenticodeSignature -LiteralPath $setup).Status.ToString()
         }
         nativeExecutions = $nativeEvidence
+        applicationExecutions = $applicationEvidence
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
         repairRestoredDigest = $true
