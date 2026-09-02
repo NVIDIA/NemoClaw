@@ -143,7 +143,9 @@ vi.mock("../../adapters/docker", () => ({
   dockerRunDetached: vi.fn(),
 }));
 vi.mock("../../adapters/openshell/runtime", () => ({
+  buildOpenShellSubprocessEnv: vi.fn(() => ({})),
   captureOpenshell: captureOpenshellMock,
+  captureResolvedOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
 }));

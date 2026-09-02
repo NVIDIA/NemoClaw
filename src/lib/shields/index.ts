@@ -4338,6 +4338,18 @@ type ShieldsDownRollbackResult = {
   timerAuthorityRevoked: boolean;
 };
 
+function revokeRollbackTimerAuthority(
+  sandboxName: string,
+  expectedTimerAuthority?: TimerMarker,
+): { authorityRevoked: boolean; warnings: string[] } {
+  if (!expectedTimerAuthority) return killTimer(sandboxName);
+  const retirement = clearTimerMarkerGeneration(sandboxName, expectedTimerAuthority);
+  return {
+    authorityRevoked: retirement.status === "removed" || retirement.status === "missing",
+    warnings: retirement.warning === undefined ? [] : [retirement.warning],
+  };
+}
+
 function describeRollbackTimerAuthority(
   hadScheduledTimer: boolean,
   timerAuthorityRevoked: boolean,
@@ -4491,6 +4503,7 @@ function rollbackShieldsDown(
   initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  expectedTimerAuthority?: TimerMarker,
 ): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
   let rollbackResult: ShieldsPolicySnapshotRestoreResult | null = null;
@@ -4513,7 +4526,7 @@ function rollbackShieldsDown(
     if (initialMode === "mutable_default" && target.agentName === "openclaw") {
       try {
         unlockAgentConfigUnderMutationLock(sandboxName, target, false, protocol);
-        const timerCancellation = killTimer(sandboxName);
+        const timerCancellation = revokeRollbackTimerAuthority(sandboxName, expectedTimerAuthority);
         timerAuthorityRevoked = timerCancellation.authorityRevoked;
         if (!timerCancellation.authorityRevoked) {
           throw new Error(
@@ -4551,7 +4564,7 @@ function rollbackShieldsDown(
   }
   if (rollbackChattrApplied !== null && rollbackFileHashes !== null) {
     if (!timerAuthorityRevoked) {
-      const timerCancellation = killTimer(sandboxName);
+      const timerCancellation = revokeRollbackTimerAuthority(sandboxName, expectedTimerAuthority);
       timerAuthorityRevoked = timerCancellation.authorityRevoked;
       if (!timerCancellation.authorityRevoked) {
         console.error(
@@ -5021,6 +5034,7 @@ function failRecoveredHermesShieldsDown(
     state,
     allowLegacyHermesProtocol,
     "provider-state-mutation-v2",
+    completion.marker ?? undefined,
   );
   if (completion.transition && rollback.timerAuthorityRevoked) {
     clearShieldsDownTransition(sandboxName, completion.transition.processToken);
@@ -5530,6 +5544,7 @@ function shieldsDownWithoutHostLock(
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        timerAuthority,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
@@ -5686,6 +5701,7 @@ function shieldsDownWithoutHostLock(
       state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
+      timerAuthority,
     );
     transition = persistIncompleteShieldsDownPosture(
       sandboxName,
@@ -5745,21 +5761,27 @@ function shieldsDownWithoutHostLock(
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        timerAuthority,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
       }
       console.error(`  ERROR: ${message}`);
-      const timerAuthority = describeRollbackTimerAuthority(true, rollback.timerAuthorityRevoked);
+      const timerAuthorityDescription = describeRollbackTimerAuthority(
+        true,
+        rollback.timerAuthorityRevoked,
+      );
       if (rollback.outcome === "mutable_default_restored") {
         console.error(
-          `  Auto-restore handoff failed; the original mutable-default posture was restored.${timerAuthority}`,
+          `  Auto-restore handoff failed; the original mutable-default posture was restored.${timerAuthorityDescription}`,
         );
       } else if (rollback.outcome === "lockdown_restored") {
-        console.error(`  Auto-restore handoff failed; lockdown was restored.${timerAuthority}`);
+        console.error(
+          `  Auto-restore handoff failed; lockdown was restored.${timerAuthorityDescription}`,
+        );
       } else {
         console.error(
-          `  Auto-restore handoff failed; rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+          `  Auto-restore handoff failed; rollback is incomplete.${timerAuthorityDescription} Manual intervention is required.`,
         );
       }
       return failShieldsCommand(message, opts.throwOnError);
