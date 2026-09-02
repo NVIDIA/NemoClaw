@@ -239,7 +239,9 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-      "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
+      "fast": [
+        "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
@@ -354,7 +356,9 @@
     },
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
-      "liveSources": ["test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"],
+      "liveSources": [
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"
+      ],
       "fast": [
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -655,7 +659,9 @@
     },
     {
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"],
+      "liveSources": [
+        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"
+      ],
       "fast": [
         "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
         "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
@@ -693,6 +699,20 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/shields-retirement-upgrade.test.ts",
+      "liveSources": [
+        "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+        "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
+      ],
+      "fast": [
+        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/state/migrations/removed-immutability.test.ts",
+        "test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts",
+        "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
+        "test/e2e/support/shields-retirement-workflow-plan.test.ts"
       ]
     },
     {

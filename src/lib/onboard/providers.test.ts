@@ -694,6 +694,7 @@ describe("onboard provider helpers", () => {
     const credential = "discord-credential-must-not-leak";
     const calls: Array<{ command: string[]; env?: Record<string, string | undefined> }> = [];
     let created = false;
+    let profileImported = false;
     const providers = upsertMessagingProviders(
       [
         {
@@ -707,9 +708,14 @@ describe("onboard provider helpers", () => {
         calls.push({ command, env: options?.env });
         switch (command[1]) {
           case "profile":
-            return command.includes("export")
-              ? { status: 1, stdout: "", stderr: "provider profile not found" }
+            const exportingProfile = command.includes("export");
+            const profileResult = exportingProfile
+              ? profileImported
+                ? { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" }
+                : { status: 1, stdout: "", stderr: "provider profile not found" }
               : { status: 0, stdout: "", stderr: "" };
+            profileImported ||= !exportingProfile;
+            return profileResult;
           case "get":
             return created
               ? {
@@ -734,11 +740,12 @@ describe("onboard provider helpers", () => {
       "provider get alpha-discord-bridge",
       "provider profile export nemoclaw-mcp-v1 --output json",
       expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
+      "provider profile export nemoclaw-mcp-v1 --output json",
       "provider get alpha-discord-bridge",
       "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
       "provider get alpha-discord-bridge",
     ]);
-    expect(calls[4]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
+    expect(calls[5]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 

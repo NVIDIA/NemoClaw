@@ -1,0 +1,759 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import { createCliOpenShellProviderAdapter, type RunProviderCommand } from "./provider-adapter-cli";
+import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
+
+function captured(status: number | null, stdout = "", stderr = "", error?: Error) {
+  return { status, stdout, stderr, ...(error ? { error } : {}) };
+}
+
+const TAVILY_PROFILE = {
+  id: "tavily",
+  credentials: [
+    {
+      name: "api_key",
+      env_vars: ["TAVILY_API_KEY"],
+      required: true,
+      auth_style: "bearer",
+      header_name: "authorization",
+      query_param: "",
+    },
+  ],
+  endpoints: [
+    {
+      host: "api.tavily.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      request_body_credential_rewrite: true,
+      rules: [
+        { allow: { method: "POST", path: "/search" } },
+        { allow: { method: "POST", path: "/extract" } },
+      ],
+    },
+  ],
+  binaries: [
+    "/opt/venv/bin/python3*",
+    "/usr/local/bin/node",
+    "/usr/bin/node",
+    "/usr/local/bin/curl",
+    "/usr/bin/curl",
+  ],
+  inference_capable: false,
+} as const;
+
+const TAVILY_PROFILE_YAML = `
+id: tavily
+credentials:
+  - name: api_key
+    env_vars: [TAVILY_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    query_param: ''
+endpoints:
+  - host: api.tavily.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    request_body_credential_rewrite: true
+    rules:
+      - allow: { method: POST, path: /search }
+      - allow: { method: POST, path: /extract }
+binaries:
+  - /opt/venv/bin/python3*
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false
+`;
+
+describe("CLI OpenShell provider adapter", () => {
+  it("rejects an ambient endpoint before every named-gateway operation (#9806)", async () => {
+    const run = vi.fn(() => captured(0));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      environment: { OPENSHELL_GATEWAY_ENDPOINT: "https://untrusted.example.test" },
+    });
+    const target = namedOpenShellGateway("nemoclaw-18080");
+    const credentialValue = "host-only-value";
+    const operations = [
+      adapter.listProviders({ target }),
+      adapter.createProvider({
+        target,
+        name: "search-prod",
+        type: "tavily",
+        credentials: [{ name: "TAVILY_API_KEY", value: credentialValue }],
+        config: [],
+        fromExisting: false,
+      }),
+      adapter.importProviderProfile({ target, profilePath: "/unused/profile.yaml" }),
+      adapter.inspectProviderProfile({ target, profileType: "tavily" }),
+      adapter.deleteProvider({ target, providerName: "search-prod" }),
+      adapter.detachProvider({ target, providerName: "search-prod", sandboxName: "alpha" }),
+    ];
+
+    const results = await Promise.all(operations);
+
+    const expectedFailure = {
+      ok: false,
+      error: {
+        kind: "validation",
+        message:
+          "OPENSHELL_GATEWAY_ENDPOINT is set, so OpenShell may bypass the gateway recorded for this sandbox. Unset OPENSHELL_GATEWAY_ENDPOINT and retry.",
+      },
+    };
+    expect(results).toEqual([
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+    ]);
+    expect(JSON.stringify(results)).not.toContain(credentialValue);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("targets a named gateway and returns provider names (#9806)", async () => {
+    const run = vi.fn(() => captured(0, "zeta\nalpha\n"));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.listProviders({
+        target: namedOpenShellGateway("nemoclaw-18080"),
+        timeoutMs: 4_321,
+      }),
+    ).resolves.toEqual({ ok: true, value: { names: ["zeta", "alpha"] } });
+    expect(run).toHaveBeenCalledWith(["provider", "list", "-g", "nemoclaw-18080", "--names"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 4_321,
+    });
+  });
+
+  it.each([
+    ["OSC control", "alpha\n\u001b]52;c;YXR0YWNr\u0007"],
+    ["invalid name", "alpha\nbad/name"],
+  ])(
+    "rejects unsafe provider inventory output before returning names: %s (#9806)",
+    async (_case, output) => {
+      const adapter = createCliOpenShellProviderAdapter({
+        run: () => captured(0, output),
+      });
+
+      await expect(adapter.listProviders({ target: selectedOpenShellGateway() })).resolves.toEqual({
+        ok: false,
+        error: {
+          kind: "schema",
+          message: "OpenShell returned an invalid provider inventory.",
+        },
+      });
+    },
+  );
+
+  it("passes credential values only through the child environment (#9806)", async () => {
+    const run = vi.fn<RunProviderCommand>(() => captured(0));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+    const credentialValue = "host-only-value";
+
+    await expect(
+      adapter.createProvider({
+        target: selectedOpenShellGateway(),
+        name: "search-prod",
+        type: "tavily",
+        credentials: [{ name: "TAVILY_API_KEY", value: credentialValue }],
+        config: [{ key: "region", value: "us-west" }],
+        fromExisting: false,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(run).toHaveBeenCalledWith(
+      [
+        "provider",
+        "create",
+        "--name",
+        "search-prod",
+        "--type",
+        "tavily",
+        "--credential",
+        "TAVILY_API_KEY",
+        "--config",
+        "region=us-west",
+      ],
+      {
+        env: { TAVILY_API_KEY: credentialValue },
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
+    );
+    expect(run.mock.calls[0]?.[0]).not.toContain(credentialValue);
+  });
+
+  it.each([
+    [{ credentials: [], fromExisting: false }],
+    [{ credentials: [{ name: "TAVILY_API_KEY", value: "" }], fromExisting: false }],
+    [
+      {
+        credentials: [{ name: "TAVILY_API_KEY", value: "credential-value" }],
+        fromExisting: true,
+      },
+    ],
+  ])(
+    "rejects missing or conflicting credential material before provider creation (#9806)",
+    async (input) => {
+      const run = vi.fn();
+      const adapter = createCliOpenShellProviderAdapter({ run });
+
+      await expect(
+        adapter.createProvider({
+          target: selectedOpenShellGateway(),
+          name: "search-prod",
+          type: "tavily",
+          credentials: input.credentials,
+          config: [],
+          fromExisting: input.fromExisting,
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: {
+          kind: "validation",
+          message: "Provider credential input is missing or conflicts with imported credentials.",
+        },
+      });
+      expect(run).not.toHaveBeenCalled();
+    },
+  );
+
+  it("removes exact credential values from typed failures (#9806)", async () => {
+    const credentialValue = "unstructured-host-value";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", `provider rejected ${credentialValue}`),
+    });
+
+    const result = await adapter.createProvider({
+      target: selectedOpenShellGateway(),
+      name: "search-prod",
+      type: "tavily",
+      credentials: [{ name: "TAVILY_API_KEY", value: credentialValue }],
+      config: [],
+      fromExisting: false,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "provider rejected <REDACTED>",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(credentialValue);
+  });
+
+  it("removes URL userinfo from typed failures (#9806)", async () => {
+    const username = "upstream-user";
+    const password = "upstream-password";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(1, "", `provider rejected https://${username}:${password}@example.test/path`),
+    });
+
+    const result = await adapter.createProvider({
+      target: selectedOpenShellGateway(),
+      name: "search-prod",
+      type: "tavily",
+      credentials: [{ name: "TAVILY_API_KEY", value: "unrelated-host-value" }],
+      config: [],
+      fromExisting: false,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "provider rejected https://example.test/path",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(username);
+    expect(JSON.stringify(result)).not.toContain(password);
+  });
+
+  it("removes terminal control strings from typed failures (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          1,
+          "",
+          "provider rejected \u001b]52;c;osc-payload\u0007\u001bP+dcs-payload\u001b\\request",
+        ),
+    });
+
+    const result = await adapter.listProviders({ target: selectedOpenShellGateway() });
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "provider rejected request" },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/[\u001B\u0090-\u009F]/u);
+    expect(JSON.stringify(result)).not.toContain("payload");
+  });
+
+  it("does not expose an imported credential value in a provider failure (#9806)", async () => {
+    const storedCredentialValue = "arbitrary-stored-value";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", `provider rejected ${storedCredentialValue}`),
+    });
+
+    const result = await adapter.createProvider({
+      target: selectedOpenShellGateway(),
+      name: "search-prod",
+      type: "tavily",
+      credentials: [],
+      config: [],
+      fromExisting: true,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell could not create the provider from existing credentials.",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(storedCredentialValue);
+  });
+
+  it("treats an existing provider profile as already present (#9806)", async () => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile already exists"))
+      .mockReturnValueOnce(captured(0, JSON.stringify(TAVILY_PROFILE)));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      readProfileFile: () => TAVILY_PROFILE_YAML,
+    });
+
+    await expect(
+      adapter.importProviderProfile({
+        target: selectedOpenShellGateway(),
+        profilePath: "/repo/profile.yaml",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(run.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
+      ["provider", "profile", "export", "tavily", "--output", "json"],
+    ]);
+    expect(run.mock.calls[1]?.[1]).toMatchObject({ suppressOutput: true });
+  });
+
+  it("validates a newly imported provider profile before returning success (#9806)", async () => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0))
+      .mockReturnValueOnce(captured(0, JSON.stringify(TAVILY_PROFILE)));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      readProfileFile: () => TAVILY_PROFILE_YAML,
+    });
+
+    await expect(
+      adapter.importProviderProfile({
+        target: selectedOpenShellGateway(),
+        profilePath: "/repo/profile.yaml",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(run.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
+      ["provider", "profile", "export", "tavily", "--output", "json"],
+    ]);
+  });
+
+  it.each([
+    [
+      "endpoint",
+      {
+        ...TAVILY_PROFILE,
+        endpoints: [
+          ...TAVILY_PROFILE.endpoints,
+          { host: "attacker.example", port: 443, protocol: "rest", enforcement: "enforce" },
+        ],
+      },
+    ],
+    ["binary", { ...TAVILY_PROFILE, binaries: [...TAVILY_PROFILE.binaries, "/tmp/widened"] }],
+    [
+      "credential",
+      {
+        ...TAVILY_PROFILE,
+        credentials: [
+          ...TAVILY_PROFILE.credentials,
+          {
+            name: "extra",
+            env_vars: ["EXTRA_TOKEN"],
+            required: true,
+            auth_style: "bearer",
+            header_name: "authorization",
+            query_param: "",
+          },
+        ],
+      },
+    ],
+  ])("rejects an existing profile with a widened %s boundary (#9806)", async (_field, profile) => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(1, "", "provider profile already exists"))
+      .mockReturnValueOnce(captured(0, JSON.stringify(profile)));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      readProfileFile: () => TAVILY_PROFILE_YAML,
+    });
+
+    await expect(
+      adapter.importProviderProfile({
+        target: selectedOpenShellGateway(),
+        profilePath: "/repo/profile.yaml",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message:
+          "The OpenShell provider profile does not match the checked-in credential boundary.",
+      },
+    });
+  });
+
+  it("rejects a malformed exported profile after import (#9806)", async () => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0))
+      .mockReturnValueOnce(captured(0, "not-json"));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      readProfileFile: () => TAVILY_PROFILE_YAML,
+    });
+
+    await expect(
+      adapter.importProviderProfile({
+        target: selectedOpenShellGateway(),
+        profilePath: "/repo/profile.yaml",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "command", reason: "profile_incompatible" },
+    });
+  });
+
+  it("rejects a missing exported profile after import (#9806)", async () => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0))
+      .mockReturnValueOnce(captured(1, "", "provider profile not found"));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      readProfileFile: () => TAVILY_PROFILE_YAML,
+    });
+
+    await expect(
+      adapter.importProviderProfile({
+        target: selectedOpenShellGateway(),
+        profilePath: "/repo/profile.yaml",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "command", reason: "not_found" },
+    });
+  });
+
+  it("rejects an unreadable checked-in profile before invoking OpenShell (#9806)", async () => {
+    const run = vi.fn<RunProviderCommand>();
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      readProfileFile: () => {
+        throw new Error("host path detail");
+      },
+    });
+
+    await expect(
+      adapter.importProviderProfile({
+        target: selectedOpenShellGateway(),
+        profilePath: "/repo/profile.yaml",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "validation",
+        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
+      },
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("returns sorted unique credential keys from a provider profile (#9806)", async () => {
+    const run = vi.fn(() =>
+      captured(
+        0,
+        JSON.stringify({
+          id: "custom",
+          credentials: [{ env_vars: ["ZETA_TOKEN", "ALPHA_TOKEN"] }, { env_vars: ["ALPHA_TOKEN"] }],
+        }),
+      ),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.inspectProviderProfile({
+        target: selectedOpenShellGateway(),
+        profileType: "custom",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { credentialKeys: ["ALPHA_TOKEN", "ZETA_TOKEN"] },
+    });
+    expect(run).toHaveBeenCalledWith(
+      ["provider", "profile", "export", "custom", "--output", "json"],
+      expect.any(Object),
+    );
+  });
+
+  it("returns a schema failure for an invalid provider profile (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, "not-json"),
+    });
+
+    await expect(
+      adapter.inspectProviderProfile({
+        target: selectedOpenShellGateway(),
+        profileType: "custom",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "schema", message: "OpenShell returned an invalid provider profile." },
+    });
+  });
+
+  it.each([
+    ["missing", { credentials: [{ env_vars: ["CUSTOM_TOKEN"] }] }],
+    ["mismatched", { id: "other", credentials: [{ env_vars: ["CUSTOM_TOKEN"] }] }],
+  ])("rejects a provider profile with a %s identity (#9806)", async (_case, profile) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, JSON.stringify(profile)),
+    });
+
+    await expect(
+      adapter.inspectProviderProfile({
+        target: selectedOpenShellGateway(),
+        profileType: "custom",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "schema", message: "OpenShell returned an invalid provider profile." },
+    });
+  });
+
+  it("returns typed attachment names and exact detach arguments (#9806)", async () => {
+    const run = vi
+      .fn()
+      .mockReturnValueOnce(captured(1, "", "provider is attached to sandbox(es): alpha, beta"))
+      .mockReturnValueOnce(captured(0));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.deleteProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "attached",
+        message: "provider is attached to sandbox(es): alpha, beta",
+        attachedSandboxes: ["alpha", "beta"],
+      },
+    });
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(run.mock.calls[1]?.[0]).toEqual([
+      "sandbox",
+      "provider",
+      "detach",
+      "alpha",
+      "search-prod",
+    ]);
+  });
+
+  it("stops attachment parsing before trailing diagnostic prose (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(1, "", "provider is attached to sandbox(es): alpha, beta. Detach them first."),
+    });
+
+    await expect(
+      adapter.deleteProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "attached",
+        attachedSandboxes: ["alpha", "beta"],
+      },
+    });
+  });
+
+  it("places a named gateway flag before detach arguments (#9806)", async () => {
+    const run = vi.fn(() => captured(0));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.detachProvider({
+        target: namedOpenShellGateway("nemoclaw-18080"),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(run).toHaveBeenCalledWith(
+      ["sandbox", "provider", "detach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
+      expect.objectContaining({ ignoreError: true, timeout: 30_000 }),
+    );
+  });
+
+  it.each(["NotAttached", "provider search-prod is not attached"])(
+    "treats an idempotent detach result as already detached: %s (#9806)",
+    async (diagnostic) => {
+      const adapter = createCliOpenShellProviderAdapter({
+        run: () => captured(1, "", diagnostic),
+      });
+
+      await expect(
+        adapter.detachProvider({
+          target: selectedOpenShellGateway(),
+          providerName: "search-prod",
+          sandboxName: "alpha",
+        }),
+      ).resolves.toEqual({ ok: true });
+    },
+  );
+
+  it.each(["provider search-prod NotFound", "provider search-prod not found"])(
+    "does not report a missing provider as detached: %s (#9806)",
+    async (diagnostic) => {
+      const adapter = createCliOpenShellProviderAdapter({
+        run: () => captured(1, "", diagnostic),
+      });
+
+      await expect(
+        adapter.detachProvider({
+          target: selectedOpenShellGateway(),
+          providerName: "search-prod",
+          sandboxName: "alpha",
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: diagnostic },
+      });
+    },
+  );
+
+  it.each([
+    "provider is attached to sandbox(es): alpha, invalid/name",
+    "provider is attached to sandbox(es): --gateway, invalid/name",
+    "provider is attached to sandbox(es): team.alpha",
+    "provider is attached to sandbox(es):",
+  ])("does not return unvalidated attachment targets from %s (#9806)", async (diagnostic) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", diagnostic),
+    });
+
+    const result = await adapter.deleteProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "command", reason: "failed" },
+    });
+    expect(JSON.stringify(result)).not.toContain("attachedSandboxes");
+  });
+
+  it.each([
+    [
+      "authentication",
+      captured(1, "", "authentication failed: credential-value"),
+      "OpenShell could not authenticate the provider operation.",
+      undefined,
+    ],
+    [
+      "transport",
+      captured(1, "", "handshake verification failed"),
+      "The selected OpenShell gateway identity does not match the recorded identity.",
+      "identity_mismatch",
+    ],
+    [
+      "transport",
+      captured(1, "", "client error (Connect): connection refused"),
+      "OpenShell could not reach the selected gateway.",
+      "unreachable",
+    ],
+    [
+      "timeout",
+      captured(
+        null,
+        "",
+        "credential-value",
+        Object.assign(new Error("provider create credential-value timed out"), {
+          code: "ETIMEDOUT",
+        }),
+      ),
+      "The OpenShell provider operation timed out.",
+      undefined,
+    ],
+    [
+      "transport",
+      captured(
+        null,
+        "",
+        "credential-value",
+        Object.assign(new Error("spawn openshell credential-value"), { code: "ENOENT" }),
+      ),
+      "OpenShell could not start the provider operation.",
+      "process_start",
+    ],
+    [
+      "command",
+      captured(null, "", "credential-value"),
+      "OpenShell did not report whether the provider operation completed.",
+      "uncertain",
+    ],
+  ])(
+    "maps %s failures without returning CLI diagnostics (#9806)",
+    async (kind, result, message, reason) => {
+      const adapter = createCliOpenShellProviderAdapter({ run: () => result });
+
+      const mapped = await adapter.listProviders({ target: selectedOpenShellGateway() });
+
+      expect(mapped).toEqual({
+        ok: false,
+        error: { kind, ...(reason ? { reason } : {}), message },
+      });
+      expect(JSON.stringify(mapped)).not.toContain("credential-value");
+    },
+  );
+});

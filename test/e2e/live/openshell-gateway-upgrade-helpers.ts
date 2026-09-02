@@ -4,7 +4,10 @@
 import { shellQuote } from "../fixtures/clients/command.ts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
-const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
+const NON_INTERACTIVE_INSTALLER_ARGS = [
+  "--non-interactive",
+  "--yes-i-accept-third-party-software",
+];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
 const LEGACY_GATEWAY_DOCKER_NETWORK = "openshell-cluster-nemoclaw";
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
@@ -17,11 +20,15 @@ export interface LegacyGatewayUpgradeFixture {
   sandboxBaseImageRef: string;
 }
 
-export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgradeFixture): {
+export function validateLegacyGatewayUpgradeFixture(
+  fixture: LegacyGatewayUpgradeFixture,
+): {
   sandboxBaseDigest: string;
 } {
   if (!/^v\d+\.\d+\.\d+$/.test(fixture.nemoclawRef)) {
-    throw new Error(`NEMOCLAW_OLD_NEMOCLAW_REF must be a release tag; got ${fixture.nemoclawRef}`);
+    throw new Error(
+      `NEMOCLAW_OLD_NEMOCLAW_REF must be a release tag; got ${fixture.nemoclawRef}`,
+    );
   }
   if (!/^[0-9a-f]{40}$/.test(fixture.nemoclawCommit)) {
     throw new Error(
@@ -58,7 +65,9 @@ export function currentGatewayUpgradeInstallerArgs(
   installer: string,
   options: { interactive?: boolean } = {},
 ): string[] {
-  return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
+  return options.interactive
+    ? [installer]
+    : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
 export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
@@ -86,10 +95,13 @@ export function legacyGatewayUpgradeHostFirewallOptions(nemoclawRef: string): {
     case "v0.0.55":
     case "v0.0.74":
     case "v0.0.89":
+    case "v0.0.118":
       networkName = undefined;
       break;
     default:
-      throw new Error(`Unsupported gateway-upgrade network fixture: ${nemoclawRef}`);
+      throw new Error(
+        `Unsupported gateway-upgrade network fixture: ${nemoclawRef}`,
+      );
   }
   // The historical install creates its network after fetching and building
   // its payload, so keep the parallel probe alive for the full install budget.
@@ -100,11 +112,16 @@ export function throwGatewayUpgradeSetupFailures(
   results: readonly PromiseSettledResult<unknown>[],
 ): void {
   const failures = results
-    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    )
     .map((result) => result.reason);
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) {
-    throw new AggregateError(failures, "legacy install and host mock firewall setup failed");
+    throw new AggregateError(
+      failures,
+      "legacy install and host mock firewall setup failed",
+    );
   }
 }
 
@@ -120,8 +137,12 @@ export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
       return { nemoclawVersion: "0.0.74", fromDockerfile: null };
     case "v0.0.89":
       return { nemoclawVersion: "0.0.89", fromDockerfile: null };
+    case "v0.0.118":
+      return { nemoclawVersion: "0.0.118", fromDockerfile: null };
     default:
-      throw new Error(`Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`);
+      throw new Error(
+        `Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`,
+      );
   }
 }
 
