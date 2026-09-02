@@ -408,6 +408,21 @@ describe("runInferenceGet", () => {
     );
   });
 
+  it("fails closed when a named sandbox has an invalid gateway binding", async () => {
+    const deps = createDeps("");
+    deps.getSandboxTargetGatewayName.mockImplementation(() => {
+      throw new Error("invalid gatewayName secret-invalid-gateway and gatewayPort 31337");
+    });
+
+    const lookup = runInferenceGet({ sandboxName: "beta" }, deps);
+    await expect(lookup).rejects.toMatchObject({
+      message:
+        "NemoClaw could not resolve the sandbox's recorded gateway. Run 'nemoclaw beta status' to inspect and repair its registry metadata.",
+    });
+    await expect(lookup).rejects.not.toThrow(/secret-invalid-gateway|31337/);
+    expect(deps.captureOpenshell).not.toHaveBeenCalled();
+  });
+
   it("sanitizes route values only for human-readable output", async () => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: openai\u001b[2J\n  Model: gpt\u0007-5.4\r\n",

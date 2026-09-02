@@ -6,12 +6,6 @@
  * formatting helpers used across the CLI.
  */
 
-export {
-  endpointUrlHasUserinfoQueryOrFragment,
-  type EndpointUrlViolation,
-  unsafeEndpointUrlViolation,
-} from "./endpoint-url-safety";
-
 export function compactText(value = ""): string {
   return String(value).replace(/\s+/g, " ").trim();
 }

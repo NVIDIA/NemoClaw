@@ -4,16 +4,18 @@
 import { describe, expect, it } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
+  endpointUrlHasUserinfoQueryOrFragment,
+  unsafeEndpointUrlViolation,
+} from "./endpoint-url-safety";
+import {
   canonicalEndpoint,
   compactText,
-  endpointUrlHasUserinfoQueryOrFragment,
   formatEnvAssignment,
   isLoopbackHostname,
   isLoopbackRemoteAddress,
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
   stripEndpointSuffix,
-  unsafeEndpointUrlViolation,
 } from "./url-utils";
 
 describe("compactText", () => {

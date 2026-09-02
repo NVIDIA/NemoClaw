@@ -210,7 +210,22 @@ export async function runInferenceGet(
   options: InferenceGetOptions = {},
   deps: InferenceGetDeps = defaultDeps(),
 ): Promise<InferenceGetResult> {
-  const gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
+  let gatewayName: string;
+  try {
+    gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
+  } catch {
+    const safeCliName = sanitizeRouteValueForDisplay(options.cliName ?? "nemoclaw").slice(0, 32);
+    const safeSandboxName = sanitizeRouteValueForDisplay(options.sandboxName).slice(
+      0,
+      MAX_DIAGNOSTIC_SANDBOX_NAME_LENGTH,
+    );
+    const statusCommand = safeSandboxName
+      ? `${safeCliName || "nemoclaw"} ${safeSandboxName} status`
+      : `${safeCliName || "nemoclaw"} status`;
+    throw new InferenceGetError(
+      `NemoClaw could not resolve the sandbox's recorded gateway. Run '${statusCommand}' to inspect and repair its registry metadata.`,
+    );
+  }
   const result = getLiveGatewayInference(deps.captureOpenshell, {
     gatewayName,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
