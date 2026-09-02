@@ -43,6 +43,34 @@ function isServiceUserAccessCommand(command: readonly string[]): boolean {
   return command.includes("/bin/sh") && command.includes(serviceUserAccessScript);
 }
 
+function isServiceUserProofCommand(command: readonly string[]): boolean {
+  return command.includes("/usr/bin/systemd-run") && command.at(-1) === "--version";
+}
+
+function expectServiceUserProofCommand(command: readonly string[], serviceUser: string): void {
+  expect(command.slice(0, 5)).toEqual([
+    "/usr/bin/sudo",
+    "-n",
+    "/usr/bin/env",
+    "LC_ALL=C",
+    "/usr/bin/systemd-run",
+  ]);
+  expect(command).toEqual(
+    expect.arrayContaining([
+    "--wait",
+    "--pipe",
+    "--collect",
+    "--service-type=exec",
+    `--uid=${serviceUser}`,
+    "--property=KillMode=control-group",
+    "--property=RuntimeMaxSec=15s",
+    "--property=TimeoutStopSec=250ms",
+    "--property=SendSIGKILL=yes",
+    ]),
+  );
+  expect(command.slice(-2)).toEqual([executablePath, "--version"]);
+}
+
 type CommandCase = readonly [
   matches: (command: readonly string[]) => boolean,
   result: (command: readonly string[]) => OllamaExecutableCaptureResult,
@@ -225,13 +253,14 @@ describe("proveOllamaSystemdServiceExecutable", () => {
       ok: false,
     });
     const commands = fixture.runCaptureExImpl.mock.calls.map(([command]) => command as string[]);
-    const serviceUserCommands = commands.filter(
-      (command) => command[0] === "/usr/bin/sudo" && command.includes("-u"),
-    );
-    expect(serviceUserCommands).toHaveLength(3);
+    const serviceUserAccessCommands = commands.filter(isServiceUserAccessCommand);
+    expect(serviceUserAccessCommands).toHaveLength(2);
     expect(
-      serviceUserCommands.every((command) => command[command.indexOf("-u") + 1] === "#997"),
+      serviceUserAccessCommands.every((command) => command[command.indexOf("-u") + 1] === "#997"),
     ).toBe(true);
+    const [serviceUserProof] = commands.filter(isServiceUserProofCommand);
+    expect(serviceUserProof).toBeDefined();
+    expectServiceUserProofCommand(serviceUserProof ?? [], "997");
     expect(commands).toContainEqual(["/usr/bin/id", "-u", "997"]);
   });
 
@@ -244,10 +273,9 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     });
     expect(fixture.currentMode()).toBe(0o755);
     const commands = fixture.runCaptureExImpl.mock.calls.map(([command]) => command as string[]);
-    expect(commands.filter((command) => command.at(-1) === "--version")).toEqual([
-      ["/usr/bin/sudo", "-n", "-u", "ollama", "--", executablePath, "--version"],
-      ["/usr/bin/sudo", "-n", "-u", "ollama", "--", executablePath, "--version"],
-    ]);
+    const serviceUserProofs = commands.filter(isServiceUserProofCommand);
+    expect(serviceUserProofs).toHaveLength(2);
+    serviceUserProofs.forEach((command) => expectServiceUserProofCommand(command, "ollama"));
     expect(commands.filter((command) => isServiceUserAccessCommand(command))).toEqual([
       [
         "/usr/bin/sudo",
@@ -485,6 +513,12 @@ describe("proveOllamaSystemdServiceExecutable", () => {
         "could not verify that systemd User 'ollama' resolves to a host account within 5 seconds",
     },
     {
+      call: 3,
+      classification: "execution-timeout",
+      message:
+        "Ollama ExecStart did not complete '--version' as systemd User 'ollama' within 15 seconds",
+    },
+    {
       call: 4,
       classification: "executable-timeout",
       message: `could not verify that systemd User 'ollama' can execute Ollama ExecStart '${executablePath}' within 5 seconds`,
@@ -517,6 +551,83 @@ describe("proveOllamaSystemdServiceExecutable", () => {
       });
     },
   );
+
+  it("passes cgroup cleanup limits to systemd-run for the service-user proof (#10663)", () => {
+    const fixture = proofFixture(0o755);
+
+    proveOllamaSystemdServiceExecutable(fixture.options);
+    const proofCalls = fixture.runCaptureExImpl.mock.calls.filter(([command]) =>
+      isServiceUserProofCommand(command as readonly string[]),
+    );
+    expect(proofCalls).toHaveLength(1);
+    const [[command, options]] = proofCalls;
+    expectServiceUserProofCommand(command as readonly string[], "ollama");
+    expect(options).toEqual({ timeout: 17_000 });
+  });
+
+  it("classifies the systemd cgroup runtime limit as an execution timeout (#10663)", () => {
+    const fixture = proofFixture(0o755);
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      command.includes("/usr/bin/systemd-run")
+        ? {
+            exitCode: 1,
+            stderr: "Finished with result: timeout\n",
+            stdout: "",
+            timedOut: false,
+          }
+        : captureForCommand(command, [
+            [
+              (candidate) => candidate[0] === "/usr/bin/systemctl",
+              () =>
+                capture(
+                  0,
+                  `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+                ),
+            ],
+            [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+          ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      classification: "execution-timeout",
+      ok: false,
+    });
+  });
+
+  it("redacts and bounds systemd-run diagnostics for an execution failure (#10663)", () => {
+    const fixture = proofFixture(0o755);
+    const credential = `sk-${"x".repeat(48)}`;
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      isServiceUserProofCommand(command)
+        ? {
+            exitCode: 1,
+            stderr: `Failed to start transient service unit: OPENAI_API_KEY=${credential} ${"detail ".repeat(80)}`,
+            stdout: "",
+            timedOut: false,
+          }
+        : captureForCommand(command, [
+            [
+              (candidate) => candidate[0] === "/usr/bin/systemctl",
+              () =>
+                capture(
+                  0,
+                  `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+                ),
+            ],
+            [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+            [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
+          ]),
+    );
+
+    const result = proveOllamaSystemdServiceExecutable(fixture.options);
+
+    expect(result).toMatchObject({ classification: "execution-failed", ok: false });
+    expect(result.ok ? "" : result.message).toContain(
+      "systemd-run detail: Failed to start transient service unit",
+    );
+    expect(result.ok ? "" : result.message).not.toContain(credential);
+    expect(result.ok ? "" : result.message).not.toContain("detail ".repeat(40));
+  });
 
   it("accepts an initial service-user proof without changing permissions (#9728)", () => {
     const fixture = proofFixture(0o755);

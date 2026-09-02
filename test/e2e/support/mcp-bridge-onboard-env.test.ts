@@ -71,6 +71,33 @@ function selectedWorkload(
   };
 }
 
+function candidateCatalog(): Record<string, unknown> {
+  return Object.fromEntries(
+    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => {
+      const reference = selectedReferences[agent][PLATFORM];
+      return [
+        agent,
+        {
+          contractVersion: 1,
+          agent,
+          platform: PLATFORM,
+          image: MANAGED_IMAGE_REPOSITORIES[agent],
+          digest: reference.slice(reference.indexOf("@") + 1),
+          reference,
+          source: {
+            repository: "NVIDIA/NemoClaw",
+            revision: SELECTED_REVISION,
+            release: "v0.0.114",
+            cohort: SELECTED_COHORT,
+          },
+          startupProfileContractVersion: 1,
+          capabilityContractVersion: 1,
+        },
+      ];
+    }),
+  );
+}
+
 describe("MCP bridge onboarding environment", () => {
   it("restores exact-main OpenShell overrides after child environment sanitization", () => {
     const env = buildMcpBridgeExactMainEnv({
@@ -117,6 +144,32 @@ describe("MCP bridge onboarding environment", () => {
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor@sha256:test",
     });
     expect(env.UNRELATED_PARENT_VALUE).toBeUndefined();
+  });
+
+  it("retains inline candidate authority and validates its exact MCP workload", () => {
+    const inlineCatalog = JSON.stringify(candidateCatalog());
+    const environment = buildMcpBridgeExactMainEnv({
+      baseEnv: {
+        GITHUB_ACTIONS: "true",
+        HOME: "/tmp/home",
+        PATH: "/usr/bin",
+        NEMOCLAW_E2E_EXPECTED_SHA: SELECTED_REVISION,
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: inlineCatalog,
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+      },
+    });
+
+    expect(environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON).toBe(inlineCatalog);
+    expect(() =>
+      assertMcpBridgeManagedImageReceipt({
+        environment,
+        expectedAgent: "langchain-deepagents-code",
+        workload: {
+          ...selectedWorkload("langchain-deepagents-code"),
+          release: "v0.0.114",
+        },
+      }),
+    ).not.toThrow();
   });
 
   it("rejects a Dockerfile workload in managed-image MCP qualification", () => {

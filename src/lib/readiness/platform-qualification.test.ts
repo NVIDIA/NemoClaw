@@ -170,6 +170,55 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.wsl_gpu_passthrough")).toBe(expected);
   });
 
+  it("collects and qualifies the N1x WSL product identity (#10102)", () => {
+    const missingFastOs = Object.assign(new Error("missing FastOS marker"), { code: "ENOENT" });
+    const runCaptureImpl = vi.fn(() => "RTX Spark N1X\r\n");
+    const identity = collectPlatformIdentity({
+      isWsl: true,
+      runCaptureImpl,
+      productNamePath: "/fixtures/product_name",
+      readFile: () => "Virtual Machine\n",
+      openFile: () => {
+        throw missingFastOs;
+      },
+    });
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        isWsl: true,
+        runtime: "docker-desktop",
+        hasNvidiaGpu: true,
+        ...identity,
+      }),
+    );
+
+    expect(identity).toMatchObject({ n1xWslProduct: true });
+    expect(capability(result, "host.platform.n1x_wsl")).toBe("present");
+    expect(qualification(result, "host.platform.n1x_wsl")).toBe("qualified");
+    expect(result.evidence[0]?.details).toMatchObject({ n1xWslProduct: true });
+  });
+
+  it.each([
+    [false, "absent"],
+    [undefined, "absent"],
+  ] as const)(
+    "fails closed for N1x WSL product evidence %s (#10102)",
+    (n1xWslProduct, expectedCapability) => {
+      const result = projectPlatformQualification(
+        input({
+          architecture: "arm64",
+          isWsl: true,
+          runtime: "docker-desktop",
+          hasNvidiaGpu: true,
+          n1xWslProduct,
+        }),
+      );
+
+      expect(capability(result, "host.platform.n1x_wsl")).toBe(expectedCapability);
+      expect(qualification(result, "host.platform.n1x_wsl")).toBeUndefined();
+    },
+  );
+
   it.each([
     ["arm64", "docker-desktop", true],
     ["arm64", "colima", true],
@@ -244,11 +293,10 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_spark_unqualified");
   });
 
-  it("collects and qualifies the accepted N1x identity boundary (#8574)", () => {
+  it("qualifies N1x without pinning its GPU PCI device ID (#10076)", () => {
     const identityFiles: Readonly<Record<string, string>> = {
       product_name: "SKU 1\n",
       vendor: "0x10de\n",
-      device: "0x2e2a\n",
       class: "0x030000\n",
     };
     const identity = collectPlatformIdentity({
@@ -782,9 +830,21 @@ describe("platform readiness qualification (#7410)", () => {
   it("bounds firmware identity before publishing it", () => {
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
-      readFile: () => "NVIDIA DGX Spark".padEnd(5000, "x"),
+      readFile: (filePath) =>
+        new Map([["/fixtures/product_name", "NVIDIA DGX Spark".padEnd(5000, "x")]]).get(
+          filePath,
+        ) ?? unexpectedFixturePath(filePath),
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat({ uid: 1000 }),
+      closeFileDescriptor: () => undefined,
     });
 
-    expect(identity).toEqual({ nvidiaPlatform: undefined, productName: undefined });
+    expect(identity).toEqual({
+      nvidiaPlatform: undefined,
+      productName: undefined,
+      n1xCandidate: true,
+      n1xFastOsMarker: false,
+      n1xPciGpu: undefined,
+    });
   });
 });
