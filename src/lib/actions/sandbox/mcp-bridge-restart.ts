@@ -238,18 +238,19 @@ export async function restoreExistingMcpBridgeRuntime(
   assertNoProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
     const target = resolvedTargetPins(resolvedByServer, entry);
+    const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    const restoredEntry = entry.adapter === adapter ? entry : { ...entry, adapter };
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
     ensureMcpBridgeProviderProfile();
-    applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
-    attachProvider(sandboxName, entry);
-    applyGeneratedPolicy(sandboxName, entry, target);
-    const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
-    refreshMcpProviderEnvironment(entry);
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
+    applyGeneratedPolicy(sandboxName, restoredEntry, target, { bindCredential: false });
+    attachProvider(sandboxName, restoredEntry);
+    applyGeneratedPolicy(sandboxName, restoredEntry, target);
+    refreshMcpProviderEnvironment(restoredEntry);
+    const credentialRevision = waitForAttachedMcpCredential(sandboxName, restoredEntry);
     registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
-      entry,
+      restoredEntry,
       {},
       credentialRevision,
       {
@@ -258,9 +259,10 @@ export async function restoreExistingMcpBridgeRuntime(
       },
     );
     writeBridgeEntry(sandboxName, {
-      ...entry,
-      adapter,
-      allowedIps: entry.trustedPrivateHost ? [...(entry.allowedIps ?? [])] : [...target.addresses],
+      ...restoredEntry,
+      allowedIps: restoredEntry.trustedPrivateHost
+        ? [...(restoredEntry.allowedIps ?? [])]
+        : [...target.addresses],
       updatedAt: nowIso(),
     });
   }
