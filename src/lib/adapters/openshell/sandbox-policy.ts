@@ -4,17 +4,18 @@
 import type { OpenShellGatewayTarget, OpenShellSandboxResult } from "./sandbox-observer";
 import type {
   OpenShellPolicyInspection,
+  OpenShellSandboxPolicyRead,
   OpenShellSandboxPolicySetOutcome,
-} from "../../policy/merge";
+  OpenShellSandboxPolicySetSubmission,
+} from "./policy-boundary";
 
-export type { OpenShellSandboxPolicySetOutcome } from "../../policy/merge";
+export type {
+  OpenShellSandboxPolicyRead,
+  OpenShellSandboxPolicySetOutcome,
+  OpenShellSandboxPolicySetSubmission,
+} from "./policy-boundary";
 
 export type OpenShellSandboxPolicyScope = "base" | "effective";
-
-export type OpenShellSandboxPolicyRead = Readonly<{
-  document: string;
-  appliedRevision: number | null;
-}>;
 
 type OpenShellSandboxPolicyRequest = Readonly<{
   target: OpenShellGatewayTarget;
@@ -24,11 +25,6 @@ type OpenShellSandboxPolicyRequest = Readonly<{
 
 export type SetOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
   Readonly<{ policyPath: string }>;
-
-export type OpenShellSandboxPolicySetSubmission = Readonly<{
-  outcome: OpenShellSandboxPolicySetOutcome;
-  status: number | null;
-}>;
 
 export type ReadOpenShellSandboxPolicyRequest = OpenShellSandboxPolicyRequest &
   Readonly<{ scope: OpenShellSandboxPolicyScope }>;

@@ -3,13 +3,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import type { AnySchemaObject, ErrorObject, ValidateFunction } from "ajv";
 import Ajv from "ajv/dist/2020.js";
 
-import { stripCredentials } from "../security/credential-filter";
-import { parseOpenShellPolicy } from "./merge";
+import { isOpenShellSandboxPolicyCredentialFree, parseOpenShellPolicy } from "./merge";
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
 const NETWORK_POLICY_SCHEMA_PATH = path.join(PACKAGE_ROOT, "schemas", "network-policy.schema.json");
@@ -22,8 +20,7 @@ let cachedSandboxPolicyValidator: ValidateFunction<unknown> | null = null;
 
 /** Prove a live policy can cross a credential-free host handoff. */
 export function isSandboxPolicyCredentialFree(content: string): boolean {
-  const policy = parseOpenShellPolicy(content).policy;
-  return isDeepStrictEqual(stripCredentials(policy), policy);
+  return isOpenShellSandboxPolicyCredentialFree(content);
 }
 
 function loadSandboxPolicyValidator(): ValidateFunction<unknown> {

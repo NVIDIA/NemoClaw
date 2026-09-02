@@ -5,16 +5,16 @@ import YAML from "yaml";
 
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
+  buildOpenShellSandboxPolicySetArgs,
   buildOpenShellSandboxPolicyInspectionArgs,
   buildOpenShellSandboxPolicyReadArgs,
   buildOpenShellSandboxPolicyRevisionReadArgs,
-  buildOpenShellSandboxPolicySetArgs,
   classifyOpenShellSandboxPolicySetResult,
   parseOpenShellPolicy,
   parseOpenShellSandboxPolicyRead,
   parseSandboxPolicyMetadata,
   type OpenShellPolicyInspection,
-} from "../../policy/merge";
+} from "./policy-boundary";
 import { isValidName } from "../../sandbox-name-contract";
 import { stripCredentials } from "../../security/credential-filter";
 import { stripAnsi } from "./client";
@@ -31,6 +31,7 @@ import type {
   OpenShellSandboxPolicyRead,
   OpenShellSandboxPolicyReader,
   OpenShellSandboxPolicyRevisionRead,
+  OpenShellSandboxPolicySetOutcome,
   OpenShellSandboxPolicySetSubmission,
   OpenShellSandboxPolicyWriter,
   ReadOpenShellSandboxPolicyRequest,
@@ -61,6 +62,7 @@ type CapturePolicyCommand = (
 ) => CapturedOpenShellCommandResult | Promise<CapturedOpenShellCommandResult>;
 type PolicyReaderDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
 type PolicyWriterDeps<Capture> = Readonly<{ capture: Capture; defaultTimeoutMs?: number }>;
+
 export type CliOpenShellSandboxPolicyReadResult = Readonly<{
   result: OpenShellSandboxResult<OpenShellSandboxPolicyRead>;
   displayOutput: string;
@@ -139,8 +141,10 @@ function gatewayRequest(request: {
 }
 
 function policySetArgs(request: SetOpenShellSandboxPolicyRequest): string[] {
-  const target = gatewayRequest(request);
-  return buildOpenShellSandboxPolicySetArgs({ ...target, policyPath: request.policyPath });
+  return buildOpenShellSandboxPolicySetArgs({
+    ...gatewayRequest(request),
+    policyPath: request.policyPath,
+  });
 }
 
 const policyReadArgs = (request: ReadOpenShellSandboxPolicyRequest) =>
@@ -173,7 +177,7 @@ function parsePolicySet(
   captured: CapturedOpenShellCommandResult,
 ): OpenShellSandboxPolicySetSubmission {
   return {
-    outcome: classifyCliOpenShellSandboxPolicySetResult(captured),
+    outcome: classifyOpenShellSandboxPolicySetResult(captured),
     status: captured.status,
   };
 }
@@ -196,10 +200,7 @@ function parsePolicyRead(captured: CapturedOpenShellCommandResult) {
   return parseCaptured(
     captured,
     "OpenShell returned an invalid sandbox policy document.",
-    (output) => {
-      const normalized = stripAnsi(output);
-      return parseOpenShellSandboxPolicyRead(normalized);
-    },
+    (output) => parseOpenShellSandboxPolicyRead(stripAnsi(output)),
   );
 }
 

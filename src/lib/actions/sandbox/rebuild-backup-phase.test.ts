@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -119,30 +120,32 @@ describe("rebuild policy handoff", () => {
   it("routes an unsafe stale handoff to supported destroy and fresh-onboard recovery", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unsafe-recovery-"));
     temporaryDirectories.push(backupPath);
-    const preparedRecoveryManifest = writeRebuildPolicyHandoff(
-      {
-        version: 1,
-        sandboxName: "alpha",
-        timestamp: "2026-09-01T00-00-00-000Z",
-        agentType: "openclaw",
-        agentVersion: null,
-        expectedVersion: null,
-        stateDirs: [],
-        failedBackupDirs: [],
-        stateFiles: [],
-        dir: "/sandbox/.openclaw",
-        backupPath,
-        blueprintDigest: "digest",
-      },
-      [
-        "version: 1",
-        "network_policies: {}",
-        "process:",
-        "  environment:",
-        "    SERVICE_API_KEY: opaque-retained-credential",
-        "",
-      ].join("\n"),
-    );
+    const legacyCredentialPolicy = [
+      "version: 1",
+      "network_policies: {}",
+      "process:",
+      "  environment:",
+      "    SERVICE_API_KEY: opaque-retained-credential",
+      "",
+    ].join("\n");
+    const sha256 = createHash("sha256").update(legacyCredentialPolicy).digest("hex");
+    const file = `rebuild-policy-handoff.${sha256}.yaml`;
+    fs.writeFileSync(path.join(backupPath, file), legacyCredentialPolicy, { mode: 0o600 });
+    const preparedRecoveryManifest = {
+      version: 1,
+      sandboxName: "alpha",
+      timestamp: "2026-09-01T00-00-00-000Z",
+      agentType: "openclaw",
+      agentVersion: null,
+      expectedVersion: null,
+      stateDirs: [],
+      failedBackupDirs: [],
+      stateFiles: [],
+      dir: "/sandbox/.openclaw",
+      backupPath,
+      blueprintDigest: "digest",
+      rebuildPolicyHandoff: { file, sha256 },
+    };
 
     let refusal: Error | null = null;
     try {

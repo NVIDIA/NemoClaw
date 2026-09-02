@@ -390,7 +390,6 @@ describe("runner", () => {
       );
       expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
-
   });
 
   describe("actionPlan", () => {
@@ -586,15 +585,7 @@ describe("runner", () => {
         const merged = [...store.entries()].find(([path]) => path.endsWith("policy-update.yaml"));
         return YAML.parse(merged?.[1].content ?? TEST_SANDBOX_POLICY);
       });
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        args.join(" ") === "policy get -g test-gateway --base test-sandbox"
-          ? {
-              exitCode: 0,
-              stdout: ["Version: 1", "Hash: sha256:test", "---", TEST_SANDBOX_POLICY].join("\n"),
-              stderr: "",
-            }
-          : commandResult(args),
-      );
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => commandResult(args));
 
       await actionApply(
         "default",

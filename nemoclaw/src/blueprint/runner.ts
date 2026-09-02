@@ -49,6 +49,7 @@ import type {
   ExternalOpenShellGatewayStatus,
   OpenShellGatewayHealthObserver,
 } from "../shared/openshell-observation-boundary.cjs";
+import { createBlueprintOpenShellPolicyClient } from "./openshell-policy.js";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -77,17 +78,9 @@ const sourceOrGeneratedOpenShellPolicyBoundary =
   };
 const {
   assertPolicyRequirementContainment,
-  buildOpenShellSandboxPolicyInspectionArgs,
-  buildOpenShellSandboxPolicyReadArgs,
-  buildOpenShellSandboxPolicyRevisionReadArgs,
-  buildOpenShellSandboxPolicySetArgs,
-  classifyOpenShellSandboxPolicySetResult,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
-  parseOpenShellSandboxPolicyRead,
-  parseSandboxPolicyMetadata,
-  rebaseOpenShellPolicyDocument,
   withoutProviderComposedPolicies,
 } = sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
 
@@ -168,8 +161,8 @@ type BlueprintPolicyInspection =
   import("../shared/openshell-policy-boundary.cjs").OpenShellPolicyInspection;
 type BlueprintPolicyRead =
   import("../shared/openshell-policy-boundary.cjs").OpenShellSandboxPolicyRead;
-type BlueprintPolicySetOutcome =
-  import("../shared/openshell-policy-boundary.cjs").OpenShellSandboxPolicySetOutcome;
+type BlueprintPolicySetSubmission =
+  import("../shared/openshell-policy-boundary.cjs").OpenShellSandboxPolicySetSubmission;
 
 type GatewayBinding = {
   name: string;
@@ -811,6 +804,30 @@ async function runBlueprintInspectionCommand(
   return result;
 }
 
+const blueprintOpenShellPolicyClient = createBlueprintOpenShellPolicyClient({
+  captureRead: (command, gatewayName) =>
+    runBlueprintInspectionCommand(command, gatewayName, {
+      kind: "policy",
+      subject: "sandbox",
+    }),
+  captureWrite: async (command, gatewayName) => {
+    try {
+      const result = await runCmd(command, {
+        gateway: gatewayName,
+        maxBuffer: POLICY_INSPECTION_MAX_BYTES,
+        reject: false,
+        timeout: POLICY_INSPECTION_TIMEOUT_MS,
+      });
+      return { status: result.exitCode, stderr: result.stderr };
+    } catch {
+      return {
+        status: null,
+        error: { message: "OpenShell policy write could not be observed" },
+      };
+    }
+  },
+});
+
 async function inspectBlueprintPolicy(gateway: string): Promise<BlueprintPolicyInspection | null>;
 async function inspectBlueprintPolicy(
   gateway: string,
@@ -820,48 +837,42 @@ async function inspectBlueprintPolicy(
   gateway: string,
   sandboxName?: string,
 ): Promise<BlueprintPolicyInspection | null> {
-  const subject = sandboxName === undefined ? "global" : "sandbox";
-  if (sandboxName === undefined) {
-    const history = await runBlueprintInspectionCommand(
-      ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
-      gateway,
-      { kind: "policy", subject },
-    );
-    const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
-    if (historyState === "absent") {
-      return null;
-    }
-    if (historyState === "invalid") {
-      throw new Error(
-        "OpenShell returned invalid global policy history. Policy-dependent operations must stop.",
-      );
-    }
-  }
-  const command =
-    sandboxName === undefined
-      ? ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"]
-      : [
-          "openshell",
-          ...buildOpenShellSandboxPolicyInspectionArgs({
-            sandboxName,
-            gatewayName: gateway,
-          }),
-        ];
-  const result = await runBlueprintInspectionCommand(command, gateway, {
-    kind: "policy",
-    subject,
-  });
-  if (sandboxName === undefined) {
+  if (sandboxName !== undefined) {
     try {
-      const activeGlobalPolicy = parseActiveGlobalPolicyMetadata(result.stdout);
-      return activeGlobalPolicy.state === "active" ? activeGlobalPolicy.inspection : null;
+      return await blueprintOpenShellPolicyClient.inspectSandboxPolicy({
+        gatewayName: gateway,
+        sandboxName,
+      });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "OpenShell returned invalid metadata";
       throw new Error(`${detail}. Policy-dependent operations must stop.`);
     }
   }
+  const history = await runBlueprintInspectionCommand(
+    ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
+    gateway,
+    { kind: "policy", subject: "global" },
+  );
+  const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
+  if (historyState === "absent") {
+    return null;
+  }
+  if (historyState === "invalid") {
+    throw new Error(
+      "OpenShell returned invalid global policy history. Policy-dependent operations must stop.",
+    );
+  }
+  const result = await runBlueprintInspectionCommand(
+    ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"],
+    gateway,
+    {
+      kind: "policy",
+      subject: "global",
+    },
+  );
   try {
-    return parseSandboxPolicyMetadata(result.stdout, sandboxName);
+    const activeGlobalPolicy = parseActiveGlobalPolicyMetadata(result.stdout);
+    return activeGlobalPolicy.state === "active" ? activeGlobalPolicy.inspection : null;
   } catch (error) {
     const detail = error instanceof Error ? error.message : "OpenShell returned invalid metadata";
     throw new Error(`${detail}. Policy-dependent operations must stop.`);
@@ -898,108 +909,55 @@ async function readBlueprintBasePolicy(
   gatewayName: string,
   sandboxName: string,
 ): Promise<BlueprintPolicyRead> {
-  const result = await runBlueprintInspectionCommand(
-    [
-      "openshell",
-      ...buildOpenShellSandboxPolicyReadArgs({
-        sandboxName,
-        gatewayName,
-        scope: "base",
-      }),
-    ],
-    gatewayName,
-    { kind: "state", subject: "policy" },
-  );
-  try {
-    return parseOpenShellSandboxPolicyRead(result.stdout);
-  } catch {
-    throw new Error("OpenShell policy state inspection failed.");
-  }
+  return blueprintOpenShellPolicyClient.readSandboxBasePolicy({ gatewayName, sandboxName });
 }
 
-async function readBlueprintBasePolicyRevision(
+async function readBlueprintPolicyRevision(
   gatewayName: string,
   sandboxName: string,
   revision: number,
-): Promise<string> {
-  const result = await runBlueprintInspectionCommand(
-    [
-      "openshell",
-      ...buildOpenShellSandboxPolicyRevisionReadArgs({
-        sandboxName,
-        gatewayName,
-        revision,
-      }),
-    ],
+): Promise<BlueprintPolicyRead> {
+  return blueprintOpenShellPolicyClient.readSandboxPolicyRevision({
     gatewayName,
-    { kind: "state", subject: "policy" },
-  );
-  try {
-    return parseOpenShellSandboxPolicyRead(result.stdout).document;
-  } catch {
-    throw new Error("OpenShell policy state inspection failed.");
-  }
-}
-
-async function submitBlueprintBasePolicy(
-  gatewayName: string,
-  sandboxName: string,
-  policyPath: string,
-): Promise<{ outcome: BlueprintPolicySetOutcome; status: number | null }> {
-  try {
-    const result = await runCmd(
-      [
-        "openshell",
-        ...buildOpenShellSandboxPolicySetArgs({ sandboxName, gatewayName, policyPath }),
-      ],
-      { gateway: gatewayName, reject: false },
-    );
-    return {
-      outcome: classifyOpenShellSandboxPolicySetResult({
-        status: result.exitCode,
-        stderr: result.stderr,
-      }),
-      status: result.exitCode,
-    };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return {
-      outcome: classifyOpenShellSandboxPolicySetResult({
-        status: null,
-        error: { message: detail },
-      }),
-      status: null,
-    };
-  }
-}
-
-function writeBlueprintPolicyFile(policyPath: string, policyDocument: string): void {
-  assertBlueprintPolicyHandoffCredentialFree(policyDocument);
-  writeFileSync(policyPath, policyDocument, { encoding: "utf-8", mode: 0o600 });
-}
-
-function removeBlueprintPolicyFile(policyPath: string): void {
-  try {
-    unlinkSync(policyPath);
-  } catch {
-    if (existsSync(policyPath)) {
-      throw new Error(`Temporary blueprint policy remains at ${policyPath}`);
-    }
-  }
+    sandboxName,
+    revision,
+  });
 }
 
 async function submitBlueprintPolicyDocument(
   gatewayName: string,
   sandboxName: string,
   policyPath: string,
-  policyDocument: string,
-): Promise<{ outcome: BlueprintPolicySetOutcome; status: number | null }> {
-  writeBlueprintPolicyFile(policyPath, policyDocument);
+  policySource: string,
+): Promise<BlueprintPolicySetSubmission> {
+  assertBlueprintPolicyHandoffCredentialFree(policySource);
+  writeFileSync(policyPath, policySource, {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
   try {
-    return await submitBlueprintBasePolicy(gatewayName, sandboxName, policyPath);
+    return await blueprintOpenShellPolicyClient.setSandboxPolicy({
+      gatewayName,
+      sandboxName,
+      policyPath,
+    });
   } finally {
-    removeBlueprintPolicyFile(policyPath);
+    try {
+      unlinkSync(policyPath);
+    } catch {
+      if (existsSync(policyPath)) {
+        throw new Error(`Temporary blueprint policy remains at ${policyPath}`);
+      }
+    }
   }
+}
+
+function blueprintPolicyWriteFailure(submission: BlueprintPolicySetSubmission): string {
+  return submission.outcome.kind === "rejected"
+    ? boundedCommandError(submission.outcome.message)
+    : submission.outcome.kind === "ambiguous"
+      ? boundedCommandError(submission.outcome.detail)
+      : `openshell policy set exited with status ${String(submission.status)}`;
 }
 
 async function applyBlueprintPolicyAdditions(
@@ -1013,21 +971,26 @@ async function applyBlueprintPolicyAdditions(
   if (blueprintPolicyRequirementsSatisfied(current, additions)) return;
 
   let basePolicySource = (await readBlueprintBasePolicy(gateway.name, sandboxName)).document;
-  let requestedPolicySource: string | null = null;
+  let replayConcurrentPolicy = false;
   const policyPath = join(temporaryDirectory, "policy-update.yaml");
 
   for (let attempt = 1; attempt <= BLUEPRINT_POLICY_REBASE_ATTEMPTS; attempt += 1) {
-    const before = await inspectBlueprintPolicy(gateway.name, sandboxName);
-    const latestPolicySource = (await readBlueprintBasePolicy(gateway.name, sandboxName)).document;
-    if (!blueprintBasePoliciesMatch(basePolicySource, latestPolicySource)) {
+    const beforeWrite = await inspectBlueprintPolicy(gateway.name, sandboxName);
+    const replayingConcurrentPolicy = replayConcurrentPolicy;
+    replayConcurrentPolicy = false;
+    const latestPolicySource = replayingConcurrentPolicy
+      ? basePolicySource
+      : (await readBlueprintBasePolicy(gateway.name, sandboxName)).document;
+    if (
+      !replayingConcurrentPolicy &&
+      !blueprintBasePoliciesMatch(basePolicySource, latestPolicySource)
+    ) {
       assertNoConflictingBlueprintPolicyChange(basePolicySource, latestPolicySource, additions);
       basePolicySource = latestPolicySource;
-      requestedPolicySource = null;
       continue;
     }
 
-    const mergedPolicySource =
-      requestedPolicySource ?? mergePolicyAdditions(latestPolicySource, additions);
+    const mergedPolicySource = mergePolicyAdditions(latestPolicySource, additions);
     const submission = await submitBlueprintPolicyDocument(
       gateway.name,
       sandboxName,
@@ -1035,72 +998,78 @@ async function applyBlueprintPolicyAdditions(
       mergedPolicySource,
     );
     if (submission.outcome.kind === "rejected") {
-      throw new Error(`Failed to apply policy additions: ${submission.outcome.message}`);
+      throw new Error(
+        `Failed to apply policy additions: ${blueprintPolicyWriteFailure(submission)}`,
+      );
     }
-    const applied = await inspectBlueprintPolicy(gateway.name, sandboxName);
-    const observedPolicySource = (await readBlueprintBasePolicy(gateway.name, sandboxName))
-      .document;
-    const requestedIsCurrent = blueprintBasePoliciesMatch(observedPolicySource, mergedPolicySource);
-    const concurrentRevision =
-      applied.policyIdentity.activeVersion > before.policyIdentity.activeVersion + 1;
 
-    if (!concurrentRevision) {
-      if (!requestedIsCurrent) {
-        const detail =
-          submission.outcome.kind === "ambiguous"
-            ? submission.outcome.detail
-            : "the resulting base policy did not match the requested policy";
-        throw new Error(`Failed to apply policy additions: ${boundedCommandError(detail)}`);
-      }
-      assertBlueprintPolicyRequirements(applied, additions);
+    const applied = await inspectBlueprintPolicy(gateway.name, sandboxName);
+    const appliedBase = await readBlueprintBasePolicy(gateway.name, sandboxName);
+    const requestedIsCurrent = blueprintBasePoliciesMatch(appliedBase.document, mergedPolicySource);
+    const concurrentRevision =
+      applied.policyIdentity.activeVersion > beforeWrite.policyIdentity.activeVersion + 1;
+
+    if (concurrentRevision) {
+      const externalPolicySource = requestedIsCurrent
+        ? (
+            await readBlueprintPolicyRevision(
+              gateway.name,
+              sandboxName,
+              applied.policyIdentity.activeVersion - 1,
+            )
+          ).document
+        : appliedBase.document;
       try {
-        assertPolicyRequirementContainment(
-          applied,
-          blueprintPolicyPreservationRequirements(latestPolicySource, additions),
+        assertNoConflictingBlueprintPolicyChange(
+          latestPolicySource,
+          externalPolicySource,
+          additions,
         );
       } catch (error) {
-        const detail = error instanceof Error ? error.message : "the live policy changed";
-        throw new Error(
-          `Cannot reconcile the blueprint policy transition: unrelated live policy was not preserved: ${detail}.`,
-        );
+        if (requestedIsCurrent) {
+          const restoration = await submitBlueprintPolicyDocument(
+            gateway.name,
+            sandboxName,
+            policyPath,
+            externalPolicySource,
+          );
+          const restored = await readBlueprintBasePolicy(gateway.name, sandboxName);
+          if (
+            restoration.outcome.kind === "rejected" ||
+            !blueprintBasePoliciesMatch(restored.document, externalPolicySource)
+          ) {
+            throw new Error(
+              `Cannot reconcile the blueprint policy transition: the concurrent host policy could not be restored: ${blueprintPolicyWriteFailure(restoration)}.`,
+            );
+          }
+        }
+        throw error;
       }
-      return;
+      basePolicySource = externalPolicySource;
+      replayConcurrentPolicy = requestedIsCurrent;
+      continue;
     }
 
-    const externalPolicySource = requestedIsCurrent
-      ? await readBlueprintBasePolicyRevision(
-          gateway.name,
-          sandboxName,
-          applied.policyIdentity.activeVersion - 1,
-        )
-      : observedPolicySource;
-    const rebased = rebaseOpenShellPolicyDocument(
-      latestPolicySource,
-      mergedPolicySource,
-      externalPolicySource,
-    );
-    if (rebased.conflicts.length > 0) {
-      const restoration = await submitBlueprintPolicyDocument(
-        gateway.name,
-        sandboxName,
-        policyPath,
-        externalPolicySource,
-      );
-      const restored = await readBlueprintBasePolicy(gateway.name, sandboxName);
-      if (
-        restoration.outcome.kind === "rejected" ||
-        !blueprintBasePoliciesMatch(restored.document, externalPolicySource)
-      ) {
-        throw new Error(
-          "Cannot reconcile the blueprint policy transition: the concurrent external policy could not be restored.",
-        );
-      }
+    if (!requestedIsCurrent) {
       throw new Error(
-        `Cannot reconcile the blueprint policy transition: ${rebased.conflicts.join(", ")} changed concurrently.`,
+        submission.outcome.kind === "ambiguous"
+          ? `Could not confirm the blueprint policy update: ${blueprintPolicyWriteFailure(submission)}.`
+          : "OpenShell applied a different blueprint base policy than the requested document.",
       );
     }
-    basePolicySource = observedPolicySource;
-    requestedPolicySource = rebased.document;
+    assertBlueprintPolicyRequirements(applied, additions);
+    try {
+      assertPolicyRequirementContainment(
+        applied,
+        blueprintPolicyPreservationRequirements(latestPolicySource, additions),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "the live policy changed";
+      throw new Error(
+        `Cannot reconcile the blueprint policy transition: unrelated live policy was not preserved: ${detail}.`,
+      );
+    }
+    return;
   }
 
   throw new Error(

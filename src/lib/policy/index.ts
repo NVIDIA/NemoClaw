@@ -54,7 +54,6 @@ import {
 import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import {
   parseOpenShellPolicy,
-  rebaseOpenShellPolicyDocument,
   stripProviderComposedPolicies,
   type OpenShellPolicyInspection,
   withoutProviderComposedPolicies,
@@ -902,6 +901,80 @@ function inspectPolicyDocumentReadback(
 }
 
 const POLICY_RECONCILE_ATTEMPTS = 5;
+const MISSING_POLICY_VALUE = Symbol("missing-policy-value");
+type MergePolicyValue = PolicyValue | typeof MISSING_POLICY_VALUE;
+
+function clonePolicyMergeValue(value: MergePolicyValue): MergePolicyValue {
+  return value === MISSING_POLICY_VALUE ? value : structuredClone(value);
+}
+
+function mergeConcurrentPolicyValue(
+  original: MergePolicyValue,
+  requested: MergePolicyValue,
+  external: MergePolicyValue,
+  pathSegments: readonly string[],
+  conflicts: string[],
+): MergePolicyValue {
+  if (isDeepStrictEqual(requested, original)) return clonePolicyMergeValue(external);
+  if (isDeepStrictEqual(external, original)) return clonePolicyMergeValue(requested);
+  if (isDeepStrictEqual(requested, external)) return clonePolicyMergeValue(requested);
+
+  if (
+    original !== MISSING_POLICY_VALUE &&
+    requested !== MISSING_POLICY_VALUE &&
+    external !== MISSING_POLICY_VALUE &&
+    isPolicyObject(original) &&
+    isPolicyObject(requested) &&
+    isPolicyObject(external)
+  ) {
+    const merged: PolicyObject = {};
+    const keys = new Set([
+      ...Object.keys(original),
+      ...Object.keys(requested),
+      ...Object.keys(external),
+    ]);
+    for (const key of keys) {
+      const value = mergeConcurrentPolicyValue(
+        Object.prototype.hasOwnProperty.call(original, key) ? original[key] : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(requested, key)
+          ? requested[key]
+          : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(external, key) ? external[key] : MISSING_POLICY_VALUE,
+        [...pathSegments, key],
+        conflicts,
+      );
+      if (value !== MISSING_POLICY_VALUE) merged[key] = value;
+    }
+    return merged;
+  }
+
+  conflicts.push(pathSegments.join(".") || "<policy>");
+  return clonePolicyMergeValue(external);
+}
+
+function rebasePolicyDocumentOntoConcurrentEdit(
+  originalDocument: string,
+  requestedDocument: string,
+  externalDocument: string,
+): { readonly document: string; readonly conflicts: readonly string[] } {
+  const original = YAML.parse(originalDocument) as PolicyValue;
+  const requested = YAML.parse(requestedDocument) as PolicyValue;
+  const external = YAML.parse(externalDocument) as PolicyValue;
+  if (!isPolicyDocument(original) || !isPolicyDocument(requested) || !isPolicyDocument(external)) {
+    throw new PolicyObservationError(
+      "OpenShell returned an invalid policy revision while NemoClaw reconciled a concurrent policy edit.",
+    );
+  }
+  const conflicts: string[] = [];
+  const merged = mergeConcurrentPolicyValue(original, requested, external, [], conflicts);
+  if (merged === MISSING_POLICY_VALUE || !isPolicyDocument(merged)) {
+    throw new PolicyObservationError(
+      "OpenShell returned an invalid policy revision while NemoClaw reconciled a concurrent policy edit.",
+    );
+  }
+  return { document: YAML.stringify(merged), conflicts };
+}
+
 /**
  * Apply a composed policy document while optionally keeping control in the
  * caller on failure. Lifecycle code that owns compensating actions must use
@@ -1005,7 +1078,7 @@ export function setPolicyDocument(
       externalDocument = requestedIsCurrent
         ? readLivePolicyRevision(sandboxName, context.gatewayName, observedVersion - 1)
         : observedDocument;
-      const rebased = rebaseOpenShellPolicyDocument(
+      const rebased = rebasePolicyDocumentOntoConcurrentEdit(
         originalDocument,
         requestedDocument,
         externalDocument,

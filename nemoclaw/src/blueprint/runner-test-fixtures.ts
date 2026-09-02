@@ -292,7 +292,9 @@ export function createMutableIdentityPolicyResult(options: {
         : { exitCode: 0, stdout: options.runtimeProviderListing, stderr: "" };
     }
     if (options.policyWriteFailure && args[0] === "policy" && args[1] === "set") {
-      return failureResult(options.policyWriteFailure);
+      return failureResult(
+        `Error: code: 'failed_precondition', message: '${options.policyWriteFailure}'`,
+      );
     }
     return policyResult(args);
   };

@@ -86,43 +86,6 @@ function rebuildFailureDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function reportRetainedRebuildCleanup(input: {
-  sandboxName: string;
-  backupPath: string;
-  transactionId: string;
-  error: unknown;
-}): void {
-  console.warn("");
-  console.warn(
-    `  Replacement sandbox '${input.sandboxName}' completed, but its recovery marker could not be removed: ${rebuildFailureDetail(input.error)}`,
-  );
-  console.warn(`  Backup is preserved at: ${input.backupPath}`);
-  console.warn(`  Rebuild transaction: ${input.transactionId}`);
-  console.warn(
-    "  Rerun the original rebuild command with identical options to verify the replacement and finish cleanup.",
-  );
-}
-
-function tryClearRebuildRecoveryBackup(input: {
-  sandboxName: string;
-  agentName: string | null;
-  transactionId: string;
-  backupManifest: NonNullable<RebuildBackupManifest>;
-}): boolean {
-  try {
-    clearRebuildRecoveryBackup(input);
-    return true;
-  } catch (error) {
-    reportRetainedRebuildCleanup({
-      sandboxName: input.sandboxName,
-      backupPath: input.backupManifest.backupPath,
-      transactionId: input.transactionId,
-      error,
-    });
-    return false;
-  }
-}
-
 /**
  * Rebuild a live sandbox while preserving registered agent state and policies.
  *
@@ -272,6 +235,77 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      const openRecreateJournal = () => {
+        const expectedGatewayAuthority = recreateOptions.rebuildGatewayAuthority;
+        if (!expectedGatewayAuthority) {
+          bail("Authoritative rebuild gateway readiness did not produce an authority handoff.");
+          return null;
+        }
+        return openRebuildRecreateJournal({
+          target: {
+            sandboxName,
+            gatewayName: recreateOptions.targetGatewayName,
+            gatewayPort: recreateOptions.targetGatewayPort,
+          },
+          expectedGatewayAuthority,
+          agentName: rebuildAgent || "openclaw",
+          targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+          log,
+          onAuthorityRefusal: (lines) => bail(lines.join("\n")),
+        });
+      };
+      const clearRecoveryMarker = (
+        transactionId: string,
+        backupManifest: NonNullable<RebuildBackupManifest>,
+      ): boolean => {
+        try {
+          clearRebuildRecoveryBackup({
+            sandboxName,
+            agentName: rebuildAgent,
+            transactionId,
+            backupManifest,
+          });
+          return true;
+        } catch (error) {
+          console.error("");
+          console.error(
+            `  The restored replacement's recovery marker could not be removed: ${rebuildFailureDetail(error)}`,
+          );
+          console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+          console.error(
+            `  Retry \`nemoclaw ${sandboxName} rebuild --yes\`; the accepted replacement will not be restored again.`,
+          );
+          bail(
+            "Recovered replacement cleanup is incomplete; the replacement journal was retained.",
+          );
+          return false;
+        }
+      };
+
+      // Policy-handoff retirement is durably recorded before the recovery
+      // marker is removed. If marker cleanup failed after restore, resume only
+      // that cleanup against the already accepted replacement.
+      if (recoveryManifest?.rebuildPolicyHandoff?.retired === true) {
+        const cleanupManifest = recoveryManifest;
+        const cleanupJournal = openRecreateJournal();
+        if (!cleanupJournal) return;
+        if (!cleanupJournal.acceptedTarget) {
+          return bail(
+            "A retired rebuild policy handoff cannot be cleaned up until the journaled replacement is accepted.",
+          );
+        }
+        if (!clearRecoveryMarker(cleanupJournal.id, cleanupManifest)) return;
+        runBestEffortRebuildCleanup(
+          () => clearRebuildPolicyHandoff(cleanupManifest),
+          "  Warning: retired rebuild policy handoff metadata could not be removed.",
+        );
+        cleanupJournal.completeAcceptedTarget();
+        retainPolicyHandoffForRecovery = false;
+        console.log(`  Completed retained recovery cleanup for '${sandboxName}'.`);
+        console.log(`  Backup is preserved at: ${cleanupManifest.backupPath}`);
+        log(`Completed retained recovery cleanup ${cleanupJournal.id} for '${sandboxName}'`);
+        return;
+      }
 
       const backup = runRebuildBackupPhase({
         sandboxName,
@@ -400,23 +434,8 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
-      const expectedGatewayAuthority = recreateOptions.rebuildGatewayAuthority;
-      if (!expectedGatewayAuthority) {
-        bail("Authoritative rebuild gateway readiness did not produce an authority handoff.");
-        return;
-      }
-      const recreateJournal = openRebuildRecreateJournal({
-        target: {
-          sandboxName,
-          gatewayName: recreateOptions.targetGatewayName,
-          gatewayPort: recreateOptions.targetGatewayPort,
-        },
-        expectedGatewayAuthority,
-        agentName: rebuildAgent || "openclaw",
-        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
-        log,
-        onAuthorityRefusal: (lines) => bail(lines.join("\n")),
-      });
+      const recreateJournal = openRecreateJournal();
+      if (!recreateJournal) return;
       recreateOptions.rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
       const rebuildRecoveryIdentity = {
         sandboxName,
@@ -515,19 +534,19 @@ async function rebuildSandboxUnlocked(
           log,
           bail,
         });
-        if (recoveryBackup.rebuildPolicyHandoff && !clearRebuildPolicyHandoff(recoveryBackup)) {
+        if (
+          recoveryBackup.rebuildPolicyHandoff &&
+          !clearRebuildPolicyHandoff(recoveryBackup, { retainRetirement: true })
+        ) {
           return bail("The bounded rebuild policy handoff could not be retired after recovery.");
         }
-        retainPolicyHandoffForRecovery = false;
-        if (
-          !tryClearRebuildRecoveryBackup({
-            ...rebuildRecoveryIdentity,
-            backupManifest: recoveryBackup,
-          })
-        ) {
-          return;
-        }
+        if (!clearRecoveryMarker(recreateJournal.id, recoveryBackup)) return;
+        runBestEffortRebuildCleanup(
+          () => clearRebuildPolicyHandoff(recoveryBackup),
+          "  Warning: retired rebuild policy handoff metadata could not be removed.",
+        );
         recreateJournal.completeAcceptedTarget();
+        retainPolicyHandoffForRecovery = false;
         console.log(`  Recovered the accepted replacement for '${sandboxName}'.`);
         console.log(`  Backup is preserved at: ${recoveryBackup.backupPath}`);
         log(
@@ -558,7 +577,7 @@ async function rebuildSandboxUnlocked(
               return {
                 ok: false,
                 message:
-                  "The round-trippable OpenShell base policy could not be retained after MCP teardown.",
+                  "The complete live OpenShell policy could not be retained after MCP teardown.",
               };
             }
           }
@@ -734,19 +753,15 @@ async function rebuildSandboxUnlocked(
       if (backup.backupManifest) {
         if (
           backup.backupManifest.rebuildPolicyHandoff &&
-          !clearRebuildPolicyHandoff(backup.backupManifest)
+          !clearRebuildPolicyHandoff(backup.backupManifest, { retainRetirement: true })
         ) {
           return bail("The bounded rebuild policy handoff could not be retired after rebuild.");
         }
-        retainPolicyHandoffForRecovery = false;
-        if (
-          !tryClearRebuildRecoveryBackup({
-            ...rebuildRecoveryIdentity,
-            backupManifest: backup.backupManifest,
-          })
-        ) {
-          return;
-        }
+        if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
+        runBestEffortRebuildCleanup(
+          () => clearRebuildPolicyHandoff(backup.backupManifest!),
+          "  Warning: retired rebuild policy handoff metadata could not be removed.",
+        );
       }
       retainPolicyHandoffForRecovery = false;
     } finally {

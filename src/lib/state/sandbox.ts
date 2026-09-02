@@ -36,6 +36,7 @@ import { spawnSync } from "child_process";
 
 import {
   captureSandboxSshConfigCommand,
+  isOpenShellSandboxPolicyCredentialFree,
   resolveOpenshellSandboxSshHost,
 } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
@@ -52,7 +53,6 @@ import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import {
   SnapshotSanitizerPrerequisiteError,
-  isYamlDocumentCredentialFree,
   sanitizeSnapshotDirectory,
 } from "../security/snapshot-sanitizer.js";
 import {
@@ -2564,7 +2564,7 @@ export function writeRebuildPolicyHandoff(
   policyDocument: string,
 ): RebuildManifest {
   if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
-  if (!isYamlDocumentCredentialFree(policyDocument)) {
+  if (!isOpenShellSandboxPolicyCredentialFree(policyDocument)) {
     throw new Error("Cannot persist a credential-bearing rebuild policy handoff");
   }
   const sha256 = createHash("sha256").update(policyDocument).digest("hex");
@@ -2619,6 +2619,7 @@ export function clearRebuildPolicyHandoff(
   ops: {
     write?: typeof writeManifest;
     remove?: typeof rmSync;
+    retainRetirement?: boolean;
   } = {},
 ): boolean {
   const handoff = manifest.rebuildPolicyHandoff;
@@ -2639,6 +2640,7 @@ export function clearRebuildPolicyHandoff(
   } catch {
     return false;
   }
+  if (ops.retainRetirement === true) return true;
   const cleared = { ...manifest };
   delete cleared.rebuildPolicyHandoff;
   try {
