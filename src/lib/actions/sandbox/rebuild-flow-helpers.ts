@@ -423,7 +423,7 @@ export function ensureRebuildAgentBaseImage(
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
-    console.error(`  ${message}`);
+    console.error("  Inspect the redacted rebuild diagnostics for details.");
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
     bail(message);

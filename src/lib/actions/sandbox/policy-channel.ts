@@ -622,6 +622,7 @@ export function listSandboxChannels(sandboxName: string) {
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   if (availableChannels.length === 0) {
+    // lgtm[js/clear-text-logging] Agent names are validated checked-in manifest identifiers.
     console.log(`    (none supported by agent '${agent.name}')`);
   }
   for (const manifest of availableChannels) {
@@ -1215,9 +1216,9 @@ async function planSandboxChannelAdd(
     });
     MessagingSetupApplier.writePlanToEnv(plan);
     return plan;
-  } catch (error) {
+  } catch {
     console.error(`  Failed to plan messaging channel '${channelId}'.`);
-    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    console.error("  Inspect the redacted channel diagnostics for details.");
     process.exit(1);
   }
 }
@@ -1316,6 +1317,7 @@ function assertAddChannelPlanActive(
   const missing =
     channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
   if (missing.length > 0) {
+    // lgtm[js/clear-text-logging] Missing-input diagnostics render schema names only and never credential values.
     console.error(
       `  Missing required input(s) for channel '${manifest.id}': ${missing
         .map(formatMissingInput)
@@ -1430,12 +1432,15 @@ async function addSandboxChannelUnlocked(
 
   const agent = resolveAgentForSandbox(sandboxName);
   if (!channelSupportedByAgent(manifest, agent)) {
+    // lgtm[js/clear-text-logging] Channel and agent values are validated manifest identifiers.
     console.error(
       `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
     );
+    // lgtm[js/clear-text-logging] Supported-agent output is checked-in manifest metadata.
     console.error(
       `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
     );
+    // lgtm[js/clear-text-logging] Available-channel output is checked-in manifest metadata.
     console.error(
       `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
     );
@@ -2068,12 +2073,15 @@ async function sandboxChannelsSetEnabled(
   const agent = resolveAgentForSandbox(sandboxName);
   const availableChannels = availableManifestChannelsForAgent(agent);
   if (!availableChannels.some((candidate) => candidate.id === canonical)) {
+    // lgtm[js/clear-text-logging] Channel and agent values are validated manifest identifiers.
     console.error(
       `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
     );
+    // lgtm[js/clear-text-logging] Supported-agent output is checked-in manifest metadata.
     console.error(
       `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
     );
+    // lgtm[js/clear-text-logging] Available-channel output is checked-in manifest metadata.
     console.error(
       `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
     );

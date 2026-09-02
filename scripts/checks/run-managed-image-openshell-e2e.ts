@@ -1465,8 +1465,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+  run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch(() => {
+    console.error("Managed-image OpenShell E2E failed; inspect the redacted evidence artifacts.");
     process.exitCode = 1;
   });
 }

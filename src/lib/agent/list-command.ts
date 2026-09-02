@@ -24,5 +24,6 @@ export function renderAgentRuntimeList(
 }
 
 export function printAgentRuntimeList(log: (message: string) => void = console.log): void {
+  // lgtm[js/clear-text-logging] Runtime names and descriptions come from checked-in manifests, not process credentials.
   log(renderAgentRuntimeList());
 }
