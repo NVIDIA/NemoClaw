@@ -117,7 +117,7 @@ function validatePlatformEvidence(
     readonly runAttempt: number;
     readonly runId: number;
   },
-): void {
+): string {
   const platform = record(value, `${expected.agent} ${expected.platform} publication`);
   const producerRun = record(platform.run, `${expected.agent} ${expected.platform} producer run`);
   exactKeys(producerRun, ["attempt", "id"], `${expected.agent} ${expected.platform} producer run`);
@@ -254,6 +254,7 @@ function validatePlatformEvidence(
     workloadDigest,
     `${expected.agent} ${expected.platform} SPDX subject workload digest`,
   );
+  return `${image}@${workloadDigest}`;
 }
 
 /** Validate one complete published cohort against its selected workflow attempt. */
@@ -287,6 +288,7 @@ export function validateManagedImageCohort(
 
   const agents = record(cohort.agents, "managed-image cohort agents");
   exactKeys(agents, SHIPPED_MANAGED_IMAGE_AGENTS, "managed-image cohort agents");
+  const images = {} as Record<ShippedManagedImageAgent, Record<ManagedImagePlatform, string>>;
   for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
     const contract = record(agents[agent], `${agent} cohort contract`);
     const image = MANAGED_IMAGE_REPOSITORIES[agent];
@@ -301,8 +303,9 @@ export function validateManagedImageCohort(
     );
     const platforms = record(contract.platforms, `${agent} cohort platforms`);
     exactKeys(platforms, MANAGED_IMAGE_PLATFORMS, `${agent} cohort platforms`);
+    const platformImages = {} as Record<ManagedImagePlatform, string>;
     for (const platform of MANAGED_IMAGE_PLATFORMS) {
-      validatePlatformEvidence(platforms[platform], {
+      platformImages[platform] = validatePlatformEvidence(platforms[platform], {
         agent,
         cohort: cohortIdentity,
         platform,
@@ -311,34 +314,8 @@ export function validateManagedImageCohort(
         runId: expected.runId,
       });
     }
+    images[agent] = platformImages;
   }
-
-  const images = Object.fromEntries(
-    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => {
-      const platforms = record(
-        record(agents[agent], `${agent} cohort contract`).platforms,
-        `${agent} cohort platforms`,
-      );
-      return [
-        agent,
-        Object.fromEntries(
-          MANAGED_IMAGE_PLATFORMS.map((platform) => {
-            const publication = record(platforms[platform], `${agent} ${platform} publication`);
-            const workloadDescriptor = record(
-              record(publication.publicationEvidence, `${agent} ${platform} publication evidence`)
-                .workloadDescriptor,
-              `${agent} ${platform} workload descriptor`,
-            );
-            const workloadDigest = digest(
-              workloadDescriptor.digest,
-              `${agent} ${platform} workload digest`,
-            );
-            return [platform, `${MANAGED_IMAGE_REPOSITORIES[agent]}@${workloadDigest}`];
-          }),
-        ),
-      ];
-    }),
-  ) as ManagedImageCohortReceipt["images"];
   const receipt: ManagedImageCohortReceipt = {
     kind: "nemoclaw-managed-image-cohort-receipt-v1",
     cohort: cohortIdentity,
