@@ -23,21 +23,22 @@ describe("PR review advisor security boundaries", () => {
     vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
 
     try {
-      const result = await runReadOnlyAdvisor({
-        cwd: ROOT,
-        promptTurns: [],
-        systemPrompt: "test",
-        configDir,
-        htmlExportPath: path.join(configDir, "session.html"),
-        timeoutMs: 1000,
-        heartbeatMs: 1000,
-        maxCaptureBytes: 1024,
-        modelId: "missing-model",
-        credentialEnv,
-        logPrefix: "test",
-        logProgress: () => undefined,
-      });
-      expect(result.fatalError).toBeUndefined();
+      await expect(
+        runReadOnlyAdvisor({
+          cwd: ROOT,
+          promptTurns: [],
+          systemPrompt: "test",
+          configDir,
+          htmlExportPath: path.join(configDir, "session.html"),
+          timeoutMs: 1000,
+          heartbeatMs: 1000,
+          maxCaptureBytes: 1024,
+          modelId: "missing-model",
+          credentialEnv,
+          logPrefix: "test",
+          logProgress: () => undefined,
+        }),
+      ).rejects.toThrow(/Could not configure advisor model/);
       expect(process.env[credentialEnv]).toBeUndefined();
     } finally {
       fs.rmSync(configDir, { recursive: true, force: true });
