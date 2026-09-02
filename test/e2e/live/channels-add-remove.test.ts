@@ -361,7 +361,7 @@ async function expectTelegramGatewayCredentialReady(
   );
   assertExitZero(result, "Telegram gateway credential diagnostic");
   const output = resultText(result);
-  expect(output).toContain("runtime credential placeholder ready (revision-scoped)");
+  expect(output).toContain("runtime credential is ready (revision-scoped)");
   expect(output).not.toMatch(
     /TELEGRAM_BOT_TOKEN is missing|identityless canonical placeholder|placeholder is malformed/u,
   );

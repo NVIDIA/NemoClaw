@@ -308,7 +308,7 @@ type TelegramHttpRequestLike = (
       return;
     }
     if (/^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(envToken)) {
-      emit("[telegram] [default] runtime credential placeholder ready (revision-scoped)");
+      emit("[telegram] [default] runtime credential is ready (revision-scoped)");
     } else if (envToken.indexOf(prefix) === 0) {
       emit("[telegram] [default] runtime TELEGRAM_BOT_TOKEN placeholder is malformed");
       return;

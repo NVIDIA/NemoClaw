@@ -102,7 +102,7 @@ describe("OpenClaw bridge health hook", () => {
               : {
                   status: 0,
                   stdout:
-                    "[telegram] [default] runtime credential placeholder ready (revision-scoped)",
+                    "[telegram] [default] runtime credential is ready (revision-scoped)",
                 },
         },
       ),
