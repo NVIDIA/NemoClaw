@@ -525,13 +525,13 @@ describe("effective built-in policy contracts", () => {
     });
   });
 
-  it("omits Node.js from the composed Hermes Discord policy (#10655)", () => {
+  it("limits the composed Hermes Discord policy to its virtual-environment Python (#10655)", () => {
     const effective = composePresets(["discord"], "hermes");
     const discord = requireNetworkPolicy(effective, "discord");
 
     expect(binaries(discord)).toEqual([
       "/opt/hermes/.venv/bin/python",
-      "/usr/bin/python3*",
+      "/opt/hermes/.venv/bin/python3",
     ]);
   });
 
@@ -544,7 +544,7 @@ describe("effective built-in policy contracts", () => {
     const teams = requireNetworkPolicy(effective, "teams");
     expectDistinctSlackCredentialSelectors(slack);
 
-    for (const policy of [telegram, discord, slack, wechat, teams]) {
+    for (const policy of [telegram, slack, wechat, teams]) {
       expect(binaries(policy)).toEqual(
         expect.arrayContaining([
           "/usr/bin/python3*",
@@ -554,6 +554,10 @@ describe("effective built-in policy contracts", () => {
         ]),
       );
     }
+    expect(binaries(discord)).toEqual([
+      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
+    ]);
     for (const host of ["gateway.discord.gg", "*.discord.gg"]) {
       expectInspectedWebSocket(requireEndpoint(discord, host));
     }
