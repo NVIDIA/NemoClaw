@@ -11,7 +11,7 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
-import { runBoundedRetry, type RetryEvidence } from "../fixtures/retry-policy.ts";
+import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 import {
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
