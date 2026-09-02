@@ -395,6 +395,19 @@ async function assertGatewayProcess(probe: DockerProbe, container: string): Prom
   );
 }
 
+async function assertGatewayKanbanDispatcher(
+  probe: DockerProbe,
+  container: string,
+  expected: "0" | "1",
+): Promise<void> {
+  await expectContainerSh(
+    probe,
+    container,
+    `gateway process did not inherit HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expected}`,
+    `pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"; test -n "$pid"; tr '\\0' '\\n' <"/proc/$pid/environ" | grep -Fx 'HERMES_KANBAN_DISPATCH_IN_GATEWAY=${expected}'`,
+  );
+}
+
 async function runCleanVariant(
   probe: DockerProbe,
   image: string,
@@ -402,14 +415,24 @@ async function runCleanVariant(
   containers: string[],
 ): Promise<void> {
   const container = `nemoclaw-hermes-root-clean-${runId}`;
-  await probe.expect(["run", "-d", "--name", container, image, "/usr/local/bin/nemoclaw-start"], {
-    artifactName: "start-clean-root-entrypoint-container",
-    timeoutMs: RUN_TIMEOUT_MS,
-  });
+  await probe.expect(
+    [
+      "run",
+      "-d",
+      "--name",
+      container,
+      "--env",
+      "HERMES_KANBAN_DISPATCH_IN_GATEWAY=1",
+      image,
+      "/usr/local/bin/nemoclaw-start",
+    ],
+    { artifactName: "start-clean-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
+  );
   containers.push(container);
 
   await waitForHealth(probe, container);
   await assertGatewayProcess(probe, container);
+  await assertGatewayKanbanDispatcher(probe, container, "1");
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
   await assertBuildOnlyPathsAbsent(probe, container);
@@ -488,6 +511,7 @@ install -d -m 755 /tmp/nemoclaw-hostile-python
 printf '%s\n' 'import os' 'from pathlib import Path' 'if os.geteuid() == 0:' '    Path("/tmp/nemoclaw-root-sitecustomize-ran").write_text("root")' >/tmp/nemoclaw-hostile-python/sitecustomize.py
 chmod 444 /tmp/nemoclaw-hostile-python/sitecustomize.py
 export PYTHONPATH=/tmp/nemoclaw-hostile-python
+export HERMES_KANBAN_DISPATCH_IN_GATEWAY=1
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 
   await probe.expect(
@@ -512,6 +536,7 @@ test ! -e /tmp/nemoclaw-root-sitecustomize-ran
 sha256sum -c /tmp/nemoclaw-locked-config.sha256`,
   );
   await assertGatewayProcess(probe, container);
+  await assertGatewayKanbanDispatcher(probe, container, "0");
   await assertGatewayLogClean(probe, container);
   await assertRuntimeLayout(probe, container);
 }
@@ -656,6 +681,7 @@ test(
         "restored state directories permit gateway-user and sandbox-user writes",
         "legacy dashboard profile state is moved into profiles/dashboard-home",
         "locked-root startup recreates protected group-writable Hermes history without changing sealed config",
+        "gateway process preserves the caller dispatcher value while unlocked and forces it off while locked",
         "root startup rejects history and log hard links without changing the protected inode",
         "non-root startup rejects a mode-correct history file with an unusable group",
       ],
@@ -706,6 +732,7 @@ test(
         runtimeLayoutVerified: true,
         buildOnlyPathsAbsent: true,
         gatewayPrivilegeSeparationVerified: true,
+        gatewayKanbanDispatcherBoundaryVerified: true,
         bearerAuthVerified: true,
         dashboardHomeVerified: true,
         legacyPidSymlinkMigrationVerified: true,

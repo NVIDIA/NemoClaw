@@ -3399,7 +3399,9 @@ publish_hermes_root_runtime_marker() {
 prepare_hermes_root_runtime() {
   verify_hermes_config_integrity || return 1
   prepare_hermes_lazy_dependencies || return 1
-  ensure_hermes_config_root_mode || return 1
+  if ! hermes_config_root_is_locked; then
+    ensure_hermes_config_root_mode || return 1
+  fi
   ensure_hermes_runtime_api_server_key both || return 1
   apply_shields_up_runtime_env || return 1
   validate_hermes_env_secret_boundary || return 1
