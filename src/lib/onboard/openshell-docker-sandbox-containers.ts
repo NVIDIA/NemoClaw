@@ -15,6 +15,25 @@ export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 export const OPENSHELL_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
 export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 
+export type OpenShellSandboxOwnershipLabel = {
+  readonly label: string;
+  readonly value: string;
+};
+
+export function resolveOpenShellSandboxOwnershipLabel(
+  _env: NodeJS.ProcessEnv = process.env,
+): OpenShellSandboxOwnershipLabel {
+  return { label: OPENSHELL_MANAGED_BY_LABEL, value: OPENSHELL_MANAGED_BY_VALUE };
+}
+
+export function hasOpenShellSandboxOwnership(
+  labels: Readonly<Record<string, string>>,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const ownership = resolveOpenShellSandboxOwnershipLabel(env);
+  return labels[ownership.label] === ownership.value;
+}
+
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
 const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
 
