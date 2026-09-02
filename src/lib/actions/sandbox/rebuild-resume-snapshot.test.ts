@@ -33,6 +33,33 @@ import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
 
+const policyBoundaryMocks = vi.hoisted(() => ({
+  inspectSandboxPolicy: vi.fn(() => ({
+    ok: true as const,
+    value: {
+      policySource: "sandbox" as const,
+      effectivePolicy: { version: 1, network_policies: {} },
+      policyIdentity: { hash: "sha256:resume-policy", activeVersion: 1 },
+    },
+  })),
+  readSandboxPolicy: vi.fn(() => ({
+    ok: true as const,
+    value: {
+      document: "version: 1\nnetwork_policies: {}\n",
+      appliedRevision: null,
+    },
+  })),
+}));
+
+vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
+  syncCliOpenShellSandboxPolicyReader: {
+    inspectSandboxPolicy: policyBoundaryMocks.inspectSandboxPolicy,
+    readSandboxPolicy: policyBoundaryMocks.readSandboxPolicy,
+    readSandboxPolicyRevision: vi.fn(),
+  },
+}));
+
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
 }

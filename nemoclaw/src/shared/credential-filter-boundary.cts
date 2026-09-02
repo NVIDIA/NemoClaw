@@ -84,8 +84,6 @@ export type ConfigValue =
 export type ConfigObject = { [key: string]: ConfigValue };
 
 export const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
-const DIAGNOSTIC_CREDENTIAL_PLACEHOLDER = "<REDACTED>";
-const DIAGNOSTIC_URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
 
 export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
   "auth-profiles.json",
@@ -197,19 +195,6 @@ function scrubConfigValue(value: unknown): unknown {
   return stripCredentials(value);
 }
 
-/** Fully redact credential-shaped values and credential-bearing URL tokens in diagnostics. */
-export function redactCredentialText(text: string): string {
-  DIAGNOSTIC_URL_TOKEN_PATTERN.lastIndex = 0;
-  let redacted = text.replace(DIAGNOSTIC_URL_TOKEN_PATTERN, (value) =>
-    scrubConfigValue(value) === value ? value : DIAGNOSTIC_CREDENTIAL_PLACEHOLDER,
-  );
-  for (const pattern of SECRET_PATTERNS) {
-    pattern.lastIndex = 0;
-    redacted = redacted.replace(pattern, DIAGNOSTIC_CREDENTIAL_PLACEHOLDER);
-  }
-  return redacted;
-}
-
 function cliFlagName(token: string): string | null {
   const match = /^--?([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(token);
   return match ? match[1] : null;
@@ -266,6 +251,47 @@ export function stripCredentials(obj: unknown): unknown {
     }
   }
   return result;
+}
+
+const DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;
+const DIAGNOSTIC_ASSIGNMENT_PATTERN =
+  /\b([A-Za-z][A-Za-z0-9._-]{0,127})([ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/gu;
+
+function redactDiagnosticAssignments(value: string): string {
+  return value.replace(DIAGNOSTIC_ASSIGNMENT_PATTERN, (match, key: string, separator: string) =>
+    isCredentialField(key) ? `${key}${separator}<REDACTED>` : match,
+  );
+}
+
+function redactDiagnosticUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    // A malformed URL-like token is untrusted diagnostic data. Replacing the
+    // complete token fails closed when its authority or query cannot be parsed.
+    return "<REDACTED>";
+  }
+  url.username = "";
+  url.password = "";
+  for (const [key, queryValue] of url.searchParams) {
+    if (isCredentialField(key) || valueLooksLikeSecret(queryValue)) {
+      url.searchParams.set(key, "<REDACTED>");
+    }
+  }
+  const redactedHash = redactDiagnosticAssignments(url.hash);
+  if (redactedHash !== url.hash || valueLooksLikeSecret(url.hash)) url.hash = "";
+  return url.toString();
+}
+
+/** Fully redact credential-shaped assignments, bearer values, and URL credentials. */
+export function redactCredentialText(value: string): string {
+  let result = value.replace(DIAGNOSTIC_URL_PATTERN, redactDiagnosticUrl);
+  for (const pattern of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, "<REDACTED>");
+  }
+  return redactDiagnosticAssignments(result).replace(/\b(Bearer)\s+\S+/giu, "$1 <REDACTED>");
 }
 
 export function sanitizeEnvFileContent(content: string): string {

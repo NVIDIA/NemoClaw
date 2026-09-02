@@ -115,6 +115,8 @@ describe("shared credential filter", () => {
     );
 
     expect(redacted).toContain("policy write failed at");
+    expect(redacted).toContain("https://api.example/");
+    expect(redacted).toContain("apiKey=<REDACTED>");
     expect(redacted).not.toContain(urlCredential);
     expect(redacted).not.toContain(assignmentCredential);
     expect(redacted).toContain("<REDACTED>");
