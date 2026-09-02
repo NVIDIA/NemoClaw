@@ -63,6 +63,7 @@ import {
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
+  withOnboardLockReclamationGuard,
   type RecordRetainedSandboxRecoveryInput,
   type OnboardLockDisposition,
   type OnboardLockRecord,
@@ -90,6 +91,7 @@ const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
+const LOCK_RECLAMATION_GUARD_FILE = path.join(SESSION_DIR, "onboard.lock.reclamation-guard");
 export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
 const LEGACY_STATE_MIGRATION_LOCK = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
@@ -1423,6 +1425,14 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
 
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
+  return (
+    withOnboardLockReclamationGuard(LOCK_RECLAMATION_GUARD_FILE, () =>
+      acquireOnboardLockWhileGuarded(command),
+    ) ?? { acquired: false, lockFile: LOCK_FILE, stale: false }
+  );
+}
+
+function acquireOnboardLockWhileGuarded(command: string | null): LockResult {
   const payload = JSON.stringify(
     createOnboardLockRecord(typeof command === "string" ? command : null, new Date().toISOString()),
     null,

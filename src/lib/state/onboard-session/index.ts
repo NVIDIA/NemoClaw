@@ -9,4 +9,5 @@ export {
   type OnboardLockDisposition,
   type OnboardLockRecord,
 } from "./lock-holder";
+export { withOnboardLockReclamationGuard } from "./reclamation-guard";
 export * from "./retained-sandbox-recovery";

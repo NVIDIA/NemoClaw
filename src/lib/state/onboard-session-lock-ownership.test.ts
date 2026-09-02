@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createMcpLifecycleLockOwner } from "./mcp-lifecycle-lock-identity";
+
 type OnboardSessionModule = typeof import("./onboard-session");
 let session: OnboardSessionModule;
 let tmpDir: string;
@@ -92,5 +94,51 @@ describe("onboard lock ownership", () => {
 
     expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
     expect(() => session.assertOnboardLockOwned()).toThrow(/onboarding lock ownership changed/u);
+  });
+
+  it("serializes a contender after the stale inode check and before unlink (#10779)", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.LOCK_FILE,
+      JSON.stringify({
+        pid: 999999,
+        startedAt: "2026-03-25T00:00:00.000Z",
+        command: "departed onboarding owner",
+      }),
+      { mode: 0o600 },
+    );
+    const originalUnlinkSync = fs.unlinkSync.bind(fs);
+    let contender: ReturnType<OnboardSessionModule["acquireOnboardLock"]> | null = null;
+    const unlinkSpy = vi.spyOn(fs, "unlinkSync").mockImplementationOnce(((target) => {
+      contender = session.acquireOnboardLock("nemoclaw onboard --contender");
+      originalUnlinkSync(target);
+    }) as typeof fs.unlinkSync);
+
+    try {
+      const cleaner = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+      expect(cleaner.acquired).toBe(true);
+      expect(contender).toMatchObject({ acquired: false });
+      expect(JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"))).toMatchObject({
+        command: "nemoclaw onboard --resume",
+      });
+    } finally {
+      unlinkSpy.mockRestore();
+      session.releaseOnboardLock();
+    }
+  });
+
+  it("recovers an onboarding reclamation guard left by a departed process (#10779)", () => {
+    const guardFile = path.join(path.dirname(session.LOCK_FILE), "onboard.lock.reclamation-guard");
+    const departedOwner = {
+      ...createMcpLifecycleLockOwner("onboard-lock-reclamation", "departed-guard"),
+      pid: 2_147_483_647,
+      processIdentity: "departed-process",
+    };
+    fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+    fs.writeFileSync(guardFile, JSON.stringify(departedOwner), { mode: 0o600 });
+
+    expect(session.acquireOnboardLock("nemoclaw onboard --resume").acquired).toBe(true);
+    expect(fs.existsSync(guardFile)).toBe(false);
   });
 });
