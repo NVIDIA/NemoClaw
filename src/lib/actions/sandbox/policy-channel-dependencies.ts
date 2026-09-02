@@ -66,12 +66,12 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  */
 export const policyChannelDependencies = {
   /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
-  clearStoppedDockerSandboxChannelState(
+  clearStoppedSandboxStateRoots(
     sandboxName: string,
     paths: readonly string[],
-  ): ReturnType<PrivilegedExecModule["clearStoppedDockerSandboxChannelState"]> {
+  ): ReturnType<PrivilegedExecModule["clearStoppedSandboxStateRoots"]> {
     const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
-    return cleanup.clearStoppedDockerSandboxChannelState(sandboxName, paths);
+    return cleanup.clearStoppedSandboxStateRoots(sandboxName, paths);
   },
   deleteMessagingProviderWithRecovery(
     providerName: string,

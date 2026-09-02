@@ -28,7 +28,8 @@ const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
 
 function buildSandboxDriverConfig(
   intent: SandboxCreateIntent,
-  managedStateMount: MaterializeSandboxCreatePlanInput["managedStateMount"],
+  managedStateMounts: MaterializeSandboxCreatePlanInput["managedStateMounts"],
+  managedStateMountDriverId: MaterializeSandboxCreatePlanInput["managedStateMountDriverId"],
 ): string | null {
   const cdiDevice = normalizeSandboxGpuDeviceForCdi(intent.sandboxGpuDevice);
   if (cdiDevice && (!intent.policy.options.directGpu || !intent.gpuCreateArgs.includes("--gpu"))) {
@@ -37,37 +38,56 @@ function buildSandboxDriverConfig(
   const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
     ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
   );
-  if (managedStateMount) {
-    const conflictingHostMount = intent.hostMounts?.find(({ target }) =>
-      containerPathsOverlap(target, managedStateMount.target),
-    );
-    if (conflictingHostMount) {
-      throw new Error(
-        `Host mount target '${conflictingHostMount.target}' conflicts with the managed Hermes state root '${managedStateMount.target}'.`,
-      );
-    }
-    dockerMounts.unshift({ ...managedStateMount });
-  }
   const podmanMounts: Array<Record<string, unknown>> = [];
+  const mountsByDriver = new Map<string, Array<Record<string, unknown>>>([
+    ["docker", dockerMounts],
+    ["podman", podmanMounts],
+  ]);
+  if ((managedStateMounts?.length ?? 0) > 0) {
+    if (!managedStateMountDriverId) {
+      throw new Error("Managed state mounts are missing their provider-owned driver config.");
+    }
+    const providerMounts = mountsByDriver.get(managedStateMountDriverId) ?? [];
+    for (const managedStateMount of managedStateMounts ?? []) {
+      const conflictingHostMount = intent.hostMounts?.find(({ target }) =>
+        containerPathsOverlap(target, managedStateMount.target),
+      );
+      if (conflictingHostMount) {
+        throw new Error(
+          `Host mount target '${conflictingHostMount.target}' conflicts with the managed state root '${managedStateMount.target}'.`,
+        );
+      }
+      if (
+        providerMounts.some(({ target }) =>
+          typeof target === "string" && containerPathsOverlap(target, managedStateMount.target),
+        )
+      ) {
+        throw new Error(`Managed state root '${managedStateMount.target}' overlaps another root.`);
+      }
+      providerMounts.push({ ...managedStateMount });
+    }
+    mountsByDriver.set(managedStateMountDriverId, providerMounts);
+  }
   if (intent.policy.options.agentName === "langchain-deepagents-code") {
     dockerMounts.unshift(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
     podmanMounts.push(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
   }
-  if (dockerMounts.length === 0 && !cdiDevice) return null;
-  return JSON.stringify({
-    docker: {
-      ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
-      ...(dockerMounts.length > 0 ? { mounts: dockerMounts } : {}),
-    },
-    ...(podmanMounts.length > 0 || cdiDevice
-      ? {
-          podman: {
-            ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
-            ...(podmanMounts.length > 0 ? { mounts: podmanMounts } : {}),
-          },
-        }
-      : {}),
-  });
+  const driverConfig = Object.fromEntries(
+    [...mountsByDriver].flatMap(([driverId, mounts]) =>
+      mounts.length > 0 || cdiDevice
+        ? [
+            [
+              driverId,
+              {
+                ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
+                ...(mounts.length > 0 ? { mounts } : {}),
+              },
+            ],
+          ]
+        : [],
+    ),
+  );
+  return Object.keys(driverConfig).length > 0 ? JSON.stringify(driverConfig) : null;
 }
 
 export type SandboxCreatePlan = {
@@ -282,9 +302,10 @@ function assertDeferredProviderPlanSupported(
 export function materializeSandboxCreatePlan({
   intent,
   fromRef,
+  managedStateMounts,
+  managedStateMountDriverId,
   policylessCreate = false,
   deferSandboxEffectsUntilIdentityVerification = false,
-  managedStateMount,
   messagingTokenDefs,
   messagingConfig,
   runProviderPreDeleteCleanup,
@@ -294,7 +315,11 @@ export function materializeSandboxCreatePlan({
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
-  const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
+  const driverConfig = buildSandboxDriverConfig(
+    intent,
+    managedStateMounts,
+    managedStateMountDriverId,
+  );
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxCreatePolicy(
     intent,
     prepareInitialSandboxCreatePolicy,
@@ -431,7 +456,7 @@ export function materializeHermesPortableCreatePlan(input: {
       policyTier: intent.policy.options.policyTier,
     },
   );
-  const driverConfig = buildSandboxDriverConfig(intent, null);
+  const driverConfig = buildSandboxDriverConfig(intent, undefined, null);
   const createArgs = [
     "--from",
     fromRef,

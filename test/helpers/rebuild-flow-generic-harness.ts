@@ -7,6 +7,7 @@ import { vi } from "vitest";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
+  agentForwardStop,
   agentRuntime,
   buildContextFingerprint,
   createHarnessTempDir,
@@ -193,6 +194,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(rebuildFlowHelpers, "warnUnpreservedUserManagedFiles")
     .mockImplementation(() => undefined);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
+  vi.spyOn(agentForwardStop, "settleAgentForwardPortsForRebuild").mockReturnValue(true);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
     agentDef.name === "openclaw" ? null : ({ name: agentDef.name } as never),

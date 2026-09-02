@@ -83,6 +83,8 @@ export type HermesShieldsProviderConsumerHarness = {
   supportSpy: MockInstance;
   transitionSpy: MockInstance;
   verifyLockSpy: MockInstance;
+  preflightStateDirLockSpy: MockInstance;
+  verifyLockedStateDirPostureSpy: MockInstance;
   verifyStateDirMutablePostureSpy: MockInstance;
   cleanup: () => void;
 };
@@ -278,6 +280,12 @@ export function createHermesShieldsProviderConsumerHarness(
   const verifyLockSpy = vi
     .spyOn(verifyLock, "verifyShieldsLockState")
     .mockReturnValue({ issues: [] });
+  const preflightStateDirLockSpy = vi
+    .spyOn(stateDirLock, "preflightStateDirLock")
+    .mockReturnValue([]);
+  const verifyLockedStateDirPostureSpy = vi
+    .spyOn(stateDirLock, "verifyLockedStateDirPosture")
+    .mockReturnValue([]);
   const verifyStateDirMutablePostureSpy = vi
     .spyOn(stateDirLock, "verifyStateDirMutablePosture")
     .mockImplementation(() => []);
@@ -304,9 +312,13 @@ export function createHermesShieldsProviderConsumerHarness(
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
     registrySpy,
     vi
-      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-      .mockImplementation((_sandboxName: unknown, command: unknown) => command as string[]),
+      .spyOn(privilegedExec, "capturePrivilegedSandboxCommand")
+      .mockImplementation((_sandboxName: unknown, command: unknown) =>
+        Buffer.from(dockerExec.dockerExecFileSync(command as string[])),
+      ),
     verifyLockSpy,
+    preflightStateDirLockSpy,
+    verifyLockedStateDirPostureSpy,
     verifyStateDirMutablePostureSpy,
     vi.spyOn(console, "log").mockImplementation(() => undefined),
     vi.spyOn(console, "error").mockImplementation(() => undefined),
@@ -391,6 +403,8 @@ export function createHermesShieldsProviderConsumerHarness(
     supportSpy,
     transitionSpy,
     verifyLockSpy,
+    preflightStateDirLockSpy,
+    verifyLockedStateDirPostureSpy,
     verifyStateDirMutablePostureSpy,
   };
 }
