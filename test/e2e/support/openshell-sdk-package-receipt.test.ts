@@ -150,15 +150,13 @@ afterEach(() => {
 });
 
 describe("OpenShell SDK producer receipts", () => {
-  it("validates and reads the package through one non-following descriptor", () => {
+  it("records the independent digest and size of a stable regular package", () => {
     const directory = temporaryDirectory();
     const archivePath = path.join(directory, "reviewed-sdk.tgz");
-    fs.writeFileSync(archivePath, "reviewed SDK package");
-    const open = vi.spyOn(fs, "openSync");
-    const fstat = vi.spyOn(fs, "fstatSync");
-    const read = vi.spyOn(fs, "readFileSync");
+    const packageBytes = Buffer.from("reviewed SDK package");
+    fs.writeFileSync(archivePath, packageBytes);
 
-    createOpenShellSdkProducerReceipt({
+    const receipt = createOpenShellSdkProducerReceipt({
       archivePath,
       baseSha: BASE_SHA,
       candidateSha: CANDIDATE_SHA,
@@ -169,13 +167,51 @@ describe("OpenShell SDK producer receipts", () => {
       workflowSha: BASE_SHA,
     });
 
-    const descriptor = open.mock.results[0]?.value;
-    const flags = Number(open.mock.calls[0]?.[1] ?? 0);
-    const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
-    expect(flags & noFollow).toBe(noFollow);
-    expect(fstat).toHaveBeenCalledWith(descriptor, { bigint: true });
-    expect(read).toHaveBeenCalledWith(descriptor);
-    expect(read).not.toHaveBeenCalledWith(archivePath);
+    expect(receipt.package).toEqual({
+      fileName: "reviewed-sdk.tgz",
+      digest: `sha256:${createHash("sha256").update(packageBytes).digest("hex")}`,
+      size: packageBytes.length,
+    });
+  });
+
+  it("rejects a symlinked package path", () => {
+    const directory = temporaryDirectory();
+    const targetPath = path.join(directory, "target-sdk.tgz");
+    const archivePath = path.join(directory, "reviewed-sdk.tgz");
+    fs.writeFileSync(targetPath, "reviewed SDK package");
+    fs.symlinkSync(targetPath, archivePath);
+
+    expect(() =>
+      createOpenShellSdkProducerReceipt({
+        archivePath,
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        checkedOutSha: BASE_SHA,
+        pullRequest: PR_NUMBER,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+        workflowSha: BASE_SHA,
+      }),
+    ).toThrow("regular non-symlink file");
+  });
+
+  it("rejects a non-regular package path", () => {
+    const directory = temporaryDirectory();
+    const archivePath = path.join(directory, "reviewed-sdk.tgz");
+    fs.mkdirSync(archivePath);
+
+    expect(() =>
+      createOpenShellSdkProducerReceipt({
+        archivePath,
+        baseSha: BASE_SHA,
+        candidateSha: CANDIDATE_SHA,
+        checkedOutSha: BASE_SHA,
+        pullRequest: PR_NUMBER,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+        workflowSha: BASE_SHA,
+      }),
+    ).toThrow("regular non-symlink file");
   });
 
   it("rejects a package path replaced after its descriptor opens", () => {
