@@ -110,7 +110,7 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     `;
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("runtime credential placeholder ready (revision-scoped)");
+    expect(result.stderr).toContain("runtime credential is ready (revision-scoped)");
     expect(result.stderr).not.toContain("v4242");
   });
 
