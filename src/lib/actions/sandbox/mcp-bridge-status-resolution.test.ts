@@ -7,6 +7,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  baseEntry,
+  runDeepAgentsConfigCommand,
+} from "../../../../test/helpers/mcp-bridge-adapter-deepagents-fixture";
+
+import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
@@ -193,13 +199,31 @@ ${body}
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
   it(
-    "preserves fixed unsafe projection diagnostics across credential observations (#10754)",
-    { timeout: 30_000 },
+    "returns a type-specific failure for unsafe Deep Agents projection races (#10754)",
+    { timeout: 120_000 },
     () => {
-      const unsafeDetails = [
-        "Unsafe managed Deep Agents MCP projection path: symbolic link",
-        "Unsafe managed Deep Agents MCP projection path: FIFO",
+      const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
+      const projection = { mcpServers: {} };
+      const unsafeResults = [
+        ...(["symlink", "fifo"] as const).map((appearedType) =>
+          runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
+            swapAfterMissingManagedOpen: appearedType,
+            timeoutMs: 30_000,
+          }),
+        ),
+        runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
+          statAfterManagedEloopAsRegular: true,
+          symlink: true,
+          timeoutMs: 30_000,
+        }),
       ];
+      unsafeResults.forEach((result) => {
+        expect(result.status).toBe(2);
+        expect(result.stdout.trim()).toBe("");
+        expect(result.stderr).toContain("Unsafe managed Deep Agents MCP projection path:");
+        expect(result.configIsSymlink || result.configIsFifo).toBe(true);
+      });
+      const unsafeDetails = unsafeResults.map((result) => result.stderr.trim());
       const home = createTempHome("nemoclaw-mcp-status-projection-");
       const { stdout } = runHarness(
         home,
@@ -251,7 +275,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
         stderr: string;
       }>;
 
-      expect(outcomes).toHaveLength(6);
+      expect(outcomes).toHaveLength(9);
       outcomes.forEach((outcome) => {
         expect(["unavailable", "absent", "canonical"]).toContain(outcome.observation);
         expect(outcome.exitCode).toBe(2);
