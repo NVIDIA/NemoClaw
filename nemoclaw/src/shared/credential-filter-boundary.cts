@@ -84,6 +84,8 @@ export type ConfigValue =
 export type ConfigObject = { [key: string]: ConfigValue };
 
 export const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
+const DIAGNOSTIC_CREDENTIAL_PLACEHOLDER = "<REDACTED>";
+const DIAGNOSTIC_URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
 
 export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
   "auth-profiles.json",
@@ -193,6 +195,19 @@ function scrubConfigValue(value: unknown): unknown {
     return hasUrlCredentials || valueLooksLikeSecret(value) ? CREDENTIAL_PLACEHOLDER : value;
   }
   return stripCredentials(value);
+}
+
+/** Fully redact credential-shaped values and credential-bearing URL tokens in diagnostics. */
+export function redactCredentialText(text: string): string {
+  DIAGNOSTIC_URL_TOKEN_PATTERN.lastIndex = 0;
+  let redacted = text.replace(DIAGNOSTIC_URL_TOKEN_PATTERN, (value) =>
+    scrubConfigValue(value) === value ? value : DIAGNOSTIC_CREDENTIAL_PLACEHOLDER,
+  );
+  for (const pattern of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    redacted = redacted.replace(pattern, DIAGNOSTIC_CREDENTIAL_PLACEHOLDER);
+  }
+  return redacted;
 }
 
 function cliFlagName(token: string): string | null {

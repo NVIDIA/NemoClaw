@@ -35,7 +35,7 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
-import { stripCredentials } from "../security/credential-filter.js";
+import { redactCredentialText, stripCredentials } from "../security/credential-filter.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellGatewayEndpointBoundary from "../shared/openshell-gateway-endpoint-boundary.cjs";
 import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-external-target-boundary.cjs";
@@ -254,7 +254,7 @@ const SENSITIVE_ERROR_ASSIGNMENT =
   /(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*)[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
-  let redacted = stderr;
+  let redacted = redactCredentialText(stderr);
   for (const secret of [...new Set(secretValues)]
     .filter(Boolean)
     .sort((a, b) => b.length - a.length)) {

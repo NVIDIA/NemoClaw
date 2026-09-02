@@ -57,7 +57,7 @@ import {
   stripProviderComposedPolicies,
   type OpenShellPolicyInspection,
   withoutProviderComposedPolicies,
-} from "./merge";
+} from "../adapters/openshell/policy-boundary";
 import {
   findUnexpectedExistingPolicyKey,
   PERSONAL_OPEN_INTERNET_PRESET_NAME,

@@ -7,7 +7,10 @@ import path from "node:path";
 import type { AnySchemaObject, ErrorObject, ValidateFunction } from "ajv";
 import Ajv from "ajv/dist/2020.js";
 
-import { isOpenShellSandboxPolicyCredentialFree, parseOpenShellPolicy } from "./merge";
+import {
+  isOpenShellSandboxPolicyCredentialFree,
+  parseOpenShellPolicy,
+} from "../adapters/openshell/policy-boundary";
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
 const NETWORK_POLICY_SCHEMA_PATH = path.join(PACKAGE_ROOT, "schemas", "network-policy.schema.json");

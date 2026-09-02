@@ -23,6 +23,7 @@ export const {
   isCredentialField,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
+  redactCredentialText,
   sanitizeEnvFileContent,
   stripCredentials,
   valueLooksLikeSecret,
