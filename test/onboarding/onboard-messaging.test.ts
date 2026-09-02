@@ -709,7 +709,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
-  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command); if (providerGetResult !== null) return providerGetResult;
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -869,7 +869,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command); if (providerGetResult !== null) return providerGetResult;
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1040,7 +1040,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbo
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command); if (providerGetResult !== null) return providerGetResult;
+  const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1519,7 +1519,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  return fixtureMocks.mockNvidiaOrMissingProviderGetRun(command) ?? createdSandbox.run(command) ?? { status: 0 };
+  return fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw") ?? createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = createdSandbox.capture(command);

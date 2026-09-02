@@ -99,12 +99,24 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
-function mockNvidiaProviderGetRun(command) {
+function parseNamedProviderGet(command, gatewayName) {
   const args = normalizeCommand(command).split(/\s+/);
   const providerIndex = args.indexOf("provider");
   if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
-  const providerName = providerNameAfterAction(args, providerIndex);
-  if (providerName !== "nvidia-prod") return null;
+  const getArgs = args.slice(providerIndex + 2);
+  if (getArgs.length !== 3 || getArgs[0] !== "-g" || getArgs[1] !== gatewayName) {
+    return {
+      error: { status: 1, stderr: `provider get must target named gateway '${gatewayName}'` },
+    };
+  }
+  return { providerName: getArgs[2] };
+}
+
+function mockNvidiaProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  if (request.providerName !== "nvidia-prod") return null;
   return {
     status: 0,
     stdout:
@@ -112,14 +124,14 @@ function mockNvidiaProviderGetRun(command) {
   };
 }
 
-function mockNvidiaOrMissingProviderGetRun(command) {
-  const args = normalizeCommand(command).split(/\s+/);
-  const providerIndex = args.indexOf("provider");
-  if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
+function mockNvidiaOrMissingProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
   return (
-    mockNvidiaProviderGetRun(command) ?? {
+    mockNvidiaProviderGetRun(command, gatewayName) ?? {
       status: 1,
-      stderr: `provider '${providerNameAfterAction(args, providerIndex)}' not found`,
+      stderr: `provider '${request.providerName}' not found`,
     }
   );
 }
@@ -165,17 +177,17 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   );
 }
 
-function mockProviderPreparationRun(command, profileId, inferenceCapable) {
+function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
   return (
     mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) ??
-    mockNvidiaOrMissingProviderGetRun(command)
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
   );
 }
 
-function mockManagedProviderPreparationRun(command) {
+function mockManagedProviderPreparationRun(command, gatewayName) {
   return (
     mockManagedEndpointlessProviderProfileRun(command) ??
-    mockNvidiaOrMissingProviderGetRun(command)
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
   );
 }
 

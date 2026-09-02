@@ -68,7 +68,7 @@ const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -294,7 +294,7 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -513,7 +513,7 @@ buildContext.stageOptimizedSandboxBuildContext = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -632,7 +632,7 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -745,7 +745,7 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };

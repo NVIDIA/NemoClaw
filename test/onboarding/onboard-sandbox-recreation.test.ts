@@ -158,7 +158,7 @@ const commands = []; let registeredSandbox = null;
 	}, { sandboxId: sourceSandboxId });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
@@ -318,7 +318,7 @@ const events = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -497,7 +497,7 @@ const events = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -647,7 +647,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
 });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -818,7 +818,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
@@ -968,7 +968,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
@@ -1144,7 +1144,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
 });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
