@@ -250,6 +250,7 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
   gateway: { mode: "local", port: gatewayPort, controlUi: { allowInsecureAuth: true, dangerouslyDisableDeviceAuth: false, allowedOrigins: ["http://127.0.0.1:" + gatewayPort] }, trustedProxies: ["127.0.0.1", "::1"], auth: { token: "" }, reload: { mode: "hot" } },
 }), "utf8");
 const version = await run([entry, "--version"], 30000);
+const normalizedVersion = /\b2026\.7\.1\b/u.test(version.stdout) ? "2026.7.1" : version.stdout.trim();
 const gateway = spawn(node, [entry, "gateway", "run", "--dev", "--allow-unconfigured", "--auth", "token", "--bind", "loopback", "--port", String(gatewayPort)], { env, stdio: "ignore", windowsHide: true });
 let healthy = false;
 for (let attempt = 0; attempt < 120 && gateway.exitCode === null; attempt += 1) {
@@ -267,12 +268,12 @@ try {
   const payloads = document?.result?.payloads ?? document?.payloads;
   exactReply = document?.status !== "error" && Array.isArray(payloads) && payloads.length === 1 && payloads[0]?.text === "CHAT_OK";
 } catch {}
-const result = { version: version.stdout.trim(), versionExitCode: version.exitCode, healthy, chatExitCode: chat.exitCode, exactReply, reply: exactReply ? "CHAT_OK" : null };
+const result = { version: normalizedVersion, versionExitCode: version.exitCode, healthy, chatExitCode: chat.exitCode, exactReply, reply: exactReply ? "CHAT_OK" : null };
 writeFileSync(resultPath, JSON.stringify(result), "utf8");
 if (gateway.exitCode === null) gateway.kill();
 await Promise.race([new Promise((resolve) => gateway.once("exit", resolve)), sleep(5000)]);
 await new Promise((resolve) => mock.close(resolve));
-process.exit(version.exitCode === 0 && healthy && exactReply ? 0 : 1);
+process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && healthy && exactReply ? 0 : 1);
 `;
 }
 
