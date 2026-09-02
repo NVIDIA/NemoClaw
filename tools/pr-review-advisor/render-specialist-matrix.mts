@@ -8,7 +8,7 @@ import { ADVISOR_SPECIALISTS } from "./specialist-catalog.mts";
 const configuredModel = process.env.PR_REVIEW_ADVISOR_MODEL?.trim();
 const models = configuredModel
   ? [configuredModel]
-  : ["openai/openai/gpt-5.6-terra", "azure/openai/gpt-5.6-terra"];
+  : ["openai/gpt-5.6-terra", "azure/openai/gpt-5.6-terra"];
 const matrix = ADVISOR_SPECIALISTS.map(({ interest, label }, index) => ({
   interest,
   label,
