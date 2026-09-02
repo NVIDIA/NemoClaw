@@ -4620,6 +4620,36 @@ TAVILY_API_KEY=<your-tavily-key> \
 
 NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes. If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
 
+### Langfuse works with raw keys but not OpenShell placeholders
+
+Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
+That workaround bypasses the sandbox credential boundary.
+
+OpenShell 0.0.106 resolves static credentials only at endpoints declared by their provider profile.
+Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
+
+For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+nemohermes credentials add <sandbox>-langfuse \
+  --type langfuse-hermes-v1 \
+  --credential LANGFUSE_PUBLIC_KEY \
+  --credential LANGFUSE_SECRET_KEY
+unset LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+nemohermes <sandbox> rebuild
+```
+
+If `agent.log` says the keys look like placeholders, the running image does not contain the current Hermes compatibility patch.
+Rebuild onto the current managed image before changing credentials.
+If Hermes accepts the placeholders but OpenShell reports `credential_unavailable` or an endpoint mismatch, inspect the provider type and endpoint profile.
+The provider must expose the exact `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` names and authorize the configured Langfuse host.
+
+For self-hosted Langfuse, import a separate reviewed profile that matches the exact HTTPS origin, including its port, before registering the provider.
+Set only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
+Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved revision-scoped placeholder can shadow the current process-injected revision after rotation or rebuild.
+
 ### Re-onboarding asks every messaging prompt again
 
 `nemohermes onboard --resume` against a Hermes sandbox that was originally onboarded with Telegram, Discord, and Slack credentials re-prompts for each channel's bot token and per-channel settings rather than reusing the stored values. This is tracked in [#3581](https://github.com/NVIDIA/NemoClaw/issues/3581). For unattended re-onboards, export the messaging env vars first so the wizard skips the prompts:
