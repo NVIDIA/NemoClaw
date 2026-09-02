@@ -34,15 +34,15 @@ import { assertMcpGatewayProxyDnsDisabled } from "./mcp-bridge/gateway-security"
 
 const originalStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
 
-function gatewayConfig(proxyMode?: boolean): string {
+function gatewayConfig(proxyMode?: boolean, driver: "docker" | "podman" = "docker"): string {
   return [
     "[openshell]",
     "version = 1",
     "",
     "[openshell.gateway]",
-    'compute_drivers = ["docker"]',
+    `compute_drivers = ["${driver}"]`,
     "",
-    "[openshell.drivers.docker]",
+    `[openshell.drivers.${driver}]`,
     ...(proxyMode === undefined ? [] : [`proxy_connect_by_hostname = ${String(proxyMode)}`]),
     "",
   ].join("\n");
@@ -84,6 +84,35 @@ describe("managed MCP gateway proxy DNS boundary", () => {
       writeRuntimeIdentity(stateDir, gatewayConfig(false));
 
       expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("admits a launch-bound portable Podman gateway to the MCP mutation boundary", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-podman-"));
+    try {
+      writeRuntimeIdentity(stateDir, gatewayConfig(false, "podman"));
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).not.toThrow();
+      expect(processProofs.standaloneOwnershipFailure).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({ driver: "podman", stateDir }),
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a launch-bound portable Podman gateway with hostname proxy resolution", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-gateway-podman-"));
+    try {
+      writeRuntimeIdentity(stateDir, gatewayConfig(true, "podman"));
+
+      expect(() => assertMcpGatewayProxyDnsDisabled("nemoclaw", 8080)).toThrow(
+        /enables proxy hostname resolution/,
+      );
+      expect(processProofs.standaloneOwnershipFailure).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

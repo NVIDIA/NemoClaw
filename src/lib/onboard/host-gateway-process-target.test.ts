@@ -18,8 +18,10 @@ import {
   HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
   type RunResult,
+  scopedHostGatewayProcessOwnershipFailure,
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
+import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
 const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
 const tempRoots = new Set<string>();
@@ -210,6 +212,64 @@ function stopTargetedPid(pid: number, cmdline: string, targeted = true) {
 }
 
 describe("stopHostGatewayProcesses target filtering", () => {
+  it("proves a portable Podman gateway through its canonical config and process identity", () => {
+    const pid = 9_999_600;
+    const stateDir = makeTempRoot("nemoclaw-scoped-podman-target-");
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    const configPath = path.join(stateDir, "openshell-gateway.toml");
+    const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+    const gatewayEnv = {
+      OPENSHELL_DRIVERS: "podman",
+      OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:18080`,
+      OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+      OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
+      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-podman",
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      OPENSHELL_GATEWAY_CONFIG: configPath,
+    };
+    fs.writeFileSync(pidFile, `${String(pid)}\n`, { mode: 0o600 });
+    fs.writeFileSync(
+      configPath,
+      buildDockerDriverGatewayConfigToml(
+        gatewayEnv,
+        undefined,
+        jwtBundle,
+        gatewayIdForStateDir(stateDir),
+      ),
+      { mode: 0o600 },
+    );
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+      desiredEnv: gatewayEnv,
+      endpoint: "https://127.0.0.1:18080",
+      pid,
+    });
+    const run = makeRun(
+      new Map(
+        psResponses(pid, {
+          cmdline: "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]",
+          exited: new Set(),
+        }),
+      ),
+    );
+
+    expect(
+      scopedHostGatewayProcessOwnershipFailure(
+        {
+          env: {},
+          kill: vi.fn(),
+          readProcessEnvironment: () => gatewayEnv,
+          run,
+        },
+        {
+          driver: "podman",
+          openShellGatewayName: "nemoclaw-18080",
+          openShellGatewayPort: 18080,
+          stateDir,
+        },
+      ),
+    ).toBeNull();
+  });
+
   it("stops only the fully proven scoped PID without running pgrep (#8663)", () => {
     const { kill, pidFile, result, run } = stopScopedTarget();
 

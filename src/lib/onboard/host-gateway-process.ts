@@ -9,7 +9,10 @@ import path from "node:path";
 import { waitUntil } from "../core/wait";
 import { DEFAULT_GATEWAY_PORT, resolveGatewayStateDirForPort } from "./gateway/state-dir";
 import {
+  DOCKER_DRIVER_GATEWAY_CONFIG_NAME,
+  type DockerDriverGatewayDriver,
   gatewayIdForStateDir,
+  hasScopedGatewayDriverIdentity,
   hasStateScopedSandboxNamespace,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "./docker-driver-gateway-config";
@@ -296,11 +299,31 @@ export function processUsesStateScopedSandboxNamespace(
   stateDir: string,
   deps: Pick<HostGatewayProcessDeps, "env" | "readProcessEnvironment" | "run">,
 ): boolean {
+  return processUsesScopedGatewayDriverIdentity(pid, stateDir, "docker", deps);
+}
+
+function processUsesScopedGatewayDriverIdentity(
+  pid: number,
+  stateDir: string,
+  driver: DockerDriverGatewayDriver,
+  deps: Pick<HostGatewayProcessDeps, "env" | "readProcessEnvironment" | "run">,
+): boolean {
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
   const owner = deps.run("ps", ["-p", String(pid), "-o", "uid="], { env: deps.env });
   if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
   const environment = readHostGatewayProcessEnvironment(pid, deps);
-  return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
+  if (driver === "docker") {
+    return (
+      environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir)
+    );
+  }
+  const configPath = environment?.OPENSHELL_GATEWAY_CONFIG;
+  return (
+    environment?.OPENSHELL_DRIVERS === "podman" &&
+    typeof configPath === "string" &&
+    path.resolve(configPath) ===
+      path.join(path.resolve(stateDir), DOCKER_DRIVER_GATEWAY_CONFIG_NAME)
+  );
 }
 
 function readProcessExecutable(pid: number, deps: HostGatewayProcessDeps): string | null {
@@ -323,6 +346,7 @@ function normalizeProcessExecutable(value: string): string {
 export function externallySupervisedHostGatewayProcessOwnershipFailure(
   depsOverrides: Partial<HostGatewayProcessDeps>,
   options: {
+    driver?: DockerDriverGatewayDriver;
     gatewayBin: string;
     gatewayName: string;
     gatewayPort: number;
@@ -334,8 +358,12 @@ export function externallySupervisedHostGatewayProcessOwnershipFailure(
   if (!canonicalGatewayTargetMatches(options.gatewayName, options.gatewayPort)) {
     return "selected gateway name and port are not canonical";
   }
-  if (!processUsesStateScopedSandboxNamespace(options.pid, options.stateDir, deps)) {
-    return "gateway process owner and loaded sandbox namespace cannot be proven";
+  const driver = options.driver ?? "docker";
+  if (!hasScopedGatewayDriverIdentity(options.stateDir, driver)) {
+    return `gateway config does not prove a scoped ${driver} identity`;
+  }
+  if (!processUsesScopedGatewayDriverIdentity(options.pid, options.stateDir, driver, deps)) {
+    return "gateway process owner and loaded state identity cannot be proven";
   }
   const executable = readProcessExecutable(options.pid, deps);
   if (
@@ -373,9 +401,10 @@ function scopedGatewayOwnershipFailure(
   stateDir: string,
   pidFile: string,
   target: { name: string; port: number },
+  driver: DockerDriverGatewayDriver = "docker",
 ): string | null {
-  if (!hasStateScopedSandboxNamespace(stateDir)) {
-    return "gateway config does not prove an isolated sandbox namespace";
+  if (!hasScopedGatewayDriverIdentity(stateDir, driver)) {
+    return `gateway config does not prove a scoped ${driver} identity`;
   }
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
   const pidText = readOwnedRuntimeFile(pidFile, uid);
@@ -397,8 +426,8 @@ function scopedGatewayOwnershipFailure(
   ) {
     return "runtime marker does not identify the selected gateway";
   }
-  if (!processUsesStateScopedSandboxNamespace(pid, stateDir, deps)) {
-    return "gateway process owner and loaded sandbox namespace cannot be proven";
+  if (!processUsesScopedGatewayDriverIdentity(pid, stateDir, driver, deps)) {
+    return "gateway process owner and loaded state identity cannot be proven";
   }
   if (
     !hostGatewayCmdlineMatches(processArgs(pid, deps), options.gatewayBin, target, {
@@ -415,7 +444,7 @@ export function scopedHostGatewayProcessOwnershipFailure(
   options: Pick<
     StopHostGatewayOptions,
     "gatewayBin" | "openShellGatewayName" | "openShellGatewayPort" | "pidFile" | "stateDir"
-  >,
+  > & { driver?: DockerDriverGatewayDriver },
 ): string | null {
   const deps = defaultDeps(depsOverrides);
   const stateDir = options.stateDir ?? resolveDockerDriverGatewayStateDir(deps.env);
@@ -435,7 +464,15 @@ export function scopedHostGatewayProcessOwnershipFailure(
   if (hostGatewayProcessStatus(pid, deps) !== "running") {
     return "selected gateway process is not running with a proven status";
   }
-  return scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, { name, port });
+  return scopedGatewayOwnershipFailure(
+    pid,
+    deps,
+    options,
+    stateDir,
+    pidFile,
+    { name, port },
+    options.driver ?? "docker",
+  );
 }
 
 /** Prove that neither recorded nor discoverable host gateway processes claim this state root. */

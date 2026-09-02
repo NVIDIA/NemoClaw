@@ -95,7 +95,7 @@ describe("MCP URL target validation", () => {
     }
   });
 
-  it("rejects private DNS answers and OpenShell host aliases before DNS", async () => {
+  it("rejects a private DNS answer after resolution and an OpenShell host alias before resolution", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")
       .mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }] as never);

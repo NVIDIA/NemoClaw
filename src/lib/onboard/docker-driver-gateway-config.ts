@@ -31,7 +31,7 @@ const LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 3600;
 const PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION = "0.0.44";
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
-type DockerDriverGatewayDriver = "docker" | "podman";
+export type DockerDriverGatewayDriver = "docker" | "podman";
 
 interface FileIdentity {
   dev: number;
@@ -641,11 +641,14 @@ function resolveDockerDriverGatewayIdentity(
   return { configProof: null, kind: "scoped", gatewayId, sandboxNamespace: gatewayId };
 }
 
-/** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
-export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
+/** Prove that a NemoClaw-owned gateway config has the selected scoped driver identity. */
+export function hasScopedGatewayDriverIdentity(
+  stateDir: string,
+  driver: DockerDriverGatewayDriver,
+): boolean {
   let identity: DockerDriverGatewayIdentity | null = null;
   try {
-    identity = existingGatewayIdentityFromConfig(stateDir, "docker");
+    identity = existingGatewayIdentityFromConfig(stateDir, driver);
     return identity?.kind === "scoped";
   } catch {
     return false;
@@ -653,6 +656,11 @@ export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
     if (identity?.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
     if (identity?.configProof) closeRegularFileProof(identity.configProof);
   }
+}
+
+/** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
+export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
+  return hasScopedGatewayDriverIdentity(stateDir, "docker");
 }
 
 function gatewayLocalTlsDir(gatewayEnv: Record<string, string>): string {

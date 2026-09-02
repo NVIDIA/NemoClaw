@@ -8,7 +8,10 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 import { openRegularFileNoFollow } from "../../../adapters/fs/regular-file";
-import { DOCKER_DRIVER_GATEWAY_CONFIG_NAME } from "../../../onboard/docker-driver-gateway-config";
+import {
+  type DockerDriverGatewayDriver,
+  DOCKER_DRIVER_GATEWAY_CONFIG_NAME,
+} from "../../../onboard/docker-driver-gateway-config";
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
   NEMOCLAW_OPENSHELL_GATEWAY_CONFIG_SHA256_ENV,
@@ -43,7 +46,10 @@ function readOwnedGatewayFile(filePath: string): Buffer {
   }
 }
 
-function configuredProxyHostnameMode(configBytes: Buffer): unknown {
+function configuredDriverProxyHostnameMode(configBytes: Buffer): {
+  driver: DockerDriverGatewayDriver;
+  proxyHostnameMode: unknown;
+} {
   const parsed = asTable(parseToml(configBytes.toString("utf-8")));
   const openshell = asTable(parsed?.openshell);
   const gateway = asTable(openshell?.gateway);
@@ -58,7 +64,10 @@ function configuredProxyHostnameMode(configBytes: Buffer): unknown {
   const drivers = asTable(openshell?.drivers);
   const driver = asTable(drivers?.[computeDrivers[0]]);
   if (!driver) throw new Error("selected driver config is missing");
-  return driver.proxy_connect_by_hostname;
+  return {
+    driver: computeDrivers[0],
+    proxyHostnameMode: driver.proxy_connect_by_hostname,
+  };
 }
 
 function refusal(detail: string): Error {
@@ -81,27 +90,30 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
     home: os.homedir(),
     port: gatewayPort,
   });
-  const ownershipFailure = scopedHostGatewayProcessOwnershipFailure(
-    {},
-    {
-      gatewayBin: process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
-      openShellGatewayName: gatewayName,
-      openShellGatewayPort: gatewayPort,
-      stateDir,
-    },
-  );
   const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
   let configBytes: Buffer;
+  let driver: DockerDriverGatewayDriver;
   let proxyHostnameMode: unknown;
   try {
     configBytes = readOwnedGatewayFile(configPath);
-    proxyHostnameMode = configuredProxyHostnameMode(configBytes);
+    ({ driver, proxyHostnameMode } = configuredDriverProxyHostnameMode(configBytes));
   } catch (error) {
     throw refusal(error instanceof Error ? error.message : "the gateway config is unreadable");
   }
   if (proxyHostnameMode !== false && proxyHostnameMode !== undefined) {
     throw refusal("the selected driver enables proxy hostname resolution");
   }
+
+  const ownershipFailure = scopedHostGatewayProcessOwnershipFailure(
+    {},
+    {
+      driver,
+      gatewayBin: process.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
+      openShellGatewayName: gatewayName,
+      openShellGatewayPort: gatewayPort,
+      stateDir,
+    },
+  );
 
   const configSha256 = crypto.createHash("sha256").update(configBytes).digest("hex");
   if (ownershipFailure) {
@@ -110,6 +122,7 @@ export function assertMcpGatewayProxyDnsDisabled(gatewayName: string, gatewayPor
     const serviceOwnershipFailure = externallySupervisedHostGatewayProcessOwnershipFailure(
       {},
       {
+        driver,
         gatewayBin: service.executablePath,
         gatewayName,
         gatewayPort,

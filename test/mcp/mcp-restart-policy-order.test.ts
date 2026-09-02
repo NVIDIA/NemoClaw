@@ -29,7 +29,7 @@ const replace = (target, key, value) =>
   Object.defineProperty(target, key, { configurable: true, value });
 let dnsCalls = 0;
 let policyCalls = 0;
-let providerCalls = 0;
+const providerCommandCalls = [];
 let adapterCalls = 0;
 replace(dns, "resolveHostAddresses", async () => {
   dnsCalls += 1;
@@ -39,8 +39,8 @@ replace(policies, "applyPresetContent", () => {
   policyCalls += 1;
   return true;
 });
-replace(providerCommands, "runOpenshellProviderCommand", () => {
-  providerCalls += 1;
+replace(providerCommands, "runOpenshellProviderCommand", (args) => {
+  providerCommandCalls.push(args);
   return { status: 0, stdout: "", stderr: "" };
 });
 replace(adapterRegistration, "registerAgentAdapterAtCurrentCredentialRevision", () => {
@@ -79,7 +79,13 @@ action.then(
       message: error instanceof Error ? error.message : String(error),
       dnsCalls,
       policyCalls,
-      providerCalls,
+      providerMutations: providerCommandCalls.filter(
+        (args) =>
+          (args[0] === "provider" && ["create", "update", "delete"].includes(args[1])) ||
+          (args[0] === "sandbox" &&
+            args[1] === "provider" &&
+            ["attach", "detach"].includes(args[2])),
+      ),
       adapterCalls,
       allowedIps: registry.getSandbox("alpha").mcp.bridges.example.allowedIps,
     }));
@@ -99,7 +105,7 @@ action.then(
         message: string;
         dnsCalls: number;
         policyCalls: number;
-        providerCalls: number;
+        providerMutations: string[][];
         adapterCalls: number;
         allowedIps: string[];
       };
@@ -109,7 +115,7 @@ action.then(
       expect(payload.message).toContain("Sandbox destroy remains available");
       expect(payload.dnsCalls).toBe(1);
       expect(payload.policyCalls).toBe(0);
-      expect(payload.providerCalls).toBe(0);
+      expect(payload.providerMutations).toEqual([]);
       expect(payload.adapterCalls).toBe(0);
       expect(payload.allowedIps).toEqual(["8.8.8.8"]);
     },
@@ -132,7 +138,7 @@ const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
-const providerCalls = [];
+const providerCommandCalls = [];
 let policyApplyCalls = 0;
 const operation = ${JSON.stringify(operation)};
 const entries = {
@@ -173,6 +179,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 providerCommands.runOpenshellProviderCommand = (args) => {
+  providerCommandCalls.push(args);
   const profileResult = mockManagedEndpointlessProviderProfileRun(args);
   if (profileResult) return profileResult;
   if (args.join(" ") === "status --output json") {
@@ -203,7 +210,6 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
-    providerCalls.push(args.join(" "));
     updatedProviders.add(args[2]);
   }
   return { status: 0, stdout: "", stderr: "" };
@@ -246,7 +252,13 @@ operationPromise.then(
     process.stdout.write(JSON.stringify({
       message: error instanceof Error ? error.message : String(error),
       policyApplyCalls,
-      providerCalls,
+      providerMutations: providerCommandCalls.filter(
+        (args) =>
+          (args[0] === "provider" && ["create", "update", "delete"].includes(args[1])) ||
+          (args[0] === "sandbox" &&
+            args[1] === "provider" &&
+            ["attach", "detach"].includes(args[2])),
+      ),
     }));
   },
 );
@@ -263,13 +275,13 @@ operationPromise.then(
       const payload = JSON.parse(result.stdout) as {
         message: string;
         policyApplyCalls: number;
-        providerCalls: string[];
+        providerMutations: string[][];
       };
       expect(payload.message).toContain(
         "Credential key 'SECOND_MCP_TOKEN' is already supplied by attached provider 'foreign-attached'",
       );
       expect(payload.policyApplyCalls).toBe(0);
-      expect(payload.providerCalls).toEqual([]);
+      expect(payload.providerMutations).toEqual([]);
     },
   );
 
