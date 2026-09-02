@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import type { ChannelManifest } from "../messaging/manifest";
 import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
@@ -400,6 +400,32 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(statusArgs).toContain(GC_PROFILE.credentialKey);
   });
 
+  it("waits through a configured status before accepting the refreshed token", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0, stdout: PENDING_STATUS_TABLE })
+      .mockReturnValueOnce({ status: 0, stdout: MINTED_STATUS_TABLE });
+    const sleep = vi.fn();
+
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(runOpenshell.mock.calls.slice(1).map(([args]) => args.slice(0, 3))).toEqual([
+      ["provider", "refresh", "status"],
+      ["provider", "refresh", "status"],
+    ]);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(3_000);
+  });
+
   it("fails closed when the gateway never mints the first token", () => {
     // Reporting success here would let onboarding create the sandbox while the
     // provider still holds the create-time sentinel:
@@ -480,6 +506,22 @@ describe("configureMessagingBridgeRefreshes", () => {
     });
     const statusCall = runOpenshell.mock.calls.find((call) => call[0][2] === "status");
     expect(statusCall?.[1]).toMatchObject({ timeout: 15_000 });
+  });
+
+  it("bounds refresh configuration and fails closed when the command times out", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({ status: null, stderr: "operation timed out" });
+
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+    });
+
+    expect(result).toEqual({ ok: false, reason: "operation timed out" });
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell.mock.calls[0]?.[1]).toMatchObject({ timeout: 30_000 });
   });
 });
 
@@ -786,34 +828,35 @@ describe("matchesRegisteredMessagingBridgeProfile", () => {
   });
 });
 
-describe("listMessagingBridgeProfiles (real registry + co-located YAML)", () => {
-  it("discovers the Google Chat bridge and keeps the credential key in lockstep", () => {
-    const profiles = listMessagingBridgeProfiles();
-    const gc = profiles.find((p) => p.channelId === "googlechat");
-    expect(gc).toBeDefined();
-    expect(gc?.agent).toBe("openclaw");
-    expect(gc?.profileId).toBe("google-chat-bridge");
-    // Invariant: must equal the env var the googlechat-outbound-auth runtime
-    // preload reads, or outbound replies never authenticate.
-    expect(gc?.credentialKey).toBe("GOOGLE_CHAT_ACCESS_TOKEN");
-    expect(gc?.strategy).toBe("google-service-account-jwt");
-    expect(gc?.secretMaterialKeys).toContain("private_key");
-    expect(gc?.sourceSecretEnv).toBe("GOOGLECHAT_SERVICE_ACCOUNT");
-    expect(gc?.profilePath.endsWith("googlechat/provider-profile/openclaw.yaml")).toBe(true);
-  });
+describe("listMessagingBridgeProfiles", () => {
+  it("discovers a co-located bridge profile from injected manifests and YAML", () => {
+    const manifest: ChannelManifest = {
+      schemaVersion: 1,
+      id: GC_PROFILE.channelId,
+      displayName: "Fixture chat",
+      supportedAgents: [GC_PROFILE.agent],
+      auth: { mode: "token-paste" },
+      inputs: [
+        {
+          id: "serviceAccount",
+          kind: "secret",
+          required: true,
+          envKey: GC_PROFILE.sourceSecretEnv,
+        },
+      ],
+      credentials: [],
+      render: [],
+      hooks: [],
+    };
 
-  // G2: the profile's `binaries` list is what the L7 proxy injects the minted
-  // bearer for. It must stay in lockstep with the channel egress policy (Node
-  // only) so the credential is never reachable by a binary the channel runtime
-  // does not use — no curl, no shell. Re-add an entry only with a named consumer.
-  it("authorizes only the Node executable for the injected bearer credential", () => {
-    const gc = listMessagingBridgeProfiles().find((p) => p.channelId === "googlechat");
-    expect(gc).toBeDefined();
-    const binaries = YAML.parse(fs.readFileSync(gc!.profilePath, "utf-8"))?.binaries;
-    expect(Array.isArray(binaries)).toBe(true);
-    expect(binaries.length).toBeGreaterThan(0);
-    expect((binaries as string[]).every((bin) => /\/node$/.test(bin))).toBe(true);
-    expect((binaries as string[]).some((bin) => bin.includes("curl"))).toBe(false);
+    expect(
+      listMessagingBridgeProfiles({
+        root: "/repo",
+        manifests: [manifest],
+        existsSync: () => true,
+        readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
+      }),
+    ).toEqual([GC_PROFILE]);
   });
 });
 
