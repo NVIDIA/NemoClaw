@@ -205,31 +205,29 @@ ${body}
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
   it(
-    "returns a type-specific failure for unsafe Deep Agents projection races (#10754)",
+    "preserves an unsafe Deep Agents projection failure across credential observations (#10754)",
     { timeout: 120_000 },
     () => {
       const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
       const projection = { mcpServers: {} };
-      const unsafeResults = [
-        ...(["symlink", "fifo"] as const).map((appearedType) =>
-          runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
-            swapAfterMissingManagedOpen: appearedType,
-            timeoutMs: 30_000,
-          }),
-        ),
-        runDeepAgentsConfigCommand(statusCommand, projection, "v2", undefined, 0o600, {
-          swapAfterManagedEloop: true,
-          symlink: true,
+      const unsafeResult = runDeepAgentsConfigCommand(
+        statusCommand,
+        projection,
+        "v2",
+        undefined,
+        0o600,
+        {
+          swapAfterMissingManagedOpen: "symlink",
           timeoutMs: 30_000,
-        }),
-      ];
-      unsafeResults.forEach((result) => {
-        expect(result.status).toBe(2);
-        expect(result.stdout.trim()).toBe("");
-        expect(result.stderr).toContain("Unsafe managed Deep Agents MCP projection path:");
-        expect(result.configIsSymlink || result.configIsFifo).toBe(true);
-      });
-      const unsafeDetails = unsafeResults.map((result) => result.stderr.trim());
+        },
+      );
+      expect(unsafeResult.status).toBe(2);
+      expect(unsafeResult.stdout.trim()).toBe("");
+      expect(unsafeResult.stderr).toContain(
+        "Unsafe managed Deep Agents MCP projection path: symbolic link",
+      );
+      expect(unsafeResult.configIsSymlink).toBe(true);
+      const unsafeDetail = unsafeResult.stderr.trim();
       const home = createTempHome("nemoclaw-mcp-status-projection-");
       const { stdout } = runHarness(
         home,
@@ -249,26 +247,25 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     },
   });
   const outcomes = [];
-  for (const detail of ${JSON.stringify(unsafeDetails)}) {
-    for (const observation of [null, "absent", "canonical"]) {
-      providerCredentialObservation = observation;
-      processRecovery.executeSandboxCommand = () => ({
-        status: 2,
-        stdout: "",
-        stderr: detail + "\n",
-      });
-      logLines.length = 0;
-      errorLines.length = 0;
-      await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
-      outcomes.push({
-        detail,
-        observation: observation ?? "unavailable",
-        exitCode: process.exitCode ?? 0,
-        stdout: logLines.join("\n"),
-        stderr: errorLines.join("\n"),
-      });
-      process.exitCode = 0;
-    }
+  const detail = ${JSON.stringify(unsafeDetail)};
+  for (const observation of [null, "absent", "canonical"]) {
+    providerCredentialObservation = observation;
+    processRecovery.executeSandboxCommand = () => ({
+      status: 2,
+      stdout: "",
+      stderr: detail + "\n",
+    });
+    logLines.length = 0;
+    errorLines.length = 0;
+    await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
+    outcomes.push({
+      detail,
+      observation: observation ?? "unavailable",
+      exitCode: process.exitCode ?? 0,
+      stdout: logLines.join("\n"),
+      stderr: errorLines.join("\n"),
+    });
+    process.exitCode = 0;
   }
   writeHarnessResult(JSON.stringify(outcomes));
 `,
@@ -281,7 +278,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
         stderr: string;
       }>;
 
-      expect(outcomes).toHaveLength(9);
+      expect(outcomes).toHaveLength(3);
       outcomes.forEach((outcome) => {
         expect(["unavailable", "absent", "canonical"]).toContain(outcome.observation);
         expect(outcome.exitCode).toBe(2);

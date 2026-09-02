@@ -291,7 +291,13 @@ describe("Deep Agents managed MCP projection safety", () => {
     },
   ])(
     "classifies a $diagnostic that appears after a missing-path open (#10754)",
-    ({ appearedType, diagnostic }) => {
+    ({
+      appearedType,
+      diagnostic,
+      expectedConfigIsFifo,
+      expectedConfigIsSymlink,
+      expectedTargetText,
+    }) => {
       const result = runDeepAgentsConfigCommand(
         buildDeepAgentsMcpStatusCommand(baseEntry),
         emptyProjection,
@@ -306,10 +312,9 @@ describe("Deep Agents managed MCP projection safety", () => {
       expect(result.stderr).toContain(
         `Unsafe managed Deep Agents MCP projection path: ${diagnostic}`,
       );
-      expect(appearedType === "symlink" ? result.configIsSymlink : result.configIsFifo).toBe(true);
-      expect(result.managedSymlinkTargetText).toBe(
-        appearedType === "symlink" ? `${JSON.stringify(emptyProjection, null, 2)}\n` : null,
-      );
+      expect(result.configIsFifo).toBe(expectedConfigIsFifo);
+      expect(result.configIsSymlink).toBe(expectedConfigIsSymlink);
+      expect(result.managedSymlinkTargetText).toBe(expectedTargetText);
     },
   );
 
