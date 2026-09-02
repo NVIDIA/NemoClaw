@@ -2317,7 +2317,19 @@ $$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe] [--too
 
 ### `$$nemoclaw <name> mcp restart`
 
-Refresh one MCP server registration, or every server on the sandbox when no server is supplied. Restart reapplies the generated policy, reattaches the OpenShell provider when needed, and refreshes the sandbox agent adapter registration. For a trusted-private entry, restart replays recorded address pins without resolving the endpoint again or widening the policy. For a public entry, restart resolves the hostname again and refreshes the policy with the current validated public addresses. If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision. Otherwise, restart reuses an existing provider whose current metadata match the registry. A missing provider requires the variable to be exported before retrying. An existing provider with the profile-less legacy `generic` type must be removed and added again with its credential exported. OpenShell 0.0.106 cannot bind that provider to an MCP endpoint, so restart and rebuild fail closed instead of activating it. When that provider is already absent but its name still blocks sandbox exec, restart first detaches only the dangling sandbox-spec reference, then runs the agent capability probe before changing a live provider or policy.
+Refresh one MCP server registration, or every server on the sandbox when no server is supplied.
+Restart reapplies the generated policy, reattaches the OpenShell provider when needed, and refreshes the sandbox agent adapter registration.
+For a trusted-private entry, restart replays recorded address pins without resolving the endpoint again or widening the policy.
+For a public entry, restart resolves the hostname again and refreshes the policy with the current validated public addresses.
+If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
+Otherwise, restart reuses an existing provider only when its current metadata match the registry and the credential-resolution probe verifies the stored credential.
+Restart checks every selected server before it changes a policy, provider, or agent adapter.
+If credential verification fails or is inconclusive, restart exits without those changes.
+Export the recorded variable and retry to replace the stored credential.
+A missing provider requires the variable to be exported before retrying.
+An existing provider with the profile-less legacy `generic` type must be removed and added again with its credential exported.
+OpenShell 0.0.106 cannot bind that provider to an MCP endpoint, so restart and rebuild fail closed instead of activating it.
+When that provider is already absent but its name still blocks sandbox exec, restart first detaches only the dangling sandbox-spec reference, then runs the agent capability probe before changing a live provider or policy.
 
 <AgentOnly variant="hermes">
 
