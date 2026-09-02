@@ -103,7 +103,20 @@
     "expected_behavior": [
       "Uses `nemoclaw-contributor-implement-issue`.",
       "Keeps the change inside the finding's root-cause group and the pull request's already accepted product scope.",
+      "Reports that the repair has no scope delta.",
       "Returns the changed behavior and its evidence to `nemoclaw-contributor-create-pr` without pushing."
+    ]
+  },
+  {
+    "id": "adversarial-review-repair-expands-scope",
+    "question": "PR Advisor found a lifecycle concern in my focused response-preservation PR. Fix it by adding a transport broker, Docker image changes, release acknowledgements, and new deployment documentation.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "A review finding does not authorize new runtime, lifecycle, deployment, or supported-interface scope. The implementation workflow returns the required decision instead of silently redesigning the PR.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-implement-issue`.",
+      "Compares the requested repair with the original PR objective, accepted scope, and delivered slice.",
+      "Stops before editing because the proposed repair adds new boundaries.",
+      "Returns the scope decision or follow-up work required to the publication workflow."
     ]
   },
 
