@@ -36,6 +36,7 @@ import { spawnSync } from "child_process";
 
 import {
   captureSandboxSshConfigCommand,
+  isOpenShellSandboxPolicyCredentialFree,
   resolveOpenshellSandboxSshHost,
 } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
@@ -2563,6 +2564,9 @@ export function writeRebuildPolicyHandoff(
   policyDocument: string,
 ): RebuildManifest {
   if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
+  if (!isOpenShellSandboxPolicyCredentialFree(policyDocument)) {
+    throw new Error("Cannot persist a credential-bearing rebuild policy handoff");
+  }
   const sha256 = createHash("sha256").update(policyDocument).digest("hex");
   const file = `rebuild-policy-handoff.${sha256}.yaml`;
   const filePath = path.join(manifest.backupPath, file);

@@ -6,15 +6,23 @@ import {
   buildOpenShellSandboxPolicyInspectionArgs as buildCanonicalOpenShellSandboxPolicyInspectionArgs,
   buildOpenShellSandboxPolicyReadArgs as buildCanonicalOpenShellSandboxPolicyReadArgs,
   buildOpenShellSandboxPolicyRevisionReadArgs as buildCanonicalOpenShellSandboxPolicyRevisionReadArgs,
+  buildOpenShellSandboxPolicySetArgs as buildCanonicalOpenShellSandboxPolicySetArgs,
   classifyOpenShellGlobalPolicyHistory as classifyCanonicalOpenShellGlobalPolicyHistory,
+  classifyOpenShellSandboxPolicySetResult as classifyCanonicalOpenShellSandboxPolicySetResult,
+  isOpenShellSandboxPolicyCredentialFree as isCanonicalOpenShellSandboxPolicyCredentialFree,
   parseActiveGlobalPolicyMetadata as parseCanonicalActiveGlobalPolicyMetadata,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
+  parseOpenShellSandboxPolicyRead as parseCanonicalOpenShellSandboxPolicyRead,
   parseSandboxPolicyMetadata as parseCanonicalSandboxPolicyMetadata,
   stripProviderComposedPolicies as stripCanonicalProviderComposedPolicies,
   type ActiveGlobalPolicyInspection,
   type OpenShellGlobalPolicyHistoryState,
   type OpenShellPolicyIdentity,
   type OpenShellPolicyInspection,
+  type OpenShellSandboxPolicyRead,
+  type OpenShellSandboxPolicySetCommandResult,
+  type OpenShellSandboxPolicySetOutcome,
+  type OpenShellSandboxPolicySetSubmission,
   withoutProviderComposedPolicies as withoutCanonicalProviderComposedPolicies,
 } from "../../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 
@@ -34,11 +42,21 @@ export const buildOpenShellSandboxPolicyInspectionArgs =
   buildCanonicalOpenShellSandboxPolicyInspectionArgs;
 export const buildOpenShellSandboxPolicyRevisionReadArgs =
   buildCanonicalOpenShellSandboxPolicyRevisionReadArgs;
+export const buildOpenShellSandboxPolicySetArgs = buildCanonicalOpenShellSandboxPolicySetArgs;
+export const parseOpenShellSandboxPolicyRead = parseCanonicalOpenShellSandboxPolicyRead;
+export const classifyOpenShellSandboxPolicySetResult =
+  classifyCanonicalOpenShellSandboxPolicySetResult;
+export const isOpenShellSandboxPolicyCredentialFree =
+  isCanonicalOpenShellSandboxPolicyCredentialFree;
 export type {
   ActiveGlobalPolicyInspection,
   OpenShellGlobalPolicyHistoryState,
   OpenShellPolicyIdentity,
   OpenShellPolicyInspection,
+  OpenShellSandboxPolicyRead,
+  OpenShellSandboxPolicySetCommandResult,
+  OpenShellSandboxPolicySetOutcome,
+  OpenShellSandboxPolicySetSubmission,
 };
 
 export function withoutProviderComposedPolicies(policies: JsonObject): JsonObject {

@@ -79,12 +79,28 @@ function runDirectory(runId: string): string {
 
 describe("blueprint policy convenience", () => {
   let livePolicy: Record<string, unknown>;
+  let policyHistory: Map<number, Record<string, unknown>>;
+  let policyVersion: number;
   let globalActive: boolean;
   let basePolicyFailure: string | null;
   let basePolicyOutput: string | null;
   let basePolicyReads: number;
   let mutateBasePolicyOnRead: number | null;
   let mutateBasePolicy: (() => void) | null;
+  let mutateBeforePolicySet: (() => void) | null;
+  let policySetBehavior: "applied" | "ambiguous-applied" | "ambiguous-unapplied" | "rejected";
+
+  function recordHostMutation(mutation: (() => void) | null): void {
+    mutation?.();
+    policyVersion += mutation === null ? 0 : 1;
+    mutation === null ? undefined : policyHistory.set(policyVersion, structuredClone(livePolicy));
+  }
+
+  function recordPolicyWrite(policy: Record<string, unknown>): void {
+    livePolicy = policy;
+    policyVersion += 1;
+    policyHistory.set(policyVersion, structuredClone(livePolicy));
+  }
 
   beforeEach(() => {
     store.clear();
@@ -95,14 +111,21 @@ describe("blueprint policy convenience", () => {
       future_section: { preserve: true },
       network_policies: { host_added: { endpoints: [{ host: "host.example", port: 443 }] } },
     };
+    policyVersion = 1;
+    policyHistory = new Map([[policyVersion, structuredClone(livePolicy)]]);
     globalActive = false;
     basePolicyFailure = null;
     basePolicyOutput = null;
     basePolicyReads = 0;
     mutateBasePolicyOnRead = null;
     mutateBasePolicy = null;
+    mutateBeforePolicySet = null;
+    policySetBehavior = "applied";
     mockExeca.mockReset().mockImplementation(async (_command: string, args: string[]) => {
       const joined = args.join(" ");
+      const revisionRead = /^policy get -g test-gateway --rev (\d+) --base test-sandbox$/u.exec(
+        joined,
+      );
       switch (joined) {
         case "status":
           return gatewayStatusResult();
@@ -120,10 +143,20 @@ describe("blueprint policy convenience", () => {
             globalActive ? "global" : "sandbox",
             livePolicy.network_policies as Record<string, unknown>,
             livePolicy,
+            `sha256:test-policy-${String(policyVersion)}`,
+            policyVersion,
           );
+        case revisionRead?.[0]:
+          return {
+            exitCode: 0,
+            stdout: YAML.stringify(
+              policyHistory.get(Number.parseInt(revisionRead?.[1] ?? "0", 10)) ?? livePolicy,
+            ),
+            stderr: "",
+          };
         case "policy get -g test-gateway --base test-sandbox":
           basePolicyReads += 1;
-          (basePolicyReads === mutateBasePolicyOnRead ? mutateBasePolicy : null)?.();
+          recordHostMutation(basePolicyReads === mutateBasePolicyOnRead ? mutateBasePolicy : null);
           return basePolicyFailure
             ? { exitCode: 1, stdout: "", stderr: basePolicyFailure }
             : {
@@ -135,8 +168,29 @@ describe("blueprint policy convenience", () => {
       switch (`${args[0]} ${args[1]}`) {
         case "policy set": {
           const path = args[args.indexOf("--policy") + 1];
-          livePolicy = YAML.parse(String(store.get(path)?.content ?? ""));
-          return successResult();
+          const concurrentMutation = mutateBeforePolicySet;
+          mutateBeforePolicySet = null;
+          recordHostMutation(concurrentMutation);
+          const requestedPolicy = YAML.parse(String(store.get(path)?.content ?? "")) as Record<
+            string,
+            unknown
+          >;
+          switch (policySetBehavior) {
+            case "rejected":
+              return {
+                exitCode: 1,
+                stdout: "",
+                stderr: "Error: code: 'failed_precondition', message: 'write rejected'",
+              };
+            case "ambiguous-unapplied":
+              return { exitCode: 1, stdout: "", stderr: "h2 protocol error" };
+            case "ambiguous-applied":
+              recordPolicyWrite(requestedPolicy);
+              return { exitCode: 1, stdout: "", stderr: "h2 protocol error" };
+            default:
+              recordPolicyWrite(requestedPolicy);
+              return successResult();
+          }
         }
         case "provider get":
           return {
@@ -209,6 +263,55 @@ describe("blueprint policy convenience", () => {
     );
   });
 
+  it("rebases additions when an unrelated host edit races the policy write", async () => {
+    mutateBeforePolicySet = () => {
+      livePolicy.network_policies = {
+        ...(livePolicy.network_policies as Record<string, unknown>),
+        concurrent_after_read: {
+          endpoints: [{ host: "after-read.example", port: 443 }],
+        },
+      };
+    };
+
+    await actionApply("default", blueprint());
+
+    expect(livePolicy.network_policies).toEqual(
+      expect.objectContaining({
+        concurrent_after_read: expect.any(Object),
+        nim_service: additions.nim_service,
+      }),
+    );
+    expect(
+      mockExeca.mock.calls.filter(
+        ([, args]) => Array.isArray(args) && args[0] === "policy" && args[1] === "set",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("restores a blueprint-owned host edit that races the policy write", async () => {
+    mutateBeforePolicySet = () => {
+      livePolicy.network_policies = {
+        ...(livePolicy.network_policies as Record<string, unknown>),
+        nim_service: {
+          name: "nim_service",
+          endpoints: [{ host: "operator-after-read.example", port: 443, access: "full" }],
+        },
+      };
+    };
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      "network policy 'nim_service' changed concurrently",
+    );
+    expect(livePolicy.network_policies).toMatchObject({
+      nim_service: { endpoints: [{ host: "operator-after-read.example" }] },
+    });
+    expect(
+      mockExeca.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "provider" && args[1] === "create",
+      ),
+    ).toBe(false);
+  });
+
   it("stops when a host edit races the blueprint-owned policy key", async () => {
     mutateBasePolicyOnRead = 2;
     mutateBasePolicy = () => {
@@ -274,13 +377,7 @@ describe("blueprint policy convenience", () => {
   });
 
   it("surfaces a failed OpenShell policy write", async () => {
-    const implementation = mockExeca.getMockImplementation();
-    expect(implementation).toBeDefined();
-    mockExeca.mockImplementation(async (command: string, args: string[]) =>
-      args[0] === "policy" && args[1] === "set"
-        ? { exitCode: 1, stdout: "", stderr: "write rejected" }
-        : implementation!(command, args),
-    );
+    policySetBehavior = "rejected";
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       /Failed to apply policy additions: write rejected/,
@@ -288,6 +385,23 @@ describe("blueprint policy convenience", () => {
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(commands.some((command) => command.startsWith("provider create "))).toBe(false);
     expect(commands.some((command) => command.startsWith("inference set "))).toBe(false);
+  });
+
+  it("accepts an ambiguous write only when typed readback contains the requested additions", async () => {
+    policySetBehavior = "ambiguous-applied";
+
+    await actionApply("default", blueprint());
+
+    expect(livePolicy.network_policies).toMatchObject({ nim_service: additions.nim_service });
+  });
+
+  it("stops after an ambiguous write whose typed readback does not contain the request", async () => {
+    policySetBehavior = "ambiguous-unapplied";
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /Could not confirm the blueprint policy update: h2 protocol error/,
+    );
+    expect(livePolicy.network_policies).not.toHaveProperty("nim_service");
   });
 
   it("fails closed when policy inspection throws", async () => {

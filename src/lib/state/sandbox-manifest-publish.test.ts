@@ -147,25 +147,43 @@ describe("bounded rebuild policy handoff", () => {
   it.each([
     ["permissive mode", (filePath: string) => fs.chmodSync(filePath, 0o640)],
     ["extra hard link", (filePath: string) => fs.linkSync(filePath, `${filePath}.linked`)],
-  ] as const)(
-    "rejects a digest-matching handoff with %s",
-    (_unsafeMetadata, makeUnsafe) => {
-      const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-authority-"));
-      tempDirs.push(backupPath);
-      const published = manifest(backupPath);
-      __test.writeManifest(backupPath, published);
-      const policy = "version: 1\nnetwork_policies: {}\n";
-      const withHandoff = writeRebuildPolicyHandoff(published, policy);
-      const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+  ] as const)("rejects a digest-matching handoff with %s", (_unsafeMetadata, makeUnsafe) => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-authority-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const policy = "version: 1\nnetwork_policies: {}\n";
+    const withHandoff = writeRebuildPolicyHandoff(published, policy);
+    const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
 
-      makeUnsafe(handoffPath);
+    makeUnsafe(handoffPath);
 
-      expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
-      expect(() => writeRebuildPolicyHandoff(withHandoff, policy)).toThrow(
-        "Existing rebuild policy handoff does not match its content identity",
-      );
-    },
-  );
+    expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
+    expect(() => writeRebuildPolicyHandoff(withHandoff, policy)).toThrow(
+      "Existing rebuild policy handoff does not match its content identity",
+    );
+  });
+
+  it("rejects a credential-bearing handoff before publishing an artifact or manifest field", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-credential-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+    const originalManifest = fs.readFileSync(manifestPath, "utf8");
+
+    expect(() =>
+      writeRebuildPolicyHandoff(
+        published,
+        "version: 1\nprocess:\n  environment:\n    SERVICE_API_KEY: opaque-retained-credential\n",
+      ),
+    ).toThrow("Cannot persist a credential-bearing rebuild policy handoff");
+    expect(published).not.toHaveProperty("rebuildPolicyHandoff");
+    expect(fs.readFileSync(manifestPath, "utf8")).toBe(originalManifest);
+    expect(fs.readdirSync(backupPath).filter((file) => file.includes("policy-handoff"))).toEqual(
+      [],
+    );
+  });
 
   it("retains a retired handoff tombstone until the owning recovery marker is removed", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-retirement-"));
