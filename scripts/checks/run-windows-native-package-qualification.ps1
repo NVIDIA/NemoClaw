@@ -437,7 +437,6 @@ $nodePath = Join-Path $installBin 'node.exe'
 $nemoclawEntryPath = Join-Path $installRoot 'nemoclaw\app\bin\nemoclaw.js'
 $openClawEntryPath = Join-Path $installRoot 'openclaw\node_modules\openclaw\openclaw.mjs'
 $wxcExecPath = Join-Path $installRoot 'mxc\wxc-exec.exe'
-$wxcHostPrepPath = Join-Path $installRoot 'mxc\wxc-host-prep.exe'
 $nemoclawLauncherPath = Join-Path $installBin 'nemoclaw.cmd'
 $bundleInstallLog = Join-Path $artifactRoot 'bundle-install.log'
 $msiRepairLog = Join-Path $artifactRoot 'msi-repair.log'
@@ -484,16 +483,6 @@ try {
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $nemoclawEntryPath -ExpectedVersion $ProductVersion -Label 'Installed NemoClaw CLI'
         Invoke-NodeCliVersionProbe -NodePath $nodePath -EntryPath $openClawEntryPath -ExpectedVersion '2026.7.1' -Label 'Installed OpenClaw runtime'
     )
-    Invoke-BoundedProcess `
-        -FilePath $wxcHostPrepPath `
-        -Arguments @('prepare-system-drive') `
-        -Label 'Prepare ephemeral runner for native MXC qualification' `
-        -AllowedExitCodes @(0) | Out-Null
-    Invoke-BoundedProcess `
-        -FilePath $wxcHostPrepPath `
-        -Arguments @('prepare-null-device') `
-        -Label 'Prepare the ephemeral runner null device for native MXC qualification' `
-        -AllowedExitCodes @(0) | Out-Null
     $nativeTurnArtifacts = Join-Path $artifactRoot 'native-turn'
     Write-Host "PS> Installed NemoClaw native MXC agent turn :: nemoclaw debug --native-windows-turn"
     & $nemoclawLauncherPath debug --native-windows-turn --artifact-directory $nativeTurnArtifacts
