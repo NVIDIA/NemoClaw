@@ -78,15 +78,31 @@ const reader = (
 });
 describe("Launchable evidence inspection", () => {
   it("returns a versioned receipt from candidate-bound successful evidence (#10798)", () =>
-    expect(inspectLaunchableEvidence({ candidate: SHA }, reader())).toMatchObject({
+    expect(inspectLaunchableEvidence({ candidate: SHA }, reader())).toEqual({
       version: 1,
       candidate: { sha: SHA },
-      run: { id: 10, attempt: 2 },
-      job: { id: 20 },
+      run: { id: 10, attempt: 2, url: "https://example.test/runs/10" },
+      job: { id: 20, url: "https://example.test/jobs/20" },
       artifact: { name: `staging-brev-launchable-${SHA}-10-2` },
+      producer: {
+        runId: 30,
+        status: "success",
+        url: "https://github.com/brevdev/nemoclaw-image/actions/runs/30",
+      },
+      boot: {
+        bootImage: "registry.test/image@sha256:123",
+        schemaVersion: 1,
+        sourceRepository: "NVIDIA/NemoClaw",
+        sourcePath: "/opt/nemoclaw-image/NemoClaw",
+        repoSha: SHA,
+        provisionSha: SHA,
+        imageRepositorySha: IMAGE_SHA,
+        repoClean: true,
+        runtimeOverrides: false,
+      },
       workspace: { name: "workspace", id: "ws-1" },
-      fullE2e: { status: "passed" },
-      cleanup: { status: "ABSENT" },
+      fullE2e: { status: "passed", sentinel: "NEMOCLAW_FULL_E2E_PASSED" },
+      cleanup: { status: "ABSENT", verifiedAt: "2026-06-01T01:00:00Z" },
     }));
   it.each([
     ["wrong candidate", run(10, "2026-06-01T00:00:00Z", { head_sha: IMAGE_SHA })],
@@ -96,6 +112,29 @@ describe("Launchable evidence inspection", () => {
       "no successful",
     ),
   );
+  it("returns early recovery identity before full evidence exists (#10798)", () => {
+    const artifact: ArtifactFiles = {
+      "workspace-recovery.json": JSON.stringify({
+        schemaVersion: 1,
+        candidateSha: SHA,
+        runId: "10",
+        runAttempt: "2",
+        workspace: { name: "nclaw-e2e-10-2", id: "ws-1" },
+      }),
+      "cleanup.json": JSON.stringify({
+        workspaceName: "nclaw-e2e-10-2",
+        workspaceId: "ws-1",
+        status: "PRESENT",
+        checkedAt: "2026-06-01T01:00:00Z",
+      }),
+    };
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        reader([run()], { "10:2": [job(20, { conclusion: "failure" })] }, artifact),
+      ),
+    ).toThrow("workspace=nclaw-e2e-10-2 id=ws-1 status=PRESENT");
+  });
   it("returns recovery identity from a failed cleanup job (#10798)", () => {
     const artifact = files({
       "cleanup.json": JSON.stringify({
@@ -210,10 +249,13 @@ describe("Launchable evidence inspection", () => {
       );
     },
   );
-  it("rejects malformed eligible workflow timestamps (#10798)", () =>
-    expect(() =>
-      inspectLaunchableEvidence({ candidate: SHA }, reader([run(10, "not-a-time")])),
-    ).toThrow("workflow run created_at must be an ISO 8601 UTC timestamp"));
+  it.each(["not-a-time", "2026-02-30T01:00:00Z"])(
+    "rejects invalid eligible workflow timestamp %s (#10798)",
+    (createdAt) =>
+      expect(() =>
+        inspectLaunchableEvidence({ candidate: SHA }, reader([run(10, createdAt)])),
+      ).toThrow("workflow run created_at must be"),
+  );
   it("merges workflow-run pages before selecting evidence (#10798)", () => {
     const runs = workflowRunsFromPages([
       { workflow_runs: [run(9, "2026-07-01T00:00:00Z", { head_sha: IMAGE_SHA })] },
@@ -322,7 +364,7 @@ describe("Launchable evidence inspection", () => {
         workspaceId: "ws-1",
         status: "ABSENT",
         checkedAt: "2026-06-01T01:00:00Z",
-        verifiedAt: "not-a-time",
+        verifiedAt: "2026-02-30T01:00:00Z",
       }),
     });
     expect(() =>

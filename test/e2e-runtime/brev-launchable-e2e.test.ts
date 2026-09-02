@@ -140,6 +140,7 @@ describe("focused staging Brev Launchable lane", () => {
       "cleanup.json",
       "lane.log",
       "launchable-identity.json",
+      "workspace-recovery.json",
     ]);
 
     const evidence = JSON.parse(
@@ -323,10 +324,20 @@ describe("focused staging Brev Launchable lane", () => {
       "full-e2e.log",
       "lane.log",
       "launchable-e2e.json",
+      "workspace-recovery.json",
     ]);
     expect(fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8")).not.toContain(
       "nvapi-test-value",
     );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "workspace-recovery.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      candidateSha,
+      runId: "789",
+      runAttempt: "1",
+      workspace: { name: "nclaw-e2e-test-1", id: "ws-1" },
+    });
     const evidence = JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8"));
     expect(evidence).toMatchObject({
       candidateSha,

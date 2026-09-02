@@ -41,7 +41,10 @@ staging-brev-launchable-<candidate-sha>-<run-id>-<attempt>
 ```
 
 The inspector requires `launchable-e2e.json`, a nonempty `full-e2e.log`, and
-`cleanup.json`. The log must contain the exact `NEMOCLAW_FULL_E2E_PASSED`
+`cleanup.json` for successful evidence. The lane writes `workspace-recovery.json` immediately
+after it obtains the workspace ID. When full evidence is absent, the inspector uses that
+candidate-, run-, attempt-, name-, and ID-bound receipt only to report recovery identity;
+it never accepts it as release evidence. The log must contain the exact `NEMOCLAW_FULL_E2E_PASSED`
 sentinel.
 
 The inspector verifies these values in `launchable-e2e.json`:
@@ -91,7 +94,8 @@ Only a maintainer with access to the repository's Brev organization may perform 
 2. Download the reported artifact from that run attempt. Its name must be
    `staging-brev-launchable-<candidate>-<run-id>-<attempt>`. In `launchable-e2e.json`, require
    `candidateSha` to equal the candidate and require `workspace.name` and `workspace.id` to equal
-   the reported values. The workspace name must also equal `nclaw-e2e-<run-id>-<attempt>`.
+   the reported values. If full evidence is absent, require `workspace-recovery.json` instead; its
+   candidate, run, attempt, workspace name, and workspace ID must equal the reported values. The workspace name must also equal `nclaw-e2e-<run-id>-<attempt>`.
 3. Authenticate the Brev CLI to the repository's Brev organization through the maintainer-approved
    credential path. Run `brev ls --json`. Permit deletion only when exactly one row has both the
    reported name and ID. If the row is absent, skip deletion. If the inventory is unavailable,

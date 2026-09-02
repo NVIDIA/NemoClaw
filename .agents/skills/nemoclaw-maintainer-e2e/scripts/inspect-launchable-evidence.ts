@@ -35,6 +35,7 @@ export interface WorkflowJob {
   html_url: string;
 }
 export interface ArtifactFiles {
+  "workspace-recovery.json"?: string;
   "launchable-e2e.json"?: string;
   "full-e2e.log"?: string;
   "cleanup.json"?: string;
@@ -85,6 +86,15 @@ function text(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) fail(`${label} must be a nonempty string`);
   return value;
 }
+function utcTimestamp(value: string, label: string): string {
+  const milliseconds = Date.parse(value);
+  if (!UTC.test(value) || Number.isNaN(milliseconds))
+    fail(`${label} must be an ISO 8601 UTC timestamp`);
+  const canonical = new Date(milliseconds).toISOString().replace(/\.000Z$/u, "Z"),
+    normalized = value.replace(/\.000Z$/u, "Z");
+  if (canonical !== normalized) fail(`${label} must be a valid ISO 8601 UTC timestamp`);
+  return value;
+}
 function integer(value: unknown, label: string): number {
   const parsed = typeof value === "string" && /^[1-9]\d*$/u.test(value) ? Number(value) : value;
   if (!Number.isSafeInteger(parsed) || (parsed as number) <= 0)
@@ -115,8 +125,7 @@ function candidateRuns(candidate: string, runs: WorkflowRun[]): WorkflowRun[] {
       run.status === "completed",
   );
   for (const run of eligible) {
-    if (!UTC.test(run.created_at) || Number.isNaN(Date.parse(run.created_at)))
-      fail("workflow run created_at must be an ISO 8601 UTC timestamp");
+    utcTimestamp(run.created_at, "workflow run created_at");
   }
   return eligible.sort(
     (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id,
@@ -203,8 +212,11 @@ export function validateLaunchableEvidence(
   } catch {
     return recovery("verifiedAt is missing", cleanupStatus, checkedAt);
   }
-  if (!UTC.test(verifiedAt) || Number.isNaN(Date.parse(verifiedAt)))
+  try {
+    utcTimestamp(verifiedAt, "cleanup.verifiedAt");
+  } catch {
     return recovery("verifiedAt is invalid", cleanupStatus, checkedAt);
+  }
   return {
     version: 1,
     candidate: { sha: candidate },
@@ -232,18 +244,44 @@ export function validateLaunchableEvidence(
     cleanup: { status: "ABSENT", verifiedAt },
   };
 }
+function earlyRecovery(
+  candidate: string,
+  selection: Selection,
+  artifactName: string,
+  files: ArtifactFiles,
+): never {
+  const recovery = json(files["workspace-recovery.json"], "workspace-recovery.json"),
+    workspace = record(recovery.workspace, "workspace-recovery.workspace"),
+    name = text(workspace.name, "workspace-recovery.workspace.name"),
+    id = text(workspace.id, "workspace-recovery.workspace.id");
+  if (
+    recovery.schemaVersion !== 1 ||
+    recovery.candidateSha !== candidate ||
+    recovery.runId !== String(selection.run.id) ||
+    recovery.runAttempt !== String(selection.run.run_attempt) ||
+    name !== `nclaw-e2e-${selection.run.id}-${selection.run.run_attempt}`
+  )
+    fail("workspace recovery receipt does not match the selected candidate run attempt");
+  const cleanup = json(files["cleanup.json"], "cleanup.json"),
+    status = text(cleanup.status, "cleanup.status"),
+    checkedAt = text(cleanup.checkedAt, "cleanup.checkedAt");
+  if (cleanup.workspaceName !== name || cleanup.workspaceId !== id)
+    fail("workspace recovery cleanup identity does not match the early receipt");
+  fail(
+    `cleanup incomplete before full evidence: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName} workspace=${name} id=${id} status=${status} checkedAt=${checkedAt}`,
+  );
+}
+
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
   const runs = reader.listRuns(options.candidate),
     jobs = (run: WorkflowRun): WorkflowJob[] => reader.listJobs(run.id, run.run_attempt),
     selection = selectNewestJob(options.candidate, runs, jobs);
   if (!selection) fail("no successful staging Brev Launchable job is bound to the candidate");
   const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
-    receipt = validateLaunchableEvidence(
-      options.candidate,
-      selection,
-      artifactName,
-      reader.readArtifact(selection.run.id, artifactName),
-    );
+    files = reader.readArtifact(selection.run.id, artifactName);
+  if (files["launchable-e2e.json"] === undefined)
+    return earlyRecovery(options.candidate, selection, artifactName, files);
+  const receipt = validateLaunchableEvidence(options.candidate, selection, artifactName, files);
   if (selection.job.conclusion !== "success")
     fail(
       `staging Brev Launchable job conclusion ${selection.job.conclusion ?? "<missing>"} cannot provide release evidence: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName}`,
@@ -322,7 +360,12 @@ export function createGitHubReader(): EvidenceReader {
           timeout: 120_000,
         });
         const result: ArtifactFiles = {};
-        for (const file of ["launchable-e2e.json", "full-e2e.log", "cleanup.json"] as const) {
+        for (const file of [
+          "workspace-recovery.json",
+          "launchable-e2e.json",
+          "full-e2e.log",
+          "cleanup.json",
+        ] as const) {
           try {
             result[file] = readFileSync(path.join(directory, file), "utf8");
           } catch {}
