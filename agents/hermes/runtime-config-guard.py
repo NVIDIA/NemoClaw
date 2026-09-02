@@ -5009,6 +5009,18 @@ def _runtime_plan_replacements_and_provider_keys(
                 continue
         if compiled.search(runtime_value):
             replacement_value = runtime_value if target_env_key else value
+            alias_marker = "-OPENSHELL-RESOLVE-ENV-"
+            if (
+                target_env_key is None
+                and alias_marker in value
+                and runtime_value.startswith(SCOPED_PLACEHOLDER_PREFIX)
+            ):
+                runtime_suffix = runtime_value[len(SCOPED_PLACEHOLDER_PREFIX) :]
+                alias_prefix, alias_suffix = value.split(alias_marker, 1)
+                if alias_suffix == env_key and re.fullmatch(
+                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix
+                ):
+                    replacement_value = f"{alias_prefix}{alias_marker}{runtime_suffix}"
             replacements[replacement_env_key] = (replacement_value, message)
     return replacements, provider_env_keys, True
 

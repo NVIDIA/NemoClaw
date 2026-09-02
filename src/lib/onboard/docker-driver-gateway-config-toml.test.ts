@@ -32,6 +32,7 @@ import {
   buildDockerDriverGatewayRuntimeMarker,
   writeDockerDriverGatewayRuntimeMarker,
 } from "./docker-driver-gateway-runtime-marker";
+import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 const SCOPED_NAMESPACE_PROOF_DRIVER = path.join(
   process.cwd(),
@@ -59,6 +60,14 @@ function parseGatewayProxyConnectByHostname(toml: string): unknown {
   return parsed.openshell?.drivers?.docker?.proxy_connect_by_hostname;
 }
 
+function podmanGatewayRuntime(env: Record<string, string>) {
+  return prepareNativePodmanGatewayHostRuntime({
+    environment: { ...process.env, ...env },
+    platform: "linux",
+    socketPath: env.OPENSHELL_PODMAN_SOCKET,
+  });
+}
+
 function writePreScopedGatewayConfig(
   stateDir: string,
   includeDefaultNamespace = false,
@@ -76,11 +85,20 @@ function writePreScopedGatewayConfig(
   );
   const gatewayId = legacyGatewayIdForStateDir(stateDir);
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  const gatewayRuntime =
+    driver === "podman"
+      ? prepareNativePodmanGatewayHostRuntime({
+          environment: { ...process.env, ...env },
+          platform: "linux",
+          socketPath: env.OPENSHELL_PODMAN_SOCKET,
+        })
+      : undefined;
   let toml = buildDockerDriverGatewayConfigToml(
     env,
     "/usr/bin/openshell-sandbox",
     jwtBundle,
     gatewayId,
+    gatewayRuntime,
   );
   toml = toml.replace(
     /^sandbox_namespace = .*\n/m,
@@ -387,7 +405,9 @@ describe("docker-driver-gateway config TOML", () => {
       });
 
       expect(() =>
-        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox", {
+          gatewayRuntime: podmanGatewayRuntime(podmanEnv),
+        }),
       ).toThrow(
         /already configures a 'docker'-driver OpenShell gateway.*this run selected the 'podman' driver.*NemoClaw-managed state.*nemoclaw uninstall.*preserves externally managed or supervised state.*lifecycle authority.*NEMOCLAW_GATEWAY_PORT.*separate state directory.*NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR/s,
       );
@@ -434,10 +454,14 @@ describe("docker-driver-gateway config TOML", () => {
       });
 
       expect(() =>
-        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox", {
+          gatewayRuntime: podmanGatewayRuntime(podmanEnv),
+        }),
       ).toThrow(/driver config is incomplete/);
       expect(() =>
-        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox", {
+          gatewayRuntime: podmanGatewayRuntime(podmanEnv),
+        }),
       ).not.toThrow(/already configures a 'docker'-driver/);
       expect(fs.readFileSync(configPath, "utf-8")).toBe(malformedToml);
     } finally {
@@ -485,7 +509,9 @@ describe("docker-driver-gateway config TOML", () => {
       });
 
       expect(() =>
-        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox", {
+          gatewayRuntime: podmanGatewayRuntime(podmanEnv),
+        }),
       ).toThrow(/already configures a 'docker'-driver/);
       printOnboardResumeHint(true, console.error);
       const joined = errSpy.mock.calls.map((call) => String(call[0])).join("\n");
@@ -807,7 +833,13 @@ describe("docker-driver-gateway config TOML", () => {
       });
       env.OPENSHELL_PODMAN_SOCKET = path.join(stateDir, "new-podman.sock");
 
-      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        gatewayRuntime: prepareNativePodmanGatewayHostRuntime({
+          environment: { ...process.env, ...env },
+          platform: "linux",
+          socketPath: env.OPENSHELL_PODMAN_SOCKET,
+        }),
+      });
 
       const rewritten = fs.readFileSync(configPath, "utf-8");
       expect(rewritten).toContain('compute_drivers = ["podman"]');

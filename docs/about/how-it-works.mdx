@@ -189,6 +189,8 @@ When you run `$$nemoclaw onboard`, the host CLI and blueprint runner complete th
 4. The runner determines which gateway, provider, policy, sandbox, and integration resources to create or update.
 5. NemoClaw records progress so a supported interruption can resume or report a specific recovery action.
 
+Before the blueprint runner writes a temporary policy update, it parses the merged live policy and refuses a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry. The refusal happens before the policy file or OpenShell policy mutation is created.
+
 After the sandbox starts, the selected agent uses its managed configuration and the controls supported by the host.
 
 ## Lifecycle and State

@@ -3,11 +3,9 @@
 
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { waitUntil } from "../core/wait";
-import { DEFAULT_GATEWAY_PORT, resolveGatewayStateDirForPort } from "./gateway/state-dir";
 import {
   DOCKER_DRIVER_GATEWAY_CONFIG_NAME,
   type DockerDriverGatewayDriver,
@@ -20,7 +18,10 @@ import {
   clearDockerDriverGatewayRuntimeMarker,
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
+  resolveDockerDriverGatewayPidFile,
+  resolveDockerDriverGatewayStateDir,
 } from "./docker-driver-gateway-runtime-marker";
+import { resolveRegisteredRuntimeProvider } from "./runtime-provider/selection";
 import {
   canonicalGatewayTargetMatches,
   type OpenShellGatewayProcessTarget,
@@ -28,6 +29,10 @@ import {
 } from "./gateway-process-identity";
 
 export { hasStateScopedSandboxNamespace } from "./docker-driver-gateway-config";
+export {
+  resolveDockerDriverGatewayPidFile,
+  resolveDockerDriverGatewayStateDir,
+} from "./docker-driver-gateway-runtime-marker";
 
 export interface RunResult {
   status: number | null;
@@ -123,25 +128,6 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
       env,
     }).status === 0
   );
-}
-
-export function resolveDockerDriverGatewayStateDir(
-  env: NodeJS.ProcessEnv = process.env,
-  homeDir: string = env.HOME || os.homedir(),
-  gatewayPort: number = DEFAULT_GATEWAY_PORT,
-): string {
-  return resolveGatewayStateDirForPort({
-    configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-    home: homeDir,
-    port: gatewayPort,
-  });
-}
-
-export function resolveDockerDriverGatewayPidFile(
-  env: NodeJS.ProcessEnv = process.env,
-  homeDir: string = env.HOME || os.homedir(),
-): string {
-  return path.join(resolveDockerDriverGatewayStateDir(env, homeDir), "openshell-gateway.pid");
 }
 
 function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatewayProcessDeps {
@@ -401,17 +387,29 @@ function scopedGatewayOwnershipFailure(
   stateDir: string,
   pidFile: string,
   target: { name: string; port: number },
-  driver: DockerDriverGatewayDriver = "docker",
 ): string | null {
-  if (!hasScopedGatewayDriverIdentity(stateDir, driver)) {
-    return `gateway config does not prove a scoped ${driver} identity`;
-  }
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
   const pidText = readOwnedRuntimeFile(pidFile, uid);
   const markerText = readOwnedRuntimeFile(getDockerDriverGatewayRuntimeMarkerPath(stateDir), uid);
   const marker = markerText ? parseDockerDriverGatewayRuntimeMarker(markerText) : null;
   if (Number(pidText?.trim()) !== pid || marker?.pid !== pid) {
     return "PID file and runtime marker do not identify the same process";
+  }
+  const provider = resolveRegisteredRuntimeProvider(marker.driver);
+  if (!provider?.gateway.supported) {
+    return "runtime marker does not identify a registered gateway provider";
+  }
+  let processOwnership: "scoped-namespace" | "runtime-marker";
+  try {
+    processOwnership = provider.gateway.prepareHostRuntime({
+      environment: deps.env,
+      platform: marker.platform,
+    }).gatewayConfig.processOwnership;
+  } catch {
+    return "runtime marker provider ownership could not be prepared";
+  }
+  if (processOwnership === "scoped-namespace" && !hasStateScopedSandboxNamespace(stateDir)) {
+    return "gateway config does not prove an isolated sandbox namespace";
   }
   let markerPort = 0;
   try {
@@ -426,8 +424,11 @@ function scopedGatewayOwnershipFailure(
   ) {
     return "runtime marker does not identify the selected gateway";
   }
-  if (!processUsesScopedGatewayDriverIdentity(pid, stateDir, driver, deps)) {
-    return "gateway process owner and loaded state identity cannot be proven";
+  if (
+    processOwnership === "scoped-namespace" &&
+    !processUsesStateScopedSandboxNamespace(pid, stateDir, deps)
+  ) {
+    return "gateway process owner and loaded sandbox namespace cannot be proven";
   }
   if (
     !hostGatewayCmdlineMatches(processArgs(pid, deps), options.gatewayBin, target, {
@@ -471,7 +472,6 @@ export function scopedHostGatewayProcessOwnershipFailure(
     stateDir,
     pidFile,
     { name, port },
-    options.driver ?? "docker",
   );
 }
 

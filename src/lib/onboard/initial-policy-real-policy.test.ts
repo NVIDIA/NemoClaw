@@ -303,6 +303,8 @@ describe("initial sandbox policy real preset merge", () => {
     expect(slackBinaries).toEqual([
       "/usr/local/bin/hermes",
       "/usr/bin/python3*",
+      "/usr/bin/python3.13",
+      "/opt/hermes/.venv/bin/python3",
       "/opt/hermes/.venv/bin/python",
     ]);
 
@@ -449,19 +451,38 @@ describe("initial sandbox policy real preset merge", () => {
     ].flatMap((policyCase) =>
       ["slack.com", "api.slack.com", "hooks.slack.com"].map((host) => ({ policyCase, host })),
     ),
-  )("keeps Slack credential rewrite for $policyCase.agent on $host", ({ policyCase, host }) => {
-    const effective = readPreparedPolicy(
-      prepareInitialSandboxCreatePolicy(policyCase.path, ["slack"], {
-        agentName: policyCase.agent,
-      }),
-    );
-    const slackEndpoints = effective.network_policies?.slack?.endpoints ?? [];
-    const endpoint = slackEndpoints.find((candidate) => candidate.host === host);
-    expect(endpoint, `${policyCase.agent}:${host}`).toMatchObject({
-      protocol: "rest",
-      request_body_credential_rewrite: true,
-    });
-  });
+  )(
+    "replaces permissive Slack access with credential-bound channel policy for $policyCase.agent on $host",
+    ({ policyCase, host }) => {
+      const sandboxName = policyCase.agent === "openclaw" ? "oc-slack" : "hm-slack";
+      const effective = readPreparedPolicy(
+        prepareInitialSandboxCreatePolicy(policyCase.path, ["slack"], {
+          agentName: policyCase.agent,
+          sandboxName,
+        }),
+      );
+      const slackEndpoints = effective.network_policies?.slack?.endpoints ?? [];
+      const endpoints = slackEndpoints.filter((candidate) => candidate.host === host);
+      expect(endpoints.length, `${policyCase.agent}:${host}`).toBeGreaterThan(0);
+      expect(endpoints).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            protocol: "rest",
+            request_body_credential_rewrite: true,
+            credential_binding: {
+              provider:
+                host === "slack.com"
+                  ? expect.stringMatching(new RegExp(`^${sandboxName}-slack-(?:app|bridge)$`, "u"))
+                  : `${sandboxName}-slack-bridge`,
+            },
+          }),
+        ]),
+      );
+      expect(endpoints).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ access: "full" })]),
+      );
+    },
+  );
 
   it("materializes Hermes Discord credential bindings from the target sandbox name", () => {
     const sandboxName = "hermes-discord-e2e";
