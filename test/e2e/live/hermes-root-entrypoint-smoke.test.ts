@@ -199,6 +199,31 @@ async function assertGatewayLogClean(probe: DockerProbe, container: string): Pro
   );
 }
 
+async function assertImageCapabilitySurface(
+  probe: DockerProbe,
+  container: string,
+): Promise<void> {
+  await expectContainerSh(
+    probe,
+    container,
+    "Hermes image is missing an optional runtime capability or root sandbox-group membership",
+    String.raw`set -eu
+id -Gn root | tr ' ' '\n' | grep -Fx sandbox
+/opt/hermes/.venv/bin/python -I - <<'PY'
+import acp
+import anthropic
+import discord
+import fastapi
+import mcp
+import ptyprocess
+import uvicorn
+from acp_adapter.server import HermesACPAgent
+
+assert HermesACPAgent is not None
+PY`,
+  );
+}
+
 async function assertRuntimeLayout(probe: DockerProbe, container: string): Promise<void> {
   await expectContainerSh(
     probe,
@@ -498,6 +523,7 @@ async function runCleanVariant(
   await assertGatewayProcess(probe, container);
   await assertGatewayKanbanDispatcher(probe, container, "1");
   await assertGatewayLogClean(probe, container);
+  await assertImageCapabilitySurface(probe, container);
   await assertRuntimeLayout(probe, container);
   await assertBuildOnlyPathsAbsent(probe, container);
   await assertImageRuntimeCapabilities(probe, container);
@@ -808,6 +834,8 @@ test(
         "gateway process runs as gateway user",
         "gateway log has no PID race or config load failure",
         "Hermes v0.14 writable runtime directories are present",
+        "selected Hermes optional capabilities import from the shipped image",
+        "root retains sandbox supplementary-group membership in the shipped image",
         "build-only upstream tests and root caches are absent from the runtime image",
         "selected Hermes optional capabilities import and execute from the runtime image",
         "root retains effective sandbox-group membership in the runtime image",
@@ -870,6 +898,8 @@ test(
         cleanStartupHealthy: true,
         legacyStartupHealthy: true,
         lockedRootStartupHealthy: true,
+        selectedHermesCapabilitiesVerified: true,
+        rootSandboxGroupMembershipVerified: true,
         runtimeLayoutVerified: true,
         buildOnlyPathsAbsent: true,
         selectedHermesCapabilitiesVerified: true,
