@@ -810,7 +810,6 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
     },
     async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
-      const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",

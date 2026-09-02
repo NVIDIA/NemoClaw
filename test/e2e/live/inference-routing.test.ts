@@ -335,7 +335,7 @@ async function runRuntimeIdentityE2EScenario(
   scenario: RuntimeIdentityE2EScenario,
   context: RuntimeIdentityE2EContext,
 ): Promise<void> {
-  const { artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip } = context;
+  const { artifacts, cleanup, host, progress, runtimeProvider, sandbox } = context;
   const artifactPrefix = scenario.testId.toLowerCase();
   progress.phase("confirm live runtime identity prerequisites");
   await requireLivePrerequisites(host, runtimeProvider);

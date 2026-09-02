@@ -52,7 +52,6 @@ import { prepareRuntimeProviderStateMutationPlan } from "./state-mutation";
 const DOCKER_PROVIDER_ID = "docker";
 const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
-const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
 const HELPER_TRANSPORT_BROKER_PATH =
   "/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;

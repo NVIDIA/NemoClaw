@@ -13,7 +13,6 @@ import {
   createHermesShieldsProviderConsumerHarness,
   createRetainedUnlockSimulation,
   createTimerAuthorizationSender,
-  createTransitionFailureForPosture,
   hermesProviderConsumerSandbox as sandbox,
   hermesProviderConsumerTarget as target,
   writeBoundForwardPolicy,
