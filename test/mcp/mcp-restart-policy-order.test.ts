@@ -364,6 +364,7 @@ const bridgeStatus = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 let policyApplyCalls = 0;
 let resourceVersion = 1;
 const providerCalls = [];
+const statusCalls = [];
 const entry = {
   server: "example",
   agent: "openclaw",
@@ -422,11 +423,11 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   stderr: "",
 });
 const statusResponse = ${JSON.stringify(statusResponse)};
-const statusHandlers = {
-  probe: async () => [{ provider: { credentialResolution: statusResponse.value } }],
-  error: async () => { throw new Error(statusResponse.value); },
+bridgeStatus.statusMcpBridge = async (sandboxName, server, options) => {
+  statusCalls.push({ sandboxName, server, options });
+  if (statusResponse.kind === "error") throw new Error(statusResponse.value);
+  return [{ provider: { credentialResolution: statusResponse.value } }];
 };
-bridgeStatus.statusMcpBridge = statusHandlers[statusResponse.kind];
 
 registry.registerSandbox({
   name: "alpha",
@@ -445,6 +446,7 @@ bridge.restartMcpBridge("alpha", "example").then(
       outcome: "refreshed",
       policyApplyCalls,
       providerCalls,
+      statusCalls,
     });
   },
   (error) => {
@@ -454,6 +456,7 @@ bridge.restartMcpBridge("alpha", "example").then(
       exitCode: error && error.exitCode,
       policyApplyCalls,
       providerCalls,
+      statusCalls,
     });
   },
 );
@@ -468,7 +471,16 @@ bridge.restartMcpBridge("alpha", "example").then(
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as object;
-      expect(payload).toEqual(expectedPayload);
+      expect(payload).toEqual({
+        ...expectedPayload,
+        statusCalls: [
+          {
+            sandboxName: "alpha",
+            server: "example",
+            options: { probeCredentialResolution: true },
+          },
+        ],
+      });
     },
     75_000,
   );
