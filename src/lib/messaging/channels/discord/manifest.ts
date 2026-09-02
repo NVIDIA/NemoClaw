@@ -85,8 +85,9 @@ export const discordManifest = {
         "when the policy is working. Validate the configured messaging bridge/gateway path.",
         'DNS-only checks such as dns.resolve("gateway.discord.gg")',
         "can also be inconclusive behind a proxy.",
-        "The agent-specific gateway probe prints 200 on success. A transport error",
-        "or OpenShell policy denial means validation failed.",
+        "The agent-specific gateway probe prints an HTTP status when it reaches Discord.",
+        "Any HTTP response confirms reachability. A transport error or OpenShell policy",
+        "denial means validation failed.",
       ],
       validationWarningLinesByAgent: {
         openclaw: [
@@ -95,7 +96,7 @@ export const discordManifest = {
         ],
         hermes: [
           "Hermes validation uses its virtual-environment Python runtime:",
-          `nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c "import urllib.request; print(urllib.request.urlopen('https://discord.com/api/v10/gateway', timeout=20).status)"`,
+          `nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c "import urllib.error, urllib.request; u='https://discord.com/api/v10/gateway';\ntry: print(urllib.request.urlopen(u, timeout=20).status)\nexcept urllib.error.HTTPError as error: print(error.code)"`,
         ],
       },
     },

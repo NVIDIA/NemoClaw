@@ -189,7 +189,7 @@ describe("built-in messaging channel metadata", () => {
       "teams",
     ]);
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
-      "The agent-specific gateway probe prints 200 on success. A transport error",
+      "Any HTTP response confirms reachability. A transport error or OpenShell policy",
     );
     const openClawDiscordWarning = getMessagingPolicyPresetValidationWarnings({
       agent: "openclaw",
@@ -204,6 +204,11 @@ describe("built-in messaging channel metadata", () => {
     expect(hermesDiscordWarning).toContain(
       "Hermes validation uses its virtual-environment Python runtime:",
     );
+    const renderedHermesDiscordWarning = hermesDiscordWarning.join("\n");
+    expect(renderedHermesDiscordWarning).toContain(
+      "except urllib.error.HTTPError as error: print(error.code)",
+    );
+    expect(renderedHermesDiscordWarning).not.toContain("prints 200 on success");
     expect(hermesDiscordWarning).not.toContain("OpenClaw validation uses its Node runtime:");
     expect(listOpenClawManagedChannelNames()).toEqual([
       "telegram",
