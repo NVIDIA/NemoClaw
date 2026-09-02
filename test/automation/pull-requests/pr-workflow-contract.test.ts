@@ -162,6 +162,7 @@ function runWorkflowShellStep(
 }
 
 type SdkPackageLocatorFixture = Readonly<{
+  bootstrapScript?: readonly string[];
   inspectorOutput?: string;
   inspectorRequired?: unknown;
   step: WorkflowStep;
@@ -189,14 +190,54 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
       `process.stdout.write(${JSON.stringify(inspectorDecision)});\n`,
     );
     writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
+    writeFileSync(
+      join(workflowDirectory, "pr.yaml"),
+      [
+        "jobs:",
+        "  openshell-sdk-package:",
+        "    steps:",
+        "      - name: Locate exact base-controlled SDK package run",
+        "        run: |",
+        "          trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
+        "          trusted_runs=actions/workflows/openshell-sdk-package-pr.yaml/runs",
+        ...(
+          fixture.bootstrapScript ?? [
+            "set -euo pipefail",
+            'echo "artifact_name=reviewed-sdk.tgz" >> "$GITHUB_OUTPUT"',
+            'echo "run_id=123" >> "$GITHUB_OUTPUT"',
+            'echo "required=true" >> "$GITHUB_OUTPUT"',
+          ]
+        ).map((line) => `          ${line}`),
+        "      - name: Next trusted step",
+        "        run: true",
+        "",
+      ].join("\n"),
+    );
+    mkdirSync(join(tempRoot, "tools/e2e"), { recursive: true });
+    writeFileSync(
+      join(tempRoot, "tools/e2e/openshell-sdk-package-receipt.mts"),
+      'throw new Error("candidate resolver executed");\n',
+    );
+    const fakeBin = join(tempRoot, ".test-bin");
+    mkdirSync(fakeBin);
+    writeFileSync(join(fakeBin, "git"), `#!/bin/sh\nprintf '%s\\n' '${"b".repeat(40)}'\n`, {
+      mode: 0o755,
+    });
     const outputPath = join(tempRoot, "github-output");
     const result = runWorkflowShellStep(
       fixture.step,
       {
+        BASE_SHA: "b".repeat(40),
+        CANDIDATE_SHA: "a".repeat(40),
+        GH_TOKEN: "test-token",
         GITHUB_OUTPUT: outputPath,
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_TOKEN: "test-token",
         GITHUB_WORKSPACE: tempRoot,
+        HEAD_SHA: "a".repeat(40),
         HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        RUNNER_TEMP: tempRoot,
       },
       tempRoot,
     );
@@ -518,7 +559,11 @@ describe("pull request and main workflow contracts", () => {
     expect(requiredWorkflowStep(packageJob, "Checkout base package decision").with).toMatchObject({
       ref: "${{ github.event.pull_request.base.sha }}",
       path: ".trusted-sdk-package-decision",
+      "sparse-checkout": expect.stringContaining(".github/workflows/pr.yaml"),
     });
+    expect(
+      requiredWorkflowStep(packageJob, "Checkout pull request lockfiles").with?.["sparse-checkout"],
+    ).not.toContain("tools/e2e/openshell-sdk-package-receipt.mts");
     const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
     expect(locate.env?.HEAD_REPOSITORY).toBe(
       "${{ github.event.pull_request.head.repo.full_name }}",
@@ -538,7 +583,10 @@ describe("pull request and main workflow contracts", () => {
       "trusted_receipt_tool=.trusted-sdk-package-decision/tools/e2e/openshell-sdk-package-receipt.mts",
     );
     expect(locate.run).toContain('if [ ! -f "$trusted_receipt_tool" ]');
-    expect(locate.run).toContain("The pull request base cannot authenticate");
+    expect(locate.run).toContain(
+      "trusted_bootstrap_workflow=.trusted-sdk-package-decision/.github/workflows/pr.yaml",
+    );
+    expect(locate.run).toContain('bash "$bootstrap_resolver"');
     expect(locate.run).toContain('"$trusted_receipt_tool" resolve');
     expect(locate.run).not.toContain("tools/e2e/openshell-sdk-package-receipt.mts resolve");
     expect(locate.run).toContain('"$RUNNER_TEMP/openshell-sdk-selection/selection.json"');
@@ -548,6 +596,22 @@ describe("pull request and main workflow contracts", () => {
     expect(locate.run).toContain("available only to same-repository pull requests");
     expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
     expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+    expect(
+      requiredWorkflowStep(packageJob, "Download exact base-controlled bootstrap SDK archive"),
+    ).toMatchObject({
+      if: "steps.locate.outputs.required == 'true' && steps.locate.outputs.bootstrap == 'true'",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        "github-token": "${{ github.token }}",
+        name: "openshell-sdk-${{ github.event.pull_request.head.sha }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+        repository: "${{ github.repository }}",
+        "run-id": "${{ steps.locate.outputs.run_id }}",
+      },
+    });
+    expect(requiredWorkflowStep(packageJob, "Publish authenticated SDK selection receipt").if).toBe(
+      "steps.locate.outputs.required == 'true' && steps.locate.outputs.bootstrap != 'true'",
+    );
   });
 
   // The one-time bootstrap may proceed only while both lockfiles use the public registry.
@@ -677,17 +741,27 @@ describe("pull request and main workflow contracts", () => {
     expect(githubOutput).toBe("required=false\n");
   });
 
-  it("fails closed when the pull request base lacks the trusted SDK receipt resolver", () => {
+  it("executes only the base-controlled bootstrap when its receipt resolver is unavailable", () => {
     const { githubOutput, result } = runSdkPackageLocator({
+      bootstrapScript: [
+        "set -euo pipefail",
+        'test "$BASE_SHA" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"',
+        'test "$HEAD_SHA" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+        'test -n "$GH_TOKEN"',
+        'echo "artifact_name=reviewed-sdk.tgz" >> "$GITHUB_OUTPUT"',
+        'echo "run_id=123" >> "$GITHUB_OUTPUT"',
+        'echo "required=true" >> "$GITHUB_OUTPUT"',
+      ],
       step: requiredWorkflowStep(
         prWorkflow.jobs["openshell-sdk-package"],
         "Locate exact base-controlled SDK package run",
       ),
     });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toContain("The pull request base cannot authenticate");
-    expect(githubOutput).toBe("");
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(githubOutput).toBe(
+      "artifact_name=reviewed-sdk.tgz\nrun_id=123\nrequired=true\nbootstrap=true\n",
+    );
   });
 
   it("rejects a non-boolean package requirement from the trusted inspector", () => {

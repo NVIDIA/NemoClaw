@@ -196,6 +196,7 @@ jobs:
           path: .trusted-sdk-package-decision
           persist-credentials: false
           sparse-checkout: |
+            .github/workflows/pr.yaml
             .github/workflows/openshell-sdk-package-pr.yaml
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
@@ -214,7 +215,9 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -273,8 +276,30 @@ jobs:
           artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
           trusted_receipt_tool=.trusted-sdk-package-decision/tools/e2e/openshell-sdk-package-receipt.mts
           if [ ! -f "$trusted_receipt_tool" ]; then
-            echo "::error title=Missing trusted SDK package resolver::The pull request base cannot authenticate the packaged OpenShell SDK receipt."
-            exit 1
+            trusted_bootstrap_workflow=.trusted-sdk-package-decision/.github/workflows/pr.yaml
+            if [ ! -f "$trusted_bootstrap_workflow" ]; then
+              echo "::error title=Missing trusted SDK package resolver::The pull request base has neither a receipt resolver nor the reviewed bootstrap resolver."
+              exit 1
+            fi
+            if [ "$(grep -Fc '      - name: Locate exact base-controlled SDK package run' "$trusted_bootstrap_workflow")" != 1 ]; then
+              echo "::error title=Invalid trusted SDK package resolver::The pull request base does not contain exactly one reviewed bootstrap resolver."
+              exit 1
+            fi
+            test "$(git -C .trusted-sdk-package-decision rev-parse --verify HEAD)" = "$BASE_SHA"
+            bootstrap_resolver="$RUNNER_TEMP/openshell-sdk-bootstrap-resolver.sh"
+            awk '
+              $0 == "      - name: Locate exact base-controlled SDK package run" { found = 1; next }
+              found && $0 == "        run: |" { copy = 1; next }
+              copy && /^      - name: / { exit }
+              copy { sub(/^          /, ""); print }
+              END { if (!found || !copy) exit 1 }
+            ' "$trusted_bootstrap_workflow" > "$bootstrap_resolver"
+            chmod 600 "$bootstrap_resolver"
+            grep -Fq 'trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts' "$bootstrap_resolver"
+            grep -Fq 'actions/workflows/openshell-sdk-package-pr.yaml/runs' "$bootstrap_resolver"
+            bash "$bootstrap_resolver"
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           resolved_artifact_name="$(
             node --experimental-strip-types --no-warnings \
@@ -287,7 +312,18 @@ jobs:
             exit 1
           fi
           printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "bootstrap=false" >> "$GITHUB_OUTPUT"
           echo "required=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact base-controlled bootstrap SDK archive
+        if: steps.locate.outputs.required == 'true' && steps.locate.outputs.bootstrap == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.locate.outputs.run_id }}
+          name: openshell-sdk-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/openshell-sdk
 
       - name: Publish SDK archive inside this CI run
         if: steps.locate.outputs.required == 'true'
@@ -299,7 +335,7 @@ jobs:
           retention-days: 1
 
       - name: Publish authenticated SDK selection receipt
-        if: steps.locate.outputs.required == 'true'
+        if: steps.locate.outputs.required == 'true' && steps.locate.outputs.bootstrap != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openshell-sdk-selection-${{ github.run_id }}-${{ github.run_attempt }}
