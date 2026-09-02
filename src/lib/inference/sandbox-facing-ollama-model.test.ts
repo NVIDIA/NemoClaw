@@ -108,13 +108,22 @@ describe("sandbox-facing Ollama model validation", () => {
 
 describe("Ollama model inventory", () => {
   it("queries the given daemon for its inventory", () => {
-    const capture = vi.fn((_command: readonly string[]) => tagsBody("llama3.2:1b"));
+    const capture = vi.fn(
+      (
+        _command: readonly string[],
+        _options?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv; timeout?: number },
+      ) => tagsBody("llama3.2:1b"),
+    );
 
-    const inventory = probeOllamaEndpointInventory("host.docker.internal", capture);
+    const inventory = probeOllamaEndpointInventory("host.docker.internal", capture, 1_200);
 
     expect(commandUrl(capture.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
     );
+    expect(capture.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(["--connect-timeout", "1.2", "--max-time", "1.2"]),
+    );
+    expect(capture.mock.calls[0][1]).toMatchObject({ ignoreError: true, timeout: 1_200 });
     expect(inventory).toEqual(["llama3.2:1b"]);
     expect(ollamaInventoryContainsModel(inventory ?? [], "gemma4:26b")).toBe(false);
   });

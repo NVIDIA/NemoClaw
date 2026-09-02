@@ -224,20 +224,24 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
   });
 
   it("limits warm-up to the command timeout budget remaining after the probe", () => {
+    let nowMs = 1_000;
     const runCaptureExImpl = vi.fn(
       (_command: string[], _options?: { env?: NodeJS.ProcessEnv; timeout?: number }) =>
         successfulWarmResult(),
     );
-    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(6_000);
+    const probeRuntimeModelStatus = vi.fn(() => {
+      nowMs = 6_000;
+      return unloadedStatus;
+    });
 
     expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
         {
-          probeRuntimeModelStatus: () => unloadedStatus,
+          probeRuntimeModelStatus,
           runCaptureExImpl,
           timeoutSeconds: 30,
-          now,
+          now: () => nowMs,
         },
       ),
     ).toEqual({ kind: "warmed", ok: true });
@@ -245,20 +249,30 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     const warmCommand = runCaptureExImpl.mock.calls[0][0];
     expect(warmCommand[warmCommand.indexOf("--max-time") + 1]).toBe("25");
     expect(runCaptureExImpl.mock.calls[0][1]?.timeout).toBe(25_000);
+    expect(probeRuntimeModelStatus).toHaveBeenCalledWith(
+      "qwen3.6:35b",
+      expect.any(Function),
+      expect.any(Function),
+      5_000,
+    );
   });
 
   it("skips warm-up when the probe consumes the command timeout budget", () => {
+    let nowMs = 1_000;
     const runCaptureExImpl = vi.fn(() => successfulWarmResult());
-    const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(31_000);
+    const probeRuntimeModelStatus = vi.fn(() => {
+      nowMs = 31_000;
+      return unloadedStatus;
+    });
 
     expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
         {
-          probeRuntimeModelStatus: () => unloadedStatus,
+          probeRuntimeModelStatus,
           runCaptureExImpl,
           timeoutSeconds: 30,
-          now,
+          now: () => nowMs,
         },
       ),
     ).toEqual({
@@ -267,6 +281,31 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
     });
     expect(runCaptureExImpl).not.toHaveBeenCalled();
+  });
+
+  it("bounds the daemon probe and skips warm-up when a short timeout is consumed", () => {
+    let nowMs = 1_000;
+    const probeRuntimeModelStatus = vi.fn(() => {
+      nowMs = 3_000;
+      return unloadedStatus;
+    });
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        { probeRuntimeModelStatus, timeoutSeconds: 2, now: () => nowMs },
+      ),
+    ).toEqual({
+      kind: "skipped",
+      reason: "deadline-exhausted",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
+    expect(probeRuntimeModelStatus).toHaveBeenCalledWith(
+      "qwen3.6:35b",
+      expect.any(Function),
+      expect.any(Function),
+      2_000,
+    );
   });
 
   it("does not treat an exit-zero Ollama error body as a successful warm-up", () => {
@@ -318,7 +357,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
       inventoryLabel: "llama3.2:1b",
     });
-    expect(probeModelInventory).toHaveBeenCalledWith("host.docker.internal", expect.any(Function));
+    expect(probeModelInventory).toHaveBeenCalledWith(
+      "host.docker.internal",
+      expect.any(Function),
+      5_000,
+    );
   });
 
   it("keeps the warm failure when the daemon does hold the model (#9455)", () => {

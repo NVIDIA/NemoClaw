@@ -50,8 +50,13 @@ export interface OllamaRestartRecoveryDeps extends OllamaRestartRecoveryOptions 
     model: string,
     getOllamaHost: () => string,
     runCaptureImpl?: RunCaptureFn,
+    timeoutMilliseconds?: number,
   ) => OllamaRuntimeModelStatus;
-  probeModelInventory?: (host: string, runCaptureImpl?: RunCaptureFn) => string[] | null;
+  probeModelInventory?: (
+    host: string,
+    runCaptureImpl?: RunCaptureFn,
+    timeoutMilliseconds?: number,
+  ) => string[] | null;
   runCaptureExImpl?: RunCaptureExFn;
   getOllamaHost?: () => string;
   runCaptureImpl?: RunCaptureFn;
@@ -82,6 +87,7 @@ export type OllamaRestartRecoveryResult =
 
 export const OLLAMA_LOCAL_PROVIDER = "ollama-local";
 const OLLAMA_RESTART_RECOVERY_TIMEOUT_SECONDS = 300;
+const OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS = 5_000;
 const OPENSHELL_HOST_BRIDGE = "host.openshell.internal";
 const ALLOWED_RAW_OLLAMA_HOSTS = new Set([
   OLLAMA_LOCALHOST,
@@ -250,6 +256,10 @@ export function maybeWarmOllamaAfterDaemonRestart(
   const now = deps.now ?? Date.now;
   const recoveryDeadline = recoveryDeadlineMilliseconds(deps.timeoutSeconds, now);
   const probe = deps.probeRuntimeModelStatus ?? probeOllamaRuntimeModelStatus;
+  const probeBudgetMilliseconds = remainingRecoveryMilliseconds(recoveryDeadline, now);
+  if (probeBudgetMilliseconds === 0) {
+    return { kind: "skipped", reason: "deadline-exhausted", endpoint: rawEndpoint };
+  }
   const rawCapture = createOllamaApiCapture(
     deps.runCaptureImpl,
     rawHost,
@@ -262,7 +272,12 @@ export function maybeWarmOllamaAfterDaemonRestart(
   );
   let status: OllamaRuntimeModelStatus;
   try {
-    status = probe(model, () => rawHost, rawCapture);
+    status = probe(
+      model,
+      () => rawHost,
+      rawCapture,
+      Math.min(OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS, probeBudgetMilliseconds),
+    );
   } catch {
     return { kind: "skipped", reason: "unreachable", endpoint: rawEndpoint };
   }
@@ -314,15 +329,25 @@ export function maybeWarmOllamaAfterDaemonRestart(
     // valid (#9455). Ask the same daemon for its inventory to tell them apart;
     // an unreadable inventory keeps the original warm-failure reason.
     if (response === "ollama-error") {
-      const probeInventory = deps.probeModelInventory ?? probeOllamaEndpointInventory;
-      const inventory = probeInventory(rawHost, rawCapture);
-      if (inventory && !ollamaInventoryContainsModel(inventory, model)) {
-        return {
-          kind: "skipped",
-          reason: "model-absent",
-          endpoint: `http://${rawHost}:${OLLAMA_PORT}`,
-          inventoryLabel: describeModelInventory(inventory),
-        };
+      const inventoryBudgetMilliseconds = remainingRecoveryMilliseconds(recoveryDeadline, now);
+      if (inventoryBudgetMilliseconds > 0) {
+        const probeInventory = deps.probeModelInventory ?? probeOllamaEndpointInventory;
+        const inventory = probeInventory(
+          rawHost,
+          rawCapture,
+          Math.min(
+            OLLAMA_RESTART_RECOVERY_PROBE_TIMEOUT_MILLISECONDS,
+            inventoryBudgetMilliseconds,
+          ),
+        );
+        if (inventory && !ollamaInventoryContainsModel(inventory, model)) {
+          return {
+            kind: "skipped",
+            reason: "model-absent",
+            endpoint: `http://${rawHost}:${OLLAMA_PORT}`,
+            inventoryLabel: describeModelInventory(inventory),
+          };
+        }
       }
     }
     if (response !== "ok") {

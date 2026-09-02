@@ -122,7 +122,7 @@ export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
 export type RunCaptureFn = (
   cmd: readonly string[],
-  opts?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv },
+  opts?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv; timeout?: number },
 ) => string;
 type PrepareDockerEnvironmentFn = () => PreparedDockerBuildEnvironment;
 
@@ -1379,21 +1379,30 @@ export function getLocalProviderContainerReachabilityCheck(
 export function probeOllamaEndpointInventory(
   host: string,
   runCaptureImpl?: RunCaptureFn,
+  timeoutMilliseconds = 5_000,
 ): string[] | null {
   const capture = createOllamaApiCapture(runCaptureImpl, host);
+  const normalizedTimeoutMilliseconds =
+    Number.isFinite(timeoutMilliseconds) && timeoutMilliseconds > 0
+      ? Math.floor(timeoutMilliseconds)
+      : 5_000;
+  const boundedTimeoutMilliseconds = Math.max(
+    1,
+    Math.min(5_000, normalizedTimeoutMilliseconds),
+  );
   const body = capture(
     [
       "curl",
       ...buildValidatedCurlCommandArgs([
         "-sf",
         "--connect-timeout",
-        "3",
+        String(Math.min(3, boundedTimeoutMilliseconds / 1000)),
         "--max-time",
-        "5",
+        String(boundedTimeoutMilliseconds / 1000),
         `http://${host}:${OLLAMA_PORT}/api/tags`,
       ]),
     ],
-    { ignoreError: true },
+    { ignoreError: true, timeout: boundedTimeoutMilliseconds },
   );
   return parseOllamaModelInventory(body);
 }
