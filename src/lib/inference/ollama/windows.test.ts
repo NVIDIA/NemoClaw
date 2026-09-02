@@ -27,7 +27,7 @@ function loadWindowsOllamaWithMocks(
   // Prove the retired subprocess-sleep path stays unused: the module must not
   // call child_process.spawnSync for its fixed readiness delays.
   const originalSpawnSync = childProcess.spawnSync;
-  const spawnSyncSpy = vi.fn(() => ({ status: 0 }));
+  const spawnSyncSpy = vi.fn((_command: string, _args?: readonly string[]) => ({ status: 0 }));
   childProcess.spawnSync = spawnSyncSpy;
 
   delete require.cache[WINDOWS_DIST_PATH];
@@ -106,7 +106,10 @@ describe("Windows Ollama helper", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(
+      run,
+      runCapture,
+    );
 
     try {
       expect(windows.setupWindowsOllamaWith0000Binding({ installedPath })).toBe(true);
@@ -140,6 +143,8 @@ describe("Windows Ollama helper", () => {
       ],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(atomicsWaitSpy).not.toHaveBeenCalled();
+    expect(spawnSyncSpy.mock.calls.some(([command]) => command === "sleep")).toBe(false);
   });
 
   it("isolates Docker credentials while waiting for the Windows-host daemon", () => {
