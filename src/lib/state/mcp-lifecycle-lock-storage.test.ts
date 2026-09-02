@@ -27,14 +27,14 @@ afterEach(() => {
 describe("MCP lifecycle lock storage", () => {
   it("rejects an oversized asynchronous observation before reading its body", async () => {
     const lockPath = "/state/main.lock";
-    const readFile = vi.fn();
+    const read = vi.fn();
     const close = vi.fn().mockResolvedValue(undefined);
     vi.spyOn(fs.promises, "open").mockResolvedValue({
       stat: vi.fn().mockResolvedValue({
         isFile: () => true,
         size: MAX_MCP_LIFECYCLE_LOCK_BYTES + 1,
       }),
-      readFile,
+      read,
       close,
     } as unknown as fs.promises.FileHandle);
 
@@ -42,7 +42,31 @@ describe("MCP lifecycle lock storage", () => {
       `Lock '${lockPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
     );
 
-    expect(readFile).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an asynchronous observation that grows after its size check", async () => {
+    const lockPath = "/state/main.lock";
+    const read = vi.fn().mockResolvedValueOnce({
+      bytesRead: MAX_MCP_LIFECYCLE_LOCK_BYTES + 1,
+      buffer: Buffer.alloc(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1),
+    });
+    const close = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(fs.promises, "open").mockResolvedValue({
+      stat: vi.fn().mockResolvedValue({
+        isFile: () => true,
+        size: MAX_MCP_LIFECYCLE_LOCK_BYTES,
+      }),
+      read,
+      close,
+    } as unknown as fs.promises.FileHandle);
+
+    await expect(readMcpLifecycleLockObservation(lockPath)).rejects.toThrow(
+      `Lock '${lockPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
+    );
+
+    expect(read).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -80,17 +104,35 @@ describe("MCP lifecycle lock storage", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
     const lockPath = path.join(stateDir, "main.lock");
     fs.writeFileSync(lockPath, Buffer.alloc(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1, "x"));
-    const readFile = vi.spyOn(fs, "readFileSync");
+    const read = vi.spyOn(fs, "readSync");
     try {
       expect(() => readMcpLifecycleLockObservationSync(lockPath)).toThrow(
         `Lock '${lockPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
       );
 
-      expect(readFile).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
     } finally {
-      readFile.mockRestore();
+      read.mockRestore();
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a synchronous observation that grows after its size check", () => {
+    const lockPath = "/state/main.lock";
+    vi.spyOn(fs, "openSync").mockReturnValue(42);
+    vi.spyOn(fs, "fstatSync").mockReturnValue({
+      isFile: () => true,
+      size: MAX_MCP_LIFECYCLE_LOCK_BYTES,
+    } as unknown as fs.Stats);
+    const read = vi.spyOn(fs, "readSync").mockReturnValueOnce(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1);
+    const close = vi.spyOn(fs, "closeSync").mockImplementation(() => undefined);
+
+    expect(() => readMcpLifecycleLockObservationSync(lockPath)).toThrow(
+      `Lock '${lockPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
+    );
+
+    expect(read).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("restores an oversized generation rejected after a synchronous claim", () => {

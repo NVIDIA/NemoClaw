@@ -109,6 +109,34 @@ function candidateMatchesOwnerPath(
   return candidatePath === lifecycleLockCandidatePath(lockPath, owner.pid, owner.token);
 }
 
+async function readBoundedLockFile(
+  handle: fs.promises.FileHandle,
+  lockPath: string,
+  maxBytes: number,
+): Promise<string> {
+  const bytes = Buffer.alloc(maxBytes + 1);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  if (offset > maxBytes) throw new LockObservationTooLargeError(lockPath, maxBytes);
+  return bytes.subarray(0, offset).toString("utf8");
+}
+
+function readBoundedLockFileSync(fd: number, lockPath: string, maxBytes: number): string {
+  const bytes = Buffer.alloc(maxBytes + 1);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const bytesRead = fs.readSync(fd, bytes, offset, bytes.length - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  if (offset > maxBytes) throw new LockObservationTooLargeError(lockPath, maxBytes);
+  return bytes.subarray(0, offset).toString("utf8");
+}
+
 export async function readMcpLifecycleLockObservation(
   lockPath: string,
   maxBytes = MAX_MCP_LIFECYCLE_LOCK_BYTES,
@@ -153,8 +181,9 @@ export async function readMcpLifecycleLockObservation(
     if (stat.size > maxBytes) {
       throw new LockObservationTooLargeError(lockPath, maxBytes);
     }
+    const contents = await readBoundedLockFile(handle, lockPath, maxBytes);
     try {
-      const parsed: unknown = JSON.parse(await handle.readFile("utf8"));
+      const parsed: unknown = JSON.parse(contents);
       return {
         owner: isMcpLifecycleLockOwner(parsed) ? parsed : null,
         mtimeMs: stat.mtimeMs,
@@ -220,8 +249,9 @@ export function readMcpLifecycleLockObservationSync(
     if (stat.size > maxBytes) {
       throw new LockObservationTooLargeError(lockPath, maxBytes);
     }
+    const contents = readBoundedLockFileSync(fd, lockPath, maxBytes);
     try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
+      const parsed: unknown = JSON.parse(contents);
       return {
         owner: isMcpLifecycleLockOwner(parsed) ? parsed : null,
         mtimeMs: stat.mtimeMs,
