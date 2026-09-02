@@ -171,6 +171,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       name: "staging-brev-launchable-identity-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
+        "${{ steps.workspace.outputs.work_dir }}/workspace-recovery.json",
         "${{ steps.workspace.outputs.work_dir }}/launchable-identity.json",
         "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
         "",

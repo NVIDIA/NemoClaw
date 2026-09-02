@@ -426,13 +426,16 @@ describe("focused staging Brev Launchable lane", () => {
     });
 
     const wrongImage = fixture({
-      bootImage: "projects/brevdevprod/global/images/wrong-image",
+      bootImage: "projects/brevdevprod/global/images/wrong-image?token=guest-secret",
     });
     const wrongImageResult = run(identitySmokeEnv(wrongImage.env));
     expect(wrongImageResult.status).not.toBe(0);
     expect(wrongImageResult.stderr).toContain("booted image does not match the producer handoff");
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
+    expect(
+      fs.readFileSync(path.join(wrongImage.workDir, "launchable-identity.json"), "utf8"),
+    ).not.toContain("guest-secret");
     expect(
       JSON.parse(
         fs.readFileSync(path.join(wrongImage.workDir, "launchable-identity.json"), "utf8"),
