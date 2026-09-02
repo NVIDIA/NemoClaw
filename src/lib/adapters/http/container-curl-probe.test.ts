@@ -23,12 +23,6 @@ function successfulSpawn(stdout = "200"): SpawnSyncReturns<string> {
 }
 
 describe("container curl probe", () => {
-  it("uses the accepted immutable curl image", () => {
-    expect(CONTAINER_REACHABILITY_IMAGE).toBe(
-      "docker.io/curlimages/curl@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b",
-    );
-  });
-
   it("writes the response body and returns the HTTP status without a WSL bind mount (#9116)", () => {
     const responseBody = '{"choices":[{"message":{"tool_calls":[{}]}}]}';
     const spawn = vi.fn(

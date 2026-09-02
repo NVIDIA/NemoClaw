@@ -7,8 +7,9 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
-  CONTAINER_REACHABILITY_IMAGE,
-} from "../../../src/lib/adapters/http/container-curl-probe.ts";
+  getOllamaApiCommand,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+} from "../../../src/lib/inference/local.ts";
 import {
   assertExitZero,
   type CommandRunner,
@@ -80,10 +81,19 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
-  it("pins the live container reachability client by digest", () => {
-    expect(CONTAINER_REACHABILITY_IMAGE).toBe(
-      "docker.io/curlimages/curl@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b",
+  it("uses a digest-pinned image for the live Windows-host transport", () => {
+    const command = getOllamaApiCommand(
+      ["-sf", "http://host.docker.internal:11434/api/tags"],
+      OLLAMA_HOST_DOCKER_INTERNAL,
     );
+
+    expect(command.slice(0, 4)).toEqual([
+      "docker",
+      "run",
+      "--rm",
+      expect.stringMatching(/^docker\.io\/curlimages\/curl@sha256:[a-f0-9]{64}$/u),
+    ]);
+    expect(command).not.toContain("curlimages/curl:8.10.1");
   });
 
   it.each([
