@@ -56,7 +56,10 @@ function runPatcher(file: string) {
   });
 }
 
-function runCrossUidParentRepair(name: "gateway" | "runtime", kind: "symlink" | "file") {
+function runCrossUidParentRepair(
+  name: "sessions" | "gateway" | "runtime",
+  kind: "symlink" | "file",
+) {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shared-parent-"));
   fixtures.push(fixture);
   const hermesHome = path.join(fixture, ".hermes");
@@ -200,7 +203,7 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(dockerfile).toContain(`discord_message_recovery.db)" = "sandbox:sandbox 660"`);
   });
 
-  it("requires descriptor-relative, no-follow repair for both writable parents", () => {
+  it("requires descriptor-relative, no-follow repair for every writable state parent", () => {
     expect(startScript).toContain("ensure_hermes_cross_uid_state_dir() {");
     expect(startScript).toContain('name = os.environ["NEMOCLAW_HERMES_STATE_DIR_NAME"]');
     expect(startScript).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
@@ -214,12 +217,18 @@ describe("Hermes cross-UID ledger permissions", () => {
       "if ! ensure_hermes_cross_uid_state_dir gateway; then",
       repairStart,
     );
+    const sessionsRepair = startScript.indexOf(
+      "if ! ensure_hermes_cross_uid_state_dir sessions; then",
+      repairStart,
+    );
     const runtimeRepair = startScript.indexOf(
       "if ! ensure_hermes_cross_uid_state_dir runtime; then",
       repairStart,
     );
     expect(repairStart).toBeGreaterThanOrEqual(0);
     expect(lockedBranch).toBeGreaterThan(repairStart);
+    expect(sessionsRepair).toBeGreaterThan(repairStart);
+    expect(sessionsRepair).toBeLessThan(gatewayRepair);
     expect(gatewayRepair).toBeGreaterThan(repairStart);
     expect(gatewayRepair).toBeLessThan(
       startScript.indexOf("if hermes_config_root_is_locked; then", repairStart),
@@ -230,6 +239,8 @@ describe("Hermes cross-UID ledger permissions", () => {
   });
 
   it.each([
+    ["sessions", "symlink", "is a symlink"],
+    ["sessions", "file", "is not a directory"],
     ["gateway", "symlink", "is a symlink"],
     ["gateway", "file", "is not a directory"],
     ["runtime", "symlink", "is a symlink"],

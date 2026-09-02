@@ -490,6 +490,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
 
   fs.mkdirSync(runtimeDir, { recursive: true });
   fs.mkdirSync(cronDir);
+  fs.mkdirSync(path.join(hermesHome, "sessions"), { mode: 0o750 });
   fs.chmodSync(runtimeDir, 0o2770);
   fs.chmodSync(cronDir, 0o2770);
   fs.mkdirSync(procRoot, { recursive: true });
@@ -513,8 +514,6 @@ function runHermesGatewayRuntimeCleanup(opts: {
     fs.chmodSync(hermesHome, 0o755);
   }
   if (opts.lockedConfigRoot) {
-    fs.writeFileSync(configYamlPath, "model: test\n", { mode: 0o600 });
-    fs.writeFileSync(envFilePath, "HERMES_TEST=1\n", { mode: 0o600 });
     fs.chmodSync(cronDir, 0o755);
   }
   const historyPath = path.join(hermesHome, ".hermes_history");
@@ -618,12 +617,12 @@ function runHermesGatewayRuntimeCleanup(opts: {
       return [entry, entryMode];
     };
     const requiredDirs = Object.fromEntries(
-      "gateway runtime cron logs logs/curator hooks image_cache audio_cache"
+      "sessions gateway runtime cron logs logs/curator hooks image_cache audio_cache"
         .split(" ")
         .map((entry) => modeEntry(entry, 0o777)),
     );
     const requiredDirFullModes = Object.fromEntries(
-      ["gateway", "runtime", "cron", "logs", "logs/curator"].map((entry) =>
+      ["sessions", "gateway", "runtime", "cron", "logs", "logs/curator"].map((entry) =>
         modeEntry(entry, 0o7777),
       ),
     );
@@ -1172,10 +1171,10 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       rootOwnedConfigRoot: true,
       preExistingLogFile: true,
     });
-
     expect(run.result.status).toBe(0);
     expect(run.hermesDirMode).toBe("3770");
     expect(run.requiredDirs).toEqual({
+      sessions: "770",
       gateway: "770",
       runtime: "770",
       cron: "770",
@@ -1186,6 +1185,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       audio_cache: "770",
     });
     expect(run.requiredDirFullModes).toMatchObject({
+      sessions: "2770",
       gateway: "2770",
       runtime: "2770",
       cron: "2770",
@@ -1205,7 +1205,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       rootOwnedConfigRoot: true,
       preExistingHistory: "regular",
     });
-
     expect(run.result.status).toBe(0);
     expect(run.historyKind).toBe("regular");
     expect(run.historyMode).toBe("660");
@@ -1241,10 +1240,10 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
   it("repairs runtime parents and history without reopening cron job definitions", () => {
     const run = runHermesGatewayRuntimeCleanup({ lockedConfigRoot: true });
-
     expect(run.result.status).toBe(0);
     expect(run.hermesDirMode).toBe("755");
     expect(run.requiredDirs).toEqual({
+      sessions: "770",
       gateway: "770",
       runtime: "770",
       cron: "755",
@@ -1256,6 +1255,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     });
     expect(run.historyKind).toBe("regular");
     expect(run.requiredDirFullModes).toMatchObject({
+      sessions: "2770",
       gateway: "2770",
       runtime: "2770",
       cron: "755",
