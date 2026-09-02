@@ -97,7 +97,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       options: { danglingSymlink: true },
     },
   ])(
-    "rejects an existing $caseName projection path without following it (#10754)",
+    "rejects an existing $caseName projection path (#10754)",
     ({
       diagnostic,
       expectedConfigIsDirectory,
@@ -126,6 +126,24 @@ describe("Deep Agents managed MCP projection safety", () => {
       expect(result.managedSymlinkTargetText).toBe(expectedTargetText);
     },
   );
+
+  it("rejects a projection symlink without reading its target (#10754)", () => {
+    const result = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      undefined,
+      "v2",
+      undefined,
+      0o600,
+      { symlink: true, targetReadProbe: true, timeoutMs: managedCommandTimeoutMs },
+    );
+    expect(result.status).toBe(2);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    );
+    expect(result.managedSymlinkTargetExists).toBe(true);
+    expect(result.managedTargetReadAccessed).toBe(false);
+  });
 
   it.each([
     {
@@ -310,14 +328,13 @@ describe("Deep Agents managed MCP projection safety", () => {
   );
 
   it("rejects a symlinked projection parent without reading its target (#10754)", () => {
-    const initialText = `${JSON.stringify(emptyProjection, null, 2)}\n`;
     const status = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpStatusCommand(baseEntry),
-      emptyProjection,
+      undefined,
       "v2",
       undefined,
       0o600,
-      { parentSymlink: true },
+      { parentSymlink: true, targetReadProbe: true, timeoutMs: managedCommandTimeoutMs },
     );
     expect(status.status).toBe(2);
     expect(status.stdout.trim()).toBe("");
@@ -325,7 +342,7 @@ describe("Deep Agents managed MCP projection safety", () => {
       "Unsafe managed Deep Agents MCP projection path: symbolic link",
     );
     expect(status.managedParentIsSymlink).toBe(true);
-    expect(status.managedParentTargetText).toBe(initialText);
+    expect(status.managedTargetReadAccessed).toBe(false);
   });
 
   it.each([

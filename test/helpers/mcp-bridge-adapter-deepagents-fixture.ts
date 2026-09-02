@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,6 +38,7 @@ export interface DeepAgentsConfigCommandResult {
   managedParentTargetText: string | null;
   managedSymlinkTargetExists: boolean;
   managedSymlinkTargetText: string | null;
+  managedTargetReadAccessed: boolean;
 }
 
 export interface DeepAgentsManagedFixtureOptions {
@@ -54,6 +55,7 @@ export interface DeepAgentsManagedFixtureOptions {
   swapOnManagedRead?: "fifo" | "symlink";
   swapOnManagedSeek?: string;
   symlink?: boolean;
+  targetReadProbe?: boolean;
   timeoutMs?: number;
 }
 
@@ -93,6 +95,45 @@ function resolveManagedSwap(options: DeepAgentsManagedFixtureOptions): ManagedSw
     return { content: options.swapOnManagedSeek, kind: "regular", phase: "seek" };
   }
   return undefined;
+}
+
+function createFifo(target: string, mode = 0o600): void {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const fifo = spawnSync("mkfifo", [target], { encoding: "utf-8", timeout: 5000 });
+  if (fifo.status !== 0) throw new Error(fifo.stderr || "could not create managed fixture FIFO");
+  fs.chmodSync(target, mode);
+}
+
+function pause(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function waitForPath(target: string, timeoutMs: number): boolean {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (fs.existsSync(target)) return true;
+    pause(10);
+  } while (Date.now() < deadline);
+  return fs.existsSync(target);
+}
+
+function startTargetReadProbe(target: string, ready: string, accessed: string) {
+  const script = [
+    "import os, sys",
+    "open(sys.argv[2], 'x').close()",
+    "descriptor = os.open(sys.argv[1], os.O_WRONLY)",
+    "os.close(descriptor)",
+    "open(sys.argv[3], 'x').close()",
+  ].join("\n");
+  const probe = spawn("python3", ["-I", "-c", script, target, ready, accessed], {
+    stdio: "ignore",
+  });
+  if (!waitForPath(ready, 1000)) {
+    probe.kill("SIGTERM");
+    throw new Error("managed target-read probe did not become ready");
+  }
+  pause(50);
+  return probe;
 }
 
 function createDeepAgentsFixturePythonExecutable(
@@ -223,6 +264,8 @@ export function runDeepAgentsConfigCommand(
   const managedParentTarget = path.join(tmp, "managed-parent-target");
   const managedParentTargetConfig = path.join(managedParentTarget, path.basename(configPath));
   const managedSymlinkTarget = path.join(tmp, "managed-projection-target.json");
+  const managedTargetReadReady = path.join(tmp, "managed-target-read-ready");
+  const managedTargetReadAccess = path.join(tmp, "managed-target-read-accessed");
   const legacyConfigPath = path.join(tmp, ".deepagents", ".mcp.json");
   const initializeConfig = (
     target: string,
@@ -238,20 +281,33 @@ export function runDeepAgentsConfigCommand(
     );
   };
   const managedSymlink = managedOptions.symlink === true || managedOptions.danglingSymlink === true;
+  const managedTargetReadPath = managedOptions.targetReadProbe
+    ? managedOptions.parentSymlink
+      ? managedParentTargetConfig
+      : managedSymlink
+        ? managedSymlinkTarget
+        : null
+    : null;
+  if (managedOptions.targetReadProbe && managedTargetReadPath === null) {
+    throw new Error("targetReadProbe requires a projection or parent symlink");
+  }
   const managedInitialPath = managedSymlink ? managedSymlinkTarget : configPath;
   if (managedOptions.parentSymlink) {
     fs.mkdirSync(managedParentTarget, { recursive: true });
-    initializeConfig(managedParentTargetConfig, initialConfig, managedOptions.mode);
+    if (managedTargetReadPath === managedParentTargetConfig) {
+      createFifo(managedParentTargetConfig, managedOptions.mode);
+    } else {
+      initializeConfig(managedParentTargetConfig, initialConfig, managedOptions.mode);
+    }
     fs.symlinkSync(managedParentTarget, managedParentPath);
   } else if (managedOptions.directory) {
     fs.mkdirSync(configPath, { recursive: true, mode: managedOptions.mode ?? 0o700 });
   } else if (managedOptions.fifo) {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    const fifo = spawnSync("mkfifo", [configPath], { encoding: "utf-8", timeout: 5000 });
-    if (fifo.status !== 0) throw new Error(fifo.stderr || "could not create managed fixture FIFO");
-    fs.chmodSync(configPath, managedOptions.mode ?? 0o600);
+    createFifo(configPath, managedOptions.mode);
   } else {
-    if (!managedOptions.danglingSymlink && managedSwap?.phase !== "after-missing-open") {
+    if (managedTargetReadPath === managedSymlinkTarget) {
+      createFifo(managedSymlinkTarget, managedOptions.mode);
+    } else if (!managedOptions.danglingSymlink && managedSwap?.phase !== "after-missing-open") {
       initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
       if (initialConfig !== undefined)
         fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
@@ -269,7 +325,15 @@ export function runDeepAgentsConfigCommand(
   }
   initializeConfig(legacyConfigPath, initialLegacyConfig);
   if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);
+  let targetReadProbe: ReturnType<typeof spawn> | null = null;
   try {
+    if (managedTargetReadPath !== null) {
+      targetReadProbe = startTargetReadProbe(
+        managedTargetReadPath,
+        managedTargetReadReady,
+        managedTargetReadAccess,
+      );
+    }
     const fixturePython = createDeepAgentsFixturePythonExecutable(
       tmp,
       configPath,
@@ -313,12 +377,17 @@ export function runDeepAgentsConfigCommand(
         ? fs.readFileSync(configPath, "utf-8")
         : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
-    const managedSymlinkTargetText = managedSymlinkTargetExists
-      ? fs.readFileSync(managedSymlinkTarget, "utf-8")
-      : null;
-    const managedParentTargetText = fs.existsSync(managedParentTargetConfig)
-      ? fs.readFileSync(managedParentTargetConfig, "utf-8")
-      : null;
+    const readRegularFile = (target: string): string | null => {
+      try {
+        return fs.lstatSync(target).isFile() ? fs.readFileSync(target, "utf-8") : null;
+      } catch {
+        return null;
+      }
+    };
+    const managedSymlinkTargetText = readRegularFile(managedSymlinkTarget);
+    const managedParentTargetText = readRegularFile(managedParentTargetConfig);
+    const managedTargetReadAccessed =
+      managedTargetReadPath !== null && waitForPath(managedTargetReadAccess, 200);
     const legacyConfigText = legacyConfigExists ? fs.readFileSync(legacyConfigPath, "utf-8") : null;
     const parseConfigText = (text: string | null): Record<string, unknown> | null => {
       if (!text) return null;
@@ -349,8 +418,10 @@ export function runDeepAgentsConfigCommand(
       managedParentTargetText,
       managedSymlinkTargetExists,
       managedSymlinkTargetText,
+      managedTargetReadAccessed,
     };
   } finally {
+    targetReadProbe?.kill("SIGTERM");
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
