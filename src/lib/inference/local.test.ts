@@ -176,10 +176,11 @@ describe("local inference helpers", () => {
       "http://127.0.0.1:11434/api/tags",
       "http://host.docker.internal:11434/api/tags",
     ]);
-    expect(commands.map((command) => command.slice(2, 6))).toEqual([
-      ["--connect-timeout", "3", "--max-time", "5"],
-      ["--connect-timeout", "3", "--max-time", "5"],
-    ]);
+    expect(commands.map((command) => command[0])).toEqual(["curl", "docker"]);
+    expect(commands[0]).toEqual(expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]));
+    expect(commands[1]).toEqual(
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE, "--connect-timeout", "3", "--max-time", "5"]),
+    );
   });
 
   it("returns the expected base URL for vllm-local", () => {
@@ -334,7 +335,7 @@ describe("local inference helpers", () => {
     expect(result.message).toMatch(/not an Ollama networking failure/);
     expect(result.message).not.toMatch(/Docker container reachability check failed/);
     expect(result.message).not.toMatch(/sandbox uses a different network path/);
-    expect(result.diagnostic).toMatch(/DOCKER_CONFIG=\$\(mktemp -d\) docker pull curlimages\/curl/);
+    expect(result.diagnostic).toContain(CONTAINER_REACHABILITY_IMAGE);
     expect(result.diagnostic).toMatch(/credential helper/);
     expect(result.diagnostic).toMatch(/onboard --resume/);
   });
@@ -353,7 +354,7 @@ describe("local inference helpers", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/Docker image-pull failure/);
     expect(result.message).toMatch(/not a vLLM networking failure/);
-    expect(result.diagnostic).toMatch(/docker pull curlimages\/curl/);
+    expect(result.diagnostic).toContain(`docker pull ${CONTAINER_REACHABILITY_IMAGE}`);
   });
 
   it("keeps the runtime-failure report when the probe image is present locally (#9308)", () => {
@@ -1215,7 +1216,8 @@ describe("local inference helpers", () => {
   it("builds a background warmup command for ollama models", () => {
     const command = getOllamaWarmupCommand("nemotron-3-nano:30b");
     expect(command).toEqual(expect.arrayContaining(["bash", "-c"]));
-    expect(command[2]).toMatch(/^nohup curl -s http:\/\/127.0.0.1:11434\/api\/generate /);
+    expect(command[2]).toContain("'--connect-timeout' '10' '--max-time' '120'");
+    expect(command[2]).toContain("http://127.0.0.1:11434/api/generate");
     expect(command[2]).toMatch(/"model":"nemotron-3-nano:30b"/);
     expect(command[2]).toMatch(/"keep_alive":"15m"/);
   });
@@ -1226,7 +1228,7 @@ describe("local inference helpers", () => {
     const probe1 = getOllamaProbeCommand("qwen3.5:9b", 30, "5m");
     expect(probe1).toContain("--max-time");
     expect(probe1).toContain("30");
-    const payload1 = probe1[probe1.length - 1];
+    const payload1 = probe1[probe1.indexOf("-d") + 1];
     expect(payload1).toMatch(/"keep_alive":"5m"/);
   });
 
@@ -1237,7 +1239,7 @@ describe("local inference helpers", () => {
     expect(command).toContain("--max-time");
     expect(command).toContain("120");
     expect(command).toContain("http://127.0.0.1:11434/api/generate");
-    const payload = command[command.length - 1];
+    const payload = command[command.indexOf("-d") + 1];
     expect(payload).toMatch(/"model":"nemotron-3-nano:30b"/);
   });
 

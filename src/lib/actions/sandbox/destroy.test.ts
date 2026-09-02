@@ -4,7 +4,11 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertUnambiguousDestroyContainerIdentity, cleanupSandboxServices } from "./destroy";
+import type { SandboxEntry } from "../../state/registry";
+import {
+  assertUnambiguousDestroyContainerIdentity,
+  cleanupSandboxServices,
+} from "./destroy";
 
 const SANDBOX = "mybox";
 const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
@@ -68,6 +72,41 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
+  });
+});
+
+describe("cleanupSandboxServices Ollama ownership", () => {
+  it("keeps a model shared through a compatible endpoint at the same local daemon", () => {
+    const own = {
+      name: SANDBOX,
+      provider: "ollama-local",
+      model: "llama3",
+    } as SandboxEntry;
+    const peer = {
+      name: "peer",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+      model: "llama3:latest",
+    } as SandboxEntry;
+    const unloadOllamaModels = vi.fn();
+
+    cleanupSandboxServices(
+      SANDBOX,
+      { stopHostServices: false },
+      {
+        getSandbox: () => own,
+        listSandboxes: () => ({ sandboxes: [own, peer], defaultSandbox: null }),
+        loadPersistedOllamaHost: () => "127.0.0.1",
+        unloadOllamaModels,
+        withOllamaModelOwnershipLock: (operation) => operation(),
+        rmSync: vi.fn(),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+      },
+    );
+
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 });
 
