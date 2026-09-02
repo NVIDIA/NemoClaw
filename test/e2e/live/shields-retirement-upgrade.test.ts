@@ -138,10 +138,14 @@ function writeExecutable(target: string, contents: string): void {
   fs.chmodSync(target, 0o755);
 }
 
-function createReleasedDockerWrapper(artifacts: ArtifactSink): string {
+function createReleasedDockerWrapper(artifacts: ArtifactSink): {
+  logFile: string;
+  wrapperDir: string;
+} {
   const wrapperDir = artifacts.pathFor("released-docker-wrapper");
   const logFile = artifacts.pathFor("released-docker-wrapper.log");
   const realDocker = process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker";
+  fs.rmSync(logFile, { force: true });
   writeExecutable(
     path.join(wrapperDir, "docker"),
     `#!/usr/bin/env bash
@@ -171,12 +175,14 @@ while [ "$#" -gt 0 ]; do
       if [ "$#" -ge 2 ] && [ "\${2#OPENCLAW_VERSION=}" != "$2" ]; then
         args+=("--build-arg" "OPENCLAW_VERSION=\${old_openclaw}")
         rewrote_openclaw=1
+        printf 'rewrite build-arg %s -> OPENCLAW_VERSION=%s\n' "$2" "$old_openclaw" >>"$log_file"
         shift 2
         continue
       fi
       if [ "$#" -ge 2 ] && [ "\${2#BASE_IMAGE=}" != "$2" ]; then
         args+=("--build-arg" "BASE_IMAGE=\${base_ref}")
         rewrote_base=1
+        printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$2" "$base_ref" >>"$log_file"
         shift 2
         continue
       fi
@@ -184,12 +190,14 @@ while [ "$#" -gt 0 ]; do
     --build-arg=OPENCLAW_VERSION=*)
       args+=("--build-arg=OPENCLAW_VERSION=\${old_openclaw}")
       rewrote_openclaw=1
+      printf 'rewrite build-arg %s -> OPENCLAW_VERSION=%s\n' "$1" "$old_openclaw" >>"$log_file"
       shift
       continue
       ;;
     --build-arg=BASE_IMAGE=*)
       args+=("--build-arg=BASE_IMAGE=\${base_ref}")
       rewrote_base=1
+      printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$1" "$base_ref" >>"$log_file"
       shift
       continue
       ;;
@@ -197,12 +205,18 @@ while [ "$#" -gt 0 ]; do
   args+=("$1")
   shift
 done
-if [ "$rewrote_openclaw" = "0" ]; then args+=("--build-arg" "OPENCLAW_VERSION=\${old_openclaw}"); fi
-if [ "$rewrote_base" = "0" ]; then args+=("--build-arg" "BASE_IMAGE=\${base_ref}"); fi
+if [ "$rewrote_openclaw" = "0" ]; then
+  args+=("--build-arg" "OPENCLAW_VERSION=\${old_openclaw}")
+  printf 'add build-arg OPENCLAW_VERSION=%s\n' "$old_openclaw" >>"$log_file"
+fi
+if [ "$rewrote_base" = "0" ]; then
+  args+=("--build-arg" "BASE_IMAGE=\${base_ref}")
+  printf 'add build-arg BASE_IMAGE=%s\n' "$base_ref" >>"$log_file"
+fi
 exec "$real_docker" "\${args[@]}"
 `,
   );
-  return wrapperDir;
+  return { logFile, wrapperDir };
 }
 
 async function runReleasedInstaller(
@@ -243,7 +257,7 @@ async function installReleasedNemoclaw(
 ): Promise<void> {
   const installer = artifacts.pathFor("released-install.sh");
   const installLog = artifacts.pathFor("released-install.log");
-  const wrapperDir = createReleasedDockerWrapper(artifacts);
+  const { logFile: dockerWrapperLog, wrapperDir } = createReleasedDockerWrapper(artifacts);
   const download = await bash(
     host,
     `curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/${shellQuote(RELEASE_COMMIT)}/install.sh -o ${shellQuote(installer)}`,
@@ -288,10 +302,11 @@ async function installReleasedNemoclaw(
     removeReviewedNpmArchive(reviewedOpenClaw);
   }
 
-  const installText = fs.readFileSync(installLog, "utf8");
-  expect(installText).toContain(
-    `Pinning base image to sha256:${RELEASE_SANDBOX_BASE_DIGEST.slice(0, 12)}`,
+  const dockerEvidence = fs.readFileSync(dockerWrapperLog, "utf8");
+  expect(dockerEvidence).toContain(
+    `BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${RELEASE_SANDBOX_BASE_DIGEST}`,
   );
+  expect(dockerEvidence).toContain(`OPENCLAW_VERSION=${RELEASE_OPENCLAW_VERSION}`);
   const sourceHead = await bash(host, 'git -C "$HOME/.nemoclaw/source" rev-parse --verify HEAD', {
     artifactName: "released-source-head",
     timeoutMs: 30_000,
