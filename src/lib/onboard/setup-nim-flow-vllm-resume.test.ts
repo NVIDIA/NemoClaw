@@ -69,6 +69,54 @@ describe("createSetupNim vLLM resume", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("normalizes a checkpointed catalog alias before validating the installed vLLM", async () => {
+    const alias = "nemotron-3-nano-4b";
+    const servedModel = "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8";
+    const profile = { name: "Linux NVIDIA GPU" } as VllmProfile;
+    const checkpointVllmInstallModel = vi.fn();
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
+      options.beforeInstall?.(servedModel);
+      options.checkpointInstallIntent?.(alias);
+      return { ok: true };
+    });
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      expect(state.model).toBe(servedModel);
+      state.provider = "vllm-local";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const selectVllmModelFromEnv = vi.fn((env?: NodeJS.ProcessEnv) => {
+      expect(env?.NEMOCLAW_VLLM_MODEL).toBe(alias);
+      return { id: servedModel, servedModelId: servedModel };
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        getVllmInstallResumeModel: () => null,
+        checkpointVllmInstallModel,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            hasVllmImage: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM" }],
+          }),
+        installVllm,
+        handleVllmSelection,
+        selectVllmModelFromEnv,
+      }),
+    );
+
+    await expect(setupNim(null, null, null, true)).resolves.toMatchObject({
+      model: servedModel,
+      provider: "vllm-local",
+    });
+    expect(checkpointVllmInstallModel).toHaveBeenCalledWith(alias);
+    expect(selectVllmModelFromEnv).toHaveBeenCalledOnce();
+  });
+
   it("refuses checkpoint-first vLLM installation when sandbox identity changes (#9833)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const checkpointVllmInstallModel = vi.fn();
