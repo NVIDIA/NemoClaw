@@ -18,6 +18,7 @@ import { getProviderSelectionConfig } from "./config";
 import {
   createOllamaApiCapture,
   getResolvedOllamaHost,
+  isValidOllamaTagsResponseBody,
   loadPersistedOllamaHost,
   type LocalProviderHealthProbeOptions,
   OLLAMA_PORT,
@@ -72,6 +73,7 @@ export type OllamaHostInventoryProbeOptions = {
 export function probeOllamaHostInventory(options: OllamaHostInventoryProbeOptions = {}): {
   endpoint: string;
   output: string;
+  valid: boolean;
 } {
   const host = options.getOllamaHost
     ? options.getOllamaHost()
@@ -96,7 +98,7 @@ export function probeOllamaHostInventory(options: OllamaHostInventoryProbeOption
     ],
     { ignoreError: true, timeout: 6000 },
   );
-  return { endpoint, output };
+  return { endpoint, output, valid: isValidOllamaTagsResponseBody(output) };
 }
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);

@@ -86,4 +86,24 @@ describe("doctor system checks", () => {
     expect(prepareDockerEnvironment).toHaveBeenCalledOnce();
     expect(cleanup).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["malformed JSON", "not-json"],
+    ["JSON without a models array", JSON.stringify({ status: "ok" })],
+  ])("rejects %s from the selected Ollama endpoint", (_name, output) => {
+    const { ollamaDoctorCheck } = requireDist(modulePath);
+
+    expect(
+      ollamaDoctorCheck("ollama-local", {
+        getOllamaHost: () => "127.0.0.1",
+        runCaptureImpl: () => output,
+      }),
+    ).toEqual({
+      group: "Local services",
+      label: "Ollama",
+      status: "fail",
+      detail: "invalid response from http://127.0.0.1:11434/api/tags",
+      hint: "start Ollama or change the sandbox inference provider",
+    });
+  });
 });
