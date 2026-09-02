@@ -178,14 +178,14 @@ export function ollamaDoctorCheck(
   currentProvider: string,
   deps: OllamaDoctorCheckDeps = {},
 ): DoctorCheck {
-  const { endpoint, output } = probeOllamaHostInventory(deps);
+  const { endpoint, output, valid } = probeOllamaHostInventory(deps);
   const required = currentProvider === "ollama-local";
-  if (!output) {
+  if (!output || !valid) {
     return {
       group: "Local services",
       label: "Ollama",
       status: required ? "fail" : "info",
-      detail: `not reachable at ${endpoint}`,
+      detail: output ? `invalid response from ${endpoint}` : `not reachable at ${endpoint}`,
       hint: required ? "start Ollama or change the sandbox inference provider" : undefined,
     };
   }
