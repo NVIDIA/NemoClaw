@@ -41,8 +41,8 @@ import {
   safelyReleaseMcpLifecycleLockSync,
   writeMcpLifecycleLockCandidateAndLink,
   writeMcpLifecycleLockCandidateAndLinkSync,
+  resolveNemoclawStateDir,
 } from "./mcp-lifecycle-lock-storage";
-import { resolveNemoclawStateDir } from "./paths";
 
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;

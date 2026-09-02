@@ -450,7 +450,7 @@ function resolvePinnedDcodeBaseImage(
     }
     if (!warned) {
       warned = true;
-      console.warn(`  Warning: failed to remove temporary DCode base image '${imageRef}'.`);
+      console.warn("  Warning: failed to remove the temporary DCode base image.");
     }
     return false;
   };

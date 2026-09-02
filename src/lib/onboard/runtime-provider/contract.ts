@@ -10,11 +10,19 @@ import type {
 } from "../managed-bootstrap/runtime-create";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
+import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceOperationInput,
   HostLocalInferenceService,
 } from "./host-local-inference";
+
+export {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_PLATFORMS,
+  MANAGED_IMAGE_REPOSITORIES,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+} from "../managed-image/contract";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
@@ -69,6 +77,74 @@ export type RuntimeProviderSupportedSurface<T extends object> = Readonly<
 
 export interface RuntimeProviderPlanDefinition {
   readonly gatewayLauncher: RuntimeProviderGatewayLauncher;
+}
+
+export interface RuntimeProviderGatewayHostRuntimeInput {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+  /** Optional exact socket supplied by a caller that already prepared provider authority. */
+  readonly socketPath?: string;
+}
+
+export interface RuntimeProviderGatewayNetworkInfo {
+  readonly subnet?: string;
+  readonly gatewayIp?: string;
+}
+
+export interface RuntimeProviderGatewayCommandResult {
+  readonly status: number | null;
+  readonly stdout?: string | Buffer | null;
+  readonly stderr?: string | Buffer | null;
+  readonly signal?: NodeJS.Signals | null;
+  readonly error?: string;
+  readonly errorCode?: string | null;
+  readonly timedOut?: boolean;
+}
+
+export interface RuntimeProviderGatewayImageCacheResult {
+  readonly ok: boolean;
+  readonly alreadyCached?: boolean;
+  readonly reason?: "inspect_unavailable" | "pull_failed" | "pull_timeout";
+  readonly details?: string;
+}
+
+/**
+ * Provider-owned gateway behavior projected into generic orchestration. None of
+ * these values identify a provider; callers consume the behavior without
+ * branching on the bundle identity.
+ */
+export interface RuntimeProviderGatewayHostRuntime {
+  /** Opaque identity persisted for provider-owned runtime observation. */
+  readonly providerId: string;
+  readonly openShellDriver: string;
+  readonly bindAddress: string;
+  /** Host advertised to the gateway's sandbox-facing gRPC transport. */
+  readonly grpcHost: string;
+  /** Host used by the local SSH gateway client. */
+  readonly sshGatewayHost: string;
+  readonly portCheckHost: string;
+  readonly socketPath: string | null;
+  readonly requiredServerIpSans: readonly string[];
+  readonly sandboxHostAddress: string | null;
+  readonly usesHostGatewayRoute: boolean;
+  readonly resourceOwnership: {
+    readonly label: string;
+    readonly value: string;
+  };
+  readonly gatewayConfig: {
+    readonly sandboxNamespace: "scoped" | "omitted";
+    readonly hostGatewayIp: string | null;
+    readonly includeSupervisorBin: boolean;
+    readonly processOwnership: "scoped-namespace" | "runtime-marker";
+  };
+  readonly network: {
+    /** Provider-owned sandbox source ranges authorized to reach host services. */
+    sandboxSourceCidrs(): readonly string[];
+    inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
+    usesHostGatewayRoute(): boolean;
+    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
+  };
 }
 
 export type RuntimeProviderReadOnlyHostMountCapability =
@@ -260,6 +336,85 @@ export type RuntimeProviderLifecycleStopOutcome = RuntimeProviderLifecycleResult
   readonly state?: "already-stopped" | "stopped";
 };
 
+/** Opaque provider-owned identity for one observed sandbox runtime resource. */
+export interface RuntimeProviderPrivilegedSandboxTarget {
+  readonly providerId: string;
+  readonly resourceHandle: string;
+}
+
+export interface RuntimeProviderPrivilegedSandboxCommandInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly command: readonly string[];
+  readonly input?: Buffer;
+  readonly sanitizeEnvironment: boolean;
+  readonly expectedResourceHandle?: string;
+  readonly timeoutMs: number;
+  readonly maxOutputBytes?: number;
+}
+
+export interface RuntimeProviderPrivilegedSandboxCommandResult {
+  readonly status: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: Buffer;
+  readonly stderr: Buffer;
+  readonly error?: Error;
+}
+
+export type RuntimeProviderStoppedSandboxStateCleanupFailure =
+  | "sandbox-registry-unavailable"
+  | "provider-cleanup-unavailable"
+  | "state-paths-invalid"
+  | "runtime-discovery-failed"
+  | "no-eligible-stopped-runtime"
+  | "runtime-ownership-invalid"
+  | "runtime-inspection-failed"
+  | "runtime-not-stopped"
+  | "state-resource-unavailable"
+  | "cleanup-helper-image-unavailable"
+  | "cleanup-helper-ownership-invalid"
+  | "cleanup-helper-reconciliation-failed"
+  | "cleanup-state-tree-unsafe"
+  | "cleanup-deletion-unconfirmed"
+  | "cleanup-helper-failed"
+  | "runtime-revalidation-failed"
+  | "lifecycle-authority-unavailable";
+
+export type RuntimeProviderStoppedSandboxStateCleanupResult =
+  | { readonly cleared: true }
+  | {
+      readonly cleared: false;
+      readonly failure: RuntimeProviderStoppedSandboxStateCleanupFailure;
+      readonly cleanupHelperName?: string;
+    };
+
+export interface RuntimeProviderStoppedSandboxStateCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly paths: readonly string[];
+}
+
+export interface RuntimeProviderPrivilegedSandboxControl {
+  resolveTarget(
+    input: Pick<
+      RuntimeProviderPrivilegedSandboxCommandInput,
+      "registeredSandboxNames" | "sandbox" | "sandboxName"
+    >,
+  ): RuntimeProviderPrivilegedSandboxTarget;
+  execute(
+    input: RuntimeProviderPrivilegedSandboxCommandInput,
+  ): RuntimeProviderPrivilegedSandboxCommandResult;
+  clearStoppedStateRoots?(
+    input: RuntimeProviderStoppedSandboxStateCleanupInput,
+  ): RuntimeProviderStoppedSandboxStateCleanupResult;
+  /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
+  buildLegacyDockerArgv?(
+    input: Omit<RuntimeProviderPrivilegedSandboxCommandInput, "timeoutMs">,
+  ): string[];
+}
+
 export interface RuntimeProviderLifecycleStopHooks {
   readonly beforeStop: () => void;
 }
@@ -272,6 +427,14 @@ export type RuntimeProviderProviderDetachResult = {
 export interface RuntimeProviderCleanupInput {
   readonly sandbox: SandboxEntry;
   readonly sandboxName: string;
+}
+
+/** Provider-owned proof for the exact runtime resource targeted by destroy. */
+export interface RuntimeProviderDestroyIdentityReceipt {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly resourceHandle: string | null;
+  readonly ownershipSha256: string | null;
 }
 
 export type RuntimeProviderWorkloadCleanupPlan =
@@ -475,6 +638,7 @@ export interface RuntimeProviderSnapshotRestoreReceipt {
 
 export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurface<{
   inspectHost(): RuntimeProviderDoctorCheck;
+  validateSandboxGpu(config: SandboxGpuConfig, exitProcess: (code: number) => never): void;
   preflightLifecycle(
     action: RuntimeProviderLifecycleAction,
     input: RuntimeProviderLifecycleInput,
@@ -484,10 +648,15 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
 export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
+  prepareHostRuntime(
+    input: RuntimeProviderGatewayHostRuntimeInput,
+  ): RuntimeProviderGatewayHostRuntime;
 }>;
 
 export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
   readonly profile: RuntimeProviderWorkloadProfile;
+  /** Provider-owned OpenShell driver-config key for managed state mounts. */
+  readonly managedStateMountDriverId?: string;
   acceptsReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean;
 }>;
 
@@ -501,6 +670,9 @@ export type RuntimeProviderHostLocalInferenceSurface =
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
+      /** Provider-owned timeout for direct container lifecycle mutations. */
+      readonly containerMutationTimeoutMs?: number;
+      readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
       start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
       verifyStarted(
         input: RuntimeProviderLifecycleInput,
@@ -628,6 +800,12 @@ export type RuntimeProviderRecoverySurface =
 
 export type RuntimeProviderCleanupSurface =
   | RuntimeProviderSupportedSurface<{
+      /** Observe immutable runtime identity and ownership without mutation. */
+      captureDestroyIdentity?(
+        input: RuntimeProviderCleanupInput,
+      ): RuntimeProviderDestroyIdentityReceipt;
+      /** Prove a provider-owned runtime created before registry finalization. */
+      captureDestroyIdentityByName?(sandboxName: string): RuntimeProviderDestroyIdentityReceipt;
       prepareDestroy(
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,
@@ -651,6 +829,11 @@ export type RuntimeProviderContainerEngineSurface =
         readonly engineId: string;
         readonly displayName: string;
       }[];
+      capture(
+        operation: RuntimeProviderContainerEngineOperation,
+        args: readonly string[],
+        timeoutMs?: number,
+      ): RuntimeProviderCommandCapture;
     }>
   | RuntimeProviderUnsupportedSurface;
 

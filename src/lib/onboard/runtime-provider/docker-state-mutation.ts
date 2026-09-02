@@ -52,7 +52,6 @@ import { prepareRuntimeProviderStateMutationPlan } from "./state-mutation";
 const DOCKER_PROVIDER_ID = "docker";
 const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
-const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
 const HELPER_TRANSPORT_BROKER_PATH =
   "/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
@@ -90,12 +89,14 @@ const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
 const RUNTIME_QUERY_FORMAT = "{{.ID}}";
-const INSPECT_FORMAT =
-  '[{{json .Id}},{{json .State.Running}},{{json .State.Status}},{{json .State.Paused}},{{json .State.Restarting}},{{json .State.Dead}},{{json .State.Pid}},{{json (index .Config.Labels "openshell.ai/managed-by")}},{{json (index .Config.Labels "openshell.ai/sandbox-name")}},{{json (index .Config.Labels "openshell.ai/sandbox-id")}},{{json .HostConfig.PidMode}},{{json .HostConfig.Privileged}},{{json .Mounts}}]';
+const DEFAULT_MANAGED_LABEL_KEY = "openshell.ai/managed-by";
+const DEFAULT_MANAGED_LABEL_VALUE = "openshell";
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CONTAINER_ID = /^[a-f0-9]{64}$/u;
 const PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const SAFE_LABEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u;
+const SAFE_LABEL_VALUE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u;
 const LIFECYCLE_GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const MOUNT_NAMESPACE = /^mnt:\[[1-9][0-9]*\]$/u;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
@@ -143,7 +144,7 @@ interface DockerRuntimeObservation {
   readonly providerDisplayName: string;
   readonly runtimeId: string;
   readonly runtimePid: number;
-  readonly pidMode: "";
+  readonly pidMode: string;
   readonly privileged: false;
   readonly sandboxIdentitySha256: string;
   readonly containerMountsSha256: string;
@@ -203,6 +204,18 @@ export interface ContainerStateMutationOwnerOptions {
   readonly authority: ContainerStateMutationAuthority;
   readonly engineAuthorityStore: PersistedEngineAuthorityStore;
   readonly lifecycleStore: PersistedEngineLifecycleStore;
+  /** Provider-native Go-template field for the full immutable runtime ID. */
+  readonly runtimeIdInspectField?: "Id" | "ID";
+  /** Provider-native inspect value proving a private PID namespace. */
+  readonly privatePidMode?: string;
+  /** Provider-owned label proving that the runtime belongs to OpenShell. */
+  readonly managedLabelKey?: string;
+  readonly managedLabelValue?: string;
+  /** Provider-owned normalization for one logical mount reported as multiple inspect rows. */
+  readonly normalizeInspectionMounts?: (
+    mounts: readonly unknown[],
+    runtimeId: string,
+  ) => readonly unknown[];
 }
 
 export type DockerStateMutationOwnerOptions = Omit<
@@ -231,6 +244,14 @@ export interface ContainerStateMutationSurfaceOptions {
   readonly createAuthority: (
     input: RuntimeProviderStateMutationContext,
   ) => ContainerStateMutationAuthority;
+  readonly runtimeIdInspectField?: "Id" | "ID";
+  readonly privatePidMode?: string;
+  readonly managedLabelKey?: string;
+  readonly managedLabelValue?: string;
+  readonly normalizeInspectionMounts?: (
+    mounts: readonly unknown[],
+    runtimeId: string,
+  ) => readonly unknown[];
   readonly resolveStateDir?: (environment: NodeJS.ProcessEnv) => string;
   readonly withDirectSandboxExecutionExclusion?: <T>(
     sandboxName: string,
@@ -478,6 +499,9 @@ function parseInspection(
   expectedRuntimeId: string,
   expectedSandboxName: string,
   providerDisplayName: string,
+  expectedPrivatePidMode: string,
+  expectedManagedLabelValue: string,
+  normalizeMounts: (mounts: readonly unknown[], runtimeId: string) => readonly unknown[],
 ): DockerRuntimeObservation {
   if (
     output.length === 0 ||
@@ -527,10 +551,10 @@ function parseInspection(
   ) {
     fail(`${providerDisplayName} container is not one stable running runtime`);
   }
-  if (managedBy !== "openshell" || sandboxName !== expectedSandboxName) {
+  if (managedBy !== expectedManagedLabelValue || sandboxName !== expectedSandboxName) {
     fail(`${providerDisplayName} container does not belong to the exact OpenShell sandbox`);
   }
-  if (pidMode !== "" || privileged !== false) {
+  if (pidMode !== expectedPrivatePidMode || privileged !== false) {
     fail(`${providerDisplayName} container does not have one private unprivileged PID namespace`);
   }
   const sandboxId = exactText(sandboxIdInput, "OpenShell sandbox identity", 512);
@@ -538,7 +562,7 @@ function parseInspection(
   if (!Array.isArray(mountsInput) || mountsInput.length > MAX_MOUNTS) {
     fail(`${providerDisplayName} container mounts are malformed`);
   }
-  const mounts = mountsInput
+  const mounts = normalizeMounts(mountsInput, runtimeId)
     .map(parseMount)
     .sort((left, right) =>
       left.destination < right.destination
@@ -565,7 +589,7 @@ function parseInspection(
     providerDisplayName,
     runtimeId,
     runtimePid: runtimePid as number,
-    pidMode: "",
+    pidMode: expectedPrivatePidMode,
     privileged: false,
     sandboxIdentitySha256,
     containerMountsSha256: mountsSha256(mounts),
@@ -1025,28 +1049,22 @@ function requireCurrentEngineAuthority(
   );
 }
 
-function inspectCommand(runtimeId: string) {
+function inspectCommand(
+  runtimeId: string,
+  runtimeIdField: "Id" | "ID" = "Id",
+  managedLabelKey = DEFAULT_MANAGED_LABEL_KEY,
+) {
+  boundedString(managedLabelKey, SAFE_LABEL_KEY, "managed runtime label key");
+  const format =
+    `[{{json .${runtimeIdField}}},{{json .State.Running}},{{json .State.Status}},` +
+    `{{json .State.Paused}},{{json .State.Restarting}},{{json .State.Dead}},` +
+    `{{json .State.Pid}},{{json (index .Config.Labels "${managedLabelKey}")}},` +
+    '{{json (index .Config.Labels "openshell.ai/sandbox-name")}},' +
+    '{{json (index .Config.Labels "openshell.ai/sandbox-id")}},' +
+    "{{json .HostConfig.PidMode}},{{json .HostConfig.Privileged}},{{json .Mounts}}]";
   return Object.freeze({
-    args: Object.freeze(["container", "inspect", "--format", INSPECT_FORMAT, runtimeId]),
+    args: Object.freeze(["container", "inspect", "--format", format, runtimeId]),
     targetIndex: 4,
-  });
-}
-
-function helperCommand(runtimeId: string, action: HelperAction) {
-  return Object.freeze({
-    args: Object.freeze([
-      "container",
-      "exec",
-      "--interactive",
-      "--user",
-      "root",
-      runtimeId,
-      HELPER_PYTHON_PATH,
-      "-I",
-      HELPER_PATH,
-      action,
-    ]),
-    targetIndex: 5,
   });
 }
 
@@ -1266,7 +1284,6 @@ function finishReleasedHelperTransport(
   bindingSha256: string,
   transactionId: string,
 ): void {
-  if (options.providerId !== DOCKER_PROVIDER_ID) return;
   const capture: HelperTransportCapture = (command, timeoutMs) => {
     requireCurrentEngineAuthority(options, bindingSha256);
     const result = options.authority.engine.capture(command.args, timeoutMs);
@@ -1473,7 +1490,11 @@ function inspectDirect(
 ): DockerRuntimeObservation {
   requireCurrentEngineAuthority(options, bindingSha256);
   const result = options.authority.engine.capture(
-    inspectCommand(options.runtimeId).args,
+    inspectCommand(
+      options.runtimeId,
+      options.runtimeIdInspectField,
+      options.managedLabelKey ?? DEFAULT_MANAGED_LABEL_KEY,
+    ).args,
     INSPECT_TIMEOUT_MS,
   );
   requireCurrentEngineAuthority(options, bindingSha256);
@@ -1482,6 +1503,9 @@ function inspectDirect(
     options.runtimeId,
     options.sandboxName,
     options.providerDisplayName,
+    options.privatePidMode ?? "",
+    options.managedLabelValue ?? DEFAULT_MANAGED_LABEL_VALUE,
+    options.normalizeInspectionMounts ?? ((mounts) => mounts),
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -1491,12 +1515,24 @@ function inspectAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
   options: ContainerStateMutationOwnerOptions,
 ): DockerRuntimeObservation {
-  const result = scope.captureExact("target", inspectCommand, INSPECT_TIMEOUT_MS);
+  const result = scope.captureExact(
+    "target",
+    (runtimeId) =>
+      inspectCommand(
+        runtimeId,
+        options.runtimeIdInspectField,
+        options.managedLabelKey ?? DEFAULT_MANAGED_LABEL_KEY,
+      ),
+    INSPECT_TIMEOUT_MS,
+  );
   const observation = parseInspection(
     requireCommandSuccess(result, `${options.providerDisplayName} container inspection`),
     options.runtimeId,
     options.sandboxName,
     options.providerDisplayName,
+    options.privatePidMode ?? "",
+    options.managedLabelValue ?? DEFAULT_MANAGED_LABEL_VALUE,
+    options.normalizeInspectionMounts ?? ((mounts) => mounts),
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -1534,21 +1570,9 @@ function invokeHelperAuthorized(
   action: HelperAction,
   input: Buffer,
 ): DockerStateMutationHelperReceipt {
-  if (options.providerId === DOCKER_PROVIDER_ID) {
-    const capture: HelperTransportCapture = (command, timeoutMs) =>
-      scope.captureExact("target", () => command, timeoutMs);
-    return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
-  }
-  const result = scope.captureExact(
-    "target",
-    (runtimeId) => helperCommand(runtimeId, action),
-    helperTimeoutMs(action),
-    input,
-  );
-  return parseHelperReceipt(
-    requireCommandSuccess(result, `root helper ${action}`),
-    options.providerId,
-  );
+  const capture: HelperTransportCapture = (command, timeoutMs) =>
+    scope.captureExact("target", () => command, timeoutMs);
+  return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
 }
 
 function lifecycleInput(
@@ -1951,9 +1975,7 @@ function acquireAuthorizedReceipt(
   ) {
     fail("persisted state mutation intent does not match the lifecycle transaction");
   }
-  if (options.providerId === DOCKER_PROVIDER_ID) {
-    ensureHelperTransportAuthorized(scope, options, exactTransactionId);
-  }
+  ensureHelperTransportAuthorized(scope, options, exactTransactionId);
   signalSupervisorAuthorized(scope, options, "SIGSTOP");
   const receipt = invokeHelperAuthorized(
     scope,
@@ -2007,31 +2029,18 @@ function queryEstablishedReceipt(
       execution.transactionId,
       expectedFence?.providerHandle,
     );
-    const result =
-      options.providerId === DOCKER_PROVIDER_ID
-        ? invokeHelperTransport(
-            (command, timeoutMs) => {
-              guard();
-              const captured = options.authority.engine.capture(command.args, timeoutMs);
-              guard();
-              return captured;
-            },
-            options,
-            execution.transactionId,
-            action,
-            request,
-          )
-        : parseHelperReceipt(
-            requireCommandSuccess(
-              options.authority.engine.capture(
-                helperCommand(options.runtimeId, action).args,
-                helperTimeoutMs(action),
-                request,
-              ),
-              `root helper ${action}`,
-            ),
-            options.providerId,
-          );
+    const result = invokeHelperTransport(
+      (command, timeoutMs) => {
+        guard();
+        const captured = options.authority.engine.capture(command.args, timeoutMs);
+        guard();
+        return captured;
+      },
+      options,
+      execution.transactionId,
+      action,
+      request,
+    );
     guard();
     const receipt = result;
     validateReceipt(receipt, options, bindingSha256, before, currentRecord);
@@ -2134,7 +2143,11 @@ function releaseAuthorizedFence(
 export function createContainerStateMutationOwner(
   optionsInput: ContainerStateMutationOwnerOptions,
 ): ContainerStateMutationOwner {
-  const options = Object.freeze({ ...optionsInput });
+  const options = Object.freeze({
+    privatePidMode: "",
+    runtimeIdInspectField: "Id" as const,
+    ...optionsInput,
+  });
   boundedString(options.providerId, PROVIDER_ID, "provider identity");
   boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   boundedString(options.sandboxName, SAFE_NAME, "sandbox name");
@@ -2486,14 +2499,18 @@ function resolveExactLabeledRuntimeId(
   authority: ContainerStateMutationAuthority,
   sandboxName: string,
   providerDisplayName: string,
+  managedLabelKey = DEFAULT_MANAGED_LABEL_KEY,
+  managedLabelValue = DEFAULT_MANAGED_LABEL_VALUE,
 ): string {
+  boundedString(managedLabelKey, SAFE_LABEL_KEY, "managed runtime label key");
+  boundedString(managedLabelValue, SAFE_LABEL_VALUE, "managed runtime label value");
   const result = authority.engine.capture(
     [
       "ps",
       "-a",
       "--no-trunc",
       "--filter",
-      "label=openshell.ai/managed-by=openshell",
+      `label=${managedLabelKey}=${managedLabelValue}`,
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
       "--format",
@@ -2553,6 +2570,8 @@ function createSurfaceOwnerOptions(
     authority,
     input.sandboxName,
     options.providerDisplayName,
+    options.managedLabelKey,
+    options.managedLabelValue,
   );
   return {
     providerId: options.providerId,
@@ -2570,6 +2589,19 @@ function createSurfaceOwnerOptions(
     authority,
     engineAuthorityStore,
     lifecycleStore: createFilePersistedEngineLifecycleStore(stateDir),
+    ...(options.runtimeIdInspectField
+      ? { runtimeIdInspectField: options.runtimeIdInspectField }
+      : {}),
+    ...(options.privatePidMode === undefined ? {} : { privatePidMode: options.privatePidMode }),
+    ...(options.managedLabelKey === undefined
+      ? {}
+      : { managedLabelKey: options.managedLabelKey }),
+    ...(options.managedLabelValue === undefined
+      ? {}
+      : { managedLabelValue: options.managedLabelValue }),
+    ...(options.normalizeInspectionMounts === undefined
+      ? {}
+      : { normalizeInspectionMounts: options.normalizeInspectionMounts }),
   };
 }
 
@@ -2593,7 +2625,6 @@ function retireReleasedSurfaceStateMutations(
       }
     | undefined;
   lifecycleStore.retireReleasedStateMutations(input.sandboxName, (record) => {
-    if (options.providerId !== DOCKER_PROVIDER_ID) return;
     if (!cleanup) {
       const ownerOptions = createSurfaceOwnerOptions(input, options, "existing");
       cleanup = {

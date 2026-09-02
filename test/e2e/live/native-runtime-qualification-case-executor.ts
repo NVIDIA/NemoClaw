@@ -878,7 +878,15 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       },
     });
     expect(bundle.identity.id).toBe("podman");
-    expect(bundle.workload.profile.support).toBeNull();
+    expect(bundle.workload.profile).toMatchObject({
+      support: {
+        exactDigestReferences: true,
+        platforms: ["linux/amd64", "linux/arm64"],
+      },
+      hostArchitectures: ["amd64", "arm64"],
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+    });
     const hostInspection = bundle.preflightDoctor.inspectHost();
     if (hostInspection.status !== "ok") {
       throw new Error(`Podman host qualification failed: ${bounded(hostInspection.detail)}`);

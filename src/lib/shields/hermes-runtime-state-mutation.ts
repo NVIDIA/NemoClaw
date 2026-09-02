@@ -23,6 +23,17 @@ import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provi
 import { prepareAgentDefinitionProtectionTransitionPlan } from "../onboard/runtime-provider/state-mutation";
 import { resolveCurrentAgentDefinition } from "../sandbox/agent-config";
 import type { SandboxEntry } from "../state/registry/types";
+import { parseLiveSandboxEntries } from "../runtime-recovery";
+
+export const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
+
+/** Parse the Hermes sandbox phase from OpenShell sandbox-list output. */
+export function parseHermesRuntimeProviderSandboxPhase(
+  sandboxName: string,
+  output: string,
+): string | null {
+  return parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null;
+}
 
 export const HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH =
   "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json";
@@ -334,10 +345,25 @@ function releaseTarget(
   }
 }
 
+/** Select the provider protocol only when the registered bundle owns it. */
+export function hasHermesRuntimeProviderStateMutationAuthority(
+  sandbox: SandboxEntry | null,
+  providers: RuntimeProviderBundleRegistry = currentRuntimeProviderBundles(),
+): boolean {
+  if (sandbox?.agent !== "hermes" || sandbox.workload?.kind !== "managed-image") return false;
+  const provider = requireRuntimeProviderBundleForSandbox(sandbox, providers);
+  return (
+    provider.lifecycle.supported === true &&
+    provider.stateMutation.supported === true &&
+    provider.stateMutation.providerId === provider.identity.id
+  );
+}
+
 /**
- * Select the new protocol only for a current managed Hermes Docker image. The
- * fixed helper validates the same capability again after the durable runtime
- * claim is acquired, so this compatibility probe never grants authority.
+ * Select the new protocol only for a current managed Hermes image whose
+ * provider owns lifecycle and state-mutation authority. The fixed helper
+ * validates the same capability again after the durable runtime claim is
+ * acquired, so this compatibility probe never grants authority.
  */
 export function supportsHermesRuntimeProviderStateMutation(
   sandbox: SandboxEntry | null,
@@ -345,17 +371,15 @@ export function supportsHermesRuntimeProviderStateMutation(
   providers: RuntimeProviderBundleRegistry = currentRuntimeProviderBundles(),
 ): boolean {
   if (
-    sandbox?.agent !== "hermes" ||
-    sandbox.openshellDriver?.trim().toLowerCase() !== "docker" ||
-    sandbox.workload?.kind !== "managed-image" ||
+    !hasHermesRuntimeProviderStateMutationAuthority(sandbox, providers) ||
+    !sandbox ||
     !sandbox.lifecycleGeneration ||
     capability?.content !== HERMES_RUNTIME_STATE_MUTATION_CAPABILITY ||
     capability.metadata !== HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA
   ) {
     return false;
   }
-  const provider = requireRuntimeProviderBundleForSandbox(sandbox, providers);
-  return provider.identity.id === "docker" && provider.stateMutation.supported === true;
+  return true;
 }
 
 /** Execute one complete Hermes protection transition under its provider fence. */

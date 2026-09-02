@@ -13,6 +13,7 @@ import { redactFull } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import { registryEntryGatewayPort } from "../../state/gateway-registry";
 import * as registry from "../../state/registry";
+import { settleAgentForwardPortsForRebuild } from "../../tunnel/agent-forward-stop";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { type RebuildSandboxEntry, warnUnpreservedUserManagedFiles } from "./rebuild-flow-helpers";
@@ -352,23 +353,6 @@ export async function runRebuildDestroyPhase(
     }
   }
 
-  // MCP preparation can await external systems. Re-read the registry at the
-  // synchronous delete edge so those checks and deletion use one target.
-  if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
-    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-      sandboxName,
-      rebuildDetachedMcpProviderEntries,
-      rebuildScrubbedMcpAdapterEntries,
-    );
-    relockShieldsIfNeeded(true);
-    bail(
-      mcpRecoveryFailure
-        ? `Sandbox delete target changed during rebuild preparation; MCP provider recovery also failed: ${mcpRecoveryFailure}`
-        : "Sandbox delete target changed during rebuild preparation.",
-    );
-    return null;
-  }
-
   if (validateAtDeleteEdge) {
     let validation: RebuildDeleteValidationResult;
     try {
@@ -396,6 +380,26 @@ export async function runRebuildDestroyPhase(
       );
       return null;
     }
+  }
+
+  // Rebuild keeps the gateway/session alive, but the replacement must reclaim
+  // the old sandbox's host forwards. Stop only forwards proven to belong to
+  // this registered sandbox, then re-read the registry at the synchronous
+  // delete edge so cleanup and deletion still use one target.
+  settleAgentForwardPortsForRebuild(sandboxName, { info: log, warn: log });
+  if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+    );
+    relockShieldsIfNeeded(true);
+    bail(
+      mcpRecoveryFailure
+        ? `Sandbox delete target changed during rebuild preparation; MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        : "Sandbox delete target changed during rebuild preparation.",
+    );
+    return null;
   }
 
   // MCP adapter entries are already detached and scrubbed here. A journal write
@@ -509,6 +513,12 @@ export async function runRebuildDestroyPhase(
     input.onDeleteStateAmbiguous?.();
     const detail = error instanceof Error ? error.message : String(error);
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
+    return null;
+  }
+  if (!settleAgentForwardPortsForRebuild(sandboxName, { info: log, warn: log })) {
+    bail(
+      `Sandbox '${sandboxName}' was deleted, but its host port forwards were not released; retry rebuild after the forward listener stops.`,
+    );
     return null;
   }
   try {
