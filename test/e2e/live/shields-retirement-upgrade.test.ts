@@ -25,7 +25,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -62,7 +62,7 @@ const GATEWAY_STATE_DIR = path.join(
   "openshell-docker-gateway",
 );
 const GATEWAY_PID_FILE = path.join(GATEWAY_STATE_DIR, "openshell-gateway.pid");
-const CANDIDATE_CLI = process.env.NEMOCLAW_CLI_BIN ?? path.join(REPO_ROOT, "bin", "nemoclaw.js");
+const CANDIDATE_CLI = process.env.NEMOCLAW_CLI_BIN ?? CLI_ENTRYPOINT;
 const EXPECTED_CANDIDATE_SHA = process.env.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
 const COMMAND_TIMEOUT_MS = 2 * 60_000;
 const TEST_TIMEOUT_MS = 115 * 60_000;
