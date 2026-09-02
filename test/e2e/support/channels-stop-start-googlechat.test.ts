@@ -449,11 +449,11 @@ describe("channels stop/start Google Chat live composition", () => {
   });
 
   it.each([
-    [{}, "update"],
-    [{ replaceExisting: true }, "create"],
+    [{}, "update", []],
+    [{ replaceExisting: true }, "create", ["--type", "google-chat-bridge"]],
   ] as const)(
     "reconciles an existing fixture provider with options %o",
-    (options, expectedMutation) => {
+    (options, expectedMutation, expectedMutationArgs) => {
       const providerDependencies: FixtureProviderDependencies = {
         upsertMessagingProviders: vi.fn(() => []),
       };
@@ -488,13 +488,9 @@ describe("channels stop/start Google Chat live composition", () => {
           "e2e-oc-ch-cycle-googlechat-bridge",
           "--credential",
           "GOOGLE_CHAT_ACCESS_TOKEN",
+          ...expectedMutationArgs,
         ]),
       );
-      if (expectedMutation === "create") {
-        expect(mutation?.args).toEqual(
-          expect.arrayContaining(["--type", "google-chat-bridge"]),
-        );
-      }
       expect(mutation?.env).toEqual({
         GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN,
       });
