@@ -41,7 +41,7 @@ Keep monitoring bounded. Return states, identifiers, and short excerpts; read fu
 
 | Result | Action |
 |---|---|
-| Candidate-owned valid finding or failed check | Group by cause and repair the complete group. |
+| Candidate-owned valid finding or failed check that is in scope and not ambiguous, risky, broad, or design-changing | Group by cause and repair the complete group. |
 | Inherited finding or failed check | Leave the candidate unchanged. Preserve the base evidence and report the disposition. |
 | Duplicate, style suggestion, or false positive | Leave unchanged and preserve the evidence for its disposition. |
 | New scope or ambiguous, risky, broad, or design-changing feedback | Ask the user. Do not add the new surface as a repair. |
