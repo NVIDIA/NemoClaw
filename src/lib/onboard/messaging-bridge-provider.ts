@@ -115,7 +115,7 @@ export interface EnsureMessagingBridgeProfilesDeps {
   readonly readFileSync?: (file: string) => string;
 }
 
-export interface MatchRegisteredStaticMessagingProfileDeps {
+export interface MatchRegisteredMessagingBridgeProfileDeps {
   readonly root: string;
   readonly runOpenshell: RunOpenshell;
   readonly profiles?: readonly MessagingBridgeProfile[];
@@ -178,7 +178,7 @@ function credentialBoundary(doc: Record<string, unknown>): Record<string, unknow
   };
 }
 
-function staticProfileMatchesCheckedInBoundary(
+function profileMatchesCheckedInBoundary(
   profile: MessagingBridgeProfile,
   exported: string,
   readFileSync: (file: string) => string,
@@ -192,11 +192,12 @@ function staticProfileMatchesCheckedInBoundary(
       actualBoundary !== null &&
       expectedBoundary !== null &&
       expectedBoundary.id === profile.profileId &&
-      Array.isArray(expectedBoundary.endpoints) &&
-      expectedBoundary.endpoints.length === 0 &&
-      Array.isArray(expectedBoundary.binaries) &&
-      expectedBoundary.binaries.length === 0 &&
-      expectedBoundary.inference_capable === false &&
+      (profile.strategy !== null ||
+        (Array.isArray(expectedBoundary.endpoints) &&
+          expectedBoundary.endpoints.length === 0 &&
+          Array.isArray(expectedBoundary.binaries) &&
+          expectedBoundary.binaries.length === 0 &&
+          expectedBoundary.inference_capable === false)) &&
       isDeepStrictEqual(actualBoundary, expectedBoundary)
     );
   } catch {
@@ -204,13 +205,13 @@ function staticProfileMatchesCheckedInBoundary(
   }
 }
 
-/** Compare a registered static profile with its checked-in credential boundary. */
-export function matchesRegisteredStaticMessagingProfile(
+/** Compare a registered bridge profile with its checked-in credential boundary. */
+export function matchesRegisteredMessagingBridgeProfile(
   providerType: string,
-  deps: MatchRegisteredStaticMessagingProfileDeps,
+  deps: MatchRegisteredMessagingBridgeProfileDeps,
 ): boolean | null {
   const profile = (deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root })).find(
-    (candidate) => candidate.profileId === providerType && candidate.strategy === null,
+    (candidate) => candidate.profileId === providerType,
   );
   if (!profile) return null;
   const exported = deps.runOpenshell(
@@ -218,7 +219,7 @@ export function matchesRegisteredStaticMessagingProfile(
     { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
   );
   if (exported.status !== 0) return false;
-  return staticProfileMatchesCheckedInBoundary(
+  return profileMatchesCheckedInBoundary(
     profile,
     bufferOrStringToText(exported.stdout),
     deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
@@ -464,9 +465,13 @@ export function ensureMessagingBridgeProfiles(
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
   const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
 
-  const rejectMismatchedStaticProfile = (profile: MessagingBridgeProfile): void => {
+  const rejectMismatchedProfile = (profile: MessagingBridgeProfile): void => {
+    const contract =
+      profile.strategy === null
+        ? `endpointless ${profile.channelId} credential contract`
+        : `checked-in ${profile.channelId} credential boundary`;
     errorLog(
-      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's endpointless ${profile.channelId} credential contract.`,
+      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's ${contract}.`,
     );
     errorLog("    Remove the conflicting profile and re-run onboarding.");
     exit(1);
@@ -485,14 +490,13 @@ export function ensureMessagingBridgeProfiles(
     );
     if (alreadyRegistered.status === 0) {
       if (
-        profile.strategy === null &&
-        !staticProfileMatchesCheckedInBoundary(
+        !profileMatchesCheckedInBoundary(
           profile,
           bufferOrStringToText(alreadyRegistered.stdout),
           readFileSync,
         )
       ) {
-        rejectMismatchedStaticProfile(profile);
+        rejectMismatchedProfile(profile);
         return;
       }
       continue;
@@ -517,29 +521,26 @@ export function ensureMessagingBridgeProfiles(
     // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
     const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
     if (/already exists/i.test(rawDiagnostic)) {
-      if (profile.strategy !== null) continue;
       const racedProfile = deps.runOpenshell(
         ["provider", "profile", "export", profile.profileId, "--output", "json"],
         { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
       );
       if (
         racedProfile.status !== 0 ||
-        !staticProfileMatchesCheckedInBoundary(
+        !profileMatchesCheckedInBoundary(
           profile,
           bufferOrStringToText(racedProfile.stdout),
           readFileSync,
         )
       ) {
-        rejectMismatchedStaticProfile(profile);
+        rejectMismatchedProfile(profile);
         return;
       }
       continue;
     }
 
     const diagnostic = compactText(deps.redact(rawDiagnostic));
-    errorLog(
-      `\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`,
-    );
+    errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
     if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
     errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
     exit(result.status || 1);

@@ -205,11 +205,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
-    const staticProfileMatches = messagingBridgeProvider.matchesRegisteredStaticMessagingProfile(
+    const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (staticProfileMatches === false) return { kind: "indeterminate" };
+    if (profileMatches === false) return { kind: "indeterminate" };
     return gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
       {
         name: binding.name,

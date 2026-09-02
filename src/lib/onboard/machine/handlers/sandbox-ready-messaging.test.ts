@@ -1,10 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { hashCredential } from "../../../security/credential-hash";
 import { createSession } from "../../../state/onboard-session";
+import {
+  type CredentialProviderRegistrationDeps,
+  createCredentialProviderRegistration,
+} from "../../credential-provider-registration";
 import { detectUnconfiguredMessagingChannels } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
 import {
@@ -125,6 +132,85 @@ describe("handleSandboxState Ready sandbox messaging", () => {
       }),
     ).rejects.toThrow(
       /Ready sandbox 'saved'.*running sandbox and durable messaging plan were not changed/u,
+    );
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(recordStateSkipped).not.toHaveBeenCalled();
+    expect(writePlanToEnv).not.toHaveBeenCalled();
+    expect(getSession().messagingPlan).toEqual(registryPlan);
+  });
+
+  it("rejects Ready reuse when a Google Chat bridge profile has added authority", async () => {
+    const registryPlan = makeMinimalPlan("saved", "openclaw", ["googlechat"]);
+    const session = createSession({ sandboxName: "saved", messagingPlan: registryPlan });
+    session.steps.sandbox.status = "complete";
+    const profilePath = path.join(
+      process.cwd(),
+      "src/lib/messaging/channels/googlechat/provider-profile/openclaw.yaml",
+    );
+    const checkedInProfile = YAML.parse(fs.readFileSync(profilePath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export")
+        ? {
+            status: 0,
+            stdout: JSON.stringify({
+              ...checkedInProfile,
+              binaries: [...(checkedInProfile.binaries as string[]), "/usr/bin/curl"],
+            }),
+          }
+        : {
+            status: 0,
+            stdout:
+              "Name: saved-googlechat-bridge\nType: google-chat-bridge\n" +
+              "Credential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n",
+          },
+    );
+    const registration = createCredentialProviderRegistration({
+      root: process.cwd(),
+      runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
+      getGatewayName: () => "nemoclaw",
+      getCredential: () => null,
+      updateSession: (mutator) => mutator(session) ?? session,
+      stagedLegacyValues: new Map(),
+      migratedLegacyKeys: new Set(),
+      persistMigratedLegacyKeys: vi.fn(),
+    });
+    const recordStateSkipped = vi.fn(async () => session);
+    const writePlanToEnv = vi.fn();
+    detectUnconfiguredMessagingChannelsMock.mockReturnValue(["googlechat"]);
+    const { deps, calls, getSession } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxRegistryEntry: () => ({
+          name: "saved",
+          pendingRouteReservation: true,
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          toolDisclosure: "progressive",
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+        }),
+        getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
+        inspectGatewayCredential: registration.inspectGatewayCredential,
+        writePlanToEnv,
+        recordStateSkipped,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+      }),
+    ).rejects.toThrow(
+      /Could not inspect messaging provider 'saved-googlechat-bridge'.*No messaging state was changed/u,
     );
 
     expect(calls.createSandbox).not.toHaveBeenCalled();

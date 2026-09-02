@@ -11,7 +11,7 @@ import {
   configureMessagingBridgeRefreshes,
   ensureMessagingBridgeProfiles,
   listMessagingBridgeProfiles,
-  matchesRegisteredStaticMessagingProfile,
+  matchesRegisteredMessagingBridgeProfile,
   MESSAGING_BRIDGE_PENDING_VALUE,
   type MessagingBridgeProfile,
   refreshStatusForCredential,
@@ -48,6 +48,32 @@ const GC_PROFILE: MessagingBridgeProfile = {
   scopes: ["https://www.googleapis.com/auth/chat.bot"],
   secretMaterialKeys: ["private_key"],
   sourceSecretEnv: "GOOGLECHAT_SERVICE_ACCOUNT",
+};
+
+const GC_PROFILE_DOC = {
+  id: GC_PROFILE.profileId,
+  credentials: [
+    {
+      name: "access_token",
+      env_vars: [GC_PROFILE.credentialKey],
+      required: true,
+      auth_style: "bearer",
+      header_name: "Authorization",
+      query_param: "",
+      refresh: {
+        strategy: GC_PROFILE.strategy,
+        scopes: GC_PROFILE.scopes,
+        material: [
+          { name: "client_email", required: true },
+          { name: "private_key", required: true, secret: true },
+          { name: "scope" },
+        ],
+      },
+    },
+  ],
+  endpoints: [{ host: "chat.googleapis.com", port: 443 }],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+  inference_capable: false,
 };
 
 // Google Chat is the one channel shipping a profile per agent, so a sandbox must
@@ -434,9 +460,9 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(result.ok).toBe(false);
     // Six probes at a minute each cross the five-minute deadline well before
     // the fifty-attempt cap.
-    expect(
-      runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length,
-    ).toBeLessThan(10);
+    expect(runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length).toBeLessThan(
+      10,
+    );
   });
 
   it("bounds each status probe with a command timeout", () => {
@@ -503,9 +529,17 @@ describe("ensureMessagingBridgeProfiles", () => {
   it("skips the import when the profile is already registered", () => {
     // A fresh onboard registers bridge providers twice; the second pass must not
     // re-import and trigger OpenShell's "already exists / import failed" output.
-    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({ status: 0 }));
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: JSON.stringify(GC_PROFILE_DOC),
+    }));
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
+      ...baseDeps(),
+      readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
+      runOpenshell,
+      exit,
+    });
     expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
     const exportCall = runOpenshell.mock.calls.find((call) => call[0].includes("export"));
     expect(exportCall?.[0]).toEqual([
@@ -603,11 +637,64 @@ describe("ensureMessagingBridgeProfiles", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(3);
   });
 
-  it("tolerates an already-registered profile without exiting", () => {
-    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "profile already exists" }));
+  it.each([
+    {
+      condition: "is already registered",
+      results: [
+        {
+          status: 0,
+          stdout: JSON.stringify({
+            ...GC_PROFILE_DOC,
+            endpoints: [...GC_PROFILE_DOC.endpoints, { host: "untrusted.invalid", port: 443 }],
+          }),
+        },
+      ],
+    },
+    {
+      condition: "wins an import race",
+      results: [
+        { status: 1 },
+        { status: 1, stderr: "profile already exists" },
+        {
+          status: 0,
+          stdout: JSON.stringify({
+            ...GC_PROFILE_DOC,
+            binaries: [...GC_PROFILE_DOC.binaries, "/usr/bin/curl"],
+          }),
+        },
+      ],
+    },
+  ])("rejects a mismatched refreshing profile that $condition", ({ results }) => {
+    const queuedResults = [...results];
+    const runOpenshell = vi.fn(() => queuedResults.shift() ?? { status: 1 });
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
+      ...baseDeps(),
+      readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
+      runOpenshell,
+      exit,
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(runOpenshell).toHaveBeenCalledTimes(results.length);
+  });
+
+  it("accepts a matching refreshing profile that wins an import race", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(GC_PROFILE_DOC) });
+    const exit = vi.fn(() => undefined as never);
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
+      ...baseDeps(),
+      readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
+      runOpenshell,
+      exit,
+    });
     expect(exit).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenCalledTimes(3);
   });
 
   it("exits when profile import fails for another reason", () => {
@@ -618,7 +705,7 @@ describe("ensureMessagingBridgeProfiles", () => {
   });
 });
 
-describe("matchesRegisteredStaticMessagingProfile", () => {
+describe("matchesRegisteredMessagingBridgeProfile", () => {
   it("accepts only the checked-in static credential boundary", () => {
     const runOpenshell = vi.fn(() => ({
       status: 0,
@@ -626,7 +713,7 @@ describe("matchesRegisteredStaticMessagingProfile", () => {
     }));
 
     expect(
-      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+      matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
         root: "/repo",
         profiles: [DISCORD_PROFILE],
         readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
@@ -649,10 +736,37 @@ describe("matchesRegisteredStaticMessagingProfile", () => {
     }));
 
     expect(
-      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+      matchesRegisteredMessagingBridgeProfile(DISCORD_PROFILE.profileId, {
         root: "/repo",
         profiles: [DISCORD_PROFILE],
         readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+        runOpenshell,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a registered refreshing profile with altered refresh authority", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({
+        ...GC_PROFILE_DOC,
+        credentials: [
+          {
+            ...GC_PROFILE_DOC.credentials[0],
+            refresh: {
+              ...GC_PROFILE_DOC.credentials[0].refresh,
+              scopes: [...GC_PROFILE.scopes, "https://www.googleapis.com/auth/cloud-platform"],
+            },
+          },
+        ],
+      }),
+    }));
+
+    expect(
+      matchesRegisteredMessagingBridgeProfile(GC_PROFILE.profileId, {
+        root: "/repo",
+        profiles: [GC_PROFILE],
+        readFileSync: () => YAML.stringify(GC_PROFILE_DOC),
         runOpenshell,
       }),
     ).toBe(false);
@@ -662,7 +776,7 @@ describe("matchesRegisteredStaticMessagingProfile", () => {
     const runOpenshell = vi.fn();
 
     expect(
-      matchesRegisteredStaticMessagingProfile("generic", {
+      matchesRegisteredMessagingBridgeProfile("generic", {
         root: "/repo",
         profiles: [DISCORD_PROFILE],
         runOpenshell,
