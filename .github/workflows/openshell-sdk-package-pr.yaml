@@ -39,6 +39,10 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/scorecard/read-artifact-zip.mts
+            tools/e2e/base-image-publication.mts
+            tools/e2e/exact-artifact-download.mts
+            tools/e2e/openshell-sdk-package-receipt.mts
           sparse-checkout-cone-mode: false
 
       - name: Setup Node.js for reviewed package download
@@ -59,10 +63,24 @@ jobs:
           [ -n "$artifact_path" ]
           printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
 
+      - name: Record authenticated SDK producer receipt
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          export CHECKED_OUT_SHA="$(git rev-parse --verify HEAD)"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/openshell-sdk-package-receipt.mts create \
+            "${{ steps.package.outputs.artifact_path }}" \
+            "${RUNNER_TEMP}/openshell-sdk/receipt.json"
+
       - name: Upload verified OpenShell SDK archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: openshell-sdk-${{ github.event.pull_request.head.sha }}
-          path: ${{ steps.package.outputs.artifact_path }}
+          name: openshell-sdk-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openshell-sdk/
           if-no-files-found: error
           retention-days: 1

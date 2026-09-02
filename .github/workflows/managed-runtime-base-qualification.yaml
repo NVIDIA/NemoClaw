@@ -1,0 +1,316 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Exact Base Managed Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open same-repository pull request number
+        required: true
+        type: string
+      candidate_sha:
+        description: Candidate commit tested by the managed-image run
+        required: true
+        type: string
+      base_sha:
+        description: Comparison base commit for the identical scenario
+        required: true
+        type: string
+      candidate_run_id:
+        description: Managed-image workflow run ID
+        required: true
+        type: string
+      candidate_run_attempt:
+        description: Managed-image workflow run attempt
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: managed-runtime-base-${{ inputs.pr_number }}-${{ inputs.candidate_sha }}-${{ inputs.base_sha }}
+  cancel-in-progress: false
+
+jobs:
+  authenticate-candidate:
+    name: Authenticate candidate managed runtime evidence
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      base_sha: ${{ steps.select.outputs.base_sha }}
+      candidate_outcome: ${{ steps.select.outputs.candidate_outcome }}
+      candidate_ready: ${{ steps.select.outputs.candidate_ready }}
+      candidate_sha: ${{ steps.select.outputs.candidate_sha }}
+    steps:
+      - name: Check out trusted comparison controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+
+      - id: select
+        name: Bind the candidate run and artifacts
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/managed-runtime-comparison.mts
+          select-candidate
+          "${RUNNER_TEMP}/managed-runtime-candidate/selection.json"
+
+      - name: Preserve authenticated candidate selection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-candidate-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-runtime-candidate/selection.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  exact-base-activation:
+    name: Exact base all-agent managed runtime activation
+    needs: authenticate-candidate
+    if: >-
+      needs.authenticate-candidate.result == 'success' &&
+      needs.authenticate-candidate.outputs.candidate_ready == 'true' &&
+      (needs.authenticate-candidate.outputs.candidate_outcome == 'success' ||
+      needs.authenticate-candidate.outputs.candidate_outcome == 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    env:
+      BASE_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
+      CANDIDATE_SHA: ${{ needs.authenticate-candidate.outputs.candidate_sha }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/base/e2e-artifacts/live/managed-image-activation
+      E2E_JOB: "1"
+      E2E_TARGET_ID: managed-image-activation
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/base/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
+      NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_MANAGED_ACTIVATION_CATALOG: ${{ runner.temp }}/managed-runtime-base/catalog.json
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - name: Check out trusted comparison controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Check out exact comparison base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authenticate-candidate.outputs.base_sha }}
+          path: base
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          registry-url: https://npm.pkg.github.com
+          scope: "@nvidia"
+
+      - name: Verify base and workflow source identities
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C base rev-parse --verify HEAD)" = "$BASE_SHA"
+          test "$(git -C trusted rev-parse --verify HEAD)" = "$WORKFLOW_SHA"
+
+      - id: publication
+        name: Select the production managed-image cohort for the base
+        working-directory: base
+        env:
+          EXPECTED_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1"
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
+          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1"
+        run: |
+          set -euo pipefail
+          export GITHUB_REF=refs/heads/main
+          export GITHUB_SHA="$EXPECTED_SHA"
+          node --experimental-strip-types --no-warnings \
+            ../trusted/tools/e2e/base-image-publication.mts \
+            --wait-seconds 300 --poll-seconds 30
+
+      - name: Download the authenticated base managed-image cohort
+        working-directory: base
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_ARTIFACT_KIND: managed-image-cohort
+          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          ../trusted/tools/e2e/exact-artifact-download.mts
+          "${RUNNER_TEMP}/managed-runtime-base/cohort"
+
+      - id: cohort
+        name: Validate the base cohort and materialize its runtime catalog
+        working-directory: base
+        env:
+          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          ../trusted/tools/e2e/managed-image-cohort-contract.mts
+          "${RUNNER_TEMP}/managed-runtime-base/cohort/cohort.json"
+          "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+
+      - name: Install exact-base dependencies
+        working-directory: base
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: npm ci --ignore-scripts
+
+      - name: Build the exact-base CLI
+        working-directory: base
+        run: npm run build:cli
+
+      - name: Install the exact-base OpenShell CLI
+        working-directory: base
+        run: env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN bash scripts/install-openshell.sh
+
+      - id: runtime
+        name: Record the base OpenShell runtime identity
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          version="$("$OPENSHELL_BIN" --version)"
+          [[ "$version" != *$'\n'* && "$version" != *$'\r'* && -n "$version" ]]
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - id: activation
+        name: Run the identical exact-base managed runtime scenario
+        working-directory: base
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$BASE_SHA"
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/managed-image-activation-e2e.test.ts
+
+      - name: Record the base activation receipt
+        if: always()
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MANAGED_IMAGE_REVISION: ${{ steps.publication.outputs.head_sha }}
+          MANAGED_RUNTIME_CATALOG: ${{ env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG }}
+          MANAGED_RUNTIME_EVIDENCE_DIRECTORY: ${{ env.E2E_ARTIFACT_DIR }}
+          MANAGED_RUNTIME_JOB: Exact base all-agent managed runtime activation
+          MANAGED_RUNTIME_OUTCOME: ${{ steps.activation.outcome }}
+          MANAGED_RUNTIME_ROLE: base
+          MANAGED_RUNTIME_SOURCE_SHA: ${{ needs.authenticate-candidate.outputs.base_sha }}
+          MANAGED_RUNTIME_WORKFLOW_PATH: .github/workflows/managed-runtime-base-qualification.yaml
+          OPENSHELL_VERSION: ${{ steps.runtime.outputs.version }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          trusted/tools/e2e/managed-runtime-comparison.mts
+          record
+          "${RUNNER_TEMP}/managed-runtime-base-receipt/receipt.json"
+
+      - name: Upload exact-base activation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-base-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.E2E_ARTIFACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload exact-base activation receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-base-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-runtime-base-receipt/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  classify:
+    name: Classify candidate and exact-base evidence
+    needs: [authenticate-candidate, exact-base-activation]
+    if: always() && needs.authenticate-candidate.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out trusted comparison controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+
+      - name: Download authenticated candidate selection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: managed-runtime-candidate-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-runtime-candidate
+
+      - id: classify
+        name: Compare authenticated scenario receipts
+        continue-on-error: true
+        env:
+          BASE_JOB_CONCLUSION: ${{ needs.exact-base-activation.result }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/managed-runtime-comparison.mts
+          classify
+          "${RUNNER_TEMP}/managed-runtime-candidate/selection.json"
+          "${RUNNER_TEMP}/managed-runtime-comparison/comparison.json"
+
+      - name: Preserve managed runtime comparison receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: managed-runtime-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-runtime-comparison/comparison.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Propagate the comparison classification
+        if: steps.classify.outcome != 'success'
+        run: |
+          echo "ERROR: managed runtime comparison did not pass; inspect the comparison receipt." >&2
+          exit 1
