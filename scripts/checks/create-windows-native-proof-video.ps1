@@ -313,7 +313,7 @@ public static class NemoClawProofVideoEncoder
         foreach (var imagePath in imagePaths)
         {
             var image = await StorageFile.GetFileFromPathAsync(imagePath);
-            var clip = await MediaClip.CreateFromImageFile(
+            var clip = await MediaClip.CreateFromImageFileAsync(
                 image,
                 TimeSpan.FromMilliseconds(millisecondsPerFrame));
             composition.Clips.Add(clip);
