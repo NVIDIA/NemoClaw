@@ -196,11 +196,11 @@ jobs:
             "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
             "${contracts[@]}"
 
-      - name: Install candidate dependencies
+      - name: Install candidate dependencies without package credentials
         working-directory: candidate
-        env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
-        run: npm ci --ignore-scripts
+        run: >-
+          env -u GITHUB_TOKEN -u NODE_AUTH_TOKEN
+          bash ../trusted/.github/actions/ci-install-dependencies.sh
 
       - name: Build exact candidate CLI
         working-directory: candidate
