@@ -451,8 +451,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
-  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
-    errors.push("Manual PR checkout validation must use the public PR metadata endpoint");
+  if (
+    validation.env?.GITHUB_TOKEN !==
+    "${{ steps.candidate_authorization.outputs.nvidia_owned == 'true' && github.token || '' }}"
+  ) {
+    errors.push(
+      "Manual PR checkout validation token must be limited to authenticated NVIDIA-owned revisions",
+    );
   }
   if (
     validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
@@ -468,19 +473,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "checkout_sha changed before execution",
     "base_sha changed before execution",
     '"$NVIDIA_OWNED" == "true"',
+    '[[ -n "$GITHUB_TOKEN" ]]',
+    'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
+    '"${auth_args[@]}"',
     "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
     }
   }
-  if (
-    validationSource.includes("Authorization: Bearer") ||
-    Object.hasOwn(validation.env ?? {}, "GITHUB_TOKEN")
-  ) {
-    errors.push("Manual PR checkout validation must use public PR metadata without a job token");
-  }
-
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
