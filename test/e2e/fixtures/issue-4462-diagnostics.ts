@@ -128,21 +128,23 @@ export function buildIssue4462DiagnosticsCommand(
   return ["node", "-e", PROJECT_PAIRING_DIAGNOSTICS_PROGRAM, ...logPaths];
 }
 
-/** Preserve startup pairing evidence without replacing the scenario's primary failure. */
+/** Preserve startup pairing evidence and report whether its command completed successfully. */
 export async function captureIssue4462FailureDiagnostics(
   sandbox: Pick<SandboxClient, "exec">,
   options: Issue4462FailureDiagnosticsOptions,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await sandbox.exec(options.sandboxName, buildIssue4462DiagnosticsCommand(), {
+    const result = await sandbox.exec(options.sandboxName, buildIssue4462DiagnosticsCommand(), {
       artifactName: "failure-openclaw-pairing-diagnostics",
       captureLimitBytes: 1024 * 1024,
       env: options.env,
       redactionValues: [...options.redactionValues],
       timeoutMs: 30_000,
     });
+    return result.exitCode === 0;
   } catch {
     // Preserve the primary failure when the sandbox or its logs are unavailable.
+    return false;
   }
 }
 
@@ -153,7 +155,7 @@ export function trackIssue4462FailureDiagnostics(
   env: NodeJS.ProcessEnv,
   redactionValues: readonly string[],
 ): void {
-  cleanup.trackDisposable("capture OpenClaw pairing failure diagnostics", () =>
-    captureIssue4462FailureDiagnostics(sandbox, { env, redactionValues, sandboxName }),
-  );
+  cleanup.trackDisposable("capture OpenClaw pairing failure diagnostics", async () => {
+    await captureIssue4462FailureDiagnostics(sandbox, { env, redactionValues, sandboxName });
+  });
 }

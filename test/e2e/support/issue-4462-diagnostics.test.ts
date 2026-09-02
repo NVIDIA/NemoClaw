@@ -18,11 +18,13 @@ describe("pairing failure evidence", () => {
   it("invokes structured auto-pair and gateway diagnostics with fixed arguments (#9844)", async () => {
     const exec = vi.fn(async () => ({ exitCode: 0 }));
 
-    await captureIssue4462FailureDiagnostics({ exec } as never, {
-      env: { PATH: "/usr/bin" },
-      redactionValues: ["secret-api-key"],
-      sandboxName: "issue-4462",
-    });
+    await expect(
+      captureIssue4462FailureDiagnostics({ exec } as never, {
+        env: { PATH: "/usr/bin" },
+        redactionValues: ["secret-api-key"],
+        sandboxName: "issue-4462",
+      }),
+    ).resolves.toBe(true);
 
     expect(exec).toHaveBeenCalledExactlyOnceWith(
       "issue-4462",

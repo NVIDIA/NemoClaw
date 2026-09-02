@@ -49,7 +49,7 @@ type OnboardPairingSession = {
 type OnboardPairingReconciliationOptions<T extends CommandExitResult> = {
   expectedFromDockerfile: string;
   sandboxName: string;
-  captureDiagnostics(): Promise<void>;
+  captureDiagnostics(): Promise<boolean>;
   listSandbox(): Promise<T>;
   loadSession(): OnboardPairingSession | null;
   resolveTarget(): PairingTarget | null;
@@ -135,7 +135,7 @@ export async function reconcileOpenClawPluginOnboardPairing<T extends CommandExi
   options: OnboardPairingReconciliationOptions<T>,
 ): Promise<boolean> {
   try {
-    await options.captureDiagnostics();
+    if (!(await options.captureDiagnostics())) return false;
     const list = await options.listSandbox();
     if (list.exitCode !== 0 || !outputContainsReadySandbox(list, options.sandboxName)) return false;
     const target = options.resolveTarget();
