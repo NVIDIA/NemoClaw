@@ -51,6 +51,7 @@ function createDoctorHarness(
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
+  ollamaInventoryProbeSpy: MockInstance;
   inspectMutableConfigPermsSpy: MockInstance;
   loadAgentSpy: MockInstance;
   probeSandboxInferenceGatewayHealthSpy: MockInstance;
@@ -192,6 +193,10 @@ function createDoctorHarness(
     endpoint: "http://127.0.0.1:11434/v1/chat/completions",
     detail: "healthy",
   });
+  const ollamaInventoryProbeSpy = vi.spyOn(health, "probeOllamaHostInventory").mockReturnValue({
+    endpoint: "http://127.0.0.1:11434/api/tags",
+    inventory: ["m"],
+  });
   const probeSandboxInferenceGatewayHealthSpy = vi
     .spyOn(inferenceRouteHealth, "probeSandboxInferenceGatewayHealth")
     .mockResolvedValue({
@@ -274,6 +279,7 @@ function createDoctorHarness(
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
+    ollamaInventoryProbeSpy,
     inspectMutableConfigPermsSpy,
     loadAgentSpy,
     probeSandboxInferenceGatewayHealthSpy,
@@ -492,6 +498,7 @@ describe("runSandboxDoctor flow", () => {
         ]),
       );
       expect(exitSpy).not.toHaveBeenCalled();
+      expect(harness.ollamaInventoryProbeSpy).toHaveBeenCalledOnce();
       expect(harness.logSpy).not.toHaveBeenCalled();
     },
   );
