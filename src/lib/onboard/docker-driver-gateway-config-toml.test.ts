@@ -165,6 +165,7 @@ describe("docker-driver-gateway config TOML", () => {
       const priorToml = fs
         .readFileSync(configPath, "utf-8")
         .replace("proxy_connect_by_hostname = false\n", "");
+      expect(parseGatewayProxyConnectByHostname(priorToml)).toBeUndefined();
       fs.writeFileSync(configPath, priorToml, { mode: 0o600 });
 
       prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
