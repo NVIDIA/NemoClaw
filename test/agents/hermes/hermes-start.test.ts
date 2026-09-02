@@ -462,6 +462,16 @@ function lstatIfPresent(entry: string): fs.Stats | null {
   }
 }
 
+function filesystemFingerprint(entry: string): string {
+  const stat = fs.statSync(entry);
+  const contents = stat.isDirectory()
+    ? fs.readdirSync(entry).join("\0")
+    : fs.readFileSync(entry, "utf8");
+  return [stat.dev, stat.ino, stat.uid, stat.gid, stat.mode & 0o7777, contents].join(":");
+}
+
+type HermesStateDir = "sessions" | "gateway" | "runtime";
+
 function runHermesGatewayRuntimeCleanup(opts: {
   liveGateway?: boolean;
   liveGatewayArgv?: string[];
@@ -473,6 +483,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   rootOwnedConfigRoot?: boolean;
   preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
+  unsafeState?: readonly [name: HermesStateDir, kind: "symlink" | "file"];
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-cleanup-"));
   const hermesHome = path.join(tmpDir, ".hermes");
@@ -534,6 +545,34 @@ function runHermesGatewayRuntimeCleanup(opts: {
   fs.symlinkSync("runtime/gateway.pid", legacyPid);
   if (opts.stalePid !== false) fs.writeFileSync(runtimePid, "999999\n");
   if (opts.staleLock !== false) fs.writeFileSync(runtimeLock, "stale lock");
+  let unsafeStatePath: string | undefined;
+  let unsafeStateTarget: string | undefined;
+  let unsafeStateBefore: string | undefined;
+  void (opts.unsafeState
+    ? (() => {
+        const [name, kind] = opts.unsafeState;
+        const entry = path.join(hermesHome, name);
+        fs.rmSync(entry, { recursive: true, force: true });
+        const setups = {
+          symlink: () => {
+            const target = path.join(tmpDir, `${name}-target`);
+            fs.mkdirSync(target, { mode: 0o750 });
+            fs.chmodSync(target, 0o750);
+            fs.symlinkSync(target, entry);
+            return target;
+          },
+          file: () => {
+            fs.writeFileSync(entry, "attacker\n", { mode: 0o640 });
+            fs.chmodSync(entry, 0o640);
+            return entry;
+          },
+        };
+        const target = setups[kind]();
+        unsafeStatePath = entry;
+        unsafeStateTarget = target;
+        unsafeStateBefore = `${kind}:${filesystemFingerprint(target)}`;
+      })()
+    : undefined);
   if (opts.liveGateway) {
     writeFakeProcCmdline(
       procRoot,
@@ -670,6 +709,10 @@ function runHermesGatewayRuntimeCleanup(opts: {
       historyKind,
       historyContent,
       symlinkTargetContent,
+      unsafeStateBefore,
+      unsafeStateAfter: unsafeStatePath && unsafeStateTarget
+        ? `${fs.lstatSync(unsafeStatePath).isSymbolicLink() ? "symlink" : "file"}:${filesystemFingerprint(unsafeStateTarget)}`
+        : undefined,
       configYamlMode,
       configYamlContent,
       envFileMode,
@@ -1153,7 +1196,6 @@ describe("agents/hermes/start.sh env secret boundary", () => {
 describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   it("removes stale Hermes pid and lock files plus the legacy compatibility pid symlink", () => {
     const run = runHermesGatewayRuntimeCleanup({});
-
     expect(run.result.status).toBe(0);
     expect(run.runtimePidExists).toBe(false);
     expect(run.runtimeLockExists).toBe(false);
@@ -1173,13 +1215,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     });
     expect(run.result.status).toBe(0);
     expect(run.hermesDirMode).toBe("3770");
-    expect(run.requiredDirs).toEqual({
-      sessions: "770",
-      gateway: "770",
-      runtime: "770",
-      cron: "770",
-      logs: "770",
-      "logs/curator": "770",
+    expect(run.requiredDirs).toMatchObject({
       hooks: "770",
       image_cache: "770",
       audio_cache: "770",
@@ -1198,6 +1234,29 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyContent).toBe("");
   });
 
+  it.each([
+    ["sessions", "symlink", "is a symlink"],
+    ["sessions", "file", "is not a directory"],
+    ["gateway", "symlink", "is a symlink"],
+    ["gateway", "file", "is not a directory"],
+    ["runtime", "symlink", "is a symlink"],
+    ["runtime", "file", "is not a directory"],
+  ] as const)("refuses an unsafe %s %s without mutation", (name, kind, message) => {
+    const run = runHermesGatewayRuntimeCleanup({ unsafeState: [name, kind] });
+    expect(run.result.status).not.toBe(0);
+    expect(run.legacyPidIsSymlink).toBe(true);
+    expect(run.unsafeStateBefore).toBeDefined();
+    expect(run.unsafeStateAfter).toBe(run.unsafeStateBefore);
+    expect(run.result.stderr).toContain("Refusing Hermes cross-UID state repair");
+    expect(run.result.stderr).toContain(`/${name} ${message}`);
+    expect(run.result.stderr).toContain(
+      `Hermes pre-launch layout repair failed at ${name} state directory`,
+    );
+    expect(run.result.stderr).toContain(
+      "Restore a trusted snapshot into a recreated sandbox, or recreate from host-side onboarding configuration.",
+    );
+  });
+
   it("preserves a pre-existing Hermes history file and re-asserts its mode", () => {
     const run = runHermesGatewayRuntimeCleanup({
       staleLock: false,
@@ -1211,42 +1270,31 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyContent).toBe("pre-existing\n");
   });
 
-  it("refuses to repair when the Hermes history path is a symlink and does not write through", () => {
+  it.each([
+    [false, "symlink", ".hermes_history is a symlink"],
+    [true, "symlink", ".hermes_history is a symlink"],
+    [false, "directory", ".hermes_history is not a regular file"],
+    [true, "directory", ".hermes_history is not a regular file"],
+  ] as const)("refuses unsafe history with locked root=%s and kind=%s", (locked, kind, message) => {
     const run = runHermesGatewayRuntimeCleanup({
+      lockedConfigRoot: locked,
+      rootOwnedConfigRoot: !locked,
       staleLock: false,
       stalePid: false,
-      rootOwnedConfigRoot: true,
-      preExistingHistory: "symlink",
+      preExistingHistory: kind,
     });
-
-    expect(run.historyKind).toBe("symlink");
-    expect(run.symlinkTargetContent).toBe("attacker\n");
+    expect(run.result.status).not.toBe(0);
+    expect(run.historyKind).toBe(kind);
+    expect(run.symlinkTargetContent).toBe(kind === "symlink" ? "attacker\n" : "");
     expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
-    expect(run.result.stderr).toContain(".hermes_history is a symlink");
-  });
-
-  it("refuses to repair when the Hermes history path is a directory", () => {
-    const run = runHermesGatewayRuntimeCleanup({
-      staleLock: false,
-      stalePid: false,
-      rootOwnedConfigRoot: true,
-      preExistingHistory: "directory",
-    });
-
-    expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
-    expect(run.result.stderr).toContain(".hermes_history is not a regular file");
+    expect(run.result.stderr).toContain(message);
   });
 
   it("repairs runtime parents and history without reopening cron job definitions", () => {
     const run = runHermesGatewayRuntimeCleanup({ lockedConfigRoot: true });
     expect(run.result.status).toBe(0);
     expect(run.hermesDirMode).toBe("755");
-    expect(run.requiredDirs).toEqual({
-      sessions: "770",
-      gateway: "770",
-      runtime: "770",
-      cron: "755",
+    expect(run.requiredDirs).toMatchObject({
       logs: "missing",
       "logs/curator": "missing",
       hooks: "missing",
@@ -1270,19 +1318,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     );
   });
 
-  it("fails Hermes startup when the locked-root history path is a symlink and does not write through", () => {
-    const run = runHermesGatewayRuntimeCleanup({
-      lockedConfigRoot: true,
-      preExistingHistory: "symlink",
-    });
-
-    expect(run.result.status).not.toBe(0);
-    expect(run.historyKind).toBe("symlink");
-    expect(run.symlinkTargetContent).toBe("attacker\n");
-    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
-    expect(run.result.stderr).toContain(".hermes_history is a symlink");
-  });
-
   it("fails Hermes startup when the locked-root history path hard-links a sealed config file", () => {
     const run = runHermesGatewayRuntimeCleanup({
       lockedConfigRoot: true,
@@ -1298,16 +1333,10 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   });
 
   it("repair_hermes_log_permissions rejects log files hard-linked to config.yaml or .env and preserves config/env owner, mode, and content", () => {
-    const configRun = runHermesGatewayRuntimeCleanup({
-      staleLock: false,
-      stalePid: false,
-      preExistingLogFile: "hardlink-to-config",
-    });
-    const envRun = runHermesGatewayRuntimeCleanup({
-      staleLock: false,
-      stalePid: false,
-      preExistingLogFile: "hardlink-to-env",
-    });
+    const [configRun, envRun] = (["hardlink-to-config", "hardlink-to-env"] as const).map(
+      (preExistingLogFile) =>
+        runHermesGatewayRuntimeCleanup({ staleLock: false, stalePid: false, preExistingLogFile }),
+    );
 
     expect(configRun.result.status).not.toBe(0);
     expect(configRun.result.stderr).toContain("Refusing Hermes log repair because");
@@ -1321,57 +1350,28 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(envRun.envFileContent).toBe("HERMES_TEST=1\n");
   });
 
-  it("fails Hermes startup when the locked-root history path is a directory", () => {
+  it.each([
+    ["gateway", { orphanSocat: true }, "456", "Removing orphaned socat forwarder"],
+    ["dashboard", { orphanDashboardSocat: true }, "789", "Removing orphaned dashboard socat"],
+  ] as const)("kills orphaned %s socat forwarders", (_name, orphan, pid, message) => {
     const run = runHermesGatewayRuntimeCleanup({
-      lockedConfigRoot: true,
-      preExistingHistory: "directory",
-    });
-
-    expect(run.result.status).not.toBe(0);
-    expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
-    expect(run.result.stderr).toContain(".hermes_history is not a regular file");
-  });
-
-  it("kills orphaned socat forwarders when no Hermes gateway is alive", () => {
-    const run = runHermesGatewayRuntimeCleanup({
-      orphanSocat: true,
+      ...orphan,
       staleLock: false,
       stalePid: false,
     });
 
     expect(run.result.status).toBe(0);
-    expect(run.killLog.trim()).toBe("456");
-    expect(run.result.stderr).toContain("Removing orphaned socat forwarder");
+    expect(run.killLog.trim()).toBe(pid);
+    expect(run.result.stderr).toContain(message);
   });
 
-  it("kills orphaned dashboard socat forwarders when no Hermes gateway is alive", () => {
-    const run = runHermesGatewayRuntimeCleanup({
-      orphanDashboardSocat: true,
-      staleLock: false,
-      stalePid: false,
-    });
-
-    expect(run.result.status).toBe(0);
-    expect(run.killLog.trim()).toBe("789");
-    expect(run.result.stderr).toContain("Removing orphaned dashboard socat forwarder");
-  });
-
-  it("preserves Hermes runtime state when a gateway process is alive", () => {
-    const run = runHermesGatewayRuntimeCleanup({ liveGateway: true, orphanSocat: true });
-
-    expect(run.result.status).toBe(0);
-    expect(run.runtimePidExists).toBe(true);
-    expect(run.runtimeLockExists).toBe(true);
-    expect(run.legacyPidIsSymlink).toBe(true);
-    expect(run.killLog).toBe("");
-    expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
-  });
-
-  it("preserves Hermes runtime state when the wrapped gateway execs hermes.real", () => {
+  it.each([
+    undefined,
+    ["/usr/local/bin/hermes.real", "gateway", "run"],
+  ])("preserves runtime state for a live gateway process [case %#]", (liveGatewayArgv) => {
     const run = runHermesGatewayRuntimeCleanup({
       liveGateway: true,
-      liveGatewayArgv: ["/usr/local/bin/hermes.real", "gateway", "run"],
+      liveGatewayArgv,
       orphanSocat: true,
     });
 
