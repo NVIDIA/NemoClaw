@@ -1358,6 +1358,16 @@ function logPresetScopeForState(
 
 const OPENCLAW_NPM_BASELINE_KEY = "npm_registry";
 const OPENCLAW_NPM_PRESET_KEY = "npm_yarn";
+const CUSTOM_PRESET_RESERVED_NETWORK_POLICY_KEYS = [
+  OPENCLAW_NPM_PRESET_KEY,
+  PERSONAL_OPEN_INTERNET_POLICY_KEY,
+] as const;
+
+function findReservedCustomNetworkPolicyKey(networkPolicies: PolicyObject): string | undefined {
+  return CUSTOM_PRESET_RESERVED_NETWORK_POLICY_KEYS.find((key) =>
+    Object.prototype.hasOwnProperty.call(networkPolicies, key),
+  );
+}
 
 function npmCompatibilityEntry(
   baselineEntry: PolicyObject,
@@ -2264,9 +2274,7 @@ function applyPresetContent(
       console.error(`  Preset '${presetName}' has invalid or missing network_policies.`);
       return false;
     }
-    const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find((key) =>
-      Object.prototype.hasOwnProperty.call(np, key),
-    );
+    const reservedKey = findReservedCustomNetworkPolicyKey(np);
     if (reservedKey) {
       console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
       return false;
@@ -2719,6 +2727,11 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     return null;
   }
   const np = parsed.network_policies as PolicyObject;
+  const reservedKey = findReservedCustomNetworkPolicyKey(np);
+  if (reservedKey) {
+    console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
+    return null;
+  }
   if (networkPoliciesHasAllowedIps(np)) {
     console.error(
       `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets: ${filePath}`,
