@@ -46,7 +46,7 @@ try {
     $transcriptStarted = $true
     Clear-Host
     Write-Host 'NemoClaw Native Windows ARM64 Installer - LIVE CONSOLE PROOF' -ForegroundColor Cyan
-    Write-Host 'This window is executing the complete setup/install/repair/uninstall flow.'
+    Write-Host 'This window is downloading, installing, running, and uninstalling NemoClaw.'
     Write-Host ''
     Start-Sleep -Seconds 2
 

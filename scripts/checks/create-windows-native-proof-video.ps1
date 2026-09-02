@@ -6,10 +6,10 @@
     Record the live console running the native Windows installer qualification.
 
 .DESCRIPTION
-    Launches the real setup/install/repair/reinstall/uninstall qualification
-    in a real Windows console, captures the actual console and WiX installer
-    window pixels four times per second, and encodes those live frames to H.264
-    with the Windows Media Foundation-backed Windows.Media.Editing API.
+    Downloads and launches the real setup, runs the installed NemoClaw turn,
+    and uninstalls it in a real Windows console. Captures the actual console and
+    WiX installer window pixels four times per second, then encodes those live
+    frames to H.264 with Windows Media Foundation.
 #>
 
 [CmdletBinding()]

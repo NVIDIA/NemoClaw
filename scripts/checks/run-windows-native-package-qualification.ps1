@@ -447,6 +447,8 @@ $bundleUninstallLog = Join-Path $artifactRoot 'bundle-uninstall.log'
 $preExecution = Get-ProhibitedProcessSnapshot -Phase 'pre-execution'
 $processAudit = Start-ProhibitedProcessAudit
 $processAuditStopped = $false
+$repairRestoredDigest = $false
+$reinstallPreservedRegistration = $false
 
 Write-Host "HOST> NemoClaw native Windows ARM64 package qualification"
 Write-Host "HOST> os=$([Environment]::OSVersion.Version) architecture=$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) product=$ProductVersion"
@@ -521,28 +523,34 @@ try {
     Write-Host "[PASS] Add/Remove Programs registered MSI=$($msiArp[0].displayVersion) bundle=$($bundleArp[0].displayVersion)"
     Write-Host '[PASS] Machine PATH contains the installed bin directory exactly once'
 
-    [IO.File]::AppendAllText($openshellPath, 'msi-repair-drift', [Text.UTF8Encoding]::new($false))
-    Invoke-BoundedProcess `
-        -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
-        -Arguments @('/fa', $msi, '/qn', '/norestart', '/l*v', $msiRepairLog) `
-        -Label 'MSI repair' `
-        -AllowedExitCodes @(0, 3010) | Out-Null
-    if ((Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['bin\openshell.exe']) {
-        Fail-PackageQualification 'MSI repair did not restore the corrupted OpenShell CLI.'
-    }
-    Assert-InstalledTree -Root $installRoot -Phase 'MSI repair' -ExpectedFiles $expectedPayloadFiles
-    Write-Host '[PASS] MSI repair restored the deliberately corrupted openshell.exe digest'
+    if ($InteractiveProof) {
+        Write-Host '[INFO] Repair and reinstall are already proven by the bound initial qualification receipt'
+    } else {
+        [IO.File]::AppendAllText($openshellPath, 'msi-repair-drift', [Text.UTF8Encoding]::new($false))
+        Invoke-BoundedProcess `
+            -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
+            -Arguments @('/fa', $msi, '/qn', '/norestart', '/l*v', $msiRepairLog) `
+            -Label 'MSI repair' `
+            -AllowedExitCodes @(0, 3010) | Out-Null
+        if ((Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payloadHashes['bin\openshell.exe']) {
+            Fail-PackageQualification 'MSI repair did not restore the corrupted OpenShell CLI.'
+        }
+        Assert-InstalledTree -Root $installRoot -Phase 'MSI repair' -ExpectedFiles $expectedPayloadFiles
+        $repairRestoredDigest = $true
+        Write-Host '[PASS] MSI repair restored the deliberately corrupted openshell.exe digest'
 
-    Invoke-BoundedProcess `
-        -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
-        -Arguments @('/i', $msi, 'REINSTALL=ALL', 'REINSTALLMODE=vomus', '/qn', '/norestart', '/l*v', $msiReinstallLog) `
-        -Label 'MSI reinstall' `
-        -AllowedExitCodes @(0, 3010) | Out-Null
-    if (@(Get-ArpEntries -DisplayName $script:MsiDisplayName).Count -ne 1) {
-        Fail-PackageQualification 'MSI reinstall did not preserve one product registration.'
+        Invoke-BoundedProcess `
+            -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
+            -Arguments @('/i', $msi, 'REINSTALL=ALL', 'REINSTALLMODE=vomus', '/qn', '/norestart', '/l*v', $msiReinstallLog) `
+            -Label 'MSI reinstall' `
+            -AllowedExitCodes @(0, 3010) | Out-Null
+        if (@(Get-ArpEntries -DisplayName $script:MsiDisplayName).Count -ne 1) {
+            Fail-PackageQualification 'MSI reinstall did not preserve one product registration.'
+        }
+        Assert-InstalledTree -Root $installRoot -Phase 'MSI reinstall' -ExpectedFiles $expectedPayloadFiles
+        $reinstallPreservedRegistration = $true
+        Write-Host '[PASS] MSI reinstall preserved exactly one product registration'
     }
-    Assert-InstalledTree -Root $installRoot -Phase 'MSI reinstall' -ExpectedFiles $expectedPayloadFiles
-    Write-Host '[PASS] MSI reinstall preserved exactly one product registration'
 
     Invoke-BoundedProcess `
         -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
@@ -599,7 +607,11 @@ try {
     }
     Write-Host "[PASS] Zero prohibited package descendants; runner-wide prohibited starts recorded=$($prohibitedStarts.Count)"
 
-    foreach ($logPath in @($bundleInstallLog, $msiRepairLog, $msiReinstallLog, $msiUninstallLog, $bundleUninstallLog)) {
+    $requiredLogs = @($bundleInstallLog, $msiUninstallLog, $bundleUninstallLog)
+    if (-not $InteractiveProof) {
+        $requiredLogs += @($msiRepairLog, $msiReinstallLog)
+    }
+    foreach ($logPath in $requiredLogs) {
         if (-not (Test-Path -LiteralPath $logPath -PathType Leaf) -or (Get-Item -LiteralPath $logPath).Length -eq 0) {
             Fail-PackageQualification "Installer log is missing: $(Split-Path -Leaf $logPath)"
         }
@@ -626,8 +638,8 @@ try {
         nativeTurn = $nativeTurnReceipt
         msiRegistration = $msiArp
         bundleRegistration = $bundleArp
-        repairRestoredDigest = $true
-        reinstallPreservedRegistration = $true
+        repairRestoredDigest = $repairRestoredDigest
+        reinstallPreservedRegistration = $reinstallPreservedRegistration
         finalAbsence = $true
         machinePathRemoved = $true
         prohibitedProcessStarts = $prohibitedStarts
