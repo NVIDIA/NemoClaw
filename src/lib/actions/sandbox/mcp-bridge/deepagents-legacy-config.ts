@@ -3,6 +3,22 @@
 
 export const DEEPAGENTS_LEGACY_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";
 
+export const DEEPAGENTS_RUNTIME_SELECTION_HELPERS = [
+  "def select_deepagents_runtime_kind(requested_kind, managed_path, legacy_path):",
+  "    if requested_kind != 'auto':",
+  "        return requested_kind",
+  "    try:",
+  "        from deepagents_code import _nemoclaw_managed as managed",
+  "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
+  "        if runtime_path == str(managed_path):",
+  "            return 'v2'",
+  "        if runtime_path == str(legacy_path):",
+  "            return 'legacy'",
+  "    except Exception:",
+  "        pass",
+  "    return 'unknown'",
+];
+
 export const DEEPAGENTS_LEGACY_CONFIG_HELPERS = [
   "LEGACY_MCP_MAX_BYTES = 262144",
   "def legacy_fingerprint(metadata):",

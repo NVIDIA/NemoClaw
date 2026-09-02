@@ -10,38 +10,64 @@ import {
   buildDeepAgentsMcpRegisterCommand,
   buildDeepAgentsMcpRemoveCommand,
 } from "./mcp-bridge-adapter-deepagents";
+import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 describe("Deep Agents MCP config adapter runtime guards", () => {
-  it.each(
-    Array.from(
-      [
-        buildDeepAgentsMcpRemoveCommand(baseEntry, true, true),
-        buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true),
-      ],
-      (value) => [value],
-    ),
-  )(
-    "fails closed without touching either config when the runtime generation is unknown [case %#]",
-    (command) => {
-      const v2Config = {
-        mcpServers: {
-          github: {
-            type: "http",
-            url: baseEntry.url,
-            headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
-          },
-        },
-      };
-      const legacyConfig = {
-        mcpServers: { local: { type: "stdio", command: "user-owned" } },
-        ui: { theme: "dark" },
-      };
+  const managedServer = {
+    type: "http",
+    url: baseEntry.url,
+    headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+  };
+  const userServer = { type: "stdio", command: "user-owned" };
+  const registeredV2Config = { mcpServers: { github: managedServer } };
+  const registeredLegacyConfig = {
+    mcpServers: { github: managedServer, local: userServer },
+    ui: { theme: "dark" },
+  };
+  const driftedLegacyConfig = {
+    mcpServers: { github: { type: "http", url: "https://user.example/mcp" } },
+  };
+  const emptyV2Config = { mcpServers: {} };
+  const emptyLegacyConfig = {
+    mcpServers: { local: userServer },
+    ui: { theme: "dark" },
+  };
+  const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
+  const removalCommand = buildDeepAgentsMcpRemoveCommand(baseEntry, true, true);
+  const rollbackCommand = buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true);
+  const runtimeSelectionCases = [
+    ["status", "v2", statusCommand, registeredV2Config, driftedLegacyConfig, [0, "registered", "", true, true]],
+    ["status", "legacy", statusCommand, registeredV2Config, driftedLegacyConfig, [0, "mismatch", "", true, true]],
+    ["status", "unknown", statusCommand, registeredV2Config, driftedLegacyConfig, [2, "", "Could not identify the managed Deep Agents MCP runtime", true, true]],
+    ["adaptive teardown", "v2", removalCommand, registeredV2Config, registeredLegacyConfig, [0, "NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=removed", "", false, true]],
+    ["adaptive teardown", "legacy", removalCommand, registeredV2Config, registeredLegacyConfig, [0, "NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=removed", "", true, false]],
+    ["adaptive teardown", "unknown", removalCommand, registeredV2Config, registeredLegacyConfig, [2, "", "Could not identify the managed Deep Agents MCP runtime; refusing teardown", true, true]],
+    ["rollback", "v2", rollbackCommand, emptyV2Config, emptyLegacyConfig, [0, "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1", "", true, false]],
+    ["rollback", "legacy", rollbackCommand, emptyV2Config, emptyLegacyConfig, [0, "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1", "", false, true]],
+    ["rollback", "unknown", rollbackCommand, emptyV2Config, emptyLegacyConfig, [2, "", "Could not identify the managed Deep Agents MCP runtime; refusing rollback", false, false]],
+  ] as const;
+  const hasGithubServer = (config: Record<string, unknown> | null): boolean => {
+    const servers = config?.mcpServers;
+    return typeof servers === "object" && servers !== null && Object.hasOwn(servers, "github");
+  };
 
-      const result = runDeepAgentsConfigCommand(command, v2Config, "unknown", legacyConfig);
-      expect(result.status).toBe(2);
-      expect(result.stderr).toContain("Could not identify the managed Deep Agents MCP runtime");
-      expect(result.config).toEqual(v2Config);
-      expect(result.legacyConfig).toEqual(legacyConfig);
+  it.each(runtimeSelectionCases)(
+    "uses the shared runtime marker for %s: %s",
+    (_operation, runtimeKind, command, initialConfig, initialLegacyConfig, expected) => {
+      const result = runDeepAgentsConfigCommand(
+        command,
+        initialConfig,
+        runtimeKind,
+        initialLegacyConfig,
+      );
+
+      expect([
+        result.status,
+        result.stdout.trim(),
+        result.stderr.trim(),
+        hasGithubServer(result.config),
+        hasGithubServer(result.legacyConfig),
+      ]).toEqual(expected);
     },
   );
 
