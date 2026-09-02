@@ -586,6 +586,13 @@ jobs:
         run: |
           set -euo pipefail
           image_json="$(docker image inspect "$IMAGE_REFERENCE")"
+          if [ "$AGENT" = "hermes" ]; then
+            layer_count="$(jq -er '.[0].RootFS.Layers | length' <<< "$image_json")"
+            if [ "$layer_count" -gt 125 ]; then
+              echo "ERROR: Hermes managed image has ${layer_count} filesystem layers; the publication runner compatibility ceiling is 125." >&2
+              exit 1
+            fi
+          fi
           image_id="$(
             jq -er '
               if length == 1 and (.[0].Id | type) == "string"

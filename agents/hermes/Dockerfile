@@ -436,6 +436,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=9d617ac7cd4e977cfb91ce5dcf0a82c7f6a3c1078a86bcea41cf20329613cf93
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -446,14 +447,13 @@ RUN printf '%s  %s\n' \
     && git -C /opt/hermes apply \
         --include=tools/lazy_deps.py \
         /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
-    && rm /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
-
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=9d617ac7cd4e977cfb91ce5dcf0a82c7f6a3c1078a86bcea41cf20329613cf93
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
-    | sha256sum -c - \
-    || { echo "ERROR: image-build-probes.py hash mismatch (update NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256)" >&2; exit 1; }
+    && rm /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
+    && { \
+        printf '%s  %s\n' \
+            "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
+        | sha256sum -c - \
+        || { echo "ERROR: image-build-probes.py hash mismatch (update NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256)" >&2; exit 1; }; \
+    }
 
 COPY --from=hermes-runtime-payload / /
 
