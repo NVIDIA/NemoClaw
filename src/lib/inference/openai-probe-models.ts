@@ -47,6 +47,10 @@ export function isKimiK26Model(model: unknown): boolean {
   return String(model || "").toLowerCase() === "moonshotai/kimi-k2.6";
 }
 
+function isNemotron3Super120bModel(model: unknown): boolean {
+  return String(model || "").toLowerCase() === "nvidia/nemotron-3-super-120b-a12b";
+}
+
 export function getChatCompletionsProbePayload(model: string): Record<string, unknown> {
   const maxTokensField = resolveMaxTokensField(model);
   const payload = {
@@ -71,6 +75,15 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
       ...payload,
       [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
       chat_template_kwargs: { thinking: false },
+    };
+  }
+
+  if (isNemotron3Super120bModel(model)) {
+    return {
+      ...payload,
+      temperature: 1,
+      top_p: 0.95,
+      chat_template_kwargs: { enable_thinking: false },
     };
   }
 
