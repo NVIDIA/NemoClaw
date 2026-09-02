@@ -65,7 +65,7 @@ describe("onboard lock ownership", () => {
     expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
   });
 
-  it("gives guarded recovery for a live PID without verified process identity", () => {
+  it("reports verify-before-remove guidance for a live PID without verified identity", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
     const record = lockHolder.createOnboardLockRecord(
       "unverified onboarding owner",
@@ -99,6 +99,16 @@ describe("onboard lock ownership", () => {
         `'${session.LOCK_FILE}', then retry.`,
     );
     expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+  });
+
+  it("rejects an incomplete lock publication without retaining ownership", () => {
+    const write = vi.spyOn(fs, "writeSync").mockReturnValueOnce(1).mockReturnValueOnce(0);
+
+    expect(() => session.acquireOnboardLock("nemoclaw onboard")).toThrow(/write made no progress/u);
+
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
   });
 
   it.each([

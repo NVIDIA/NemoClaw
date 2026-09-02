@@ -11,7 +11,9 @@ import { createMcpLifecycleLockOwner, type LockObservation } from "./mcp-lifecyc
 import {
   MAX_MCP_LIFECYCLE_LOCK_BYTES,
   readMcpLifecycleLockObservation,
+  readMcpLifecycleLockObservationSync,
   reclaimStaleMcpLifecycleLockGeneration,
+  reclaimStaleMcpLifecycleLockGenerationSync,
   safelyReleaseMcpLifecycleLock,
   safelyReleaseMcpLifecycleLockSync,
   writeMcpLifecycleLockCandidateAndLink,
@@ -59,6 +61,53 @@ describe("MCP lifecycle lock storage", () => {
       };
 
       await expect(reclaimStaleMcpLifecycleLockGeneration(lockPath, expected)).rejects.toThrow(
+        `Lock '${lockPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
+      );
+
+      const after = fs.statSync(lockPath);
+      expect({ dev: after.dev, ino: after.ino, size: after.size }).toEqual({
+        dev: before.dev,
+        ino: before.ino,
+        size: MAX_MCP_LIFECYCLE_LOCK_BYTES + 1,
+      });
+      expect(fs.readdirSync(stateDir)).toEqual(["main.lock"]);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an oversized synchronous observation before reading its body", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    fs.writeFileSync(lockPath, Buffer.alloc(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1, "x"));
+    const readFile = vi.spyOn(fs, "readFileSync");
+    try {
+      expect(() => readMcpLifecycleLockObservationSync(lockPath)).toThrow(
+        `Lock '${lockPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
+      );
+
+      expect(readFile).not.toHaveBeenCalled();
+    } finally {
+      readFile.mockRestore();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores an oversized generation rejected after a synchronous claim", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-lock-storage-"));
+    const lockPath = path.join(stateDir, "main.lock");
+    try {
+      fs.writeFileSync(lockPath, Buffer.alloc(MAX_MCP_LIFECYCLE_LOCK_BYTES + 1, "x"));
+      const before = fs.statSync(lockPath);
+      const expected: LockObservation = {
+        owner: null,
+        mtimeMs: before.mtimeMs,
+        dev: before.dev,
+        ino: before.ino,
+        reclaimable: true,
+      };
+
+      expect(() => reclaimStaleMcpLifecycleLockGenerationSync(lockPath, expected)).toThrow(
         `Lock '${lockPath}' exceeds the ${String(MAX_MCP_LIFECYCLE_LOCK_BYTES)}-byte observation limit.`,
       );
 

@@ -252,7 +252,7 @@ describe("cross-process onboard lock", () => {
     }
   });
 
-  it("prints guarded recovery for a live PID without verified process identity", async () => {
+  it("prints verify-before-remove guidance for a live PID without verified identity", async () => {
     const authority = await import("../onboard/portable-retirement-authority");
     const messages: string[] = [];
     const errorSpy = vi

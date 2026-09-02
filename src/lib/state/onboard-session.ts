@@ -1511,6 +1511,54 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
   return acquireOnboardLockGeneration(command);
 }
 
+function writeCompleteOnboardLockPayload(fd: number, payload: string): void {
+  const bytes = Buffer.from(payload, "utf8");
+  let offset = 0;
+  while (offset < bytes.length) {
+    const written = fs.writeSync(fd, bytes, offset, bytes.length - offset, null);
+    if (written <= 0) {
+      throw new Error(`Failed to publish onboarding lock '${LOCK_FILE}': write made no progress.`);
+    }
+    offset += written;
+  }
+}
+
+function closeAndDiscardIncompleteOnboardLockGeneration(fd: number): void {
+  let observation: LockObservation | null = null;
+  try {
+    const stat = fs.fstatSync(fd);
+    observation = {
+      owner: null,
+      mtimeMs: stat.mtimeMs,
+      dev: stat.dev,
+      ino: stat.ino,
+      reclaimable: true,
+    };
+  } catch {
+    // The descriptor is still closed below. Without its identity, pathname
+    // cleanup would risk removing a replacement generation.
+  }
+  try {
+    fs.closeSync(fd);
+  } catch {
+    /* preserve the publication error */
+  }
+  if (observation === null) return;
+  try {
+    reclaimStaleMcpLifecycleLockGenerationSync(
+      LOCK_FILE,
+      observation,
+      undefined,
+      MAX_ONBOARD_LOCK_BYTES,
+    );
+  } catch (cleanupError) {
+    process.emitWarning(
+      `Failed to retire incomplete onboarding lock '${LOCK_FILE}': ${String(cleanupError)}`,
+      { code: "NEMOCLAW_ONBOARD_LOCK_CLEANUP_FAILED" },
+    );
+  }
+}
+
 function acquireOnboardLockGeneration(command: string | null): LockResult {
   const payload = JSON.stringify(
     createOnboardLockRecord(typeof command === "string" ? command : null, new Date().toISOString()),
@@ -1589,18 +1637,9 @@ function acquireOnboardLockGeneration(command: string | null): LockResult {
     // for the lifetime of the lock so releaseOnboardLock() can verify
     // ownership via the live descriptor.
     try {
-      fs.writeSync(fd, payload);
+      writeCompleteOnboardLockPayload(fd, payload);
     } catch (writeError) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        /* ignore */
-      }
-      try {
-        fs.unlinkSync(LOCK_FILE);
-      } catch {
-        /* ignore */
-      }
+      closeAndDiscardIncompleteOnboardLockGeneration(fd);
       throw writeError;
     }
     heldLockFd = fd;
