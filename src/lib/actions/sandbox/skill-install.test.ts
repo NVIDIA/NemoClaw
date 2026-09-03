@@ -15,7 +15,6 @@ const withSandboxMutationLock = vi.hoisted(() =>
 const skillInstall = vi.hoisted(() => ({
   validateSkillName: vi.fn(),
   resolveSkillPaths: vi.fn(),
-  checkWorkspaceSkillCollision: vi.fn(),
   checkExisting: vi.fn(),
   removeSkill: vi.fn(),
   verifyRemove: vi.fn(),
@@ -117,7 +116,6 @@ describe("sandbox skill action orchestration", () => {
     getSessionAgent.mockReturnValue(genericAgent);
     skillInstall.validateSkillName.mockReturnValue(true);
     skillInstall.resolveSkillPaths.mockReturnValue(genericPaths);
-    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(false);
     skillInstall.checkExisting.mockReturnValue(true);
     skillInstall.removeSkill.mockReturnValue({
       success: true,
@@ -228,21 +226,6 @@ describe("sandbox skill action orchestration", () => {
       expect.stringContaining("Automatic OpenClaw skill removal is unavailable"),
     );
     expect(captureSandboxSshConfig).not.toHaveBeenCalled();
-    expect(skillInstall.checkExisting).not.toHaveBeenCalled();
-    expect(skillInstall.removeSkill).not.toHaveBeenCalled();
-    expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when the removal workspace collision probe is inconclusive", async () => {
-    skillInstall.checkWorkspaceSkillCollision.mockReturnValue(null);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
-
-    expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      "  Could not check for an OpenClaw workspace skill named 'demo-skill'.",
-    );
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(skillInstall.removeSkill).not.toHaveBeenCalled();
     expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
@@ -451,7 +434,6 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       "  The pinned OpenClaw runtime does not expose the reviewed native skill install capability.",
     );
-    expect(skillInstall.checkWorkspaceSkillCollision).not.toHaveBeenCalled();
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });

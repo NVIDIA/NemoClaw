@@ -24,7 +24,6 @@ import { shellQuote, sshExec } from "./skill-remote";
 
 export { validateSkillName } from "./skill-name";
 export {
-  checkWorkspaceSkillCollision,
   checkExisting,
   type RemoveResult,
   removeSkill,
@@ -720,10 +719,11 @@ export function installOpenClawSkill(
     buildOpenClawNativeInstallScript(paths, skillName, snapshot.contentDigest),
     { input: snapshot.archive, timeout: 120_000 },
   );
+  const stdout = result?.stdout.trim() ?? "";
   const success =
     result?.status === 0 &&
-    (result.stdout === `INSTALLED ${snapshot.contentDigest}` ||
-      result.stdout === `UPDATED ${snapshot.contentDigest}`);
+    (stdout.endsWith(`INSTALLED ${snapshot.contentDigest}`) ||
+      stdout.endsWith(`UPDATED ${snapshot.contentDigest}`));
   if (success) {
     return {
       success: true,
@@ -735,11 +735,11 @@ export function installOpenClawSkill(
     success: false,
     uploaded: 0,
     reason:
-      result?.status === 2 && result.stdout === "COLLISION"
+      result?.status === 2 && stdout.endsWith("COLLISION")
         ? "destination_exists"
-        : result?.status === 3 && result.stdout === "CAPABILITY_MISSING"
+        : result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
           ? "native_capability_missing"
-          : result?.status === 4 && result.stdout === "VERIFY_FAILED"
+          : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
             ? "verification_failed"
             : "remote_state_unknown",
   };

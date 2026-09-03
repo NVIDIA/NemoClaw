@@ -50,7 +50,7 @@ describe("OpenClaw native skill installation", () => {
         _opts?: { input?: string | Buffer; timeout?: number },
       ): SshResult => ({
         status: 0,
-        stdout: `INSTALLED ${digest}`,
+        stdout: `INSTALLED ${digest}\n`,
         stderr: "",
       }),
     );
@@ -87,7 +87,7 @@ describe("OpenClaw native skill installation", () => {
         _opts?: { input?: string | Buffer; timeout?: number },
       ): SshResult => ({
         status: 0,
-        stdout: `UPDATED ${digest}`,
+        stdout: `UPDATED ${digest}\n`,
         stderr: "",
       }),
     );
@@ -101,9 +101,9 @@ describe("OpenClaw native skill installation", () => {
   });
 
   it.each([
-    [2, "COLLISION", "destination_exists"],
-    [3, "CAPABILITY_MISSING", "native_capability_missing"],
-    [4, "VERIFY_FAILED", "verification_failed"],
+    [2, "COLLISION\n", "destination_exists"],
+    [3, "CAPABILITY_MISSING\n", "native_capability_missing"],
+    [4, "installer output\nVERIFY_FAILED\n", "verification_failed"],
   ] as const)("maps native failure %s to %s", (status, stdout, reason) => {
     const skill = makeSkill();
     const sshExec = vi.fn(
