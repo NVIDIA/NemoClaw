@@ -20,9 +20,7 @@ function fixture(): {
   lock: string;
   owner: OnboardLockOwner;
 } {
-  const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "nemoclaw-onboard-observation-"),
-  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-observation-"));
   roots.push(root);
   const lock = path.join(root, "onboard.lock");
   const owner: OnboardLockOwner = {
@@ -47,8 +45,7 @@ function writeOwner(lock: string, owner: OnboardLockOwner): void {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("onboarding lock observation", () => {
@@ -60,9 +57,7 @@ describe("onboarding lock observation", () => {
   it("reports only proven-local departed and reused owners as stale", () => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, owner);
-    expect(
-      observeOnboardLock(lock, { ...evidence, processAlive: () => false }),
-    ).toMatchObject({
+    expect(observeOnboardLock(lock, { ...evidence, processAlive: () => false })).toMatchObject({
       kind: "stale",
       reason: "departed",
     });
@@ -82,9 +77,7 @@ describe("onboarding lock observation", () => {
   ] as const)("keeps %s owners busy", (reason, overrides) => {
     const { evidence, lock, owner } = fixture();
     writeOwner(lock, owner);
-    expect(
-      observeOnboardLock(lock, { ...evidence, ...overrides }),
-    ).toMatchObject({
+    expect(observeOnboardLock(lock, { ...evidence, ...overrides })).toMatchObject({
       kind: "busy",
       reason,
     });
