@@ -26,7 +26,7 @@ import {
   redactFullWithUrls,
   writeRedactedResult,
 } from "./security/redact";
-import { buildSubprocessEnv } from "./subprocess-env";
+import { buildDockerSubprocessEnv, buildSubprocessEnv } from "./subprocess-env";
 
 const ROOT = REPOSITORY_ROOT;
 const SCRIPTS = path.join(ROOT, "scripts");
@@ -62,18 +62,12 @@ function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv, executable?: string): Reco
       if (value !== undefined) normalizedExtra[key] = value;
     }
   }
-  const usesDockerDefaultAuthority =
-    executable !== undefined &&
-    path.basename(executable) === "docker" &&
-    normalizedExtra.DOCKER_HOST === undefined &&
-    process.env.DOCKER_HOST === undefined;
-  if (usesDockerDefaultAuthority) {
-    if (normalizedExtra.DOCKER_CONFIG === undefined && process.env.DOCKER_CONFIG !== undefined) {
-      normalizedExtra.DOCKER_CONFIG = process.env.DOCKER_CONFIG;
-    }
-    if (normalizedExtra.DOCKER_CONTEXT === undefined && process.env.DOCKER_CONTEXT !== undefined) {
-      normalizedExtra.DOCKER_CONTEXT = process.env.DOCKER_CONTEXT;
-    }
+  if (executable !== undefined && path.basename(executable) === "docker") {
+    return buildDockerSubprocessEnv(
+      process.env,
+      normalizedExtra.DOCKER_HOST ?? process.env.DOCKER_HOST,
+      normalizedExtra,
+    );
   }
   return buildSubprocessEnv(normalizedExtra);
 }

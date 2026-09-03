@@ -16,7 +16,11 @@ const INSTALL_DOCKER_COMMANDS: Readonly<Record<PackageManager, string>> = {
 };
 
 export function wslDockerBlocksRemainingChecks(host: HostAssessment): boolean {
-  return host.isWsl && (!host.dockerInstalled || !host.dockerReachable);
+  return (
+    host.isWsl &&
+    host.dockerProbeIssue === undefined &&
+    (!host.dockerInstalled || !host.dockerReachable)
+  );
 }
 
 export const enableDockerDesktopWslIntegration: AdvisoryCheck<HostAssessment> = {
@@ -95,6 +99,30 @@ export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+export const retryDockerProbe: AdvisoryCheck<HostAssessment> = {
+  id: "docker_probe_inconclusive",
+  phase: "preflight.host",
+  severity: "blocking",
+  resumeSafe: false,
+  check(host) {
+    const issue = host.dockerProbeIssue;
+    if (!issue) return null;
+    const command = issue.startsWith("version_") ? "docker version" : "docker info";
+    const timedOut = issue.endsWith("_timeout");
+    return hostAdvisory(retryDockerProbe, {
+      title: "Retry the Docker readiness probe",
+      kind: "manual",
+      reason: timedOut
+        ? `The selected Docker authority did not answer \`${command}\` within 15 seconds. NemoClaw kept that authority and did not classify the daemon as stopped.`
+        : `NemoClaw could not start the \`${command}\` readiness probe. It kept the selected Docker authority because no daemon verdict was available.`,
+      commands: [
+        `${command}   # verify the selected Docker authority answers`,
+        "Restart the selected Docker runtime if the command remains unresponsive, then rerun `nemoclaw onboard`.",
+      ],
+    });
+  },
+};
+
 export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   id: "docker_group_permission",
   phase: "preflight.host",
@@ -103,6 +131,7 @@ export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   check(host) {
     if (
       host.dockerHostInvalid ||
+      host.dockerProbeIssue !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -139,6 +168,7 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
     const likelyGroupIssue = host.platform === "linux" && host.dockerServiceActive === true;
     if (
       host.dockerHostInvalid ||
+      host.dockerProbeIssue !== undefined ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -199,6 +229,7 @@ export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   enableDockerDesktopWslIntegration,
   installDocker,
   invalidDockerHost,
+  retryDockerProbe,
   addUserToDockerGroup,
   startDocker,
   dockerDesktopCredentialStoreHeadless,

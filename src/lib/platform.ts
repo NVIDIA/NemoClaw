@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
-import { isSubprocessEnvNameAllowed, withLocalNoProxy } from "./subprocess-env";
+import { buildDockerSubprocessEnv } from "./subprocess-env";
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 
@@ -147,24 +147,7 @@ function buildDockerProbeEnv(
   source: NodeJS.ProcessEnv,
   dockerHost: string | undefined,
 ): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [name, value] of Object.entries(source)) {
-    // The probe pins its own authority; an ambient one would mask it.
-    if (name === "DOCKER_HOST") continue;
-    if (value === undefined) continue;
-    if (isSubprocessEnvNameAllowed(name)) env[name] = value;
-  }
-  if (dockerHost === undefined) {
-    if (source.DOCKER_CONFIG !== undefined) env.DOCKER_CONFIG = source.DOCKER_CONFIG;
-    if (source.DOCKER_CONTEXT !== undefined) env.DOCKER_CONTEXT = source.DOCKER_CONTEXT;
-  }
-  if (dockerHost) {
-    env.DOCKER_HOST = dockerHost;
-  }
-  // Keep a local authority off a forwarded host proxy, exactly as
-  // `buildSubprocessEnv` does for the Docker commands that follow.
-  withLocalNoProxy(env);
-  return env;
+  return buildDockerSubprocessEnv(source, dockerHost);
 }
 
 function probeDockerHost(

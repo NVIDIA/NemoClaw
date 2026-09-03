@@ -48,10 +48,11 @@ export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-const { run, runCapture } = require("../runner");
+const { run, runCapture, runCaptureEx } = require("../runner");
 const DOCKER_HOST_ADVISORY_IDS = new Set(DOCKER_HOST_ADVISORY_CHECKS.map(({ id }) => id));
 
 type RunCaptureFn = typeof import("../runner").runCapture;
+type RunCaptureExFn = typeof import("../runner").runCaptureEx;
 type RunFn = typeof import("../runner").run;
 type RunCaptureOpts = Parameters<RunCaptureFn>[1];
 type NullableRunCaptureFn = (
@@ -134,6 +135,11 @@ export interface HostAssessment {
   dockerInstalled: boolean;
   dockerRunning: boolean;
   dockerReachable: boolean;
+  dockerProbeIssue?:
+    | "info_timeout"
+    | "info_unavailable"
+    | "version_timeout"
+    | "version_unavailable";
   nodeInstalled: boolean;
   openshellInstalled: boolean;
   dockerInfoSummary?: string;
@@ -189,6 +195,7 @@ export interface AssessHostOpts {
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
+  runCaptureExImpl?: RunCaptureExFn;
   resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
@@ -553,6 +560,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
         ignoreError: options?.ignoreError ?? false,
         timeout: options?.timeout,
       }));
+  const runCaptureExImpl =
+    opts.runCaptureExImpl ?? (opts.runCaptureImpl === undefined ? runCaptureEx : undefined);
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
   const readdirImpl = opts.readdirImpl ?? ((dir: string) => fs.readdirSync(dir));
   const dockerInstalled =
@@ -568,13 +577,27 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerHostInvalid = !isSupportedGatewayDockerHost(env.DOCKER_HOST);
 
   let dockerInfoOutput = opts.dockerInfoOutput;
+  let dockerProbeIssue: HostAssessment["dockerProbeIssue"];
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
-    dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
-      ignoreError: true,
-      timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
-    });
+    if (runCaptureExImpl) {
+      try {
+        const result = runCaptureExImpl(["docker", "info", "--format", "{{json .}}"], {
+          timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+        });
+        if (result.timedOut) dockerProbeIssue = "info_timeout";
+        else if (result.exitCode === null) dockerProbeIssue = "info_unavailable";
+        else dockerInfoOutput = result.exitCode === 0 ? result.stdout : "";
+      } catch {
+        dockerProbeIssue = "info_unavailable";
+      }
+    } else {
+      dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
+        ignoreError: true,
+        timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+      });
+    }
   }
   if (dockerInstalled && isDockerDaemonReachable(dockerInfoOutput)) {
     dockerReachable = true;
@@ -586,10 +609,23 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   // down/absent Docker never pays for the extra call (#7320).
   let dockerVersionOutput = opts.dockerVersionOutput;
   if (dockerReachable && !dockerHostInvalid && dockerVersionOutput === undefined) {
-    dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
-      ignoreError: true,
-      timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
-    });
+    if (runCaptureExImpl) {
+      try {
+        const result = runCaptureExImpl(["docker", "version", "--format", "{{json .}}"], {
+          timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+        });
+        if (result.timedOut) dockerProbeIssue = "version_timeout";
+        else if (result.exitCode === null) dockerProbeIssue = "version_unavailable";
+        else dockerVersionOutput = result.exitCode === 0 ? result.stdout : "";
+      } catch {
+        dockerProbeIssue = "version_unavailable";
+      }
+    } else {
+      dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
+        ignoreError: true,
+        timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
+      });
+    }
   }
 
   const release = opts.release ?? os.release();
@@ -708,6 +744,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerInstalled,
     dockerRunning,
     dockerReachable,
+    dockerProbeIssue,
     nodeInstalled,
     openshellInstalled,
     dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),

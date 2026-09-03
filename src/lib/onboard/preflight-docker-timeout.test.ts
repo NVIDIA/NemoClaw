@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { assessHost } from "./preflight";
+import { assessHost, planHostAdvisories } from "./preflight";
 
 const dockerInfoCommand = ["docker", "info", "--format", "{{json .}}"] as const;
 const dockerVersionCommand = ["docker", "version", "--format", "{{json .}}"] as const;
@@ -27,44 +27,66 @@ describe("Docker preflight timeouts", () => {
   it("bounds Docker info before reporting an unreachable daemon (#10367)", () => {
     const calls: Array<{
       command: readonly string[];
-      ignoreError: boolean | undefined;
       timeout: number | undefined;
     }> = [];
     const result = assessHost({
       ...commonAssessmentOptions(),
       env: {},
-      runCaptureImpl: (command, options) => {
-        calls.push({ command, ignoreError: options?.ignoreError, timeout: options?.timeout });
-        return "";
+      runCaptureExImpl: (command, options) => {
+        calls.push({ command, timeout: options?.timeout });
+        return { stdout: "", stderr: "", exitCode: null, timedOut: true };
       },
     });
 
     expect(calls.filter(({ command }) => command[0] === "docker")).toEqual([
-      { command: dockerInfoCommand, ignoreError: true, timeout: 15_000 },
+      { command: dockerInfoCommand, timeout: 15_000 },
     ]);
     expect(result.dockerReachable).toBe(false);
+    expect(result.dockerProbeIssue).toBe("info_timeout");
+    const advisories = planHostAdvisories(result);
+    expect(advisories.map(({ id }) => id)).toContain("docker_probe_inconclusive");
+    expect(advisories.find(({ id }) => id === "docker_probe_inconclusive")?.reason).toContain(
+      "did not answer `docker info` within 15 seconds",
+    );
+    expect(advisories.map(({ id }) => id)).not.toContain("start_docker");
+    expect(advisories.map(({ id }) => id)).not.toContain("docker_group_permission");
   });
 
   it("bounds Docker version after Docker info succeeds (#10367)", () => {
     const calls: Array<{
       command: readonly string[];
-      ignoreError: boolean | undefined;
       timeout: number | undefined;
     }> = [];
-    const outputs = new Map([[dockerInfoCommand.join("\0"), reachableInfoOutput]]);
+    const results = new Map([
+      [
+        dockerInfoCommand.join("\0"),
+        { stdout: reachableInfoOutput, stderr: "", exitCode: 0, timedOut: false },
+      ],
+    ]);
     const result = assessHost({
       ...commonAssessmentOptions(),
       env: {},
-      runCaptureImpl: (command, options) => {
-        calls.push({ command, ignoreError: options?.ignoreError, timeout: options?.timeout });
-        return outputs.get(command.join("\0")) ?? "";
+      runCaptureExImpl: (command, options) => {
+        calls.push({ command, timeout: options?.timeout });
+        return (
+          results.get(command.join("\0")) ?? {
+            stdout: "",
+            stderr: "",
+            exitCode: null,
+            timedOut: true,
+          }
+        );
       },
     });
 
     expect(calls.filter(({ command }) => command[0] === "docker")).toEqual([
-      { command: dockerInfoCommand, ignoreError: true, timeout: 15_000 },
-      { command: dockerVersionCommand, ignoreError: true, timeout: 15_000 },
+      { command: dockerInfoCommand, timeout: 15_000 },
+      { command: dockerVersionCommand, timeout: 15_000 },
     ]);
     expect(result.dockerReachable).toBe(true);
+    expect(result.dockerProbeIssue).toBe("version_timeout");
+    expect(
+      planHostAdvisories(result).find(({ id }) => id === "docker_probe_inconclusive")?.reason,
+    ).toContain("did not answer `docker version` within 15 seconds");
   });
 });
