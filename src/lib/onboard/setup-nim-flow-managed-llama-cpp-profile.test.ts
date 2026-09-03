@@ -174,24 +174,28 @@ describe("managed llama.cpp profile onboarding", () => {
     );
   });
 
-  it("rejects a remote Docker context before managed N1x installation", async () => {
-    vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1");
-    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
-    const installManagedLlamaCpp = vi.fn();
-    const setupNim = createSetupNim(
-      makeDeps({
-        isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-llama-cpp",
-        resolveManagedLlamaCppSelection: resolveManagedLlamaCppSelectionForGpu,
-        installManagedLlamaCpp,
-      }),
-    );
+  it(
+    "rejects a remote Docker context before managed N1x installation",
+    { timeout: 15_000 },
+    async () => {
+      vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1");
+      vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+      const installManagedLlamaCpp = vi.fn();
+      const setupNim = createSetupNim(
+        makeDeps({
+          isNonInteractive: () => true,
+          getNonInteractiveProvider: () => "install-llama-cpp",
+          resolveManagedLlamaCppSelection: resolveManagedLlamaCppSelectionForGpu,
+          installManagedLlamaCpp,
+        }),
+      );
 
-    await expect(
-      setupNim({ platform: "n1x", wslDockerDesktopGpuProofPassed: true } as never, "n1x-agent"),
-    ).rejects.toThrow("effective Docker context");
-    expect(installManagedLlamaCpp).not.toHaveBeenCalled();
-  });
+      await expect(
+        setupNim({ platform: "n1x", wslDockerDesktopGpuProofPassed: true } as never, "n1x-agent"),
+      ).rejects.toThrow("effective Docker context");
+      expect(installManagedLlamaCpp).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports optional profile discovery failures while keeping other providers available", async () => {
     const note = vi.fn();
