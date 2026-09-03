@@ -1218,6 +1218,16 @@ describe("focused staging Brev Launchable lane", () => {
       JSON.parse(fs.readFileSync(path.join(acceptedDelayed.workDir, "cleanup.json"), "utf8")),
     ).toMatchObject({ workspaceId: "ws-1", status: "ABSENT" });
 
+    const replaced = fixture();
+    fs.writeFileSync(replaced.state, JSON.stringify({ workspaces: [{ id: "ws-2", name: replaced.env.INSTANCE_NAME }] }));
+    fs.writeFileSync(`${replaced.workDir}.workspace-owner`, JSON.stringify({ workspaceName: replaced.env.INSTANCE_NAME, createState: "accepted", deleteAttempts: 0 }), { mode: 0o600 });
+    fs.writeFileSync(path.join(replaced.workDir, "workspace-recovery.json"), JSON.stringify({ schemaVersion: 1, workspace: { name: replaced.env.INSTANCE_NAME, id: "ws-1" } }));
+    const replacedResult = run({ ...replaced.env, BREV_DELETE_TIMEOUT_SECONDS: "1", POLL_SECONDS: "1" }, ["cleanup-owned-workspace"]);
+    expect(replacedResult.status).not.toBe(0);
+    expect(fs.existsSync(replaced.calls) ? fs.readFileSync(replaced.calls, "utf8") : "").not.toContain("brev delete");
+    expect(JSON.parse(fs.readFileSync(replaced.state, "utf8"))).toMatchObject({ workspaces: [{ id: "ws-2" }] });
+    expect(JSON.parse(fs.readFileSync(path.join(replaced.workDir, "cleanup.json"), "utf8"))).toMatchObject({ workspaceId: "ws-1", status: "PRESENT" });
+
     const notOwned = fixture();
     fs.writeFileSync(
       notOwned.state,

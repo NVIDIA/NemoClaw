@@ -141,8 +141,9 @@ Show the complete documentation coverage evidence. Offer the maintainer the thre
 there. If the maintainer requests documentation work or stops, do not continue to E2E or tag
 confirmation. If the maintainer proceeds, record the decision line in the release brief.
 
-Do not offer the general E2E proceed option until the release entry and image checks pass and the
-maintainer chooses to proceed with the displayed documentation coverage. Record the returned paths,
+Do not offer the general E2E proceed option until the release entry and image checks pass, canonical
+Launchable inspection succeeds for the candidate, and the maintainer chooses to proceed with the
+displayed documentation coverage. Record the returned paths,
 URLs, PR state, commit ranges, review state, check state, and image identities in the release brief.
 
 ### 3. Present General E2E and Ask for a Decision
@@ -166,7 +167,8 @@ reason. The reason must say what differs or remains unresolved and why the maint
 Selecting “Proceed with the status as shown” is the decision, not the reason. Stop and ask the
 maintainer why before continuing when a reason is required.
 This exception applies only to E2E. It never replaces the current-main release entry, a historical
-plan's release-entry exception, the documentation coverage decision, or required image evidence.
+plan's release-entry exception, the documentation coverage decision, required image evidence, or
+canonical Launchable evidence.
 
 ### 4. Finish and Review the Release Brief
 
