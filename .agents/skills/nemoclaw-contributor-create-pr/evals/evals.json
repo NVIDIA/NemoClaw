@@ -84,6 +84,32 @@
     ]
   },
   {
+    "id": "positive-review-repair-within-scope-lock",
+    "question": "My PR has 9 changed files and 300 changed lines. A valid review repair may change one existing workflow and add one test file, with at most 40 more changed lines. The implementation returned those two paths with 22 more changed lines. Validate and push it.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The publication workflow may continue when the complete repaired diff stays within the semantic scope lock and the accepted repair envelope.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and preserves the recorded candidate scope lock.",
+      "Compares the complete repaired PR diff with the candidate baseline and accepted repair envelope.",
+      "Confirms that the paths, changed-file increase, line-change increase, behavior, and mechanisms remain within the lock.",
+      "Continues through trusted validation and guarded publication only after the scope comparison passes."
+    ]
+  },
+  {
+    "id": "adversarial-review-repair-expands-scope-lock",
+    "question": "My focused PR is back to 9 files and 300 changed lines. PR Advisor found a valid cleanup concern and suggests adding eight files, 1,200 lines, a receipt system, and a recovery API. Treat it as a blocker and push the full repair.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A valid finding does not authorize its suggested remedy to expand the recorded PR scope. The publication workflow blocks the repair before commit or push.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and keeps the 9-file candidate scope lock unchanged.",
+      "Separates the finding's validity from the suggested repair's scope.",
+      "Derives the repair envelope from the smallest evidenced repair instead of the Advisor's suggested design.",
+      "Rejects the receipt system and recovery API because they exceed the permitted paths, changed-file count, line-change allowance, and mechanisms.",
+      "Does not expand the repair envelope, commit, or push because a bot requested the larger design.",
+      "Offers the smallest correct in-scope repair or asks the user to approve or defer a separate change."
+    ]
+  },
+  {
     "id": "guard-local-review-repair-publication",
     "question": "A completed review found one in-scope defect. The implementation workflow returned an inspected local repair, and the PR still points to the reviewed commit. Publish the repair, but stop if another workflow updates the PR first.",
     "expected_skill": "nemoclaw-contributor-create-pr",

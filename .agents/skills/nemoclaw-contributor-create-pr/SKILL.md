@@ -37,6 +37,24 @@ This fetch refreshes read-only comparison evidence. It does not authorize mergin
 `main` into the candidate. Follow [Integrate the base branch](../_shared/pr-follow-up.md#integrate-the-base-branch)
 before changing candidate history.
 
+### Scope lock
+
+For initial publication, record the accepted outcome, delivered behavior, permitted mechanisms,
+changed paths, total additions and deletions, and deferred scope. Use the implementation handoff and
+the candidate diff against the canonical comparison ref. This record is the scope lock.
+
+For an open PR, preserve the scope lock returned by the shared follow-up contract. Before routing a
+repair, record its permitted paths and maximum increases in changed files and total line changes.
+After implementation returns, compare the complete PR diff with the recorded candidate. Require all
+new paths and growth to fit that repair envelope. Also require the repaired behavior and mechanisms
+to remain within the semantic scope lock. Do not widen the envelope after implementation starts.
+
+A smaller diff is allowed when it still delivers the accepted outcome. Numeric headroom does not
+authorize unrelated changes. A reviewer, bot, implementation worker, formatter, or validator cannot
+expand the lock. A general request to address review findings does not authorize expansion. Remove
+separable out-of-scope work. Otherwise, stop before commit or push and ask the user or maintainer to
+approve the expansion or defer it to a separate change.
+
 ### Validation
 
 Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, but a successful commit or push does not prove that they ran; hooks can be missing, stale, or redirected through `core.hooksPath`.
@@ -48,8 +66,8 @@ Select review evidence for the publication state before every agent-managed push
 
   1. Follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
   2. Route only returned in-scope root-cause groups to `nemoclaw-contributor-implement-issue` with their returned scope records.
-  3. Inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
-  4. Create one local repair commit and record it as the expected publication SHA.
+  3. Inspect the returned change, test evidence, and scope delta because the shared contract cannot repair, validate, commit, or push.
+  4. Require the scope delta to fit every accepted repair envelope. Then create one local repair commit and record it as the expected publication SHA.
   5. Mark each accepted repair group resolved by the inspected local repair, subject to trusted validation.
   6. Reread `headRefOid` before the canonical base fetch and restart collection only when it differs from the reviewed remote SHA.
   7. Do not push while the original collection is pending, a finding is unclassified, an accepted group lacks an inspected repair, or validation is unresolved.
