@@ -27,7 +27,6 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import {
-  assertMcpAdapterConfigMutationsAllowed,
   assertMcpAdapterMutationRuntimeCapabilities,
   assertMcpAdapterTeardownRuntimeCapabilities,
 } from "./mcp-bridge-runtime-capabilities";
@@ -139,9 +138,6 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const targetEntries = targets
     .map(([, entry]) => entry)
     .filter((entry): entry is McpBridgeEntry => !!entry);
-  // Hermes shields posture is host-visible. Refuse before DNS, gateway
-  // recovery/selection, provider inspection, or any lifecycle mutation.
-  assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, targetEntries);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);

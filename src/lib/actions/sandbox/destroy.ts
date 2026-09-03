@@ -37,14 +37,16 @@ import {
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
-  removeManagedHermesStateVolume,
+  removeManagedAgentStateVolumes,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import {
+  enforceRemovedImmutabilityMigrationBoundary,
+  retireRemovedImmutabilityStateRecord,
+} from "../../state/migrations/removed-immutability";
 import * as onboardSession from "../../state/onboard-session";
-import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import {
   assertSandboxDestroyCommandAvailable,
@@ -69,6 +71,7 @@ import {
   prepareSandboxDestroy,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
+  teardownSandboxDashboardForward,
 } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
@@ -191,22 +194,6 @@ export type CleanupSandboxServicesDeps = {
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
   googlechatWebhookTunnelPidDir?: (servicePidDir: string) => string;
-};
-
-type ShieldsTimerNeutralizeResult = {
-  warnings?: string[];
-};
-
-type CleanupShieldsDestroyArtifactsDeps = {
-  killShieldsTimer?: (sandboxName: string) => ShieldsTimerNeutralizeResult | void;
-  rmSync?: typeof fs.rmSync;
-  stateDir?: string;
-  warn?: (message: string) => void;
-};
-
-type RemoveShieldsStateDeps = {
-  rmSync?: typeof fs.rmSync;
-  warn?: (message: string) => void;
 };
 
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
@@ -458,54 +445,6 @@ export function cleanupSandboxServices(
 }
 
 /**
- * Remove host-side Shields state and recovery artifacts for a sandbox.
- *
- * Without this cleanup, stale state or an external policy handoff from a
- * previous sandbox can survive destroy → re-onboard under the same name.
- *
- * See: https://github.com/NVIDIA/NemoClaw/issues/3114
- */
-export function removeShieldsState(
-  sandboxName: string,
-  stateDir = resolveNemoclawStateDir(),
-  deps: RemoveShieldsStateDeps = {},
-): void {
-  const rmSync = deps.rmSync ?? fs.rmSync;
-  const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
-  const resolvedStateDir = path.resolve(stateDir);
-  const recoveryArtifactName = `shields-external-policy-${sandboxName}.yaml`;
-  const artifactNames = [
-    recoveryArtifactName,
-    `shields-${sandboxName}.json`,
-    `shields-timer-${sandboxName}.json`,
-  ];
-  for (const artifactName of artifactNames) {
-    const filePath = path.resolve(resolvedStateDir, artifactName);
-    if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
-      // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
-      // all entry points, but reject traversal attempts just in case.
-      continue;
-    }
-    try {
-      rmSync(filePath, { force: true });
-    } catch (error) {
-      // force: true already suppresses ENOENT. A recovery handoff must not
-      // become unbound under a reusable sandbox name, so preserve Shields
-      // state and stop cleanup when that artifact cannot be removed.
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      const message = error instanceof Error ? error.message : String(error);
-      if (artifactName === recoveryArtifactName) {
-        throw new Error(
-          `Could not remove external Shields policy recovery artifact '${filePath}': ${message}. Shields state was preserved for retry.`,
-          { cause: error },
-        );
-      }
-      warn(`Failed to remove Shields cleanup artifact '${filePath}': ${message}`);
-    }
-  }
-}
-
-/**
  * Remove only a provider-owned per-sandbox workload image. Shared managed
  * cohorts and ambiguous ownership are never deleted.
  * Must be called before registry.removeSandbox() since the imageTag is stored there.
@@ -632,25 +571,6 @@ export async function revokeDestroyedSandboxHttpsPinRoute(
   }
 }
 
-export function cleanupShieldsDestroyArtifacts(
-  sandboxName: string,
-  deps: CleanupShieldsDestroyArtifactsDeps = {},
-): void {
-  const killShieldsTimer = deps.killShieldsTimer ?? defaultKillShieldsTimer;
-  const stateDir = deps.stateDir ?? resolveNemoclawStateDir();
-  const warn = deps.warn ?? defaultDestroyWarn;
-
-  const timerResult = killShieldsTimer(sandboxName);
-  for (const warning of timerResult?.warnings ?? []) {
-    warn(warning);
-  }
-
-  removeShieldsState(sandboxName, stateDir, {
-    rmSync: deps.rmSync ?? fs.rmSync,
-    warn,
-  });
-}
-
 export type { WipeSandboxStateDeps };
 // Re-export so existing callers (tests, downstream code) keep working after
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
@@ -673,8 +593,16 @@ export async function destroySandbox(
 ): Promise<void> {
   try {
     return await withMcpLifecycleLock(sandboxName, () => {
+      const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
+        sandboxName,
+        { allowStateRecord: true },
+      );
       assertSandboxDestroyCommandAvailable(sandboxName);
-      return destroySandboxUnlocked(sandboxName, options);
+      return destroySandboxUnlocked(
+        sandboxName,
+        options,
+        removedImmutabilityMigration.stateRecord !== null,
+      );
     });
   } catch (error) {
     if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
@@ -685,6 +613,7 @@ export async function destroySandbox(
 async function destroySandboxUnlocked(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
+  retireRemovedImmutabilityState = false,
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
@@ -725,15 +654,20 @@ async function destroySandboxUnlocked(
     );
   }
 
-  const inspectContainerIdentity = () =>
-    assertUnambiguousDestroyContainerIdentity(sandboxName, {
+  const inspectContainerIdentity = () => {
+    const registeredSandbox = registry.getSandbox(sandboxName);
+    return assertUnambiguousDestroyContainerIdentity(sandboxName, {
       cliName: CLI_NAME,
-      providerId: normalizeRuntimeProviderIdentity(
-        registry.getSandbox(sandboxName)?.openshellDriver,
-      ),
+      providerId: registeredSandbox
+        ? normalizeRuntimeProviderIdentity(registeredSandbox.openshellDriver)
+        : normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
-      ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
+      sandbox: registeredSandbox,
+      ...(retainedSandboxIdentityFingerprint
+        ? { retainedSandboxIdentityFingerprint }
+        : {}),
     });
+  };
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
     requestSandboxDestroyExit(1);
@@ -794,7 +728,6 @@ async function destroySandboxUnlocked(
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() =>
     prepareSandboxDestroy(sandboxName, {
-      force: normalized.force === true,
       retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
     }),
   );
@@ -838,8 +771,6 @@ async function destroySandboxUnlocked(
   let destructiveResult: Awaited<ReturnType<typeof executeSandboxDestroy>>;
   try {
     destructiveResult = await executeSandboxDestroy({
-      cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
-      cliName: CLI_NAME,
       force: normalized.force === true,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
@@ -851,7 +782,11 @@ async function destroySandboxUnlocked(
       ...(retainedSandboxIdentityFingerprint
         ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
         : {}),
+      ...(initialIdentity?.providerIdentity
+        ? { expectedRuntimeProviderIdentity: initialIdentity.providerIdentity }
+        : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
+      verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
   } catch (error) {
@@ -879,23 +814,7 @@ async function destroySandboxUnlocked(
       );
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
-    const shieldsRecoveryRequired =
-      destructiveResult.shieldsRelockRequiresGateway ||
-      destructiveResult.workspaceTimeoutRequiresShieldsRecovery === true;
-    if (shieldsRecoveryRequired) {
-      if (destructiveResult.shieldsRelockRequiresGateway) {
-        console.error(
-          `  The OpenShell gateway is unreachable and shields could not be re-locked before delete. Local state was preserved so the seven-attempt auto-restore recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
-        );
-      } else {
-        console.error(
-          `  The workspace cleanup timeout left an active shields timer authoritative. Local state was preserved so bounded recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
-        );
-      }
-      console.error(
-        `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'). Run '${CLI_NAME} ${sandboxName} shields status' to verify recovery or follow its durable containment guidance. Retry destroy only after recovery permits it; --force cannot safely discard a record while shields recovery is unresolved.`,
-      );
-    } else if (destructiveResult.timedOut) {
+    if (destructiveResult.timedOut) {
       console.error(
         `  NemoClaw preserved the local sandbox record because OpenShell did not confirm the remote operation.`,
       );
@@ -983,28 +902,38 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
-    const stateVolumeCleanup = abortPreparedCleanupOnError(() =>
-      removeManagedHermesStateVolume({
-        agentName: sandbox.agent,
-        runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
-        sandboxName,
-        workloadKind: sandbox.workload?.kind ?? "",
-      }),
+    const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
+      removeManagedAgentStateVolumes(
+        {
+          agentName: sandbox.agent,
+          runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
+          sandboxName,
+          workloadKind: sandbox.workload?.kind ?? "",
+        },
+        {
+          runtimeProviders: CURRENT_RUNTIME_PROVIDER_BUNDLES,
+        },
+      ),
     );
-    if (stateVolumeCleanup.status === "failed") {
+    const failedStateVolumeCleanup = stateVolumeCleanupResults.find(
+      (result) => result.status === "failed",
+    );
+    if (failedStateVolumeCleanup?.status === "failed") {
       console.error(
-        `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,
+        `  Sandbox '${sandboxName}' is gone, but its managed agent state volume '${failedStateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(failedStateVolumeCleanup.detail)}`,
       );
       console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
       preparedManagedLlamaCppCleanup?.abort();
       requestSandboxDestroyExit(1);
     }
-    if (stateVolumeCleanup.status === "not-owned") {
-      console.warn(
-        `  ${YW}⚠${R} Left Docker volume '${stateVolumeCleanup.volumeName}' untouched because ${stateVolumeCleanup.detail}.`,
-      );
-    } else if (stateVolumeCleanup.status === "removed") {
-      console.log(`  Removed managed Hermes state volume for '${sandboxName}'.`);
+    for (const stateVolumeCleanup of stateVolumeCleanupResults) {
+      if (stateVolumeCleanup.status === "not-owned") {
+        console.warn(
+          `  ${YW}⚠${R} Left managed state volume '${stateVolumeCleanup.volumeName}' untouched because ${stateVolumeCleanup.detail}.`,
+        );
+      } else if (stateVolumeCleanup.status === "removed") {
+        console.log(`  Removed managed agent state volume for '${sandboxName}'.`);
+      }
     }
   }
   abortPreparedCleanupOnError(() => {
@@ -1054,6 +983,9 @@ async function destroySandboxUnlocked(
    * registry owns authenticated reconciliation that can safely complete cleanup
    * without retaining the local ownership row.
    */
+  if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
+    retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
+  }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;
   if (removalOutcome.status === "blocked") {

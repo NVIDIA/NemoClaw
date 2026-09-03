@@ -154,7 +154,7 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("forward list")) return sandboxName + " 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 

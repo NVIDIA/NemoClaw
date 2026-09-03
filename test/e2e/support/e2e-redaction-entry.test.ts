@@ -56,6 +56,30 @@ describe("fixture redaction entry point", () => {
     ).toMatchObject({ COMPASS: "north", BYPASS: "allowed" });
   });
 
+  it("rejects secret-shaped names from the non-secret child env channel", () => {
+    expect(() =>
+      buildChildEnv(
+        { CUSTOM_TOKEN: "must-not-pass" },
+        { fixtureOverlay: {}, additionalAllowedEnv: ["CUSTOM_TOKEN"] },
+      ),
+    ).toThrow(/looks secret-bearing; use secretEnv/);
+  });
+
+  it("does not let fixture prefixes or overlays bypass the declared-secret channel", () => {
+    const childEnv = buildChildEnv(
+      { E2E_TARGET_ID: "target-a", E2E_PROVIDER_TOKEN: "must-not-pass" },
+      { fixtureOverlay: {} },
+    );
+    expect(childEnv).toMatchObject({ E2E_TARGET_ID: "target-a" });
+    expect(childEnv.E2E_PROVIDER_TOKEN).toBeUndefined();
+    expect(() =>
+      buildChildEnv(
+        {},
+        { fixtureOverlay: { E2E_PROVIDER_TOKEN: "must-not-pass" } },
+      ),
+    ).toThrow(/fixtureOverlay entry 'E2E_PROVIDER_TOKEN' looks secret-bearing/);
+  });
+
   it("passes only the workflow-owned trace directory through child env", () => {
     const childEnv = buildChildEnv(
       {

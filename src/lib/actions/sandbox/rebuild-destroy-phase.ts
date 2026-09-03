@@ -26,6 +26,7 @@ import type {
   RebuildRecreateJournal,
   RebuildRecreateSourcePresence,
 } from "./rebuild-recreate-journal";
+import { teardownSandboxDashboardForward } from "./forward-recovery";
 
 export type RebuildDeleteValidationResult =
   | { ok: true }
@@ -39,7 +40,6 @@ export interface RebuildDestroyPhaseInput {
   backupManifest: RebuildBackupManifest;
   log: RebuildLog;
   bail: RebuildBail;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
   validateAfterMcpPreparation?: (
     preparation: McpRebuildPreparation,
@@ -235,7 +235,6 @@ export async function runRebuildDestroyPhase(
     backupManifest,
     log,
     bail,
-    relockShieldsIfNeeded,
     validateAfterMcpPreparation,
     validateAtDeleteEdge,
     cleanupDockerOrphanAfterDelete,
@@ -275,7 +274,6 @@ export async function runRebuildDestroyPhase(
         sandboxName,
         staleRecovery,
         input.force === true,
-        relockShieldsIfNeeded,
         bail,
       );
       return preparation;
@@ -304,7 +302,6 @@ export async function runRebuildDestroyPhase(
           preparation.detachedProviderEntries,
           preparation.scrubbedAdapterEntries,
         );
-        relockShieldsIfNeeded(true);
         bail(
           mcpRecoveryFailure
             ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
@@ -341,7 +338,6 @@ export async function runRebuildDestroyPhase(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
       );
-      relockShieldsIfNeeded(true);
       const detail = error instanceof Error ? error.message : String(error);
       bail(
         mcpRecoveryFailure
@@ -352,7 +348,7 @@ export async function runRebuildDestroyPhase(
     }
   }
 
-  // MCP preparation can await external systems. Re-read the registry at the
+  // MCP preparation can await external systems; re-read the registry at the
   // synchronous delete edge so those checks and deletion use one target.
   if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
@@ -360,7 +356,6 @@ export async function runRebuildDestroyPhase(
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
     );
-    relockShieldsIfNeeded(true);
     bail(
       mcpRecoveryFailure
         ? `Sandbox delete target changed during rebuild preparation; MCP provider recovery also failed: ${mcpRecoveryFailure}`
@@ -387,7 +382,6 @@ export async function runRebuildDestroyPhase(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
       );
-      relockShieldsIfNeeded(true);
       bail(
         mcpRecoveryFailure
           ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
@@ -403,15 +397,13 @@ export async function runRebuildDestroyPhase(
   // running sandbox is left without its MCP wiring.
   let sourcePresence: RebuildRecreateSourcePresence;
   try {
-    sourcePresence = recreateJournal.observeSourceForDelete();
-    recreateJournal.markDeleting();
+    sourcePresence = recreateJournal.beginDelete();
   } catch (error) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
     );
-    relockShieldsIfNeeded(true);
     const detail = error instanceof Error ? error.message : String(error);
     bail(
       mcpRecoveryFailure
@@ -458,10 +450,13 @@ export async function runRebuildDestroyPhase(
       if (backupManifest) {
         console.error("  State backup is preserved at: " + backupManifest.backupPath);
       }
-      relockShieldsIfNeeded(true);
       bail(
         mcpRecoveryFailure
-          ? `Failed to delete sandbox; MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          ? `Failed to delete sandbox; recovery also failed: ${[
+              mcpRecoveryFailure,
+            ]
+              .filter(Boolean)
+              .join("; ")}`
           : "Failed to delete sandbox.",
         deleteResult.status || 1,
       );
@@ -509,6 +504,14 @@ export async function runRebuildDestroyPhase(
     input.onDeleteStateAmbiguous?.();
     const detail = error instanceof Error ? error.message : String(error);
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
+    return null;
+  }
+  if (!teardownSandboxDashboardForward(sandboxName)) {
+    console.error(
+      "  Sandbox deletion succeeded, but one or more ForwardTcp host ports did not release.",
+    );
+    input.onDeleteStateAmbiguous?.();
+    bail("Sandbox host ports did not release after deletion.");
     return null;
   }
   try {

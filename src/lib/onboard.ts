@@ -61,7 +61,6 @@ const channelState: typeof import("./onboard/channel-state") = require("./onboar
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
-const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
@@ -428,11 +427,7 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
-const {
-  isRoutedInferenceProvider,
-  loadBlueprintProfile,
-  reconcileModelRouter,
-} = modelRouter;
+const { isRoutedInferenceProvider, loadBlueprintProfile, reconcileModelRouter } = modelRouter;
 const routedInference: typeof import("./onboard/routed-inference") = require("./onboard/routed-inference");
 const {
   OnboardRuntimeBoundary,
@@ -475,8 +470,6 @@ const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
-const { tryCleanupOrphanedDashboardForward } =
-  require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { runPreflightGatewaySequence } =
   require("./onboard/preflight-gateway-sequence") as typeof import("./onboard/preflight-gateway-sequence");
 const { destroyGatewayWithVolumeCleanup } =
@@ -509,9 +502,9 @@ const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const overlayfsAutoFix: typeof import("./onboard/overlayfs-auto-fix") = require("./onboard/overlayfs-auto-fix");
 const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo } = preflightUtils;
-const {
-  assertDockerBridgeAndContainerDnsHealthy,
-}: typeof import("./onboard/bridge-dns-preflight") = require("./onboard/bridge-dns-preflight");
+const runtimeEffectfulPreflight: typeof import("./onboard/machine/runtime-effectful-preflight") = require("./onboard/machine/runtime-effectful-preflight");
+const assertRuntimeProviderHealthy =
+  runtimeEffectfulPreflight.bindConfiguredRuntimeProviderHealth(isNonInteractive);
 const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
@@ -892,19 +885,17 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-const registeredCredentialProviders =
-  credentialProviderRegistration.createCredentialProviderRegistration({
-    root: ROOT,
-    runOpenshell,
-    getGatewayName: () => GATEWAY_NAME,
-    getCredential,
-    updateSession: onboardSession.updateSession,
-    stagedLegacyValues,
-    migratedLegacyKeys,
-    persistMigratedLegacyKeys,
-  });
-const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } =
-  registeredCredentialProviders;
+const registration = credentialProviderRegistration.createCredentialProviderRegistration({
+  root: ROOT,
+  runOpenshell,
+  getGatewayName: () => GATEWAY_NAME,
+  getCredential,
+  updateSession: onboardSession.updateSession,
+  stagedLegacyValues,
+  migratedLegacyKeys,
+  persistMigratedLegacyKeys,
+});
+const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } = registration;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
   onboardProviders.providerExistsInGateway(
     name,
@@ -1114,7 +1105,6 @@ const {
   runQuietOpenshell,
 } = createGatewayProcessLifecycle({
   gatewayName: () => GATEWAY_NAME,
-  dashboardPort: getOnboardDashboardPort,
   runOpenshell,
   runCaptureOpenshell,
   dockerInspect,
@@ -1150,12 +1140,6 @@ function getGatewayClusterContainerState(): string {
 
 function buildGatewayClusterExecArgv(script: string): string[] {
   return dockerExecArgv(getGatewayClusterContainerName(GATEWAY_NAME), ["sh", "-lc", script]);
-}
-
-function captureProcessArgs(pid: number): string {
-  return runCapture(["ps", "-p", String(pid), "-o", "args="], {
-    ignoreError: true,
-  }).trim();
 }
 
 function checkGatewayPortAvailable() {
@@ -1226,21 +1210,16 @@ async function preflight(
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
     gatewayName: GATEWAY_NAME,
     cliDisplayName: cliDisplayName(),
-    dashboardPort: getOnboardDashboardPort(),
     verifyGatewayContainerRunning,
     recoverGatewayRuntime,
     waitForGatewayHttpReady,
     getGatewayLocalEndpoint,
-    stopDashboardForward: () =>
-      runOpenshell(["forward", "stop", String(getOnboardDashboardPort())], {
-        ignoreError: true,
-      }),
+    stopDashboardForward: stopAllDashboardForwards,
     stopAllDashboardForwards,
     getGatewayClusterImageDrift,
     exitProcess: (code) => process.exit(code),
     destroyGateway,
     destroyGatewayForReuse,
-    runOpenshell,
     dockerInspect,
     dockerStop,
     dockerRm,
@@ -1277,7 +1256,6 @@ async function preflight(
       const reuse = await applyHealthyPortReuse({
         kind,
         port,
-        dashboardPort: getOnboardDashboardPort(),
         label,
         runtimeDisplayName: cliDisplayName(),
         gatewayName: GATEWAY_NAME,
@@ -1286,7 +1264,6 @@ async function preflight(
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
-        runOpenshell,
         checkPortAvailable,
         verifyGatewayContainerRunning,
       });
@@ -1310,25 +1287,6 @@ async function preflight(
       );
       if (managedListenerAccepted) {
         continue;
-      }
-      // Auto-cleanup orphaned SSH port-forward from a previous NemoClaw session
-      // (e.g. dashboard forward left behind after destroy). Only kill the process
-      // if its command line contains "openshell" to avoid killing unrelated SSH
-      // tunnels the user may have set up on the same port. (#1950)
-      if (kind === "dashboard" && portCheck.process === "ssh" && portCheck.pid) {
-        const outcome = await tryCleanupOrphanedDashboardForward({
-          port,
-          pid: portCheck.pid,
-          label,
-          portCheckOptions,
-          captureProcessArgs,
-          runCaptureOpenshell,
-          run,
-          sleepSeconds,
-          checkPortAvailable,
-        });
-        if (outcome.kind === "killed-still-blocked") portCheck = outcome.portCheck;
-        else if (outcome.kind !== "not-openshell") continue;
       }
       printPortConflictReport({
         port,
@@ -1507,22 +1465,18 @@ const gatewayRecovery = createGatewayRecoveryOrchestration({
   startGatewayWithOptions: gatewayStart.startGatewayWithOptions,
 });
 
-const {
-  recoverGatewayRuntime,
-  startDockerDriverGateway,
-  startGateway,
-  startGatewayForRecovery,
-} = createGatewayLifecycleApplication({
-  dockerDriverStart: dockerDriverGatewayStart,
-  recovery: gatewayRecovery,
-  registration: gatewayRegistration,
-  start: gatewayStart,
-});
+const { recoverGatewayRuntime, startDockerDriverGateway, startGateway, startGatewayForRecovery } =
+  createGatewayLifecycleApplication({
+    dockerDriverStart: dockerDriverGatewayStart,
+    recovery: gatewayRecovery,
+    registration: gatewayRegistration,
+    start: gatewayStart,
+  });
 
 const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandboxMetadata } =
   sandboxRegistryMetadata.createSandboxRegistryMetadataHelpers({
-    getOpenShellComputeDriverName: () =>
-      dockerDriverPlatform.resolveCurrentOpenShellComputePlan().driverName,
+    getCurrentRuntimeProviderId: () =>
+      setupNimFlow.resolveCurrentRuntimeProviderBundle().identity.id,
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
@@ -2469,13 +2423,10 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
 }
 export type SetupInferenceDeps = import("./onboard/setup-inference").SetupInferenceDeps;
 export type SetupInference = import("./onboard/setup-inference").SetupInference;
-
 function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
   return setupInferenceFactory.createSetupInference(getSetupInferenceDeps(), overrides);
 }
-
 const setupInference = createSetupInference();
-
 // ── Step 6: Messaging channels ───────────────────────────────────
 
 const MESSAGING_CHANNELS = listChannels();
@@ -2520,7 +2471,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
 const stageSandboxCredentialProviders = (
   input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>,
 ) =>
-  registeredCredentialProviders.stageSandboxCredentialProviders(
+  registration.stageSandboxCredentialProviders(
     input,
     sandboxCreateIntentResolver.prepareCredentialProviders,
   );
@@ -2590,6 +2541,7 @@ const {
   isWsl,
   redact,
   sleep: sleepSeconds,
+  productionForwardService: true,
   printAgentDashboardUi: agentOnboard.printDashboardUi,
 });
 const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
@@ -2674,7 +2626,6 @@ async function preflightAuthoritativeRebuildTarget(
         assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
         inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-        checkPort: (port) => checkPortAvailable(port),
       },
     );
     return gatewayAuthorityCheckpoint.checkpointGatewayAuthority(getGatewayOwner());
@@ -2976,7 +2927,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               ...options,
               allowStorageRemediation: !isGatewayExternallySupervised(),
             }),
-          assertDockerBridgeAndContainerDnsHealthy,
+          assertRuntimeProviderHealthy,
           resolveSandboxGpuConfig,
           validateSandboxGpuPreflight,
           skippedStepMessage,
@@ -3000,8 +2951,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           waitForGatewayHttpReady,
           recoverGatewayRuntime,
           getGatewayLocalEndpoint,
-          stopDashboardForward: () =>
-            bestEffortForwardStop(runOpenshell, getOnboardDashboardPort()),
+          stopDashboardForward: stopAllDashboardForwards,
           destroyGateway,
           getGatewayClusterImageDrift,
           stopAllDashboardForwards,
@@ -3182,7 +3132,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             agentSupportsWebSearch,
             agentSupportsWebSearchProvider,
             ...{ note, cliName },
-            updateSession: onboardSession.updateSession,
+            ...{
+              loadSession: onboardSession.loadSession,
+              updateSession: onboardSession.updateSession,
+              compareAndSwapSession: onboardSession.compareAndSwapSession,
+            },
             getStoredMessagingChannelConfig,
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
@@ -3215,6 +3169,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             clearPlanEnv: messagingChannelSetup.clearPlanEnv,
             getRegistrySandboxMessagingAuthority:
               messagingChannelSetup.getRegistrySandboxMessagingAuthority,
+            inspectGatewayCredential: registration.inspectGatewayCredential,
             providerMatchesGatewayCredential,
             stageSandboxCredentialProviders,
             promptValidatedSandboxName,
@@ -3236,6 +3191,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   dashboardPortReservationScope,
                   hermesApiPortReservationScope,
                   ...createArgs,
+                  opts.allowRemovedImmutabilityStateRecord === true,
                 ),
               ),
             ),
@@ -3335,15 +3291,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         finalization: {
           stagedLegacyKeys,
           migratedLegacyKeys,
-          webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
+          webSearchEnabled: (config) => braveProviderProfile.shouldEnableWebSearch(config),
           webSearchProvider: (config) => webSearchProviderForConfig(config),
         },
         finalizationDeps: {
-          ensureAgentDashboardForward: ensureFinalizationAgentDashboardForward,
           setDefaultSandbox: registry.setDefault,
           verifyWebSearchInsideSandbox,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates,
           removeLegacyCredentialsFile,
           cleanupStaleHostFiles,
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
@@ -3372,8 +3326,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   );
                   return parseInt(result.trim(), 10) || 0;
                 },
-                captureForwardList: () =>
-                  runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),
@@ -3522,6 +3474,7 @@ module.exports = {
   startDockerDriverGateway,
   findAvailableDashboardPort,
   startGatewayForRecovery,
+  managedWorkloadOnboard,
   ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,

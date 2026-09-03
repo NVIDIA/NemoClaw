@@ -4,7 +4,7 @@
 """Relocate pinned Hermes gateway metadata below its writable runtime directory.
 
 Hermes v0.19.0 stores ``gateway.pid``, ``gateway.lock``, and
-``gateway_state.json`` directly below ``HERMES_HOME``. NemoClaw shields-up
+``gateway_state.json`` directly below ``HERMES_HOME``. NemoClaw
 correctly makes that config root root-owned and non-writable, so NemoClaw's
 managed stop/start recovery cannot remove the old PID file or atomically
 refresh runtime status. The next managed start exits with "PID file race lost".
