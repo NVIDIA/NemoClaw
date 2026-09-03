@@ -201,6 +201,7 @@ async function readChangedFiles(
     readonly baseSha: string;
     readonly candidateRepository: string;
     readonly candidateSha: string;
+    readonly managedImageSha?: string;
   },
   request: (path: string) => Promise<unknown>,
 ): Promise<string[]> {
@@ -334,6 +335,7 @@ export async function resolvePrManagedImageCatalog(
     readonly baseSha: string;
     readonly candidateRepository: string;
     readonly candidateSha: string;
+    readonly managedImageSha?: string;
     readonly outputPath: string;
     readonly prNumber: number;
     readonly token: string;
@@ -348,6 +350,9 @@ export async function resolvePrManagedImageCatalog(
 ): Promise<PrManagedImageSelection> {
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");
+  }
+  if (input.managedImageSha !== undefined && !SHA_PATTERN.test(input.managedImageSha)) {
+    throw new Error("managed image SHA is invalid");
   }
   if (
     !REPOSITORY_PATTERN.test(input.candidateRepository) ||
@@ -368,10 +373,11 @@ export async function resolvePrManagedImageCatalog(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}`),
   );
-  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`;
+  const managedImageSha = input.managedImageSha ?? input.candidateSha;
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}/runs?event=pull_request&head_sha=${managedImageSha}&per_page=100`;
   const run = selectManagedImagePublicationRun(
     await collectPaginated(request, runsPath, "workflow_runs"),
-    { headSha: input.candidateSha, prNumber: input.prNumber, workflowId },
+    { headSha: managedImageSha, prNumber: input.prNumber, workflowId },
   );
 
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-managed-catalog-"));
@@ -398,7 +404,7 @@ export async function resolvePrManagedImageCatalog(
     }
     const catalog = assembleManagedImageCatalog(
       contracts,
-      input.candidateSha,
+      managedImageSha,
       `ghrun-${run.id}-${run.attempt}` as const,
     );
     writeValidatedManagedImageCatalog(catalog, input.outputPath);
@@ -434,6 +440,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     baseSha: env.BASE_SHA ?? "",
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",
     candidateSha: env.CANDIDATE_SHA ?? "",
+    managedImageSha: env.MANAGED_IMAGE_SHA || undefined,
     outputPath: argv[0],
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
     token: env.GITHUB_TOKEN ?? "",

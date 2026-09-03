@@ -78,10 +78,9 @@ The accepted `settings.json` restore keys are `theme`, `hideThinkingBlock`, `sho
 
 ## Create and Restore Snapshots
 
-Finish active Pi tasks and lower Shields before creating a snapshot. Snapshot creation refuses to continue while Shields are up.
+Finish active Pi tasks before creating a snapshot.
 
 ```bash
-nemoclaw <sandbox-name> shields down
 nemoclaw <sandbox-name> snapshot create --name before-change
 nemoclaw <sandbox-name> snapshot list
 ```
@@ -118,7 +117,6 @@ Destroy removes the registered sandbox and its managed runtime resources. It doe
 ```bash
 nemoclaw <sandbox-name> stop
 nemoclaw <sandbox-name> start
-nemoclaw <sandbox-name> shields down
 nemoclaw <sandbox-name> snapshot create --name before-destroy
 nemoclaw <sandbox-name> destroy --yes
 nemoclaw credentials reset <provider> --yes
