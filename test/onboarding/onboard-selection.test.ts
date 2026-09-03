@@ -3881,7 +3881,6 @@ const { setupNim } = require(${onboardPath});
         "install-windows-ollama",
         "qwen3:8b",
         false,
-        false,
         null,
         state,
       );
@@ -3951,7 +3950,6 @@ const { setupNim } = require(${onboardPath});
         selectedResolution.selected.key,
         "qwen3:8b",
         false,
-        false,
         installedPath,
         state,
       );
@@ -4000,7 +3998,6 @@ const { setupNim } = require(${onboardPath});
         null,
         "start-windows-ollama",
         "qwen3:8b",
-        false,
         detected.loopbackOnly,
         detected.installedPath,
         state,
@@ -4047,7 +4044,6 @@ const { setupNim } = require(${onboardPath});
         null,
         "start-windows-ollama",
         "qwen3:8b",
-        false,
         detected.loopbackOnly,
         detected.installedPath,
         state,
