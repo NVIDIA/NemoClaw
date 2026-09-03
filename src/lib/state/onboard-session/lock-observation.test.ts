@@ -5,7 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   observeOnboardLock,
@@ -98,6 +100,49 @@ describe("onboarding lock observation", () => {
       kind: "busy",
       reason: "unsafe",
     });
+  });
+
+  it("keeps symlink and hard-linked lock paths unsafe", () => {
+    const { evidence, lock, owner } = fixture();
+    const target = `${lock}.target`;
+    writeOwner(target, owner);
+    fs.symlinkSync(target, lock);
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unsafe" });
+
+    fs.rmSync(lock);
+    fs.linkSync(target, lock);
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unsafe" });
+  });
+
+  it.runIf(process.platform !== "win32")("keeps a FIFO lock path unsafe", () => {
+    const { evidence, lock } = fixture();
+    expect(spawnSync("mkfifo", [lock]).status).toBe(0);
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unsafe" });
+  });
+
+  it("keeps a lock changed during its stable read busy", () => {
+    const { evidence, lock, owner } = fixture();
+    writeOwner(lock, owner);
+    const original = fs.fstatSync.bind(fs);
+    let calls = 0;
+    vi.spyOn(fs, "fstatSync").mockImplementation((fd) => {
+      calls += 1;
+      if (calls === 2) fs.appendFileSync(lock, " ");
+      return original(fd);
+    });
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "publishing" });
+  });
+
+  it("keeps a lock replaced between descriptor and path checks unsafe", () => {
+    const { evidence, lock, owner } = fixture();
+    writeOwner(lock, owner);
+    const original = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, "lstatSync").mockImplementation((path) => {
+      fs.renameSync(lock, `${lock}.old`);
+      writeOwner(lock, owner);
+      return original(path);
+    });
+    expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "busy", reason: "unsafe" });
   });
 
   it.each([0, -1])("keeps a malformed PID %s unverified", (pid) => {
