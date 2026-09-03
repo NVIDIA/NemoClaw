@@ -122,6 +122,12 @@ exit 99
 printf '%s\n' '${timestamp}'
 `,
     );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+exit 99
+`,
+    );
     const nemoclaw = path.join(bin, "nemoclaw");
     writeExecutable(
       nemoclaw,
