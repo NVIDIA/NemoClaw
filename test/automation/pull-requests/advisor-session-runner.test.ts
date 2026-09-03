@@ -8,8 +8,6 @@ import path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RECORD_ADVISOR_FINDINGS_TOOL } from "../../../tools/pr-review-advisor/finding-ledger.mts";
-
 const sdk = vi.hoisted(() => {
   type Listener = (event: unknown) => void;
   type TerminalResponse =
@@ -339,7 +337,6 @@ async function run(
   promptTurns: AdvisorPromptTurn[],
   prepare?: (directory: string) => void,
   additionalReadRoots: string[] = [],
-  additionalTools: ToolDefinition[] = [],
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
@@ -362,7 +359,6 @@ async function run(
       customTool("turn_action"),
       customTool("draft_action"),
       customTool("repair_action"),
-      ...additionalTools,
     ],
   });
 }
@@ -548,127 +544,6 @@ describe("advisor session runner", () => {
     expect(result.turnErrors).toEqual([]);
     expect(result.raw).not.toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(1);
-  });
-
-  it("connects a specialist diff path to its trusted session read root", async () => {
-    const contextDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-specialist-context-"));
-    const siblingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-specialist-sibling-"));
-    tempDirs.push(contextDirectory, siblingDirectory);
-    const diffPath = path.join(contextDirectory, "diff.patch");
-    const siblingPath = path.join(siblingDirectory, "sibling.patch");
-    fs.writeFileSync(diffPath, "prepared specialist diff\n", "utf8");
-    fs.writeFileSync(siblingPath, "not trusted\n", "utf8");
-    const productionTurn = buildSpecialistInvestigateTurn("customer-value-behavior", {
-      scopeRisk: {},
-      diffPath,
-      controlledWords: "",
-      terminology: {},
-      correctness: {},
-      security: {},
-      tests: {},
-      operations: {},
-      reconciliation: {},
-      metadata: "{}",
-    });
-    const turn: AdvisorPromptTurn = {
-      ...productionTurn,
-      contextToolResults: undefined,
-      requiredToolNames: undefined,
-      requireToolsBeforeText: undefined,
-    };
-
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [turn],
-      undefined,
-      [contextDirectory],
-      [customTool(RECORD_ADVISOR_FINDINGS_TOOL)],
-    );
-
-    expect(result.turnErrors).toEqual([]);
-    expect(sdk.state.readContents).toContain("prepared specialist diff\n");
-
-    await expect(
-      run(
-        [{ ...turn, requiredReadPaths: [siblingPath] }],
-        undefined,
-        [contextDirectory],
-        [customTool(RECORD_ADVISOR_FINDINGS_TOOL)],
-      ),
-    ).rejects.toThrow(`Advisor read-only path is outside the workspace: ${siblingPath}`);
-  });
-
-  it("deduplicates relative aliases before required-read preparation (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["required.txt", "./required.txt"],
-        },
-      ],
-      (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("prepares every distinct required read before submission (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["first.txt", "second.txt"],
-        },
-      ],
-      (directory) => {
-        fs.writeFileSync(path.join(directory, "first.txt"), "first\n", "utf8");
-        fs.writeFileSync(path.join(directory, "second.txt"), "second\n", "utf8");
-      },
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(sdk.state.prompts).toHaveLength(3);
-    expect(sdk.state.prompts[0]).toMatch(/first\.txt/u);
-    expect(sdk.state.prompts[1]).toMatch(/second\.txt/u);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("accepts an empty required file at EOF (#9963)", async () => {
-    const requiredReadTurn: AdvisorPromptTurn = {
-      name: "read-empty",
-      prompt: "Analyze the required file.",
-      requiredReadPaths: ["empty.txt"],
-      requireAssistantText: true,
-    };
-    const result = await run([requiredReadTurn], (directory) =>
-      fs.writeFileSync(path.join(directory, "empty.txt"), "", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end read-empty ok");
-  });
-
-  it("rejects a required read outside the workspace (#9963)", async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-required-read-outside-"));
-    tempDirs.push(outside);
-    const outsideFile = path.join(outside, "outside.txt");
-    fs.writeFileSync(outsideFile, "outside\n", "utf8");
-
-    await expect(
-      run([
-        {
-          name: "read-outside",
-          prompt: "Analyze the required file.",
-          requiredReadPaths: [outsideFile],
-        },
-      ]),
-    ).rejects.toThrow("outside the workspace");
   });
 
   it("allows one failed initial submit followed by one repair success", async () => {

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Manual PR runs bind the candidate SHA independently from reusable image publication.
+# Manual PR runs bind the selected head or base SHA independently from reusable image publication.
 
 name: E2E / Main and Manual Suite
 run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
@@ -68,12 +68,12 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Optional lowercase 40-character latest PR commit SHA for manual E2E.
+        description: Optional lowercase 40-character PR head or exact PR base SHA for manual E2E.
         required: false
         default: ""
         type: string
       checkout_repository:
-        description: Optional PR source repository for manual E2E.
+        description: Optional repository containing the selected PR head or base SHA for manual E2E.
         required: false
         default: ""
         type: string
@@ -395,6 +395,8 @@ jobs:
         name: Authenticate manual PR dispatch
         if: ${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}
         env:
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -403,6 +405,7 @@ jobs:
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
           JOBS: ${{ inputs.jobs }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          TARGETS: ${{ inputs.targets }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -427,9 +430,19 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must be open" >&2; exit 1; }
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
-          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
+          [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
+          if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]; then
+            [[ "$ALLOW_JETSON_DISPATCH" != "true" && "$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true" ]] || { echo "::error::exact-base E2E cannot launch dedicated hardware dispatches" >&2; exit 1; }
+            [[ ",${TARGETS}," != *",jetson-nvmap-gpu,"* &&
+               ",${JOBS}," != *",jetson-nvmap-gpu,"* &&
+               ",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"* &&
+               ",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"* ]] || { echo "::error::exact-base E2E cannot select dedicated hardware jobs" >&2; exit 1; }
+            [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR base repository" >&2; exit 1; }
+          else
+            [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
+            [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
+          fi
           nvidia_owned=false
           if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
                 "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]]; then
@@ -764,9 +777,14 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open" >&2; exit 1; }
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
+          if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]; then
+            [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before base execution" >&2; exit 1; }
+          else
+            [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before head execution" >&2; exit 1; }
+            [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before head execution" >&2; exit 1; }
+          fi
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
                   "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization" ]] || {
