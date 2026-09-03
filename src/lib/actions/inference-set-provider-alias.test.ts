@@ -44,7 +44,6 @@ function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]
   expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
   expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   expect(calls.updateSession).not.toHaveBeenCalled();
-  expect(calls.appendAuditEntry).not.toHaveBeenCalled();
   expect(calls.restartSandboxGateway).not.toHaveBeenCalled();
 }
 

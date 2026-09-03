@@ -48,8 +48,6 @@ import {
   type PodmanHostPreflightOptions,
   qualifyPodmanHost,
 } from "./podman-preflight";
-import { createPodmanStateMutationSurface } from "./podman-state-mutation";
-import type { PodmanStateMutationSurfaceOptions } from "./podman-state-mutation";
 import {
   createCurrentPodmanOperationEngine,
   capturePodmanDestroyIdentity,
@@ -70,7 +68,6 @@ export interface PodmanRuntimeProviderEngines {
   readonly hostLocalInference?: PodmanContainerEngine;
   readonly managedBootstrap?: PodmanBoundContainerEngine;
   readonly sandboxLifecycle: PodmanContainerEngine;
-  readonly stateMutation?: PodmanBoundContainerEngine;
   readonly workloadCleanup?: PodmanBoundContainerEngine;
 }
 
@@ -97,7 +94,6 @@ export interface PodmanRuntimeProviderOptions {
   readonly gatewayHostPreparation?: NativePodmanGatewayHostPreparationDeps;
   readonly hostLocalInference?: PodmanHostLocalInferenceOptions;
   readonly preflight?: PodmanHostPreflightOptions;
-  readonly stateMutation?: Omit<PodmanStateMutationSurfaceOptions, "engine">;
 }
 
 const QUALIFIED_MANAGED_WORKLOAD_PROFILE = {
@@ -163,7 +159,6 @@ function requireEngine(
     | "host-local-inference"
     | "managed-bootstrap"
     | "sandbox-lifecycle"
-    | "state-mutation"
     | "workload-cleanup",
 ): void {
   if (engine.engineId !== "podman" || engine.operation !== operation) {
@@ -198,18 +193,15 @@ export function createPodmanRuntimeProviderBundle(
     hostLocalInference: inferenceEngine,
     managedBootstrap,
     sandboxLifecycle,
-    stateMutation: stateMutationEngine,
     workloadCleanup,
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
   const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
-  const stateMutationOptions = options.stateMutation;
   const containerEngineOperations = new Map([
     ["host-doctor", hostDoctor],
     ...(gatewayInspection ? ([["gateway-inspection", gatewayInspection]] as const) : []),
     ...(inferenceEngine ? ([["host-local-inference", inferenceEngine]] as const) : []),
     ["sandbox-lifecycle", sandboxLifecycle],
-    ...(stateMutationEngine ? ([["state-mutation", stateMutationEngine]] as const) : []),
     ...(workloadCleanup ? ([["workload-cleanup", workloadCleanup]] as const) : []),
   ] as const);
   requireEngine(hostDoctor, "host-doctor");
@@ -238,15 +230,6 @@ export function createPodmanRuntimeProviderBundle(
       !publishedRecoveryOperation.operation.assertTransactionCurrent)
   ) {
     throw new Error("Podman published recovery operation authority is incomplete.");
-  }
-  if (stateMutationEngine !== undefined) {
-    requireEngine(stateMutationEngine, "state-mutation");
-    if (stateMutationEngine.endpointAuthorityId !== providerEndpointAuthority) {
-      throw new Error("Podman provider engines must bind the same endpoint authority.");
-    }
-  }
-  if (stateMutationEngine === undefined && stateMutationOptions !== undefined) {
-    throw new Error("Podman provider requires its state-mutation engine with its options.");
   }
   for (const [engine, operation] of [
     [gatewayInspection, "gateway-inspection"],
@@ -387,16 +370,6 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       operations: ["start", "stop"],
     },
-    stateMutation:
-      stateMutationEngine === undefined
-        ? unsupported(
-            providerId,
-            "Podman state mutation remains disabled without injected candidate authority.",
-          )
-        : createPodmanStateMutationSurface({
-            engine: stateMutationEngine,
-            ...(stateMutationOptions ?? {}),
-          }),
     bootstrap:
       managedBootstrap === undefined
         ? unsupported(providerId, deferred)
@@ -469,15 +442,6 @@ export function createPodmanRuntimeProviderBundle(
           engineId: sandboxLifecycle.engineId,
           displayName: sandboxLifecycle.displayName,
         },
-        ...(stateMutationEngine
-          ? [
-              {
-                operation: "state-mutation" as const,
-                engineId: stateMutationEngine.engineId,
-                displayName: stateMutationEngine.displayName,
-              },
-            ]
-          : []),
         ...(workloadCleanup
           ? [
               {
@@ -530,7 +494,6 @@ export function createCurrentPodmanRuntimeProviderBundle(
     hostLocalInference: createCurrentPodmanOperationEngine("host-local-inference", environment),
     managedBootstrap: createCurrentPodmanOperationEngine("managed-bootstrap", environment),
     sandboxLifecycle: createCurrentPodmanOperationEngine("sandbox-lifecycle", environment),
-    stateMutation: createCurrentPodmanOperationEngine("state-mutation", environment),
     workloadCleanup: createCurrentPodmanOperationEngine("workload-cleanup", environment),
   } as const;
   const bundle = createPodmanRuntimeProviderBundle({
@@ -548,7 +511,6 @@ export function createCurrentPodmanRuntimeProviderBundle(
       },
       redactSensitive: (value) => redactPodmanFailure(environment, value),
     },
-    stateMutation: {},
   });
   return Object.freeze({
     ...bundle,
