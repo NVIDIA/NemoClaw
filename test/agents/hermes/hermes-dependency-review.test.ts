@@ -261,12 +261,12 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfile).toContain(
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = 'gateway:sandbox 2770'`,
     );
+    expect(dockerfile).toContain("hermes_gateway_state_metadata='gateway:sandbox 2777'");
+    expect(dockerfile).toContain("hermes_gateway_state_metadata='gateway:sandbox 2770'");
     expect(dockerfile).toContain(
-      "check_metadata /sandbox/.hermes/sessions 'gateway:sandbox 2770'",
+      'check_metadata /sandbox/.hermes/sessions "$hermes_gateway_state_metadata"',
     );
-    expect(dockerfile).toContain(
-      "check_metadata /sandbox/.hermes/logs 'sandbox:sandbox 2770'",
-    );
+    expect(dockerfile).toContain('check_metadata /sandbox/.hermes/logs "$hermes_log_metadata"');
     expect(runtimeBoundariesPatch).toContain("nemoclaw_protected_process_control");
     expect(runtimeBoundariesPatch).toContain("nemoclaw_sanitized_installer_env");
     expect(runtimeBoundariesPatch).toContain('uv_bin = "/usr/local/bin/uv"');
