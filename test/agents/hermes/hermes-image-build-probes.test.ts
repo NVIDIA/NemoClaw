@@ -184,6 +184,29 @@ describe("Hermes image build probes", () => {
     expect(dockerfile.indexOf(applyCheck, shaCheckIndex)).toBeGreaterThan(shaCheckIndex);
   });
 
+  // source-shape-contract: security -- The final image must execute the reviewed runtime environment validator bytes
+  it("binds the runtime environment validator to its source digest", () => {
+    const imageDockerfile = fs.readFileSync(
+      path.join(process.cwd(), "agents", "hermes", "Dockerfile"),
+      "utf8",
+    );
+    const runtimeEnvValidator = fs.readFileSync(
+      path.join(process.cwd(), "agents", "hermes", "validate-env-secret-boundary.py"),
+    );
+    const digest = createHash("sha256").update(runtimeEnvValidator).digest("hex");
+    const digestBinding = `ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=${digest}`;
+    const integrityCheck =
+      '"$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py';
+    const bindingIndex = imageDockerfile.indexOf(digestBinding);
+    const integrityCheckIndex = imageDockerfile.indexOf(integrityCheck, bindingIndex);
+
+    expect(bindingIndex).toBeGreaterThan(-1);
+    expect(integrityCheckIndex).toBeGreaterThan(bindingIndex);
+    expect(imageDockerfile.indexOf("| sha256sum -c -", integrityCheckIndex)).toBeGreaterThan(
+      integrityCheckIndex,
+    );
+  });
+
   it("removes the Hindsight probe wheel after staging its temporary copy", () => {
     const probeWheel = "/opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl";
     const copyIndex = dockerfile.indexOf(`cp ${probeWheel}`);
