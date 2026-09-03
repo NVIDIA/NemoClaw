@@ -579,6 +579,11 @@ OUT=$(docker run --rm --user root -e NEMOCLAW_MODEL_OVERRIDE="test/override-mode
     exit 1
   fi
   source /dev/stdin <<<"$APPLY_MODEL_OVERRIDE_SNIPPET"
+  # Keep this case scoped to the JSON rewrite. Permission normalization and
+  # owner dispatch are exercised by the dedicated cases below.
+  normalize_mutable_config_perms() { :; }
+  run_openclaw_config_as_owner() { "$@"; }
+  ensure_mutable_openclaw_config_hash() { :; }
   export NEMOCLAW_MODEL_OVERRIDE="test/override-model"
   apply_model_override
   python3 -c "
