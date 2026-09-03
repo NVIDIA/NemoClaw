@@ -21,8 +21,8 @@ describe("PR review advisor security boundaries", () => {
   it("removes the model credential after registering the selected model in memory", async () => {
     const credentialEnv = "PR_REVIEW_ADVISOR_TEST_API_KEY";
     vi.stubEnv(credentialEnv, "test-secret");
-    vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
+    vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
 
     try {
       await expect(
