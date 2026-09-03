@@ -593,7 +593,6 @@ async function main() {
     if (!logsClosed) {
       fs.closeSync(gatewayLog);
       fs.closeSync(gatewayError);
-      logsClosed = true;
     }
     if (!passed) {
       const diagnosticParts = [gatewayLogPath, gatewayErrorPath]
