@@ -89,4 +89,36 @@ describe("Docker preflight timeouts", () => {
       planHostAdvisories(result).find(({ id }) => id === "docker_probe_inconclusive")?.reason,
     ).toContain("did not answer `docker version` within 15 seconds");
   });
+
+  it("reports an unavailable Docker info process as inconclusive", () => {
+    const result = assessHost({
+      ...commonAssessmentOptions(),
+      env: {},
+      runCaptureExImpl: () => {
+        throw new Error("spawn failed");
+      },
+    });
+
+    expect(result.dockerReachable).toBe(false);
+    expect(result.dockerProbeIssue).toBe("info_unavailable");
+    const advisoryIds = planHostAdvisories(result).map(({ id }) => id);
+    expect(advisoryIds).toContain("docker_probe_inconclusive");
+    expect(advisoryIds).not.toContain("start_docker");
+    expect(advisoryIds).not.toContain("docker_group_permission");
+  });
+
+  it("reports an unavailable Docker version process as inconclusive", () => {
+    const result = assessHost({
+      ...commonAssessmentOptions(),
+      env: {},
+      runCaptureExImpl: (command) =>
+        command[1] === "info"
+          ? { stdout: reachableInfoOutput, stderr: "", exitCode: 0, timedOut: false }
+          : { stdout: "", stderr: "", exitCode: null, timedOut: false },
+    });
+
+    expect(result.dockerReachable).toBe(true);
+    expect(result.dockerProbeIssue).toBe("version_unavailable");
+    expect(planHostAdvisories(result).map(({ id }) => id)).toContain("docker_probe_inconclusive");
+  });
 });

@@ -10,7 +10,11 @@ vi.mock("node:child_process", async (importOriginal) => ({
   spawnSync: subprocess.spawnSync,
 }));
 
-import { buildSystemReadinessProbeEnv, createSystemReadinessCapture } from "./probe-env";
+import {
+  buildSystemReadinessProbeEnv,
+  createSystemReadinessCapture,
+  createSystemReadinessCaptureEx,
+} from "./probe-env";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -69,14 +73,35 @@ describe("system readiness child environment (#7411)", () => {
     );
   });
 
-  it.each([
-    "gateway\0spoof",
-    "gateway\rspoof",
-    "gateway\nspoof",
-  ])("rejects an invalid gateway name before spawning: %j", (gatewayName) => {
-    expect(() => buildSystemReadinessProbeEnv({}, { gatewayName })).toThrow(
-      "Readiness gateway name contains an invalid character.",
+  it("preserves timeout evidence in the structured readiness capture", () => {
+    subprocess.spawnSync.mockReturnValue({
+      error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
+      status: null,
+      stdout: "partial\n",
+      stderr: "deadline exceeded\n",
+    });
+    const capture = createSystemReadinessCaptureEx({ PATH: "/usr/bin" });
+
+    expect(capture(["docker", "info"], { env: { API_TOKEN: "must-not-cross" } })).toEqual({
+      stdout: "partial",
+      stderr: "deadline exceeded",
+      exitCode: null,
+      timedOut: true,
+    });
+    expect(subprocess.spawnSync).toHaveBeenCalledWith(
+      "docker",
+      ["info"],
+      expect.objectContaining({ env: { PATH: "/usr/bin" }, shell: false }),
     );
-    expect(subprocess.spawnSync).not.toHaveBeenCalled();
   });
+
+  it.each(["gateway\0spoof", "gateway\rspoof", "gateway\nspoof"])(
+    "rejects an invalid gateway name before spawning: %j",
+    (gatewayName) => {
+      expect(() => buildSystemReadinessProbeEnv({}, { gatewayName })).toThrow(
+        "Readiness gateway name contains an invalid character.",
+      );
+      expect(subprocess.spawnSync).not.toHaveBeenCalled();
+    },
+  );
 });

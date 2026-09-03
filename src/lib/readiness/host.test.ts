@@ -179,6 +179,23 @@ describe("host readiness projection (#7408)", () => {
     },
   );
 
+  it.each([
+    ["info_timeout", "unknown"],
+    ["version_timeout", "present"],
+  ] as const)("keeps a %s Docker probe inconclusive", (dockerProbeIssue, daemonState) => {
+    const result = report({
+      dockerReachable: dockerProbeIssue === "version_timeout",
+      dockerProbeIssue,
+    });
+
+    expect(result.status).toBe("inconclusive");
+    expect(result.exitCode).toBe(3);
+    expect(state(result, "host.docker.daemon_reachable")).toBe(daemonState);
+    expect(state(result, "host.docker.runtime_supported")).toBe("unknown");
+    expect(findingIds(result)).toContain("host.docker.probe_inconclusive");
+    expect(findingIds(result)).not.toContain("host.docker.daemon_unreachable");
+  });
+
   it("blocks a reachable but unsupported DOCKER_HOST before using daemon evidence (#7411)", () => {
     const result = report({ dockerHostInvalid: true, dockerReachable: true });
 
