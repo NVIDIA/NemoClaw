@@ -195,6 +195,35 @@ describe("gateway readiness projection (#7411)", () => {
     expect(serialized).toContain("<gateway-state>");
   });
 
+  it("reports the underlying error when managed gateway observation throws", async () => {
+    const deps = dependencies(managedOwner());
+    vi.mocked(deps.observeManagedGateway).mockRejectedValueOnce(
+      new Error("spawnSync docker ENOENT"),
+    );
+
+    const projection = projectGatewayReadiness(
+      await collectGatewayObservations(deps, { now: () => NOW }),
+      { now: () => NOW },
+    );
+
+    expect(JSON.stringify(projection)).toContain("spawnSync docker ENOENT");
+  });
+
+  it("reports the underlying error when the external attachment probe throws unexpectedly", async () => {
+    const owner = externalOwner();
+    const deps = dependencies(owner);
+    vi.mocked(deps.probeAttachment).mockRejectedValueOnce(new Error("ECONNREFUSED 127.0.0.1:8080"));
+
+    const projection = projectGatewayReadiness(
+      await collectGatewayObservations(deps, { now: () => NOW }),
+      { now: () => NOW },
+    );
+    const serialized = JSON.stringify(projection);
+
+    expect(serialized).toContain("ECONNREFUSED 127.0.0.1:8080");
+    expect(serialized).not.toContain(owner.stateDir);
+  });
+
   it("fails closed when lifecycle authority cannot be resolved", async () => {
     const deps = dependencies(managedOwner());
     vi.mocked(deps.resolveOwner).mockImplementationOnce(() => {

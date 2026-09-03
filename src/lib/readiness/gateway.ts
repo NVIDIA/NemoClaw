@@ -182,7 +182,7 @@ async function observeGateway(
           driftState: "not-applicable",
           portConflictState: "unknown",
         },
-        failure: "The externally supervised gateway attachment probe failed safely.",
+        failure: `The externally supervised gateway attachment probe failed safely: ${safeOwnerFailureText(probeFailureDetail(error), owner)}`,
       };
     }
   }
@@ -202,7 +202,7 @@ async function observeGateway(
           : undefined,
       },
     };
-  } catch {
+  } catch (error) {
     return {
       observedAt,
       observations: {
@@ -212,9 +212,14 @@ async function observeGateway(
         driftState: "unknown",
         portConflictState: "unknown",
       },
-      failure: "Managed gateway observations could not be collected safely.",
+      failure: `Managed gateway observations could not be collected safely: ${safeOwnerFailureText(probeFailureDetail(error), owner)}`,
     };
   }
+}
+
+/** Render a caught probe error as reportable text without assuming its shape. */
+function probeFailureDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function observation(
