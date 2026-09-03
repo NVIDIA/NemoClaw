@@ -106,11 +106,13 @@ Keep that variable set for later type-check, build, and test commands.
 
 ### Image push fails with out-of-memory errors
 
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
+The sandbox image is approximately 2.4 GB compressed. During image push, the selected container runtime, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
 
 If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
 
 ### Docker is not running
+
+These steps apply to the default Docker path. Native rootless Podman does not require Docker; retain `NEMOCLAW_GATEWAY_RUNTIME=podman` and follow [Podman](#podman).
 
 Check the host before onboarding:
 
@@ -120,7 +122,7 @@ $$nemoclaw host probe
 
 The command does not start Docker or apply a repair. A `host.docker.daemon_unreachable` finding means Docker is installed but NemoClaw cannot reach the daemon. For JSON output and exit-code details, refer to [System Readiness](system-readiness).
 
-The installer and onboard wizard require Docker to be running. If you see a Docker connection error, start the Docker daemon:
+The installer and onboard wizard require Docker to be running on the default Docker path. If you see a Docker connection error on that path, start the Docker daemon:
 
 ```bash
 sudo systemctl start docker
@@ -133,7 +135,7 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group. The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically. Add your user and activate the group in the current shell:
 
 <Warning title="Docker group access">
-  NemoClaw needs Docker access. On personal Linux development machines, adding your user to the
+  The default Docker path needs Docker access. On personal Linux development machines, adding your user to the
   `docker` group is the standard way to run Docker without sudo. Members of the `docker` group can
   control the daemon with root-level impact, so grant this access only to trusted local accounts; on
   shared or managed systems, use your organization's approved Docker access path. For background,

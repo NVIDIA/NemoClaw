@@ -184,7 +184,9 @@ export function detectInferenceProviderHostState(
   const discoveredOllamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();
   const vllmRunning = input.probeVllm === false ? false : probeVllmRunning(deps);
   const vllmProfile = deps.detectVllmProfile(input.gpu);
+  const dockerAvailable = deps.hostCommandExists("docker");
   const hasVllmImage = !!(
+    dockerAvailable &&
     vllmProfile &&
     deps
       .dockerCapture(["image", "inspect", "--format", "{{.Id}}", vllmProfile.image], {
@@ -303,6 +305,7 @@ export function detectInferenceProviderHostState(
       experimental: input.experimental,
       platform: input.gpu?.platform,
       hasVllmImage,
+      dockerAvailable,
       env: input.env,
       log: (message) => log(message),
     }),
