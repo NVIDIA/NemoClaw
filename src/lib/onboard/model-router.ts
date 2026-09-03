@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import { GATEWAY_PORT } from "../core/ports";
 import { requireValue } from "../core/require-value";
 import { compactText } from "../core/url-utils";
@@ -76,6 +78,7 @@ const MODEL_ROUTER_VENV_DIR = path.join(
 );
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 const DEFAULT_MODEL_ROUTER_POOL_CONFIG_PATH = "router/pool-config.yaml";
+const MODEL_ROUTER_POOL_SNAPSHOT_PREFIX = "model-router-pool-";
 
 export type BlueprintRouterConfig = {
   enabled?: boolean;
@@ -110,6 +113,59 @@ function readModelRouterPoolConfig(poolConfigPath: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Materialize one owner-read-only, content-addressed pool snapshot.
+ * NemoClaw never replaces a snapshot after another process can consume it.
+ */
+function writeModelRouterPoolConfigSnapshot(stateDir: string, poolConfig: string): string {
+  const contentDigest = createHash("sha256").update(poolConfig).digest("hex");
+  const snapshotPath = path.join(
+    stateDir,
+    `${MODEL_ROUTER_POOL_SNAPSHOT_PREFIX}${contentDigest}.yaml`,
+  );
+  let snapshot: ReturnType<typeof openRegularFileNoFollow>;
+  if (fs.existsSync(snapshotPath)) {
+    snapshot = openRegularFileNoFollow(snapshotPath);
+  } else {
+    try {
+      const created = openRegularFileNoFollow(snapshotPath, {
+        create: true,
+        mode: 0o600,
+        writable: true,
+      });
+      try {
+        created.replaceUtf8(poolConfig, 0o400);
+        snapshot = created;
+      } catch (writeError) {
+        created.close();
+        throw writeError;
+      }
+    } catch (createError) {
+      if (!fs.existsSync(snapshotPath)) throw createError;
+      snapshot = openRegularFileNoFollow(snapshotPath);
+    }
+  }
+  try {
+    const expectedSize = Buffer.byteLength(poolConfig);
+    const beforeRead = snapshot.stat();
+    if (beforeRead.size !== expectedSize || (beforeRead.mode & 0o777) !== 0o400) {
+      throw new Error(`Model Router pool snapshot is not immutable: ${snapshotPath}`);
+    }
+    const contents = snapshot.readBytes(expectedSize).toString("utf8");
+    const afterRead = snapshot.stat();
+    if (
+      afterRead.size !== expectedSize ||
+      contents !== poolConfig ||
+      (afterRead.mode & 0o777) !== 0o400
+    ) {
+      throw new Error(`Model Router pool snapshot is not immutable: ${snapshotPath}`);
+    }
+  } finally {
+    snapshot.close();
+  }
+  return snapshotPath;
 }
 
 /**
@@ -167,8 +223,7 @@ export function modelRouterPoolRetirementError(poolConfig: string | null): strin
     const retired = parsed.models
       .map((model) => model?.name)
       .filter(
-        (name): name is string =>
-          typeof name === "string" && RETIRED_MODEL_ROUTER_MODELS.has(name),
+        (name): name is string => typeof name === "string" && RETIRED_MODEL_ROUTER_MODELS.has(name),
       );
     return retired.length > 0
       ? `configured model(s) retired from NVIDIA Endpoints: ${retired.join(", ")}`
@@ -203,9 +258,7 @@ export function modelRouterPoolCheckpointError(poolConfig: string | null): strin
 }
 
 function modelRouterPoolCompatibilityError(poolConfig: string | null): string | null {
-  return (
-    modelRouterPoolRetirementError(poolConfig) ?? modelRouterPoolCheckpointError(poolConfig)
-  );
+  return modelRouterPoolRetirementError(poolConfig) ?? modelRouterPoolCheckpointError(poolConfig);
 }
 
 type ModelRouterProxyConfigResult = {
@@ -248,6 +301,8 @@ export type StartModelRouterDeps = {
   readRouterLogTail: (logPath: string, startOffset: number) => string;
   /** Read the router pool config; null when unreadable. */
   readPoolConfig: (poolConfigPath: string) => string | null;
+  /** Write an owner-read-only snapshot and return its path. */
+  writePoolConfigSnapshot: (stateDir: string, poolConfig: string) => string;
   resolveProviderCredential: (name: string) => string | null;
   buildSubprocessEnv: (extra: Record<string, string>) => Record<string, string>;
   isRouterHealthy: (port: number, timeoutMs?: number) => Promise<boolean>;
@@ -262,9 +317,15 @@ export type StartModelRouterDeps = {
 type PreparedModelRouterStart = {
   blueprintDir: string;
   litellmConfigPath: string;
-  poolConfig: string | null;
+  poolConfig: string;
   poolConfigPath: string;
   routerCommand: string;
+  stateDir: string;
+};
+
+type ModelRouterPoolSnapshot = {
+  poolConfig: string;
+  poolConfigPath: string;
   stateDir: string;
 };
 
@@ -434,6 +495,7 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
       }
     },
     readPoolConfig: readModelRouterPoolConfig,
+    writePoolConfigSnapshot: writeModelRouterPoolConfigSnapshot,
     resolveProviderCredential,
     buildSubprocessEnv,
     isRouterHealthy,
@@ -453,28 +515,42 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
   };
 }
 
-function prepareModelRouterStart(
+function createModelRouterPoolSnapshot(
   routerCfg: BlueprintRouterConfig,
   deps: StartModelRouterDeps,
-): PreparedModelRouterStart {
-  const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
-  const poolConfigPath = modelRouterPoolConfigPath(routerCfg, deps.rootDir);
-  const poolConfig = deps.readPoolConfig(poolConfigPath);
+): ModelRouterPoolSnapshot {
+  const sourcePath = modelRouterPoolConfigPath(routerCfg, deps.rootDir);
+  const poolConfig = deps.readPoolConfig(sourcePath);
+  if (poolConfig === null) {
+    throw new Error(
+      `Cannot read or parse Model Router pool configuration at ${sourcePath}. Repair the file and rerun onboarding.`,
+    );
+  }
   const compatibilityError = modelRouterPoolCompatibilityError(poolConfig);
   if (compatibilityError) {
     throw new Error(`Model Router pool configuration is incompatible: ${compatibilityError}.`);
   }
-  const routerCommand = deps.ensureModelRouterCommand();
   const stateDir = path.join(nemoclawStateRoot(deps.homeDir, GATEWAY_PORT), "state");
-  const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
 
   rejectSymlinksOnPath(stateDir);
   deps.mkdirSync(stateDir);
   rejectSymlinksOnPath(stateDir);
+  const poolConfigPath = deps.writePoolConfigSnapshot(stateDir, poolConfig);
+  return Object.freeze({ poolConfig, poolConfigPath, stateDir });
+}
+
+function prepareModelRouterStart(
+  routerCfg: BlueprintRouterConfig,
+  deps: StartModelRouterDeps,
+  poolSnapshot: ModelRouterPoolSnapshot = createModelRouterPoolSnapshot(routerCfg, deps),
+): PreparedModelRouterStart {
+  const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
+  const routerCommand = deps.ensureModelRouterCommand();
+  const litellmConfigPath = path.join(poolSnapshot.stateDir, "litellm-proxy.yaml");
 
   const proxyConfigResult = deps.runProxyConfig(
     routerCommand,
-    ["proxy-config", "--config", poolConfigPath, "--output", litellmConfigPath],
+    ["proxy-config", "--config", poolSnapshot.poolConfigPath, "--output", litellmConfigPath],
     { encoding: "utf8", timeout: 30_000, cwd: blueprintDir },
   );
   if (proxyConfigResult.status !== 0) {
@@ -486,10 +562,10 @@ function prepareModelRouterStart(
   return {
     blueprintDir,
     litellmConfigPath,
-    poolConfig,
-    poolConfigPath,
+    poolConfig: poolSnapshot.poolConfig,
+    poolConfigPath: poolSnapshot.poolConfigPath,
     routerCommand,
-    stateDir,
+    stateDir: poolSnapshot.stateDir,
   };
 }
 
@@ -767,20 +843,32 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
 }
 
 type ReconcileModelRouterDeps = {
-  prepareRouter: (routerCfg: BlueprintRouterConfig) => PreparedModelRouterStart;
+  snapshotPool: (routerCfg: BlueprintRouterConfig) => ModelRouterPoolSnapshot;
+  prepareRouter: (
+    routerCfg: BlueprintRouterConfig,
+    poolSnapshot: ModelRouterPoolSnapshot,
+  ) => PreparedModelRouterStart;
   startRouter: (
     routerCfg: BlueprintRouterConfig,
     prepared: PreparedModelRouterStart,
   ) => Promise<number>;
 };
 
+type ReconcileModelRouterOverrides = Partial<ReconcileModelRouterDeps> & {
+  startDeps?: Partial<StartModelRouterDeps>;
+};
+
 export async function reconcileModelRouter(
-  overrides: Partial<ReconcileModelRouterDeps> = {},
+  overrides: ReconcileModelRouterOverrides = {},
 ): Promise<void> {
+  const { startDeps = {}, ...routerOverrides } = overrides;
+  const resolvedStartDeps = { ...createStartModelRouterDeps(), ...startDeps };
   const deps: ReconcileModelRouterDeps = {
-    prepareRouter: (routerCfg) => prepareModelRouterStart(routerCfg, createStartModelRouterDeps()),
-    startRouter: (routerCfg, prepared) => startPreparedModelRouter(routerCfg, {}, prepared),
-    ...overrides,
+    snapshotPool: (routerCfg) => createModelRouterPoolSnapshot(routerCfg, resolvedStartDeps),
+    prepareRouter: (routerCfg, poolSnapshot) =>
+      prepareModelRouterStart(routerCfg, resolvedStartDeps, poolSnapshot),
+    startRouter: (routerCfg, prepared) => startPreparedModelRouter(routerCfg, startDeps, prepared),
+    ...routerOverrides,
   };
   const bp = getRoutedProfile();
   const routerPort = resolveModelRouterPort();
@@ -794,17 +882,21 @@ export async function reconcileModelRouter(
   }
   saveCredential(routerCredentialEnv, routerCredential);
   const poolConfigPath = modelRouterPoolConfigPath(bp.router);
-  const poolConfig = readModelRouterPoolConfig(poolConfigPath);
-  const routerRecoveryHash = hashModelRouterRecoveryIdentity(routerCredential, poolConfig);
+  let poolSnapshot: ModelRouterPoolSnapshot;
+  try {
+    poolSnapshot = deps.snapshotPool(bp.router);
+  } catch (error) {
+    const redacted = redactSensitiveText(String(error));
+    const detail = redacted ? compactText(redacted) : "unknown pool snapshot error";
+    throw new Error(`${detail} NemoClaw did not change the router process or recovery identity.`);
+  }
+  const routerRecoveryHash = hashModelRouterRecoveryIdentity(
+    routerCredential,
+    poolSnapshot.poolConfig,
+  );
   if (!routerRecoveryHash) {
     throw new Error(
       `Cannot read or parse Model Router pool configuration at ${poolConfigPath}. Repair the file and rerun onboarding. NemoClaw did not change the router process.`,
-    );
-  }
-  const compatibilityError = modelRouterPoolCompatibilityError(poolConfig);
-  if (compatibilityError) {
-    throw new Error(
-      `Model Router pool configuration is incompatible: ${compatibilityError}. NemoClaw did not change the router process.`,
     );
   }
   const session = onboardSession.loadSession();
@@ -835,7 +927,7 @@ export async function reconcileModelRouter(
       return;
     }
     try {
-      prepared = deps.prepareRouter(bp.router);
+      prepared = deps.prepareRouter(bp.router, poolSnapshot);
     } catch (error) {
       const redacted = redactSensitiveText(String(error));
       const detail = redacted ? compactText(redacted) : "";
@@ -871,7 +963,7 @@ export async function reconcileModelRouter(
     }
   }
 
-  prepared ??= deps.prepareRouter(bp.router);
+  prepared ??= deps.prepareRouter(bp.router, poolSnapshot);
   console.log("  Starting model router...");
   let routerPid: number;
   try {

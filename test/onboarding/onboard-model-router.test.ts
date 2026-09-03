@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +17,7 @@ import {
   modelRouterPoolCheckpointError,
   modelRouterPoolRetirementError,
   poolTargetsOnlyNvidiaEndpoints,
-  startModelRouter,
+  startModelRouter as startModelRouterSource,
 } from "../../src/lib/onboard/model-router";
 import {
   createModelRouterCommandProvisioner,
@@ -64,6 +65,17 @@ type CommandHarnessOptions = {
 };
 
 const tempDirs = new Set<string>();
+
+function startModelRouter(
+  routerCfg: Parameters<typeof startModelRouterSource>[0],
+  overrides: Parameters<typeof startModelRouterSource>[1] = {},
+) {
+  return startModelRouterSource(routerCfg, {
+    readPoolConfig: () => "models: []\n",
+    writePoolConfigSnapshot: () => "/test/state/model-router-pool.yaml",
+    ...overrides,
+  });
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -174,10 +186,7 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
       modelRouterPoolRetirementError(config(["gpt-oss-20b-high", "nemotron-3-super"])),
       null,
     );
-    assert.equal(
-      modelRouterPoolCheckpointError(config(["nemotron-3-nano-reasoning"])),
-      null,
-    );
+    assert.equal(modelRouterPoolCheckpointError(config(["nemotron-3-nano-reasoning"])), null);
     assert.equal(
       modelRouterPoolRetirementError(config(["nemotron-3-nano-reasoning"])),
       "configured model(s) retired from NVIDIA Endpoints: nemotron-3-nano-reasoning",
@@ -361,11 +370,10 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
     const poolConfigPath = path.join(blueprintDir, "router", "test-pool.yaml");
     const stateDir = path.join(homeDir, ".nemoclaw", "state");
     const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
+    const poolConfig =
+      'models:\n  - litellm_model: "openai/nvidia/test"\n    api_base: "https://integrate.api.nvidia.com/v1"\n';
     fs.mkdirSync(path.dirname(poolConfigPath), { recursive: true });
-    fs.writeFileSync(
-      poolConfigPath,
-      'models:\n  - litellm_model: "openai/nvidia/test"\n    api_base: "https://integrate.api.nvidia.com/v1"\n',
-    );
+    fs.writeFileSync(poolConfigPath, poolConfig);
     fs.mkdirSync(path.dirname(routerCommand), { recursive: true });
     fs.writeFileSync(
       routerCommand,
@@ -395,7 +403,7 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
       },
       async () => {
         try {
-          pid = await startModelRouter(
+          pid = await startModelRouterSource(
             {
               port,
               pool_config_path: "router/test-pool.yaml",
@@ -425,10 +433,19 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
           const proxy = entries.find(({ args }) => args[0] === "proxy");
           assert.ok(proxyConfig);
           assert.ok(proxy);
+          const poolConfigSnapshotPath = proxyConfig.args[2];
+          assert.notEqual(poolConfigSnapshotPath, poolConfigPath);
+          assert.match(
+            poolConfigSnapshotPath,
+            new RegExp(`${stateDir}/model-router-pool-[a-f0-9]{64}\\.yaml$`),
+          );
+          assert.equal(fs.readFileSync(poolConfigSnapshotPath, "utf8"), poolConfig);
+          assert.equal(fs.statSync(poolConfigSnapshotPath).size, Buffer.byteLength(poolConfig));
+          assert.equal(fs.statSync(poolConfigSnapshotPath).mode & 0o777, 0o400);
           assert.deepEqual(proxyConfig.args, [
             "proxy-config",
             "--config",
-            poolConfigPath,
+            poolConfigSnapshotPath,
             "--output",
             litellmConfigPath,
           ]);
@@ -438,7 +455,7 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
             "--litellm-config",
             litellmConfigPath,
             "--router-config",
-            poolConfigPath,
+            poolConfigSnapshotPath,
             "--host",
             "0.0.0.0",
             "--port",
@@ -459,6 +476,33 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
         }
       },
     );
+  });
+
+  it("rejects a pool snapshot whose content-addressed file has trailing bytes", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-router-pool-tamper-"));
+    tempDirs.add(tmpDir);
+    const rootDir = path.join(tmpDir, "repo");
+    const homeDir = path.join(tmpDir, "home");
+    const poolConfig = "models: []\n";
+    const poolConfigPath = path.join(rootDir, "nemoclaw-blueprint", "router", "test-pool.yaml");
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const digest = createHash("sha256").update(poolConfig).digest("hex");
+    const snapshotPath = path.join(stateDir, `model-router-pool-${digest}.yaml`);
+    fs.mkdirSync(path.dirname(poolConfigPath), { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(poolConfigPath, poolConfig);
+    fs.writeFileSync(snapshotPath, `${poolConfig}trailing: bytes\n`, { mode: 0o400 });
+    const ensureModelRouterCommand = vi.fn(() => "/test/model-router");
+
+    await assert.rejects(
+      startModelRouterSource(
+        { pool_config_path: "router/test-pool.yaml" },
+        { rootDir, homeDir, ensureModelRouterCommand },
+      ),
+      /Model Router pool snapshot is not immutable/,
+    );
+
+    assert.equal(ensureModelRouterCommand.mock.calls.length, 0);
   });
 
   it("writes router output to an owner-only log in the state directory (#8962)", async () => {
@@ -1044,6 +1088,8 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
         homeDir,
         ensureModelRouterCommand: () => "/test/model-router",
         mkdirSync,
+        readPoolConfig: () => "models: []\n",
+        writePoolConfigSnapshot: () => path.join(expectedStateDir, "model-router-pool.yaml"),
         runProxyConfig: (_command, args) => {
           proxyConfigArgs.push(args);
           return { status: 0 };
@@ -1102,6 +1148,7 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
             rootDir: path.join(tmpDir, "repo"),
             homeDir,
             ensureModelRouterCommand: () => "/test/model-router",
+            readPoolConfig: () => "models: []\n",
             runProxyConfig,
           },
         ),
@@ -1133,6 +1180,7 @@ ${models.map((name) => `  - name: ${name}`).join("\n")}
           rootDir: path.join(tmpDir, "repo"),
           homeDir,
           ensureModelRouterCommand: () => "/test/model-router",
+          readPoolConfig: () => "models: []\n",
           mkdirSync: () => {
             fs.mkdirSync(path.dirname(stateDir), { recursive: true });
             fs.symlinkSync(controlled, stateDir, "dir");
