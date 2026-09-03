@@ -1,0 +1,318 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Simple PR Regressions
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/e2e-simple.yaml"
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  CANDIDATE_REPOSITORY: NVIDIA/NemoClaw
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+  MANAGED_IMAGE_CATALOG: '{"openclaw":{"contractVersion":1,"agent":"openclaw","platform":"linux/amd64","image":"ghcr.io/nvidia/nemoclaw/openclaw-sandbox","digest":"sha256:c3f2eee548b33bdb0bf295ed6841c4157ba486b2dc55f3d9b98f33a7065959c7","reference":"ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:c3f2eee548b33bdb0bf295ed6841c4157ba486b2dc55f3d9b98f33a7065959c7","source":{"repository":"NVIDIA/NemoClaw","revision":"376c7c09092dffd3ee7ee698e506dba1ae81e6fa","release":"v0.0.119-35-g376c7c090","cohort":"ghrun-33803755678-1"},"startupProfileContractVersion":1,"capabilityContractVersion":1},"hermes":{"contractVersion":1,"agent":"hermes","platform":"linux/amd64","image":"ghcr.io/nvidia/nemoclaw/hermes-sandbox","digest":"sha256:4b18257a2fb992a62c58c114c7fe36d2c685eae11dad85717b38223d10e0fbd3","reference":"ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:4b18257a2fb992a62c58c114c7fe36d2c685eae11dad85717b38223d10e0fbd3","source":{"repository":"NVIDIA/NemoClaw","revision":"376c7c09092dffd3ee7ee698e506dba1ae81e6fa","release":"v0.0.119-35-g376c7c090","cohort":"ghrun-33803755678-1"},"startupProfileContractVersion":1,"capabilityContractVersion":1},"langchain-deepagents-code":{"contractVersion":1,"agent":"langchain-deepagents-code","platform":"linux/amd64","image":"ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox","digest":"sha256:d71529567c0ff7398a1ae2fd96c4cb9b1118253edd31cb759255c9c1428e50b1","reference":"ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:d71529567c0ff7398a1ae2fd96c4cb9b1118253edd31cb759255c9c1428e50b1","source":{"repository":"NVIDIA/NemoClaw","revision":"376c7c09092dffd3ee7ee698e506dba1ae81e6fa","release":"v0.0.119-35-g376c7c090","cohort":"ghrun-33803755678-1"},"startupProfileContractVersion":1,"capabilityContractVersion":1}}'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      cli_provenance: ${{ steps.provenance.outputs.provenance }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.CANDIDATE_REPOSITORY }}
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+
+      - name: Prepare and build the exact candidate CLI
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - id: package
+        name: Package the exact candidate CLI
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: scripts/e2e/package-cli-artifact.sh
+
+      - id: upload
+        name: Upload the exact candidate CLI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ runner.temp }}/nemoclaw-cli-artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - id: provenance
+        name: Record exact CLI provenance
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_NAME: ${{ steps.package.outputs.artifact_name }}
+          PAYLOAD_SHA256: ${{ steps.package.outputs.payload_sha256 }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          provenance="$(jq -cn \
+            --arg artifactDigest "$ARTIFACT_DIGEST" \
+            --arg artifactId "$ARTIFACT_ID" \
+            --arg artifactName "$ARTIFACT_NAME" \
+            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg payloadSha256 "$PAYLOAD_SHA256" \
+            --arg runAttempt "$RUN_ATTEMPT" \
+            --arg runId "$RUN_ID" \
+            --arg workflowSha "$WORKFLOW_SHA" \
+            '{kind:"nemoclaw-e2e-cli-provenance-v1",artifactDigest:$artifactDigest,artifactId:$artifactId,artifactName:$artifactName,candidateRepository:$candidateRepository,candidateSha:$candidateSha,payloadSha256:$payloadSha256,workflowSha:$workflowSha,runId:$runId,runAttempt:$runAttempt}')"
+          printf 'provenance=%s\n' "$provenance" >>"$GITHUB_OUTPUT"
+
+  regressions:
+    needs: prepare
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Messaging providers
+            kind: direct
+            test_file: test/e2e/live/messaging-providers.test.ts
+            selector: ""
+            target_id: messaging-providers
+            execution_id: messaging-providers-docker
+            shard: default
+            runner: ubuntu-latest
+            timeout_minutes: 90
+            swap: false
+            mcp: false
+            install_mode: none
+          - name: MCP bridge Hermes
+            kind: direct
+            test_file: test/e2e/live/mcp-bridge.test.ts
+            selector: ^mcp-bridge-hermes$
+            target_id: mcp-bridge
+            execution_id: mcp-bridge-hermes-docker
+            shard: hermes
+            runner: ubuntu-latest
+            timeout_minutes: 90
+            swap: true
+            mcp: true
+            install_mode: none
+          - name: Hermes E2E
+            kind: direct
+            test_file: test/e2e/live/hermes-e2e.test.ts
+            selector: ""
+            target_id: hermes-e2e
+            execution_id: hermes-e2e-docker
+            shard: default
+            runner: ubuntu-latest
+            timeout_minutes: 85
+            swap: true
+            mcp: false
+            install_mode: none
+          - name: Hermes security posture
+            kind: catalogue
+            catalogue_id: security-posture-hermes
+            test_file: test/e2e/live/hermes-e2e.test.ts
+            target_id: security-posture
+            execution_id: security-posture-hermes-hermes-docker
+            shard: hermes
+            runner: ubuntu-latest
+            timeout_minutes: 75
+            swap: true
+            mcp: false
+            install_mode: credential-free
+          - name: Upgrade v0.0.55 x86-64
+            kind: catalogue
+            catalogue_id: openshell-gateway-upgrade-v0-0-55-x86-64
+            test_file: test/e2e/live/openshell-gateway-upgrade.test.ts
+            target_id: openshell-gateway-upgrade
+            execution_id: openshell-gateway-upgrade-v0-0-55-x86-64-v0-0-55-x86-64-docker
+            shard: v0-0-55-x86-64
+            runner: ubuntu-latest
+            timeout_minutes: 70
+            swap: false
+            mcp: false
+            install_mode: none
+          - name: Upgrade v0.0.55 ARM64
+            kind: catalogue
+            catalogue_id: openshell-gateway-upgrade-v0-0-55-aarch64
+            test_file: test/e2e/live/openshell-gateway-upgrade.test.ts
+            target_id: openshell-gateway-upgrade
+            execution_id: openshell-gateway-upgrade-v0-0-55-aarch64-v0-0-55-aarch64-docker
+            shard: v0-0-55-aarch64
+            runner: ubuntu-24.04-arm
+            timeout_minutes: 70
+            swap: false
+            mcp: false
+            install_mode: none
+          - name: Upgrade v0.0.74 x86-64
+            kind: catalogue
+            catalogue_id: openshell-gateway-upgrade-v0-0-74-x86-64
+            test_file: test/e2e/live/openshell-gateway-upgrade.test.ts
+            target_id: openshell-gateway-upgrade
+            execution_id: openshell-gateway-upgrade-v0-0-74-x86-64-v0-0-74-x86-64-docker
+            shard: v0-0-74-x86-64
+            runner: ubuntu-latest
+            timeout_minutes: 70
+            swap: false
+            mcp: false
+            install_mode: none
+          - name: Upgrade v0.0.89 x86-64
+            kind: catalogue
+            catalogue_id: openshell-gateway-upgrade-v0-0-89-x86-64
+            test_file: test/e2e/live/openshell-gateway-upgrade.test.ts
+            target_id: openshell-gateway-upgrade
+            execution_id: openshell-gateway-upgrade-v0-0-89-x86-64-v0-0-89-x86-64-docker
+            shard: v0-0-89-x86-64
+            runner: ubuntu-latest
+            timeout_minutes: 70
+            swap: false
+            mcp: false
+            install_mode: none
+          - name: Shields retirement upgrade
+            kind: catalogue
+            catalogue_id: shields-retirement-upgrade
+            test_file: test/e2e/live/shields-retirement-upgrade.test.ts
+            target_id: shields-retirement-upgrade
+            execution_id: shields-retirement-upgrade-default-docker
+            shard: default
+            runner: ubuntu-latest
+            timeout_minutes: 120
+            swap: false
+            mcp: false
+            install_mode: none
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ matrix.execution_id }}
+      E2E_EXECUTION_ID: ${{ matrix.execution_id }}
+      E2E_JOB: "1"
+      E2E_TARGET_ID: ${{ matrix.target_id }}
+      E2E_WORKLOAD_SOURCE: managed-image
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+      NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
+      NEMOCLAW_E2E_INFERENCE_MODE: mock
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ env.MANAGED_IMAGE_CATALOG }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: docker
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.shard == 'hermes' && 'hermes' || '' }}
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_OPENSHELL_CHANNEL: stable
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.CANDIDATE_REPOSITORY }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f
+        with:
+          auth-required: "1"
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Provision simple Hermes swap
+        if: ${{ matrix.swap }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          swap_file="/mnt/nemoclaw-simple-e2e.swap"
+          sudo fallocate -l 34359742464 "$swap_file"
+          sudo chmod 0600 "$swap_file"
+          sudo mkswap --quiet "$swap_file"
+          sudo swapon "$swap_file"
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact candidate CLI
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
+        with:
+          provenance-json: ${{ needs.prepare.outputs.cli_provenance }}
+
+      - name: Install OpenShell without workflow credentials
+        if: ${{ matrix.install_mode == 'credential-free' }}
+        run: |
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
+            -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u BRAVE_API_KEY \
+            -u GITHUB_TOKEN -u COMPATIBLE_API_KEY bash scripts/install-openshell.sh
+
+      - name: Install MCP bridge prerequisites
+        if: ${{ matrix.mcp }}
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526
+        run: |
+          set -euo pipefail
+          deb="${RUNNER_TEMP}/cloudflared.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "$deb"
+          printf '%s  %s\n' "$CLOUDFLARED_DEB_SHA256" "$deb" | sha256sum -c -
+          sudo dpkg -i "$deb"
+          bash test/e2e/setup-mcp-test-tls.sh
+
+      - name: Run affected regression
+        env:
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
+          DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
+          GITHUB_TOKEN: ${{ github.token }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          SLACK_APP_TOKEN_REAL: ${{ secrets.SLACK_APP_TOKEN_REAL }}
+          SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
+          SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
+          TELEGRAM_ALLOWED_IDS: ${{ secrets.TELEGRAM_ALLOWED_IDS }}
+          TELEGRAM_AUTHORIZED_CHAT_IDS: ${{ secrets.TELEGRAM_AUTHORIZED_CHAT_IDS }}
+          TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.kind }}" == "catalogue" ]]; then
+            npx tsx tools/e2e/target-catalogue.mts run "${{ matrix.catalogue_id }}" "${{ matrix.test_file }}"
+          elif [[ -n "${{ matrix.selector }}" ]]; then
+            npx tsx tools/e2e/live-vitest-invocation.mts run \
+              --test-path "${{ matrix.test_file }}" --selector "${{ matrix.selector }}"
+          else
+            npx tsx tools/e2e/live-vitest-invocation.mts run --test-path "${{ matrix.test_file }}"
+          fi
+
+      - name: Upload regression artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: simple-e2e-${{ matrix.execution_id }}
+          path: e2e-artifacts/live/
+          if-no-files-found: warn
+
+      - name: Remove simple Hermes swap
+        if: ${{ always() && matrix.swap }}
+        shell: bash
+        run: |
+          sudo swapoff /mnt/nemoclaw-simple-e2e.swap || true
+          sudo rm -f /mnt/nemoclaw-simple-e2e.swap || true
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
