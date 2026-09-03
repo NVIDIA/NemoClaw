@@ -76,6 +76,124 @@ function Assert-Arm64PortableExecutable {
     }
 }
 
+function Get-StableWixIdentifier {
+    param(
+        [Parameter(Mandatory)][string]$Prefix,
+        [Parameter(Mandatory)][string]$Value
+    )
+
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value.ToLowerInvariant())
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha256.ComputeHash($bytes)
+    } finally {
+        $sha256.Dispose()
+    }
+    $hex = ($digest | ForEach-Object { $_.ToString('x2') }) -join ''
+    return "$Prefix$($hex.Substring(0, 32))"
+}
+
+function New-GroupedPayloadAuthoring {
+    param(
+        [Parameter(Mandatory)][string]$PayloadRoot,
+        [Parameter(Mandatory)][string]$OutputPath
+    )
+
+    $settings = [Xml.XmlWriterSettings]::new()
+    $settings.Encoding = [Text.UTF8Encoding]::new($false)
+    $settings.Indent = $true
+    $settings.NewLineChars = [Environment]::NewLine
+    $settings.NewLineHandling = [Xml.NewLineHandling]::Replace
+    $writer = [Xml.XmlWriter]::Create($OutputPath, $settings)
+    $componentIds = [Collections.Generic.List[string]]::new()
+    $stats = @{ fileCount = 0 }
+    $namespace = 'http://wixtoolset.org/schemas/v4/wxs'
+    $writeDirectory = $null
+    $writeDirectory = {
+        param(
+            [Parameter(Mandatory)][string]$DirectoryPath,
+            [Parameter(Mandatory)][AllowEmptyString()][string]$RelativeDirectory,
+            [Parameter(Mandatory)][bool]$Root
+        )
+
+        if ($Root) {
+            $writer.WriteStartElement('DirectoryRef', $namespace)
+            $writer.WriteAttributeString('Id', 'INSTALLFOLDER')
+        } else {
+            $writer.WriteStartElement('Directory', $namespace)
+            $writer.WriteAttributeString('Id', (Get-StableWixIdentifier -Prefix 'Dir_' -Value $RelativeDirectory))
+            $writer.WriteAttributeString('Name', (Split-Path -Leaf $DirectoryPath))
+        }
+
+        $files = @(Get-ChildItem -LiteralPath $DirectoryPath -File -Force | Sort-Object Name)
+        if ($files.Count -gt 0) {
+            $componentIdentity = if ($Root) { '<root>' } else { $RelativeDirectory }
+            $componentId = Get-StableWixIdentifier -Prefix 'Cmp_' -Value $componentIdentity
+            $componentIds.Add($componentId)
+            $writer.WriteStartElement('Component', $namespace)
+            $writer.WriteAttributeString('Id', $componentId)
+            $writer.WriteAttributeString('Guid', '*')
+            $writer.WriteAttributeString('Bitness', 'always64')
+            for ($index = 0; $index -lt $files.Count; $index++) {
+                $file = $files[$index]
+                $relativeFile = $file.FullName.Substring($PayloadRoot.Length + 1)
+                $writer.WriteStartElement('File', $namespace)
+                $writer.WriteAttributeString('Id', (Get-StableWixIdentifier -Prefix 'Fil_' -Value $relativeFile))
+                $writer.WriteAttributeString('Name', $file.Name)
+                $writer.WriteAttributeString('Source', $file.FullName)
+                if ($index -eq 0) {
+                    $writer.WriteAttributeString('KeyPath', 'yes')
+                }
+                $writer.WriteEndElement()
+                $stats.fileCount++
+            }
+            $writer.WriteEndElement()
+        }
+
+        foreach ($child in @(Get-ChildItem -LiteralPath $DirectoryPath -Directory -Force | Sort-Object Name)) {
+            if (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Fail-WindowsPackageBuild "Payload contains a reparse-point directory: $($child.FullName)"
+            }
+            $childRelative = if ([string]::IsNullOrEmpty($RelativeDirectory)) {
+                $child.Name
+            } else {
+                "$RelativeDirectory\$($child.Name)"
+            }
+            & $writeDirectory $child.FullName $childRelative $false
+        }
+        $writer.WriteEndElement()
+    }
+
+    try {
+        $writer.WriteStartDocument()
+        $writer.WriteStartElement('Wix', $namespace)
+        $writer.WriteStartElement('Fragment', $namespace)
+        & $writeDirectory $PayloadRoot '' $true
+        $writer.WriteEndElement()
+        $writer.WriteStartElement('Fragment', $namespace)
+        $writer.WriteStartElement('ComponentGroup', $namespace)
+        $writer.WriteAttributeString('Id', 'PayloadComponents')
+        foreach ($componentId in $componentIds) {
+            $writer.WriteStartElement('ComponentRef', $namespace)
+            $writer.WriteAttributeString('Id', $componentId)
+            $writer.WriteEndElement()
+        }
+        $writer.WriteEndElement()
+        $writer.WriteEndElement()
+        $writer.WriteEndElement()
+        $writer.WriteEndDocument()
+    } finally {
+        $writer.Dispose()
+    }
+    if ($stats.fileCount -eq 0) {
+        Fail-WindowsPackageBuild 'Grouped payload authoring did not contain any files.'
+    }
+    if ($componentIds.Count -ge 65536) {
+        Fail-WindowsPackageBuild "Grouped payload still exceeds the MSI component limit: $($componentIds.Count)."
+    }
+    Write-Host "Grouped WiX payload authoring: files=$($stats.fileCount) components=$($componentIds.Count)"
+}
+
 if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
     Fail-WindowsPackageBuild 'ProductVersion must be a strict three-part MSI version.'
 }
@@ -201,6 +319,8 @@ $bootstrapperOutput = Join-Path $intermediate 'bootstrapper\publish'
 $bootstrapperPath = Join-Path $bootstrapperOutput 'NemoClaw.Bootstrapper.exe'
 $bootstrapperSha256 = $null
 $bootstrapperAuthenticodeStatus = $null
+$payloadAuthoring = Join-Path $intermediate 'GroupedPayload.wxs'
+New-GroupedPayloadAuthoring -PayloadRoot $payload -OutputPath $payloadAuthoring
 Push-Location $wixRoot
 try {
     $dotnetVersion = (& dotnet --version).Trim()
@@ -216,6 +336,7 @@ try {
         "-p:SourceRoot=$sourceRoot",
         "-p:PackageOutputRoot=$output",
         "-p:PackageIntermediateRoot=$intermediate",
+        "-p:GeneratedPayloadAuthoring=$payloadAuthoring",
         "-p:RestorePackagesPath=$restorePackages",
         '-p:ContinuousIntegrationBuild=true',
         '-p:RestoreIgnoreFailedSources=false'

@@ -52,7 +52,7 @@
     </StandardDirectory>
 
     <Feature Id="Complete" Title="NemoClaw" Level="1">
-      <Files Include="$(var.PayloadRoot)\**" Directory="INSTALLFOLDER" />
+      <ComponentGroupRef Id="PayloadComponents" />
       <ComponentRef Id="MachinePathComponent" />
     </Feature>
   </Package>

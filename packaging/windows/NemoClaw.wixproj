@@ -19,11 +19,14 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Product.wxs" />
+    <Compile Include="$(GeneratedPayloadAuthoring)" />
   </ItemGroup>
   <Target Name="ValidateNemoClawPackageInputs" BeforeTargets="Build">
     <Error Condition="'$(ProductVersion)' == ''" Text="ProductVersion is required." />
     <Error Condition="'$(PayloadRoot)' == ''" Text="PayloadRoot is required." />
     <Error Condition="'$(SourceRoot)' == ''" Text="SourceRoot is required." />
+    <Error Condition="'$(GeneratedPayloadAuthoring)' == ''" Text="GeneratedPayloadAuthoring is required." />
+    <Error Condition="!Exists('$(GeneratedPayloadAuthoring)')" Text="The grouped payload authoring is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\bin\openshell.exe')" Text="The ARM64 openshell.exe payload is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\bin\openshell-gateway.exe')" Text="The ARM64 openshell-gateway.exe payload is missing." />
     <Error Condition="!Exists('$(PayloadRoot)\bin\node.exe')" Text="The ARM64 Node.js runtime is missing." />
