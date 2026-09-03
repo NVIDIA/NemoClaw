@@ -34,10 +34,7 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
-import {
-  assertMcpAdapterConfigMutationsAllowed,
-  assertMcpAdapterTeardownRuntimeCapabilities,
-} from "./mcp-bridge-runtime-capabilities";
+import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
 import {
   assertMcpDestroyNotPending,
   bridgeState,
@@ -102,20 +99,6 @@ async function getCompleteMcpRebuildEntries(
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(currentSandbox);
-  if (!options.sandboxAbsent) {
-    const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
-      (entry) => entry.addState !== "prepared",
-    );
-    // This host-visible config preflight must precede
-    // discardSafeIncompleteMcpAdds, which can remove the generated live policy key for a
-    // providerless preflighted add. That cleanup has no adapter/provider to
-    // probe; complete entries get the teardown runtime probe below.
-    assertMcpAdapterConfigMutationsAllowed(
-      sandboxName,
-      currentSandbox,
-      entriesRequiringExternalCleanup,
-    );
-  }
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox, options);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const incompleteAdd = entries.find((entry) => entry.addState);

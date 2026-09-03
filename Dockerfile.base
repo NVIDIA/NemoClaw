@@ -313,7 +313,7 @@ RUN groupadd -r -g 999 gateway && useradd -r -u 999 -g gateway -d /sandbox -s /u
 # layers config on top and sets final permissions.
 # Do not seed the legacy update-check.json file. OpenClaw 2026.7.1 treats an
 # empty or populated file as a fatal migration warning when the separate
-# gateway user cannot archive it through a shields-protected parent.
+# gateway user cannot archive it through a root-owned parent.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
 RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
         /sandbox/.openclaw/extensions \

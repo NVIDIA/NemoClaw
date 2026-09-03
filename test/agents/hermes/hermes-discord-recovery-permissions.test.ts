@@ -2,14 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { extractShellFunction } from "../../support/hermes-shell-harness";
+
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(repoRoot, "agents", "hermes", "patch-discord-recovery-permissions.py");
+const dockerfile = fs.readFileSync(path.join(repoRoot, "agents", "hermes", "Dockerfile"), "utf8");
+const imageBuildProbes = fs.readFileSync(
+  path.join(repoRoot, "agents", "hermes", "image-build-probes.py"),
+  "utf8",
+);
+const baseDockerfile = fs.readFileSync(
+  path.join(repoRoot, "agents", "hermes", "Dockerfile.base"),
+  "utf8",
+);
+const startScript = fs.readFileSync(path.join(repoRoot, "agents", "hermes", "start.sh"), "utf8");
 const fixtures: string[] = [];
 
 const exactUpstreamFixture = `\
@@ -39,6 +52,41 @@ function fixtureFile(source = exactUpstreamFixture): string {
 function runPatcher(file: string) {
   return spawnSync("python3", ["-I", patcher, file], {
     encoding: "utf8",
+    timeout: 5000,
+  });
+}
+
+function runCrossUidParentRepair(
+  name: "sessions" | "gateway" | "runtime",
+  kind: "symlink" | "file",
+) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shared-parent-"));
+  fixtures.push(fixture);
+  const hermesHome = path.join(fixture, ".hermes");
+  const stateDir = path.join(hermesHome, name);
+  const script = path.join(fixture, "repair.sh");
+  fs.mkdirSync(hermesHome);
+  const setup: Record<typeof kind, () => void> = {
+    symlink: () => {
+      const target = path.join(fixture, `${name}-target`);
+      fs.mkdirSync(target);
+      fs.symlinkSync(target, stateDir);
+    },
+    file: () => fs.writeFileSync(stateDir, "unsafe\n"),
+  };
+  setup[kind]();
+  fs.writeFileSync(
+    script,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunction(startScript, "ensure_hermes_cross_uid_state_dir"),
+      `ensure_hermes_cross_uid_state_dir ${name}`,
+    ].join("\n"),
+  );
+  return spawnSync("bash", [script], {
+    encoding: "utf8",
+    env: { ...process.env, HERMES_DIR: hermesHome },
     timeout: 5000,
   });
 }
@@ -91,4 +139,103 @@ describe("Hermes Discord recovery permissions", () => {
     expect(fs.readFileSync(file, "utf8")).toBe(source);
   });
 
+  it("hash-binds and executes the patcher in the final image", () => {
+    const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
+
+    expect(dockerfile).toContain(`ARG NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256=${digest}`);
+    expect(dockerfile).toContain(
+      "COPY agents/hermes/patch-discord-recovery-permissions.py " +
+        "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
+    );
+    expect(dockerfile).toMatch(
+      /patch-hermes-discord-recovery-permissions[.]py \\\n\s+\/opt\/hermes\/plugins\/platforms\/discord\/recovery[.]py/,
+    );
+    expect(imageBuildProbes).toContain('source.count("os.chmod(path, 0o660)") == 1');
+  });
+
+  it.each([baseDockerfile, dockerfile])(
+    "prepares all setgid cross-UID parents in both image layouts [case %#]",
+    (source) => {
+      expect(source).toContain("/sandbox/.hermes/cron");
+      expect(source).toContain("/sandbox/.hermes/sessions");
+      expect(source).toContain("/sandbox/.hermes/gateway");
+      expect(source).toMatch(
+        /chown gateway:sandbox \\\n\s+\/sandbox\/[.]hermes\/sessions \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
+      );
+      expect(source).toMatch(
+        /chmod 2770 \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/sessions \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
+      );
+    },
+  );
+
+  it("requires a Dockerfile cross-identity probe for the cron ledger lifecycle", () => {
+    expect(dockerfile).toContain(
+      `stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770"`,
+    );
+    expect(dockerfile).toContain("test ! -e /sandbox/.hermes/cron/executions.db");
+    expect(imageBuildProbes).toContain("from cron.executions import create_execution");
+    expect(imageBuildProbes).toContain("nemoclaw-cross-uid-create-probe");
+    expect(imageBuildProbes).toContain("nemoclaw-cross-uid-reopen-probe");
+    expect(dockerfile).toContain(`runtime/cron-executions.db)" = "gateway:sandbox 640"`);
+    expect(dockerfile).toContain(`runtime/cron-executions.db)" = "sandbox:sandbox 660"`);
+    expect(imageBuildProbes).toContain('for suffix in ("-wal", "-shm"):');
+  });
+
+  it("build-probes Discord gateway creation, sandbox backup and replacement, then reopen", () => {
+    expect(dockerfile).toContain(
+      `stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 2770"`,
+    );
+    expect(dockerfile).toContain(
+      "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \\\n" +
+        "        /opt/nemoclaw-hermes-config/image-build-probes.py discord-create",
+    );
+    expect(dockerfile).toContain(
+      "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /opt/hermes/.venv/bin/python -I \\\n" +
+        "        /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup",
+    );
+    const discordBackup = imageBuildProbes.slice(
+      imageBuildProbes.indexOf("def verify_discord_backup("),
+      imageBuildProbes.indexOf("def verify_discord_reopen("),
+    );
+    expect(discordBackup).toContain(".nemoclaw-discord-recovery-staged");
+    expect(discordBackup).toContain("source.backup(target)");
+    expect(discordBackup).toContain("os.replace(staged, path)");
+    expect(imageBuildProbes).toContain("gateway-reopened");
+    expect(dockerfile).toContain(`discord_message_recovery.db)" = "sandbox:sandbox 660"`);
+  });
+
+  it("requires descriptor-relative, no-follow repair for all writable parents", () => {
+    expect(startScript).toContain("ensure_hermes_cross_uid_state_dir() {");
+    expect(startScript).toContain('name = os.environ["NEMOCLAW_HERMES_STATE_DIR_NAME"]');
+    expect(startScript).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
+    expect(startScript).toContain("os.open(name, open_flags, dir_fd=root_fd)");
+    expect(startScript).toContain("os.mkdir(name, desired_mode, dir_fd=root_fd)");
+    expect(startScript).toContain("os.fchown(gateway_fd, gateway_uid, sandbox_gid)");
+    expect(startScript).toContain("os.fchmod(gateway_fd, desired_mode)");
+    const repairStart = startScript.indexOf("repair_hermes_startup_layout() {");
+    const sharedStateRepair = startScript.indexOf(
+      "for state_dir in sessions gateway runtime; do",
+      repairStart,
+    );
+    const configRootRepair = startScript.indexOf("ensure_hermes_config_root_mode", repairStart);
+    expect(repairStart).toBeGreaterThanOrEqual(0);
+    expect(sharedStateRepair).toBeGreaterThan(repairStart);
+    expect(sharedStateRepair).toBeLessThan(configRootRepair);
+    expect(startScript).not.toContain("ensure_hermes_cross_uid_state_dir cron");
+  });
+
+  it.each([
+    ["sessions", "symlink", "is a symlink"],
+    ["sessions", "file", "is not a directory"],
+    ["gateway", "symlink", "is a symlink"],
+    ["gateway", "file", "is not a directory"],
+    ["runtime", "symlink", "is a symlink"],
+    ["runtime", "file", "is not a directory"],
+  ] as const)("refuses an unsafe %s %s parent", (name, kind, message) => {
+    const result = runCrossUidParentRepair(name, kind);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Refusing Hermes cross-UID state repair");
+    expect(result.stderr).toContain(`/${name} ${message}`);
+  });
 });

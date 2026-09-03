@@ -14,6 +14,27 @@ skill:
 
 Use the lightest recovery operation that repairs the sandbox while preserving its supported state.
 
+## Upgrade from a Release That Used Shields
+
+Shields has been retired from NemoClaw. The current CLI has no Shields commands, status, timers, or supported locked posture. After an upgrade, NemoClaw prints a retirement notice while it still finds legacy Shields state and identifies the affected sandbox records when possible.
+
+If the sandbox has only an inert legacy state record, create a trusted snapshot or backup. Then rebuild the affected sandbox before running further mutations.
+
+If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe.
+
+A notice-only provider intent recorded before mutation authority was granted is preserved for review but does not by itself block lifecycle operations. The retirement notice prints each exact absolute notice-only path and labels it nonblocking. A notice-only path is not part of the quarantine inventory unless a later blocking error explicitly lists that same path.
+
+Use the active state directory and exact blocking paths printed in the error as the complete quarantine inventory. A provider path can name a whole lifecycle transaction directory; treat the whole printed path as one unit.
+
+1. Record the active state directory and every printed blocking path.
+2. Reboot the host. Before continuing, ensure that no older NemoClaw binary restarts. Stopping selected processes without a reboot is not sufficient authority-stop proof.
+3. Create trusted backup storage and a quarantine directory outside the printed active state directory. Back up each listed path, then move the original whole path into that outside quarantine. Do not delete, edit, or interpret any artifact, and do not move only selected files from a printed transaction directory.
+4. Confirm that none of the printed paths remains in the active state directory. Only then retry the current-version rebuild or recreate flow. For recreation, use the [manual transfer workflow](../state-and-backups/transfer-state-manually) to copy only trusted user data.
+
+If you cannot complete the reboot, backup, or full quarantine, leave every artifact untouched. NemoClaw continues to block ordinary mutations while any listed path remains in active state.
+
+Do not use cross-sandbox snapshot restore from the legacy sandbox because that flow preserves the source image. The current CLI deliberately does not interpret, resume, or delete ambiguous legacy recovery state.
+
 ## Restart a Stopped Sandbox Container
 
 If NemoClaw reports that a Docker-driver sandbox is stopped, restart the existing container:
@@ -29,19 +50,6 @@ This path preserves the sandbox workspace and repairs the agent runtime and host
   OpenShell reports the sandbox ready, and host-side port forwards pass their checks. If a check
   fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you
   retry `start`.
-</AgentOnly>
-
-<AgentOnly variant="openclaw">
-### Lower Shields After a Failed Startup
-
-If the sandbox has shields up and the OpenClaw gateway does not start after the container restarts, lower shields before you rebuild:
-
-```bash
-$$nemoclaw <sandbox-name> shields down
-```
-
-While holding the config mutation lock, NemoClaw confirms that no startup process runs and no readiness lease exists. Only then does it accept `shields down`. Other locked-config operations still require the lease. This failed-startup recovery path requires a sandbox image that includes the in-container OpenClaw config and state guards. If NemoClaw reports that the config guard is absent, upgrade the CLI. Then rebuild the sandbox before you retry recovery. After shields are down, start the sandbox again. When the OpenClaw gateway is healthy, rerun `shields up`.
-
 </AgentOnly>
 
 ## Recover the Agent Runtime
@@ -241,7 +249,8 @@ On WSL with Docker Desktop, a generated replacement image build uses a temporary
 
 <AgentOnly variant="openclaw">
 
-After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match. If verification fails, NemoClaw restores Shields, exits nonzero, and does not report a successful rebuild.
+After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
+If verification fails, NemoClaw exits nonzero and does not report a successful rebuild.
 
 </AgentOnly>
 
@@ -390,33 +399,14 @@ Remove the incomplete host-side snapshot only after you verify that the original
   Across every rebuild path, NemoClaw does not attempt to stop the local NVIDIA NIM through the delete attempt.
   Cleanup is attempted on a best-effort basis only after deletion is positively confirmed.
   After a nonzero delete, an explicit missing result converges as deleted.
-  A `Ready` or `Running` result triggers an attempt to restore prepared MCP state and any lockdown that rebuild temporarily relaxed.
-  NemoClaw reports any MCP or lockdown restoration failure and does not present the operation as a successful rollback.
+  A `Ready` or `Running` result triggers an attempt to restore prepared MCP state.
+  NemoClaw reports any MCP restoration failure and does not present the operation as a successful rollback.
   Any partial or unreachable result remains ambiguous.
-  NemoClaw preserves the MCP ownership and rebuild-recovery records, does not attempt to stop NIM, skips the rebuild process's immediate lockdown restoration, and does not claim that the original sandbox is intact.
+  NemoClaw preserves the MCP ownership and rebuild-recovery records, does not attempt to stop NIM, and does not claim that the original sandbox is intact.
   Inspect the live sandbox and gateway state before retrying recovery.
   This recovery also stops for incomplete MCP adds or ambiguous ownership.
   An error after a successful no-op does not fall back to the host-side path.
 </Warning>
-
-When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation. A detached auto-lock timer remains the recovery authority until NemoClaw commits a successful shields-up state, including when the host rebuild process exits unexpectedly.
-
-<AgentOnly variant="openclaw">
-If a failed shields transition on a sandbox from an older NemoClaw release quarantined the OpenClaw config, the bytes are preserved as `/sandbox/.openclaw/.nemoclaw-rejected-openclaw.json-<random>` rather than deleted.
-Upgrade the NemoClaw CLI before rebuilding because an older CLI restages the older in-container guard.
-To preserve settings, copy the quarantine file out of the container before `rebuild --yes`.
-After the rebuild, inspect that copy and reapply required settings with the host-side `config set` command.
-To discard the quarantined settings, upgrade the CLI and run `rebuild --yes` to create a known-good baseline.
-Sandboxes with the updated guard report quarantine filenames and synthesize a missing `.config-hash` only during `shields up` from the default mutable posture.
-</AgentOnly>
-
-<AgentOnly variant="hermes">
-  For an older Hermes image that predates sealed shields transitions, only the rebuild workflow may
-  use the descriptor-safe compatibility transition needed to archive and replace the sandbox. That
-  transition verifies the strict and compatibility hashes and publishes fresh config inodes before
-  changing their lock posture, while ordinary `shields up` and `shields down` commands continue to
-  refuse the older protocol.
-</AgentOnly>
 
 Refer to [`$$nemoclaw <name> rebuild`](../../reference/commands#$$nemoclaw-name-rebuild) for flag details.
 
