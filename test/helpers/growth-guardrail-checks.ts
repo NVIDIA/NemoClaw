@@ -3,9 +3,11 @@
 
 import ts from "typescript";
 
+import { parseE2eAssertionBudget } from "../../scripts/checks/e2e-assertion-census.mts";
 import type { GrowthGuardrailDiff, PullRequestFile } from "./growth-guardrail-diff";
 
 const BUDGET_FILE = "ci/test-file-size-budget.json";
+const E2E_ASSERTION_BUDGET_FILE = "ci/e2e-assertion-budget.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
@@ -382,6 +384,65 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
   return violations;
 }
 
+export async function e2eAssertionBudgetGrowthViolations(
+  diff: GrowthGuardrailDiff,
+): Promise<string[]> {
+  const changed = diff.files.some(
+    ({ filename, previous_filename }) =>
+      filename === E2E_ASSERTION_BUDGET_FILE || previous_filename === E2E_ASSERTION_BUDGET_FILE,
+  );
+  if (!changed) return [];
+  const [baseBlob, headBlob] = await Promise.all([
+    diff.readBase([E2E_ASSERTION_BUDGET_FILE]),
+    diff.readHead([E2E_ASSERTION_BUDGET_FILE]),
+  ]);
+  const baseSource = baseBlob.get(E2E_ASSERTION_BUDGET_FILE);
+  const headSource = headBlob.get(E2E_ASSERTION_BUDGET_FILE);
+  if (headSource === null || headSource === undefined) {
+    return [`${E2E_ASSERTION_BUDGET_FILE} must remain present`];
+  }
+  if (baseSource === null || baseSource === undefined) return [];
+
+  const base = parseE2eAssertionBudget(baseSource);
+  const head = parseE2eAssertionBudget(headSource);
+  const violations: string[] = [];
+  if (JSON.stringify(head.reference) !== JSON.stringify(base.reference)) {
+    violations.push("live E2E assertion reference metadata changed");
+  }
+  for (const count of ["testFileCount", "liveFileCount"] as const) {
+    if (head.limits[count] > base.limits[count]) {
+      violations.push(`${count} increased from ${base.limits[count]} to ${head.limits[count]}`);
+    }
+  }
+  for (const view of ["direct", "unique"] as const) {
+    for (const metric of [
+      "expectCalls",
+      "assertionPoints",
+      "generatedProbeBlocks",
+      "generatedProbeConditions",
+    ] as const) {
+      const before = base.limits[view][metric];
+      const after = head.limits[view][metric];
+      if (after > before) violations.push(`${view}.${metric} increased from ${before} to ${after}`);
+    }
+  }
+  for (const [file, after] of Object.entries(head.limits.files)) {
+    const before = base.limits.files[file];
+    if (!before) {
+      violations.push(`${file} added a live E2E assertion budget`);
+      continue;
+    }
+    after.forEach((value, index) => {
+      if (value > before[index]!) {
+        violations.push(
+          `${file} ${head.limits.fileMetricOrder[index]} increased from ${before[index]} to ${value}`,
+        );
+      }
+    });
+  }
+  return violations;
+}
+
 async function syntaxGrowthViolations(
   diff: GrowthGuardrailDiff,
   count: (file: string, source: string | null) => number,
@@ -428,6 +489,12 @@ export const diagnostics = {
       "The test file size budget was exceeded or weakened.",
       details,
       "Split oversized tests, and lower legacy budgets when files shrink.",
+    ),
+  e2eAssertions: (details: readonly string[]) =>
+    formatList(
+      "The live E2E assertion budget increased.",
+      details,
+      "Keep the baseline at or below the trusted base. Reduce assertions before updating the budget.",
     ),
   conditionals: (details: readonly string[]) =>
     formatList(
