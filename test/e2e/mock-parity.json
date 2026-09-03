@@ -53,10 +53,7 @@
     },
     {
       "live": "test/e2e/live/managed-image-openclaw-security.test.ts",
-      "liveSources": [
-        "test/e2e/live/managed-image-multiarch-startup-helpers.ts",
-        "test/e2e/live/managed-image-openclaw-security-helpers.ts"
-      ],
+      "liveSources": ["test/e2e/live/managed-image-multiarch-startup-helpers.ts"],
       "fast": [
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
