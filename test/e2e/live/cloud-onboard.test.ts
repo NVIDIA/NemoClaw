@@ -216,7 +216,10 @@ test(
   progress.phase("install and onboard cloud sandbox");
   const install = await host.command(
     "bash",
-    ["-lc", `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash`],
+    [
+      "-lc",
+      `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash && ${runtimeProvider.id === "docker" ? "command -v docker >/dev/null" : "! command -v docker >/dev/null"}`,
+    ],
     {
       artifactName: "phase-1-public-install",
       env: testEnv({
@@ -232,14 +235,6 @@ test(
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
-  const dockerAfterInstall = await host.command("bash", ["-lc", "command -v docker"], {
-    artifactName: "phase-1-docker-cli-after-public-install",
-    env: testEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(dockerAfterInstall.exitCode === 0, resultText(dockerAfterInstall)).toBe(
-    runtimeProvider.id === "docker",
-  );
   assertStockManagedImageReceipt({
     environment: testEnv(),
     expectedAgent: "openclaw",
