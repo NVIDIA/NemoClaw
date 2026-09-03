@@ -35,17 +35,17 @@ function metadata(
 }
 
 describe("rebuild-Hermes base reuse", () => {
-  it("retags the immutable pinned base selected during normal setup (#7144)", () => {
+  it("keeps the pinned evidence alias out of the rebuild environment (#10903)", () => {
     const selected = metadata();
 
     expect(planRebuildHermesBaseReuse(false, selected, preparedRef)).toEqual({
       sourceRef: selected.ref,
       preparedRef,
-      childEnv: { NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: preparedRef },
+      childEnv: {},
     });
   });
 
-  it("retags the repository-built local base selected during normal setup (#7144)", () => {
+  it("keeps the local evidence alias out of the rebuild environment (#10903)", () => {
     const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
 
     expect(
@@ -57,7 +57,7 @@ describe("rebuild-Hermes base reuse", () => {
     ).toEqual({
       sourceRef: localRef,
       preparedRef,
-      childEnv: { NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: preparedRef },
+      childEnv: {},
     });
   });
 

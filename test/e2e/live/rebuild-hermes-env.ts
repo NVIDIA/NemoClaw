@@ -4,7 +4,6 @@
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
-const HERMES_BASE_IMAGE_OVERRIDE_ENV = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
 const OFFICIAL_HERMES_BASE_DIGEST =
   /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/;
 const LOCAL_HERMES_BASE = /^nemoclaw-hermes-sandbox-base-local:[^\s]+$/;
@@ -27,7 +26,7 @@ export function buildRebuildHermesRecreateEnv(
   };
 }
 
-/** Select the normal lane's exact phase 1 image under a test-owned local alias. */
+/** Retain the normal lane's phase 1 image under a test-owned evidence alias. */
 export function planRebuildHermesBaseReuse(
   staleBaseMode: boolean,
   metadata: SandboxBaseImageResolutionMetadata | null,
@@ -64,7 +63,7 @@ export function planRebuildHermesBaseReuse(
   return {
     sourceRef,
     preparedRef: normalizedPreparedRef,
-    childEnv: { [HERMES_BASE_IMAGE_OVERRIDE_ENV]: normalizedPreparedRef },
+    childEnv: {},
   };
 }
 
