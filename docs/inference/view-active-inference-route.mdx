@@ -70,7 +70,10 @@ NemoClaw omits the endpoint when participating registry metadata is absent, conf
 Text output reports `Endpoint: unavailable` with a non-secret reason, up to five affected sandbox names, and a recovery action.
 JSON output adds `endpointDiagnostic` with `reason`, `affectedSandboxNames`, `additionalAffectedSandboxCount`, and `recovery`; it never includes the rejected endpoint or gateway binding.
 The reason is `missing-endpoint`, `invalid-endpoint`, `conflicting-endpoints`, or `invalid-gateway-binding`.
-Run the reported status command, then repair the recorded gateway binding or remove and re-onboard the affected sandbox.
+Run the reported status command before changing registry metadata.
+For `invalid-gateway-binding`, restore known-good `gatewayName` and `gatewayPort` metadata from a trusted backup.
+Do not copy a binding from another sandbox.
+If no trusted backup is available, back up and remove the affected sandbox, then re-onboard it.
 If the registry cannot be read for a compatible custom route, the command exits non-zero without exposing the underlying registry error and directs you to the applicable `status` command.
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.

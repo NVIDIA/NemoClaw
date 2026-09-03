@@ -6,7 +6,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
 import { getLiveGatewayInference } from "../inference/live";
-import { isSharedGatewayRouteParticipant } from "../state/registry/route-reservation";
+import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -72,6 +72,8 @@ const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
 ]);
 const MAX_DIAGNOSTIC_SANDBOX_NAMES = 5;
 const MAX_DIAGNOSTIC_SANDBOX_NAME_LENGTH = 64;
+const INVALID_GATEWAY_BINDING_RECOVERY =
+  "For an invalid gateway binding, restore known-good gatewayName and gatewayPort metadata from a trusted backup. Do not copy a binding from another sandbox. Otherwise, back up and remove the affected sandbox, then re-onboard it.";
 
 type PersistedEndpointSelection =
   | { endpointUrl: string; diagnostic: null }
@@ -104,7 +106,7 @@ function endpointDiagnostic(
     reason,
     affectedSandboxNames: safeNames.slice(0, MAX_DIAGNOSTIC_SANDBOX_NAMES),
     additionalAffectedSandboxCount: Math.max(0, safeNames.length - MAX_DIAGNOSTIC_SANDBOX_NAMES),
-    recovery: `Run '${recoveryCommand}' to inspect the affected registry metadata. Repair the recorded gateway binding or remove and re-onboard the affected sandbox.`,
+    recovery: `Run '${recoveryCommand}' to inspect the affected registry metadata. ${INVALID_GATEWAY_BINDING_RECOVERY}`,
   };
 }
 
@@ -137,7 +139,7 @@ function getPersistedEndpointUrl(
   const invalidEndpointNames: string[] = [];
   const invalidBindingNames: string[] = [];
   for (const sandbox of sandboxes) {
-    if (!isSharedGatewayRouteParticipant(sandbox)) continue;
+    if (!isPublishedSandboxRegistration(sandbox)) continue;
     if (sandboxName && sandbox.name !== sandboxName) continue;
     if (sandbox.provider !== provider) continue;
     try {
@@ -223,7 +225,7 @@ export async function runInferenceGet(
       ? `${safeCliName || "nemoclaw"} ${safeSandboxName} status`
       : `${safeCliName || "nemoclaw"} status`;
     throw new InferenceGetError(
-      `NemoClaw could not resolve the sandbox's recorded gateway. Run '${statusCommand}' to inspect and repair its registry metadata.`,
+      `NemoClaw could not resolve the sandbox's recorded gateway. Run '${statusCommand}' to inspect its registry metadata. ${INVALID_GATEWAY_BINDING_RECOVERY}`,
     );
   }
   const result = getLiveGatewayInference(deps.captureOpenshell, {

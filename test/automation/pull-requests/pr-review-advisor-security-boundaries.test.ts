@@ -23,7 +23,6 @@ describe("PR review advisor security boundaries", () => {
     vi.stubEnv(credentialEnv, "test-secret");
     vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
-    vi.spyOn(ModelRegistry.prototype, "find").mockReturnValue(undefined);
 
     try {
       await expect(

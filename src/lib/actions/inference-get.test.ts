@@ -27,7 +27,7 @@ function expectedEndpointDiagnostic(
     reason,
     affectedSandboxNames,
     additionalAffectedSandboxCount: 0,
-    recovery: `Run '${statusCommand}' to inspect the affected registry metadata. Repair the recorded gateway binding or remove and re-onboard the affected sandbox.`,
+    recovery: `Run '${statusCommand}' to inspect the affected registry metadata. For an invalid gateway binding, restore known-good gatewayName and gatewayPort metadata from a trusted backup. Do not copy a binding from another sandbox. Otherwise, back up and remove the affected sandbox, then re-onboard it.`,
   };
 }
 
@@ -291,7 +291,7 @@ describe("runInferenceGet", () => {
     },
   );
 
-  it("ignores unpublished same-gateway rows when selecting the endpoint (#9733)", async () => {
+  it("ignores a pending route reservation when selecting the endpoint (#10784)", async () => {
     const deps = createDeps(
       "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
     );
@@ -308,7 +308,6 @@ describe("runInferenceGet", () => {
         model: "custom/model",
         endpointUrl: "https://unpublished.example.test/v1",
         pendingRouteReservation: true,
-        createdAt: "2026-09-02T00:00:00.000Z",
       },
     ]);
 
@@ -417,7 +416,7 @@ describe("runInferenceGet", () => {
     const lookup = runInferenceGet({ sandboxName: "beta" }, deps);
     await expect(lookup).rejects.toMatchObject({
       message:
-        "NemoClaw could not resolve the sandbox's recorded gateway. Run 'nemoclaw beta status' to inspect and repair its registry metadata.",
+        "NemoClaw could not resolve the sandbox's recorded gateway. Run 'nemoclaw beta status' to inspect its registry metadata. For an invalid gateway binding, restore known-good gatewayName and gatewayPort metadata from a trusted backup. Do not copy a binding from another sandbox. Otherwise, back up and remove the affected sandbox, then re-onboard it.",
     });
     await expect(lookup).rejects.not.toThrow(/secret-invalid-gateway|31337/);
     expect(deps.captureOpenshell).not.toHaveBeenCalled();
