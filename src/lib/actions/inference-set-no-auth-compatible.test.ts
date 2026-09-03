@@ -174,6 +174,41 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
+  it("refuses incomplete typed provider identity before route mutation (#9806)", async () => {
+    const captureOpenshell = noAuthProviderCapture();
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+    });
+    const getProvider = vi
+      .spyOn(deps.providerAdapter, "getProvider")
+      .mockResolvedValue({
+        ok: true as const,
+        value: {
+          name: "compatible-endpoint",
+          type: "openai",
+          credentialKeys: [NO_AUTH_CREDENTIAL_ENV],
+          configKeys: ["OPENAI_BASE_URL"],
+          revision: null,
+        },
+      });
+
+    await expect(
+      runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
+    ).rejects.toThrow(/without a revision/);
+
+    expect(inferenceSetArgs(captureOpenshell)).toEqual([]);
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+    expect(getProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "compatible-endpoint",
+    });
+    expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("refuses an absent provider before selecting the route with no endpoint options", async () => {
     const captureOpenshell = noAuthProviderCapture({ initiallyPresent: false });
     const deps = createDeps({

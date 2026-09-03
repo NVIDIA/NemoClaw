@@ -27,10 +27,7 @@ import {
   resolveReasoningEffortRequest,
 } from "../inference/selection";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
-import {
-  matchesGatewayProviderBinding,
-  parseGatewayProviderMetadata,
-} from "../onboard/gateway-provider-metadata";
+import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
   assertNoOpenShellGatewayEndpointOverride,
@@ -73,8 +70,10 @@ import {
 } from "./inference-set-gateway-restart";
 import {
   type InferenceSetSandboxRouteProbe,
+  type InferenceSetProviderAdapter,
   assertInferenceSetCommandAvailable,
   assertInferenceSetProviderOwnership,
+  createDefaultInferenceSetProviderAdapter,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
@@ -166,6 +165,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
       "env" | "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
     >,
   ) => CaptureOpenshellResult;
+  providerAdapter: InferenceSetProviderAdapter;
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
@@ -269,6 +269,7 @@ function defaultDeps(): InferenceSetDeps {
       getOpenshellBinary();
     },
     captureOpenshell: (args, opts) => captureOpenshell(args, opts),
+    providerAdapter: createDefaultInferenceSetProviderAdapter(),
     appendAuditEntry,
     log: console.log,
     isLocalInferenceProvider: (provider) =>
@@ -719,7 +720,7 @@ function getPreferredInferenceApi(config: ConfigObject): string | null {
   return typeof inferenceProvider.api === "string" ? inferenceProvider.api : null;
 }
 
-function assertHermesCompatibleAnthropicOpenAiProvider(
+async function assertHermesCompatibleAnthropicOpenAiProvider(
   sandboxName: string,
   agentName: string,
   gatewayName: string,
@@ -729,7 +730,7 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
   httpsPinProviderBinding: {
     providerType: "openai" | "anthropic";
   } | null = null,
-): void {
+): Promise<void> {
   if (
     agentName !== "hermes" ||
     provider !== "compatible-anthropic-endpoint" ||
@@ -739,15 +740,13 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
   }
   if (httpsPinProviderBinding?.providerType === "openai") return;
 
-  const result = deps.captureOpenshell(["provider", "get", "-g", gatewayName, provider], {
-    ignoreError: true,
-    includeStreams: true,
-    maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+  const result = await deps.providerAdapter.getProvider({
+    target: { kind: "named", gatewayName },
+    providerName: provider,
   });
-  const output = result.output || `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  const metadata = result.status === 0 ? parseGatewayProviderMetadata(output) : null;
   if (
-    matchesGatewayProviderBinding(metadata, {
+    result.ok &&
+    matchesGatewayProviderBinding(result.value, {
       name: provider,
       type: "openai",
       credentialKey: "COMPATIBLE_ANTHROPIC_API_KEY",
@@ -1005,7 +1004,7 @@ async function runInferenceSetWithoutHostLock(
   // `inference set` changes the selected route but cannot change a gateway
   // provider's protocol type. Fail before mutation when a legacy Anthropic
   // registration would make the required Hermes OpenAI frontend unroutable.
-  assertHermesCompatibleAnthropicOpenAiProvider(
+  await assertHermesCompatibleAnthropicOpenAiProvider(
     sandboxName,
     agentName,
     preparedRoute.gatewayName,
@@ -1055,7 +1054,8 @@ async function runInferenceSetWithoutHostLock(
   let appliedProvider = false;
   let appliedInferenceSelection = false;
   let restoredSelectionAfterProviderFailure = false;
-  let providerMutation: ReturnType<typeof prepareInferenceSetProviderBinding> | null = null;
+  let providerMutation: Awaited<ReturnType<typeof prepareInferenceSetProviderBinding>> | null =
+    null;
   const restorePreviousInferenceSelection = (): string | null => {
     let restoreResult: CaptureOpenshellResult;
     try {
@@ -1084,11 +1084,11 @@ async function runInferenceSetWithoutHostLock(
   try {
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
-      providerMutation = prepareInferenceSetProviderBinding({
+      providerMutation = await prepareInferenceSetProviderBinding({
         gatewayName: preparedRoute.gatewayName,
         providerName: provider,
         binding: providerBinding,
-        captureOpenshell: deps.captureOpenshell,
+        providerAdapter: deps.providerAdapter,
         allowCreate: !loopbackNoAuthProxyRoute,
       });
       if (directProviderBinding && providerMutation.action === "update") {
@@ -1116,12 +1116,12 @@ async function runInferenceSetWithoutHostLock(
       // no-auth proxy token that OpenShell holds and sends on selection, and
       // its host-side verification is skipped, so confirm the durable binding
       // is still the one onboarding registered before selecting it.
-      assertInferenceSetProviderOwnership({
+      await assertInferenceSetProviderOwnership({
         gatewayName: preparedRoute.gatewayName,
         providerName: provider,
         providerType: preMutationInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
         credentialEnv: sandboxCustomCompatibleCredentialEnv(entry, provider),
-        captureOpenshell: deps.captureOpenshell,
+        providerAdapter: deps.providerAdapter,
       });
     }
     if (providerMutation) {
@@ -1162,13 +1162,13 @@ async function runInferenceSetWithoutHostLock(
       setResult = setInferenceRoute();
     }
     if (setResult.status !== 0) {
-      const failure = buildInferenceSetFailure(setResult, provider, deps);
+      const failure = await buildInferenceSetFailure(setResult, provider, deps);
       throw new InferenceSetError(failure.message, failure.exitCode);
     }
     appliedInferenceSelection = true;
     if (providerMutation) {
       try {
-        providerMutation.commit();
+        await providerMutation.commit();
         appliedProvider = true;
       } catch (providerError) {
         const providerDetail =
@@ -1476,7 +1476,7 @@ async function runInferenceSetWithoutHostLock(
     const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
     if (!appliedInferenceSelection) {
       try {
-        providerMutation.rollback();
+        await providerMutation.rollback();
       } catch (rollbackError) {
         const rollbackDetail =
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
