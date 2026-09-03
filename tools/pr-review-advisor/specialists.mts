@@ -106,7 +106,7 @@ export function buildSpecialistInvestigateTurn(
     terminalSubmitToolName: RECORD_ADVISOR_FINDINGS_TOOL,
     terminalSubmitRepairPrompt:
       `Commit the complete blocker ledger now by calling ${RECORD_ADVISOR_FINDINGS_TOOL}. ` +
-      "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason."
+      "Do not emit more prose. If there are no P0/P1 blockers, submit an empty finding list and a concrete noFindingsReason.",
     prompt: `Review the ${specialist.label} area.
 
 ${COMMON_PROMPT}

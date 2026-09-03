@@ -14,6 +14,7 @@ import {
   type PullRequestReviewState,
 } from "../pr-review-advisor/review-state.mts";
 import {
+  assertRepairContractSchema,
   CANONICAL_REPOSITORY,
   MAX_PATCH_BYTES,
   parseValidatedReceiptForPublication,
@@ -774,7 +775,7 @@ export async function publishValidatedRepair(input: {
     input.token,
     request,
   );
-  return {
+  const publication: PublicationReceipt = {
     version: 1,
     attemptKey: input.receipt.attemptKey,
     sourceHeadSha: input.receipt.sourceHeadSha,
@@ -783,6 +784,8 @@ export async function publishValidatedRepair(input: {
     headRef: input.receipt.headRef,
     dispatchedWorkflows,
   };
+  assertRepairContractSchema("publication-receipt", publication);
+  return publication;
 }
 
 async function main(env: NodeJS.ProcessEnv): Promise<void> {

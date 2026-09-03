@@ -5,6 +5,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { repairContractSchemaErrors, type RepairContractSchemaName } from "./schemas.mts";
+
+export type { RepairContractSchemaName } from "./schemas.mts";
+
 export const CANONICAL_REPOSITORY = "NVIDIA/NemoClaw";
 export const MAX_PATCH_BYTES = 2 * 1024 * 1024;
 export const MAX_CHANGED_FILES = 20;
@@ -150,6 +154,15 @@ export class RepairContractError extends Error {
     super(message);
     this.name = "RepairContractError";
   }
+}
+
+export function assertRepairContractSchema(name: RepairContractSchemaName, value: unknown): void {
+  const [error] = repairContractSchemaErrors(name, value) ?? [];
+  if (!error) return;
+  const location = error.instancePath || "/";
+  throw new RepairContractError(
+    `${name} does not match the committed schema at ${location}: ${error.message ?? "invalid value"}`,
+  );
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -394,6 +407,7 @@ function parseFinding(value: unknown, index: number): FindingInput {
 }
 
 export function parseSelectionInput(value: unknown): SelectionInput {
+  assertRepairContractSchema("selection-input", value);
   const input = record(value, "selection input");
   exactKeys(
     input,
@@ -661,6 +675,7 @@ function parseProposalFields(
 }
 
 export function parseProposalDraft(value: unknown, selection: SelectionBundle): ProposalReceipt {
+  assertRepairContractSchema("proposal-draft", value);
   const input = record(value, "proposal draft");
   exactKeys(
     input,
@@ -677,6 +692,7 @@ export function parseProposalDraft(value: unknown, selection: SelectionBundle): 
 }
 
 export function parseProposalReceipt(value: unknown, selection: SelectionBundle): ProposalReceipt {
+  assertRepairContractSchema("proposal-receipt", value);
   const input = record(value, "proposal receipt");
   exactKeys(
     input,
@@ -713,6 +729,7 @@ export function parseValidatedReceiptForPublication(
   value: unknown,
   patch: Buffer,
 ): ValidationReceipt {
+  assertRepairContractSchema("validation-receipt", value);
   const input = record(value, "validation receipt");
   exactKeys(
     input,

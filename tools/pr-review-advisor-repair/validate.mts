@@ -23,6 +23,7 @@ import {
   type OpenShellTools,
 } from "../openshell-agent/runtime.mts";
 import {
+  assertRepairContractSchema,
   CANONICAL_REPOSITORY,
   MAX_CHANGED_FILE_BYTES,
   MAX_CHANGED_FILES,
@@ -1047,6 +1048,7 @@ export function writeValidationArtifacts(
   receipt: ValidationReceipt,
   patch: Buffer | null,
 ): void {
+  assertRepairContractSchema("validation-receipt", receipt);
   const parent = path.dirname(directory);
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   if (fs.existsSync(directory)) {

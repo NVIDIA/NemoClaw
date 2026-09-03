@@ -645,7 +645,7 @@ describe("PR Review Advisor repair Phase 1 publication", () => {
     ).toThrow("selected paths are unsupported");
     expect(() =>
       parseValidatedReceiptForPublication({ ...receipt, author: "bad login" }, patch),
-    ).toThrow("supported GitHub login");
+    ).toThrow("validation-receipt does not match the committed schema at /author");
     expect(() =>
       parseValidatedReceiptForPublication(
         { ...receipt, attemptKey: `sha256:${"0".repeat(64)}` },

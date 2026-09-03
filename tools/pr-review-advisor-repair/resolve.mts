@@ -8,14 +8,15 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  configureOpenShellInference as configureSharedOpenShellInference,
   createOpenShellSandbox,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
   downloadOpenShellPath,
   execOpenShellSandbox,
+  type OwnedOpenShellInference,
   type OpenShellTools,
   required,
+  startOwnedOpenShellInference,
 } from "../openshell-agent/runtime.mts";
 import {
   MAX_CHANGED_FILE_BYTES,
@@ -66,6 +67,15 @@ const PI_COMMAND_PREFIX = [
 type FileIdentity = { bytes: number; sha256: string };
 
 export type ResolverTools = OpenShellTools;
+
+export type RepairLifecycle = {
+  create: (env: NodeJS.ProcessEnv) => void;
+  download: (env: NodeJS.ProcessEnv) => void;
+  exportPatch: (env: NodeJS.ProcessEnv) => void;
+  remove: (env: NodeJS.ProcessEnv) => void;
+  run: (env: NodeJS.ProcessEnv) => void;
+  startInference: (env: NodeJS.ProcessEnv) => OwnedOpenShellInference;
+};
 
 export function resolverGitEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const clean: NodeJS.ProcessEnv = {};
@@ -293,11 +303,11 @@ export function prepareRepairWorkspace(input: {
   return selection;
 }
 
-export async function configureOpenShellInference(
+export function startRepairOpenShellInference(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
-): Promise<void> {
-  await configureSharedOpenShellInference(
+): OwnedOpenShellInference {
+  return startOwnedOpenShellInference(
     env,
     {
       gatewayId: "pr-review-advisor-repair-phase1",
@@ -593,29 +603,83 @@ function exportPatch(env: NodeJS.ProcessEnv): void {
   appendProposalJobSummary(env.GITHUB_STEP_SUMMARY, result.proposal);
 }
 
+const defaultRepairLifecycle: RepairLifecycle = {
+  startInference: (env) => startRepairOpenShellInference(env),
+  create: (env) => createRepairSandbox(env),
+  run: (env) => runRepairTask(env),
+  download: (env) => downloadRepairCandidate(env),
+  exportPatch,
+  remove: (env) => deleteRepairSandbox(env),
+};
+
+function cleanupFailure(stage: string, error: unknown): Error {
+  return new Error(`${stage}: ${sanitizeDiagnostic(error)}`, { cause: error });
+}
+
+export async function runRepairLifecycle(
+  env: NodeJS.ProcessEnv,
+  lifecycle: RepairLifecycle = defaultRepairLifecycle,
+): Promise<void> {
+  let inference: OwnedOpenShellInference | undefined;
+  let sandboxClaimed = false;
+  let failed = false;
+  let primaryFailure: unknown;
+  try {
+    inference = lifecycle.startInference(env);
+    await inference.configure;
+    sandboxClaimed = true;
+    lifecycle.create(env);
+    lifecycle.run(env);
+    lifecycle.download(env);
+    lifecycle.exportPatch(env);
+  } catch (error) {
+    failed = true;
+    primaryFailure = error;
+  }
+
+  const cleanupFailures: Error[] = [];
+  if (sandboxClaimed) {
+    try {
+      lifecycle.remove(env);
+    } catch (error) {
+      cleanupFailures.push(cleanupFailure("sandbox cleanup", error));
+    }
+  }
+  if (inference) {
+    try {
+      await inference.stop();
+    } catch (error) {
+      cleanupFailures.push(cleanupFailure("gateway cleanup", error));
+    }
+  }
+
+  if (failed) {
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [primaryFailure, ...cleanupFailures],
+        `${sanitizeDiagnostic(primaryFailure)}; repair lifecycle cleanup also failed: ${cleanupFailures.map((error) => error.message).join("; ")}`,
+        { cause: primaryFailure },
+      );
+    }
+    throw primaryFailure;
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures,
+      `repair lifecycle cleanup failed: ${cleanupFailures.map((error) => error.message).join("; ")}`,
+      { cause: cleanupFailures[0] },
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const command = required(process.env.REPAIR_COMMAND, "REPAIR_COMMAND");
   switch (command) {
     case "prepare":
       prepare(process.env);
       return;
-    case "configure":
-      await configureOpenShellInference(process.env);
-      return;
-    case "create":
-      createRepairSandbox(process.env);
-      return;
-    case "run":
-      runRepairTask(process.env);
-      return;
-    case "download":
-      downloadRepairCandidate(process.env);
-      return;
-    case "export":
-      exportPatch(process.env);
-      return;
-    case "delete":
-      deleteRepairSandbox(process.env);
+    case "lifecycle":
+      await runRepairLifecycle(process.env);
       return;
     default:
       throw new RepairContractError(`unsupported repair command: ${command}`);

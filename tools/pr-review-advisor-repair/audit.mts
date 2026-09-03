@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  assertRepairContractSchema,
   CANONICAL_REPOSITORY,
   RepairContractError,
   sanitizeDiagnostic,
@@ -87,7 +88,7 @@ export function createAttemptReceipt(env: NodeJS.ProcessEnv): AttemptReceipt {
         : actor !== triggeringActor
           ? "dispatch-actor-mismatch"
           : "enabled";
-  return {
+  const receipt: AttemptReceipt = {
     version: 1,
     phase: "phase1-manual-publication",
     repository: CANONICAL_REPOSITORY,
@@ -109,6 +110,8 @@ export function createAttemptReceipt(env: NodeJS.ProcessEnv): AttemptReceipt {
     outcome: reason === "enabled" ? "gate-enabled" : "disabled",
     reason,
   };
+  assertRepairContractSchema("attempt-receipt", receipt);
+  return receipt;
 }
 
 function main(env: NodeJS.ProcessEnv): void {

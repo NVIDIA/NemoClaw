@@ -305,37 +305,11 @@ jobs:
             NEMOCLAW_NON_INTERACTIVE=1 \
             bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
 
-      - name: Configure host-side OpenShell inference
+      - name: Run and clean up the bounded repair lifecycle
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-          REPAIR_COMMAND: configure
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
-
-      - name: Create the credential-free offline sandbox
-        env:
-          REPAIR_COMMAND: create
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
-
-      - name: Run the bounded two-turn Pi repair without shell or test tools
-        env:
-          REPAIR_COMMAND: run
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
-
-      - name: Download the candidate tree and proposal receipt
-        env:
-          REPAIR_COMMAND: download
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
-
-      - name: Compute the patch in trusted host code
-        env:
-          REPAIR_COMMAND: export
+          REPAIR_COMMAND: lifecycle
           SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
-
-      - name: Delete the repair sandbox
-        if: always()
-        env:
-          REPAIR_COMMAND: delete
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor-repair/resolve.mts"
 
       - id: upload-repair

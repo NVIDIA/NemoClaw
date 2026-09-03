@@ -5,7 +5,6 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAttemptReceipt } from "../../../tools/pr-review-advisor-repair/audit.mts";
@@ -17,6 +16,7 @@ import {
   type OpenShellTools,
 } from "../../../tools/openshell-agent/runtime.mts";
 import {
+  assertRepairContractSchema,
   parseSelectionBundle,
   parseSelectionInput,
   parseProposalDraft,
@@ -153,22 +153,6 @@ function selection(overrides: Record<string, unknown> = {}): SelectionBundle {
 function writeJson(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function expectSchemaValid(schemaName: string, value: unknown): void {
-  const schemaFile = path.resolve(
-    "tools",
-    "pr-review-advisor-repair",
-    "schemas",
-    `${schemaName}.schema.json`,
-  );
-  const validate = new Ajv2020({ allErrors: true, strict: true }).compile(
-    JSON.parse(fs.readFileSync(schemaFile, "utf8")),
-  );
-  expect(
-    validate(value),
-    `${schemaName} schema rejected its runtime value: ${JSON.stringify(validate.errors)}`,
-  ).toBe(true);
 }
 
 function expectSecretFreeOpenShellEnvironment(environment: NodeJS.ProcessEnv): void {
@@ -416,12 +400,23 @@ describe("PR Review Advisor repair Phase 1", () => {
       ],
     };
 
-    expectSchemaValid("attempt-receipt", attempt);
-    expectSchemaValid("selection-input", bundle.input);
-    expectSchemaValid("proposal-draft", draft);
-    expectSchemaValid("proposal-receipt", proposalReceipt);
-    expectSchemaValid("validation-receipt", validationReceipt);
-    expectSchemaValid("publication-receipt", publicationReceipt);
+    expect(() => assertRepairContractSchema("attempt-receipt", attempt)).not.toThrow();
+    expect(() => assertRepairContractSchema("selection-input", bundle.input)).not.toThrow();
+    expect(() => assertRepairContractSchema("proposal-draft", draft)).not.toThrow();
+    expect(() => assertRepairContractSchema("proposal-receipt", proposalReceipt)).not.toThrow();
+    expect(() => assertRepairContractSchema("validation-receipt", validationReceipt)).not.toThrow();
+    expect(() =>
+      assertRepairContractSchema("publication-receipt", publicationReceipt),
+    ).not.toThrow();
+  });
+
+  it("rejects structural drift through the runtime schema boundary (#10791)", () => {
+    const input = selectionInput();
+    delete (input.pullRequest as Record<string, unknown>).state;
+
+    expect(() => parseSelectionInput(input)).toThrow(
+      "selection-input does not match the committed schema",
+    );
   });
 
   it("does not treat maintainer permission as model data-egress consent (#10791)", () => {

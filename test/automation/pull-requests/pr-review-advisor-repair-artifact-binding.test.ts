@@ -82,12 +82,14 @@ describe("PR Review Advisor repair artifact binding", () => {
     const sourceHeadSha = "a".repeat(40);
     const baseSha = "b".repeat(40);
     const manifest = advisorManifest();
+    const selectedInterest =
+      ADVISOR_INTERESTS.find((interest) => interest.includes("behavior")) ?? ADVISOR_INTERESTS[0]!;
     const ledgers = ADVISOR_INTERESTS.map((interest) =>
       buildAdvisorFindingLedger({
         headSha: sourceHeadSha,
         interest,
         input:
-          interest === "behavior"
+          interest === selectedInterest
             ? {
                 findings: [
                   {
@@ -107,8 +109,8 @@ describe("PR Review Advisor repair artifact binding", () => {
             : { findings: [], noFindingsReason: `No ${interest} blocker remains.` },
       }),
     );
-    const selectedFindingId = ledgers.find(({ interest }) => interest === "behavior")!.findings[0]!
-      .id;
+    const selectedFindingId = ledgers.find(({ interest }) => interest === selectedInterest)!
+      .findings[0]!.id;
     const authority = parseRepairSelectionAuthority({
       version: 1,
       repository: "NVIDIA/NemoClaw",
@@ -186,13 +188,13 @@ describe("PR Review Advisor repair artifact binding", () => {
     });
     expect(fs.readFileSync(output, "utf8")).not.toContain(collected.selection.attemptKey);
 
-    const behaviorSummary = path.join(
+    const selectedSummary = path.join(
       downloadRoot,
-      "pr-review-specialist-behavior-2",
-      "pr-review-behavior-summary.md",
+      `pr-review-specialist-${selectedInterest}-2`,
+      `pr-review-${selectedInterest}-summary.md`,
     );
-    fs.rmSync(behaviorSummary);
-    fs.symlinkSync(path.join(root, "outside.md"), behaviorSummary);
+    fs.rmSync(selectedSummary);
+    fs.symlinkSync(path.join(root, "outside.md"), selectedSummary);
     expect(() =>
       bindDownloadedAdvisorArtifacts({
         downloadDirectory: downloadRoot,
@@ -202,10 +204,10 @@ describe("PR Review Advisor repair artifact binding", () => {
       }),
     ).toThrow("regular-file contract");
 
-    fs.rmSync(behaviorSummary);
+    fs.rmSync(selectedSummary);
     const outsideSummary = path.join(root, "outside-summary.md");
     write(root, "outside-summary.md", "Hard-linked summary.\n");
-    fs.linkSync(outsideSummary, behaviorSummary);
+    fs.linkSync(outsideSummary, selectedSummary);
     expect(() =>
       bindDownloadedAdvisorArtifacts({
         downloadDirectory: downloadRoot,
