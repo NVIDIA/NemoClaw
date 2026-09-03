@@ -700,7 +700,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   const sandboxResult = existingSandbox.run(sandboxCommand(command));
   if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
@@ -1085,7 +1085,7 @@ runner.runCapture = (command) => {
     return "Name: my-assistant\nId: sbx-portable-source\n";
   }
   if (value.includes("sandbox list")) return "my-assistant Ready";
-  if (value.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (value.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return require(${scriptMocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" }) || "";
 };
 

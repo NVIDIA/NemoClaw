@@ -396,7 +396,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
     if (persistedPort === preferredPort && isPortBound(preferredPort)) {
       throw new Error(
-        `Registered dashboard port ${String(preferredPort)} is already occupied; refusing to adopt or reallocate it.`,
+        `Registered dashboard port ${String(preferredPort)} is already occupied; it cannot be reallocated or adopted.`,
       );
     }
     let actualPort: number;

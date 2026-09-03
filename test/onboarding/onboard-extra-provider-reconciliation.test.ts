@@ -102,7 +102,7 @@ runner.runCapture = (command) => {
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   if (normalized.includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "SANDBOX BIND PORT PID STATUS";
   }
   return "";
 };

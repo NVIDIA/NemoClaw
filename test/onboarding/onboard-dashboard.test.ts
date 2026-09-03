@@ -164,7 +164,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(() => helpers.ensureDashboardForward("my-sandbox")).toThrow(
-      /refusing to adopt or reallocate/u,
+      /cannot be reallocated or adopted/u,
     );
     expect(launch).not.toHaveBeenCalled();
   });

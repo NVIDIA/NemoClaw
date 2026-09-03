@@ -82,7 +82,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -310,7 +310,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -529,7 +529,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -644,7 +644,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -762,7 +762,7 @@ runner.runCapture = (command) => {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {

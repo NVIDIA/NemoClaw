@@ -94,7 +94,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -341,7 +341,7 @@ runner.runCapture = (command) => {
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
   if (normalized.includes("sandbox list")) return "";
   if (normalized.includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "SANDBOX BIND PORT PID STATUS";
   }
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
     defaultCurlOutput: "ok",
@@ -459,7 +459,7 @@ runner.runCapture = (command) => {
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.
   if (normalized.includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "SANDBOX BIND PORT PID STATUS";
   }
   return "";
 };

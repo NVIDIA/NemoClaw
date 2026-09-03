@@ -87,7 +87,7 @@ runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
   if (_n(command).includes("provider get")) return "Provider: discord-bridge";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -360,7 +360,7 @@ runner.run = fixtureMocks.createStatefulMessagingProviderRunner({ commands, crea
 runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -537,7 +537,7 @@ runner.runCapture = (command) => {
   if (sandboxCapture !== null) return sandboxCapture;
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 }; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => { registered = entry; return true; }; registry.updateSandbox = () => true; registry.setDefault = () => true; registry.removeSandbox = () => true;
@@ -721,7 +721,7 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 }; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => {
@@ -881,7 +881,7 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 }; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => {
@@ -1051,7 +1051,7 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 }; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => {
@@ -1279,7 +1279,7 @@ runner.runCapture = (command) => {
   if (sandboxCapture !== null) return sandboxCapture;
   // All messaging providers already exist in gateway
   if (_n(command).includes("provider get")) return "Provider: exists";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture(
@@ -1387,7 +1387,7 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 }; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = () => true;
@@ -1528,7 +1528,7 @@ runner.runCapture = (command) => {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 }; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = () => true;
