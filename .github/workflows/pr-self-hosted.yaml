@@ -237,7 +237,7 @@ jobs:
           docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
 
 
-  test-e2e-port-overrides:
+  port-override-image-contract:
     runs-on: linux-amd64-cpu4
     timeout-minutes: 10
     needs: build-sandbox-images

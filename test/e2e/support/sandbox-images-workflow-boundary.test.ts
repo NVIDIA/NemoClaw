@@ -24,16 +24,16 @@ describe("sandbox image workflow boundary", () => {
 
   it("rejects late sandbox scheduling or omission from the final main gate", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    mainWorkflow.jobs["sandbox-images-and-e2e"].needs = "checks";
+    mainWorkflow.jobs["sandbox-image-contracts"].needs = "checks";
     mainWorkflow.jobs.checks.needs = (mainWorkflow.jobs.checks.needs as string[]).filter(
-      (dependency) => dependency !== "sandbox-images-and-e2e",
+      (dependency) => dependency !== "sandbox-image-contracts",
     );
     const gate = mainWorkflow.jobs.checks.steps!.find(
       (step) => step.name === "Verify required main checks",
     )!;
-    delete gate.env!.SANDBOX_IMAGES_E2E_RESULT;
+    delete gate.env!.SANDBOX_IMAGE_CONTRACTS_RESULT;
     gate.run = gate.run!.replace(
-      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+      'require_success "sandbox-image-contracts" "$SANDBOX_IMAGE_CONTRACTS_RESULT"',
       "",
     );
 

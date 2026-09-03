@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / Build and Test Sandbox Images
+name: Images / Sandbox Image Contracts
 
 on:
   # Manual dispatch is the branch-validation path. Non-main refs set
@@ -471,7 +471,7 @@ jobs:
         if: always()
         uses: ./.github/actions/upload-e2e-artifacts
 
-  test-e2e-port-overrides:
+  port-override-image-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build-sandbox-images
@@ -482,5 +482,5 @@ jobs:
 
       - *load-isolation-image
 
-      - name: Run port override E2E tests
+      - name: Validate port override image contract
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-port-overrides.sh

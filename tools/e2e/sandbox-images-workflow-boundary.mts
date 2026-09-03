@@ -8,12 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DEFAULT_WORKFLOW_PATH = join(
-  REPO_ROOT,
-  ".github",
-  "workflows",
-  "sandbox-images-and-e2e.yaml",
-);
+const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "sandbox-images.yaml");
 const DEFAULT_MAIN_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "main.yaml");
 
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
@@ -43,7 +38,7 @@ const IMAGE_BUILD_JOBS = [
   MESSAGING_PLAN_IMAGE_BOUNDARY_JOB,
   "build-sandbox-images-arm64",
 ] as const;
-const OPENCLAW_IMAGE_CONSUMER_JOBS = ["runtime-overrides", "test-e2e-port-overrides"] as const;
+const OPENCLAW_IMAGE_CONSUMER_JOBS = ["runtime-overrides", "port-override-image-contract"] as const;
 const DOCKERHUB_SECRETS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;
 const FORBIDDEN_RUNTIME_SECRETS = [
   "NVIDIA_API_KEY",
@@ -191,8 +186,8 @@ function validateTriggersAndPermissions(errors: string[], workflow: SandboxImage
 }
 
 function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflow): void {
-  const caller = record(record(mainWorkflow.jobs)["sandbox-images-and-e2e"]);
-  if (caller.uses !== "./.github/workflows/sandbox-images-and-e2e.yaml") {
+  const caller = record(record(mainWorkflow.jobs)["sandbox-image-contracts"]);
+  if (caller.uses !== "./.github/workflows/sandbox-images.yaml") {
     errors.push("main workflow must call the local sandbox image workflow");
   }
   if (!isDeepStrictEqual(caller.needs, ["static-checks", "build-typecheck"])) {
@@ -210,15 +205,15 @@ function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflo
   }
 
   const checks = record(record(mainWorkflow.jobs).checks);
-  if (!Array.isArray(checks.needs) || !checks.needs.includes("sandbox-images-and-e2e")) {
+  if (!Array.isArray(checks.needs) || !checks.needs.includes("sandbox-image-contracts")) {
     errors.push("main checks must wait for the sandbox image workflow");
   }
   const gate = requireStep(errors, "main checks", checks, "Verify required main checks");
   if (
-    record(gate.env).SANDBOX_IMAGES_E2E_RESULT !==
-      "${{ needs['sandbox-images-and-e2e'].result }}" ||
+    record(gate.env).SANDBOX_IMAGE_CONTRACTS_RESULT !==
+      "${{ needs['sandbox-image-contracts'].result }}" ||
     !(gate.run ?? "").includes(
-      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+      'require_success "sandbox-image-contracts" "$SANDBOX_IMAGE_CONTRACTS_RESULT"',
     )
   ) {
     errors.push("main checks must require the sandbox image workflow result");
