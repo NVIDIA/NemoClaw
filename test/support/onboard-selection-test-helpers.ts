@@ -181,6 +181,7 @@ function createIsolatedOnboardEnv(tmpDir: string, provider: string): NodeJS.Proc
     PATH: `${tmpDir}${path.delimiter}${env.PATH ?? ""}`,
     NEMOCLAW_MODEL: "qwen3:8b",
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_OLLAMA_INSTALL_MODE: "user",
     NEMOCLAW_PROVIDER: provider,
     NEMOCLAW_YES: "1",
   };
@@ -222,6 +223,7 @@ platform.isWsl = () => true;
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v ollama")) return "";
+  if (Array.isArray(command) && command.at(-1) === "zstd") return "zstd";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("docker images")) return "";
   if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) {
