@@ -26,6 +26,7 @@ import {
   isHostPortFree,
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 
 export type DestroyRunOpenshell = (
   args: string[],
@@ -38,6 +39,8 @@ export interface CleanupGatewayDeps {
   clearGatewayRuntimeFiles?: typeof clearHostGatewayRuntimeFiles;
   isGatewayPortFree?: typeof isHostPortFree;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
+  resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
+  runtimeProviderId?: string | null;
   stopOpenShellGatewayUserService?: typeof stopOpenShellGatewayUserService;
 }
 
@@ -91,6 +94,9 @@ export function cleanupGatewayAfterLastSandbox(
   if (!perGatewayState) {
     throw new Error(`Refusing cleanup for noncanonical NemoClaw gateway '${gatewayName}'.`);
   }
+  const runtimeProvider = deps.runtimeProviderId
+    ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(deps.runtimeProviderId)
+    : null;
   // The sandbox and its registry entry are already gone when this runs; shared
   // gateway cleanup is the last, optional step. Rethrowing an authority refusal
   // here crashed `destroy` outright, and because rebuild and
@@ -246,9 +252,11 @@ export function cleanupGatewayAfterLastSandbox(
   if (externallySupervised) {
     return;
   }
-  dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
-    ignoreError: true,
-  });
+  if (runtimeProvider?.gateway.ownsHostReadiness !== true) {
+    dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
+      ignoreError: true,
+    });
+  }
   if (packagedServiceFallbackReason !== null) {
     const clearRuntimeFiles = deps.clearGatewayRuntimeFiles ?? clearHostGatewayRuntimeFiles;
     clearRuntimeFiles(

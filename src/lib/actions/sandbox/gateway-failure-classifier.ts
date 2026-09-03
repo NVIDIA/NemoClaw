@@ -117,6 +117,13 @@ export async function classifyGatewayFailure(
 ): Promise<GatewayFailureResult> {
   const runners = opts?.runners ?? defaultRunners;
 
+  if (!isDockerBackedSandbox(sandboxName, registry.getSandbox)) {
+    return {
+      layer: "gateway_unreachable",
+      detail: `The OpenShell gateway for sandbox '${sandboxName}' is unreachable.`,
+    };
+  }
+
   if (!runners.dockerInfo()) {
     return {
       layer: "docker_unreachable",
@@ -271,15 +278,10 @@ export async function classifySandboxContainerFailure(
 
 type SandboxDriverLookup = (name: string) => { openshellDriver?: string | null } | null | undefined;
 
-// Drivers whose sandbox runtime does NOT live in the local Docker daemon. Only
-// `vm` qualifies: the NemoClaw gateway always runs as a local Docker
-// `openshell-cluster-<gateway>` container (see classifyGatewayFailure), so the
-// `docker` driver and the `kubernetes`/k3s driver (k3s-in-Docker, or Docker
-// Desktop's Kubernetes — selected by `isLinuxDockerDriverGatewayEnabled()` for
-// non-Linux/non-arm64 hosts) both depend on a reachable local Docker daemon. A
-// `vm` sandbox runs in a real VM with no local Docker daemon, so a failing
-// `docker info` is normal and must not trigger the outage preflight.
-const NON_DOCKER_DRIVERS = new Set(["vm"]);
+// Drivers whose sandbox runtime does not live in the local Docker daemon.
+// Kubernetes remains Docker-backed on the supported legacy deployment paths;
+// native Podman and VM sandboxes must never enter the Docker outage probe.
+const NON_DOCKER_DRIVERS = new Set(["podman", "vm"]);
 
 /**
  * Whether a sandbox's runtime depends on the local Docker daemon. Only the
@@ -294,7 +296,7 @@ const NON_DOCKER_DRIVERS = new Set(["vm"]);
  */
 function isDockerBackedSandbox(sandboxName: string, getSandbox: SandboxDriverLookup): boolean {
   const driver = getSandbox(sandboxName)?.openshellDriver;
-  return !(typeof driver === "string" && NON_DOCKER_DRIVERS.has(driver.toLowerCase()));
+  return !(typeof driver === "string" && NON_DOCKER_DRIVERS.has(driver.trim().toLowerCase()));
 }
 
 /**

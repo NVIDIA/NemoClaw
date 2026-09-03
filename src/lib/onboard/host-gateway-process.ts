@@ -357,12 +357,12 @@ function scopedGatewayOwnershipFailure(
   }
   let processOwnership: "scoped-namespace" | "runtime-marker";
   try {
-    processOwnership = provider.gateway.prepareHostRuntime({
+    processOwnership = provider.gateway.observeHostRuntime({
       environment: deps.env,
       platform: marker.platform,
     }).gatewayConfig.processOwnership;
   } catch {
-    return "runtime marker provider ownership could not be prepared";
+    return "runtime marker provider ownership could not be observed";
   }
   if (processOwnership === "scoped-namespace" && !hasStateScopedSandboxNamespace(stateDir)) {
     return "gateway config does not prove an isolated sandbox namespace";

@@ -201,7 +201,7 @@ function requireConfiguredRuntimeProviderGateway(
   return gateway;
 }
 
-export function prepareConfiguredGatewayHostRuntime(
+export function observeConfiguredGatewayHostRuntime(
   options: PrepareConfiguredGatewayHostRuntimeOptions = {},
 ): RuntimeProviderGatewayHostRuntime {
   const environment = options.environment ?? process.env;
@@ -214,7 +214,7 @@ export function prepareConfiguredGatewayHostRuntime(
     platform,
     architecture,
     environment,
-  ).prepareHostRuntime({
+  ).observeHostRuntime({
     environment,
     platform,
     socketPath: options.socketPath,
@@ -246,7 +246,7 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
 
 export function getGatewayPortCheckOptions(env: NodeJS.ProcessEnv = process.env): { host: string } {
   return {
-    host: prepareConfiguredGatewayHostRuntime({ environment: env }).portCheckHost,
+    host: observeConfiguredGatewayHostRuntime({ environment: env }).portCheckHost,
   };
 }
 
@@ -255,7 +255,7 @@ export function getGatewayStartNetworkEnv(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  const runtime = prepareConfiguredGatewayHostRuntime({ environment: env, platform });
+  const runtime = observeConfiguredGatewayHostRuntime({ environment: env, platform });
   return {
     OPENSHELL_BIND_ADDRESS: runtime.bindAddress,
     OPENSHELL_SERVER_PORT: String(gatewayPort),
@@ -270,7 +270,7 @@ export function assertDockerDriverGatewayBindAddressSafe(
   platform: NodeJS.Platform = process.platform,
 ): void {
   if (gatewayEnv.OPENSHELL_BIND_ADDRESS !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
-  const selectedRuntime = prepareConfiguredGatewayHostRuntime({ environment, platform });
+  const selectedRuntime = observeConfiguredGatewayHostRuntime({ environment, platform });
   if (
     selectedRuntime.sandboxHostAddress !== null &&
     gatewayEnv.OPENSHELL_GRPC_ENDPOINT ===
@@ -415,7 +415,7 @@ export function buildDockerDriverGatewayEnv({
   const portable = isPortableExperimentalProfile();
   const runtime =
     gatewayHostRuntime ??
-    prepareConfiguredGatewayHostRuntime({
+    observeConfiguredGatewayHostRuntime({
       architecture,
       platform,
       socketPath: podmanSocketPath,

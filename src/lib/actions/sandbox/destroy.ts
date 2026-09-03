@@ -663,9 +663,7 @@ async function destroySandboxUnlocked(
         : normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
       sandbox: registeredSandbox,
-      ...(retainedSandboxIdentityFingerprint
-        ? { retainedSandboxIdentityFingerprint }
-        : {}),
+      ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
     });
   };
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
@@ -1120,11 +1118,20 @@ async function destroySandboxUnlocked(
     shouldCleanupGatewayAfterConfirmedFinalDestroy({
       deleteSucceededOrAlreadyGone,
       removedRegistryEntry: removed,
+      ...(registeredSandbox?.openshellDriver
+        ? { runtimeProviderId: registeredSandbox.openshellDriver }
+        : {}),
     })
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell);
+      if (registeredSandbox?.openshellDriver) {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell, {
+          runtimeProviderId: registeredSandbox.openshellDriver,
+        });
+      } else {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell);
+      }
     } else {
       // `gateway remove <name>` is the modern OpenShell subcommand on every
       // platform; the old `gateway destroy -g` was pre-0.0.44 only and current

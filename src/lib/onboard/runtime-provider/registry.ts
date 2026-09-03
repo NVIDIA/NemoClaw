@@ -385,6 +385,8 @@ function validateGatewaySurface(providerId: string, surface: Record<string, unkn
   }
   requireBoolean(surface, "inspectLegacyContainer", "gateway");
   requireBoolean(surface, "ownsHostReadiness", "gateway");
+  requireFunction(surface, "observeHostRuntime", "gateway");
+  requireFunction(surface, "prepareHostRuntime", "gateway");
 }
 
 function validateWorkloadSurface(providerId: string, surface: Record<string, unknown>): void {

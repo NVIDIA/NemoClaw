@@ -237,7 +237,7 @@ describe("E2E artifact uploads", () => {
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
         "shared-e2e must not declare E2E_JOB",
         "shared-e2e upload-e2e-artifacts invocation must not override its contract",
-        "messaging-providers upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+        "messaging-providers upload-e2e-artifacts invocation must follow artifact producers and precede only native Podman restoration and Docker auth cleanup",
       ]),
     );
   });

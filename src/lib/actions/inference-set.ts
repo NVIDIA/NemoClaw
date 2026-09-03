@@ -950,7 +950,7 @@ async function runInferenceSetWithoutHostLock(
         ...adapterOptions,
         discoverAllowedSourceCidrs: () =>
           runtimeProvider.gateway
-            .prepareHostRuntime({ environment: process.env, platform: process.platform })
+            .observeHostRuntime({ environment: process.env, platform: process.platform })
             .network.sandboxSourceCidrs(),
       }),
     effectiveInferenceApi: preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,

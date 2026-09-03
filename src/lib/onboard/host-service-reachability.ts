@@ -27,7 +27,7 @@ import {
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
 import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
-import { prepareConfiguredGatewayHostRuntime } from "./docker-driver-gateway-env";
+import { observeConfiguredGatewayHostRuntime } from "./docker-driver-gateway-env";
 export { formatHostServiceUnreachableMessage } from "./reachability/host-service-message";
 
 export const DEFAULT_PROBE_NETWORK = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
@@ -105,7 +105,7 @@ export async function probeHostServiceSandboxReachability(
   const platform = opts.platform ?? process.platform;
   const managedGatewayRuntime =
     opts.gatewayRuntime ??
-    prepareConfiguredGatewayHostRuntime({ environment: process.env, platform });
+    observeConfiguredGatewayHostRuntime({ environment: process.env, platform });
   const inspectNetwork = opts.inspectNetworkImpl ?? managedGatewayRuntime.network.inspect;
   const usesHostGatewayRoute =
     opts.usesHostGatewayRouteImpl ?? managedGatewayRuntime.network.usesHostGatewayRoute;

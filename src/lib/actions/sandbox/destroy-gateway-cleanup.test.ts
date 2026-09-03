@@ -56,6 +56,31 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     ).toBe(false);
   });
 
+  it("does not enter the Docker container probe for native Podman cleanup", () => {
+    const captureOpenshell = vi.fn(() => ({ status: 0, output: "" }));
+    const dockerCapture = vi.fn(() => {
+      throw new Error("native Podman cleanup reached Docker");
+    });
+
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+          runtimeProviderId: "podman",
+        },
+        {
+          captureOpenshell,
+          dockerCapture,
+          listSandboxes: () => ({ sandboxes: [] }),
+          resolveRuntimeProvider: () => ({ gateway: { ownsHostReadiness: true } }) as never,
+        },
+      ),
+    ).toBe(true);
+    expect(captureOpenshell).toHaveBeenCalledOnce();
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
   it("preserves the gateway when a live sandbox appears after the empty-registry check", () => {
     const events: string[] = [];
     expect(

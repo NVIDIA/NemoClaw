@@ -269,6 +269,17 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     });
   });
 
+  it("does not remove Docker volumes for a native Podman gateway", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      runtimeProviderId: "podman",
+      resolveRuntimeProvider: () => ({ gateway: { ownsHostReadiness: true } }) as never,
+    });
+
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
   it("fails before gateway and volume removal when the owned host listener survives (#4662)", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     vi.spyOn(os, "homedir").mockReturnValue("/home/tester");

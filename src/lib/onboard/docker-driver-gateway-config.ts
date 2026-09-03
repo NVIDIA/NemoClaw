@@ -73,7 +73,7 @@ function resolveGatewayRuntimeProjection(
   if (!provider?.gateway.supported) {
     throw new Error("The configured runtime provider does not support gateway configuration.");
   }
-  return provider.gateway.prepareHostRuntime({
+  return provider.gateway.observeHostRuntime({
     environment: { ...process.env, ...gatewayEnv },
     platform: process.platform,
     socketPath: gatewayEnv.OPENSHELL_PODMAN_SOCKET,

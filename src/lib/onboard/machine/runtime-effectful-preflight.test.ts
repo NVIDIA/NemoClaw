@@ -71,6 +71,7 @@ function providerBundle(
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
       ownsHostReadiness: false,
+      observeHostRuntime: prepareHostRuntime,
       prepareHostRuntime,
     },
   } as unknown as RuntimeProviderBundle;

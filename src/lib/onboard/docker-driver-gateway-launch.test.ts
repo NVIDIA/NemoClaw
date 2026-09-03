@@ -22,6 +22,14 @@ import {
 } from "./docker-driver-gateway-launch";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 import { gatewayProcessCmdlineMatches } from "./gateway-process-identity";
+import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
+
+function nativePodmanGatewayRuntime(socketPath = "/run/user/1001/podman/podman.sock") {
+  return prepareNativePodmanGatewayHostRuntime({
+    environment: { OPENSHELL_PODMAN_SOCKET: socketPath },
+    platform: "linux",
+  });
+}
 
 function withTempBinaries<T>(
   fn: (paths: { dir: string; gatewayBin: string; sandboxBin: string }) => T,
@@ -157,13 +165,19 @@ describe("docker-driver-gateway-launch", () => {
   });
 
   it("writes the exact rootless socket only for the Podman driver", () => {
-    const toml = buildDockerDriverGatewayConfigToml({
-      OPENSHELL_DRIVERS: "podman",
-      OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:8080`,
-      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
-      OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
-    });
+    const toml = buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:8080`,
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      },
+      undefined,
+      undefined,
+      "nemoclaw",
+      nativePodmanGatewayRuntime(),
+    );
 
     expect(toml).toContain("[openshell.drivers.podman]");
     expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
@@ -341,6 +355,7 @@ describe("docker-driver-gateway-launch", () => {
         },
         hostGlibcVersion: "2.39",
         requiredGlibcVersions: ["2.39"],
+        gatewayHostRuntime: nativePodmanGatewayRuntime(),
         gatewayEnv: { OPENSHELL_DRIVERS: "podman" },
       });
 

@@ -29,7 +29,7 @@ import { DOCKER_DESKTOP_WSL_INTEGRATION_HINT, isDockerDaemonUnreachable } from "
 import type { UfwAutoApplyResult } from "./ufw-auto-apply";
 import { isUfwAutoApplyOptedIn, tryAutoApplyUfwRule } from "./ufw-auto-apply";
 import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
-import { prepareConfiguredGatewayHostRuntime } from "./docker-driver-gateway-env";
+import { observeConfiguredGatewayHostRuntime } from "./docker-driver-gateway-env";
 
 export type { UfwAutoApplyOptions, UfwAutoApplyResult } from "./ufw-auto-apply";
 export { tryAutoApplyUfwRule } from "./ufw-auto-apply";
@@ -279,7 +279,7 @@ export async function isSandboxBridgeGatewayReachable(
   const platform = opts.platform ?? process.platform;
   const managedGatewayRuntime =
     opts.gatewayRuntime ??
-    prepareConfiguredGatewayHostRuntime({ environment: process.env, platform });
+    observeConfiguredGatewayHostRuntime({ environment: process.env, platform });
   const providerHostGateway = portableProfile
     ? { address: PORTABLE_HOST_GATEWAY_IP, routeKind: "portable_host_gateway" as const }
     : managedGatewayRuntime?.sandboxHostAddress

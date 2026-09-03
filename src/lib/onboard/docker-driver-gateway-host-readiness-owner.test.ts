@@ -16,6 +16,7 @@ vi.mock("./runtime-provider/selection", () => ({
     gateway: {
       supported: true,
       ownsHostReadiness: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman",
+      observeHostRuntime: mocks.prepareHostRuntime,
       prepareHostRuntime: mocks.prepareHostRuntime,
     },
   }),

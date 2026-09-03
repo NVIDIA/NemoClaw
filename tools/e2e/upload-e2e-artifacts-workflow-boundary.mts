@@ -364,12 +364,16 @@ function validateUploadPlacement(
   // checkout. Its exact pre-checkout position is enforced by workflow-boundary.
   if (jobName === "generate-matrix") return;
   const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
-  if (
-    stepsAfterUpload.length > 1 ||
-    stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
-  ) {
+  const tailNames = stepsAfterUpload.map((step) => step.name);
+  const validTail = [
+    [],
+    ["Clean up Docker auth"],
+    ["Restore Docker CLI after native Podman E2E"],
+    ["Restore Docker CLI after native Podman E2E", "Clean up Docker auth"],
+  ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
+  if (!validTail) {
     errors.push(
-      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
+      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only native Podman restoration and Docker auth cleanup`,
     );
   }
 }

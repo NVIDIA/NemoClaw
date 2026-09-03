@@ -2863,7 +2863,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -2993,6 +2993,12 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/logs/
             e2e-artifacts/live/${{ matrix.id }}/shell/
 
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
+
       - name: Clean up Docker auth
         if: always()
         shell: bash
@@ -3040,7 +3046,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3060,6 +3066,12 @@ jobs:
         with:
           name: e2e-${{ matrix.execution_id }}
           path: e2e-artifacts/live/${{ matrix.execution_id }}/
+
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
 
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
@@ -3708,7 +3720,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3794,6 +3806,12 @@ jobs:
           name: e2e-mcp-bridge-${{ matrix.agent }}-${{ matrix.runtime_provider }}
           path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/${{ matrix.runtime_provider }}/
 
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
+
       - name: Clean up Docker auth
         if: always()
         shell: bash
@@ -3853,7 +3871,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -3930,6 +3948,12 @@ jobs:
         with:
           name: e2e-openshell-credential-generation-window-${{ matrix.runtime_provider }}
           path: e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}/
+
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
 
       - name: Clean up Docker auth
         if: always()
@@ -4120,7 +4144,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -4185,6 +4209,12 @@ jobs:
         with:
           name: e2e-mcp-bridge-dev-${{ matrix.agent }}-${{ matrix.runtime_provider }}
           path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/${{ matrix.runtime_provider }}/
+
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
 
       - name: Clean up Docker auth
         if: always()
@@ -5256,7 +5286,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5279,6 +5309,12 @@ jobs:
         with:
           name: e2e-hermes-e2e-${{ matrix.runtime_provider }}
           path: e2e-artifacts/live/hermes-e2e/${{ matrix.runtime_provider }}/
+
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
 
       - name: Clean up Docker auth
         if: always()
@@ -5427,7 +5463,7 @@ jobs:
           node-version: "22"
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5569,6 +5605,12 @@ jobs:
           name: e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}
           path: e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/
 
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
+
       - name: Clean up Docker auth
         if: always()
         shell: bash
@@ -5687,7 +5729,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5699,32 +5741,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          disabled_path="${RUNNER_TEMP}/nemoclaw-disabled-docker-cli"
-          docker_cli="$(command -v docker || true)"
           install -d -m 0700 "${E2E_ARTIFACT_DIR}"
-          if [[ -n "${docker_cli}" ]]; then
-            case "${docker_cli}" in
-              /usr/bin/docker | /usr/local/bin/docker) ;;
-              *)
-                echo "::error::Refusing to move unexpected Docker CLI path: ${docker_cli}" >&2
-                exit 1
-                ;;
-            esac
-            if [[ -e "${disabled_path}" || -L "${disabled_path}" ]]; then
-              echo "::error::Docker CLI disable target already exists" >&2
-              exit 1
-            fi
-            printf 'NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s\n' "${disabled_path}" >>"${GITHUB_ENV}"
-            printf 'NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s\n' "${docker_cli}" >>"${GITHUB_ENV}"
-            sudo mv -- "${docker_cli}" "${disabled_path}"
-          fi
           if command -v docker >/dev/null 2>&1; then
             echo "::error::Native Podman public install still resolves a Docker CLI" >&2
             exit 1
           fi
           jq -n \
-            --arg originalPath "${docker_cli}" \
-            '{schemaVersion: 1, dockerClientAvailable: false, originalPath: $originalPath}' \
+            '{schemaVersion: 1, dockerClientAvailable: false}' \
             >"${E2E_ARTIFACT_DIR}/docker-client-absence.json"
 
       - name: Run cloud-onboard live Vitest test
@@ -5747,36 +5770,9 @@ jobs:
 
       - name: Restore Docker CLI after native Podman public install
         if: ${{ always() && matrix.runtime_provider == 'podman' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          disabled_path="${NEMOCLAW_E2E_DISABLED_DOCKER_CLI:-}"
-          restore_path="${NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH:-}"
-          if [[ -z "${disabled_path}" && -z "${restore_path}" ]]; then
-            exit 0
-          fi
-          if [[ "${disabled_path}" != "${RUNNER_TEMP}/nemoclaw-disabled-docker-cli" ]]; then
-            echo "::error::Refusing unsafe Docker CLI restore source" >&2
-            exit 1
-          fi
-          case "${restore_path}" in
-            /usr/bin/docker | /usr/local/bin/docker) ;;
-            *)
-              echo "::error::Refusing unsafe Docker CLI restore destination" >&2
-              exit 1
-              ;;
-          esac
-          if [[ ! -e "${disabled_path}" && ! -L "${disabled_path}" ]]; then
-            echo "::error::Disabled Docker CLI is missing before restore" >&2
-            exit 1
-          fi
-          if [[ -e "${restore_path}" || -L "${restore_path}" ]]; then
-            echo "::error::Docker CLI restore destination is already occupied" >&2
-            exit 1
-          fi
-          sudo mv -- "${disabled_path}" "${restore_path}"
-          test -x "${restore_path}"
-          test "$(command -v docker)" = "${restore_path}"
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
 
       - name: Build trusted cloud-onboard timing summary
         if: always()
@@ -5876,7 +5872,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -5906,6 +5902,12 @@ jobs:
         with:
           name: e2e-messaging-providers-${{ matrix.runtime_provider }}
           path: e2e-artifacts/live/messaging-providers/${{ matrix.runtime_provider }}/
+
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && matrix.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@42e2af2548fc7c1d42c7946000d739b4ec9df30c
+        with:
+          enabled: "true"
 
       - name: Clean up Docker auth
         if: always()
