@@ -10,16 +10,14 @@ import type { AgentDefinition, ManifestRecord } from "../../agent/definition-typ
 import {
   parseManifestRecord,
   readBoolean,
-  readConfigShieldsFiles,
   readHealthProbe,
   readObject,
   readStateFiles,
-  readStateLockPlanInImage,
   readString,
   readUserManagedFiles,
 } from "../../agent/manifest-readers";
 import { readAgentRuntime } from "../../agent/runtime-manifest";
-import { buildStateLockPlan, readStateDirectories } from "../../agent/state-directory-contract";
+import { readStateDirectories } from "../../agent/state-directory-contract";
 import { readWebAuth } from "../../agent/web-auth";
 import {
   buildCurrentHermesPortableRuntimeEnvArgs,
@@ -146,7 +144,6 @@ function manifestConfigPaths(config: ManifestRecord | undefined) {
     configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
     envFile: readString(config ?? {}, "env_file") ?? null,
     format: readString(config ?? {}, "format") ?? "json",
-    shieldsFiles: readConfigShieldsFiles(config),
   };
 }
 
@@ -164,8 +161,6 @@ function manifestProjection(record: ManifestRecord) {
     configPaths: manifestConfigPaths(config),
     stateDirectories,
     stateFiles: readStateFiles(record) ?? [],
-    stateLockPlan: buildStateLockPlan(stateDirectories),
-    stateLockPlanInImage: readStateLockPlanInImage(record),
     userManagedFiles: readUserManagedFiles(record) ?? [],
   };
 }
@@ -182,8 +177,6 @@ function agentProjection(agent: AgentDefinition): ReturnType<typeof manifestProj
     configPaths: agent.configPaths,
     stateDirectories: agent.stateDirectories,
     stateFiles: agent.stateFiles,
-    stateLockPlan: agent.stateLockPlan,
-    stateLockPlanInImage: agent.stateLockPlanInImage,
     userManagedFiles: agent.userManagedFiles,
   };
 }
@@ -310,8 +303,6 @@ function stateIdentity(projection: ReturnType<typeof manifestProjection>): strin
         configPaths: projection.configPaths,
         stateDirectories: projection.stateDirectories,
         stateFiles: projection.stateFiles,
-        stateLockPlan: projection.stateLockPlan,
-        stateLockPlanInImage: projection.stateLockPlanInImage,
         userManagedFiles: projection.userManagedFiles,
       }),
     ),

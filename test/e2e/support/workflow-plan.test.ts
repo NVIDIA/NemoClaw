@@ -30,7 +30,6 @@ import {
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
-  withoutCredentialedCatalogueProfiles,
   withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
@@ -53,12 +52,6 @@ function retiredControllerSelectorIds(): string[] {
   const retiredIds = RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
   expect(retiredIds).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS]);
   return retiredIds;
-}
-
-function prCandidatePlan(
-  plan: ReturnType<typeof buildE2eWorkflowPlan>,
-): ReturnType<typeof buildE2eWorkflowPlan> {
-  return withoutCredentialedCatalogueProfiles(plan);
 }
 
 function expectExplicitCatalogueCoverage(): void {
@@ -96,7 +89,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(92);
+    expect(plan.coverageMatrix).toHaveLength(91);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -139,7 +132,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(52);
+    expect(catalogueIds).toHaveLength(50);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -407,15 +400,6 @@ describe("E2E workflow plan", () => {
         hostPreparation: "hermes-swap",
         runnerComparison: true,
         shard: "anthropic",
-      },
-    ],
-    [
-      "hermes-shields-config",
-      {
-        profile: "standard",
-        runnerKey: "hermes-shields-config",
-        hostPreparation: "hermes-swap",
-        runnerComparison: true,
       },
     ],
     [
@@ -773,18 +757,6 @@ describe("E2E workflow plan", () => {
     );
     expect(plan.selectedJobs).toContain("messaging-providers");
     expect(plan.selectedJobs).not.toContain("channels-stop-start");
-  });
-
-  it("selects both Shields proof lanes for shared Shields runtime changes", () => {
-    const plan = buildE2eWorkflowPlan(
-      {},
-      { changedFiles: ["src/lib/shields/relock-reconfirm.ts"] },
-    );
-
-    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("hermes-shields-config");
-    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
-      "shields-config",
-    );
   });
 
   it.each(["jobs", "targets"] as const)(

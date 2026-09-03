@@ -57,66 +57,44 @@ config:
   dir: /sandbox/.hermes
   config_file: config.yaml
   env_file: .env                  # relative to dir — API keys
-  # Additional generated config files that Shields seals with config_file and
-  # .config-hash. Each entry must exist before a Shields transition. The
-  # runtime-config-guard parity test protects the separate in-image boundary.
-  shields_files:
-    - .env
   auth_file: auth.json            # OAuth tokens (Nous Portal, Codex, etc.)
   format: yaml
 
 # ── State directories ──────────────────────────────────────────
-# All state dirs live under the single config dir now that
-# immutable/writable split has been removed.
-state_lock_plan_in_image: true
 state_dirs:
   - memories
-  # Hermes lazy dependency installs persist here outside sealed configuration.
-  - path: lazy-packages
-    shields: read-only
+  # Hermes lazy dependency installs persist across rebuilds.
+  - lazy-packages
   - sessions
-  - path: skills
-    shields: read-only
-  - path: plugins
-    shields: read-only
-  - path: cron
-    shields: read-only
+  - skills
+  - plugins
+  - cron
   # User-authored cron scripts are part of the job definition contract. Keep
   # them in the same rebuild backup so active jobs never outlive their inputs.
   - scripts
-  # Hermes creates this mutable integration directory today, and the existing
-  # Shields helper protects it. Keep that lock behavior without newly treating
-  # its contents as portable snapshot state.
+  # Hermes creates this machine-local integration directory. Keep it outside
+  # portable snapshot state.
   - path: hooks
     backup: false
-    shields: read-only
   - logs
-  - path: skins
-    shields: read-only
+  - skins
   - plans
-  - path: workspace
-    shields: read-only
-  - path: profiles
-    shields: read-only
-    writable_subpaths:
-      - dashboard-home
+  - workspace
+  - profiles
   - cache
-  - path: pairing
-    shields: confidential
+  - pairing
   # Legacy pre-#7200 dashboard profile location. Keep it in snapshots while
   # startup migrates existing state into profiles/dashboard-home.
   - dashboard-home
   # Hermes' WhatsApp bridge stores QR-paired session credentials under
   # ~/.hermes/platforms/whatsapp/session. Preserve the parent so rebuilds
   # keep the in-sandbox pairing state without re-scanning.
-  - path: platforms
-    shields: read-only
+  - platforms
   # Hermes' iLink WeChat adapter persists per-account context tokens under
   # ~/.hermes/weixin/accounts/<id>.context-tokens.json so the long-poll
   # cursor survives a rebuild. The bot token itself comes from .env via
   # the L7 proxy and is not stored on disk inside the sandbox.
-  - path: weixin
-    shields: read-only
+  - weixin
 
 # ── Top-level durable state files ───────────────────────────────
 # NemoClaw stores Hermes gateway-created top-level state under runtime/ and
@@ -124,9 +102,8 @@ state_dirs:
 # The SQLite database is captured with SQLite's online backup API; WAL/SHM
 # files are intentionally omitted because the backup produces a consistent DB.
 # .hermes_history is user runtime history: prompt_toolkit appends to it on
-# every TUI keypress, so NemoClaw intentionally keeps it sandbox-writable even
-# when shields-up locks the parent config dir. It can be removed from this
-# contract if upstream Hermes supports redirecting or disabling FileHistory.
+# every TUI keypress. It can be removed from this contract if upstream Hermes
+# supports redirecting or disabling FileHistory.
 state_files:
   - path: SOUL.md
   - path: .hermes_history
@@ -134,7 +111,7 @@ state_files:
     strategy: sqlite_backup
   # Hermes 0.19 records default-profile cron execution history in a separate
   # SQLite ledger. NemoClaw relocates only this mutable database below runtime
-  # so Shields up can keep cron job definitions sealed. Named profiles live
+  # so cron job definitions remain separate. Named profiles live
   # below profiles/<name>/ and remain part of the raw profiles state-dir
   # capture until dynamic profile-local SQLite discovery is supported.
   - path: runtime/cron-executions.db

@@ -111,7 +111,6 @@ afterEach(() => {
     fs.rmSync(tmp, { force: true, recursive: true });
   }
 });
-
 describe("Hermes source archive download", () => {
   it.each([
     ["invalid version", { version: "v2026.8" }, "failure=invalid-version"],

@@ -264,7 +264,6 @@ function bundle(providerId: string): RuntimeProviderBundle {
       supported: true,
       operations: ["rebuild"],
     },
-    stateMutation: unsupported(providerId),
     bootstrap: unsupported(providerId),
     snapshot: unsupported(providerId),
     recovery: unsupported(providerId),

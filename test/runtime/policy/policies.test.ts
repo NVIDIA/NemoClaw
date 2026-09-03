@@ -619,6 +619,7 @@ exit 1
       const resolveSpy = vi
         .spyOn(resolveOpenshellModule, "resolveOpenshell")
         .mockReturnValueOnce(fakeOpenshell)
+        .mockReturnValueOnce(fakeOpenshell)
         .mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

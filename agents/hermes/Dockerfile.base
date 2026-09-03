@@ -78,6 +78,7 @@ ARG HERMES_NPM_INTEGRITY=sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq1
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
 ARG NODE_VERSION=24.18.1
 ARG UV_VERSION=0.11.33
+ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=820563cc3450de582663c8137670001bb9974ac8a5584901880982f6509747b8
 
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
@@ -451,20 +452,33 @@ COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies
 COPY agents/hermes/agent-browser-runtime/package.json \
     agents/hermes/agent-browser-runtime/package-lock.json \
     /opt/nemoclaw-agent-browser-runtime/
+COPY agents/hermes/runtime-boundaries.patch /tmp/hermes-runtime-boundaries.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
+# hadolint ignore=DL4006
 RUN mkdir -p /opt/hermes \
     && bash /tmp/nemoclaw-download-hermes-source-archive.sh "${HERMES_VERSION}" /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm -rf /opt/hermes/tests \
+    && printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch | sha256sum -c - \
     && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
     && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
+    && git -C /opt/hermes apply --check /tmp/hermes-runtime-boundaries.patch \
+    && git -C /opt/hermes apply /tmp/hermes-runtime-boundaries.patch \
+    && grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py \
+    && grep -Fq 'nemoclaw_protected_process_control' /opt/hermes/hermes_cli/env_loader.py \
+    && grep -Fq 'nemoclaw_sanitized_installer_env' /opt/hermes/tools/lazy_deps.py \
+    && grep -Fq 'Managed gateway: user and project plugins disabled' /opt/hermes/hermes_cli/plugins.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/memory/__init__.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/cron_providers/__init__.py \
+    && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/providers/__init__.py \
     && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
     && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
-        /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch \
+        /tmp/hermes-security-dependencies.patch /tmp/hermes-runtime-boundaries.patch \
+        /tmp/hermes-whatsapp-proxy.patch \
         /tmp/nemoclaw-download-hermes-source-archive.sh
 
 # Cross-check the pinned release against two independent sources before
