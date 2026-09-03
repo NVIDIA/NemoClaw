@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
+import { prepareOllamaApiExecution } from "../../../inference/local";
 import {
   maybeWarmOllamaAfterDaemonRestart,
   type OllamaRestartRecoveryDeps,
@@ -46,8 +47,23 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
   });
 
   it("uses the persisted direct bridge route for both the default probe and warm-up", () => {
-    const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
-    const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const prepareDockerEnvironment = () => ({
+      env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+      isolatedCredentialConfig: true,
+      cleanup,
+    });
+    const runCaptureImpl = vi.fn(
+      (_command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
+        options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+          ? JSON.stringify({ models: [] })
+          : "",
+    );
+    const runCaptureExImpl = vi.fn((_command: string[], options?: { env?: NodeJS.ProcessEnv }) =>
+      options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+        ? successfulWarmResult()
+        : { stdout: "", exitCode: 1, timedOut: false },
+    );
 
     expect(
       maybeWarmOllamaAfterDaemonRestart(
@@ -56,21 +72,37 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "qwen3.6:35b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { runCaptureImpl, runCaptureExImpl },
+        {
+          runCaptureImpl,
+          runCaptureExImpl,
+          prepareDockerEnvironment,
+          prepareOllamaApiExecution: (command, host, options) =>
+            prepareOllamaApiExecution(command, host, {
+              ...options,
+              prepareDockerEnvironment,
+            }),
+        },
       ),
     ).toEqual({ kind: "warmed", ok: true, timedOut: false });
 
     expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
     );
+    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("docker");
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
     );
+    expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("docker");
     expect(getCommandBody(runCaptureExImpl.mock.calls[0][0])).toMatchObject({
       model: "qwen3.6:35b",
       stream: false,
       think: false,
     });
+    expect(runCaptureImpl.mock.calls[0][1]?.env?.DOCKER_CONFIG).toBe("/tmp/credential-free-docker");
+    expect(runCaptureExImpl.mock.calls[0][1]?.env?.DOCKER_CONFIG).toBe(
+      "/tmp/credential-free-docker",
+    );
+    expect(cleanup).toHaveBeenCalledTimes(2);
   });
 
   it("maps an auth-proxy route back to host loopback", () => {
@@ -89,9 +121,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
       `http://127.0.0.1:${OLLAMA_PORT}/api/ps`,
     );
+    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("curl");
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
       `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
     );
+    expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("curl");
   });
 
   it("falls back to an allowlisted host instead of probing an arbitrary registry URL", () => {
@@ -182,7 +216,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: true, reason: "timeout" });
+    ).toEqual({
+      kind: "warmed",
+      ok: false,
+      timedOut: true,
+      reason: "timeout",
+      endpoint: "http://127.0.0.1:11434",
+      detail: "warm-up exceeded 300 seconds",
+    });
   });
 
   it("does not treat an exit-zero Ollama error body as a successful warm-up", () => {
@@ -199,7 +240,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "ollama-error" });
+    ).toMatchObject({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "ollama-error",
+      endpoint: "http://127.0.0.1:11434",
+      detail: expect.stringContaining("model not found"),
+    });
   });
 
   it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", () => {
@@ -228,7 +276,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
       inventoryLabel: "llama3.2:1b",
     });
-    expect(probeModelInventory).toHaveBeenCalledWith("host.docker.internal", undefined);
+    expect(probeModelInventory).toHaveBeenCalledWith("host.docker.internal", expect.any(Function));
   });
 
   it("keeps the warm failure when the daemon does hold the model (#9455)", () => {
@@ -245,7 +293,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "ollama-error" });
+    ).toMatchObject({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "ollama-error",
+      endpoint: "http://127.0.0.1:11434",
+      detail: expect.stringContaining("runner stopped unexpectedly"),
+    });
   });
 
   it("accepts a completed thinking-only response from a thinking model", () => {
@@ -278,7 +333,13 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           runCaptureExImpl: () => ({ stdout, exitCode: 0, timedOut: false }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "invalid-response" });
+    ).toMatchObject({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "invalid-response",
+      endpoint: "http://127.0.0.1:11434",
+    });
   });
 
   it("reports a non-zero warm command exit", () => {
@@ -290,7 +351,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           runCaptureExImpl: () => ({ stdout: "", exitCode: 7, timedOut: false }),
         },
       ),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "command-failed" });
+    ).toEqual({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "command-failed",
+      endpoint: "http://127.0.0.1:11434",
+      detail: "warm-up exited 7",
+    });
   });
 
   it("reports a warm process spawn failure without throwing", () => {
@@ -303,6 +371,13 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
 
     expect(
       maybeWarmOllamaAfterDaemonRestart({ provider: "ollama-local", model: "qwen3.6:35b" }, deps),
-    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "spawn-failed" });
+    ).toEqual({
+      kind: "warmed",
+      ok: false,
+      timedOut: false,
+      reason: "spawn-failed",
+      endpoint: "http://127.0.0.1:11434",
+      detail: "spawn failed",
+    });
   });
 });

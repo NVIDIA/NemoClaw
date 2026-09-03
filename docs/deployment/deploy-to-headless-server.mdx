@@ -274,7 +274,8 @@ Deep Agents Code does not expose a dashboard URL or gateway token. Model traffic
 
 <AgentOnly variant="openclaw">
 
-OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration. If Shields are up, a non-root start preserves the sealed token because the sandbox user cannot replace the protected configuration. Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
+OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
+Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -350,9 +351,8 @@ Use a newly reviewed commit SHA for each planned update instead of relying on th
 | Direct edits to generated profile, config, or environment files | May remain until regeneration | Agent-specific and usually excluded or filtered | Regenerated or filtered by the current manifest |
 
 <AgentOnly variant="openclaw">
-  | OpenClaw gateway token | Rotated when the container starts with mutable configuration; preserved
-  for a non-root start while Shields are up | Not captured; a replacement sandbox generates a new
-  token | Rotated for the replacement sandbox |
+  | OpenClaw gateway token | Rotated when the container starts with mutable configuration | Not
+  captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
 </AgentOnly>
 <AgentOnly variant="hermes">
   | Hermes `API_SERVER_KEY` | Preserved | Not captured; a replacement sandbox generates a new token

@@ -30,12 +30,22 @@ describe("OpenShell MCP provider profile", () => {
       .fn()
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
       .mockReturnValueOnce({ status: 0, stdout: "Imported", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: exportedEndpointlessProfile("openai", true),
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
-      .mockReturnValueOnce({ status: 0, stdout: "Imported", stderr: "" });
+      .mockReturnValueOnce({ status: 0, stdout: "Imported", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: exportedEndpointlessProfile(MCP_BRIDGE_PROVIDER_TYPE, false),
+        stderr: "",
+      });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     expect(() => ensureMcpBridgeProviderProfile()).not.toThrow();
-    expect(runOpenshell).toHaveBeenCalledTimes(4);
+    expect(runOpenshell).toHaveBeenCalledTimes(6);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/)],
       expect.any(Object),

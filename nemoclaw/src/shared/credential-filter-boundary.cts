@@ -183,7 +183,14 @@ export function isConfigValue(value: unknown): value is ConfigValue {
 function scrubConfigValue(value: unknown): unknown {
   if (typeof value === "string") {
     if (isSafeCredentialPlaceholder(value)) return value;
-    return valueLooksLikeSecret(value) ? CREDENTIAL_PLACEHOLDER : value;
+    let hasUrlCredentials = false;
+    try {
+      const url = new URL(value);
+      hasUrlCredentials = url.username !== "" || url.password !== "";
+    } catch {
+      // Non-URL configuration strings continue through the normal secret patterns.
+    }
+    return hasUrlCredentials || valueLooksLikeSecret(value) ? CREDENTIAL_PLACEHOLDER : value;
   }
   return stripCredentials(value);
 }
@@ -244,6 +251,47 @@ export function stripCredentials(obj: unknown): unknown {
     }
   }
   return result;
+}
+
+const DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;
+const DIAGNOSTIC_ASSIGNMENT_PATTERN =
+  /\b([A-Za-z][A-Za-z0-9._-]{0,127})([ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;]+)/gu;
+
+function redactDiagnosticAssignments(value: string): string {
+  return value.replace(DIAGNOSTIC_ASSIGNMENT_PATTERN, (match, key: string, separator: string) =>
+    isCredentialField(key) ? `${key}${separator}<REDACTED>` : match,
+  );
+}
+
+function redactDiagnosticUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    // A malformed URL-like token is untrusted diagnostic data. Replacing the
+    // complete token fails closed when its authority or query cannot be parsed.
+    return "<REDACTED>";
+  }
+  url.username = "";
+  url.password = "";
+  for (const [key, queryValue] of url.searchParams) {
+    if (isCredentialField(key) || valueLooksLikeSecret(queryValue)) {
+      url.searchParams.set(key, "<REDACTED>");
+    }
+  }
+  const redactedHash = redactDiagnosticAssignments(url.hash);
+  if (redactedHash !== url.hash || valueLooksLikeSecret(url.hash)) url.hash = "";
+  return url.toString();
+}
+
+/** Fully redact credential-shaped assignments, bearer values, and URL credentials. */
+export function redactCredentialText(value: string): string {
+  let result = value.replace(DIAGNOSTIC_URL_PATTERN, redactDiagnosticUrl);
+  for (const pattern of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, "<REDACTED>");
+  }
+  return redactDiagnosticAssignments(result).replace(/\b(Bearer)\s+\S+/giu, "$1 <REDACTED>");
 }
 
 export function sanitizeEnvFileContent(content: string): string {

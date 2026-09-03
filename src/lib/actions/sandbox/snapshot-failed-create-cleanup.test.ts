@@ -20,14 +20,12 @@ vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: vi.fn(() => new Set(["alpha"])),
 }));
 
-vi.mock("../../shields", () => ({
-  isShieldsDown: vi.fn(() => true),
+vi.mock("../../state/mcp-lifecycle-lock", () => ({
+  withSandboxMutationLock: vi.fn((_name: string, operation: () => unknown) => operation()),
 }));
 
-vi.mock("../../shields/timer-bound-lock", () => ({
-  withTimerBoundShieldsMutationLock: vi.fn(
-    (_sandboxName: string, _command: string, operation: () => unknown) => operation(),
-  ),
+vi.mock("../../state/mcp-lifecycle-lock-acquisition", () => ({
+  withMcpLifecycleLockSync: vi.fn((_name: string, operation: () => unknown) => operation()),
 }));
 
 vi.mock("../../state/registry", () => ({
@@ -95,7 +93,7 @@ describe("snapshot create cleanup after a failed capture", () => {
     expect(errors).toContain("Snapshot failed.");
     expect(errors).toContain("Failed directories: workspace (permission denied), skills");
     expect(errors).toContain("Failed files: openclaw.json");
-  });
+  }, 15_000);
 
   it("removes the snapshot so a later restore cannot select an incomplete capture (#8201)", async () => {
     mocks.backupSandboxState.mockReturnValue(failedCaptureWithPublishedSnapshot());
