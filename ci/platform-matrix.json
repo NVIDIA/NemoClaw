@@ -367,7 +367,7 @@
     {
       "name": "Native rootless Podman on Linux",
       "status": "caveated",
-      "notes": "Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before standard onboarding. The provider requires a qualified current-user Podman socket, rootless service, cgroups v2, bridge networking and DNS, and exact managed-image receipts. Full native E2E qualification currently runs on Linux amd64; the managed-image contract accepts `linux/amd64` and `linux/arm64` receipts. Custom `--from` Dockerfiles and read-only host mounts are not qualified. The portable experimental profile remains separate."
+      "notes": "Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before standard onboarding. The provider requires a qualified current-user Podman socket, rootless service, cgroups v2, bridge networking and DNS, and exact managed-image receipts. Full native E2E qualification currently runs on Linux amd64; the managed-image contract accepts `linux/amd64` and `linux/arm64` receipts. Managed local vLLM install/start remains Docker-backed and is unavailable without Docker. Custom `--from` Dockerfiles and read-only host mounts are not qualified. The portable experimental profile remains separate."
     },
     {
       "name": "Headless Linux server",

@@ -156,7 +156,7 @@ Pick the row that matches the target environment.
 | Path | Status | Notes |
 |------|--------|-------|
 | Local CLI onboard | Tested | Run `$$nemoclaw onboard` on a tested platform with Docker available locally. Primary path. |
-| Native rootless Podman on Linux | Tested with limitations | Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before standard onboarding. The provider requires a qualified current-user Podman socket, rootless service, cgroups v2, bridge networking and DNS, and exact managed-image receipts. Full native E2E qualification currently runs on Linux amd64; the managed-image contract accepts `linux/amd64` and `linux/arm64` receipts. Custom `--from` Dockerfiles and read-only host mounts are not qualified. The portable experimental profile remains separate. |
+| Native rootless Podman on Linux | Tested with limitations | Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before standard onboarding. The provider requires a qualified current-user Podman socket, rootless service, cgroups v2, bridge networking and DNS, and exact managed-image receipts. Full native E2E qualification currently runs on Linux amd64; the managed-image contract accepts `linux/amd64` and `linux/arm64` receipts. Managed local vLLM install/start remains Docker-backed and is unavailable without Docker. Custom `--from` Dockerfiles and read-only host mounts are not qualified. The portable experimental profile remains separate. |
 | Headless Linux server | Tested with limitations | Provision a tested Linux host, connect over SSH, run the standard installer and `$$nemoclaw onboard`, and keep dashboards bound to loopback behind SSH port forwarding. Automatic recovery after a host reboot is not guaranteed; follow the documented manual recovery flow. |
 {/* deployment-status:end */}
 
