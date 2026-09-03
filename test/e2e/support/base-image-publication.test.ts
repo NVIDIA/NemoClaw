@@ -850,17 +850,21 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/managed-image publication workflow did not complete successfully/u);
   });
 
-  it("uses the latest successful attempt after a newer rerun is cancelled", async () => {
+  it("searches past failed attempts without an attempt-count cap", async () => {
     const cancelledRun = workflowRun({
-      run_attempt: 3,
+      run_attempt: 12,
       conclusion: "cancelled",
     });
-    const successfulAttempt = workflowRun({ run_attempt: 2 });
+    const failedAttempts = Array.from({ length: 10 }, (_, index) =>
+      workflowRun({ run_attempt: 11 - index, conclusion: "failure" }),
+    );
+    const successfulAttempt = workflowRun({ run_attempt: 1 });
     const responses = [
       workflowMetadata(),
       runsPayload([cancelledRun]),
+      ...failedAttempts,
       successfulAttempt,
-      { total_count: 3, jobs: successfulJobs({ runAttempt: 2 }) },
+      { total_count: 3, jobs: successfulJobs() },
       cancelledRun,
       successfulAttempt,
     ];
@@ -876,15 +880,90 @@ describe("base-image publication evidence", () => {
         requireWorkflowSuccess: true,
         waitMs: 100,
         pollMs: 10,
+        now: () => 0,
       }),
-    ).resolves.toMatchObject({ id: RUN_ID, attempt: 2, conclusion: "success" });
+    ).resolves.toMatchObject({ id: RUN_ID, attempt: 1, conclusion: "success" });
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      ...Array.from(
+        { length: 11 },
+        (_, index) => `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${11 - index}`,
+      ),
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1`,
+    ]);
+  });
+
+  it("rejects mismatched identity from a prior workflow attempt", async () => {
+    const cancelledRun = workflowRun({ run_attempt: 3, conclusion: "cancelled" });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([cancelledRun]),
+      workflowRun({ run_attempt: 2, head_sha: STALE_SHA }),
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).rejects.toThrow(/selected base-image workflow changed while evidence was verified/u);
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2/jobs?per_page=100&page=1`,
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
+    ]);
+  });
+
+  it("stops the prior-attempt scan at the publication deadline", async () => {
+    const cancelledRun = workflowRun({ run_attempt: 3, conclusion: "cancelled" });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([cancelledRun]),
+      workflowRun({ run_attempt: 2, conclusion: "failure" }),
+    ];
+    const requests: Array<{ path: string; budgetMs: number | undefined }> = [];
+    const responseTimes = new Map([
+      [`/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`, 100],
+    ]);
+    let currentTime = 0;
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath, budgetMs) => {
+          requests.push({ path: requestPath, budgetMs });
+          currentTime = responseTimes.get(requestPath) ?? currentTime;
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+        now: () => currentTime,
+      }),
+    ).rejects.toThrow(/timed out validating base-image publication/u);
+    expect(requests).toEqual([
+      {
+        path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+        budgetMs: undefined,
+      },
+      {
+        path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+        budgetMs: undefined,
+      },
+      {
+        path: `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
+        budgetMs: 100,
+      },
     ]);
   });
 
@@ -992,6 +1071,29 @@ describe("base-image publication evidence", () => {
       }),
     ).resolves.toEqual({ ok: true });
     expect(rateLimitSleeps).toEqual([7000]);
+  });
+
+  it("keeps GitHub retries inside the caller's request budget", async () => {
+    const sleeps: number[] = [];
+    let currentTime = 0;
+    let requests = 0;
+
+    await expect(
+      githubRequest("/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml", "token", {
+        budgetMs: 1_500,
+        fetchImpl: async () => {
+          requests += 1;
+          throw new Error("network unavailable");
+        },
+        now: () => currentTime,
+        sleep: async (milliseconds) => {
+          sleeps.push(milliseconds);
+          currentTime += milliseconds;
+        },
+      }),
+    ).rejects.toThrow(/time budget/u);
+    expect(requests).toBe(2);
+    expect(sleeps).toEqual([1000, 500]);
   });
 
   it("fails permanent and malformed GitHub responses without retrying (#7372)", async () => {
