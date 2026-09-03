@@ -260,6 +260,35 @@ function storageRemediableReadinessReport(
   };
 }
 
+function dockerAbsentReadinessReport(
+  preset: ManagedInferenceServingPreset,
+): SystemReadinessReport {
+  const report = readinessReport({}, preset);
+  return {
+    ...report,
+    observations: report.observations.map((observation) =>
+      observation.id === "host.docker.runtime"
+        ? { id: observation.id, state: "unknown" as const }
+        : observation,
+    ),
+    capabilities: report.capabilities.map((capability) =>
+      capability.id.startsWith("host.docker.")
+        ? { ...capability, state: "unknown" as const }
+        : capability,
+    ),
+    findings: [
+      {
+        id: "host.docker.unavailable",
+        severity: "blocking",
+        summary: "Docker is unavailable.",
+        capabilityIds: ["host.docker.available"],
+      },
+    ],
+    status: "incompatible",
+    exitCode: 2,
+  };
+}
+
 function deferredN1xReadinessReport(
   extraFindings: SystemReadinessReport["findings"] = [],
   n1xState: "present" | "absent" = "present",
@@ -1185,6 +1214,53 @@ describe("managed inference resolver", () => {
     );
 
     expect(result).toMatchObject({ outcome: "selected", selection: "explicit" });
+  });
+
+  it("admits Docker-less host-local vLLM only for the selected readiness-owning provider (#10891)", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const preset = catalog.presets[0]!;
+    const input = {
+      readinessReports: [
+        { nodeId: "spark-head", report: dockerAbsentReadinessReport(preset) },
+      ],
+      topologyQualifications: [],
+      intent: { preset: preset.metadata.id },
+      now: NOW,
+    } satisfies ManagedInferenceResolverInput;
+
+    expect(resolveManagedInferenceServing(input, catalog)).toMatchObject({
+      outcome: "rejected",
+      code: "invalid-readiness",
+    });
+    expect(
+      resolveManagedInferenceServing(
+        { ...input, providerOwnsHostReadiness: true },
+        catalog,
+      ),
+    ).toMatchObject({ outcome: "selected", selection: "explicit" });
+
+    const dockerAbsentWithGpuBlocker = {
+      ...input.readinessReports[0]!.report,
+      findings: [
+        ...input.readinessReports[0]!.report.findings,
+        {
+          id: "host.gpu.container_toolkit_missing",
+          severity: "blocking" as const,
+          summary: "NVIDIA Container Toolkit is missing.",
+          capabilityIds: ["host.gpu.container_toolkit_available"],
+        },
+      ],
+    };
+    expect(
+      resolveManagedInferenceServing(
+        {
+          ...input,
+          readinessReports: [{ nodeId: "spark-head", report: dockerAbsentWithGpuBlocker }],
+          providerOwnsHostReadiness: true,
+        },
+        catalog,
+      ),
+    ).toMatchObject({ outcome: "rejected", code: "invalid-readiness" });
   });
 
   it("selects the N1x managed-vLLM preset with explicit Deferred preview intent (#9902)", () => {

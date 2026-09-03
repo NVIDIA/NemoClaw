@@ -1831,6 +1831,8 @@ export interface InstallVllmOptions {
   resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
   /** Reuse an already-collected readiness snapshot instead of probing the host again. */
   readinessReports?: readonly ManagedInferenceReadinessSource[];
+  /** The selected runtime provider replaces standard Docker host-readiness authority. */
+  providerOwnsHostReadiness?: boolean;
   /**
    * Injected rather than imported so this module does not take a dependency on
    * the onboard preflight layer. onboard.ts supplies the same probe the gateway
@@ -2066,6 +2068,7 @@ async function runVllmInstall(
     const selected = resolveHostLocalVllmSelection(profile, selectionEnv, {
       automatic: opts.nonInteractive,
       readinessReports: opts.readinessReports,
+      providerOwnsHostReadiness: opts.providerOwnsHostReadiness,
     });
     if (selected.kind === "rejected") {
       console.error(`  vLLM install failed: ${selected.reason}`);
@@ -2163,6 +2166,7 @@ async function runVllmInstall(
       },
       {
         readinessReports: opts.readinessReports,
+        providerOwnsHostReadiness: opts.providerOwnsHostReadiness,
       },
     );
     if (selected.kind === "rejected") {

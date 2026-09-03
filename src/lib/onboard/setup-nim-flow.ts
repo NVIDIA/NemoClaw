@@ -70,6 +70,17 @@ export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
 export { createLocalModelProfileIntegration } from "./local-model-profile/integration";
 export { resumeManagedLlamaCppRuntime };
 
+function managedVllmHostReadinessOptions(
+  provider: RuntimeProviderBundle,
+): { readonly providerOwnsHostReadiness?: true } {
+  const ownsReadiness =
+    provider.gateway.supported &&
+    provider.gateway.ownsHostReadiness &&
+    provider.hostLocalInference.supported &&
+    provider.hostLocalInference.services.includes("vllm");
+  return ownsReadiness ? { providerOwnsHostReadiness: true } : {};
+}
+
 /** Bind managed llama.cpp resume to the selected runtime provider. */
 export function bindManagedLlamaCppResume(gatewayPort: number) {
   return (sandboxName: string, revalidateSandboxIdentity?: (operation: string) => void) =>
@@ -227,6 +238,7 @@ export interface SetupNimFlowDeps {
       beforeInstall?: (modelId: string) => void;
       checkpointInstallIntent?: (modelId: string) => void;
       modelIntent?: string;
+      providerOwnsHostReadiness?: boolean;
     },
   ): Promise<{ ok: boolean }>;
   checkpointVllmInstallModel?(modelId: string): void;
@@ -1288,6 +1300,7 @@ export function createSetupNim(
             hasImage: hasVllmImage,
             nonInteractive: deps.isNonInteractive(),
             promptFn: deps.prompt,
+            ...managedVllmHostReadinessOptions(deps.getRuntimeProvider()),
             ...vllmRecovery,
             beforeInstall: (modelId) => {
               seedVllmInstallRoute(modelId);

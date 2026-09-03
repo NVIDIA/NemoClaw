@@ -4,6 +4,8 @@
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
 import {
   evaluateOnboardReadinessAdmission,
+  isStandardDockerReadinessFinding,
+  isStandardDockerReadinessRequirement,
   ONBOARD_READINESS_FINDING_IDS,
 } from "../../readiness/onboard-admission.js";
 import { getSystemReadinessReferenceErrors } from "../../readiness/references.js";
@@ -115,6 +117,7 @@ function hasRemediableStorageFinding(report: SystemReadinessReport): boolean {
 function hasAdmittedReadinessException(
   report: SystemReadinessReport,
   allowDeferredN1xManagedVllm: boolean,
+  providerOwnsHostReadiness: boolean,
 ): boolean {
   if (report.status !== "incompatible" || report.exitCode !== 2) return false;
   const remediableStorage = hasRemediableStorageFinding(report);
@@ -123,6 +126,7 @@ function hasAdmittedReadinessException(
     allowUnsupportedRuntime: false,
     allowStorageRemediation: remediableStorage,
     allowDeferredN1xManagedVllm,
+    providerOwnsHostReadiness,
   });
   if (!admission.admitted || admission.waivedFindingIds.length === 0) return false;
   const waivedFindingIds = new Set(admission.waivedFindingIds);
@@ -133,7 +137,11 @@ function hasAdmittedReadinessException(
       ? [ONBOARD_READINESS_FINDING_IDS.n1xValidationPending]
       : []),
   ]);
-  return admission.waivedFindingIds.every((id) => allowedFindingIds.has(id));
+  return admission.waivedFindingIds.every(
+    (id) =>
+      allowedFindingIds.has(id) ||
+      (providerOwnsHostReadiness && isStandardDockerReadinessFinding(id)),
+  );
 }
 
 function readinessError(
@@ -141,6 +149,7 @@ function readinessError(
   nowMs: number,
   maxAgeMs: number,
   allowDeferredN1xManagedVllm: boolean,
+  providerOwnsHostReadiness: boolean,
 ): string | undefined {
   const { nodeId, report } = source;
   if (!hasText(nodeId)) return "readiness node ID is empty";
@@ -163,6 +172,7 @@ function readinessError(
   const admittedReadinessException = hasAdmittedReadinessException(
     report,
     allowDeferredN1xManagedVllm,
+    providerOwnsHostReadiness,
   );
   if ((report.status !== "supported" || report.exitCode !== 0) && !admittedReadinessException) {
     return `${nodeId}: readiness status is ${report.status}`;
@@ -181,13 +191,20 @@ function readinessReportsError(
   nowMs: number,
   maxAgeMs: number,
   allowDeferredN1xManagedVllm: boolean,
+  providerOwnsHostReadiness: boolean,
 ): string | undefined {
   const nodeIds = sources.map(({ nodeId }) => nodeId);
   if (new Set(nodeIds).size !== nodeIds.length) {
     return "readiness reports contain duplicate node IDs";
   }
   for (const source of sources) {
-    const error = readinessError(source, nowMs, maxAgeMs, allowDeferredN1xManagedVllm);
+    const error = readinessError(
+      source,
+      nowMs,
+      maxAgeMs,
+      allowDeferredN1xManagedVllm,
+      providerOwnsHostReadiness,
+    );
     if (error) return error;
   }
   return undefined;
@@ -275,7 +292,15 @@ function readinessComparisonMatches(
 function readinessRequirementMatches(
   requirement: ManagedInferenceReadinessRequirement["readiness"],
   reports: readonly ManagedInferenceReadinessSource[],
+  providerOwnsHostReadiness: boolean,
 ): boolean {
+  if (
+    providerOwnsHostReadiness &&
+    requirement.kind !== "qualification" &&
+    isStandardDockerReadinessRequirement(requirement.kind, requirement.id)
+  ) {
+    return readinessScopeMatches(requirement.scope, reports, () => true);
+  }
   return readinessScopeMatches(requirement.scope, reports, ({ report }) => {
     if (requirement.kind === "qualification") {
       const matches = report.qualifications.filter(({ id }) => id === requirement.id);
@@ -378,12 +403,19 @@ function evaluateRequirements<TOutput>(
   preset: ManagedInferenceServingPreset,
   reports: readonly ManagedInferenceReadinessSource[],
   topologyQualifications: readonly ManagedInferenceTopologyQualification<TOutput>[],
+  providerOwnsHostReadiness: boolean,
 ): RequirementEvaluation<TOutput> {
   const matchedTopologies: ManagedInferenceTopologyQualification<TOutput>[] = [];
   const expectedSubjectNodeIds = reports.map(({ nodeId }) => nodeId).sort(compareStrings);
   for (const requirement of preset.spec.requirements.all) {
     if ("readiness" in requirement) {
-      if (!readinessRequirementMatches(requirement.readiness, reports)) {
+      if (
+        !readinessRequirementMatches(
+          requirement.readiness,
+          reports,
+          providerOwnsHostReadiness,
+        )
+      ) {
         return {
           outcome: "unmet",
           message: `Readiness requirement ${requirement.readiness.id} did not match.`,
@@ -516,6 +548,7 @@ function matchingCandidate<TOutput>(
     preset,
     input.readinessReports,
     input.topologyQualifications,
+    input.providerOwnsHostReadiness === true,
   );
   if (requirements.outcome !== "matched") return requirements;
   const memoryError = runtimeMemoryRequirementError(recipe, input.readinessReports);
@@ -616,6 +649,7 @@ export function resolveManagedInferenceServing<TOutput>(
     nowMs,
     maxAgeMs,
     hasManagedVllmIntent(intent, catalog),
+    input.providerOwnsHostReadiness === true,
   );
   if (reportsError) {
     return {

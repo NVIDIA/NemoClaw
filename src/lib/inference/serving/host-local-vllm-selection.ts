@@ -187,6 +187,7 @@ export function resolveHostLocalVllmSelection(
   options: {
     readonly automatic?: boolean;
     readonly readinessReports?: readonly ManagedInferenceReadinessSource[];
+    readonly providerOwnsHostReadiness?: boolean;
   } = {},
 ): HostLocalVllmSelectionResult {
   const presetId = String(env.NEMOCLAW_SERVING_PRESET ?? "").trim();
@@ -224,6 +225,7 @@ export function resolveHostLocalVllmSelection(
   const resolution = resolveManagedInferenceServing({
     readinessReports,
     topologyQualifications: [],
+    providerOwnsHostReadiness: options.providerOwnsHostReadiness,
     intent: presetId
       ? { preset: presetId }
       : model

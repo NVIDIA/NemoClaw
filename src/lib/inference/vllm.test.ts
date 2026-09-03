@@ -973,6 +973,7 @@ describe("installVllm model resolution", () => {
       hasImage: true,
       nonInteractive: true,
       promptFn: vi.fn(),
+      providerOwnsHostReadiness: true,
     });
 
     expect(result).toEqual({ ok: false });
@@ -980,6 +981,11 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("gated on Hugging Face"));
+    expect(mocks.resolveHostLocalVllmSelection).toHaveBeenCalledWith(
+      profile,
+      expect.any(Object),
+      expect.objectContaining({ providerOwnsHostReadiness: true }),
+    );
   });
 
   it("persists exact profile ownership before authenticating a catalog-selected runtime (#8246)", async () => {
