@@ -446,13 +446,6 @@ describe("MessagingSetupApplier", () => {
       ["provider", "get", "demo-telegram-bridge"],
       ["provider", "get", "demo-slack-bridge"],
       ["provider", "get", "demo-slack-app"],
-      [
-        "provider",
-        "profile",
-        "import",
-        "--file",
-        expect.stringContaining("provider-profiles/nemoclaw-mcp-v1.yaml"),
-      ],
       ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       [
         "provider",
@@ -479,7 +472,7 @@ describe("MessagingSetupApplier", () => {
       ],
       ["provider", "get", "demo-slack-app"],
     ]);
-    expect(calls[5]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
+    expect(calls[4]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
     expect(result.upserted.map((entry) => `${entry.action}:${entry.providerName}`)).toEqual([
       "create:demo-telegram-bridge",
       "update:demo-slack-bridge",

@@ -16,6 +16,7 @@ import {
   type OpenShellGatewayTarget,
 } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { redactStandaloneSecretsFull } from "../../security/redact";
 import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
 import {
   messagingCredentialProviderProfilePath,
@@ -47,12 +48,14 @@ export class MessagingProviderApplyError extends Error {
   readonly code: string;
   readonly mutatedProviderNames: readonly string[];
   readonly createdProviderNames: readonly string[];
+  readonly replacedProviderNames: readonly string[];
 
   constructor(input: {
     readonly message: string;
     readonly bindingConflict?: boolean;
     readonly mutatedProviderNames?: readonly string[];
     readonly createdProviderNames?: readonly string[];
+    readonly replacedProviderNames?: readonly string[];
     readonly cause?: unknown;
   }) {
     super(input.message, input.cause === undefined ? undefined : { cause: input.cause });
@@ -62,6 +65,7 @@ export class MessagingProviderApplyError extends Error {
       : MESSAGING_PROVIDER_MUTATION_FAILURE;
     this.mutatedProviderNames = uniqueStrings(input.mutatedProviderNames ?? []);
     this.createdProviderNames = uniqueStrings(input.createdProviderNames ?? []);
+    this.replacedProviderNames = uniqueStrings(input.replacedProviderNames ?? []);
   }
 }
 
@@ -131,6 +135,7 @@ export async function applyCredentialsAtOpenShell(
   const missing: MessagingMissingCredentialEntry[] = [];
   const mutatedProviderNames: string[] = [];
   const createdProviderNames: string[] = [];
+  const replacedProviderNames: string[] = [];
 
   for (const definition of definitions) {
     let state = states.get(definition.providerName) ?? "indeterminate";
@@ -148,9 +153,15 @@ export async function applyCredentialsAtOpenShell(
       try {
         await deleteProviderForReplacement(definition.providerName, options, providerAdapter);
       } catch (error) {
-        throw withMutationEvidence(error, mutatedProviderNames, createdProviderNames);
+        throw withMutationEvidence(
+          error,
+          mutatedProviderNames,
+          createdProviderNames,
+          replacedProviderNames,
+        );
       }
       mutatedProviderNames.push(definition.providerName);
+      replacedProviderNames.push(definition.providerName);
       state = "missing";
     }
 
@@ -172,10 +183,16 @@ export async function applyCredentialsAtOpenShell(
             config: [],
           });
     if (!result.ok) {
+      const outcomeUncertain = mutationOutcomeUncertain(result.error);
       throw withMutationEvidence(
-        `Failed to ${action} messaging provider '${definition.providerName}': ${result.error.message}`,
-        mutatedProviderNames,
-        createdProviderNames,
+        `Failed to ${action} messaging provider '${definition.providerName}': ${providerErrorMessage(result.error)}`,
+        outcomeUncertain
+          ? [...mutatedProviderNames, definition.providerName]
+          : mutatedProviderNames,
+        outcomeUncertain && action === "create"
+          ? [...createdProviderNames, definition.providerName]
+          : createdProviderNames,
+        replacedProviderNames,
       );
     }
     mutatedProviderNames.push(definition.providerName);
@@ -190,6 +207,7 @@ export async function applyCredentialsAtOpenShell(
         `OpenShell did not confirm messaging provider '${definition.providerName}' after ${action}.`,
         mutatedProviderNames,
         createdProviderNames,
+        replacedProviderNames,
       );
     }
     upserted.push({
@@ -204,7 +222,12 @@ export async function applyCredentialsAtOpenShell(
   try {
     await configureRefreshes(refreshes, options, providerAdapter);
   } catch (error) {
-    throw withMutationEvidence(error, mutatedProviderNames, createdProviderNames);
+    throw withMutationEvidence(
+      error,
+      mutatedProviderNames,
+      createdProviderNames,
+      replacedProviderNames,
+    );
   }
 
   const providerNames = uniqueStrings([
@@ -215,7 +238,12 @@ export async function applyCredentialsAtOpenShell(
     try {
       await attachProviders(providerNames, options.attachToSandbox, options, providerAdapter);
     } catch (error) {
-      throw withMutationEvidence(error, mutatedProviderNames, createdProviderNames);
+      throw withMutationEvidence(
+        error,
+        mutatedProviderNames,
+        createdProviderNames,
+        replacedProviderNames,
+      );
     }
   }
 
@@ -243,6 +271,11 @@ export async function cleanupProvidersAtOpenShell(
   const residualProviders: Array<{ providerName: string; error: OpenShellProviderError }> = [];
 
   for (const providerName of uniqueStrings(providerNames)) {
+    const initialIdentityError = cleanupIdentityError(options, providerName, "delete");
+    if (initialIdentityError) {
+      residualProviders.push({ providerName, error: redactedProviderError(initialIdentityError) });
+      continue;
+    }
     const first = await options.providerAdapter.deleteProvider({ target, providerName });
     if (first.ok) {
       removedProviderNames.push(providerName);
@@ -253,7 +286,7 @@ export async function cleanupProvidersAtOpenShell(
       continue;
     }
     if (!isAttached(first) || !attachmentsAuthorized(first.error.attachedSandboxes, allowed)) {
-      residualProviders.push({ providerName, error: first.error });
+      residualProviders.push({ providerName, error: redactedProviderError(first.error) });
       continue;
     }
 
@@ -285,13 +318,18 @@ export async function cleanupProvidersAtOpenShell(
       }
     }
     if (detachFailed) {
-      residualProviders.push({ providerName, error: detachFailed });
+      residualProviders.push({ providerName, error: redactedProviderError(detachFailed) });
+      continue;
+    }
+    const retryIdentityError = cleanupIdentityError(options, providerName, "retry deletion of");
+    if (retryIdentityError) {
+      residualProviders.push({ providerName, error: redactedProviderError(retryIdentityError) });
       continue;
     }
     const retried = await options.providerAdapter.deleteProvider({ target, providerName });
     if (retried.ok) removedProviderNames.push(providerName);
     else if (isNotFound(retried)) absentProviderNames.push(providerName);
-    else residualProviders.push({ providerName, error: retried.error });
+    else residualProviders.push({ providerName, error: redactedProviderError(retried.error) });
   }
 
   return {
@@ -300,6 +338,24 @@ export async function cleanupProvidersAtOpenShell(
     detachedAttachments,
     residualProviders,
   };
+}
+
+function cleanupIdentityError(
+  options: MessagingProviderCleanupOptions,
+  providerName: string,
+  action: string,
+): OpenShellProviderError | null {
+  try {
+    options.revalidateSandboxIdentity?.(
+      `${action} messaging provider ${JSON.stringify(providerName)} during cleanup`,
+    );
+    return null;
+  } catch {
+    return {
+      kind: "validation",
+      message: "Sandbox identity changed during messaging provider cleanup.",
+    };
+  }
 }
 
 function definitionsFromPlan(
@@ -408,7 +464,7 @@ async function prepareProfiles(
     const imported = await providerAdapter.importProviderProfile({ target, profilePath });
     if (!imported.ok) {
       throw new MessagingProviderApplyError({
-        message: `Could not prepare messaging provider profile '${profileType}': ${imported.error.message}`,
+        message: `Could not prepare messaging provider profile '${profileType}': ${providerErrorMessage(imported.error)}`,
       });
     }
   }
@@ -466,7 +522,15 @@ function classifyProviderDefinition(
 function providerFailureMessage(
   result: OpenShellProviderResult<OpenShellProviderMetadata>,
 ): string {
-  return result.ok ? "provider metadata did not match" : result.error.message;
+  return result.ok ? "provider metadata did not match" : providerErrorMessage(result.error);
+}
+
+function providerErrorMessage(error: OpenShellProviderError): string {
+  return redactStandaloneSecretsFull(error.message);
+}
+
+function redactedProviderError(error: OpenShellProviderError): OpenShellProviderError {
+  return { ...error, message: providerErrorMessage(error) };
 }
 
 function bindingConflict(
@@ -492,7 +556,8 @@ async function deleteProviderForReplacement(
   if (result.ok) return;
   if (!isAttached(result)) {
     throw new MessagingProviderApplyError({
-      message: `Could not replace messaging provider '${providerName}': ${result.error.message}`,
+      message: `Could not replace messaging provider '${providerName}': ${providerErrorMessage(result.error)}`,
+      mutatedProviderNames: mutationOutcomeUncertain(result.error) ? [providerName] : [],
     });
   }
   const allowed = new Set(options.allowedSandboxes ?? []);
@@ -516,8 +581,9 @@ async function deleteProviderForReplacement(
       });
       if (!detachResult.ok) {
         throw new MessagingProviderApplyError({
-          message: `Could not detach messaging provider '${providerName}' from sandbox '${sandboxName}': ${detachResult.error.message}`,
-          mutatedProviderNames: detached ? [providerName] : [],
+          message: `Could not detach messaging provider '${providerName}' from sandbox '${sandboxName}': ${providerErrorMessage(detachResult.error)}`,
+          mutatedProviderNames:
+            detached || mutationOutcomeUncertain(detachResult.error) ? [providerName] : [],
         });
       }
       detached = true;
@@ -532,10 +598,17 @@ async function deleteProviderForReplacement(
   result = await providerAdapter.deleteProvider({ target, providerName });
   if (!result.ok) {
     throw new MessagingProviderApplyError({
-      message: `Could not replace messaging provider '${providerName}': ${result.error.message}`,
-      mutatedProviderNames: detached ? [providerName] : [],
+      message: `Could not replace messaging provider '${providerName}': ${providerErrorMessage(result.error)}`,
+      mutatedProviderNames:
+        detached || mutationOutcomeUncertain(result.error) ? [providerName] : [],
     });
   }
+}
+
+function mutationOutcomeUncertain(error: OpenShellProviderError): boolean {
+  return (
+    error.kind === "timeout" || (error.kind === "command" && error.reason === "uncertain")
+  );
 }
 
 async function configureRefreshes(
@@ -557,7 +630,7 @@ async function configureRefreshes(
     });
     if (!configured.ok) {
       throw new MessagingProviderApplyError({
-        message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${configured.error.message}`,
+        message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${providerErrorMessage(configured.error)}`,
         mutatedProviderNames: [refresh.providerName],
       });
     }
@@ -586,7 +659,7 @@ async function configureRefreshes(
     if (status === "refreshed") continue;
     if (observationError) {
       throw new MessagingProviderApplyError({
-        message: `Could not observe gateway token minting for messaging provider '${refresh.providerName}': ${observationError.message}`,
+        message: `Could not observe gateway token minting for messaging provider '${refresh.providerName}': ${providerErrorMessage(observationError)}`,
         mutatedProviderNames: [refresh.providerName],
       });
     }
@@ -617,7 +690,7 @@ async function attachProviders(
       });
       if (!attached.ok) {
         throw new MessagingProviderApplyError({
-          message: `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}': ${attached.error.message}`,
+          message: `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}': ${providerErrorMessage(attached.error)}`,
           mutatedProviderNames: [providerName],
         });
       }
@@ -677,17 +750,21 @@ function withMutationEvidence(
   error: unknown,
   mutatedProviderNames: readonly string[],
   createdProviderNames: readonly string[],
+  replacedProviderNames: readonly string[] = [],
 ): MessagingProviderApplyError {
   const message = error instanceof Error ? error.message : String(error);
   const existingMutated =
     error instanceof MessagingProviderApplyError ? error.mutatedProviderNames : [];
   const existingCreated =
     error instanceof MessagingProviderApplyError ? error.createdProviderNames : [];
+  const existingReplaced =
+    error instanceof MessagingProviderApplyError ? error.replacedProviderNames : [];
   return new MessagingProviderApplyError({
     message,
     bindingConflict: isMessagingProviderBindingConflict(error),
     mutatedProviderNames: [...existingMutated, ...mutatedProviderNames],
     createdProviderNames: [...existingCreated, ...createdProviderNames],
+    replacedProviderNames: [...existingReplaced, ...replacedProviderNames],
     cause: error,
   });
 }

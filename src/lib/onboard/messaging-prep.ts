@@ -177,8 +177,8 @@ export function prepareCreateSandboxMessaging(
   // gateway-side (declared by a co-located provider-profile YAML) registers a
   // refresh-minted provider so the gateway mints the token (secret stays
   // gateway-side) and the L7 proxy injects it. The credential value is a sentinel
-  // (minted by refresh, configured post-create in onboard's
-  // upsertMessagingProviders wrapper). Today only Google Chat uses this.
+  // (minted by refresh, configured through the messaging applier). Today only
+  // Google Chat uses this.
   // Resolve the agent instead of defaulting it: an agent no manifest supports
   // must configure no bridge, not the OpenClaw one.
   const bridgeProfiles = messagingProviderProfiles.filter((profile) => profile.strategy !== null);

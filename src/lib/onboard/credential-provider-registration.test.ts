@@ -3,6 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { MessagingProviderApplyError } from "../messaging/applier/openshell-provider";
+import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
@@ -495,9 +497,9 @@ describe("credential provider registration", () => {
         ? { ...defaultResult, stdout: JSON.stringify(BRAVE_PROFILE) }
         : (commandResults.get(args.join(" ")) ?? defaultResult),
     );
-    const registration = createCredentialProviderRegistration(
-      registrationDeps(runOpenshell, session),
-    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
     const tokenDefs: MessagingTokenDef[] = [
       {
         name: "alpha-brave-search",
@@ -603,6 +605,136 @@ describe("credential provider registration", () => {
     );
   });
 
+  it.each([
+    {
+      case: "fresh creation",
+      replacedProviderNames: [],
+      expectedMutatedProviderNames: [],
+    },
+    {
+      case: "replacement",
+      replacedProviderNames: ["alpha-discord-bridge"],
+      expectedMutatedProviderNames: ["alpha-discord-bridge"],
+    },
+  ])(
+    "reconciles a cleaned $case with exact post-cleanup evidence (#9806)",
+    async ({ replacedProviderNames, expectedMutatedProviderNames }) => {
+      const providerName = "alpha-discord-bridge";
+      const apply = vi
+        .spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell")
+        .mockRejectedValue(
+          new MessagingProviderApplyError({
+            message: "refresh failed",
+            mutatedProviderNames: [providerName],
+            createdProviderNames: [providerName],
+            replacedProviderNames,
+          }),
+        );
+      const cleanup = vi
+        .spyOn(MessagingSetupApplier, "cleanupProvidersAtOpenShell")
+        .mockResolvedValue({
+          removedProviderNames: [providerName],
+          absentProviderNames: [],
+          detachedAttachments: [],
+          residualProviders: [],
+        });
+      const session = { stagedCredentialProviders: [] } as unknown as Session;
+      const registration = createCredentialProviderRegistration(
+        registrationDeps(vi.fn(), session),
+      );
+
+      try {
+        const failure = await registration
+          .applyMessagingProviders(
+            [
+              {
+                name: providerName,
+                envKey: "DISCORD_BOT_TOKEN",
+                token: DISCORD_SECRET,
+                providerType: "nemoclaw-mcp-v1",
+              },
+            ],
+            { allowedSandboxes: ["alpha"] },
+          )
+          .catch((error: unknown) => error);
+
+        expect(failure).toMatchObject({
+          message: "refresh failed",
+          mutatedProviderNames: expectedMutatedProviderNames,
+          createdProviderNames: [],
+          replacedProviderNames,
+        });
+        expect(cleanup).toHaveBeenCalledExactlyOnceWith(
+          [providerName],
+          expect.objectContaining({
+            target: { kind: "named", gatewayName: "test-gateway" },
+            allowedSandboxes: ["alpha"],
+          }),
+        );
+      } finally {
+        cleanup.mockRestore();
+        apply.mockRestore();
+      }
+    },
+  );
+
+  it("returns exact residual recovery when typed onboarding cleanup fails (#9806)", async () => {
+    const providerName = "alpha-discord-bridge";
+    const apply = vi
+      .spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell")
+      .mockRejectedValue(
+        new MessagingProviderApplyError({
+          message: "refresh failed",
+          mutatedProviderNames: [providerName],
+          createdProviderNames: [providerName],
+        }),
+      );
+    const cleanup = vi
+      .spyOn(MessagingSetupApplier, "cleanupProvidersAtOpenShell")
+      .mockResolvedValue({
+        removedProviderNames: [],
+        absentProviderNames: [],
+        detachedAttachments: [],
+        residualProviders: [
+          {
+            providerName,
+            error: { kind: "transport", reason: "unreachable", message: "gateway unavailable" },
+          },
+        ],
+      });
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(vi.fn(), { stagedCredentialProviders: [] } as unknown as Session),
+    );
+
+    try {
+      const failure = await registration
+        .applyMessagingProviders([
+          {
+            name: providerName,
+            envKey: "DISCORD_BOT_TOKEN",
+            token: DISCORD_SECRET,
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ])
+        .catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({
+        mutatedProviderNames: [providerName],
+        createdProviderNames: [providerName],
+        replacedProviderNames: [],
+      });
+      expect((failure as Error).message).toContain(
+        'Automatic cleanup could not remove "alpha-discord-bridge": gateway unavailable.',
+      );
+      expect((failure as Error).message).toContain(
+        'openshell provider delete -g "test-gateway" "alpha-discord-bridge"',
+      );
+    } finally {
+      cleanup.mockRestore();
+      apply.mockRestore();
+    }
+  });
+
   it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const missing = {
@@ -612,20 +744,28 @@ describe("credential provider registration", () => {
     };
     const success = { status: 0, stdout: "", stderr: "" };
     let profileImported = false;
+    let providerCreated = false;
     const runOpenshell = vi.fn((args: string[]) => {
       profileImported ||=
         args[0] === "provider" && args.includes("profile") && args.includes("import");
+      providerCreated ||= args[0] === "provider" && args[1] === "create";
       return args[0] === "provider" && args.includes("profile") && args.includes("export")
         ? profileImported
           ? { ...success, stdout: JSON.stringify(DISCORD_STATIC_PROFILE) }
           : missing
         : args[0] === "provider" && args[1] === "get"
-          ? missing
+          ? providerCreated
+            ? providerMetadata(
+                "alpha-discord-bridge",
+                "discord-hermes-static-v1",
+                "DISCORD_BOT_TOKEN",
+              )
+            : providerMissing(String(args.at(-1)))
           : success;
     });
-    const registration = createCredentialProviderRegistration(
-      registrationDeps(runOpenshell, session),
-    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
     const plan: SandboxMessagingPlan = {
       schemaVersion: 1,
       sandboxName: "alpha",

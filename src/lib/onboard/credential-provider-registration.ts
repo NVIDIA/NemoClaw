@@ -4,6 +4,10 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import {
+  isMessagingProviderMutationFailure,
+  MessagingProviderApplyError,
+} from "../messaging/applier/openshell-provider";
 import { buildMessagingProviderApplication } from "../messaging/applier/provider-application";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
@@ -100,6 +104,52 @@ const MISSING_BINDING_ERROR =
   "A required credential provider is missing and no credential is available to recreate it.";
 const BINDING_INSPECTION_ERROR =
   "The required credential provider could not be inspected through the selected gateway.";
+
+async function rethrowAfterCreatedProviderCleanup(
+  error: unknown,
+  input: {
+    readonly providerAdapter: ReturnType<typeof createCliOpenShellProviderAdapter>;
+    readonly gatewayName: string;
+    readonly allowedSandboxes?: readonly string[];
+    readonly revalidateSandboxIdentity?: (operation: string) => void;
+  },
+): Promise<never> {
+  if (!isMessagingProviderMutationFailure(error) || error.createdProviderNames.length === 0) {
+    throw error;
+  }
+  const cleanup = await MessagingSetupApplier.cleanupProvidersAtOpenShell(
+    error.createdProviderNames,
+    {
+      providerAdapter: input.providerAdapter,
+      target: namedOpenShellGateway(input.gatewayName),
+      allowedSandboxes: input.allowedSandboxes,
+      revalidateSandboxIdentity: input.revalidateSandboxIdentity,
+    },
+  );
+  const createdProviders = new Set(error.createdProviderNames);
+  const replacedProviders = new Set(error.replacedProviderNames);
+  const residualProviderNames = cleanup.residualProviders.map(({ providerName }) => providerName);
+  const residualMessage = cleanup.residualProviders
+    .map(
+      ({ providerName, error: cleanupError }) =>
+        `Automatic cleanup could not remove ${JSON.stringify(providerName)}: ${cleanupError.message}. ` +
+        `Run \`openshell provider delete -g ${JSON.stringify(input.gatewayName)} ${JSON.stringify(providerName)}\`, then retry onboarding.`,
+    )
+    .join(" ");
+  throw new MessagingProviderApplyError({
+    message: [error.message, residualMessage].filter(Boolean).join(" "),
+    mutatedProviderNames: [
+      ...error.mutatedProviderNames.filter(
+        (providerName) =>
+          !createdProviders.has(providerName) || replacedProviders.has(providerName),
+      ),
+      ...residualProviderNames,
+    ],
+    createdProviderNames: residualProviderNames,
+    replacedProviderNames: error.replacedProviderNames,
+    cause: error,
+  });
+}
 
 function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
   return [binding.name, binding.type, binding.credentialEnv].every(
@@ -216,23 +266,35 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       channelIdForCredential: (envKey, providerName) =>
         channelIdForProvider(applicationPlan, envKey, providerName),
     });
-    const typedResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(applicationPlan, {
-      providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
-      target: namedOpenShellGateway(deps.getGatewayName()),
-      definitions: application.definitions,
-      refreshes: application.refreshes,
-      replaceExisting: options.replaceExisting,
-      allowedSandboxes: options.allowedSandboxes,
-      revalidateSandboxIdentity: options.revalidateSandboxIdentity,
-      log: (message) => console.error(`  ${message}`),
-    });
+    const gatewayName = deps.getGatewayName();
+    const providerAdapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
+    const typedResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(
+      applicationPlan,
+      {
+        providerAdapter,
+        target: namedOpenShellGateway(gatewayName),
+        definitions: application.definitions,
+        refreshes: application.refreshes,
+        replaceExisting: options.replaceExisting,
+        allowedSandboxes: options.allowedSandboxes,
+        revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+        log: (message) => console.error(`  ${message}`),
+      },
+    ).catch((error: unknown) =>
+      rethrowAfterCreatedProviderCleanup(error, {
+        providerAdapter,
+        gatewayName,
+        allowedSandboxes: options.allowedSandboxes,
+        revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+      }),
+    );
     if (typedResult.missing.length > 0) throw new Error(MISSING_BINDING_ERROR);
     const otherProviderNames =
       application.otherTokenDefs.length > 0
         ? (providers.upsertMessagingProviders(
             application.otherTokenDefs,
             createGatewayScopedOpenshellRunner(runOpenshell, deps.getGatewayName()),
-            options,
+            { ...options, gatewayName: deps.getGatewayName() },
           ) as string[])
         : [];
     const appliedNames = new Set([...otherProviderNames, ...typedResult.providerNames]);

@@ -927,6 +927,7 @@ async function applyChannelAddToGatewayAndRegistry(
     ) {
       const createdProviderNames = [...(err.createdProviderNames ?? [])];
       const createdProviders = new Set(createdProviderNames);
+      const replacedProviders = new Set(err.replacedProviderNames ?? []);
       const cleanup = await policyChannelDependencies.cleanupMessagingProviders(
         createdProviderNames,
         sandboxName,
@@ -934,7 +935,7 @@ async function applyChannelAddToGatewayAndRegistry(
         () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
       );
       const updatedProviderNames = err.mutatedProviderNames.filter(
-        (providerName) => !createdProviders.has(providerName),
+        (providerName) => !createdProviders.has(providerName) || replacedProviders.has(providerName),
       );
       const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
         .replace(/\s+/gu, " ")
@@ -1061,7 +1062,8 @@ async function applyChannelRemoveToGatewayAndRegistry(
         `  Failed to remove bridge provider(s) from the OpenShell gateway: ${cleanup.residualProviders.map(({ providerName }) => providerName).join(", ")}.`,
       );
       for (const failure of cleanup.residualProviders) {
-        console.error(`    [${failure.providerName}] ${failure.error.message}`);
+        const diagnostic = redactFullWithUrls(failure.error.message).replace(/\s+/gu, " ").trim();
+        console.error(`    [${failure.providerName}] ${diagnostic}`);
       }
       if (!bestEffort) {
         console.error("  Registry not updated; re-run after resolving the gateway error.");

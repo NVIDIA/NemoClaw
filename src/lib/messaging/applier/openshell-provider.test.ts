@@ -276,6 +276,39 @@ describe("messaging OpenShell provider application", () => {
     expect(failure).toMatchObject({
       createdProviderNames: [expected.providerName],
       mutatedProviderNames: [expected.providerName],
+      replacedProviderNames: [],
+    });
+  });
+
+  it("preserves replacement evidence when the recreated provider cannot attach (#9806)", async () => {
+    const expected = definition();
+    const adapter = providerAdapter({
+      getProvider: vi
+        .fn<OpenShellProviderAdapter["getProvider"]>()
+        .mockResolvedValueOnce({
+          ok: true,
+          value: { ...metadata(expected), type: "generic" },
+        })
+        .mockResolvedValueOnce({ ok: true, value: metadata(expected) }),
+      attachProvider: vi.fn<OpenShellProviderAdapter["attachProvider"]>().mockResolvedValue({
+        ok: false,
+        error: { kind: "transport", reason: "unreachable", message: "gateway unavailable" },
+      }),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      replaceExisting: true,
+      allowedSandboxes: ["alpha"],
+      attachToSandbox: "alpha",
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      createdProviderNames: [expected.providerName],
+      mutatedProviderNames: [expected.providerName],
+      replacedProviderNames: [expected.providerName],
     });
   });
 
@@ -350,6 +383,65 @@ describe("messaging OpenShell provider application", () => {
     });
   });
 
+  it.each(["command uncertainty", "timeout"])(
+    "marks an uncertain create as a cleanup candidate after %s (#9806)",
+    async (failureKind) => {
+      const expected = definition();
+      const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>().mockResolvedValue({
+        ok: false,
+        error:
+          failureKind === "timeout"
+            ? { kind: "timeout", message: "provider create timed out" }
+            : {
+                kind: "command",
+                reason: "uncertain",
+                message: "provider create outcome is unknown",
+              },
+      });
+      const adapter = providerAdapter({ createProvider });
+
+      const failure = await applyCredentialsAtOpenShell(plan, {
+        providerAdapter: adapter,
+        target,
+        definitions: [expected],
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({
+        createdProviderNames: [expected.providerName],
+        mutatedProviderNames: [expected.providerName],
+      });
+      expect(adapter.getProvider).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("marks an uncertain update as mutated without claiming provider creation (#9806)", async () => {
+    const expected = definition();
+    const adapter = providerAdapter({
+      getProvider: vi
+        .fn<OpenShellProviderAdapter["getProvider"]>()
+        .mockResolvedValue({ ok: true, value: metadata(expected) }),
+      updateProvider: vi.fn<OpenShellProviderAdapter["updateProvider"]>().mockResolvedValue({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "uncertain",
+          message: "provider update outcome is unknown",
+        },
+      }),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      createdProviderNames: [],
+      mutatedProviderNames: [expected.providerName],
+    });
+  });
+
   it("keeps provider and refresh secrets out of successful results (#9806)", async () => {
     const credentialSecret = "credential-secret-value";
     const refreshSecret = "refresh-secret-value";
@@ -388,9 +480,48 @@ describe("messaging OpenShell provider application", () => {
     expect(JSON.stringify(result)).not.toContain(refreshSecret);
   });
 
+  it("redacts injected adapter failures from errors and cleanup results (#9806)", async () => {
+    const secret = "nvapi-secret-value";
+    const expected = definition();
+    const applyAdapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: false,
+        error: {
+          kind: "transport",
+          reason: "unreachable",
+          message: `NVIDIA_API_KEY=${secret}`,
+        },
+      }),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: applyAdapter,
+      target,
+      definitions: [expected],
+    }).catch((error: unknown) => error);
+    const cleanup = await cleanupProvidersAtOpenShell([expected.providerName], {
+      providerAdapter: providerAdapter({
+        deleteProvider: vi.fn<OpenShellProviderAdapter["deleteProvider"]>().mockResolvedValue({
+          ok: false,
+          error: {
+            kind: "transport",
+            reason: "unreachable",
+            message: `NVIDIA_API_KEY=${secret}`,
+          },
+        }),
+      }),
+      target,
+    });
+
+    expect(String((failure as Error).message)).not.toContain(secret);
+    expect(JSON.stringify(cleanup)).not.toContain(secret);
+    expect(cleanup.residualProviders[0]?.error.message).toContain("<REDACTED>");
+  });
+
   it.each(["configuration", "observation"] as const)(
     "reports %s refresh failure with mutation evidence (#9806)",
     async (failureKind) => {
+      const observationSecret = "nvapi-observation-secret";
       const expected = definition();
       const refresh: MessagingProviderRefreshEphemeralInput = {
         channelId: "telegram",
@@ -424,7 +555,7 @@ describe("messaging OpenShell provider application", () => {
                   error: {
                     kind: "transport",
                     reason: "unreachable",
-                    message: "status unavailable",
+                    message: `status unavailable ${observationSecret}`,
                   },
                 }),
             });
@@ -442,6 +573,7 @@ describe("messaging OpenShell provider application", () => {
       expect(failure).toMatchObject({
         mutatedProviderNames: [expected.providerName],
       });
+      expect((failure as Error).message).not.toContain(observationSecret);
     },
   );
 
@@ -504,6 +636,37 @@ describe("messaging OpenShell provider application", () => {
       detachedAttachments: [],
       residualProviders: [],
     });
+  });
+
+  it("stops cleanup before deletion when sandbox identity changes (#9806)", async () => {
+    const providerName = "alpha-telegram-bridge";
+    const adapter = providerAdapter();
+
+    const result = await cleanupProvidersAtOpenShell([providerName], {
+      providerAdapter: adapter,
+      target,
+      allowedSandboxes: ["alpha"],
+      revalidateSandboxIdentity: () => {
+        throw new Error("untrusted identity detail");
+      },
+    });
+
+    expect(adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      removedProviderNames: [],
+      absentProviderNames: [],
+      detachedAttachments: [],
+      residualProviders: [
+        {
+          providerName,
+          error: {
+            kind: "validation",
+            message: "Sandbox identity changed during messaging provider cleanup.",
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain("untrusted identity detail");
   });
 });
 

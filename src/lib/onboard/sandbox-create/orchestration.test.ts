@@ -523,7 +523,7 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: (revalidate) => {
+      activateDeferredProviderEffects: async (revalidate) => {
         revalidate("cleaning up providers for sandbox 'alpha'");
         return ["first", "second"];
       },
@@ -579,7 +579,7 @@ describe("deferred provider effect authority", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => [],
+      activateDeferredProviderEffects: async () => [],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
@@ -1076,7 +1076,7 @@ describe("sandbox create identity checks", () => {
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => ["credential-provider"],
+      activateDeferredProviderEffects: async () => ["credential-provider"],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const error = await runSandboxCreateWithIdentityVerification({

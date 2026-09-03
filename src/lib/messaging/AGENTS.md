@@ -38,7 +38,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 ## Core Invariants
 
 - Manifests and compiled plans are serializable data. Do not put functions, classes, live clients, or raw secret values in them.
-- Ephemeral provider application inputs may hold credential or refresh material only for the immediate adapter call. Never serialize, persist, log, diagnose, or return those values from the applier. Pass provider credentials and refresh secrets to OpenShell through the child environment, never command arguments.
+- Ephemeral provider application inputs may retain credential or refresh material in host process memory for the complete provider-application operation. Callers must release those references as soon as the operation settles; JavaScript does not guarantee zeroization. Never serialize, persist, log, diagnose, or return those values from the applier. Transfer provider credentials and refresh secrets to OpenShell child processes through environment values only, never command arguments.
 - Secret inputs must not declare `statePath`; persisted plans may contain `credentialAvailable`, `credentialHash`, and placeholders, never tokens.
 - Hook implementations are resolved by stable handler IDs through `MessagingHookRegistry`. Manifests reference handlers by string; they do not import handler code.
 - Hook outputs must match manifest declarations and be JSON-serializable. Add outputs to the manifest before consuming them.

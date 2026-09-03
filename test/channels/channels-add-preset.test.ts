@@ -598,6 +598,16 @@ describe("channels add applies a matching policy preset (#3437)", () => {
   });
 
   it("keeps plan state and does not retry provider delete when rollback detach fails", async () => {
+    registryEntry = {
+      ...registryEntry,
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "fingerprint-1",
+    } as SandboxEntry;
+    vi.spyOn(
+      policyChannelDependencies,
+      "inspectMessagingProviderAttachmentTarget",
+    ).mockReturnValue("fingerprint-1");
     applyPresetSpy
       .mockImplementationOnce((_name, presetName) => {
         callOrder.push(`applyPreset:${presetName}`);

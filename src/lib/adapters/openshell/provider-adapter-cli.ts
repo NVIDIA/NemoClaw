@@ -412,15 +412,26 @@ export function createCliOpenShellProviderAdapter(
     gatewayFlagIndex = 2,
     suppressOutput = false,
     maxBuffer?: number,
-  ) =>
-    run(scopedArgs(args, request.target, gatewayFlagIndex), {
-      ...(env ? { env } : {}),
-      ignoreError: true,
-      ...(maxBuffer ? { maxBuffer } : {}),
-      stdio: ["ignore", "pipe", "pipe"],
-      ...(suppressOutput ? { suppressOutput: true } : {}),
-      timeout: timeoutFor(request),
-    });
+  ): CapturedProviderCommandResult => {
+    try {
+      return run(scopedArgs(args, request.target, gatewayFlagIndex), {
+        ...(env ? { env } : {}),
+        ignoreError: true,
+        ...(maxBuffer ? { maxBuffer } : {}),
+        stdio: ["ignore", "pipe", "pipe"],
+        ...(suppressOutput ? { suppressOutput: true } : {}),
+        timeout: timeoutFor(request),
+      });
+    } catch (error) {
+      return {
+        status: null,
+        error:
+          error instanceof Error
+            ? error
+            : new Error("OpenShell provider command failed before returning a result."),
+      };
+    }
+  };
 
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
