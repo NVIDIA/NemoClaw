@@ -178,6 +178,7 @@ NemoClaw reuses a Windows-host daemon only when it is bound to `127.0.0.1:11434`
 The Windows install and restart actions enforce the same loopback binding and validation check.
 For WSL hosts that do not qualify for managed llama.cpp, accepting Express selects WSL-local Ollama.
 The Windows-host Ollama path remains an explicit manual option and requires Docker Desktop WSL integration.
+For that path, unset `DOCKER_HOST` and use Docker's local `default` context; otherwise, choose WSL-local Ollama.
 When the installer must read the Docker configuration file to determine the effective Docker context and Node.js is unavailable, it defers provider selection until after it installs Node.js.
 It then reads the configuration to finish the managed N1x eligibility check.
 The express selection does not waive system readiness.

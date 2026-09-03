@@ -225,6 +225,8 @@ Choose the WSL-local Ollama install when Docker Desktop cannot reach the protect
 Run only one Ollama instance on port `11434` at a time.
 
 Windows-host Ollama requires Docker Desktop WSL integration.
+It also requires `DOCKER_HOST` to be unset and Docker to use its local `default` context.
+Switch to that context before onboarding, or choose WSL-local Ollama instead.
 When NemoClaw detects native Docker Engine inside WSL, it labels the Windows-host actions as requiring Docker Desktop integration; selecting one prints remediation guidance and returns to the menu, or exits when onboarding runs non-interactively.
 
 Qualified Windows-host Ollama paths use Docker Desktop integration and do not use the authenticated reverse proxy described below.
