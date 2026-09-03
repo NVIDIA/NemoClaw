@@ -131,6 +131,9 @@ if ($authoringText -match '<\s*CustomAction\b' -or
     $authoringText -match '(?i)\b(powershell|pwsh|wsl|bash|ubuntu|docker)\b') {
     Fail-WindowsPackageBuild 'WiX authoring contains a prohibited custom-action or non-native execution path.'
 }
+if ($authoringText -notmatch '<\s*MajorUpgrade\b[^>]*Schedule="afterInstallInitialize"') {
+    Fail-WindowsPackageBuild 'Major-upgrade removal must remain inside MSI rollback protection.'
+}
 $exePackages = @([regex]::Matches($authoringText, '<\s*ExePackage\b[^>]*/>', 'IgnoreCase, Singleline'))
 $systemDrivePreparation = @($exePackages | Where-Object {
     $_.Value -match 'Id="MxcSystemDrivePreparation"' -and

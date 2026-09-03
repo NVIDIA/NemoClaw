@@ -302,7 +302,12 @@ if (-not $qualification.repairRestoredDigest -or
     $qualification.nativeTurn.verdict -cne 'pass' -or
     $qualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
     $qualification.nativeTurn.openClawExecutionMode -cne 'embedded-worker' -or
+    $qualification.nativeTurn.createWatcherStopped -ne $true -or
+    $qualification.nativeTurn.workloadStopped -ne $true -or
+    $qualification.nativeTurn.gatewayStopped -ne $true -or
     $qualification.nativeTurn.sandboxDeleted -ne $true -or
+    $qualification.nativeTurn.sandboxRegistryAbsent -ne $true -or
+    $qualification.nativeTurn.qualificationRootsRemoved -ne $true -or
     @($qualification.nativeExecutions).Count -ne 3 -or
     @($qualification.applicationExecutions).Count -ne 2 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
@@ -557,7 +562,12 @@ public static class NemoClawConsoleVideoEncoder
     if ($recordedQualification.nativeTurn.verdict -cne 'pass' -or
         $recordedQualification.nativeTurn.exactReply -cne 'CHAT_OK' -or
         $recordedQualification.nativeTurn.openClawExecutionMode -cne 'embedded-worker' -or
-        $recordedQualification.nativeTurn.sandboxDeleted -ne $true) {
+        $recordedQualification.nativeTurn.createWatcherStopped -ne $true -or
+        $recordedQualification.nativeTurn.workloadStopped -ne $true -or
+        $recordedQualification.nativeTurn.gatewayStopped -ne $true -or
+        $recordedQualification.nativeTurn.sandboxDeleted -ne $true -or
+        $recordedQualification.nativeTurn.sandboxRegistryAbsent -ne $true -or
+        $recordedQualification.nativeTurn.qualificationRootsRemoved -ne $true) {
         Fail-ProofVideo 'The recorded qualification receipt does not prove the installed NemoClaw turn.'
     }
     $receipt = [pscustomobject]@{

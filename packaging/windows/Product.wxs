@@ -15,6 +15,7 @@
       Description="NemoClaw native Windows ARM64 candidate payload"
       Manufacturer="NVIDIA Corporation" />
     <MajorUpgrade
+      Schedule="afterInstallInitialize"
       DowngradeErrorMessage="A newer NemoClaw native Windows candidate is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 

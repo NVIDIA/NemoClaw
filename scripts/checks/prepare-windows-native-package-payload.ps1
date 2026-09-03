@@ -273,6 +273,7 @@ debug = false
     $receipt = [pscustomobject]@{
         schemaVersion = 1
         classification = 'nemoclaw-native-windows-arm64-runtime-payload'
+        nemoclaw = [pscustomobject]@{ version = $candidateVersion; revision = $candidateRevision }
         node = [pscustomobject]@{ version = $script:NodeVersion; archiveSha256 = $script:NodeArchiveSha256 }
         openClaw = [pscustomobject]@{ version = '2026.7.1' }
         openShell = [pscustomobject]@{ pullRequest = 'NVIDIA/OpenShell#2721'; revision = $script:OpenShellRevision }

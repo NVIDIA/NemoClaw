@@ -138,6 +138,41 @@ async function run(file, args, environment, label, timeout = TIMEOUT_MS) {
   });
 }
 
+async function stopChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  const exited = new Promise((resolve) => child.once("exit", () => resolve(true)));
+  child.kill();
+  return await Promise.race([exited, sleep(5000).then(() => false)]);
+}
+
+async function removeDirectory(directory) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+    } catch {}
+    if (!fs.existsSync(directory)) return true;
+    await sleep(1000);
+  }
+  return false;
+}
+
+async function waitForFileText(file, expected, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file) && fs.readFileSync(file, "utf8").includes(expected)) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
+function jsonContainsExactValue(value, target) {
+  if (value === target) return true;
+  if (Array.isArray(value)) return value.some((item) => jsonContainsExactValue(item, target));
+  if (value !== null && typeof value === "object")
+    return Object.values(value).some((item) => jsonContainsExactValue(item, target));
+  return false;
+}
+
 function quoteYamlPath(value) {
   return JSON.stringify(value.replaceAll("\\", "/"));
 }
@@ -398,8 +433,8 @@ async function main() {
   let result = null;
   let cliEnvironment = gatewayEnvironment;
   let create = null;
-  let createExit = null;
   let createWatcherDetached = false;
+  let logsClosed = false;
   try {
     console.log("NEMOCLAW> Starting installed OpenShell MXC gateway");
     await waitForPort(gatewayPort, gateway);
@@ -462,12 +497,9 @@ async function main() {
     create.once("error", (error) => {
       createSpawnError = error;
     });
-    createExit = new Promise((resolve) =>
-      create.once("close", (code) => {
-        createClosed = true;
-        resolve(code);
-      }),
-    );
+    create.once("close", () => {
+      createClosed = true;
+    });
     console.log("NEMOCLAW> Waiting for the installed OpenClaw agent turn");
     const deadline = Date.now() + TIMEOUT_MS;
     while (
@@ -487,8 +519,7 @@ async function main() {
       fail("installed OpenClaw turn did not publish a result");
     }
     createWatcherDetached = create.exitCode === null;
-    if (createWatcherDetached) create.kill();
-    await Promise.race([createExit, sleep(5000)]);
+    if (!(await stopChild(create))) fail("OpenShell sandbox request watcher did not stop");
     result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
     const turnPassed =
       result.executionMode === "embedded-worker" &&
@@ -507,6 +538,8 @@ async function main() {
       console.error(`NEMOCLAW> Failed sandbox probe result ${failedProbe}`);
       fail("installed OpenClaw turn result was not exact");
     }
+    if (!(await waitForFileText(gatewayLogPath, "MXC agent exec completed successfully")))
+      fail("OpenShell did not report successful MXC workload termination");
     console.log("AGENT> CHAT_OK");
     await run(
       openshell,
@@ -514,16 +547,37 @@ async function main() {
       cliEnvironment,
       "Deleting native MXC sandbox",
     );
-    passed = true;
+    const sandboxList = await run(
+      openshell,
+      ["sandbox", "list", "-o", "json"],
+      cliEnvironment,
+      "Verifying native MXC sandbox registry cleanup",
+    );
+    let sandboxRegistry;
+    try {
+      sandboxRegistry = JSON.parse(sandboxList.stdout.trim());
+    } catch {
+      fail("OpenShell sandbox registry output was not JSON");
+    }
+    if (jsonContainsExactValue(sandboxRegistry, sandboxName))
+      fail("native MXC sandbox remained registered after deletion");
+    if (!(await stopChild(gateway))) fail("OpenShell MXC gateway did not stop");
+    fs.closeSync(gatewayLog);
+    fs.closeSync(gatewayError);
+    logsClosed = true;
+    for (const directory of [runRoot, shareRoot, runtimeRoot]) {
+      if (!(await removeDirectory(directory)))
+        fail(`qualification root remained after cleanup: ${path.basename(directory)}`);
+    }
     fs.writeFileSync(
       receiptPath,
-      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawExecutionMode: result.executionMode, openShellCreateWatcherDetached: createWatcherDetached, artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, verdict: "pass" }, null, 2)}\n`,
+      `${JSON.stringify({ schemaVersion: 1, classification: "installed-nemoclaw-native-windows-turn", architecture: "arm64", backend: "process_container", openClawExecutionMode: result.executionMode, openShellCreateWatcherDetached: createWatcherDetached, createWatcherStopped: true, workloadStopped: true, gatewayStopped: true, artifactStagedAtDriveRoot: true, openClawVersion: result.version, exactReply: result.reply, sandboxDeleted: true, sandboxRegistryAbsent: true, qualificationRootsRemoved: true, verdict: "pass" }, null, 2)}\n`,
       "utf8",
     );
+    passed = true;
     console.log(`NEMOCLAW> PASS receipt=${receiptPath}`);
   } finally {
-    if (create?.exitCode === null) create.kill();
-    if (createExit !== null) await Promise.race([createExit, sleep(5000)]);
+    if (create !== null) await stopChild(create);
     if (!passed) {
       try {
         await run(
@@ -535,33 +589,32 @@ async function main() {
         );
       } catch {}
     }
-    if (gateway.exitCode === null) gateway.kill();
-    await Promise.race([new Promise((resolve) => gateway.once("exit", resolve)), sleep(5000)]);
-    fs.closeSync(gatewayLog);
-    fs.closeSync(gatewayError);
+    await stopChild(gateway);
+    if (!logsClosed) {
+      fs.closeSync(gatewayLog);
+      fs.closeSync(gatewayError);
+      logsClosed = true;
+    }
     if (!passed) {
-      const diagnostic = sanitizedDiagnostic(
-        `${fs.readFileSync(gatewayLogPath, "utf8")}\n${fs.readFileSync(gatewayErrorPath, "utf8")}`,
-        [
+      const diagnosticParts = [gatewayLogPath, gatewayErrorPath]
+        .filter((file) => fs.existsSync(file))
+        .map((file) => fs.readFileSync(file, "utf8"));
+      if (diagnosticParts.length > 0) {
+        const diagnostic = sanitizedDiagnostic(diagnosticParts.join("\n"), [
           [installRoot, "<install-root>"],
           [runtimeRoot, "<runtime-root>"],
           [shareRoot, "<share-root>"],
           [runRoot, "<run-root>"],
-        ],
-      );
-      const diagnosticPath = path.join(evidenceRoot, `native-windows-turn-diagnostic-${runId}.log`);
-      fs.writeFileSync(diagnosticPath, diagnostic, "utf8");
-      console.error(`NEMOCLAW> Sanitized MXC diagnostic\n${diagnostic}`);
+        ]);
+        const diagnosticPath = path.join(
+          evidenceRoot,
+          `native-windows-turn-diagnostic-${runId}.log`,
+        );
+        fs.writeFileSync(diagnosticPath, diagnostic, "utf8");
+        console.error(`NEMOCLAW> Sanitized MXC diagnostic\n${diagnostic}`);
+      }
     }
-    try {
-      fs.rmSync(runRoot, { recursive: true, force: true });
-    } catch {}
-    try {
-      fs.rmSync(shareRoot, { recursive: true, force: true });
-    } catch {}
-    try {
-      fs.rmSync(runtimeRoot, { recursive: true, force: true });
-    } catch {}
+    for (const directory of [runRoot, shareRoot, runtimeRoot]) await removeDirectory(directory);
   }
 }
 

@@ -328,7 +328,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/nemoclaw-native-runtime-payload
-          key: windows-native-runtime-v2-${{ runner.os }}-${{ runner.arch }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/openshell-2721-node-ui.patch') }}
+          key: windows-native-runtime-v2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-openshell-bcd517bbe08c-${{ hashFiles('candidate/package.json', 'candidate/package-lock.json', 'candidate/bin/**', 'candidate/src/**', 'candidate/nemoclaw/**', 'candidate/agents/**', 'candidate/scripts/lib/package-blueprint-runner-runtime.mts', 'candidate/scripts/checks/prepare-windows-native-package-payload.ps1', 'candidate/packaging/windows/NATIVE-PREVIEW.txt', 'candidate/packaging/windows/MXC-LICENSE.txt', 'candidate/packaging/windows/openshell-2721-node-ui.patch') }}
 
       - name: Assemble the native NemoClaw runtime payload
         shell: powershell
@@ -343,6 +343,10 @@ jobs:
               -CandidateCheckout $candidate `
               -OpenShellPayloadRoot "$openshell\target\aarch64-pc-windows-msvc\release" `
               -OutputDirectory $payloadRoot
+          }
+          $payloadReceipt = Get-Content -LiteralPath "$payloadRoot\runtime-payload-receipt.json" -Raw | ConvertFrom-Json
+          if ($payloadReceipt.nemoclaw.revision -cne $env:GITHUB_SHA) {
+            throw 'The cached native NemoClaw runtime payload does not match the exact candidate revision.'
           }
           Copy-Item `
             -LiteralPath "$candidate\packaging\windows\runtime\run-installed-native-turn.mts" `
