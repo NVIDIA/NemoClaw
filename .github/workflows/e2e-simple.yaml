@@ -22,6 +22,11 @@ on:
         required: false
         default: "security-posture-hermes,openshell-gateway-upgrade-v0-0-55-x86-64,openshell-gateway-upgrade-v0-0-55-aarch64,openshell-gateway-upgrade-v0-0-74-x86-64,openshell-gateway-upgrade-v0-0-89-x86-64,shields-retirement-upgrade"
         type: string
+      image_run_id:
+        description: "Optional prior successful Simple E2E run whose exact managed images should be reused"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -37,6 +42,7 @@ jobs:
     outputs:
       build_base: ${{ steps.plan.outputs.build_base }}
       exclude: ${{ steps.plan.outputs.exclude }}
+      image_run_id: ${{ steps.plan.outputs.image_run_id }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
       - name: Require a repository maintainer
@@ -62,6 +68,7 @@ jobs:
       - id: plan
         name: Select tests and classify base-image work
         env:
+          IMAGE_RUN_ID: ${{ inputs.image_run_id }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         shell: bash
@@ -103,11 +110,19 @@ jobs:
           base_changed="$(grep -E '^(Dockerfile[.]base|agents/hermes/Dockerfile[.]base|agents/hermes/(security-dependencies|runtime-boundaries|whatsapp-proxy)[.]patch|agents/hermes/hindsight-client-probe-requirements[.]txt|agents/langchain-deepagents-code/(Dockerfile[.]base|requirements[.]lock)|agents/openclaw/(openclaw-runtime|mcporter-runtime)/|ci/npm-audit-exceptions[.]json|nemoclaw-blueprint/blueprint[.]yaml|scripts/security/|scripts/checks/download-hermes-source-archive[.]sh|scripts/lib/(bundled-npm-package|openclaw-npm-remediation|patch-bundled-npm-ip-address|reviewed-npm-archive|reviewed-npm-audit)[.]mts|scripts/lib/sandbox-rlimits[.]sh|scripts/(patch-bundled-npm-brace-expansion|patch-bundled-npm-tar|upgrade-bundled-npm)[.]mts)$' <<<"$changed" || true)"
           build_base=false
           [[ -z "$base_changed" ]] || build_base=true
+          if [[ -n "$IMAGE_RUN_ID" ]]; then
+            [[ "$IMAGE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::image_run_id must be a positive workflow run ID"
+              exit 1
+            }
+            build_base=false
+          fi
 
           {
             printf 'sha=%s\n' "$sha"
             printf 'exclude=%s\n' "$exclude"
             printf 'build_base=%s\n' "$build_base"
+            printf 'image_run_id=%s\n' "$IMAGE_RUN_ID"
           } >>"$GITHUB_OUTPUT"
           {
             # shellcheck disable=SC2016
@@ -122,7 +137,7 @@ jobs:
 
   base-images:
     needs: plan
-    if: ${{ needs.plan.outputs.build_base == 'true' }}
+    if: ${{ needs.plan.outputs.build_base == 'true' && needs.plan.outputs.image_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
@@ -192,7 +207,7 @@ jobs:
 
   managed-images:
     needs: [plan, base-images]
-    if: ${{ always() && needs.plan.result == 'success' && (needs.base-images.result == 'success' || needs.base-images.result == 'skipped') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.image_run_id == '' && (needs.base-images.result == 'success' || needs.base-images.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
@@ -303,17 +318,36 @@ jobs:
 
   catalog:
     needs: [plan, managed-images]
+    if: ${{ always() && needs.plan.result == 'success' && (needs.managed-images.result == 'success' || (needs.managed-images.result == 'skipped' && needs.plan.outputs.image_run_id != '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: ${{ needs.plan.outputs.image_run_id == '' }}
         with:
           pattern: simple-managed-*
           path: ${{ runner.temp }}/managed-contracts
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: ${{ needs.plan.outputs.image_run_id != '' }}
+        with:
+          pattern: simple-managed-*
+          path: ${{ runner.temp }}/managed-contracts
+          run-id: ${{ needs.plan.outputs.image_run_id }}
+          github-token: ${{ github.token }}
+
       - name: Assemble exact managed-image catalog
+        env:
+          IMAGE_RUN_ID: ${{ needs.plan.outputs.image_run_id }}
+          TARGET_SHA: ${{ needs.plan.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -321,6 +355,20 @@ jobs:
           find "$RUNNER_TEMP/managed-contracts" -name contract.json -print0 \
             | xargs -0 jq -s 'if length == 3 then map({key:.agent,value:.}) | from_entries else error("expected three managed contracts") end' \
             >"$RUNNER_TEMP/catalog/catalog.json"
+          source_revision="$(jq -er '[.[].source.revision] | unique | if length == 1 then .[0] else error("mixed source revisions") end' "$RUNNER_TEMP/catalog/catalog.json")"
+          [[ "$source_revision" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$source_revision" "$TARGET_SHA"
+          if [[ "$source_revision" != "$TARGET_SHA" ]]; then
+            changed="$(git diff --name-only --diff-filter=ACMRD "$source_revision" "$TARGET_SHA")"
+            [[ "$changed" == ".github/workflows/e2e-simple.yaml" ]] || {
+              echo "::error::Reused images are not source-equivalent to the requested commit"
+              exit 1
+            }
+          fi
+          if [[ -n "$IMAGE_RUN_ID" ]]; then
+            jq -e --arg prefix "ghrun-$IMAGE_RUN_ID-" 'all(.[]; .source.cohort | startswith($prefix))' \
+              "$RUNNER_TEMP/catalog/catalog.json" >/dev/null
+          fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -331,6 +379,7 @@ jobs:
 
   test:
     needs: [plan, catalog]
+    if: ${{ always() && needs.plan.result == 'success' && needs.catalog.result == 'success' }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
