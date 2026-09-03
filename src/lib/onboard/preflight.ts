@@ -19,6 +19,7 @@ import {
   dockerDesktopCredentialHelperResponds,
   readDockerCredentialStore,
 } from "../adapters/docker/credential-store";
+import { DOCKER_HOST_ADVISORY_CHECKS } from "../advisories/checks/host/docker";
 import { ADVISORY_CHECKS } from "../advisories/registry";
 import { runAdvisories } from "../advisories/runner";
 import { DASHBOARD_PORT } from "../core/ports";
@@ -48,6 +49,7 @@ export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 // runner.ts still uses CommonJS-style exports — use require here.
 const { run, runCapture } = require("../runner");
+const DOCKER_HOST_ADVISORY_IDS = new Set(DOCKER_HOST_ADVISORY_CHECKS.map(({ id }) => id));
 
 type RunCaptureFn = typeof import("../runner").runCapture;
 type RunFn = typeof import("../runner").run;
@@ -743,12 +745,14 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
 
 export function planHostAdvisories(
   assessment: HostAssessment,
-  options: { resuming?: boolean } = {},
+  options: { providerOwnsHostReadiness?: boolean; resuming?: boolean } = {},
 ) {
-  return runAdvisories(ADVISORY_CHECKS, assessment, {
+  const advisories = runAdvisories(ADVISORY_CHECKS, assessment, {
     phase: "preflight.host",
     resuming: options.resuming,
   }).advisories;
+  if (!options.providerOwnsHostReadiness) return advisories;
+  return advisories.filter(({ id }) => !DOCKER_HOST_ADVISORY_IDS.has(id));
 }
 
 // ── Port availability ────────────────────────────────────────────

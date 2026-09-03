@@ -4,7 +4,6 @@
 import { findDashboardForwardOwner } from "./dashboard-port";
 import { resolveGatewayName } from "./gateway-binding";
 import type { InferenceRouteState } from "./inference-route";
-import type { PortProbeResult } from "./preflight";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
 import {
   createProviderRecoveryReceiptLedger,
@@ -213,7 +212,6 @@ export type AuthoritativeRebuildTargetDeps = {
   assertGatewayReadiness(): unknown | Promise<unknown>;
   inferenceRouteState(provider: string, model: string): InferenceRouteState;
   captureForwardList(): string | null;
-  checkPort(port: number): Promise<PortProbeResult>;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -259,14 +257,9 @@ export async function preflightAuthoritativeRebuildTarget(
     if (owner && owner !== target.sandboxName) {
       fail(`Dashboard port ${target.controlUiPort} belongs to sandbox '${owner}'.`);
     }
-    if (owner) return;
-    const portCheck = await deps.checkPort(target.controlUiPort);
-    if (!portCheck.ok) {
-      const blocker = portCheck.process
-        ? `${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`
-        : portCheck.reason;
-      fail(`Dashboard port ${target.controlUiPort} is occupied by ${blocker}.`);
-    }
+    // A direct ForwardTcp process has no legacy list row. Rebuild makes the
+    // sandbox unavailable first; the natural OpenShell lifecycle releases its
+    // port. The replacement launch then refuses any port that stayed occupied.
   } finally {
     if (previousGateway === undefined) delete env.OPENSHELL_GATEWAY;
     else env.OPENSHELL_GATEWAY = previousGateway;
