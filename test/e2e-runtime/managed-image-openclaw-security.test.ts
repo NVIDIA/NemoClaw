@@ -70,6 +70,125 @@ if source.count(needle) != 1:
 Path("/tmp/normalizer-handoff-race.py").write_text(source.replace(needle, replacement))
 `;
 
+const ROOT_BOOT_RECOVERY_PROBE = String.raw`
+  set -euo pipefail
+  trap 'printf "ROOT_BOOT_RECLAIM_FAIL line=%s status=%s\n" "$LINENO" "$?" >&2' ERR
+  {
+    sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^classify_openclaw_config_seal() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^reclaim_collapsed_mutable_config() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^openclaw_config_dir_owner() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^prepare_openclaw_config_startup() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/reclaim.sh
+  test -s /tmp/reclaim.sh
+  source /tmp/reclaim.sh
+
+  chown sandbox:sandbox /sandbox
+  chmod 755 /sandbox
+  chown root:root /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  chmod 700 /sandbox/.openclaw
+  chmod g-s /sandbox/.openclaw
+  chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  run_openclaw_config_guard() {
+    case "$1" in
+      revoke-startup-ready) return 0 ;;
+      recover)
+        [ "$(stat -c "%a %U:%G" /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]
+        return
+        ;;
+      *) return 90 ;;
+    esac
+  }
+  prepare_openclaw_config_startup
+  [ "$(stat -c "%a %U:%G" /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]
+  [ "$(stat -c "%a %U:%G" /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]
+  [ "$(stat -c "%a %U:%G" /sandbox/.openclaw/.config-hash)" = "660 sandbox:sandbox" ]
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json; touch /sandbox/.openclaw/reclaim-write-check"
+
+  chown root:root /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  chmod 755 /sandbox/.openclaw
+  chmod g-s /sandbox/.openclaw
+  chmod 444 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  sealed_before=$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)
+  normalize_mutable_config_perms
+  [ "$sealed_before" = "$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)" ]
+  ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf x >>/sandbox/.openclaw/openclaw.json"
+
+  chmod 644 /sandbox/.openclaw/openclaw.json
+  ambiguous_before=$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$ambiguous_before" = "$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)" ]
+
+  chown root:sandbox /sandbox
+  chmod 1775 /sandbox
+  chmod 700 /sandbox/.openclaw
+  chmod g-s /sandbox/.openclaw
+  chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  parent_before=$(stat -c "%u %g %a" /sandbox /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$parent_before" = "$(stat -c "%u %g %a" /sandbox /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)" ]
+  chown sandbox:sandbox /sandbox
+  chmod 755 /sandbox
+
+  rm -f /sandbox/.openclaw/openclaw.json
+  printf "{}\n" >/sandbox/reclaim-hardlink-target
+  chmod 600 /sandbox/reclaim-hardlink-target
+  chown root:root /sandbox/reclaim-hardlink-target /sandbox/.openclaw/.config-hash /sandbox/.openclaw
+  chmod 600 /sandbox/.openclaw/.config-hash
+  chmod 700 /sandbox/.openclaw
+  chmod g-s /sandbox/.openclaw
+  ln /sandbox/reclaim-hardlink-target /sandbox/.openclaw/openclaw.json
+  hardlink_before=$(stat -c "%u %g %a %h" /sandbox/reclaim-hardlink-target)
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$hardlink_before" = "$(stat -c "%u %g %a %h" /sandbox/reclaim-hardlink-target)" ]
+
+  rm -f /sandbox/.openclaw/openclaw.json
+  printf "protected\n" >/sandbox/reclaim-symlink-target
+  chmod 600 /sandbox/reclaim-symlink-target
+  chown root:root /sandbox/reclaim-symlink-target
+  ln -s /sandbox/reclaim-symlink-target /sandbox/.openclaw/openclaw.json
+  symlink_before=$(stat -c "%u %g %a" /sandbox/reclaim-symlink-target)
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$symlink_before" = "$(stat -c "%u %g %a" /sandbox/reclaim-symlink-target)" ]
+  [ -L /sandbox/.openclaw/openclaw.json ]
+
+  rm -f /sandbox/.openclaw/openclaw.json
+  printf "{}\n" >/sandbox/.openclaw/openclaw.json
+  chown root:root /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  chmod 700 /sandbox/.openclaw
+  chmod g-s /sandbox/.openclaw
+  chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  python3() {
+    if [ "${"${2:-}"}" = "-" ] && [ ! -e /tmp/reclaim-open-raced ]; then
+      command python3 "$@"
+      local classify_rc=$?
+      : >/tmp/reclaim-open-raced
+      mv /sandbox/.openclaw /sandbox/.openclaw-raced
+      return "$classify_rc"
+    fi
+    command python3 "$@"
+  }
+  race_output=""
+  rc=0
+  race_output=$(normalize_mutable_config_perms 2>&1) || rc=$?
+  [ "$rc" -eq 1 ]
+  echo "$race_output" | grep -q "descriptor-safe reclaim detected an unsafe link, race, owner, or metadata state"
+  [ ! -e /sandbox/.openclaw ]
+  [ "$(stat -c "%u %g %a" /sandbox/.openclaw-raced)" = "0 0 700" ]
+  [ "$(stat -c "%u %g %a" /sandbox/.openclaw-raced/openclaw.json)" = "0 0 600" ]
+  [ "$(stat -c "%u %g %a" /sandbox/.openclaw-raced/.config-hash)" = "0 0 600" ]
+  printf "ROOT_BOOT_RECLAIM_OK\n"
+`;
+
 function managedImageCohort(): string {
   return (
     process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ??
@@ -260,6 +379,38 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
     );
 
     progress.phase("verify packaged configuration repair and refusal");
+    await runContainer(
+      host,
+      image,
+      [
+        '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
+        "source /tmp/normalize.sh",
+        `before="$(stat -c '%u %g %a' /sandbox/.openclaw)"`,
+        "rc=0",
+        "output=$(normalize_mutable_config_perms 2>&1) || rc=$?",
+        '[ "$rc" -eq 1 ]',
+        `[ "$before" = "$(stat -c '%u %g %a' /sandbox/.openclaw)" ]`,
+        'grep -q "CAP_SETGID" <<<"$output"',
+      ].join("\n"),
+      "managed-image-openclaw-missing-cap-setgid",
+      ["--cap-drop=CAP_DAC_OVERRIDE", "--cap-drop=CAP_SETGID"],
+    );
+    await runContainer(
+      host,
+      image,
+      [
+        '{ sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start; } >/tmp/normalize.sh',
+        "source /tmp/normalize.sh",
+        `before="$(stat -c '%u %g %a' /sandbox/.openclaw)"`,
+        "rc=0",
+        "output=$(normalize_mutable_config_perms 2>&1) || rc=$?",
+        '[ "$rc" -eq 1 ]',
+        `[ "$before" = "$(stat -c '%u %g %a' /sandbox/.openclaw)" ]`,
+        'grep -q "CAP_SETUID" <<<"$output"',
+      ].join("\n"),
+      "managed-image-openclaw-missing-cap-setuid",
+      ["--cap-drop=CAP_DAC_OVERRIDE", "--cap-drop=CAP_SETUID"],
+    );
     await runContainer(
       host,
       image,

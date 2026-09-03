@@ -213,10 +213,12 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
       },
     );
     expect(
-      job.steps?.find((step) => step.name === "Remove managed-image security volumes"),
+      job.steps?.find((step) => step.name === "Remove managed-image security resources"),
     ).toMatchObject({
       if: "${{ always() }}",
-      run: expect.stringMatching(/managed-image\.cohort[\s\S]*docker volume rm/u),
+      run: expect.stringMatching(
+        /managed-image\.cohort[\s\S]*docker ps -aq[\s\S]*docker rm -f[\s\S]*docker volume rm -f[\s\S]*docker ps -aq[\s\S]*docker volume ls -q[\s\S]*cleanup_failed/u,
+      ),
     });
     expect(
       job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),

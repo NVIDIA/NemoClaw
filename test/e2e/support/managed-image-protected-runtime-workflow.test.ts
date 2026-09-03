@@ -451,6 +451,18 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it.each([
+    ["Validate OpenClaw managed-image security boundary", "run", "true"],
+    ["Validate OpenClaw managed-image security boundary", "continue-on-error", true],
+    ["Validate managed-image glibc probe lifecycle", "if", "always()"],
+    ["Validate managed-image glibc probe lifecycle", "continue-on-error", true],
+  ] as const)("rejects weakened protected consumer step %s %s", (name, key, value) => {
+    const candidate = workflow();
+    namedMultiarchStep(candidate, name)[key] = value;
+
+    expect(validateManagedImageMultiarchWorkflow(candidate)).not.toEqual([]);
+  });
+
   it("requires one amd64 build-cache upload", () => {
     const value = workflow();
     const job = multiarchJob(value);

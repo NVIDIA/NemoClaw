@@ -408,8 +408,31 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "compression-level": 0,
     overwrite: true,
   });
-  requireStep(errors, steps, "Validate OpenClaw managed-image security boundary");
-  requireStep(errors, steps, "Validate managed-image glibc probe lifecycle");
+  const security = requireStep(errors, steps, "Validate OpenClaw managed-image security boundary");
+  if (security?.["continue-on-error"] !== undefined) {
+    errors.push(`${JOB_ID} managed-image security boundary must not continue on error`);
+  }
+  requireFragments(errors, security, [
+    "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN",
+    "npx vitest run --project integration",
+    "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+  ]);
+  const glibc = requireStep(errors, steps, "Validate managed-image glibc probe lifecycle");
+  if (glibc?.if !== "${{ !cancelled() }}") {
+    errors.push(`${JOB_ID} managed-image glibc probe must run unless cancelled`);
+  }
+  if (glibc?.["continue-on-error"] !== undefined) {
+    errors.push(`${JOB_ID} managed-image glibc probe must not continue on error`);
+  }
+  requireFragments(errors, glibc, [
+    "export NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E=1",
+    "NEMOCLAW_TEST_IMAGE=",
+    "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN",
+    "npx vitest run --project integration",
+    "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+  ]);
   requireStep(errors, steps, "Upload protected managed-image evidence");
   requireStep(errors, steps, "Clean up Docker auth");
   requireOrderedSteps(errors, steps, [
