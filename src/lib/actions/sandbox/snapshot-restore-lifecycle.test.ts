@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -198,7 +199,16 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
   });
 
   it("preserves an occupied recovery path and reports an unused location before retry (#10756)", async () => {
-    const occupiedRecoveryPath = "/sandbox/.nemoclaw-mcp.json.recovery";
+    const sandboxRoot = path.join(process.env.HOME!, "sandbox");
+    const occupiedRecoveryPath = path.join(sandboxRoot, ".nemoclaw-mcp.json.recovery");
+    const projectionPath = path.join(sandboxRoot, ".deepagents", ".nemoclaw-mcp.json");
+    const shellInjectionMarker = path.join(process.env.HOME!, "unexpected-shell-command");
+    const sandboxName = `alpha $(touch ${shellInjectionMarker})`;
+    fs.mkdirSync(occupiedRecoveryPath, { recursive: true });
+    fs.writeFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "existing recovery\n");
+    fs.mkdirSync(projectionPath, { recursive: true });
+    fs.writeFileSync(path.join(projectionPath, "managed.json"), '{"managed":true}\n');
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set([sandboxName]));
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
@@ -206,7 +216,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       backupPath: "/tmp/backup-alpha",
     });
     f.getSandboxMock.mockReturnValue({
-      name: "alpha",
+      name: sandboxName,
       agent: "langchain-deepagents-code",
       mcp: {
         bridges: {
@@ -230,36 +240,63 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       .mockImplementationOnce(() => {});
     const { runSandboxSnapshot, SnapshotCommandError } = await import("./snapshot");
 
-    const failure = await runSandboxSnapshot("alpha", { kind: "restore" }).catch(
+    const failure = await runSandboxSnapshot(sandboxName, { kind: "restore" }).catch(
       (error: unknown) => error,
     );
     expect(failure).toBeInstanceOf(SnapshotCommandError);
     expect(failure).toMatchObject({
       exitCode: 1,
       lines: [
-        "Snapshot files were not restored into 'alpha'.",
+        `Snapshot files were not restored into '${sandboxName}'.`,
         expect.stringContaining("managed MCP projection path is a directory"),
         expect.any(String),
       ],
     });
-    const recoveryAction = (failure as InstanceType<typeof SnapshotCommandError>).lines[2];
-    expect(recoveryAction).toContain(
-      `recovery_dir=$(mktemp -d ${occupiedRecoveryPath}.XXXXXX)`,
+    const recoveryGuidance = (failure as InstanceType<typeof SnapshotCommandError>).lines[2];
+    const recoveryAction = recoveryGuidance.match(/run `([^`]+)`/)?.[1] ?? "";
+    expect(recoveryAction).not.toBe("");
+    const parsedRecoveryAction = spawnSync("sh", [
+      "-c",
+      `nemoclaw() { printf "%s\\0" "$@"; }\n${recoveryAction}`,
+    ]);
+    expect(parsedRecoveryAction.status, parsedRecoveryAction.stderr.toString()).toBe(0);
+    const recoveryArguments = parsedRecoveryAction.stdout.toString().split("\0").filter(Boolean);
+    expect(recoveryArguments).toEqual([sandboxName, "exec", "--", "sh", "-c", expect.any(String)]);
+    expect(fs.existsSync(shellInjectionMarker)).toBe(false);
+
+    const recoveryScript = recoveryArguments[5].replaceAll("/sandbox", sandboxRoot);
+    const recoveryResult = spawnSync("sh", ["-c", recoveryScript], { encoding: "utf8" });
+    expect(recoveryResult.status, recoveryResult.stderr).toBe(0);
+    expect(fs.existsSync(projectionPath)).toBe(false);
+    expect(fs.readFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "utf8")).toBe(
+      "existing recovery\n",
     );
-    expect(recoveryAction).toContain(
+    const recoveryDirectories = fs
+      .readdirSync(sandboxRoot)
+      .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery."));
+    expect(recoveryDirectories).toHaveLength(1);
+    const recoveredProjectionPath = path.join(sandboxRoot, recoveryDirectories[0], "projection");
+    expect(fs.readFileSync(path.join(recoveredProjectionPath, "managed.json"), "utf8")).toBe(
+      '{"managed":true}\n',
+    );
+    expect(recoveryResult.stdout).toBe(
+      `Moved managed MCP projection to ${recoveredProjectionPath}\n`,
+    );
+    expect(recoveryScript).toContain(`recovery_dir=$(mktemp -d ${occupiedRecoveryPath}.XXXXXX)`);
+    expect(recoveryGuidance).toContain(
       'mv -- /sandbox/.deepagents/.nemoclaw-mcp.json "$recovery_dir/projection"',
     );
-    expect(recoveryAction).toContain(
+    expect(recoveryGuidance).toContain(
       'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
     );
-    expect(recoveryAction).not.toContain(
-      `mv -- /sandbox/.deepagents/.nemoclaw-mcp.json ${occupiedRecoveryPath}`,
+    expect(recoveryGuidance).not.toContain(
+      "mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery",
     );
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
 
-    await runSandboxSnapshot("alpha", { kind: "restore" });
+    await runSandboxSnapshot(sandboxName, { kind: "restore" });
 
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith(sandboxName, "/tmp/backup-alpha");
   });
 
   it("repairs mutable permissions after restoring OpenClaw config", async () => {

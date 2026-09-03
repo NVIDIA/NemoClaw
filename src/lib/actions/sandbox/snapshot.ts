@@ -123,7 +123,7 @@ function deepAgentsManagedProjectionRecoveryCommand(sandboxName: string): string
     'mv -- /sandbox/.deepagents/.nemoclaw-mcp.json "$recovery_dir/projection"',
     'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
   ].join(" && ");
-  return `${CLI_NAME} ${sandboxName} exec -- sh -c ${shellQuote(script)}`;
+  return `${CLI_NAME} ${shellQuote(sandboxName)} exec -- sh -c ${shellQuote(script)}`;
 }
 
 export type SnapshotRequest =
