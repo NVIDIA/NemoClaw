@@ -18,13 +18,13 @@ import {
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
-  buildSpecialistInvestigateTurn,
+  ADVISOR_SPECIALISTS,
   parseAdvisorInterest,
   type AdvisorInterest,
-} from "./specialists.mts";
-import { createTerminologyToolController } from "./terminology.mts";
+} from "./specialist-catalog.mts";
+import { buildSpecialistInvestigateTurn } from "./specialists.mts";
+import { specialistCustomTools } from "./specialist-tools.mts";
 import { SPECIALIST_DIFF_FILE_NAME } from "./specialist-context.mts";
 import { buildSystemPrompt, readTrustedControlledWords } from "./trusted-guidance.mts";
 import {
@@ -38,21 +38,10 @@ import {
 
 const CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
 
-export function documentationSpecialistTools(
-  interest: AdvisorInterest,
-  { baseRef, headRef, cwd = process.cwd() }: { baseRef: string; headRef: string; cwd?: string },
-): ToolDefinition[] {
-  return interest === "documentation"
-    ? createTerminologyToolController({ baseRef, headRef, cwd }).tools
-    : [];
-}
-
 export function renderSpecialistSummary(interest: AdvisorInterest, text: string): string {
-  const title = interest
-    .split("-")
-    .map((part) => part[0]!.toUpperCase() + part.slice(1))
-    .join(" / ");
-  return `# PR Review Advisor — ${title} specialist\n\n> Complete specialist review for maintainers and review agents.\n\n${text.trim()}\n`;
+  const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);
+  if (!specialist) throw new Error(`Unknown specialist: ${interest}`);
+  return `# PR Review Advisor — ${specialist.label} specialist\n\n> Complete specialist review for maintainers and review agents.\n\n${text.trim()}\n`;
 }
 
 export function writeSpecialistSummary(
@@ -73,7 +62,7 @@ export function runSpecialistAdvisor(
 ): Promise<RunAdvisorResult> {
   return run({
     ...options,
-    customTools: documentationSpecialistTools(interest, { ...refs, cwd: options.cwd }),
+    customTools: specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
   });
 }
 
@@ -133,6 +122,7 @@ async function main(): Promise<void> {
     { baseRef, headRef },
     {
       cwd: process.cwd(),
+      additionalReadRoots: [path.dirname(diffPath)],
       promptTurns: [turn],
       systemPrompt: buildSystemPrompt(),
       configDir,

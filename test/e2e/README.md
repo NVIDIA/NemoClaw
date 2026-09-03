@@ -185,10 +185,9 @@ registry writes disabled. After the build, it scans the completed image for
 node-tar and verifies the sandbox-readable installed files. It then uploads the
 compressed image as the one-day `hermes-isolation-image` artifact.
 
-The 90-minute `test-hermes-sandbox-image` job and the
-`state-dir-guard-metadata` job download and load that artifact instead of
-rebuilding the image. Within the Hermes test job, the secret-boundary and
-root-entrypoint steps have 45- and 30-minute budgets respectively.
+The 90-minute `test-hermes-sandbox-image` job downloads and loads that artifact instead of
+rebuilding the image.
+Within that job, the secret-boundary and root-entrypoint steps have 45- and 30-minute budgets respectively.
 
 The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
@@ -714,7 +713,7 @@ If visibility remains stale, cleanup treats the file as active.
 Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
-The fallback covers agent-turn latency, Hermes inference switch and shields,
+The fallback covers agent-turn latency and Hermes inference switch,
 the Hermes stable MCP shard, the Hermes common-egress and channel
 stop/start shards, the dashboard-bearing `hermes-e2e` lane, `hermes-discord`,
 and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
@@ -736,7 +735,6 @@ lanes:
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - the Anthropic-compatible `hermes-inference-switch` mode;
-- `hermes-shields-config`;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - `rebuild-hermes`;
 - `rebuild-hermes-stale-base`;
@@ -1041,7 +1039,7 @@ request resets that observation window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 12 routed workflow lane identities / 14
+telemetry for 11 routed workflow lane identities / 13
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
@@ -1055,7 +1053,6 @@ concrete job executions.
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
 - `hermes-inference-switch` with the `anthropic` mode
-- `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
 The two extra instrumented executions come from the 3 `common-egress-agent`

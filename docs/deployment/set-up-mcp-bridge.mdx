@@ -145,17 +145,6 @@ mcp_servers:
 The `v12_` prefix is an illustrative OpenShell credential revision.
 Hermes records the revision that the readiness check proves for the live provider.
 
-### Prepare Hermes for Mutation
-
-When Hermes shields are up, run `nemohermes <sandbox> shields down --timeout 15m --reason "MCP maintenance"` before `mcp add`, `mcp restart`, `mcp remove`, or destroy, then restore shields if the sandbox still exists.
-Choose a window long enough for the command, allowing at least 15 minutes per configured server for an all-server restart or destroy.
-
-Rebuild opens and owns a separate 30-minute crash-recoverable window automatically.
-NemoClaw checks host shields posture before provider, policy, attachment, or adapter mutation, and the in-sandbox helper checks the config again at commit time.
-
-If shields rise between those checks, the command fails instead of writing locked config; lower shields and retry the durable MCP transaction to converge any earlier provider or policy stage.
-`mcp list` and `mcp status` are read-only and do not require lowering shields.
-
 ### Verify the Hermes Reload
 
 The validated transaction helper runs as a one-shot ordinary `openshell sandbox exec --no-tty` command with a fixed executable and argument shape.
@@ -169,17 +158,12 @@ The command carries no MCP traffic or raw service credential, and its payload co
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
-### Prepare OpenClaw for Mutation
-
-OpenClaw stores its managed MCP servers in the Mcporter config under the `workspace` state root, which lockdown re-owns to `root` and makes unwritable from inside the sandbox.
-When OpenClaw shields are up, run `nemoclaw <sandbox> shields down --timeout 15m --reason "MCP maintenance"` before `mcp add`, `mcp restart`, `mcp remove`, or destroy, then restore shields if the sandbox still exists.
-
-`--force` does not bypass the refusal for `mcp add`, `mcp restart`, or `mcp remove`: the posture is checked before any provider, policy, or adapter side effect, so ownership state is preserved for a retry once shields are down.
+OpenClaw stores its managed MCP servers in the Mcporter config under the writable `workspace` state root.
+Use the host-side MCP commands so provider, policy, attachment, and adapter state change in one serialized transaction.
 
 `destroy --force` can continue only when every retained MCP adapter entry is an OpenClaw Mcporter entry.
-It reports the refusal, then continues to the workspace wipe and sandbox deletion.
 NemoClaw keeps the managed MCP policy and provider until OpenShell confirms deletion.
-If deletion fails, run `destroy --force` again, or lower Shields and rerun ordinary destroy.
+If deletion fails, run `destroy --force` again.
 Do not onboard a same-name replacement.
 A successful workspace wipe removes the adapter entry.
 If the wipe does not complete successfully, use a different sandbox name to avoid the retained config.

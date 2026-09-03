@@ -57,7 +57,7 @@
   },
   {
     "name": "NEMOCLAW_TEST_STATE_DIR",
-    "reason": "Internal Vitest-only state root that keeps lifecycle locks and Shields artifacts out of the caller's real NemoClaw state. The production resolver honors it only while Vitest is active."
+    "reason": "Internal Vitest-only state root that keeps lifecycle locks out of the caller's real NemoClaw state. The production resolver honors it only while Vitest is active."
   },
   {
     "name": "NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS",

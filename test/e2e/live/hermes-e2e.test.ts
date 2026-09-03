@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -207,7 +208,7 @@ async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promis
 test(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
   {
-    timeout: HERMES_E2E_TEST_TIMEOUT_MS,
+    timeout: testTimeout(HERMES_E2E_TEST_TIMEOUT_MS),
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
   async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
@@ -312,7 +313,7 @@ test(
       cwd: REPO_ROOT,
       env,
       redactionValues,
-      timeoutMs: 60 * 60_000,
+      timeoutMs: execTimeout(60 * 60_000),
     });
     await (install.exitCode === 0
       ? Promise.resolve()
@@ -794,8 +795,8 @@ test(
     expect(exhaustedReasoningBudget(sandboxChatJson)).toBe(false);
     expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
 
-    progress.phase("read logs and, under root supervision, validate locked configuration");
-    // Phase 6: host CLI diagnostics and root-supervised configuration integrity.
+    progress.phase("read logs and validate Hermes configuration integrity");
+    // Phase 6: host CLI diagnostics and configuration integrity.
     const logs = await host.command("nemoclaw", [SANDBOX_NAME, "logs"], {
       artifactName: "phase-6-nemoclaw-logs",
       env: commandEnv(),
@@ -807,82 +808,62 @@ test(
     if (rootSupervisorTopology) {
       expect(recoveredRootGatewayPid).toBeDefined();
 
-      // Root-supervised Hermes has a separate locked-configuration boundary.
-      // Keep one live refusal proof in the topology that owns that behavior.
-      const shieldsUp = await host.command("nemohermes", [SANDBOX_NAME, "shields", "up"], {
-        artifactName: "phase-6-nemohermes-shields-up",
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      });
-      expect(shieldsUp.exitCode, resultText(shieldsUp)).toBe(0);
-
       try {
-        const introduceLockedDrift = await sandbox.execShell(
+        const introduceConfigDrift = await sandbox.execShell(
           SANDBOX_NAME,
           trustedSandboxShellScript(
             [
               "set -eu",
-              'for path in /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do chattr -i "$path" 2>/dev/null || true; done',
-              "chmod u+w /sandbox/.hermes/.env",
-              'printf "\\nNEMOCLAW_E2E_LOCKED_DRIFT_MARKER=1\\n" >> /sandbox/.hermes/.env',
-              "chown root:root /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-              "chmod 755 /sandbox/.hermes",
-              "chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
+              "cp /sandbox/.hermes/.env /tmp/nemoclaw-e2e-hermes-env-before-drift",
+              'printf "\\nNEMOCLAW_E2E_CONFIG_DRIFT_MARKER=1\\n" >> /sandbox/.hermes/.env',
             ].join("; "),
           ),
           {
-            artifactName: "phase-6-introduce-locked-hermes-configuration-drift",
+            artifactName: "phase-6-introduce-hermes-configuration-drift",
             env: commandEnv(),
             timeoutMs: 30_000,
           },
         );
-        expect(introduceLockedDrift.exitCode, resultText(introduceLockedDrift)).toBe(0);
+        expect(introduceConfigDrift.exitCode, resultText(introduceConfigDrift)).toBe(0);
 
-        const refuseLockedDrift = await host.command(
+        const refuseConfigDrift = await host.command(
           "nemohermes",
           [SANDBOX_NAME, "gateway", "restart", "--quiet"],
           {
-            artifactName: "phase-6-refuse-locked-hermes-configuration-drift",
+            artifactName: "phase-6-refuse-hermes-configuration-drift",
             env: commandEnv(),
             timeoutMs: 180_000,
           },
         );
-        expect(refuseLockedDrift.exitCode, resultText(refuseLockedDrift)).not.toBe(0);
-        expect(resultText(refuseLockedDrift)).toMatch(
+        expect(refuseConfigDrift.exitCode, resultText(refuseConfigDrift)).not.toBe(0);
+        expect(resultText(refuseConfigDrift)).toMatch(
           /config hash mismatch|GATEWAY_CONFIG_HASH_MISMATCH/,
         );
 
-        const afterLockedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-          artifactName: "phase-6-hermes-gateway-after-locked-configuration-refusal",
+        const afterConfigRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
+          artifactName: "phase-6-hermes-gateway-after-configuration-refusal",
           env: commandEnv(),
           timeoutMs: 30_000,
         });
-        expect(afterLockedRefusal.exitCode, resultText(afterLockedRefusal)).toBe(0);
-        expect(parseGatewayProcess(afterLockedRefusal.stdout).pid).toBe(recoveredRootGatewayPid);
+        expect(afterConfigRefusal.exitCode, resultText(afterConfigRefusal)).toBe(0);
+        expect(parseGatewayProcess(afterConfigRefusal.stdout).pid).toBe(recoveredRootGatewayPid);
       } finally {
-        const restoreLockedConfiguration = await sandbox.execShell(
+        const restoreConfiguration = await sandbox.execShell(
           SANDBOX_NAME,
           trustedSandboxShellScript(
             [
               "set -eu",
-              'for path in /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do chattr -i "$path" 2>/dev/null || true; done',
-              "chmod u+w /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-              'python3 -c \'from pathlib import Path; p=Path("/sandbox/.hermes/.env"); lines=[line for line in p.read_text(encoding="utf-8").splitlines() if not line.startswith("NEMOCLAW_E2E_LOCKED_DRIFT_MARKER=")]; p.write_text("\\n".join(lines).rstrip()+"\\n", encoding="utf-8")\'',
-              "sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env > /etc/nemoclaw/hermes.config-hash",
-              "sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env > /sandbox/.hermes/.config-hash",
-              "chown root:root /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-              "chmod 755 /sandbox/.hermes",
-              "chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-              'for path in /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do chattr +i "$path" 2>/dev/null || true; done',
+              "cp /tmp/nemoclaw-e2e-hermes-env-before-drift /sandbox/.hermes/.env",
+              "rm -f /tmp/nemoclaw-e2e-hermes-env-before-drift",
             ].join("; "),
           ),
           {
-            artifactName: "phase-6-restore-locked-hermes-configuration",
+            artifactName: "phase-6-restore-hermes-configuration",
             env: commandEnv(),
             timeoutMs: 30_000,
           },
         );
-        expect(restoreLockedConfiguration.exitCode, resultText(restoreLockedConfiguration)).toBe(0);
+        expect(restoreConfiguration.exitCode, resultText(restoreConfiguration)).toBe(0);
       }
     }
 

@@ -37,7 +37,8 @@
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
-        "src/lib/onboard/setup-nim-flow.test.ts"
+        "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {
@@ -62,9 +63,11 @@
     },
     {
       "live": "test/e2e/live/managed-image-activation-e2e.test.ts",
+      "liveSources": ["test/e2e/live/managed-image-activation-e2e-helpers.ts"],
       "fast": [
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
       ]
@@ -86,6 +89,7 @@
     },
     {
       "live": "test/e2e/live/podman-cpu-lifecycle.test.ts",
+      "liveSources": ["test/e2e/live/podman-cpu-lifecycle-helpers.ts"],
       "fast": [
         "src/lib/adapters/container-engine.test.ts",
         "src/lib/adapters/podman/index.test.ts",
@@ -243,7 +247,9 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-      "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
+      "fast": [
+        "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
@@ -341,7 +347,6 @@
         "src/lib/actions/sandbox/stopped-sandbox-backup.test.ts",
         "src/lib/state/sandbox-backup-sanitization.test.ts",
         "test/agents/openclaw/openclaw-config-snapshot.test.ts",
-        "test/cli/snapshot-shields.test.ts",
         "test/state/snapshot.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -361,7 +366,9 @@
     },
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
-      "liveSources": ["test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"],
+      "liveSources": [
+        "test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"
+      ],
       "fast": [
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -448,6 +455,7 @@
     },
     {
       "live": "test/e2e/live/device-auth-health.test.ts",
+      "liveSources": ["test/e2e/live/device-auth-health-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -506,7 +514,10 @@
     },
     {
       "live": "test/e2e/live/hermes-e2e.test.ts",
-      "liveSources": ["test/e2e/live/hermes-cli-adapter-live.ts"],
+      "liveSources": [
+        "test/e2e/live/hermes-cli-adapter-live.ts",
+        "test/e2e/live/hermes-e2e-phases.ts"
+      ],
       "fast": [
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -524,13 +535,6 @@
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/hermes-shields-config.test.ts",
-      "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -578,6 +582,8 @@
         "test/e2e/live/mcp-bridge-hermes-http.ts",
         "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
+        "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
+        "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
@@ -653,7 +659,10 @@
     },
     {
       "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-pairing-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
+      ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -678,7 +687,9 @@
     },
     {
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"],
+      "liveSources": [
+        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"
+      ],
       "fast": [
         "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
         "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
@@ -696,7 +707,10 @@
     },
     {
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
-      "liveSources": ["test/e2e/live/openclaw-pairing-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
+      ],
       "fast": [
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
@@ -713,6 +727,20 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/shields-retirement-upgrade.test.ts",
+      "liveSources": [
+        "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+        "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
+      ],
+      "fast": [
+        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/state/migrations/removed-immutability.test.ts",
+        "test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts",
+        "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
+        "test/e2e/support/shields-retirement-workflow-plan.test.ts"
       ]
     },
     {
@@ -761,15 +789,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/shields-config.test.ts",
-      "fast": [
-        "src/lib/shields/policy-delta.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/shields-failed-startup.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/skill-agent.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -806,6 +825,7 @@
     },
     {
       "live": "test/e2e/live/telegram-injection.test.ts",
+      "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -819,16 +839,13 @@
       ]
     },
     {
-      "live": "test/e2e/live/state-dir-guard-metadata.test.ts",
-      "liveOnlyReason": "Runs the installed guard from both production images against a real bind-mounted Linux filesystem; mocks cannot reproduce kernel xattr copying, POSIX ACL mask synchronization, inode replacement, or allocated-byte behavior."
-    },
-    {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "liveSources": [
         "test/e2e/live/channels-stop-start-config-state.ts",
         "test/e2e/live/channels-stop-start-googlechat-proof.ts",
         "test/e2e/live/channels-stop-start-helpers.ts",
-        "test/e2e/live/channels-stop-start-plan-state.ts"
+        "test/e2e/live/channels-stop-start-plan-state.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
         "test/channels/channels-add-bridge-lifecycle.test.ts",
@@ -866,7 +883,8 @@
       "liveSources": [
         "test/e2e/live/hermes-slack-credential-transport.ts",
         "test/e2e/live/hermes-slack-e2e-helpers.ts",
-        "test/e2e/live/hermes-slack-proof.ts"
+        "test/e2e/live/hermes-slack-proof.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
         "test/e2e/support/hermes-slack-cleanup.test.ts",
@@ -889,6 +907,10 @@
     },
     {
       "live": "test/e2e/live/registry-targets.test.ts",
+      "liveSources": [
+        "test/e2e/live/cloud-experimental-checks.ts",
+        "test/e2e/live/dcode-base-image-runtime-evidence.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-matrix.test.ts",
         "test/e2e/support/e2e-phase-onboarding.test.ts",
