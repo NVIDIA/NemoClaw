@@ -70,8 +70,8 @@ fn main() {
         .arg("--no-warnings")
         .arg(entry)
         .args(forwarded)
-        .current_dir(install)
-        .env("NEMOCLAW_NATIVE_INSTALL_ROOT", install);
+        .current_dir(&install)
+        .env("NEMOCLAW_NATIVE_INSTALL_ROOT", &install);
     command.creation_flags(if wait {
         CREATE_NO_WINDOW
     } else {
