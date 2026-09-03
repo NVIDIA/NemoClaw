@@ -215,7 +215,9 @@ test(
 
   progress.phase("install and onboard cloud sandbox");
   const dockerAvailabilityProbe =
-    runtimeProvider.id === "docker" ? "command -v docker" : "! command -v docker";
+    runtimeProvider.id === "docker"
+      ? "command -v docker >/dev/null"
+      : "! command -v docker >/dev/null";
   const install = await host.command(
     "bash",
     [
