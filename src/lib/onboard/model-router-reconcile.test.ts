@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { reconcileModelRouter } from "./model-router";
 
@@ -72,6 +74,10 @@ describe("model router reconciliation", () => {
     holder.reachabilityProbes = 0;
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("reuses a recorded router whose health snapshot names a healthy endpoint", async () => {
     holder.snapshotBody = JSON.stringify({
       healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
@@ -119,6 +125,25 @@ describe("model router reconciliation", () => {
     await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
 
     expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
+    expect(holder.reachabilityProbes).toBe(0);
+  });
+
+  it("preserves a healthy recorded router when the pool configuration is invalid", async () => {
+    holder.snapshotBody = JSON.stringify({
+      healthy_endpoints: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      unhealthy_endpoints: [],
+    });
+    const realReadFile = fs.readFileSync.bind(fs);
+    vi.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) =>
+      String(file).endsWith("router/pool-config.yaml")
+        ? "models: ["
+        : realReadFile(file, ...args)) as typeof fs.readFileSync);
+
+    await expect(reconcileModelRouter()).rejects.toThrow(
+      /Cannot read or parse Model Router pool configuration at .*pool-config\.yaml.*did not change the router process/,
+    );
+
+    expect(holder.stopped).toEqual([]);
     expect(holder.reachabilityProbes).toBe(0);
   });
 });

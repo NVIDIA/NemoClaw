@@ -662,10 +662,16 @@ export async function reconcileModelRouter(): Promise<void> {
     throw new Error(`${routerCredentialEnv} is required to start Model Router.`);
   }
   saveCredential(routerCredentialEnv, routerCredential);
+  const poolConfigPath = modelRouterPoolConfigPath(bp.router);
   const routerRecoveryHash = hashModelRouterRecoveryIdentity(
     routerCredential,
-    readModelRouterPoolConfig(modelRouterPoolConfigPath(bp.router)),
+    readModelRouterPoolConfig(poolConfigPath),
   );
+  if (!routerRecoveryHash) {
+    throw new Error(
+      `Cannot read or parse Model Router pool configuration at ${poolConfigPath}. Repair the file and rerun onboarding. NemoClaw did not change the router process.`,
+    );
+  }
   const session = onboardSession.loadSession();
   const recordedPid = session?.routerPid ?? null;
   const recordedRecoveryHash = session?.routerCredentialHash ?? null;

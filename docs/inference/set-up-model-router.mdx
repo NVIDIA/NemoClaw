@@ -32,6 +32,9 @@ When the log contains readable output from this run, the error includes a redact
 The owner-only log contains unredacted router output.
 Review the log before you share it.
 NemoClaw does not provide log-only cleanup.
+NemoClaw stores a router recovery identity that covers the routed credential and parsed pool configuration.
+During reconciliation, NemoClaw restarts a healthy router when either input changes.
+If the pool file is unreadable or invalid, NemoClaw preserves the running router and reports the file to repair.
 
 ## Router and Sandbox Lifecycle Locks
 
@@ -45,11 +48,11 @@ If another onboarding run owns the session lock, or the identity changed, `destr
 It leaves the Model Router process and current onboarding session unchanged.
 When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
 If no same-port peer remains, NemoClaw stops only a process whose command line still identifies the Model Router on that port.
-NemoClaw clears the matching Model Router process and credential recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
+NemoClaw clears the matching Model Router process and router recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
 The final sandbox-name cleanup also checks the captured session identity.
 Other sandbox destroy paths use a non-blocking session update.
 If onboarding owns the lock or the captured session identity changed, `destroy` leaves the current session unchanged.
-If the captured session still names the destroyed sandbox but uses another router port, `destroy` clears only the sandbox association and preserves the router process and credential recovery identity.
+If the captured session still names the destroyed sandbox but uses another router port, `destroy` clears only the sandbox association and preserves the router process and router recovery identity.
 If the process inventory is unavailable, the completed scan finds no matching process while the port remains healthy, or the stop fails, `destroy` still completes and keeps the recovery identity.
 If `destroy` warns that it could not identify or stop a listener for the deleted sandbox, follow these steps:
 
