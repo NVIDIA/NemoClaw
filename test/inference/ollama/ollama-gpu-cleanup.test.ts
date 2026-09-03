@@ -5,7 +5,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   findReachableOllamaHost,
@@ -113,6 +113,14 @@ function unloadOf(model: string) {
 }
 
 describe("Ollama GPU cleanup", () => {
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("restores the persisted Windows-host transport after the process cache is cleared", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-cleanup-route-"));
     const calls: SpawnCall[] = [];

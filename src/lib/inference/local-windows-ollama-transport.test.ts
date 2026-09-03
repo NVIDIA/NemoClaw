@@ -659,6 +659,44 @@ describe("Windows-host Ollama transport", () => {
     expect(capture).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["DOCKER_CONTEXT", "remote-builders"],
+    ["DOCKER_HOST", "tcp://remote.example:2376"],
+  ])("rejects a cached Windows route when %s changes before a model probe", (name, value) => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-context-switch-"));
+    try {
+      const discoveryCapture = vi.fn((command: readonly string[]) => {
+        const rendered = command.join(" ");
+        return rendered.includes("Get-NetTCPConnection")
+          ? "127.0.0.1"
+          : command.includes("Host: rebinding.invalid")
+            ? "403"
+            : rendered.includes("host.docker.internal:11434/api/tags")
+              ? JSON.stringify({ models: [] })
+              : "";
+      });
+
+      expect(
+        findReachableOllamaHost(discoveryCapture, { isWsl: true }, stateRoot, {
+          runtime: "docker-desktop",
+          prepareDockerEnvironment: isolatedDockerEnvironment,
+        }),
+      ).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+      expect(getResolvedOllamaHost()).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+
+      vi.stubEnv(name, value);
+      const requestCapture = vi.fn(() => JSON.stringify({ capabilities: ["tools"] }));
+      expect(probeOllamaModelCapabilities("qwen3.5:9b", requestCapture)).toMatchObject({
+        source: "unknown",
+        supportsTools: null,
+      });
+      expect(requestCapture).not.toHaveBeenCalled();
+      expect(getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("isolates Docker credentials for Windows-host API requests", () => {
     const cleanup = vi.fn(() => ({ ok: true as const }));
     const capture = vi.fn((_command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
@@ -677,7 +715,12 @@ describe("Windows-host Ollama transport", () => {
     );
     expect(capture).toHaveBeenCalledWith(
       expect.arrayContaining(["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE]),
-      { env: { DOCKER_CONFIG: "/tmp/credential-free-docker" } },
+      {
+        env: expect.objectContaining({
+          DOCKER_CONFIG: "/tmp/credential-free-docker",
+          DOCKER_CONTEXT: "default",
+        }),
+      },
     );
     expect(cleanup).toHaveBeenCalledOnce();
   });
@@ -703,7 +746,10 @@ describe("Windows-host Ollama transport", () => {
       ]),
       {
         ignoreError: true,
-        env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+        env: expect.objectContaining({
+          DOCKER_CONFIG: "/tmp/credential-free-docker",
+          DOCKER_CONTEXT: "default",
+        }),
       },
     );
     expect(cleanup).toHaveBeenCalledOnce();

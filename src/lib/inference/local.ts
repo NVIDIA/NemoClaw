@@ -11,6 +11,7 @@ import os from "node:os";
 import nodePath from "node:path";
 import {
   detectContainerRuntimeFromDockerInfo,
+  dockerBuildSubprocessEnv,
   dockerContextIsDefaultFromBuild,
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
@@ -278,7 +279,10 @@ export function probeWindowsHostOllamaRouteProtection(
       "5",
       `http://${OLLAMA_HOST_DOCKER_INTERNAL}:${OLLAMA_PORT}/api/tags`,
     ],
-    { ignoreError: true },
+    {
+      ignoreError: true,
+      ...(options.env === undefined ? {} : { env: options.env }),
+    },
   );
   const reachable = isValidOllamaTagsResponseBody(body);
   const hostValidationEnabled =
@@ -286,6 +290,7 @@ export function probeWindowsHostOllamaRouteProtection(
     isOllamaHostValidationEnabled(
       capture(["curl", ...getWindowsHostOllamaHostValidationCurlArgs()], {
         ignoreError: true,
+        ...(options.env === undefined ? {} : { env: options.env }),
       }),
     );
   return {
@@ -519,6 +524,7 @@ export function prepareOllamaApiExecution(
   command: readonly string[],
   host: string = getResolvedOllamaHost(),
   options: {
+    dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
     env?: NodeJS.ProcessEnv;
     operation?: string;
     prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
@@ -529,11 +535,26 @@ export function prepareOllamaApiExecution(
   if (translated[0] !== "docker") {
     return { command: translated, env: options.env, cleanup: () => {} };
   }
+  // Some callers pass a subprocess allowlist that intentionally omits Docker
+  // selectors. Reintroduce the ambient selectors for this authority check;
+  // explicit per-call values still win, and the executed request is pinned to
+  // the validated default context below.
+  const sourceEnv = { ...process.env, ...(options.env ?? {}) };
+  const contextIsDefault = options.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild;
+  if (host === OLLAMA_HOST_DOCKER_INTERNAL && !contextIsDefault(sourceEnv)) {
+    _resolvedOllamaHost = null;
+    throw new Error(
+      "Windows-host Ollama request blocked because Docker no longer targets the local default context",
+    );
+  }
   const prepared = (options.prepareDockerEnvironment ?? prepareIsolatedDockerEnvironment)();
+  const executionEnv = dockerBuildSubprocessEnv(sourceEnv);
+  delete executionEnv.DOCKER_HOST;
+  executionEnv.DOCKER_CONTEXT = "default";
   let cleaned = false;
   return {
     command: translated,
-    env: mergeIsolatedDockerClientEnv(options.env ?? {}, prepared),
+    env: mergeIsolatedDockerClientEnv(executionEnv, prepared),
     cleanup: () => {
       if (cleaned) return;
       cleaned = true;
@@ -552,10 +573,16 @@ export function createOllamaApiCapture(
 ): RunCaptureFn {
   const capture = runCaptureImpl ?? runCapture;
   return (command, options) => {
-    const execution = prepareOllamaApiExecution(command, host, {
-      env: options?.env,
-      prepareDockerEnvironment,
-    });
+    let execution: PreparedOllamaApiExecution;
+    try {
+      execution = prepareOllamaApiExecution(command, host, {
+        env: options?.env,
+        prepareDockerEnvironment,
+      });
+    } catch (error) {
+      if (options?.ignoreError) return "";
+      throw error;
+    }
     try {
       return capture(execution.command, {
         ...options,
@@ -573,10 +600,20 @@ export function createOllamaApiCaptureEx(
   prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
 ): RunCaptureExFn {
   return (command, options) => {
-    const execution = prepareOllamaApiExecution(command, host, {
-      env: options?.env,
-      prepareDockerEnvironment,
-    });
+    let execution: PreparedOllamaApiExecution;
+    try {
+      execution = prepareOllamaApiExecution(command, host, {
+        env: options?.env,
+        prepareDockerEnvironment,
+      });
+    } catch (error) {
+      return {
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: 1,
+        timedOut: false,
+      };
+    }
     try {
       return runCaptureExImpl(execution.command, {
         ...options,
@@ -2215,10 +2252,16 @@ export function runOllamaWarmup(
   const command = windowsHost
     ? getOllamaWarmupRequestCommand(model)
     : getOllamaWarmupCommand(model);
-  const execution = prepareOllamaApiExecution(command, getResolvedOllamaHost(), {
-    prepareDockerEnvironment,
-    operation: `Windows-host Ollama warm-up for '${model}'`,
-  });
+  let execution: PreparedOllamaApiExecution;
+  try {
+    execution = prepareOllamaApiExecution(command, getResolvedOllamaHost(), {
+      prepareDockerEnvironment,
+      operation: `Windows-host Ollama warm-up for '${model}'`,
+    });
+  } catch (error) {
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
   try {
     runImpl(execution.command, {
       ignoreError: true,

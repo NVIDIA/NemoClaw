@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONTAINER_REACHABILITY_IMAGE,
   loadPersistedOllamaHost,
@@ -19,7 +19,14 @@ import type { OllamaDeps } from "./types";
 
 const CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 
-afterEach(() => resetOllamaHostCache());
+beforeEach(() => {
+  vi.stubEnv("DOCKER_CONTEXT", "default");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  resetOllamaHostCache();
+});
 
 const SANDBOX_ENDPOINT_MISMATCH =
   "Selected Ollama model 'llama3.2:1b' answers on http://127.0.0.1:11434, but the daemon the " +
@@ -183,7 +190,10 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ]),
       {
         ignoreError: true,
-        env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+        env: expect.objectContaining({
+          DOCKER_CONFIG: "/tmp/credential-free-docker",
+          DOCKER_CONTEXT: "default",
+        }),
       },
     );
     expect(cleanup).toHaveBeenCalledOnce();

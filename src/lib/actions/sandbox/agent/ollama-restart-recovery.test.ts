@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import { prepareOllamaApiExecution } from "../../../inference/local";
 import {
@@ -33,6 +33,14 @@ function getCommandBody(command: readonly string[]): Record<string, unknown> {
 }
 
 describe("maybeWarmOllamaAfterDaemonRestart", () => {
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("skips routes that are not local Ollama", () => {
     expect(
       maybeWarmOllamaAfterDaemonRestart({ provider: "vllm-local", model: "meta/llama" }),

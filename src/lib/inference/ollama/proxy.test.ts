@@ -4,7 +4,15 @@
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { PassThrough } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+beforeEach(() => {
+  vi.stubEnv("DOCKER_CONTEXT", "default");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const require = createRequire(import.meta.url);
 const PROXY_DIST = require.resolve("./proxy");

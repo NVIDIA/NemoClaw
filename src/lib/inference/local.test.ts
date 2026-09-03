@@ -4,7 +4,7 @@
 import fs, { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
@@ -71,6 +71,10 @@ describe("local inference helpers", () => {
   const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
   const originalPath = process.env.PATH;
   let fakeDockerDir: string | null = null;
+
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+  });
 
   beforeAll(() => {
     fakeDockerDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-docker-"));

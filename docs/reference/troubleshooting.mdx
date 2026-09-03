@@ -2539,7 +2539,7 @@ sudo ufw allow from "$SUBNET" to any port 11435 proto tcp
 $$nemoclaw onboard
 ```
 
-Qualified Docker Desktop WSL routes do not use the auth proxy. Other hosts without the OpenShell Docker network use different routing models; for proxy-fronted routes, NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
+Only an accepted Windows-host Ollama route uses direct Docker Desktop access to port `11434`. WSL-local Ollama uses the auth proxy, including on Docker Desktop WSL. Other hosts without the OpenShell Docker network use different routing models; for proxy-fronted routes, NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
