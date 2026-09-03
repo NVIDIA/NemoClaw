@@ -106,6 +106,7 @@ RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
     && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \
     && chmod 660 /sandbox/.openclaw/.config-hash
+USER sandbox
 `;
   return runtime.trimEnd() + extension;
 }

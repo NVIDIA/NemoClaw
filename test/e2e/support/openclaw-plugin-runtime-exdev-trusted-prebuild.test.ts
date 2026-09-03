@@ -51,6 +51,17 @@ it("rejects a managed Dockerfile without the runtime anchor (#9844)", () => {
   ).toThrow("trusted EXDEV fixture requires the managed runtime anchor");
 });
 
+it("restores sandbox as the generated Dockerfile's final user (#9844)", () => {
+  const dockerfile = createTrustedPluginFixtureDockerfile({
+    crossDeviceVersionSourceName: "weather-version-v2.ts",
+    pluginDirName: "weather-plugin",
+    source: "FROM ${BASE_IMAGE}\nUSER sandbox\n",
+    versionSourceName: "weather-version-v1.ts",
+  });
+
+  expect(dockerfile.trimEnd()).toMatch(/USER sandbox$/);
+});
+
 function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
   return {
     artifacts: { result: "result.json", stderr: "stderr.txt", stdout: "stdout.txt" },
