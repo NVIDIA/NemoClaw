@@ -49,6 +49,53 @@ describe("Deep Agents MCP config adapter runtime guards", () => {
     },
   );
 
+  it.each([
+    {
+      runtimeKind: "v2" as const,
+      initialManaged: { mcpServers: {} },
+      initialLegacy: { mcpServers: { local: { type: "stdio", command: "user-owned" } } },
+      expectedManaged: {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: baseEntry.url,
+            headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+          },
+        },
+      },
+      expectedLegacy: { mcpServers: { local: { type: "stdio", command: "user-owned" } } },
+    },
+    {
+      runtimeKind: "legacy" as const,
+      initialManaged: undefined,
+      initialLegacy: { mcpServers: {} },
+      expectedManaged: null,
+      expectedLegacy: {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: baseEntry.url,
+            headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+          },
+        },
+      },
+    },
+  ])(
+    "uses the shared runtime classifier for $runtimeKind rollback (#10756)",
+    ({ runtimeKind, initialManaged, initialLegacy, expectedManaged, expectedLegacy }) => {
+      const rollback = runDeepAgentsConfigCommand(
+        buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true),
+        initialManaged,
+        runtimeKind,
+        initialLegacy,
+      );
+
+      expect(rollback.status, rollback.stderr).toBe(0);
+      expect(rollback.config).toEqual(expectedManaged);
+      expect(rollback.legacyConfig).toEqual(expectedLegacy);
+    },
+  );
+
   it.each(
     Array.from(
       [

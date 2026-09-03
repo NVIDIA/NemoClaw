@@ -23,7 +23,7 @@ export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 
-/** Build the runtime classifier shared by Deep Agents status, repair, and teardown commands. */
+/** Build the runtime classifier shared by Deep Agents status, repair, rollback, and teardown. */
 export function buildDeepAgentsRuntimeKindCommandLines(
   initialKind: "auto" | "v2" = "auto",
 ): string[] {
