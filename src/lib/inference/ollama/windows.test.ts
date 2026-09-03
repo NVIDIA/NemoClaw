@@ -338,7 +338,10 @@ describe("Windows Ollama helper", () => {
         expect.arrayContaining(["docker", "run", "--rm", WINDOWS_OLLAMA_TAGS_URL]),
         expect.objectContaining({
           ignoreError: true,
-          env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+          env: expect.objectContaining({
+            DOCKER_CONFIG: "/tmp/credential-free-docker",
+            DOCKER_CONTEXT: "default",
+          }),
         }),
       );
       expect(cleanup).toHaveBeenCalledTimes(2);
