@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import {
-  buildCliOpenShellSandboxDirectoryProbeArgs,
   buildCliOpenShellSandboxExecArgs,
   createCliOpenShellSandboxCommandExecutor,
   runCliOpenShellStreamingCommand,
@@ -61,11 +59,6 @@ export type SpawnLikeResult = {
   releaseSignals?: () => void;
 };
 
-export type SandboxExecRunner = (
-  binary: string,
-  args: readonly string[],
-) => SpawnLikeResult | Promise<SpawnLikeResult>;
-
 export type SandboxExecChild = OpenShellCommandChild;
 
 export type SandboxExecSpawner = OpenShellCommandSpawner;
@@ -85,15 +78,10 @@ export type SandboxExecCompletion = {
   cleanupError?: string;
 };
 
-export type WorkdirProbeResult = {
-  status: number | null;
-  error?: Error;
-};
-
-export type WorkdirProbeOutcome = "ok" | "missing" | "unclear";
-
-export type WorkdirProbeRunner = (binary: string, args: readonly string[]) => WorkdirProbeResult;
-
+/**
+ * Compatibility argv surface for buffered and interactive consumers tracked
+ * by #10991 and #10994. Remove it after those callers use typed executors.
+ */
 export function buildOpenshellExecArgs(
   sandboxName: string,
   command: readonly string[],
@@ -108,18 +96,6 @@ export function buildOpenshellExecArgs(
     tty: options.tty,
     timeoutSeconds: options.timeoutSeconds,
     stdin: options.stdin,
-  });
-}
-
-export function buildWorkdirProbeArgs(
-  sandboxName: string,
-  workdir: string,
-  gatewayName?: string,
-): string[] {
-  return buildCliOpenShellSandboxDirectoryProbeArgs({
-    sandboxName,
-    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
-    path: workdir,
   });
 }
 
@@ -144,13 +120,6 @@ function execInputError(command: readonly string[], workdir: string | undefined)
 
 export function workdirMissingMessage(workdir: string): string {
   return `error: --workdir: ${workdir} does not exist inside the sandbox`;
-}
-
-export function evaluateWorkdirProbe(probe: WorkdirProbeResult): WorkdirProbeOutcome {
-  if (probe.error) return "unclear";
-  if (probe.status === 0) return "ok";
-  if (probe.status === 1) return "missing";
-  return "unclear";
 }
 
 export function computeExitCode(result: SpawnLikeResult): {
@@ -235,6 +204,10 @@ export function cleanupOpenClawAfterExec(
   return null;
 }
 
+/**
+ * Compatibility child-process surface for interactive consumers tracked by
+ * #10994. Remove it after those callers use a typed interactive executor.
+ */
 export async function runSandboxExecChild(
   binary: string,
   args: readonly string[],
@@ -250,64 +223,8 @@ export async function runSandboxExecChild(
   return runCliOpenShellStreamingCommand(binary, args, childOptions, spawnChild, signalSource);
 }
 
-export async function runSandboxExecCommand(
-  binary: string,
-  sandboxName: string,
-  command: readonly string[],
-  options: SandboxExecOptions,
-  run: SandboxExecRunner,
-  cleanupDeps: SandboxExecCleanupDeps,
-  gatewayName?: string,
-): Promise<SandboxExecCompletion> {
-  let result: SpawnLikeResult;
-  try {
-    result = await run(binary, buildOpenshellExecArgs(sandboxName, command, options, gatewayName));
-  } catch (error) {
-    result = { status: null, error: error instanceof Error ? error : new Error(String(error)) };
-  }
-  try {
-    const { code: commandCode, errorMessage: invocationError } = computeExitCode(result);
-    const cleanupError = cleanupOpenClawAfterExec(sandboxName, cleanupDeps) ?? undefined;
-    return {
-      code: cleanupError ? 1 : commandCode,
-      commandCode,
-      ...(invocationError ? { invocationError } : {}),
-      ...(cleanupError ? { cleanupError } : {}),
-    };
-  } finally {
-    result.releaseSignals?.();
-  }
-}
-
 export function cleanupFailureMessage(commandCode: number, detail: string): string {
   return `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): ${detail}`;
-}
-
-const defaultWorkdirProbeRunner: WorkdirProbeRunner = (binary, args) => {
-  const probe = spawnSync(binary, args, { stdio: ["ignore", "ignore", "ignore"] });
-  return { status: probe.status, error: probe.error };
-};
-
-export function validateWorkdirOrFail(
-  binary: string,
-  sandboxName: string,
-  workdir: string,
-  run: WorkdirProbeRunner = defaultWorkdirProbeRunner,
-  gatewayName?: string,
-  exit: (code: number) => never = process.exit,
-): void {
-  const outcome = evaluateWorkdirProbe(
-    run(binary, buildWorkdirProbeArgs(sandboxName, workdir, gatewayName)),
-  );
-  if (outcome === "missing") {
-    console.error(workdirMissingMessage(workdir));
-    exit(1);
-  }
-}
-
-export function resolveSandboxExecBinary(): string {
-  const { getOpenshellBinary } = require("../../adapters/openshell/runtime");
-  return getOpenshellBinary();
 }
 
 function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
@@ -448,11 +365,19 @@ export async function execSandbox(
   const target = gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway();
   const commandExecutor = deps.commandExecutor ?? createCliOpenShellSandboxCommandExecutor();
   if (options.workdir) {
-    const workdir = await commandExecutor.probeDirectory({
-      sandboxName,
-      target,
-      path: options.workdir,
-    });
+    let workdir: Awaited<ReturnType<OpenShellSandboxCommandExecutor["probeDirectory"]>>;
+    try {
+      workdir = await commandExecutor.probeDirectory({
+        sandboxName,
+        target,
+        path: options.workdir,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`  Failed to invoke openshell: ${detail}`);
+      console.error("  Ensure 'openshell' is installed and on PATH.");
+      return exit(1);
+    }
     if (workdir.state === "missing") {
       console.error(workdirMissingMessage(options.workdir));
       exit(1);

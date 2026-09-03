@@ -138,6 +138,48 @@ describe("CLI OpenShell sandbox command executor", () => {
   });
 
   it.each([
+    ["an unavailable executable", "ENOENT", "unavailable"],
+    ["an unclassified transport failure", undefined, "invocation"],
+  ] as const)("maps an asynchronous child error from %s", async (_label, code, kind) => {
+    const events = new EventEmitter();
+    const error = Object.assign(new Error("child process failed"), code ? { code } : {});
+    const child: OpenShellCommandChild = {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => true),
+      once: ((event: string, listener: (...args: unknown[]) => void) => {
+        events.once(event, listener);
+        const notify = {
+          error: () => undefined,
+          close: () =>
+            queueMicrotask(() => {
+              events.emit("error", error);
+              events.emit("close", 0, null);
+            }),
+        }[event as "error" | "close"];
+        notify();
+        return child;
+      }) as OpenShellCommandChild["once"],
+    };
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "/usr/bin/openshell",
+      spawnChild: () => child,
+    });
+
+    const completed = await executor.runStreaming({
+      sandboxName: "alpha",
+      target: selectedOpenShellGateway(),
+      command: ["true"],
+    });
+
+    expect(completed.outcome).toEqual({
+      kind: "failed",
+      error: { kind, message: "child process failed" },
+    });
+    completed.release();
+  });
+
+  it.each([
     [0, "present"],
     [1, "missing"],
     [2, "unobservable"],

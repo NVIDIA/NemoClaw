@@ -3,6 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  createCliOpenShellSandboxCommandExecutor,
+  type OpenShellCommandChild,
+  type OpenShellCommandSpawner,
+} from "../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { execSandbox, type SandboxExecCleanupDeps } from "./exec";
 
@@ -143,6 +148,120 @@ describe("execSandbox gateway targeting", () => {
     });
     expect(run.mock.calls[0]?.[0].command.at(-2)).toBe("nemoclaw-runtime-env");
     expect(run.mock.calls[0]?.[0].command.at(-1)).toBe("hostname");
+  });
+
+  it("carries the selected gateway through the CLI workdir probe and command dispatch", async () => {
+    const spawnProbe = vi.fn(() => ({ status: 0 }));
+    const child = {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => true),
+      once: vi.fn((event: "error" | "close", listener: (...args: unknown[]) => void) => {
+        const notify = {
+          error: () => undefined,
+          close: () => queueMicrotask(() => listener(0, null)),
+        }[event];
+        notify();
+        return child;
+      }),
+    } as unknown as OpenShellCommandChild;
+    const spawnChild = vi.fn<OpenShellCommandSpawner>(() => child);
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "/usr/bin/openshell",
+      spawnProbe,
+      spawnChild,
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`__exit_${code ?? 0}__`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      execSandbox(
+        "beta",
+        ["hostname"],
+        { workdir: "/work" },
+        {
+          selectGateway: () => ({
+            outcome: "selected",
+            gatewayName: "nemoclaw-8091",
+          }),
+          commandExecutor: executor,
+          cleanupDeps: cleanupSkipped,
+          policyHint: {
+            now: () => 0,
+            env: {},
+            probeLogs: () => "",
+            enableAudit: () => {},
+            sleep: async () => {},
+            attempts: 1,
+            writeStderr: () => {},
+          },
+        },
+      ),
+    ).rejects.toThrow("__exit_0__");
+
+    expect(spawnProbe).toHaveBeenCalledWith("/usr/bin/openshell", [
+      "sandbox",
+      "exec",
+      "--name",
+      "beta",
+      "-g",
+      "nemoclaw-8091",
+      "--",
+      "test",
+      "-d",
+      "/work",
+    ]);
+    expect(spawnChild.mock.calls[0]?.[0]).toBe("/usr/bin/openshell");
+    const execArgs = spawnChild.mock.calls[0]?.[1];
+    expect(execArgs?.slice(0, 9)).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "beta",
+      "-g",
+      "nemoclaw-8091",
+      "--workdir",
+      "/work",
+      "--",
+    ]);
+    expect(execArgs?.at(-1)).toBe("hostname");
+  });
+
+  it("reports a rejected workdir probe as a normal invocation failure", async () => {
+    const resolveBinary = vi.fn(() => "/usr/bin/openshell");
+    const spawnProbe = vi.fn();
+    const spawnChild = vi.fn();
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary,
+      spawnProbe,
+      spawnChild,
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`__exit_${code ?? 0}__`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      execSandbox(
+        "invalid/name",
+        ["hostname"],
+        { workdir: "/work" },
+        {
+          selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+          commandExecutor: executor,
+          cleanupDeps: cleanupSkipped,
+        },
+      ),
+    ).rejects.toThrow("__exit_1__");
+
+    expect(console.error).toHaveBeenCalledWith(
+      "  Failed to invoke openshell: Invalid OpenShell sandbox name",
+    );
+    expect(resolveBinary).not.toHaveBeenCalled();
+    expect(spawnProbe).not.toHaveBeenCalled();
+    expect(spawnChild).not.toHaveBeenCalled();
   });
 
   it("rejects a direct endpoint override before selecting, probing, or dispatching", async () => {

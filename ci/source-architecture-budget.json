@@ -8,7 +8,7 @@
       "src/lib/adapters/docker/index.ts": 42,
       "src/lib/adapters/openshell/client.ts": 21,
       "src/lib/adapters/openshell/resolve.ts": 25,
-      "src/lib/adapters/openshell/runtime.ts": 54,
+      "src/lib/adapters/openshell/runtime.ts": 53,
       "src/lib/adapters/openshell/timeouts.ts": 33,
       "src/lib/agent/defs.ts": 32,
       "src/lib/cli/branding.ts": 80,
