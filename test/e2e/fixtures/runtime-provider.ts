@@ -33,7 +33,6 @@ const SANITIZED_PRIVILEGED_ENVIRONMENT = [
 
 const SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const CONTAINER_ID = /^[a-f0-9]{12,64}$/u;
-const REQUIRE_DOCKER_CLIENT_ABSENT_ENV = "NEMOCLAW_E2E_REQUIRE_DOCKER_CLIENT_ABSENT";
 
 interface RuntimeProviderInvocation {
   readonly argsPrefix: readonly string[];
@@ -114,19 +113,6 @@ export class RuntimeProviderPrerequisite {
   }
 
   async requireAvailable(options: { artifactName: string; scenarioLabel: string }): Promise<void> {
-    if (
-      this.id === "podman" &&
-      this.environment[REQUIRE_DOCKER_CLIENT_ABSENT_ENV]?.trim() === "1"
-    ) {
-      const dockerClientAvailable = await this.host.isCommandAvailable("docker", {
-        artifactName: `${options.artifactName}-docker-client-absence`,
-        env: buildAvailabilityProbeEnv(this.environment),
-        timeoutMs: 30_000,
-      });
-      if (dockerClientAvailable) {
-        throw new Error("Native Podman public install requires the Docker client to be absent.");
-      }
-    }
     const result = await this.command(["info"], {
       artifactName: options.artifactName,
       timeoutMs: 30_000,

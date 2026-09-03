@@ -30,6 +30,7 @@ const ACTION_USES =
 
 interface WorkflowStep {
   name?: string;
+  run?: string;
   uses?: string;
   with?: Record<string, unknown>;
   "continue-on-error"?: boolean;
@@ -207,6 +208,30 @@ exit 64
     steps.splice(prepareIndex + 1, 0, install);
     expect(validateE2eWorkflow(workflow)).toContain(
       "cloud-onboard DCode TUI host dependencies must precede workspace prep",
+    );
+  });
+
+  it("keeps Docker absent for the native Podman cloud-onboard test", () => {
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["cloud-onboard"].steps;
+    const hide =
+      steps[requireStepIndex(steps, "Hide Docker CLI from native Podman public install")]!;
+    const restore =
+      steps[requireStepIndex(steps, "Restore Docker CLI after native Podman public install")]!;
+    hide.run = hide.run?.replace(
+      "if command -v docker >/dev/null 2>&1",
+      "if command -v docker-does-not-exist >/dev/null 2>&1",
+    );
+    restore.run = restore.run?.replace(
+      'sudo mv -- "${disabled_path}" "${restore_path}"',
+      'sudo mv -- "${disabled_path}" "${restore_path}.wrong"',
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "step 'Hide Docker CLI from native Podman public install' run script must include if command -v docker >/dev/null 2>&1",
+        'step \'Restore Docker CLI after native Podman public install\' run script must include sudo mv -- "${disabled_path}" "${restore_path}"',
+      ]),
     );
   });
 });

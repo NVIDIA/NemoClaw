@@ -5690,7 +5690,6 @@ jobs:
       - name: Run cloud-onboard live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          NEMOCLAW_E2E_REQUIRE_DOCKER_CLIENT_ABSENT: ${{ matrix.runtime_provider == 'podman' && '1' || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
