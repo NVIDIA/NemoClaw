@@ -214,15 +214,11 @@ test(
   );
 
   progress.phase("install and onboard cloud sandbox");
-  const dockerAvailabilityProbe =
-    runtimeProvider.id === "docker"
-      ? "command -v docker >/dev/null"
-      : "! command -v docker >/dev/null";
   const install = await host.command(
     "bash",
     [
       "-lc",
-      `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash && ${dockerAvailabilityProbe}`,
+      `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash && ${runtimeProvider.id === "docker" ? "command -v docker >/dev/null" : "! command -v docker >/dev/null"}`,
     ],
     {
       artifactName: "phase-1-public-install",

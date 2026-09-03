@@ -414,7 +414,6 @@
     {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
-        "src/lib/onboard/agent-dashboard-forward.test.ts",
         "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
