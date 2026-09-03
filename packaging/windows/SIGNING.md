@@ -10,6 +10,9 @@ an approved Authenticode identity:
 
 1. Sign and verify `openshell.exe`, `openshell-gateway.exe`, `NemoClaw.exe`,
    and the native ARM64 bootstrapper application before MSI or Burn binding.
+   Verify the approved publisher signatures on the pinned `node.exe`,
+   `python.exe`, `wxc-exec.exe`, and `wxc-host-prep.exe` inputs, and apply an
+   NVIDIA signature too if release policy requires it.
 2. Build the ARM64 MSI from those signed payloads, then sign and verify the MSI.
 3. Build the Burn bundle with the signed MSI embedded.
 4. Use the pinned WiX tool to detach the Burn engine, sign and verify the
