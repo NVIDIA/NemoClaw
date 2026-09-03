@@ -570,6 +570,7 @@ fi
 info "27. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm --user root -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   "$IMAGE" bash -c '
+  set -e
   python3 -c "
 import json
 with open(\"/sandbox/.openclaw/openclaw.json\") as f:
