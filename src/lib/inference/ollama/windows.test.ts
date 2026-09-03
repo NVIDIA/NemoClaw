@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
@@ -158,14 +159,18 @@ function createWindowsSetupBoundary(options: {
 function loadWindowsOllamaWithMocks(
   run: ReturnType<typeof vi.fn>,
   runCapture: ReturnType<typeof vi.fn>,
+  spawnProcess?: ReturnType<typeof vi.fn>,
 ) {
+  const childProcess = require("node:child_process");
   const runner = require(RUNNER_PATH);
+  const originalSpawn = childProcess.spawn;
   const originalRun = runner.run;
   const originalRunCapture = runner.runCapture;
   // Stub the blocking wait so this test does not spend time on retry delays.
   const atomicsWaitStub = vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
 
   delete require.cache[WINDOWS_DIST_PATH];
+  if (spawnProcess) childProcess.spawn = spawnProcess;
   runner.run = run;
   runner.runCapture = runCapture;
 
@@ -173,11 +178,20 @@ function loadWindowsOllamaWithMocks(
     windows: require(WINDOWS_DIST_PATH),
     restore() {
       delete require.cache[WINDOWS_DIST_PATH];
+      childProcess.spawn = originalSpawn;
       runner.run = originalRun;
       runner.runCapture = originalRunCapture;
       atomicsWaitStub.mockRestore();
     },
   };
+}
+
+function createMockChildProcess() {
+  return Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    kill: vi.fn(() => true),
+  });
 }
 
 function captureDefaultWindowsRollbackInvocation(userHost: string | null) {
@@ -259,6 +273,63 @@ function createWindowsInstallBoundary(options: {
 }
 
 describe("Windows Ollama helper", () => {
+  it("terminates the PowerShell wrapper when cancellation precedes the PID sentinel", async () => {
+    const child = createMockChildProcess();
+    const spawnProcess = vi.fn(() => child);
+    const { windows, restore } = loadWindowsOllamaWithMocks(
+      vi.fn(),
+      vi.fn(),
+      spawnProcess,
+    );
+
+    try {
+      const installer = windows.startWindowsOllamaInstaller();
+      const cancellation = installer.cancelAndWait();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+      child.emit("close", null);
+      await expect(cancellation).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("terminates the reported Windows installer process tree", async () => {
+    const installerChild = createMockChildProcess();
+    const taskkillChild = createMockChildProcess();
+    const spawnProcess = vi.fn((command: string) =>
+      command === "taskkill.exe" ? taskkillChild : installerChild,
+    );
+    const { windows, restore } = loadWindowsOllamaWithMocks(
+      vi.fn(),
+      vi.fn(),
+      spawnProcess,
+    );
+
+    try {
+      const installer = windows.startWindowsOllamaInstaller();
+      installerChild.stdout.emit(
+        "data",
+        Buffer.from("__NEMOCLAW_WINDOWS_INSTALLER_PID__:4321\n"),
+      );
+      const cancellation = installer.cancelAndWait();
+      expect(installerChild.kill).not.toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(spawnProcess).toHaveBeenLastCalledWith(
+          "taskkill.exe",
+          ["/PID", "4321", "/T", "/F"],
+          { stdio: "ignore" },
+        ),
+      );
+
+      taskkillChild.emit("close", 0);
+      installerChild.emit("close", null);
+      await expect(cancellation).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
   it("describes Docker-client isolation in Windows Ollama timeout diagnostics", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());

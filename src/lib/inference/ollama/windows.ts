@@ -119,15 +119,16 @@ function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
     completion,
     cancelAndWait: () => {
       cancellation ??= (async () => {
-        const pid = await windowsPidReady;
-        if (pid !== null) {
-          await terminateWindowsProcessTree(pid);
-        } else {
+        if (windowsPid === null) {
           try {
             child.kill("SIGTERM");
           } catch {
-            // The wrapper has already exited, so completion below is authoritative.
+            // The wrapper has already exited, so its close event remains authoritative.
           }
+        }
+        const pid = await windowsPidReady;
+        if (pid !== null) {
+          await terminateWindowsProcessTree(pid);
         }
         await completion;
       })();
@@ -653,6 +654,7 @@ function printWindowsOllamaSnapshotDiagnostics(): void {
 module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
+  startWindowsOllamaInstaller,
   setupWindowsOllamaWith0000Binding,
   sleep: sleepSeconds,
   switchToWindowsOllamaHost,
