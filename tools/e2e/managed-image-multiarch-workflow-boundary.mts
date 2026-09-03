@@ -367,8 +367,10 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   if (cleanup?.if !== "always()") errors.push(`${JOB_ID} registry cleanup must always run`);
   requireFragments(errors, cleanup, [
     "io.nvidia.nemoclaw.e2e-owner",
-    '[[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]]',
-    'docker rm -f "$NEMOCLAW_PROTECTED_REGISTRY_NAME"',
+    'label="io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"',
+    'docker rm -f "${owned_containers[@]}"',
+    'docker image rm -f "${owned_images[@]}"',
+    'docker volume rm -f "${owned_volumes[@]}"',
     "http://127.0.0.1:5000/v2/",
   ]);
 
@@ -396,6 +398,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "compression-level": 0,
     overwrite: true,
   });
+  requireStep(errors, steps, "Validate OpenClaw managed-image security boundary");
+  requireStep(errors, steps, "Validate managed-image glibc probe lifecycle");
   requireStep(errors, steps, "Upload protected managed-image evidence");
   requireStep(errors, steps, "Clean up Docker auth");
   requireOrderedSteps(errors, steps, [

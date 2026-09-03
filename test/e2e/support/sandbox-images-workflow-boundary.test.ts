@@ -22,6 +22,28 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual([]);
   });
 
+  test("keeps typed OpenClaw security evidence in the main image gate", () => {
+    const { imageWorkflow } = readWorkflows();
+    const job = imageWorkflow.jobs["managed-image-openclaw-security"];
+    expect(job).toMatchObject({
+      needs: "build-sandbox-images",
+      env: {
+        E2E_TARGET_ID: "managed-image-openclaw-security",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
+      },
+    });
+    expect(
+      job.steps?.find((step) => step.name === "Validate OpenClaw managed-image security boundary"),
+    ).toMatchObject({ run: expect.stringContaining("managed-image-openclaw-security.test.ts") });
+    expect(
+      job.steps?.find((step) => step.name === "Upload OpenClaw managed-image security evidence"),
+    ).toMatchObject({
+      if: "${{ always() }}",
+      uses: "./.github/actions/upload-e2e-artifacts",
+    });
+  });
+
   test("keeps glibc probe lifecycle evidence in the main image gate", () => {
     const { imageWorkflow } = readWorkflows();
     const job = imageWorkflow.jobs["glibc-probe-image-contract"];

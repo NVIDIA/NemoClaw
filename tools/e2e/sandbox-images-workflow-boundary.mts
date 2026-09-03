@@ -40,6 +40,7 @@ const IMAGE_BUILD_JOBS = [
 ] as const;
 const OPENCLAW_IMAGE_CONSUMER_JOBS = [
   "runtime-overrides",
+  "managed-image-openclaw-security",
   "glibc-probe-image-contract",
   "port-override-image-contract",
 ] as const;

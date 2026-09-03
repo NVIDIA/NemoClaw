@@ -84,6 +84,7 @@ test(
         "test -x /usr/sbin/iptables",
         "test -x /usr/bin/chattr",
         "test -x /usr/local/bin/openclaw",
+        "cd /sandbox/.openclaw && sha256sum -c .config-hash >/dev/null",
         'printf "%s:%s\\n" "$gateway_uid" "$sandbox_uid"',
       ].join("\n"),
       "managed-image-openclaw-identities",
@@ -255,50 +256,43 @@ test(
       "managed-image-openclaw-replacement-refusal",
     );
 
-    const repairContainer = `nemoclaw-entrypoint-repair-${process.pid}`;
-    const repairImage = `nemoclaw-entrypoint-repair-image-${process.pid}`;
+    const cohort = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ?? `local-${process.pid}`;
+    const repairVolume = `nemoclaw-entrypoint-repair-${process.pid}`;
     const refusalVolume = `nemoclaw-entrypoint-refusal-${process.pid}`;
-    await host.command("docker", ["volume", "create", refusalVolume], {
-      artifactName: "managed-image-openclaw-create-refusal-volume",
-    });
+    const repairVolumeCreated = await host.command(
+      "docker",
+      ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, repairVolume],
+      { artifactName: "managed-image-openclaw-create-repair-volume" },
+    );
+    expect(repairVolumeCreated.exitCode).toBe(0);
+    const refusalVolumeCreated = await host.command(
+      "docker",
+      ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, refusalVolume],
+      { artifactName: "managed-image-openclaw-create-refusal-volume" },
+    );
+    expect(refusalVolumeCreated.exitCode).toBe(0);
     try {
-      await host.command(
-        "docker",
+      await runContainer(
+        host,
+        image,
         [
-          "run",
-          "--name",
-          repairContainer,
-          "--user",
-          "root",
-          "--entrypoint",
-          "/bin/bash",
-          image,
-          "-eu",
-          "-c",
-          "rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline /sandbox/.openclaw/openclaw.json.last-good; printf '{}\n' >/sandbox/.openclaw/openclaw.json; chown -R sandbox:sandbox /sandbox/.openclaw; chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash; chmod 2770 /sandbox/.openclaw; printf %s dGVzdCAiJChpZCAtdW4pIiA9IHNhbmRib3gKdGVzdCAiJChzdGF0IC1jICclYSAlVTolRycgL3NhbmRib3gvLm9wZW5jbGF3KSIgPSAnMjc3MCBzYW5kYm94OnNhbmRib3gnCnRlc3QgIiQoc3RhdCAtYyAnJWEgJVU6JUcnIC9zYW5kYm94Ly5vcGVuY2xhdy9vcGVuY2xhdy5qc29uKSIgPSAnNjYwIHNhbmRib3g6c2FuZGJveCcKZ3JlcCAtcXggJ3t9JyAvc2FuZGJveC8ub3BlbmNsYXcvb3BlbmNsYXcuanNvbgpjYXBfYm5kPSQoYXdrICcvXkNhcEJuZDove3ByaW50ICQyfScgL3Byb2Mvc2VsZi9zdGF0dXMpCnRlc3QgIiRjYXBfYm5kIiA9IDAwMDAwMDAwMDAwMDAxMDAK | base64 -d >/usr/local/bin/entrypoint-security-proof; chmod 755 /usr/local/bin/entrypoint-security-proof",
-        ],
-        { artifactName: "managed-image-openclaw-prepare-entrypoint-repair" },
-      );
-      await host.command(
-        "docker",
-        [
-          "commit",
-          "--change",
-          'ENTRYPOINT [\"/usr/local/bin/nemoclaw-start\"]',
-          "--change",
-          'CMD [\"/bin/bash\"]',
-          repairContainer,
-          repairImage,
-        ],
-        {
-          artifactName: "managed-image-openclaw-commit-entrypoint-repair",
-        },
+          "rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline /sandbox/.openclaw/openclaw.json.last-good",
+          "printf '{}\n' >/sandbox/.openclaw/openclaw.json",
+          "chown -R sandbox:sandbox /sandbox/.openclaw",
+          "chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash",
+          "chmod 2770 /sandbox/.openclaw",
+          "mkdir -p /sandbox/.openclaw/bin",
+          `printf %s dGVzdCAiJChpZCAtdW4pIiA9IHNhbmRib3gKdGVzdCAiJChzdGF0IC1jICclYSAlVTolRycgL3NhbmRib3gvLm9wZW5jbGF3KSIgPSAnMjc3MCBzYW5kYm94OnNhbmRib3gnCnRlc3QgIiQoc3RhdCAtYyAnJWEgJVU6JUcnIC9zYW5kYm94Ly5vcGVuY2xhdy9vcGVuY2xhdy5qc29uKSIgPSAnNjYwIHNhbmRib3g6c2FuZGJveCcKZ3JlcCAtcXggJ3t9JyAvc2FuZGJveC8ub3BlbmNsYXcvb3BlbmNsYXcuanNvbgpjYXBfYm5kPSQoYXdrICcvXkNhcEJuZDove3ByaW50ICQyfScgL3Byb2Mvc2VsZi9zdGF0dXMpCnRlc3QgIiRjYXBfYm5kIiA9IDAwMDAwMDAwMDAwMDAxMDAK | base64 -d >/sandbox/.openclaw/bin/entrypoint-security-proof`,
+          "chmod 755 /sandbox/.openclaw/bin/entrypoint-security-proof",
+        ].join("\n"),
+        "managed-image-openclaw-prepare-entrypoint-repair",
+        ["--volume", `${repairVolume}:/sandbox/.openclaw`],
       );
       await runDefaultContainer(
         host,
-        repairImage,
-        ["--user", "root"],
-        ["/usr/local/bin/entrypoint-security-proof"],
+        image,
+        ["--user", "root", "--volume", `${repairVolume}:/sandbox/.openclaw`],
+        ["/sandbox/.openclaw/bin/entrypoint-security-proof"],
         "managed-image-openclaw-default-entrypoint-repair",
       );
 
@@ -320,6 +314,8 @@ test(
           "--rm",
           "--user",
           "root",
+          "--label",
+          `io.nvidia.nemoclaw.e2e-owner=${cohort}`,
           "--volume",
           `${refusalVolume}:/sandbox/.openclaw`,
           image,
@@ -336,15 +332,14 @@ test(
         ["--volume", `${refusalVolume}:/sandbox/.openclaw`],
       );
     } finally {
-      await host.command("docker", ["rm", "-f", repairContainer], {
-        artifactName: "managed-image-openclaw-remove-entrypoint-container",
-      });
-      await host.command("docker", ["image", "rm", "-f", repairImage], {
-        artifactName: "managed-image-openclaw-remove-entrypoint-image",
-      });
-      await host.command("docker", ["volume", "rm", "-f", refusalVolume], {
-        artifactName: "managed-image-openclaw-remove-entrypoint-volume",
-      });
+      const removed = await host.command(
+        "docker",
+        ["volume", "rm", "-f", repairVolume, refusalVolume],
+        {
+          artifactName: "managed-image-openclaw-remove-entrypoint-volumes",
+        },
+      );
+      expect(removed.exitCode).toBe(0);
     }
 
     progress.phase("verify post-stepdown capability boundary");
