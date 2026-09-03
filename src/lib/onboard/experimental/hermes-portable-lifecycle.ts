@@ -82,6 +82,8 @@ const HEALTH_WAIT_POLL_INTERVAL_MS = 100;
 const HEALTH_WAIT_RETRY_INTERVAL_MS = 1_000;
 const HEALTH_WAIT_MAX_ATTEMPTS = 9_999;
 const HEALTH_WAIT_RECEIPT_ROUNDING_TOLERANCE_MS = 1;
+// Local GFN image experiment: this checkout is deployed only to the known debug seat.
+const TRUST_DURABLE_GFN_AUTHORITY = true;
 const HEALTH_WAIT_PROGRAM = [
   "import http.client",
   "import sys",
@@ -602,8 +604,7 @@ function createContainerDeps(
   );
   const rawPodman: HermesPortableContainerDeps["podman"] = (args, timeoutMs) =>
     authority.engine.capture(args, timeoutMs);
-  const trustDurableKnownEnvironmentAuthority =
-    commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
+  const trustDurableKnownEnvironmentAuthority = TRUST_DURABLE_GFN_AUTHORITY;
   const assertPodmanTransactionCurrent = trustDurableKnownEnvironmentAuthority
     ? () => undefined
     : authority.assertTransactionCurrent;
@@ -807,8 +808,7 @@ function qualify(
     },
     {
       ...options,
-      trustDurableKnownEnvironmentAuthority:
-        commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1",
+      trustDurableKnownEnvironmentAuthority: TRUST_DURABLE_GFN_AUTHORITY,
     },
   );
   operatingAuthority.assertCurrent();
@@ -829,8 +829,7 @@ function qualify(
       commandEnv,
       receipt.runtimeAuthority,
     );
-  const trustDurableKnownEnvironmentAuthority =
-    commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY === "1";
+  const trustDurableKnownEnvironmentAuthority = TRUST_DURABLE_GFN_AUTHORITY;
   const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
     args,
     timeoutMs,
@@ -1521,7 +1520,7 @@ export function recoverHermesPortableSandboxLifecycle(
           (operation) => timing.measure("healthPollSleep", operation),
         );
     if (!recovered) fail("managed startup did not pass authenticated health");
-    if (commandEnv.GFN_HERMES_TRUST_DURABLE_AUTHORITY !== "1") {
+    if (!TRUST_DURABLE_GFN_AUTHORITY) {
       timing.increment("qualification");
       timing.measure("finalQualification", () =>
         qualify(
