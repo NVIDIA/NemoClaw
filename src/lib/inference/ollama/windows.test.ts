@@ -4,6 +4,8 @@
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { windowsProcessListensOnlyOnLoopback } from "../../platform";
+
 const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
 const RUNNER_PATH = require.resolve("../../runner");
@@ -44,6 +46,43 @@ function loadWindowsOllamaWithMocks(
     },
   };
 }
+
+describe("Windows Ollama listener classification", () => {
+  it.each([
+    ["IPv4 loopback", "127.0.0.1", true],
+    ["IPv6 loopback", "::1", true],
+    ["multiple loopback listeners", "127.0.0.1\r\n::1", true],
+    ["IPv4 wildcard", "0.0.0.0", false],
+    ["IPv6 wildcard", "::", false],
+    ["non-loopback address", "192.168.1.20", false],
+    ["mixed listener set", "127.0.0.1\r\n0.0.0.0", false],
+    ["no process listener", "", false],
+  ])("classifies %s", (_description, listenerOutput, expected) => {
+    const runCapture = vi.fn(() => listenerOutput);
+
+    expect(
+      windowsProcessListensOnlyOnLoopback(runCapture, {
+        processName: "ollama",
+        port: 11434,
+        timeoutMs: 5_000,
+      }),
+    ).toBe(expected);
+    expect(runCapture).toHaveBeenCalledOnce();
+  });
+
+  it.each([0, 65_536, 11434.5])("rejects invalid port %s without probing", (port) => {
+    const runCapture = vi.fn();
+
+    expect(
+      windowsProcessListensOnlyOnLoopback(runCapture, {
+        processName: "ollama",
+        port,
+        timeoutMs: 5_000,
+      }),
+    ).toBe(false);
+    expect(runCapture).not.toHaveBeenCalled();
+  });
+});
 
 describe("Windows Ollama helper", () => {
   beforeEach(() => {
