@@ -2184,6 +2184,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               policylessCreate: apfInterceptorRequested,
               deferSandboxEffectsUntilIdentityVerification:
                 createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
+              skipProviderEffects: resumingVerifiedCreate,
               rebindMessagingTokenDefs: async () => {
                 revalidateSandboxIdentity(
                   false,

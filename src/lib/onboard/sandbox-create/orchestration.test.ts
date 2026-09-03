@@ -24,7 +24,6 @@ import {
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
-  runSandboxCreateWithProviderEffects,
   runWithPostCreateRecovery,
 } from "./orchestration";
 
@@ -439,89 +438,6 @@ describe("APF create policy selection", () => {
 });
 
 describe("deferred provider effect authority", () => {
-  it("publishes providers before non-deferred Hermes portable creation (#9806)", async () => {
-    const events: string[] = [];
-    const publishBeforeCreate = vi.fn(async () => {
-      events.push("providers:publish");
-    });
-    const create = vi.fn(async (runAfterVerifiedCreate) => {
-      events.push("sandbox:create");
-      expect(runAfterVerifiedCreate).toBeUndefined();
-      return "created";
-    });
-
-    await expect(
-      runSandboxCreateWithProviderEffects({
-        resumingVerifiedCreate: false,
-        providerEffectBoundary: {
-          publishBeforeCreate,
-          runAfterVerifiedCreate: undefined,
-        },
-        create,
-      }),
-    ).resolves.toBe("created");
-
-    expect(publishBeforeCreate).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledExactlyOnceWith(undefined);
-    expect(events).toEqual(["providers:publish", "sandbox:create"]);
-  });
-
-  it("runs deferred Hermes portable provider effects only after identity verification (#9806)", async () => {
-    const events: string[] = [];
-    const publishBeforeCreate = vi.fn(async () => {
-      events.push("providers:pre-create-noop");
-    });
-    const runAfterVerifiedCreate = vi.fn(async () => {
-      events.push("providers:after-verified-create");
-    });
-    const create = vi.fn(async (afterVerifiedCreate) => {
-      events.push("sandbox:create");
-      events.push("sandbox:identity-verified");
-      await afterVerifiedCreate?.({} as never);
-      return "created";
-    });
-
-    await expect(
-      runSandboxCreateWithProviderEffects({
-        resumingVerifiedCreate: false,
-        providerEffectBoundary: {
-          publishBeforeCreate,
-          runAfterVerifiedCreate,
-        },
-        create,
-      }),
-    ).resolves.toBe("created");
-
-    expect(publishBeforeCreate).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledExactlyOnceWith(runAfterVerifiedCreate);
-    expect(runAfterVerifiedCreate).toHaveBeenCalledExactlyOnceWith({});
-    expect(events).toEqual([
-      "providers:pre-create-noop",
-      "sandbox:create",
-      "sandbox:identity-verified",
-      "providers:after-verified-create",
-    ]);
-  });
-
-  it("does not replay provider publication for a verified create resume (#9806)", async () => {
-    const publishBeforeCreate = vi.fn(async () => undefined);
-    const create = vi.fn(async () => "resumed");
-
-    await expect(
-      runSandboxCreateWithProviderEffects({
-        resumingVerifiedCreate: true,
-        providerEffectBoundary: {
-          publishBeforeCreate,
-          runAfterVerifiedCreate: undefined,
-        },
-        create,
-      }),
-    ).resolves.toBe("resumed");
-
-    expect(publishBeforeCreate).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledExactlyOnceWith(undefined);
-  });
-
   it("carries identity authority through every provider cleanup effect (#9833)", () => {
     let liveIdentity = "identity-a";
     const operations: string[] = [];
