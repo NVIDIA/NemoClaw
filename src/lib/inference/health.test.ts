@@ -462,11 +462,7 @@ describe("inference health", () => {
     });
 
     it.each([
-      [
-        "gemini-api",
-        "gemini-2.5-flash",
-        '{"choices":[{"message":{"content":null}}]}',
-      ],
+      ["gemini-api", "gemini-2.5-flash", '{"choices":[{"message":{"content":null}}]}'],
       ["nvidia-prod", "meta/llama-3.3-70b-instruct", '{"error":{"message":"model unavailable"}}'],
     ])("rejects malformed HTTP 200 responses from %s", (provider, model, body) => {
       const result = probeRemoteProviderHealth(provider, {
