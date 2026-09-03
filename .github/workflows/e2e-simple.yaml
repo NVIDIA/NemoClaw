@@ -100,9 +100,9 @@ jobs:
             compare_sha="$merge_base"
           fi
           changed="$(git diff --name-only --diff-filter=ACMRD "$compare_sha" "$sha")"
-          product_changed="$(grep -Ev '^(test/|docs/|internal/|\.github/workflows/e2e-simple\.yaml$)|\.md$' <<<"$changed" || true)"
+          base_changed="$(grep -E '^(Dockerfile[.]base|agents/hermes/Dockerfile[.]base|agents/hermes/(security-dependencies|runtime-boundaries|whatsapp-proxy)[.]patch|agents/hermes/hindsight-client-probe-requirements[.]txt|agents/langchain-deepagents-code/(Dockerfile[.]base|requirements[.]lock)|agents/openclaw/(openclaw-runtime|mcporter-runtime)/|ci/npm-audit-exceptions[.]json|nemoclaw-blueprint/blueprint[.]yaml|scripts/security/|scripts/checks/download-hermes-source-archive[.]sh|scripts/lib/(bundled-npm-package|openclaw-npm-remediation|patch-bundled-npm-ip-address|reviewed-npm-archive|reviewed-npm-audit)[.]mts|scripts/lib/sandbox-rlimits[.]sh|scripts/(patch-bundled-npm-brace-expansion|patch-bundled-npm-tar|upgrade-bundled-npm)[.]mts)$' <<<"$changed" || true)"
           build_base=false
-          [[ -z "$product_changed" ]] || build_base=true
+          [[ -z "$base_changed" ]] || build_base=true
 
           {
             printf 'sha=%s\n' "$sha"
@@ -163,14 +163,20 @@ jobs:
         run: |
           set -euo pipefail
           metadata="$RUNNER_TEMP/base-metadata.json"
-          docker buildx build \
-            --platform linux/amd64 \
-            --provenance=false \
-            --sbom=false \
-            --file "$DOCKERFILE" \
-            --output "type=image,name=$REPOSITORY,push-by-digest=true,name-canonical=true,push=true" \
-            --metadata-file "$metadata" \
-            .
+          for attempt in 1 2; do
+            if docker buildx build \
+              --platform linux/amd64 \
+              --provenance=false \
+              --sbom=false \
+              --file "$DOCKERFILE" \
+              --output "type=image,name=$REPOSITORY,push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file "$metadata" \
+              .; then
+              break
+            fi
+            [[ "$attempt" -lt 2 ]] || exit 1
+            echo "::warning::Base build failed; retrying once with the retained BuildKit cache"
+          done
           digest="$(jq -er '."containerimage.digest"' "$metadata")"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           mkdir -p "$RUNNER_TEMP/base-contract"

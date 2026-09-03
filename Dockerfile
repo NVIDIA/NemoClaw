@@ -188,10 +188,7 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
 
-# Fetch every locked messaging archive outside RUN instructions. BuildKit
-# verifies the committed SHA-256 source pins before the selected architecture
-# enters the cache stage; SHA-512 verification against package-lock.json and
-# every package-materialization command then execute with networking disabled.
+# Fetch locked messaging archives by SHA-256; verify and materialize them offline.
 FROM scratch AS openclaw-managed-messaging-npm-common-archives-1
 
 ADD --chmod=0444 --checksum=sha256:d98ffa76628ea162ddf7539b7b84ab851ef889689b16d454483456ba2e166d84 https://registry.npmjs.org/@azure/abort-controller/-/abort-controller-2.1.2.tgz /abort-controller-2.1.2.tgz
