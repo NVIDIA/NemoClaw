@@ -132,15 +132,44 @@ describe("validated GitHub artifact ZIP reader", () => {
   );
 
   it.each([false, true])(
-    "rejects unsupported bit-3 data descriptors (signature: %s)",
+    "accepts validated bit-3 data descriptors (signature: %s)",
     (signature) => {
       const archive = withDataDescriptor(
         artifactZip([{ name: "summary.json", contents: '{"safe":true}' }], 8),
         signature,
       );
-      expect(readValidatedArtifactZipEntries(archive, LIMITS)).toBeNull();
+      expect(readValidatedArtifactZipEntries(archive, LIMITS)).toEqual([
+        { name: "summary.json", bytes: Buffer.from('{"safe":true}') },
+      ]);
     },
   );
+
+  it.each([
+    ["CRC", 0],
+    ["compressed size", 4],
+    ["uncompressed size", 8],
+  ])("rejects a data-descriptor %s mismatch", (_name, fieldOffset) => {
+    const archive = withDataDescriptor(
+      artifactZip([{ name: "summary.json", contents: '{"safe":true}' }], 8),
+      true,
+    );
+    const centralOffset = archive.readUInt32LE(archive.length - 6);
+    const descriptorValuesOffset = centralOffset - 12;
+    archive.writeUInt32LE(
+      archive.readUInt32LE(descriptorValuesOffset + fieldOffset) + 1,
+      descriptorValuesOffset + fieldOffset,
+    );
+    expect(readValidatedArtifactZipEntries(archive, LIMITS)).toBeNull();
+  });
+
+  it("rejects populated local sizes when a data descriptor owns them", () => {
+    const archive = withDataDescriptor(
+      artifactZip([{ name: "summary.json", contents: '{"safe":true}' }], 8),
+      true,
+    );
+    archive.writeUInt32LE(1, 18);
+    expect(readValidatedArtifactZipEntries(archive, LIMITS)).toBeNull();
+  });
 
   it("rejects encryption, local method disagreement, corrupt data, and CRC mismatch", () => {
     const encrypted = artifactZip([{ name: "summary.json", contents: "safe" }]);

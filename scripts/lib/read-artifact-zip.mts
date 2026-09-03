@@ -4,6 +4,7 @@
 import zlib from "node:zlib";
 
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 
@@ -56,6 +57,27 @@ function isSafeExpectedFile(expectedFile: string): boolean {
 
 function isSafeIntegerAtLeast(value: number, minimum: number): boolean {
   return Number.isSafeInteger(value) && value >= minimum;
+}
+
+function hasValidDataDescriptor(
+  archive: Buffer,
+  dataEnd: number,
+  centralDirectoryOffset: number,
+  expectedCrc: number,
+  compressedSize: number,
+  uncompressedSize: number,
+): boolean {
+  const matchesValuesAt = (valuesOffset: number) =>
+    valuesOffset + 12 <= centralDirectoryOffset &&
+    archive.readUInt32LE(valuesOffset) === expectedCrc &&
+    archive.readUInt32LE(valuesOffset + 4) === compressedSize &&
+    archive.readUInt32LE(valuesOffset + 8) === uncompressedSize;
+  return (
+    matchesValuesAt(dataEnd) ||
+    (dataEnd + 4 <= centralDirectoryOffset &&
+      archive.readUInt32LE(dataEnd) === ZIP_DATA_DESCRIPTOR_SIGNATURE &&
+      matchesValuesAt(dataEnd + 4))
+  );
 }
 
 /** Owns all ZIP parsing, structural validation, optional inflation, and CRC checks. */
@@ -128,7 +150,7 @@ function parseValidatedArtifactZip(
       totalUncompressedBytes > options.maxTotalUncompressedBytes ||
       seen.has(name) ||
       diskStart !== 0 ||
-      (flags & 0x9) !== 0 ||
+      (flags & 0x1) !== 0 ||
       (compressionMethod !== 0 && compressionMethod !== 8) ||
       (creatorSystem !== 0 && creatorSystem !== 3) ||
       (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
@@ -148,14 +170,27 @@ function parseValidatedArtifactZip(
     const localNameEnd = localHeaderOffset + 30 + localNameLength;
     const compressedDataOffset = localNameEnd + localExtraLength;
     const dataEnd = compressedDataOffset + compressedSize;
+    const usesDataDescriptor = (flags & 0x8) !== 0;
     if (
       localNameEnd > centralDirectoryOffset ||
       dataEnd > centralDirectoryOffset ||
       localFlags !== flags ||
       localCompressionMethod !== compressionMethod ||
-      localCrc !== expectedCrc ||
-      localCompressedSize !== compressedSize ||
-      localUncompressedSize !== uncompressedSize ||
+      (usesDataDescriptor
+        ? localCrc !== 0 ||
+          localCompressedSize !== 0 ||
+          localUncompressedSize !== 0 ||
+          !hasValidDataDescriptor(
+            archive,
+            dataEnd,
+            centralDirectoryOffset,
+            expectedCrc,
+            compressedSize,
+            uncompressedSize,
+          )
+        : localCrc !== expectedCrc ||
+          localCompressedSize !== compressedSize ||
+          localUncompressedSize !== uncompressedSize) ||
       !archive.subarray(localHeaderOffset + 30, localNameEnd).equals(nameBytes)
     ) {
       return null;
