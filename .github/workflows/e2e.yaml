@@ -4444,7 +4444,7 @@ jobs:
           fi
           docker run --detach \
             --name "$NEMOCLAW_PROTECTED_REGISTRY_NAME" \
-            --label "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
             --label "io.nvidia.nemoclaw.e2e-platform=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM}" \
             --publish 127.0.0.1:5000:5000 \
             docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
@@ -4546,21 +4546,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          label="io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"
-          mapfile -t owned_containers < <(docker ps -aq --filter "label=$label")
-          ((${#owned_containers[@]} > 0)) && docker rm -f "${owned_containers[@]}" >/dev/null
-          mapfile -t owned_images < <(docker image ls -q --filter "label=$label" | sort -u)
-          ((${#owned_images[@]} > 0)) && docker image rm -f "${owned_images[@]}" >/dev/null
-          mapfile -t owned_volumes < <(docker volume ls -q --filter "label=$label")
-          ((${#owned_volumes[@]} > 0)) && docker volume rm -f "${owned_volumes[@]}" >/dev/null
-          if docker ps -aq --filter "label=$label" | grep -q . ||
-            docker image ls -q --filter "label=$label" | grep -q . ||
-            docker volume ls -q --filter "label=$label" | grep -q .; then
-            echo "::error::Protected managed-image cohort resources remained after cleanup" >&2
+          owner="$(docker container inspect --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.cohort"}}' "$NEMOCLAW_PROTECTED_REGISTRY_NAME")"
+          [[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]] || {
+            echo "::error::Refusing to remove a registry not owned by this protected shard" >&2
             exit 1
-          fi
-          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
-            echo "::error::Protected managed-image registry listener remained after cleanup" >&2
+          }
+          docker rm -f "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null
+          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1 ||
+            curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Protected managed-image registry remained after cleanup" >&2
             exit 1
           fi
 
@@ -4582,6 +4576,25 @@ jobs:
           NEMOCLAW_TEST_IMAGE="$(jq -er '.[] | select(.agent == "openclaw") | .reference' "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT")"
           export NEMOCLAW_TEST_IMAGE
           npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
+      - name: Remove protected managed-image cohort resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          label="io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"
+          mapfile -t owned_containers < <(docker ps -aq --filter "label=$label")
+          ((${#owned_containers[@]} > 0)) && docker rm -f "${owned_containers[@]}" >/dev/null
+          mapfile -t owned_images < <(docker image ls -q --filter "label=$label" | sort -u)
+          ((${#owned_images[@]} > 0)) && docker image rm -f "${owned_images[@]}" >/dev/null
+          mapfile -t owned_volumes < <(docker volume ls -q --filter "label=$label")
+          ((${#owned_volumes[@]} > 0)) && docker volume rm -f "${owned_volumes[@]}" >/dev/null
+          if docker ps -aq --filter "label=$label" | grep -q . ||
+            docker image ls -q --filter "label=$label" | grep -q . ||
+            docker volume ls -q --filter "label=$label" | grep -q .; then
+            echo "::error::Protected managed-image cohort resources remained after cleanup" >&2
+            exit 1
+          fi
 
       - name: Publish exact amd64 protected runtime build cache
         if: ${{ matrix.platform == 'linux/amd64' }}
@@ -5098,7 +5111,7 @@ jobs:
           fi
           docker run --detach \
             --name "$NEMOCLAW_PROTECTED_REGISTRY_NAME" \
-            --label "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
             --label "io.nvidia.nemoclaw.e2e-platform=linux/amd64" \
             --publish 127.0.0.1:5000:5000 \
             docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373

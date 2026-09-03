@@ -322,7 +322,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireFragments(errors, registry, [
     'docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME"',
     "http://127.0.0.1:5000/v2/",
-    "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}",
+    "io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}",
     "--publish 127.0.0.1:5000:5000",
     REGISTRY_IMAGE,
   ]);
@@ -366,12 +366,22 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   const cleanup = requireStep(errors, steps, "Remove isolated protected managed-image registry");
   if (cleanup?.if !== "always()") errors.push(`${JOB_ID} registry cleanup must always run`);
   requireFragments(errors, cleanup, [
-    "io.nvidia.nemoclaw.e2e-owner",
-    'label="io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"',
-    'docker rm -f "${owned_containers[@]}"',
+    "io.nvidia.nemoclaw.managed-image.cohort",
+    '[[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]]',
+    'docker rm -f "$NEMOCLAW_PROTECTED_REGISTRY_NAME"',
+    "http://127.0.0.1:5000/v2/",
+  ]);
+
+  const cohortCleanup = requireStep(
+    errors,
+    steps,
+    "Remove protected managed-image cohort resources",
+  );
+  if (cohortCleanup?.if !== "always()") errors.push(`${JOB_ID} cohort cleanup must always run`);
+  requireFragments(errors, cohortCleanup, [
+    'label="io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"',
     'docker image rm -f "${owned_images[@]}"',
     'docker volume rm -f "${owned_volumes[@]}"',
-    "http://127.0.0.1:5000/v2/",
   ]);
 
   const evidence = requireStep(errors, steps, "Validate protected managed-image evidence");
@@ -418,6 +428,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Validate protected managed-image evidence",
     "Validate OpenClaw managed-image security boundary",
     "Validate managed-image glibc probe lifecycle",
+    "Remove protected managed-image cohort resources",
     "Publish exact amd64 protected runtime build cache",
     "Upload protected managed-image evidence",
     "Clean up Docker auth",

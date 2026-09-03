@@ -59,12 +59,16 @@ describe("protected managed-image runtime workflow", () => {
     const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
     const names = steps.map((step) => String(step.name));
     const cleanup = names.indexOf("Remove isolated protected managed-image registry");
+    const cohortCleanup = names.indexOf("Remove protected managed-image cohort resources");
+    const security = names.indexOf("Validate OpenClaw managed-image security boundary");
+    const glibc = names.indexOf("Validate managed-image glibc probe lifecycle");
     expect(cleanup).toBeLessThan(names.indexOf("Validate protected managed-image evidence"));
-    expect(cleanup).toBeLessThan(
-      names.indexOf("Validate OpenClaw managed-image security boundary"),
-    );
-    expect(cleanup).toBeLessThan(names.indexOf("Validate managed-image glibc probe lifecycle"));
+    expect(cleanup).toBeLessThan(security);
+    expect(cleanup).toBeLessThan(glibc);
+    expect(cohortCleanup).toBeGreaterThan(security);
+    expect(cohortCleanup).toBeGreaterThan(glibc);
     expect(steps[cleanup]).toMatchObject({ if: "always()" });
+    expect(steps[cohortCleanup]).toMatchObject({ if: "always()" });
   });
 
   it("accepts the hosted build-cache handoff to the protected runtime job", () => {

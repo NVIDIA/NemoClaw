@@ -270,14 +270,26 @@ test(
     try {
       const repairCreate = await host.command(
         "docker",
-        ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, repairVolume],
+        [
+          "volume",
+          "create",
+          "--label",
+          `io.nvidia.nemoclaw.managed-image.cohort=${cohort}`,
+          repairVolume,
+        ],
         { artifactName: "managed-image-openclaw-create-repair-volume" },
       );
       expect(repairCreate.exitCode).toBe(0);
       repairVolumeCreated = true;
       const refusalCreate = await host.command(
         "docker",
-        ["volume", "create", "--label", `io.nvidia.nemoclaw.e2e-owner=${cohort}`, refusalVolume],
+        [
+          "volume",
+          "create",
+          "--label",
+          `io.nvidia.nemoclaw.managed-image.cohort=${cohort}`,
+          refusalVolume,
+        ],
         { artifactName: "managed-image-openclaw-create-refusal-volume" },
       );
       expect(refusalCreate.exitCode).toBe(0);
@@ -325,7 +337,7 @@ test(
           "--user",
           "root",
           "--label",
-          `io.nvidia.nemoclaw.e2e-owner=${cohort}`,
+          `io.nvidia.nemoclaw.managed-image.cohort=${cohort}`,
           "--volume",
           `${refusalVolume}:/sandbox/.openclaw`,
           image,

@@ -271,7 +271,11 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     platform: "linux/amd64",
   });
 
-  const bases = requireStep(errors, workflowSteps, "Resolve digest-pinned amd64 runtime base images");
+  const bases = requireStep(
+    errors,
+    workflowSteps,
+    "Resolve digest-pinned amd64 runtime base images",
+  );
   requireValues(errors, `${JOB_ID} runtime base env`, record(bases?.env), {
     DCODE_BASE_REF: "${{ needs.base-image-publication.outputs.dcode_base_ref }}",
   });
@@ -296,7 +300,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   requireFragments(errors, registry, [
     'docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME"',
     "http://127.0.0.1:5000/v2/",
-    "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}",
+    "io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}",
     "--publish 127.0.0.1:5000:5000",
     REGISTRY_IMAGE,
   ]);
