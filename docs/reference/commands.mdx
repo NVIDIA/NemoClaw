@@ -1430,7 +1430,7 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes `https://inference.local/v1/models` from inside the sandbox, and when that probe reports the route reachable it sends one inference request over the same route. That inference request is the authoritative inference health check, and both checks exercise the route that agent traffic uses. The main `Inference` line reports one of these states:
+The command probes `https://inference.local/v1/models` from inside the sandbox, and when that probe reports the route reachable it sends an inference request over the same route. That inference request is the authoritative inference health check, and both checks exercise the route that agent traffic uses. The main `Inference` line reports one of these states:
 
 | State | Meaning |
 | --- | --- |
