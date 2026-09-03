@@ -24,6 +24,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     ];
     private IBootstrapperCommand? command;
     private MainWindow? window;
+    private Dispatcher? engineDispatcher;
     private Dispatcher? dispatcher;
     private Exception? dispatcherFailure;
     private bool installed;
@@ -41,6 +42,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
     protected override void Run()
     {
+        this.engineDispatcher = Dispatcher.CurrentDispatcher;
         this.SubscribeToEngine();
         using var dispatcherReady = new ManualResetEventSlim();
         var dispatcherThread = new Thread(() => this.RunDispatcher(dispatcherReady))
@@ -58,6 +60,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
         this.Engine.Log(LogLevel.Standard, "NemoClaw native Windows bootstrapper started.");
         this.Engine.Detect();
+        Dispatcher.Run();
         dispatcherThread.Join();
         if (this.dispatcherFailure is not null)
         {
@@ -80,7 +83,11 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                 this.window.UninstallRequested += (_, _) => this.BeginPlan(LaunchAction.Uninstall);
                 this.window.CancelRequested += (_, _) => this.cancelRequested = true;
                 this.window.OpenLogRequested += (_, _) => this.OpenBundleLog();
-                this.window.Closed += (_, _) => this.dispatcher.InvokeShutdown();
+                this.window.Closed += (_, _) =>
+                {
+                    this.dispatcher.InvokeShutdown();
+                    this.engineDispatcher?.BeginInvokeShutdown(DispatcherPriority.Normal);
+                };
                 this.window.Show();
             }
 
@@ -91,6 +98,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         {
             this.dispatcherFailure = error;
             ready.Set();
+            this.engineDispatcher?.BeginInvokeShutdown(DispatcherPriority.Normal);
         }
     }
 
@@ -134,6 +142,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         {
             this.result = args.Status;
             this.Ui(() => this.window?.ShowFailure("Windows could not inspect the current NemoClaw installation.", this.BundleLogPath()));
+            this.StopDispatchersForHeadless();
             return;
         }
 
@@ -173,6 +182,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         {
             this.result = args.Status;
             this.Ui(() => this.window?.ShowFailure("Windows could not plan the requested NemoClaw change.", this.BundleLogPath()));
+            this.StopDispatchersForHeadless();
             return;
         }
 
@@ -225,8 +235,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
         if (this.command?.Display != Display.Full)
         {
-            this.Ui(() => this.window?.Close());
-            this.dispatcher?.InvokeShutdown();
+            this.StopDispatchersForHeadless();
         }
     }
 
@@ -294,6 +303,26 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             return fallback;
         }
         return this.dispatcher.CheckAccess() ? action() : this.dispatcher.Invoke(action);
+    }
+
+    private void StopDispatchersForHeadless()
+    {
+        if (this.command?.Display == Display.Full)
+        {
+            return;
+        }
+        this.Ui(() =>
+        {
+            if (this.window is null)
+            {
+                this.dispatcher?.InvokeShutdown();
+            }
+            else
+            {
+                this.window.Close();
+            }
+        });
+        this.engineDispatcher?.BeginInvokeShutdown(DispatcherPriority.Normal);
     }
 
     private int NormalizeExitCode(int code)
