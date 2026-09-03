@@ -58,6 +58,7 @@ const providerRestore = vi.hoisted(() => {
     events.push("provider-restore-proof");
     return { phase: "validated" };
   });
+  const restoreDeepAgentsManagedMcpProjection = vi.fn();
   return {
     events,
     source,
@@ -66,6 +67,7 @@ const providerRestore = vi.hoisted(() => {
     requireCurrentSnapshotRuntimeProvider,
     prepareSandboxRuntimeRestore,
     confirmSandboxRuntimeRestore,
+    restoreDeepAgentsManagedMcpProjection,
   };
 });
 
@@ -79,6 +81,7 @@ vi.mock("./snapshot/dependencies", () => ({
   readManagedSnapshotProfileAuthority: providerRestore.readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind: vi.fn(),
   requireCurrentSnapshotRuntimeProvider: providerRestore.requireCurrentSnapshotRuntimeProvider,
+  restoreDeepAgentsManagedMcpProjection: providerRestore.restoreDeepAgentsManagedMcpProjection,
 }));
 
 function managedWorkload(agent: ShippedManagedImageAgent = "openclaw") {
@@ -119,6 +122,7 @@ beforeEach(() => {
   providerRestore.requireCurrentSnapshotRuntimeProvider.mockClear();
   providerRestore.prepareSandboxRuntimeRestore.mockClear();
   providerRestore.confirmSandboxRuntimeRestore.mockClear();
+  providerRestore.restoreDeepAgentsManagedMcpProjection.mockClear();
   fixture.getLatestBackupMock.mockReturnValue(managedSnapshot());
   fixture.getSandboxMock.mockReturnValue({
     name: "alpha",
@@ -156,36 +160,38 @@ afterEach(() => {
 
 describe("managed snapshot provider restore ordering", () => {
   it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("refreshes %s provider authority at the mutation edge and proves the profile", async (agent) => {
-    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot(agent));
-    fixture.getSandboxMock.mockReturnValue({
-      name: "alpha",
-      agent,
-      openshellDriver: "docker",
-    });
-    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({ agent });
-    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
-      providerRestoreAuthority: {
+    { agent: "openclaw" as const, providerChecks: 2 },
+    { agent: "hermes" as const, providerChecks: 2 },
+    { agent: "langchain-deepagents-code" as const, providerChecks: 3 },
+  ])(
+    "refreshes $agent provider authority at each mutation edge and proves the profile",
+    async ({ agent, providerChecks }) => {
+      fixture.getLatestBackupMock.mockReturnValue(managedSnapshot(agent));
+      fixture.getSandboxMock.mockReturnValue({
+        name: "alpha",
         agent,
-        profileFingerprint: "a".repeat(64),
-      },
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+        openshellDriver: "docker",
+      });
+      providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({ agent });
+      providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+        providerRestoreAuthority: {
+          agent,
+          profileFingerprint: "a".repeat(64),
+        },
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", { kind: "restore" });
+      await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(providerRestore.events).toEqual([
-      "provider-preflight",
-      "provider-preflight",
-      "filesystem-restore",
-      "provider-restore-proof",
-    ]);
-    expect(providerRestore.prepareSandboxRuntimeRestore).toHaveBeenCalledTimes(2);
-    expect(providerRestore.confirmSandboxRuntimeRestore).toHaveBeenCalledOnce();
-  });
+      expect(providerRestore.events).toEqual([
+        ...Array<string>(providerChecks).fill("provider-preflight"),
+        "filesystem-restore",
+        "provider-restore-proof",
+      ]);
+      expect(providerRestore.prepareSandboxRuntimeRestore).toHaveBeenCalledTimes(providerChecks);
+      expect(providerRestore.confirmSandboxRuntimeRestore).toHaveBeenCalledOnce();
+    },
+  );
 
   it("aborts before filesystem mutation when mutation-edge validation fails", async () => {
     providerRestore.prepareSandboxRuntimeRestore
@@ -220,6 +226,108 @@ describe("managed snapshot provider restore ordering", () => {
       expect.objectContaining({ validateBeforeMutation: expect.any(Function) }),
     );
     expect(providerRestore.confirmSandboxRuntimeRestore).not.toHaveBeenCalled();
+  });
+
+  it("rejects changed provider authority before repairing the managed MCP projection (#10756)", async () => {
+    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot("langchain-deepagents-code"));
+    fixture.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      openshellDriver: "docker",
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "langchain-deepagents-code",
+            adapter: "deepagents-config",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            providerName: "alpha-mcp-github",
+            policyName: "mcp-bridge-github",
+            addedAt: "2026-06-01T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({
+      agent: "langchain-deepagents-code",
+    });
+    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+      providerRestoreAuthority: {
+        agent: "langchain-deepagents-code",
+        profileFingerprint: "a".repeat(64),
+      },
+    });
+    providerRestore.prepareSandboxRuntimeRestore
+      .mockImplementationOnce(() => {
+        providerRestore.events.push("provider-preflight");
+        return {
+          phase: "preflighted",
+          targetProviderId: "docker",
+          targetSandboxName: "alpha",
+          source: providerRestore.source,
+          preflight: {},
+          managedProfile: {
+            agent: "langchain-deepagents-code",
+            profileFingerprint: "a".repeat(64),
+          },
+        };
+      })
+      .mockImplementationOnce(() => {
+        providerRestore.events.push("provider-preflight-rejected");
+        throw new Error("runtime changed before projection repair");
+      });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(providerRestore.events).toEqual(["provider-preflight", "provider-preflight-rejected"]);
+    expect(providerRestore.restoreDeepAgentsManagedMcpProjection).not.toHaveBeenCalled();
+    expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith("  Destination 'alpha' was not changed.");
+  });
+
+  it("rejects changed snapshot content before repairing the managed MCP projection (#10756)", async () => {
+    fixture.getLatestBackupMock.mockReturnValue(managedSnapshot("langchain-deepagents-code"));
+    fixture.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      openshellDriver: "docker",
+    });
+    fixture.captureSnapshotRestoreAuthorityMock
+      .mockReturnValueOnce({
+        schemaVersion: 1,
+        backupPath: "/tmp/backup-alpha",
+        contentSha256: "a".repeat(64),
+      })
+      .mockReturnValueOnce({
+        schemaVersion: 1,
+        backupPath: "/tmp/backup-alpha",
+        contentSha256: "b".repeat(64),
+      });
+    providerRestore.readManagedSnapshotProfileAuthority.mockReturnValue({
+      agent: "langchain-deepagents-code",
+    });
+    providerRestore.prepareManagedSnapshotProfileRestore.mockReturnValue({
+      providerRestoreAuthority: {
+        agent: "langchain-deepagents-code",
+        profileFingerprint: "a".repeat(64),
+      },
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(providerRestore.restoreDeepAgentsManagedMcpProjection).not.toHaveBeenCalled();
+    expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Selected snapshot content changed before filesystem mutation"),
+    );
+    expect(console.error).toHaveBeenCalledWith("  Destination 'alpha' was not changed.");
   });
 });
 
