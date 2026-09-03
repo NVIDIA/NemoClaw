@@ -69,16 +69,26 @@ describe("createSetupNim vLLM resume", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
-  it("normalizes a checkpointed catalog alias before validating the installed vLLM", async () => {
+  it("resumes an interrupted catalog alias with the served vLLM route", async () => {
     const alias = "nemotron-3-nano-4b";
     const servedModel = "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8";
     const profile = { name: "Linux NVIDIA GPU" } as VllmProfile;
-    const checkpointVllmInstallModel = vi.fn();
-    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
-      options.beforeInstall?.(servedModel);
-      options.checkpointInstallIntent?.(alias);
-      return { ok: true };
+    let checkpointedModel: string | null = null;
+    const checkpointVllmInstallModel = vi.fn((modelId: string) => {
+      checkpointedModel = modelId;
     });
+    const installVllm = vi
+      .fn<SetupNimFlowDeps["installVllm"]>()
+      .mockImplementationOnce(async (_selected, options) => {
+        expect(options.modelIntent).toBeUndefined();
+        options.checkpointInstallIntent?.(alias);
+        return { ok: false };
+      })
+      .mockImplementationOnce(async (_selected, options) => {
+        expect(options.modelIntent).toBe(alias);
+        options.checkpointInstallIntent?.(alias);
+        return { ok: true };
+      });
     const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
       expect(state.model).toBe(servedModel);
       state.provider = "vllm-local";
@@ -95,8 +105,11 @@ describe("createSetupNim vLLM resume", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-vllm",
-        getVllmInstallResumeModel: () => null,
+        getVllmInstallResumeModel: () => checkpointedModel,
         checkpointVllmInstallModel,
+        abortNonInteractive: (message) => {
+          throw new Error(message);
+        },
         detectInferenceProviderHostState: () =>
           makeHostState({
             vllmProfile: profile,
@@ -109,12 +122,17 @@ describe("createSetupNim vLLM resume", () => {
       }),
     );
 
+    await expect(setupNim(null, null, null, true)).rejects.toThrow("vLLM install failed");
+    expect(checkpointedModel).toBe(alias);
+    expect(handleVllmSelection).not.toHaveBeenCalled();
+
     await expect(setupNim(null, null, null, true)).resolves.toMatchObject({
       model: servedModel,
       provider: "vllm-local",
     });
-    expect(checkpointVllmInstallModel).toHaveBeenCalledWith(alias);
-    expect(selectVllmModelFromEnv).toHaveBeenCalledOnce();
+    expect(checkpointVllmInstallModel).toHaveBeenCalledTimes(2);
+    expect(checkpointVllmInstallModel).toHaveBeenLastCalledWith(alias);
+    expect(selectVllmModelFromEnv).toHaveBeenCalledTimes(2);
   });
 
   it("refuses checkpoint-first vLLM installation when sandbox identity changes (#9833)", async () => {
