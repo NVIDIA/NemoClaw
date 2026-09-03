@@ -568,12 +568,17 @@ function runHermesGatewayRuntimeCleanup(opts: {
       nested = path.join(nested, `d${depth}`);
     fs.mkdirSync(nested, { recursive: true });
   }
+  const wideLogPaths: string[] = [];
   if (opts.wideLogEntries) {
     const wideRoot = path.join(hermesHome, "logs", "curator");
     fs.mkdirSync(wideRoot, { recursive: true });
-    for (let index = 0; index < opts.wideLogEntries; index += 1)
-      fs.writeFileSync(path.join(wideRoot, `wide-${index}.log`), "", { mode: 0o644 });
+    for (let index = 0; index < opts.wideLogEntries; index += 1) {
+      const wideLogPath = path.join(wideRoot, `wide-${index}.log`);
+      wideLogPaths.push(wideLogPath);
+      fs.writeFileSync(wideLogPath, "", { mode: 0o644 });
+    }
   }
+  const wideLogEntriesBefore = wideLogPaths.map(filesystemFingerprint);
   const unsafeLogFixture = opts.unsafeLog
     ? createHermesUnsafeLogFixture(tmpDir, hermesHome, opts.unsafeLog)
     : undefined;
@@ -675,6 +680,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `NEMOCLAW_PROC_ROOT=${shellQuote(procRoot)}`,
+      "readonly HERMES_LAYOUT_REPAIR_REFUSED_STATUS=78",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
       "DASHBOARD_PUBLIC_PORT=18789",
@@ -795,6 +801,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
       configYamlContent,
       envFileMode,
       envFileContent,
+      wideLogEntriesBefore,
+      wideLogEntriesAfter: wideLogPaths.map(filesystemFingerprint),
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1374,10 +1382,10 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   });
   it("refuses a log tree beyond the bounded repair entry count", { timeout: 15_000 }, () => {
     const run = runHermesGatewayRuntimeCleanup({ preExistingLogFile: true, wideLogEntries: 4097 });
-    expect(run.result.status).not.toBe(0);
+    expect(run.result.status).toBe(78);
     expect(run.result.stderr).toContain("/logs exceeds maximum repair entry count 4096");
     expect(run.result.stderr).toContain("archive or remove old retained logs");
-    expect(run.agentLogMode).toBe("644");
+    expect(run.wideLogEntriesAfter).toEqual(run.wideLogEntriesBefore);
   });
   it("refuses a history path that hard-links the mutable config file", () => {
     const run = runHermesGatewayRuntimeCleanup({
@@ -1428,7 +1436,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       );
     },
   );
-
   it.each([
     ["gateway", { orphanSocat: true }, "456", "Removing orphaned socat forwarder"],
     ["dashboard", { orphanDashboardSocat: true }, "789", "Removing orphaned dashboard socat"],
@@ -1438,12 +1445,10 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       staleLock: false,
       stalePid: false,
     });
-
     expect(run.result.status).toBe(0);
     expect(run.killLog.trim()).toBe(pid);
     expect(run.result.stderr).toContain(message);
   });
-
   it.each([[undefined], [["/usr/local/bin/hermes.real", "gateway", "run"]]] as [
     string[] | undefined,
   ][])("preserves runtime state for a live gateway process [case %#]", (liveGatewayArgv) => {
@@ -1452,7 +1457,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       liveGatewayArgv,
       orphanSocat: true,
     });
-
     expect(run.result.status).toBe(0);
     expect(run.runtimePidExists).toBe(true);
     expect(run.runtimeLockExists).toBe(true);
@@ -1467,17 +1471,14 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     "resolves the installed Tirith finalizer before fallback (%s)",
     (installed) => {
       const run = runTirithFinalizerPathResolution(installed);
-
       expect(run.result.status, run.result.stderr).toBe(0);
       expect(run.result.stdout.trim()).toBe(run.expected);
     },
   );
-
   it.each(["non-root", "root"] as const)(
     "removes retryable Tirith markers before explicit command dispatch [case %#]",
     (mode) => {
       const run = runTirithExplicitCommandDispatch(mode);
-
       expect(run.result.status, `${mode}: ${run.result.stderr}`).toBe(0);
       expect(run.markerExists, mode).toBe(false);
       expect(run.result.stderr).toContain(
