@@ -820,6 +820,8 @@
     {
       "live": "test/e2e/live/state-backup-restore.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/download.test.ts",
+        "test/scripts/backup-workspace.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

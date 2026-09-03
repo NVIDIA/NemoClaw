@@ -5,7 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  isCommandTimeout,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
@@ -26,8 +31,8 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
   'if [ -L "$p" ]; then printf unsupported; exit 0; fi',
   'if [ -d "$p" ]; then',
   '  case "$p" in',
-  '    /*) root=$p ;;',
-  '    *) root=./$p ;;',
+  "    /*) root=$p ;;",
+  "    *) root=./$p ;;",
   "  esac",
   '  unsafe=$(find "$root" ! -type d ! -type f -print -quit) || exit 1',
   '  [ -n "$unsafe" ] && printf unsafe-member || printf dir',
@@ -45,7 +50,7 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
 function probeSandboxSourceKind(
   sandboxName: string,
   sandboxPath: string,
-): SandboxSourceKind | "missing" | "unsupported" | "unsafe-member" | undefined {
+): SandboxSourceKind | "missing" | "unsupported" | "unsafe-member" | "timeout" | undefined {
   const probe = captureOpenshell(
     [
       "sandbox",
@@ -59,8 +64,9 @@ function probeSandboxSourceKind(
       "sh",
       sandboxPath,
     ],
-    { ignoreError: true },
+    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
   );
+  if (probe && isCommandTimeout(probe)) return "timeout";
   const kind = probe?.output?.trim();
   return kind === "file" ||
     kind === "dir" ||
@@ -131,6 +137,11 @@ async function downloadFromSandboxUnlocked(
       `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': the directory contains an entry that is not a regular file or directory. Symbolic links are not supported.`,
     );
   }
+  if (sourceKind === "timeout") {
+    throw new Error(
+      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': source verification timed out.`,
+    );
+  }
   if (sourceKind === undefined) {
     throw new Error(
       `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': could not verify whether the source is a file or directory.`,
@@ -156,6 +167,11 @@ async function downloadFromSandboxUnlocked(
     }
 
     const sourceKindAfterDownload = probeSandboxSourceKind(opts.sandboxName, sandboxPath);
+    if (sourceKindAfterDownload === "timeout") {
+      throw new Error(
+        `Cannot publish '${sandboxPath}' from sandbox '${opts.sandboxName}': source verification timed out after download.`,
+      );
+    }
     if (sourceKindAfterDownload !== sourceKind) {
       throw new Error(
         `Cannot publish '${sandboxPath}' from sandbox '${opts.sandboxName}': source type changed or could not be revalidated after download.`,

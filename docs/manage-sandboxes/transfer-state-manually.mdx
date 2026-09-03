@@ -5,7 +5,7 @@ title: "Transfer State Manually"
 sidebar-title: "Transfer State Manually"
 description: "Download and upload selected sandbox state files when a managed snapshot is not the right transfer path."
 description-agent: "Explains safe manual download and upload paths for OpenClaw workspace files, Hermes state, and Deep Agents state. Use when inspecting or transferring specific files."
-keywords: ["nemoclaw download", "openshell sandbox upload", "manual sandbox backup", "workspace transfer"]
+keywords: ["nemoclaw download", "nemoclaw upload", "manual sandbox backup", "workspace transfer"]
 content:
   type: "how_to"
 skill:
@@ -91,7 +91,7 @@ Use `$$nemoclaw <name> snapshot create` when you need NemoClaw's built-in saniti
 
 ## Upload State
 
-Use `openshell sandbox upload` to push files back into a sandbox.
+Use `$$nemoclaw <name> upload` to copy files from the host into a sandbox.
 
 <AgentOnly variant="openclaw">
 
@@ -99,12 +99,12 @@ Use `openshell sandbox upload` to push files back into a sandbox.
 SANDBOX=my-assistant
 BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
 ```
 
 </AgentOnly>
@@ -117,11 +117,11 @@ Use manual download and upload only when you need to inspect or transfer a speci
 SANDBOX=my-hermes
 BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/profiles/dashboard-home/USER.md
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/SOUL.md" /sandbox/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/state.db" /sandbox/.hermes/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/profiles/dashboard-home/USER.md
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
 ```
 
 </AgentOnly>
@@ -131,10 +131,10 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/pl
 SANDBOX=my-deepagents
 BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent/AGENTS.md" /sandbox/.deepagents/agent/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent/memories/" /sandbox/.deepagents/agent/memories/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/skills/" /sandbox/.deepagents/skills/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/agent/skills/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/agent/AGENTS.md" /sandbox/.deepagents/agent/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/agent/memories/" /sandbox/.deepagents/agent/memories/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/skills/" /sandbox/.deepagents/skills/
+$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/agent/skills/
 ```
 
 Do not upload saved `.deepagents/.state` contents during manual restore.
@@ -160,6 +160,9 @@ Back up a workspace:
 ./scripts/backup-workspace.sh backup my-assistant
 ```
 
+The helper requires `SOUL.md`, `USER.md`, `IDENTITY.md`, and `AGENTS.md`.
+It skips `MEMORY.md` and `memory/` when those optional paths do not exist.
+
 Expected output:
 
 ```text
@@ -167,8 +170,9 @@ Backing up workspace from sandbox 'my-assistant'...
 Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
 ```
 
-If a listed file or the `memory/` directory cannot download, the helper deletes the new timestamped backup and exits.
-Check the reported sandbox path for a missing file, symbolic link, or unsupported file type.
+If a required file cannot download, the helper deletes the new timestamped backup and exits.
+The helper also deletes the backup when an optional path exists but cannot download.
+Check the reported sandbox path for a symbolic link, unsupported file type, or transfer failure.
 Correct the path, then run the same backup command again.
 
 Restore the most recent backup or a specific timestamp:

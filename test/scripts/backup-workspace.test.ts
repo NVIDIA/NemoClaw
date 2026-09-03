@@ -165,6 +165,62 @@ exit 99
     expect(fs.existsSync(openshellCalls)).toBe(false);
   });
 
+  it("keeps a backup when optional memory paths are absent (#10636)", () => {
+    const calls = path.join(root, "nemoclaw-calls.txt");
+    const nemoclaw = path.join(bin, "nemoclaw");
+    writeExecutable(
+      nemoclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
+case "$3" in
+  */MEMORY.md|*/memory/)
+    printf "Cannot download '%s' from sandbox '%s': no such path in the sandbox.\n" "$3" "$1" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$4"
+printf 'saved\n' > "\${4%/}/$(basename -- "$3")"
+`,
+    );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+exit 99
+`,
+    );
+
+    const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        NEMOCLAW_CLI_BIN: nemoclaw,
+        NEMOCLAW_TEST_CALLS: calls,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Skipped MEMORY.md (not found)");
+    expect(result.stdout).toContain("Skipped memory/ (not found)");
+    expect(result.stdout).toContain("Backup saved to ");
+    expect(result.stdout).toContain("(4 items)");
+    expect(result.stderr).toBe("");
+    expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(6);
+
+    const backupRoot = path.join(home, ".nemoclaw", "backups");
+    const backups = fs.readdirSync(backupRoot);
+    expect(backups).toHaveLength(1);
+    expect(fs.readdirSync(path.join(backupRoot, backups[0])).sort()).toEqual([
+      "AGENTS.md",
+      "IDENTITY.md",
+      "SOUL.md",
+      "USER.md",
+    ]);
+  });
+
   it("preserves an existing backup when the timestamp collides (#10636)", () => {
     const timestamp = "20260903-010203";
     const backupRoot = path.join(home, ".nemoclaw", "backups");

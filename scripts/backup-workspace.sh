@@ -47,6 +47,30 @@ shell_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
 
+download_backup_item() {
+  local sandbox="$1"
+  local remote_path="$2"
+  local host_dest="$3"
+  local optional="$4"
+  local output
+  local status
+
+  if output="$("$NEMOCLAW_CLI_BIN" "$sandbox" download "$remote_path" "$host_dest" 2>&1)"; then
+    [ -z "$output" ] || printf '%s\n' "$output"
+    return 0
+  else
+    status=$?
+  fi
+
+  local missing_message="Cannot download '${remote_path}' from sandbox '${sandbox}': no such path in the sandbox."
+  if [ "$optional" = "1" ] && [[ "$output" == *"$missing_message"* ]]; then
+    return 2
+  fi
+
+  [ -z "$output" ] || printf '%s\n' "$output" >&2
+  return "$status"
+}
+
 RESTORE_DIR_COUNT=0
 restore_directory() {
   local sandbox="$1"
@@ -100,9 +124,16 @@ do_backup() {
 
   local count=0
   for f in "${FILES[@]}"; do
-    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${f}" "${dest}/"; then
+    local optional=0
+    [ "$f" = "MEMORY.md" ] && optional=1
+    if download_backup_item "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" "$optional"; then
       count=$((count + 1))
     else
+      local status=$?
+      if [ "$status" -eq 2 ]; then
+        warn "Skipped ${f} (not found)"
+        continue
+      fi
       warn "Failed to download ${f}"
       rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
       fail "Removed incomplete backup at ${dest}/ because ${f} was not downloaded. Check ${WORKSPACE_PATH}/${f}, then rerun the backup before restore."
@@ -110,19 +141,19 @@ do_backup() {
   done
 
   for d in "${DIRS[@]}"; do
-    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/"; then
+    if download_backup_item "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 1; then
       count=$((count + 1))
     else
-      warn "Skipped ${d}/ (not found or download failed)"
+      local status=$?
+      if [ "$status" -eq 2 ]; then
+        warn "Skipped ${d}/ (not found)"
+        continue
+      fi
+      warn "Failed to download ${d}/"
       rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
       fail "Removed incomplete backup at ${dest}/ because ${d}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${d}/ and rerun the backup before restore."
     fi
   done
-
-  if [ "$count" -eq 0 ]; then
-    rmdir "$dest" 2>/dev/null || true
-    fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
-  fi
 
   info "Backup saved to ${dest}/ (${count} items)"
 }

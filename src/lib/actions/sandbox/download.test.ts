@@ -11,10 +11,14 @@ vi.mock("./gateway-state", () => ({
   ensureLiveSandboxOrExit: vi.fn(async () => undefined),
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
-  runOpenshell: vi.fn(),
-  captureOpenshell: vi.fn(),
-}));
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../adapters/openshell/runtime")>();
+  return {
+    ...actual,
+    runOpenshell: vi.fn(),
+    captureOpenshell: vi.fn(),
+  };
+});
 
 vi.mock("./sessions/download-verify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./sessions/download-verify")>();
@@ -24,7 +28,11 @@ vi.mock("./sessions/download-verify", async (importOriginal) => {
   };
 });
 
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { downloadFromSandbox } from "./download";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { publishDownloadArtifact } from "./sessions/download-verify";
@@ -285,6 +293,43 @@ describe("downloadFromSandbox", () => {
       downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
     ).rejects.toThrow(/could not verify whether the source is a file or directory/);
     expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a timed-out source probe before download (#10636)", async () => {
+    captureMock.mockReturnValue({
+      status: null,
+      output: "",
+      error: Object.assign(new Error("probe timed out"), { code: "ETIMEDOUT" }),
+    });
+
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
+    ).rejects.toThrow(/source verification timed out/);
+    expect(captureMock).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
+    );
+    expect(runMock).not.toHaveBeenCalled();
+    expect(publishMock).not.toHaveBeenCalled();
+  });
+
+  it("removes staged data when source revalidation times out (#10636)", async () => {
+    captureMock.mockReturnValueOnce({ status: 0, output: "file" }).mockReturnValueOnce({
+      status: null,
+      output: "",
+      error: Object.assign(new Error("probe timed out"), { code: "ETIMEDOUT" }),
+    });
+
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/x", hostDest: "/tmp/p" }),
+    ).rejects.toThrow(/source verification timed out after download/);
+    expect(captureMock).toHaveBeenCalledTimes(2);
+    expect(
+      captureMock.mock.calls.every((call) => call[1]?.timeout === OPENSHELL_PROBE_TIMEOUT_MS),
+    ).toBe(true);
+    expect(runMock).toHaveBeenCalledOnce();
+    expect(publishMock).not.toHaveBeenCalled();
+    expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 
   it("rejects a non-zero staged download and removes the staging directory", async () => {
