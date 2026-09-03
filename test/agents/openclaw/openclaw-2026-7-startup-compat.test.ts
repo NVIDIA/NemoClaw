@@ -65,83 +65,31 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
     expect(fs.existsSync(statePath)).toBe(false);
   });
 
-  it.skipIf(process.platform !== "linux" || (process.getuid?.() ?? -1) !== 0)(
-    "retains but accepts a stable cache under the non-root shields-up topology",
-    () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sealed-cache-"));
-      temporaryRoots.push(root);
-      const sandboxDir = path.join(root, "sandbox");
-      const configDir = path.join(sandboxDir, ".openclaw");
+  it.each(["symlink", "directory", "hardlink"] as const)(
+    "rejects a %s update-check path",
+    (kind) => {
+      const configDir = temporaryConfigDir();
       const statePath = path.join(configDir, "update-check.json");
-      const sandboxGid = 65_534;
-      const gatewayUid = 65_532;
-      fs.chmodSync(root, 0o755);
-      fs.mkdirSync(sandboxDir);
-      fs.chownSync(sandboxDir, 0, sandboxGid);
-      fs.chmodSync(sandboxDir, 0o1775);
-      fs.mkdirSync(configDir);
-      fs.chownSync(configDir, 0, 0);
-      fs.chmodSync(configDir, 0o755);
-      fs.writeFileSync(statePath, '{"lastCheck":123}\n', { mode: 0o644 });
-      fs.chownSync(statePath, 0, 0);
+      const target = path.join(path.dirname(configDir), "target.json");
+      switch (kind) {
+        case "symlink":
+          fs.writeFileSync(target, "");
+          fs.symlinkSync(target, statePath);
+          break;
+        case "directory":
+          fs.mkdirSync(statePath);
+          break;
+        case "hardlink":
+          fs.writeFileSync(target, "{}");
+          fs.linkSync(target, statePath);
+          break;
+      }
 
-      const result = spawnSync(
-        "python3",
-        [
-          "-I",
-          "-c",
-          [
-            "import importlib.util, os, sys, types",
-            "spec = importlib.util.spec_from_file_location('normalizer', sys.argv[1])",
-            "module = importlib.util.module_from_spec(spec)",
-            "spec.loader.exec_module(module)",
-            "sandbox_gid = int(sys.argv[3])",
-            "module.grp.getgrnam = lambda _name: types.SimpleNamespace(gr_gid=sandbox_gid)",
-            "os.setgroups([sandbox_gid])",
-            "os.setgid(sandbox_gid)",
-            "os.setuid(int(sys.argv[4]))",
-            "raise SystemExit(module.remove_legacy_update_check(sys.argv[2]))",
-          ].join("\n"),
-          NORMALIZER,
-          configDir,
-          String(sandboxGid),
-          String(gatewayUid),
-        ],
-        { encoding: "utf8", timeout: 5000 },
-      );
+      const result = repairUpdateCheck(configDir);
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stderr).toContain("Retained protected legacy");
-      expect(fs.readFileSync(statePath, "utf8")).toBe('{"lastCheck":123}\n');
+      expect(result.status).toBe(1);
     },
   );
-
-  it.each([
-    "symlink",
-    "directory",
-    "hardlink",
-  ] as const)("rejects a %s update-check path", (kind) => {
-    const configDir = temporaryConfigDir();
-    const statePath = path.join(configDir, "update-check.json");
-    const target = path.join(path.dirname(configDir), "target.json");
-    switch (kind) {
-      case "symlink":
-        fs.writeFileSync(target, "");
-        fs.symlinkSync(target, statePath);
-        break;
-      case "directory":
-        fs.mkdirSync(statePath);
-        break;
-      case "hardlink":
-        fs.writeFileSync(target, "{}");
-        fs.linkSync(target, statePath);
-        break;
-    }
-
-    const result = repairUpdateCheck(configDir);
-
-    expect(result.status).toBe(1);
-  });
 
   it("starts the root-mode gateway with the sandbox home", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-home-"));

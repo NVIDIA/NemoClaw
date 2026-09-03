@@ -35,7 +35,47 @@ const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifact
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const MANAGED_SOURCE_CONDITION =
-  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}";
+  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
+const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
+  [
+    "set -euo pipefail",
+    'catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"',
+    'rm -f -- "$catalog_path"',
+    'if [[ -n "$MANAGED_IMAGE_SHA" ]]; then',
+    '  [[ "$MANAGED_IMAGE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
+    '    echo "::error::managed_image_revision must be a lowercase 40-character SHA" >&2',
+    "    exit 1",
+    "  }",
+    '  git merge-base --is-ancestor "$MANAGED_IMAGE_SHA" "$CANDIDATE_SHA" || {',
+    '    echo "::error::managed_image_revision must be an ancestor of checkout_sha" >&2',
+    "    exit 1",
+    "  }",
+    "fi",
+    'selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"',
+    'case "$selection" in',
+    "  base-cohort)",
+    '    [[ ! -e "$catalog_path" && ! -L "$catalog_path" ]] || {',
+    '      echo "::error::base-cohort selection produced a candidate catalog" >&2',
+    "      exit 1",
+    "    }",
+    "    ;;",
+    "  candidate-catalog)",
+    '    [[ -f "$catalog_path" && ! -L "$catalog_path" && -s "$catalog_path" ]] || {',
+    '      echo "::error::exact PR managed-image catalog is invalid" >&2',
+    "      exit 1",
+    "    }",
+    '    catalog="$(jq -ce . "$catalog_path")"',
+    "    (( ${#catalog} <= 65536 )) || {",
+    '      echo "::error::exact PR managed-image catalog exceeds the output limit" >&2',
+    "      exit 1",
+    "    }",
+    '    printf \'catalog=%s\\n\' "$catalog" >>"$GITHUB_OUTPUT"',
+    '    echo "::notice::Jetson dispatch is unavailable because the exact PR managed-image catalog qualifies linux/amd64 only."',
+    "    ;;",
+    '  *) echo "::error::PR managed-image selection is invalid" >&2; exit 1 ;;',
+    "esac",
+    'printf \'selection=%s\\n\' "$selection" >>"$GITHUB_OUTPUT"',
+  ].join("\n") + "\n";
 const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
@@ -328,9 +368,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
     packageSource.includes("pr-managed-image-catalog.json")
   ) {
-    errors.push(
-      "Manual PR CLI packaging must not accept obsolete managed-image catalog authority",
-    );
+    errors.push("Manual PR CLI packaging must not accept obsolete managed-image catalog authority");
   }
 
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
@@ -342,6 +380,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -349,6 +389,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
+    TARGETS: "${{ inputs.targets }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -372,6 +413,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    '"$ALLOW_JETSON_DISPATCH" != "true"',
+    '"$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true"',
+    '",${TARGETS}," != *",jetson-nvmap-gpu,"*',
+    '",${JOBS}," != *",jetson-nvmap-gpu,"*',
+    '",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"*',
+    '",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"*',
+    "exact-base E2E cannot select dedicated hardware jobs",
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
@@ -391,6 +441,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
+  }
+  if (
+    authSource.includes("Authorization: Bearer") ||
+    Object.hasOwn(authentication.env ?? {}, "GITHUB_TOKEN")
+  ) {
+    errors.push("Manual PR authentication must use public PR metadata without a job token");
   }
 
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
@@ -418,8 +474,13 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
-  if (validation.env?.GITHUB_TOKEN !== undefined || validationSource.includes("Authorization:")) {
-    errors.push("Manual PR checkout validation must use the public PR metadata endpoint");
+  if (
+    validation.env?.GITHUB_TOKEN !==
+    "${{ steps.candidate_authorization.outputs.nvidia_owned == 'true' && github.token || '' }}"
+  ) {
+    errors.push(
+      "Manual PR checkout validation token must be limited to authenticated NVIDIA-owned revisions",
+    );
   }
   if (
     validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
@@ -432,17 +493,21 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "pull request must still be open",
     "pull request base repository changed before execution",
     "pull request base branch changed before execution",
-    "checkout_repository changed before execution",
-    "checkout_sha changed before execution",
     "base_sha changed before execution",
+    'if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]',
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     '"$NVIDIA_OWNED" == "true"',
+    '[[ -n "$GITHUB_TOKEN" ]]',
+    'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
+    '"${auth_args[@]}"',
     "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
     }
   }
-
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
@@ -638,7 +703,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
       managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
       managed_image_revision: "${{ steps.validate_managed_cohort.outputs.revision }}",
-      workload_source: "${{ steps.select_pr_source.outputs.workload_source || 'managed-image' }}",
+      managed_image_catalog: "${{ steps.select_pr_source.outputs.catalog }}",
+      workload_source: "managed-image",
     },
     permissions: {
       actions: "read",
@@ -678,26 +744,18 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       },
       {
         id: "select_pr_source",
-        name: "Select PR workload source",
+        name: "Resolve exact PR managed-image publication",
         if: "${{ inputs.pr_number != '' }}",
         env: {
           BASE_SHA: "${{ inputs.base_sha }}",
           CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
           CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          MANAGED_IMAGE_SHA: "${{ inputs.managed_image_revision }}",
           PR_NUMBER: "${{ inputs.pr_number }}",
         },
         shell: "bash",
-        run: [
-          "set -euo pipefail",
-          'workload_source="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts select-source)"',
-          'case "$workload_source" in',
-          "  managed-image|local-dockerfile) ;;",
-          '  *) echo "::error::PR workload source is invalid" >&2; exit 1 ;;',
-          "esac",
-          'printf \'workload_source=%s\\n\' "$workload_source" >>"$GITHUB_OUTPUT"',
-          "",
-        ].join("\n"),
+        run: PR_MANAGED_IMAGE_RESOLVER_SCRIPT,
       },
       {
         id: "publication",
@@ -708,9 +766,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_HISTORY_ALLOW_NON_HEAD:
             "${{ steps.publication_mode.outputs.allow_non_head }}",
           REQUIRE_MANAGED_IMAGE_PUBLICATION:
-            "${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || '1' }}",
+            "${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || '1' }}",
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
-            "${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || steps.publication_mode.outputs.select_nearest_successful }}",
+            "${{ steps.publication_mode.outputs.select_nearest_successful }}",
         },
         shell: "bash",
         run: [
@@ -800,10 +858,46 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("cloud-onboard must use the selected managed-image revision");
   }
   if (
+    cloudOnboard.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON !==
+    "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
+  ) {
+    errors.push("cloud-onboard must use the exact PR managed-image catalog");
+  }
+  if (
+    (cloudOnboard.steps ?? []).some(
+      (step) => step.name === "Materialize cloud-onboard managed-image catalog",
+    )
+  ) {
+    errors.push("cloud-onboard must not duplicate the exact inline managed-image catalog");
+  }
+  if (
     live.env?.E2E_MANAGED_IMAGE_REVISION !==
     "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
     errors.push("live stock onboarding must use the selected managed-image revision");
+  }
+  if (
+    live.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON !==
+    "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
+  ) {
+    errors.push("live stock onboarding must use the exact PR managed-image catalog");
+  }
+  for (const jobName of [
+    "mcp-bridge",
+    "openshell-credential-generation-window",
+    "mcp-bridge-dev",
+    "hermes-e2e",
+    "hermes-gpu-startup",
+    "cloud-onboard",
+    "messaging-providers",
+  ]) {
+    const consumer = workflow.jobs[jobName] ?? {};
+    if (
+      consumer.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON !==
+      "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
+    ) {
+      errors.push(`${jobName} must use the exact PR managed-image catalog`);
+    }
   }
   for (const jobName of [
     "catalogue-standard",
@@ -818,14 +912,22 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     }
     if (
       catalogue.with?.managed_image_revision !==
-      "${{ needs.base-image-publication.outputs.managed_image_revision }}"
+        "${{ needs.base-image-publication.outputs.managed_image_revision }}" ||
+      catalogue.with?.managed_image_catalog !==
+        "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
     ) {
       errors.push(`${jobName} must use the selected managed-image revision`);
+    }
+    if (
+      catalogue.with?.managed_image_catalog !==
+      "${{ needs.base-image-publication.outputs.managed_image_catalog }}"
+    ) {
+      errors.push(`${jobName} must use the exact PR managed-image catalog`);
     }
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-      "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
+    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
     errors.push("live DCode must use the selected immutable base reference");
   }
@@ -1222,9 +1324,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     .map((entry) => entry.trim())
     .filter(Boolean);
   if (
-    sparseCheckout.length !== 3 ||
+    sparseCheckout.length !== 4 ||
     !sparseCheckout.includes("ci/onboard-performance-budget.json") ||
     !sparseCheckout.includes("scripts/audit-test-runtime.mts") ||
+    !sparseCheckout.includes("scripts/lib/read-artifact-zip.mts") ||
     !sparseCheckout.includes("scripts/scorecard")
   ) {
     errors.push(
@@ -1442,15 +1545,19 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     errors.push("Unified advisor must not auto-dispatch workflows");
   }
   const specialistEnv = advisor.jobs?.["review-specialists"]?.env ?? {};
-  const expectedBaseRef = "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
-  const expectedHeadRef = "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
+  const expectedBaseRef =
+    "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
+  const expectedHeadRef =
+    "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
   if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
     errors.push("Unified advisor specialists must retain target refs through execution");
   }
   const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
   const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");
   const specialistSteps = advisor.jobs?.["review-specialists"]?.steps ?? [];
-  const contextDownload = specialistSteps.find((step) => step.name === "Download GitHub review context");
+  const contextDownload = specialistSteps.find(
+    (step) => step.name === "Download GitHub review context",
+  );
   const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
   const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
   if (
@@ -1460,7 +1567,9 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   ) {
     errors.push("Unified advisor context artifact must survive failed-job and full reruns");
   }
-  if (specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}") {
+  if (
+    specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}"
+  ) {
     errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
   }
 }

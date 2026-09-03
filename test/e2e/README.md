@@ -51,7 +51,9 @@ It builds the CLI from the trusted workflow checkout and never executes or resto
 
 #### Artifact Identity
 
-For a pull request (PR) run, `checkout_sha` identifies the candidate source commit.
+For a pull request (PR) run, `checkout_sha` identifies the selected head or exact base source
+commit. A base replay sets `checkout_sha` equal to `base_sha` and keeps the same trusted workflow
+SHA and selectors as the failed head run.
 The trusted workflow runs from `github.workflow_sha`.
 A push or manual run uses `github.sha` when `checkout_sha` is empty.
 
@@ -91,25 +93,30 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
-The `base-image-publication` job selects the nearest fully successful publication on the PR base
-first-parent history. It downloads the complete cohort contract and Deep Agents Code base contract
-by immutable artifact ID. It binds each artifact to the selected workflow run, attempt, revision,
-artifact ID, and artifact digest. The cohort validator requires OpenClaw, Hermes, and LangChain Deep
-Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_revision`.
-`generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed,
-incomplete, or mixed publication starts no onboarding consumer.
+The `base-image-publication` job selects managed-image authority before any stock-onboarding consumer starts.
 
-For a manual same-repository PR run, the trusted planner compares the immutable base and candidate
-commit trees with the reviewed base-image and managed-image input paths. When those inputs are
-unchanged, the run uses the applicable trusted managed-image publication from the PR base history.
-When any input changed, the run selects `local-dockerfile` and builds the candidate Dockerfiles
-locally instead of waiting for a candidate publication.
+For a manual same-repository PR run, the trusted planner compares immutable base and candidate commit trees against the reviewed image-input paths.
+When those paths are unchanged, the job selects the nearest fully successful cohort publication from the PR base's first-parent history.
+It downloads the complete cohort and Deep Agents Code base contracts by immutable artifact ID.
+It binds each artifact to the selected workflow run, attempt, revision, artifact ID, and digest.
+The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64`.
+Only then does it emit `managed_image_revision` and the complete cohort receipt.
 
-The selected source is passed to every stock-onboarding consumer. Managed-image runs receive the
-selected base revision and complete cohort receipt. Local-Dockerfile runs resolve the shipped agent
-Dockerfile at the final process boundary and require the resulting durable receipt to identify that
-source. The GitHub token remains available only to the trusted planner and is not included in the
-candidate CLI artifact.
+When a reviewed image input changed, the planner validates every returned managed-image PR workflow run for the candidate commit and selects the newest successful run by run ID.
+An earlier failed run does not block a later successful run.
+Every returned run must belong to the same open PR and an NVIDIA/NemoClaw source branch.
+The planner downloads one `managed-pr-contract-*` artifact for each shipped agent.
+It binds every artifact to the workflow run, attempt, candidate commit, artifact ID, and digest.
+It requires every shipped agent once, one candidate revision, one release, and one cohort before it assembles the candidate catalog.
+No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
+Manual PR E2E does not fall back to local Dockerfile builds.
+
+Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
+Changed-input runs pass the authenticated candidate catalog separately to those consumers.
+The candidate CLI artifact cannot contain the catalog.
+The GitHub token remains available only to the trusted planner and is not included in the candidate CLI artifact.
+The candidate catalog qualifies `linux/amd64` only, so a changed-input manual PR run does not dispatch the Jetson target.
+The trusted publication job reports this exclusion before the Jetson job is skipped.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
 OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
@@ -117,6 +124,10 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
+reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
+Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
+reject mixed cohorts, another run, a future attempt, and another candidate revision.
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
@@ -180,10 +191,9 @@ registry writes disabled. After the build, it scans the completed image for
 node-tar and verifies the sandbox-readable installed files. It then uploads the
 compressed image as the one-day `hermes-isolation-image` artifact.
 
-The 90-minute `test-hermes-sandbox-image` job and the
-`state-dir-guard-metadata` job download and load that artifact instead of
-rebuilding the image. Within the Hermes test job, the secret-boundary and
-root-entrypoint steps have 45- and 30-minute budgets respectively.
+The 90-minute `test-hermes-sandbox-image` job downloads and loads that artifact instead of
+rebuilding the image.
+Within that job, the secret-boundary and root-entrypoint steps have 45- and 30-minute budgets respectively.
 
 The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
@@ -277,8 +287,10 @@ npx tsx tools/e2e/credential-free-tests.mts
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target does not
-read an authentication file or make an authenticated gateway call.
+OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target confirms
+that its configured authentication file path does not exist before and after
+the health request. A successful request proves that public health does not
+require a credential read or make an authenticated gateway call.
 
 Use `jobs=external-gateway-health` for the manual pull request E2E run. The
 target records the expected release, reported release, public health status,
@@ -620,25 +632,30 @@ mode.
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
 1. Onboard the custom weather plugin as v1.
-2. Restart the gateway and verify v1.
-3. Recreate the sandbox with the plugin changed to v2.
-4. Run the cross-device runtime-dependency replacement probe.
+2. Install v1 with OpenClaw across distinct filesystems.
+3. Restart the gateway and verify v1.
+4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
-The recreation remains the replacement boundary. It verifies the v2 plugin
-with runtime inspection, `tools.catalog`, and `tools.invoke`, and it preserves
-the workspace marker. The job also keeps the test-only tmpfs mount, unchanged
-stock policy-source bytes, and the distinct-device and source-side `EXDEV`
-checks. The duplicate v3 rebuild is removed from this job. The
-`rebuild-openclaw` job remains the canonical live rebuild coverage.
+The recreation remains the replacement boundary. One `tools.invoke` assertion
+per phase proves the plugin version after onboarding, restart, and recreation.
+The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
+across the proven filesystem boundary before restart. `e2e-support` tests own
+deterministic wrapper argument rewriting. Deterministic tests own exact package
+versions and third-party replacement internals. Runtime inspection and catalog
+permutations are outside this live contract. Workspace preservation and policy
+selection retain their focused coverage instead of another assertion in this
+target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
 The current-checkout fixture locally prebuilds its repository-controlled v1
 and v2 Dockerfiles with BuildKit, then hands only those local image references
 to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
 trust boundary and are never host-prebuilt by this fixture.
-When a PR changes a base-image input, the current-checkout fixture enables that
-base-image build after the workflow removes Docker Hub credentials.
+The current-checkout fixture enables local base-image resolution after the
+workflow removes Docker Hub credentials.
 
-The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
+The release-baseline lane is retired. Historical package versions are not part
+of this current runtime contract.
+
 Push-run timing for the reduced lifecycle has not yet been measured.
 
 ## OpenShell development artifact retention
@@ -702,7 +719,7 @@ If visibility remains stale, cleanup treats the file as active.
 Cleanup removes it only after `swapoff` succeeds.
 Successful state is discarded with the ephemeral runner.
 
-The fallback covers agent-turn latency, Hermes inference switch and shields,
+The fallback covers agent-turn latency and Hermes inference switch,
 the Hermes stable MCP shard, the Hermes common-egress and channel
 stop/start shards, the dashboard-bearing `hermes-e2e` lane, `hermes-discord`,
 and Hermes security-posture tests. Rebuild lanes with workflow-managed swap,
@@ -724,7 +741,6 @@ lanes:
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
 - the Anthropic-compatible `hermes-inference-switch` mode;
-- `hermes-shields-config`;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - `rebuild-hermes`;
 - `rebuild-hermes-stale-base`;
@@ -1029,7 +1045,7 @@ request resets that observation window.
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for 12 routed workflow lane identities / 14
+telemetry for 11 routed workflow lane identities / 13
 concrete job executions.
 
 - `agent-turn-latency`, spanning its sequential OpenClaw and Hermes setup
@@ -1043,7 +1059,6 @@ concrete job executions.
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
 - `hermes-inference-switch` with the `anthropic` mode
-- `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
 The two extra instrumented executions come from the 3 `common-egress-agent`
@@ -1443,13 +1458,20 @@ Dispatch a new run after recovery.
 If a case fails, use the GitHub Actions job log.
 Inspect a case artifact only when its upload step completed.
 
-For a manual PR run, provide these inputs:
+For the initial manual PR run, provide these inputs:
 
 - The current PR number.
 - The lowercase 40-character SHA of the latest PR commit.
 - The PR source repository.
 - The lowercase 40-character PR base SHA.
 - The SHA of the trusted workflow commit on `main`.
+
+If the head run fails, use the read-only CI failure classifier when it is available. Stop without a
+base replay when it identifies known infrastructure failure. Only an unresolved candidate failure
+may be replayed with the same selectors against the exact PR base: set `checkout_sha` to the
+recorded base SHA and `checkout_repository` to `NVIDIA/NemoClaw`, while leaving `base_sha` and
+`workflow_sha` unchanged. The workflow run is the evidence; do not publish a separate commit status
+or automatically replay the base.
 
 For the default NVIDIA-owned PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
@@ -1465,12 +1487,15 @@ For this producer run, the executing workflow SHA, `workflow_sha` input, and PR 
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
 A trusted `main` workflow pre-checkout step validates the open PR and records whether its source repository has API-confirmed `NVIDIA` organization ownership.
 That ownership authorizes the full ordinary plan and credential profiles; external sources retain the bounded controller plan.
-A second validation after checkout rejects a changed candidate commit, base commit, PR source repository, or NVIDIA ownership before preparation.
+A second validation after checkout rejects a changed selected commit, base commit, repository, or
+NVIDIA ownership before preparation.
 Candidate runs cannot publish release qualification.
 
 The Actions run is advisory for the pull request and is not a required merge context.
-Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and executing workflow SHA.
-A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
+Treat a head or base run as passing evidence only when the `E2E` workflow concludes with `success`
+for the recorded PR number, selected repository, selected commit SHA, base commit SHA, and executing
+workflow SHA. A changed PR source repository, head commit SHA, or base commit SHA invalidates a
+head-to-base comparison.
 
 The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
 The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.

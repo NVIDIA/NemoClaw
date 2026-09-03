@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   type AdapterMutationOptions,
@@ -38,27 +37,6 @@ function mcporterRootForEntry(entry: McpBridgeEntry): string {
   return entry.agent
     ? openClawMcporterRoot(getAgentConfigDir(entry.agent, DEFAULT_OPENCLAW_CONFIG_DIR))
     : OPENCLAW_MCPORTER_ROOT;
-}
-
-/**
- * Refuse an in-sandbox Mcporter config mutation while config is locked.
- *
- * Mcporter's managed project config is `<agent config dir>/workspace/config/
- * mcporter.json`, and `workspace` is a `readOnlyRoots` entry in
- * `agents/openclaw/state-lock-plan.json`. Locking therefore re-owns that whole
- * subtree to `root:sandbox` and drops every group write bit, so the in-sandbox
- * `mcporter config` commands NemoClaw drives over SSH cannot reopen the file
- * for write. Fail closed on the posture instead of letting a raw
- * `EACCES ... open '/sandbox/.openclaw/workspace/config/mcporter.json'` escape
- * from inside the sandbox with no indication of what to do about it (#10469).
- * This mirrors `assertHermesMcpConfigMutationAllowed`, which already fails
- * closed the same way for the Hermes adapter.
- */
-export function assertOpenClawMcpConfigMutationAllowed(sandboxName: string): void {
-  if (isShieldsDown(sandboxName, false)) return;
-  throw new McpBridgeError(
-    `OpenClaw sandbox '${sandboxName}' has shields up or an unreadable shields posture. The managed Mcporter config is locked together with the rest of the workspace state root. Run \`nemoclaw ${sandboxName} shields down --timeout 15m --reason "MCP maintenance"\` before changing MCP configuration.`,
-  );
 }
 
 function ensureMcporter(sandboxName: string): void {

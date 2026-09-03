@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { CLI_ARTIFACT_PACKAGE_STEP } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
-import { readWorkflow, type Workflow } from "../../helpers/e2e-workflow-contract";
+import { CLI_ARTIFACT_PACKAGE_SCRIPT } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
 
 type CatalogInput = "absent" | "file" | "symlink";
 
@@ -19,7 +19,7 @@ const CATALOG_INPUT_WRITERS = {
   symlink: (catalog: string) => fs.symlinkSync("missing-catalog.json", catalog),
 } satisfies Record<CatalogInput, (catalog: string) => void>;
 
-function runCliArtifactPackaging(catalogInput: CatalogInput) {
+function runCliArtifactPackaging(catalogInput: CatalogInput, trustedCatalog = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-package-"));
   const workspace = path.join(root, "workspace");
   const runnerTemp = path.join(root, "runner-temp");
@@ -68,15 +68,25 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   }).trim();
 
   const dist = path.join(workspace, "dist");
+  const packagedRunner = path.join(dist, "nemoclaw");
   const shared = path.join(workspace, "nemoclaw", "dist", "shared");
-  fs.mkdirSync(dist);
+  fs.mkdirSync(path.join(dist, "lib"), { recursive: true });
+  fs.mkdirSync(path.join(packagedRunner, "blueprint"), { recursive: true });
   fs.mkdirSync(shared, { recursive: true });
   fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("fixture");\n');
+  fs.writeFileSync(path.join(dist, "lib", "blueprint-runner.js"), 'console.log("fixture");\n');
+  fs.writeFileSync(path.join(packagedRunner, "package.json"), '{"type":"module"}\n');
+  fs.writeFileSync(
+    path.join(packagedRunner, "blueprint", "runner.js"),
+    'console.log("fixture");\n',
+  );
   fs.writeFileSync(
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({ nemoclawVersion: "0.0.0", sourceRevision: candidateSha })}\n`,
   );
   for (const boundary of [
+    "openshell-gateway-health-sdk.js",
+    "openshell-observation-boundary.cjs",
     "openshell-policy-boundary.cjs",
     "sandbox-name.cjs",
     "snapshot-sanitizer-boundary.cjs",
@@ -86,13 +96,14 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
 
   const catalog = path.join(dist, "e2e-managed-image-catalog.json");
   CATALOG_INPUT_WRITERS[catalogInput](catalog);
+  const trustedCatalogPath = path.join(runnerTemp, "pr-managed-image-catalog.json");
+  const trustedCatalogJson = '{"trusted":true}';
+  trustedCatalog && fs.writeFileSync(trustedCatalogPath, `${trustedCatalogJson}\n`);
+  const trustedCatalogSha256 = trustedCatalog
+    ? createHash("sha256").update(fs.readFileSync(trustedCatalogPath)).digest("hex")
+    : "";
 
-  const workflow = readWorkflow() as Workflow;
-  const packageStep = workflow.jobs["generate-matrix"]?.steps?.find(
-    (step) => step.name === CLI_ARTIFACT_PACKAGE_STEP,
-  );
-  expect(packageStep?.run).toEqual(expect.any(String));
-  const result = spawnSync("bash", ["-c", packageStep!.run!], {
+  const result = spawnSync("bash", [path.resolve(CLI_ARTIFACT_PACKAGE_SCRIPT)], {
     cwd: workspace,
     encoding: "utf8",
     env: {
@@ -100,6 +111,8 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: candidateSha,
       GITHUB_OUTPUT: path.join(root, "github-output"),
+      MANAGED_IMAGE_CATALOG: trustedCatalog ? trustedCatalogJson : "",
+      MANAGED_IMAGE_CATALOG_SHA256: trustedCatalogSha256,
       PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
       RUN_ATTEMPT: "1",
       RUN_ID: "12345",
@@ -111,6 +124,7 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   });
   return {
     artifactExists: fs.existsSync(path.join(runnerTemp, "nemoclaw-cli-artifact")),
+    artifactPayload: path.join(runnerTemp, "nemoclaw-cli-artifact", "nemoclaw-cli.tar"),
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
     output: `${result.stdout}${result.stderr}`,
     result,
@@ -123,6 +137,18 @@ describe("CLI artifact packaging", () => {
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
       expect(fixture.artifactExists).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("seals a trusted managed-image catalog into the exact candidate artifact", () => {
+    const fixture = runCliArtifactPackaging("absent", true);
+    try {
+      expect(fixture.result.status, fixture.output).toBe(0);
+      expect(
+        execFileSync("tar", ["-tf", fixture.artifactPayload], { encoding: "utf8" }).split("\n"),
+      ).toContain("dist/e2e-managed-image-catalog.json");
     } finally {
       fixture.cleanup();
     }
