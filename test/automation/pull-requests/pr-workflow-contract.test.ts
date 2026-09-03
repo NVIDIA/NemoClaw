@@ -144,6 +144,13 @@ function requiredWorkflowStep(job: WorkflowJob, stepName: string): WorkflowStep 
   return step;
 }
 
+function expectCredentiallessCheckout(job: WorkflowJob): void {
+  expect(requiredWorkflowStep(job, "Checkout")).toMatchObject({
+    uses: trustedCheckoutAction,
+    with: { "persist-credentials": false },
+  });
+}
+
 function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
   const stepIndex = job.steps?.findIndex((candidate) => candidate.name === stepName) ?? -1;
   if (stepIndex === -1) {
@@ -566,6 +573,7 @@ describe("pull request and main workflow contracts", () => {
       );
       expect(buildNeeds).toContain("compile-artifacts");
       expect(shardNeeds).toContain("compile-artifacts");
+      [buildJob, shardJob, mergeJob].forEach(expectCredentiallessCheckout);
       expectWorkflowStepNames(
         compileJob,
         isPullRequest
