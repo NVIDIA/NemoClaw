@@ -22,6 +22,7 @@ export type {
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
+export { restoreDeepAgentsManagedMcpProjection } from "../mcp-bridge-adapter-deepagents-registration";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,
@@ -63,10 +64,7 @@ export function requireCurrentSnapshotRuntimeProvider(
 
 export function assertSandboxSnapshotCommandAvailable(
   sandboxName: string,
-  commandId:
-    | "sandbox:snapshot:create"
-    | "sandbox:snapshot:list"
-    | "sandbox:snapshot:restore",
+  commandId: "sandbox:snapshot:create" | "sandbox:snapshot:list" | "sandbox:snapshot:restore",
 ): void {
   assertHermesPortableCommandUnavailable(sandboxName, commandId);
 }
