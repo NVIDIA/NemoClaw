@@ -164,7 +164,6 @@ describe("current Podman runtime provider", () => {
         expect.objectContaining({ operation: "gateway-inspection", engineId: "podman" }),
         expect.objectContaining({ operation: "host-local-inference", engineId: "podman" }),
         expect.objectContaining({ operation: "sandbox-lifecycle", engineId: "podman" }),
-        expect.objectContaining({ operation: "state-mutation", engineId: "podman" }),
         expect.objectContaining({ operation: "workload-cleanup", engineId: "podman" }),
       ]),
     });

@@ -1,0 +1,402 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Hardens the pinned Hermes gateway boundary against sandbox-controlled plugin
+# discovery, mutable dotenv process controls, and package-installer inputs.
+diff --git a/hermes_cli/env_loader.py b/hermes_cli/env_loader.py
+index 9dea6e5fe9..e5e75594a9 100644
+--- a/hermes_cli/env_loader.py
++++ b/hermes_cli/env_loader.py
+@@ -160,10 +160,29 @@ def _sanitize_loaded_credentials() -> None:
+
+
+ def _load_dotenv_with_fallback(path: Path, *, override: bool) -> None:
++    from hermes_constants import (
++        nemoclaw_managed_gateway_plugins_only,
++        nemoclaw_protected_process_control,
++    )
++
++    protected: dict[str, str] | None = None
++    if nemoclaw_managed_gateway_plugins_only():
++        protected = {
++            key: value
++            for key, value in os.environ.items()
++            if nemoclaw_protected_process_control(key)
++        }
+     try:
+-        load_dotenv(dotenv_path=path, override=override, encoding="utf-8")
+-    except UnicodeDecodeError:
+-        load_dotenv(dotenv_path=path, override=override, encoding="latin-1")
++        try:
++            load_dotenv(dotenv_path=path, override=override, encoding="utf-8")
++        except UnicodeDecodeError:
++            load_dotenv(dotenv_path=path, override=override, encoding="latin-1")
++    finally:
++        if protected is not None:
++            for key in tuple(os.environ):
++                if nemoclaw_protected_process_control(key) and key not in protected:
++                    os.environ.pop(key, None)
++            os.environ.update(protected)
+     # Strip non-ASCII characters from credential env vars that were just
+     # loaded.  API keys must be pure ASCII since they're sent as HTTP
+     # header values (httpx encodes headers as ASCII).  Non-ASCII chars
+diff --git a/hermes_cli/plugins.py b/hermes_cli/plugins.py
+index 6ca393fca5..f798e33ec7 100644
+--- a/hermes_cli/plugins.py
++++ b/hermes_cli/plugins.py
+@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Callable, Dict, List, Optional, Set, Union
+
+-from hermes_constants import get_hermes_home
++from hermes_constants import get_hermes_home, nemoclaw_managed_gateway_plugins_only
+ from utils import env_var_enabled, fast_safe_load
+ from hermes_cli.config import cfg_get
+ from hermes_cli.middleware import OBSERVER_SCHEMA_VERSION, VALID_MIDDLEWARE
+@@ -59,6 +59,8 @@ def get_bundled_plugins_dir() -> Path:
+     installs) so read-only store paths are consulted first.  Falls back to
+     the in-repo path used during development.
+     """
++    if nemoclaw_managed_gateway_plugins_only():
++        return Path("/opt/hermes/plugins")
+     env_override = os.getenv("HERMES_BUNDLED_PLUGINS")
+     if env_override:
+         return Path(env_override)
+@@ -1346,29 +1348,36 @@ class PluginManager:
+         logger.debug("  bundled/platforms: %d manifest(s)", len(bundled_platforms))
+         manifests.extend(bundled_platforms)
+
+-        # 2. User plugins (~/.hermes/plugins/)
+-        user_dir = get_hermes_home() / "plugins"
+-        logger.debug("Scanning user plugins: %s", user_dir)
+-        user_manifests = self._scan_directory(user_dir, source="user")
+-        logger.debug("  user: %d manifest(s)", len(user_manifests))
+-        manifests.extend(user_manifests)
+-
+-        # 3. Project plugins (./.hermes/plugins/)
+-        if _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
+-            project_dir = Path.cwd() / ".hermes" / "plugins"
+-            logger.debug("Scanning project plugins: %s", project_dir)
+-            project_manifests = self._scan_directory(project_dir, source="project")
+-            logger.debug("  project: %d manifest(s)", len(project_manifests))
+-            manifests.extend(project_manifests)
++        bundled_only = nemoclaw_managed_gateway_plugins_only()
++        if bundled_only:
++            logger.debug("Managed gateway: user and project plugins disabled")
+         else:
+-            logger.debug(
+-                "Project plugins disabled (set HERMES_ENABLE_PROJECT_PLUGINS=1 to enable)"
+-            )
++            # 2. User plugins (~/.hermes/plugins/)
++            user_dir = get_hermes_home() / "plugins"
++            logger.debug("Scanning user plugins: %s", user_dir)
++            user_manifests = self._scan_directory(user_dir, source="user")
++            logger.debug("  user: %d manifest(s)", len(user_manifests))
++            manifests.extend(user_manifests)
++
++            # 3. Project plugins (./.hermes/plugins/)
++            if _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
++                project_dir = Path.cwd() / ".hermes" / "plugins"
++                logger.debug("Scanning project plugins: %s", project_dir)
++                project_manifests = self._scan_directory(project_dir, source="project")
++                logger.debug("  project: %d manifest(s)", len(project_manifests))
++                manifests.extend(project_manifests)
++            else:
++                logger.debug(
++                    "Project plugins disabled (set HERMES_ENABLE_PROJECT_PLUGINS=1 to enable)"
++                )
+
+-        # 4. Pip / entry-point plugins
+-        ep_manifests = self._scan_entry_points()
+-        logger.debug("  entrypoints: %d manifest(s)", len(ep_manifests))
+-        manifests.extend(ep_manifests)
++        # 4. Pip / entry-point plugins. The managed gateway admits only the
++        # image-owned bundled tree; same-identity Hermes retains upstream entry
++        # point discovery.
++        if not bundled_only:
++            ep_manifests = self._scan_entry_points()
++            logger.debug("  entrypoints: %d manifest(s)", len(ep_manifests))
++            manifests.extend(ep_manifests)
+
+         # Load each manifest (skip user-disabled plugins).
+         # Later sources override earlier ones on key collision — user
+diff --git a/hermes_constants.py b/hermes_constants.py
+index 639d6d48f0..bd442e7ec2 100644
+--- a/hermes_constants.py
++++ b/hermes_constants.py
+@@ -18,6 +18,152 @@ _UNSET = object()
+ _HERMES_HOME_OVERRIDE: ContextVar[str | object] = ContextVar(
+     "_HERMES_HOME_OVERRIDE", default=_UNSET
+ )
++_NEMOCLAW_PROTECTED_ENV_KEYS = frozenset(
++    {
++        "BASH_ENV",
++        "CURL_CA_BUNDLE",
++        "ENV",
++        "GIT_SSL_CAINFO",
++        "HERMES_BUNDLED_PLUGINS",
++        "HERMES_CONFIG",
++        "HERMES_ENABLE_PROJECT_PLUGINS",
++        "HERMES_ENV",
++        "HERMES_HOME",
++        "HERMES_LAZY_INSTALL_TARGET",
++        "HOME",
++        "HTTP_PROXY",
++        "HTTPS_PROXY",
++        "NODE_EXTRA_CA_CERTS",
++        "NO_PROXY",
++        "PATH",
++        "REQUESTS_CA_BUNDLE",
++        "SSL_CERT_FILE",
++        "VIRTUAL_ENV",
++        "http_proxy",
++        "https_proxy",
++        "no_proxy",
++    }
++)
++_NEMOCLAW_PROTECTED_ENV_PREFIXES = ("DYLD_", "LD_", "PIP_", "PYTHON", "UV_")
++_NEMOCLAW_INSTALLER_UNSAFE_KEYS = frozenset(
++    {"BASH_ENV", "ENV", "HOME", "PATH", "VIRTUAL_ENV"}
++)
++_NEMOCLAW_INSTALLER_UNSAFE_PREFIXES = ("DYLD_", "LD_", "PIP_", "PYTHON", "UV_")
++
++
++def nemoclaw_protected_process_control(name: str) -> bool:
++    """Return whether mutable dotenv must not replace this process control."""
++    return name in _NEMOCLAW_PROTECTED_ENV_KEYS or name.startswith(
++        _NEMOCLAW_PROTECTED_ENV_PREFIXES
++    )
++
++
++def nemoclaw_managed_gateway_plugins_only() -> bool:
++    """Return whether this is NemoClaw's identity-proven managed gateway.
++
++    The marker lives below a root-owned runtime parent and is published before
++    the root-separated gateway starts. A process running as the gateway
++    identity fails closed when the marker is absent or unsafe; the same-identity
++    sandbox topology has a different uid and retains upstream user plugins.
++    """
++    get_euid = getattr(os, "geteuid", None)
++    if get_euid is None:
++        return False
++    try:
++        import pwd
++
++        gateway_uid = pwd.getpwnam("gateway").pw_uid
++    except (ImportError, KeyError):
++        return False
++    if get_euid() != gateway_uid:
++        return False
++
++    parent_fd = -1
++    marker_fd = -1
++    try:
++        directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
++        directory_flags |= getattr(os, "O_DIRECTORY", 0)
++        directory_flags |= getattr(os, "O_NOFOLLOW", 0)
++        parent_fd = os.open("/run/nemoclaw", directory_flags)
++        parent_stat = os.fstat(parent_fd)
++        if (
++            not stat.S_ISDIR(parent_stat.st_mode)
++            or parent_stat.st_uid != 0
++            or parent_stat.st_gid != 0
++            or stat.S_IMODE(parent_stat.st_mode) != 0o755
++        ):
++            raise RuntimeError("managed plugin runtime parent is unsafe")
++
++        marker_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
++        marker_flags |= getattr(os, "O_NOFOLLOW", 0)
++        marker_fd = os.open(
++            "hermes-bundled-plugins-only", marker_flags, dir_fd=parent_fd
++        )
++        before = os.fstat(marker_fd)
++        if (
++            not stat.S_ISREG(before.st_mode)
++            or before.st_uid != 0
++            or before.st_gid != 0
++            or stat.S_IMODE(before.st_mode) != 0o444
++            or before.st_nlink != 1
++            or before.st_size != 2
++        ):
++            raise RuntimeError("managed plugin marker is unsafe")
++        payload = os.read(marker_fd, 3)
++        after = os.fstat(marker_fd)
++        if payload != b"1\n" or (
++            before.st_dev,
++            before.st_ino,
++            before.st_mode,
++            before.st_uid,
++            before.st_gid,
++            before.st_nlink,
++            before.st_size,
++        ) != (
++            after.st_dev,
++            after.st_ino,
++            after.st_mode,
++            after.st_uid,
++            after.st_gid,
++            after.st_nlink,
++            after.st_size,
++        ):
++            raise RuntimeError("managed plugin marker changed while reading")
++        return True
++    except OSError as exc:
++        raise RuntimeError("managed plugin boundary is unavailable") from exc
++    finally:
++        if marker_fd >= 0:
++            os.close(marker_fd)
++        if parent_fd >= 0:
++            os.close(parent_fd)
++
++
++def nemoclaw_sanitized_installer_env(
++    source: dict[str, str], cache_dir: str
++) -> dict[str, str]:
++    """Remove sandbox-controlled Python/package-manager process controls."""
++    clean = {
++        key: value
++        for key, value in source.items()
++        if key not in _NEMOCLAW_INSTALLER_UNSAFE_KEYS
++        and not key.startswith(_NEMOCLAW_INSTALLER_UNSAFE_PREFIXES)
++    }
++    clean.update(
++        {
++            "UV_NO_CONFIG": "1",
++            "UV_NO_CACHE": "1",
++            "UV_CACHE_DIR": cache_dir,
++            "PIP_CONFIG_FILE": "/dev/null",
++            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
++            "PYTHONSAFEPATH": "1",
++            "PYTHONNOUSERSITE": "1",
++            "PYTHONUTF8": "1",
++            "PATH": "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
++            "HOME": "/sandbox",
++        }
++    )
++    return clean
+
+
+ def set_hermes_home_override(path: str | Path | None) -> Token:
+diff --git a/plugins/cron_providers/__init__.py b/plugins/cron_providers/__init__.py
+index 456c81b41e..abd1afb6ce 100644
+--- a/plugins/cron_providers/__init__.py
++++ b/plugins/cron_providers/__init__.py
+@@ -69,7 +69,9 @@ def _register_synthetic_package(name: str, search_locations: List[str]) -> None:
+ def _get_user_plugins_dir() -> Optional[Path]:
+     """Return ``$HERMES_HOME/plugins/`` or None if unavailable."""
+     try:
+-        from hermes_constants import get_hermes_home
++        from hermes_constants import get_hermes_home, nemoclaw_managed_gateway_plugins_only
++        if nemoclaw_managed_gateway_plugins_only():
++            return None
+         d = get_hermes_home() / "plugins"
+         return d if d.is_dir() else None
+     except Exception:
+diff --git a/plugins/memory/__init__.py b/plugins/memory/__init__.py
+index cccda75ce8..f08e41aa37 100644
+--- a/plugins/memory/__init__.py
++++ b/plugins/memory/__init__.py
+@@ -64,7 +64,9 @@ def _register_synthetic_package(name: str, search_locations: List[str]) -> None:
+ def _get_user_plugins_dir() -> Optional[Path]:
+     """Return ``$HERMES_HOME/plugins/`` or None if unavailable."""
+     try:
+-        from hermes_constants import get_hermes_home
++        from hermes_constants import get_hermes_home, nemoclaw_managed_gateway_plugins_only
++        if nemoclaw_managed_gateway_plugins_only():
++            return None
+         d = get_hermes_home() / "plugins"
+         return d if d.is_dir() else None
+     except Exception:
+diff --git a/providers/__init__.py b/providers/__init__.py
+index a394e74b33..8c9144c90f 100644
+--- a/providers/__init__.py
++++ b/providers/__init__.py
+@@ -91,7 +91,9 @@ def list_providers() -> list[ProviderProfile]:
+ def _user_plugins_dir() -> Path | None:
+     """Return ``$HERMES_HOME/plugins/model-providers/`` if it exists."""
+     try:
+-        from hermes_constants import get_hermes_home
++        from hermes_constants import get_hermes_home, nemoclaw_managed_gateway_plugins_only
++        if nemoclaw_managed_gateway_plugins_only():
++            return None
+
+         d = get_hermes_home() / "plugins" / "model-providers"
+         return d if d.is_dir() else None
+diff --git a/tools/lazy_deps.py b/tools/lazy_deps.py
+index ec5692ecd5..943f1904db 100644
+--- a/tools/lazy_deps.py
++++ b/tools/lazy_deps.py
+@@ -322,6 +322,10 @@ def _lazy_install_target() -> Optional[Path]:
+     Returns a path only when :data:`_LAZY_TARGET_ENV` is set to a non-empty
+     value. The directory is created on demand by :func:`_ensure_target_ready`.
+     """
++    from hermes_constants import nemoclaw_managed_gateway_plugins_only
++
++    if nemoclaw_managed_gateway_plugins_only():
++        return Path("/run/nemoclaw/hermes-gateway-lazy-packages")
+     raw = os.environ.get(_LAZY_TARGET_ENV, "").strip()
+     if not raw:
+         return None
+@@ -654,20 +658,37 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+     if constraints is not None:
+         constraint_args = ["--constraint", str(constraints)]
+
++    from hermes_constants import (
++        nemoclaw_managed_gateway_plugins_only,
++        nemoclaw_sanitized_installer_env,
++    )
++
++    managed_gateway = nemoclaw_managed_gateway_plugins_only()
++    trusted_cwd = "/opt/hermes" if managed_gateway else None
++    cache_dir = str((target or Path("/tmp")) / ".uv-cache")
++    pip_env = (
++        nemoclaw_sanitized_installer_env(os.environ, cache_dir)
++        if managed_gateway
++        else None
++    )
++
+     try:
+         venv_root = Path(sys.executable).parent.parent
+         from tools.environments.local import hermes_subprocess_env
+         uv_env = hermes_subprocess_env(inherit_credentials=False)
++        if managed_gateway:
++            uv_env = nemoclaw_sanitized_installer_env(uv_env, cache_dir)
+         uv_env["VIRTUAL_ENV"] = str(venv_root)
+
+         # Tier 1: uv (preferred — fast, doesn't need pip in the venv)
+-        uv_bin = shutil.which("uv")
++        uv_bin = "/usr/local/bin/uv" if managed_gateway else shutil.which("uv")
+         if uv_bin:
+             try:
+                 r = subprocess.run(
+                     [uv_bin, "pip", "install", *target_args, *constraint_args, *specs],
+                     capture_output=True, text=True, timeout=timeout, env=uv_env,
+                     stdin=subprocess.DEVNULL,
++                    cwd=trusted_cwd,
+                 )
+                 if r.returncode == 0:
+                     if target is not None:
+@@ -684,6 +705,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+                 pip_cmd + ["--version"],
+                 capture_output=True, text=True, timeout=15,
+                 stdin=subprocess.DEVNULL,
++                env=pip_env, cwd=trusted_cwd,
+             )
+             if probe.returncode != 0:
+                 raise FileNotFoundError("pip not in venv")
+@@ -693,6 +715,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+                     [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
+                     capture_output=True, text=True, timeout=120, check=True,
+                     stdin=subprocess.DEVNULL,
++                    env=pip_env, cwd=trusted_cwd,
+                 )
+             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                 return _InstallResult(False, "",
+@@ -703,6 +726,7 @@ def _venv_pip_install(specs: tuple[str, ...], *, timeout: int = 300) -> _Install
+                 pip_cmd + ["install", *target_args, *constraint_args, *specs],
+                 capture_output=True, text=True, timeout=timeout,
+                 stdin=subprocess.DEVNULL,
++                env=pip_env, cwd=trusted_cwd,
+             )
+             if r.returncode == 0 and target is not None:
+                 _activate_target_on_syspath(target)

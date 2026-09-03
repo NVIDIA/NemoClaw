@@ -157,9 +157,17 @@ function parseReceipt(
 function requireReceiptSourceParity(
   git: GitRunner,
   revision: string,
+  comparisonRevision: string,
   imageSourcePaths: readonly string[],
 ): void {
-  const result = git(["diff", "--quiet", revision, "HEAD", "--", ...imageSourcePaths]);
+  const result = git([
+    "diff",
+    "--quiet",
+    revision,
+    comparisonRevision,
+    "--",
+    ...imageSourcePaths,
+  ]);
   if (result.error) {
     throw new Error(`Could not run git to validate Pi receipt source parity (${result.error})`);
   }
@@ -173,12 +181,26 @@ function requireReceiptSourceParity(
   );
 }
 
+function receiptComparisonRevision(git: GitRunner, explicit?: string): string {
+  if (explicit) return explicit;
+  if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_EVENT_NAME !== "pull_request") {
+    return "HEAD";
+  }
+  const result = git(["rev-parse", "--verify", "HEAD^2"]);
+  const revision = requireGitOutput(result, "Could not resolve the exact pull-request head").trim();
+  if (!/^[0-9a-f]{40}$/u.test(revision)) {
+    throw new Error("Could not resolve the exact pull-request head: invalid revision");
+  }
+  return revision;
+}
+
 function validateReceiptPair(
   git: GitRunner,
   rootDir: string,
   imageSourcePaths: readonly string[],
   receipts: readonly { path: string; platform: ManagedImagePlatform }[],
   acceptedDigests: ReadonlySet<string>,
+  comparisonRevision: string,
 ): void {
   const validated = receipts.map((receipt) => parseReceipt(rootDir, receipt, acceptedDigests));
   const contracts = validated.map(({ contract }) => contract);
@@ -195,13 +217,19 @@ function validateReceiptPair(
   ) {
     throw new Error("Pi candidate receipt authority must exactly match both published receipts");
   }
-  requireReceiptSourceParity(git, contracts[0]!.source.revision, imageSourcePaths);
+  requireReceiptSourceParity(
+    git,
+    contracts[0]!.source.revision,
+    comparisonRevision,
+    imageSourcePaths,
+  );
 }
 
 type PiReceiptRefreshCheckOptions = {
   acceptedDigests?: ReadonlySet<string>;
   baseBranch?: string;
   git?: GitRunner;
+  headRevision?: string;
   receipts?: readonly { path: string; platform: ManagedImagePlatform }[];
   rootDir?: string;
 };
@@ -245,7 +273,14 @@ export function checkPiQualificationReceiptRefresh(
       ].join("\n"),
     );
   }
-  validateReceiptPair(git, rootDir, imageSourcePaths, receipts, acceptedDigests);
+  validateReceiptPair(
+    git,
+    rootDir,
+    imageSourcePaths,
+    receipts,
+    acceptedDigests,
+    receiptComparisonRevision(git, options.headRevision),
+  );
 }
 
 const currentModule = fileURLToPath(import.meta.url);
