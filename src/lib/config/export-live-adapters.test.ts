@@ -113,6 +113,23 @@ describe("live export observation dependencies", () => {
     expect(process.env.NVIDIA_API_KEY).toBeUndefined();
   });
 
+  it("rejects effective policy that is older than the live sandbox revision (#10938)", async () => {
+    vi.mocked(captureSanitizedResolvedOpenshell).mockReturnValue({
+      status: 0,
+      output: inventory(7, 4),
+      stdout: inventory(7, 4),
+      stderr: "",
+    });
+    vi.mocked(syncCliOpenShellSandboxPolicyReader.readSandboxPolicy).mockReturnValue({
+      ok: true,
+      value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 3 },
+    });
+    const deps = createLiveExportObservationDependencies();
+    await expect(
+      deps.readEffectivePolicy("alpha", { name: "nemoclaw", port: 8080 } as never),
+    ).rejects.toThrow("does not match the live sandbox");
+  });
+
   it("returns registry-backed inference metadata and never resolves a credential value", async () => {
     vi.mocked(getSandboxEntryInference).mockReturnValue({
       kind: "configured",

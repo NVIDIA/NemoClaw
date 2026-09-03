@@ -16,19 +16,12 @@ export interface ConfigExportRequest {
 }
 
 export interface ConfigExportResult {
-  readonly schemaVersion: typeof CONFIG_EXPORT_RESULT_VERSION;
-  readonly status: "exported";
+  readonly version: typeof CONFIG_EXPORT_RESULT_VERSION;
+  readonly status: "succeeded";
   readonly sourceSandbox: string;
-  readonly output: string;
-  readonly config: Readonly<{
-    apiVersion: "nemoclaw.nvidia.com/v1";
-    kind: "NemoClawConfig";
-    name: string;
-    uid: string;
-    documentDigest: string;
-    specDigest: string;
-  }>;
-  readonly policyFidelity: "exact-effective-policy";
+  readonly outputPath: string;
+  readonly documentDigest: string;
+  readonly specDigest: string;
 }
 
 export interface ConfigExportDependencies {
@@ -66,18 +59,11 @@ export async function runConfigExport(
 
   const published = dependencies.publish(request.output, rendered.yaml, request.force);
   return {
-    schemaVersion: CONFIG_EXPORT_RESULT_VERSION,
-    status: "exported",
+    version: CONFIG_EXPORT_RESULT_VERSION,
+    status: "succeeded",
     sourceSandbox: request.sandboxName,
-    output: published.path,
-    config: {
-      apiVersion: config.apiVersion,
-      kind: config.kind,
-      name: config.metadata.name,
-      uid: config.metadata.uid,
-      documentDigest: rendered.documentDigest,
-      specDigest: rendered.specDigest,
-    },
-    policyFidelity: "exact-effective-policy",
+    outputPath: published.path,
+    documentDigest: rendered.documentDigest,
+    specDigest: rendered.specDigest,
   };
 }

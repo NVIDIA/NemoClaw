@@ -63,19 +63,12 @@ describe("runConfigExport", () => {
         deps,
       ),
     ).resolves.toEqual({
-      schemaVersion: 1,
-      status: "exported",
+      version: 1,
+      status: "succeeded",
       sourceSandbox: "alpha",
-      output: "/tmp/alpha.yaml",
-      config: {
-        apiVersion: "nemoclaw.nvidia.com/v1",
-        kind: "NemoClawConfig",
-        name: "team",
-        uid: "123e4567-e89b-42d3-a456-426614174000",
-        documentDigest: "doc",
-        specDigest: "spec",
-      },
-      policyFidelity: "exact-effective-policy",
+      outputPath: "/tmp/alpha.yaml",
+      documentDigest: "doc",
+      specDigest: "spec",
     });
     expect(deps.buildConfig).toHaveBeenCalledWith(expect.anything(), "team");
     expect(deps.publish).toHaveBeenCalledWith("/tmp/alpha.yaml", "kind: NemoClawConfig\n", true);

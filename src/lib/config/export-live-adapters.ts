@@ -151,6 +151,9 @@ function effectivePolicy(sandboxName: string, gateway: ObservedExportGateway) {
   if (!result.ok || result.value.appliedRevision === null) {
     throw new Error("The effective OpenShell policy and its applied revision could not be read.");
   }
+  if (row.current_policy_version !== result.value.appliedRevision) {
+    throw new Error("The effective OpenShell policy revision does not match the live sandbox.");
+  }
   return {
     sandboxId: row.id,
     revision: String(result.value.appliedRevision),

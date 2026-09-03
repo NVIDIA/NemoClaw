@@ -17,9 +17,9 @@ export default class ConfigExportCommand extends Command {
   static id = "config:export";
   static strict = true;
   static enableJsonFlag = true;
-  static summary = "Export one sandbox as a declarative NemoClaw config";
+  static summary = "Export a sandbox to a NemoClaw configuration file";
   static description =
-    "Reconstruct a canonical, secret-free NemoClawConfig from verified registry and live sandbox state without changing the source deployment.";
+    "Export a secret-free configuration from the registered sandbox and its current state. The command does not change the sandbox.";
   static usage = ["config export <sandbox> --output <path|-> [--name <name>] [--force] [--json]"];
   static examples = [
     "<%= config.bin %> config export alpha --output nemoclaw.yaml",
@@ -29,23 +29,23 @@ export default class ConfigExportCommand extends Command {
   static flags = {
     output: Flags.string({
       char: "o",
-      description: "Write canonical YAML to this path, or - for stdout",
+      description: "Write YAML to this path. Use - to write to standard output.",
       required: true,
     }),
     name: Flags.string({ description: "Set metadata.name in the exported document" }),
     force: Flags.boolean({
-      description: "Replace an existing regular output file safely",
+      description: "Replace an existing regular file; refuse symlinks and other file types",
       default: false,
     }),
     json: Flags.boolean({
-      description: "Emit a machine-readable result for file output",
+      description: "Print the versioned JSON export result after writing the file",
       default: false,
     }),
   };
   static publicDisplay = [
     {
       usage: "nemoclaw config export <sandbox>",
-      description: "Export one sandbox as a declarative NemoClaw config",
+      description: "Export a sandbox to a NemoClaw configuration file",
       flags: "--output <path|-> [--name <name>] [--force] [--json]",
       group: "Sandbox Management",
       scope: "global",
