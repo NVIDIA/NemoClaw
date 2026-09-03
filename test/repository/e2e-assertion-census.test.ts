@@ -109,6 +109,24 @@ describe("live E2E assertion census (#10934)", () => {
     });
   });
 
+  test("counts named, aliased, namespace, and CommonJS Node assertion imports", () => {
+    const metrics = analyzeAssertionSource(
+      "test/e2e/live/example.test.ts",
+      `
+        import verify, { strictEqual as same } from "node:assert/strict";
+        import * as check from "node:assert";
+        const { deepEqual: equal } = require("assert");
+        verify(value);
+        same(actual, expected);
+        check.ok(value);
+        equal(actual, expected);
+      `,
+    );
+
+    expect(metrics.nodeAssertions).toBe(4);
+    expect(metrics.assertionPoints).toBe(4);
+  });
+
   test("counts asymmetric expect factories without treating them as assertions", () => {
     const metrics = analyzeAssertionSource(
       "test/e2e/live/example.test.ts",

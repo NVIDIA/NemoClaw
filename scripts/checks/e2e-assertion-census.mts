@@ -91,6 +91,12 @@ const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
 const MATCHER = /^to[A-Z]/u;
 const OBJECT_MATCHERS = new Set(["toContainEqual", "toEqual", "toMatchObject", "toStrictEqual"]);
 const NAMED_ASSERTION = /^(?:assert|expect)[A-Z0-9_]/u;
+const NODE_ASSERT_MODULES = new Set([
+  "assert",
+  "assert/strict",
+  "node:assert",
+  "node:assert/strict",
+]);
 const NODE_ASSERT_MEMBERS = new Set([
   "deepEqual",
   "deepStrictEqual",
@@ -287,8 +293,65 @@ function literalText(node: ts.Node): string | null {
   return null;
 }
 
+function nodeAssertionBindings(parsed: ts.SourceFile): {
+  readonly functions: ReadonlySet<string>;
+  readonly roots: ReadonlySet<string>;
+} {
+  const functions = new Set<string>();
+  const roots = new Set(["assert"]);
+
+  function addNamedBinding(local: string, imported: string): void {
+    if (NODE_ASSERT_MEMBERS.has(imported)) functions.add(local);
+  }
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteralLike(node.moduleSpecifier) &&
+      NODE_ASSERT_MODULES.has(node.moduleSpecifier.text) &&
+      node.importClause
+    ) {
+      if (node.importClause.name) roots.add(node.importClause.name.text);
+      const bindings = node.importClause.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) roots.add(bindings.name.text);
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          addNamedBinding(element.name.text, element.propertyName?.text ?? element.name.text);
+        }
+      }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      node.initializer.expression.text === "require" &&
+      node.initializer.arguments[0] &&
+      ts.isStringLiteralLike(node.initializer.arguments[0]) &&
+      NODE_ASSERT_MODULES.has(node.initializer.arguments[0].text)
+    ) {
+      if (ts.isIdentifier(node.name)) roots.add(node.name.text);
+      if (ts.isObjectBindingPattern(node.name)) {
+        for (const element of node.name.elements) {
+          if (!ts.isIdentifier(element.name)) continue;
+          const imported =
+            element.propertyName && ts.isIdentifier(element.propertyName)
+              ? element.propertyName.text
+              : element.name.text;
+          addNamedBinding(element.name.text, imported);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(parsed);
+  return { functions, roots };
+}
+
 export function analyzeAssertionSource(file: string, source: string): AssertionMetrics {
   const parsed = parseSource(file, source);
+  const nodeBindings = nodeAssertionBindings(parsed);
   let expectCalls = 0;
   let matcherAssertions = 0;
   let nodeAssertions = 0;
@@ -311,7 +374,10 @@ export function analyzeAssertionSource(file: string, source: string): AssertionM
           const expected = node.arguments.at(-1);
           if (expected) objectFieldAssertions += Math.max(0, countStaticLeaves(expected) - 1);
         }
-      } else if (rootIdentifier(node.expression) === "assert") {
+      } else if (
+        (ts.isIdentifier(node.expression) && nodeBindings.functions.has(node.expression.text)) ||
+        nodeBindings.roots.has(rootIdentifier(node.expression) ?? "")
+      ) {
         if (ts.isIdentifier(node.expression) || (name !== null && NODE_ASSERT_MEMBERS.has(name))) {
           nodeAssertions += 1;
         }
