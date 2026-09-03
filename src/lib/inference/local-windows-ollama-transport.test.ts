@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyOllamaRuntimeContextWindow,
@@ -20,6 +20,7 @@ import {
   persistResolvedOllamaHost,
   probeLocalProviderHealth,
   probeOllamaModelCapabilities,
+  probeWindowsHostOllamaRouteProtection,
   resetOllamaHostCache,
   resetOllamaRuntimeContextWindowAutoState,
   runOllamaWarmup,
@@ -51,7 +52,12 @@ function isolatedDockerEnvironment() {
 }
 
 describe("Windows-host Ollama transport", () => {
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+  });
+
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetOllamaHostCache();
     resetOllamaRuntimeContextWindowAutoState();
   });
@@ -75,6 +81,106 @@ describe("Windows-host Ollama transport", () => {
       "-sf",
       "http://127.0.0.1:11434/api/tags",
     ]);
+  });
+
+  it("accepts route protection only when both probes use Docker Desktop", () => {
+    const capture = vi.fn((command: readonly string[]) => {
+      const usesDockerDesktop =
+        command[0] === "docker" &&
+        command[1] === "run" &&
+        command[2] === "--rm" &&
+        command[3] === CONTAINER_REACHABILITY_IMAGE;
+      return usesDockerDesktop
+        ? command.includes("Host: rebinding.invalid")
+          ? "403"
+          : JSON.stringify({ models: [] })
+        : "";
+    });
+
+    expect(
+      probeWindowsHostOllamaRouteProtection(capture, {
+        runtime: "docker-desktop",
+        wslDetection: { isWsl: true },
+        env: { DOCKER_CONTEXT: "default" },
+        loopbackOnly: true,
+        prepareDockerEnvironment: isolatedDockerEnvironment,
+      }),
+    ).toEqual({
+      loopbackOnly: true,
+      reachable: true,
+      hostValidationEnabled: true,
+      protected: true,
+    });
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture.mock.calls.every(([command]) => command[0] === "docker")).toBe(true);
+  });
+
+  it("rejects Host validation observed outside Docker Desktop", () => {
+    const capture = vi.fn((command: readonly string[]) =>
+      command[0] === "docker" && command.some((argument) => argument.endsWith("/api/tags"))
+        ? JSON.stringify({ models: [] })
+        : command[0] === "curl" && command.includes("Host: rebinding.invalid")
+          ? "403"
+          : "",
+    );
+
+    expect(
+      probeWindowsHostOllamaRouteProtection(capture, {
+        runtime: "docker-desktop",
+        wslDetection: { isWsl: true },
+        env: { DOCKER_CONTEXT: "default" },
+        loopbackOnly: true,
+        prepareDockerEnvironment: isolatedDockerEnvironment,
+      }),
+    ).toMatchObject({
+      reachable: true,
+      hostValidationEnabled: false,
+      protected: false,
+    });
+  });
+
+  it.each([
+    ["an explicit Docker host", { DOCKER_HOST: "ssh://remote-builder.example" }],
+    ["a non-default Docker context", { DOCKER_CONTEXT: "remote-builder" }],
+  ])("rejects the raw route for %s", (_description, env) => {
+    const capture = vi.fn(() => JSON.stringify({ models: [] }));
+
+    expect(
+      probeWindowsHostOllamaRouteProtection(capture, {
+        runtime: "docker-desktop",
+        wslDetection: { isWsl: true },
+        env,
+        loopbackOnly: true,
+        prepareDockerEnvironment: isolatedDockerEnvironment,
+      }),
+    ).toEqual({
+      loopbackOnly: false,
+      reachable: false,
+      hostValidationEnabled: false,
+      protected: false,
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("rejects the raw route for a persisted non-default Docker context", () => {
+    const capture = vi.fn(() => JSON.stringify({ models: [] }));
+
+    expect(
+      probeWindowsHostOllamaRouteProtection(capture, {
+        runtime: "docker-desktop",
+        wslDetection: { isWsl: true },
+        env: {},
+        dockerContextIsDefault: () => false,
+        loopbackOnly: true,
+        prepareDockerEnvironment: isolatedDockerEnvironment,
+      }),
+    ).toEqual({
+      loopbackOnly: false,
+      reachable: false,
+      hostValidationEnabled: false,
+      protected: false,
+    });
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("restores the accepted route receipt in a fresh process", () => {

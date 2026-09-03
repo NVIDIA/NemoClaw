@@ -516,6 +516,7 @@ describe("detectInferenceProviderHostState", () => {
     expect(probeWindowsHostOllamaRouteProtection).toHaveBeenCalledWith(runCapture, {
       runtime: "docker-desktop",
       wslDetection: { isWsl: true },
+      env: {},
       loopbackOnly: true,
     });
   });

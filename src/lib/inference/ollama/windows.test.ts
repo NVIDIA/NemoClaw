@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
@@ -46,6 +46,14 @@ function loadWindowsOllamaWithMocks(
 }
 
 describe("Windows Ollama helper", () => {
+  beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("rejects a nonempty invalid Docker readiness response (#10100)", () => {
     const run = vi.fn();
     const localInference = require(LOCAL_INFERENCE_PATH);

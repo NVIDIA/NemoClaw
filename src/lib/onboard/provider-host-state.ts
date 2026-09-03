@@ -208,6 +208,7 @@ export function detectInferenceProviderHostState(
       : deps.probeWindowsHostOllamaRouteProtection(deps.runCapture, {
           runtime: containerRuntime ?? "unknown",
           wslDetection: { isWsl },
+          env: input.env,
           loopbackOnly: hasWindowsOllama ? winOllamaState.loopbackOnly : undefined,
         });
   const windowsOllamaReachable = windowsOllamaProtection.reachable;

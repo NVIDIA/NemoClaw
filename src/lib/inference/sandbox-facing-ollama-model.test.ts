@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OLLAMA_PORT } from "../core/ports";
+import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
 import {
+  getOllamaContainerPort,
   getLocalProviderContainerReachabilityCheck,
   ollamaInventoryContainsModel,
   probeOllamaEndpointInventory,
@@ -35,6 +36,7 @@ function commandUrl(command: readonly string[]): string {
 
 describe("sandbox-facing Ollama model validation", () => {
   beforeEach(() => {
+    vi.stubEnv("DOCKER_CONTEXT", "default");
     containerCanReachHostLoopback.mockReturnValue(true);
     resetOllamaContainerPortCache();
     resetOllamaHostCache();
@@ -42,6 +44,7 @@ describe("sandbox-facing Ollama model validation", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetOllamaContainerPortCache();
     resetOllamaHostCache();
   });
@@ -63,6 +66,16 @@ describe("sandbox-facing Ollama model validation", () => {
 
     expect(getLocalProviderContainerReachabilityCheck("ollama-local", "body")).toBeNull();
     expect(validateSandboxFacingOllamaModel("llama3.2:1b", () => "")).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["an explicit remote daemon", "DOCKER_HOST", "ssh://remote-builder.example"],
+    ["a non-default context", "DOCKER_CONTEXT", "remote-builder"],
+  ])("uses the auth proxy when Docker targets %s", (_description, name, value) => {
+    vi.stubEnv(name, value);
+    resetOllamaContainerPortCache();
+
+    expect(getOllamaContainerPort()).toBe(OLLAMA_PROXY_PORT);
   });
 
   it("rejects a model the probed endpoint reports as unavailable (#9454)", () => {

@@ -11,6 +11,7 @@ import os from "node:os";
 import nodePath from "node:path";
 import {
   detectContainerRuntimeFromDockerInfo,
+  dockerContextIsDefaultFromBuild,
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
@@ -89,15 +90,17 @@ export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
- * container can reach the host's 127.0.0.1 directly (Docker Desktop on WSL),
- * and the auth proxy port otherwise (native Docker on any host, macOS, etc.).
+ * container can reach the host's 127.0.0.1 directly through a local Docker
+ * Desktop target on WSL, and the auth proxy port otherwise.
  * Memoised — call resetOllamaContainerPortCache() in tests.
  */
 let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
   if (_ollamaContainerPort !== null) return _ollamaContainerPort;
   const runtime = detectContainerRuntimeFromDockerInfo();
-  _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
+  _ollamaContainerPort = windowsHostOllamaRawRouteSupported(runtime)
+    ? OLLAMA_PORT
+    : OLLAMA_PROXY_PORT;
   return _ollamaContainerPort;
 }
 export function resetOllamaContainerPortCache(): void {
@@ -222,8 +225,19 @@ export interface WindowsHostOllamaRouteProtection {
 export interface WindowsHostOllamaRouteProtectionOptions {
   runtime?: ContainerRuntime;
   wslDetection?: WslDetectionOptions;
+  env?: NodeJS.ProcessEnv;
+  dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
   loopbackOnly?: boolean;
   prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+}
+
+function windowsHostOllamaRawRouteSupported(
+  runtime: ContainerRuntime,
+  wslDetection: WslDetectionOptions = {},
+  env: NodeJS.ProcessEnv = wslDetection.env ?? process.env,
+  dockerContextIsDefault: typeof dockerContextIsDefaultFromBuild = dockerContextIsDefaultFromBuild,
+): boolean {
+  return containerCanReachHostLoopback(runtime, wslDetection) && dockerContextIsDefault(env);
 }
 
 function probeWindowsHostOllamaLoopbackOnly(runCaptureImpl: RunCaptureFn): boolean {
@@ -241,7 +255,12 @@ export function probeWindowsHostOllamaRouteProtection(
 ): WindowsHostOllamaRouteProtection {
   const wslDetection = options.wslDetection ?? {};
   const runtime = options.runtime ?? detectContainerRuntimeFromDockerInfo();
-  const supported = containerCanReachHostLoopback(runtime, wslDetection);
+  const supported = windowsHostOllamaRawRouteSupported(
+    runtime,
+    wslDetection,
+    options.env,
+    options.dockerContextIsDefault,
+  );
   if (!supported) {
     return {
       loopbackOnly: false,
