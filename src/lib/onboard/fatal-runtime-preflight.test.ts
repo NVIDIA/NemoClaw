@@ -464,6 +464,33 @@ describe("report-backed runtime readiness (#7411)", () => {
       expect(exit).not.toHaveBeenCalled();
     },
   );
+
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "rejects unrelated blockers before native Podman host preparation",
+    () => {
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      const exit = vi.fn((_code: number): never => {
+        throw new Error("exit");
+      });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const gpu: GpuDetection = {
+        type: "nvidia",
+        platform: "linux",
+        count: 1,
+        totalMemoryMB: 24_576,
+        perGpuMB: 24_576,
+        nimCapable: true,
+      };
+
+      expect(() =>
+        assertOnboardHostReadiness(hostWithMissingGpuIntegration(), gpu, {
+          explicitlyOptedOutGpuPassthrough: false,
+          exitProcess: exit,
+        }),
+      ).toThrow("exit");
+      expect(mocks.prepareRuntimeHost).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("runFatalOnboardRuntimePreflight", () => {

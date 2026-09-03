@@ -232,11 +232,6 @@ export function configuredRuntimeProviderOwnsHostReadiness(
     options.architecture ?? process.arch,
     environment,
   );
-  gateway.prepareHostRuntime({
-    environment,
-    platform,
-    socketPath: options.socketPath,
-  });
   return gateway.ownsHostReadiness;
 }
 

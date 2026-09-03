@@ -41,7 +41,7 @@ function runInstallerHostAdmissionTest(
     gatewayRuntime?: string;
     gatewayManagementMode?: string;
     portableProfileArtifact?: "present" | "missing";
-    providerPreparationFailure?: string;
+    providerResolutionFailure?: string;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-host-admission-"));
@@ -91,9 +91,9 @@ exports.loadGatewayManagementDeclaration = () => ({
   }
   fs.writeFileSync(
     path.join(onboardDir, "docker-driver-gateway-env.js"),
-    `const preparationFailure = ${JSON.stringify(options.providerPreparationFailure ?? null)};
+    `const resolutionFailure = ${JSON.stringify(options.providerResolutionFailure ?? null)};
 exports.configuredRuntimeProviderOwnsHostReadiness = ({ environment = process.env } = {}) => {
-  if (preparationFailure) throw new Error(preparationFailure);
+  if (resolutionFailure) throw new Error(resolutionFailure);
   return environment.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" &&
     environment.NEMOCLAW_GATEWAY_RUNTIME === "podman";
 };\n`,
@@ -297,18 +297,18 @@ describe("installer host preflight package contract", () => {
     expect(rejected.output).toContain("host.docker.unavailable");
   });
 
-  it("fails closed when selected provider host preparation throws", () => {
+  it("fails closed when selected provider resolution throws", () => {
     const { output, result } = runInstallerHostAdmissionTest(
       { runtime: "podman", isUnsupportedRuntime: true },
       undefined,
       {
         gatewayRuntime: "podman",
-        providerPreparationFailure: "native Podman address preparation failed",
+        providerResolutionFailure: "native Podman provider resolution failed",
       },
     );
 
     expect(result.status).toBe(1);
-    expect(output).toContain("native Podman address preparation failed");
+    expect(output).toContain("native Podman provider resolution failed");
   });
 
   it("keeps an unsupported runtime blocked without the portable classifier artifact (#9007)", () => {

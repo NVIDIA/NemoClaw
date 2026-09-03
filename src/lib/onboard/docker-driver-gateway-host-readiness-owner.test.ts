@@ -37,18 +37,16 @@ describe("configured runtime provider host readiness", () => {
     expect(configuredRuntimeProviderOwnsHostReadiness({ environment, platform: "linux" })).toBe(
       expected,
     );
-    expect(mocks.prepareHostRuntime).toHaveBeenCalledWith(
-      expect.objectContaining({ environment, platform: "linux" }),
-    );
+    expect(mocks.prepareHostRuntime).not.toHaveBeenCalled();
   });
 
-  it("does not infer ownership from a non-null sandbox host address", () => {
+  it("does not prepare runtime topology to infer ownership", () => {
     const environment = { NEMOCLAW_GATEWAY_RUNTIME: "docker" };
 
     expect(configuredRuntimeProviderOwnsHostReadiness({ environment, platform: "linux" })).toBe(
       false,
     );
-    expect(mocks.prepareHostRuntime).toHaveReturnedWith({ sandboxHostAddress: "169.254.2.2" });
+    expect(mocks.prepareHostRuntime).not.toHaveBeenCalled();
   });
 
   it("keeps portable Podman compatibility on standard Docker readiness", () => {
