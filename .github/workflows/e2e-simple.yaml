@@ -323,6 +323,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    outputs:
+      revision: ${{ steps.assemble.outputs.revision }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -344,7 +346,8 @@ jobs:
           run-id: ${{ needs.plan.outputs.image_run_id }}
           github-token: ${{ github.token }}
 
-      - name: Assemble exact managed-image catalog
+      - id: assemble
+        name: Assemble exact managed-image catalog
         env:
           IMAGE_RUN_ID: ${{ needs.plan.outputs.image_run_id }}
           TARGET_SHA: ${{ needs.plan.outputs.sha }}
@@ -357,6 +360,7 @@ jobs:
             >"$RUNNER_TEMP/catalog/catalog.json"
           source_revision="$(jq -er '[.[].source.revision] | unique | if length == 1 then .[0] else error("mixed source revisions") end' "$RUNNER_TEMP/catalog/catalog.json")"
           [[ "$source_revision" =~ ^[a-f0-9]{40}$ ]]
+          printf 'revision=%s\n' "$source_revision" >>"$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$source_revision" "$TARGET_SHA"
           if [[ "$source_revision" != "$TARGET_SHA" ]]; then
             changed="$(git diff --name-only --diff-filter=ACMRD "$source_revision" "$TARGET_SHA")"
@@ -518,6 +522,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ needs.plan.outputs.sha }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: ${{ github.workspace }}/simple-managed-catalog/catalog.json
+      NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: ${{ needs.catalog.outputs.revision }}
       NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_RUN_LIVE_E2E: "1"
