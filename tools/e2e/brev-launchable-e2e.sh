@@ -495,6 +495,9 @@ cleanup() {
   if [ -f "$WORK_DIR/cleanup.json" ]; then
     workspace_id="$(jq -r '.workspaceId // ""' "$WORK_DIR/cleanup.json" 2>/dev/null || true)"
   fi
+  if [ -z "$workspace_id" ] && [ -f "$WORK_DIR/workspace-recovery.json" ]; then
+    workspace_id="$(jq -r --arg name "$INSTANCE_NAME" 'select(.schemaVersion == 1 and .workspace.name == $name) | .workspace.id // ""' "$WORK_DIR/workspace-recovery.json" 2>/dev/null || true)"
+  fi
   deadline=$((SECONDS + ${BREV_DELETE_TIMEOUT_SECONDS:-600}))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if record="$(workspace)"; then
@@ -524,7 +527,10 @@ cleanup() {
         absent=0
         workspace_observed=1
         current_workspace_id="$(jq -r '.id // ""' <<<"$record")"
-        [ -n "$workspace_id" ] || workspace_id="$current_workspace_id"
+        if [ -z "$workspace_id" ]; then
+          log "FAILED: workspace recovery identity is missing; refusing deletion" >&2
+          break
+        fi
         if [ -z "$current_workspace_id" ] || [ "$current_workspace_id" != "$workspace_id" ]; then
           log "FAILED: workspace name now resolves to a different identity; refusing deletion" >&2
           break
