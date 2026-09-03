@@ -88,30 +88,37 @@ export function createPodmanExecutableOperationProof(
 ): PodmanExecutableOperationProof {
   let commandCount = 0;
   let failure: unknown;
-  const assertMetadataAuthority = () => assertPodmanExecutableMetadataAuthority(authority, deps);
-  const assertContentAuthority = () => assertPodmanExecutableAuthority(authority, deps);
+  const assertWithLatch = (validate: () => void): void => {
+    if (failure === undefined) {
+      try {
+        validate();
+      } catch (error) {
+        failure = error ?? new Error("Podman executable authority check failed without evidence.");
+      }
+    }
+    if (failure !== undefined) throw failure;
+  };
+  const assertMetadataAuthority = () =>
+    assertWithLatch(() => assertPodmanExecutableMetadataAuthority(authority, deps));
+  const assertContentAuthority = () =>
+    assertWithLatch(() => assertPodmanExecutableAuthority(authority, deps));
   const proof = Object.freeze({
     authority,
     executablePath: authority.executablePath,
     assertMetadataAuthority,
     assertContentAuthority,
     guardCommand: (phase: "before" | "after") => {
-      if (failure === undefined) {
-        try {
-          const shouldRehash =
-            phase === "before" &&
-            commandCount + 1 === EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
-          if (shouldRehash) assertContentAuthority();
-          else assertMetadataAuthority();
-        } catch (error) {
-          failure =
-            error ?? new Error("Podman executable authority check failed without evidence.");
+      try {
+        const shouldRehash =
+          phase === "before" &&
+          commandCount + 1 === EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
+        if (shouldRehash) assertContentAuthority();
+        else assertMetadataAuthority();
+      } finally {
+        if (phase === "after") {
+          commandCount = (commandCount + 1) % EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
         }
       }
-      if (phase === "after") {
-        commandCount = (commandCount + 1) % EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
-      }
-      if (failure !== undefined) throw failure;
     },
   });
   podmanExecutableOperationProofs.add(proof);

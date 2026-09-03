@@ -808,6 +808,40 @@ describe("Podman container engine command adapter", () => {
     expect(secondCapture).not.toHaveBeenCalled();
   });
 
+  it("latches an explicit assertion failure across engines sharing one proof", () => {
+    const generation = { executableInode: 42n };
+    const defaults = executableAuthorityDeps();
+    const lstat = vi.fn((filePath: string) => {
+      const stat = defaults.lstat?.(filePath) as PodmanExecutableStat;
+      return filePath === "/usr/bin/podman" ? { ...stat, ino: generation.executableInode } : stat;
+    });
+    const deps = executableAuthorityDeps(PODMAN_BYTES, { lstat });
+    const authority = capturePodmanExecutableAuthority("/usr/bin/podman", deps);
+    const proof = createPodmanExecutableOperationProof(authority, deps);
+    const first = createPodmanContainerEngine({
+      operation: "host-local-inference",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" })),
+    });
+    const secondCapture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    const second = createPodmanContainerEngine({
+      operation: "sandbox-lifecycle",
+      socketAuthority: AUTHORITY,
+      executableProof: proof,
+      assertAuthority: vi.fn(),
+      capture: secondCapture,
+    });
+    generation.executableInode = 44n;
+
+    expect(() => first.assertAuthority()).toThrow("changed after it was qualified");
+    generation.executableInode = 42n;
+    expect(() => second.capture(["info"])).toThrow("changed after it was qualified");
+    expect(secondCapture).not.toHaveBeenCalled();
+  });
+
+
   it("latches executable authority failure even when socket failure wins the first guard", () => {
     const socketChanged = new Error("socket changed");
     const defaultDeps = executableAuthorityDeps();
