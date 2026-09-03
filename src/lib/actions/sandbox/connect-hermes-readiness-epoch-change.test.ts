@@ -98,7 +98,7 @@ describe("Hermes changed launch-readiness epoch", () => {
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledTimes(2);
     expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).toHaveBeenCalledTimes(2);
-    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(2);
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledOnce();
     expect(harness.captureResolvedOpenshellSpy.mock.calls[0]?.[1]).toMatchObject({
       env: {
         HOME: "/home/test",

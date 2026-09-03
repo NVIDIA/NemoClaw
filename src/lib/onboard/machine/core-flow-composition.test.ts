@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
   createProviderInferencePhase: vi.fn(),
   createResumeProviderShim: vi.fn(),
   createSandboxPhase: vi.fn(),
-  stopStaleDashboardListenersForSandbox: vi.fn(),
 }));
 
 vi.mock("./core-flow-phases", async (importOriginal) => ({
@@ -18,10 +17,6 @@ vi.mock("./core-flow-phases", async (importOriginal) => ({
 
 vi.mock("./resume-provider-shim", () => ({
   createResumeProviderShim: mocks.createResumeProviderShim,
-}));
-
-vi.mock("../stale-gateway-cleanup", () => ({
-  stopStaleDashboardListenersForSandbox: mocks.stopStaleDashboardListenersForSandbox,
 }));
 
 import { createCoreOnboardFlowPhases } from "./core-flow-composition";
@@ -70,16 +65,8 @@ describe("createCoreOnboardFlowPhases", () => {
     expect(mocks.createSandboxPhase).toHaveBeenCalledWith({
       deps: {
         existingSandboxDependency,
-        stopStaleDashboardListenersForSandbox: expect.any(Function),
       },
     });
-    const sandboxOptions = mocks.createSandboxPhase.mock.calls[0][0] as {
-      deps: {
-        stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
-      };
-    };
-    sandboxOptions.deps.stopStaleDashboardListenersForSandbox([], "sandbox-a");
-    expect(mocks.stopStaleDashboardListenersForSandbox).toHaveBeenCalledWith([], "sandbox-a");
     expect(phases).toEqual({
       providerInference: { state: "provider_selection" },
       sandbox: { state: "sandbox" },
