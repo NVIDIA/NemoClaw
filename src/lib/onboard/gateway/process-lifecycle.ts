@@ -13,7 +13,6 @@ type CommandOptions = {
 
 export interface GatewayProcessLifecycleDeps {
   gatewayName(): string;
-  dashboardPort(): number;
   runOpenshell(args: string[], options?: CommandOptions): CommandResult;
   runCaptureOpenshell(args: string[], options?: { ignoreError?: boolean }): string;
   dockerInspect(
@@ -119,9 +118,6 @@ export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps)
   }
 
   function retireLegacyGatewayForDockerDriverUpgrade(): void {
-    deps.runOpenshell(["forward", "stop", String(deps.dashboardPort())], {
-      ignoreError: true,
-    });
     stopDockerDriverGatewayProcess();
     const stoppedLegacyContainer = stopLegacyGatewayClusterContainer();
     removeDockerDriverGatewayRegistration();

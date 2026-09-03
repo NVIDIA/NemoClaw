@@ -15,7 +15,9 @@ import {
 } from "../../onboard/docker-gpu-patch-finalize";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
+import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
 import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
@@ -47,6 +49,7 @@ export type ManagedSupervisorRelaunch = {
 export type ManagedSupervisorRelaunchDeps = {
   getSandbox?: typeof registry.getSandbox;
   getSessionAgent?: typeof agentRuntime.getSessionAgent;
+  readManagedWorkloadAuthority?: typeof readManagedWorkloadAuthority;
   resolveDashboardPort?: typeof resolveSandboxDashboardPort;
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
@@ -63,6 +66,51 @@ export type ManagedSupervisorRelaunchDeps = {
     Parameters<typeof finalizeDockerGpuPatchBackup>[1]
   >["runCaptureOpenshell"];
 };
+
+export type RegisteredRuntimeRecoveryResult = {
+  readonly exitCode: number;
+  readonly message?: string;
+};
+
+/** Whether the registered provider exposes the managed in-sandbox controller. */
+export function usesManagedGatewayController(entry: registry.SandboxEntry): boolean {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  return (
+    provider?.gateway.supported === true &&
+    provider.gateway.launcher === "nemoclaw" &&
+    provider.lifecycle.supported === true
+  );
+}
+
+/** Whether retained default-engine gateway compatibility logic applies. */
+export function usesLegacyManagedGatewayRecovery(entry: registry.SandboxEntry): boolean {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  if (
+    !provider ||
+    provider.lifecycle.supported !== true ||
+    provider.gateway.launcher !== "nemoclaw"
+  ) {
+    return false;
+  }
+  try {
+    return (
+      provider.gateway.prepareHostRuntime({
+        environment: process.env,
+        platform: process.platform,
+      }).socketPath === null
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Execute provider-owned recovery when the persisted provider registers it. */
+export function recoverRegisteredRuntimeProviderSandbox(
+  entry: registry.SandboxEntry,
+): RegisteredRuntimeRecoveryResult | null {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  return provider?.recovery.supported === true ? provider.recovery.recover(entry) : null;
+}
 
 function inspectContainer(containerId: string): DockerContainerInspect {
   return parseDockerInspectJson(
@@ -84,6 +132,7 @@ function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
 function reconstructSupervisorLaunchCommand(
   sandboxName: string,
   entry: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  quiet: boolean,
   deps: ManagedSupervisorRelaunchDeps,
 ): string[] | null {
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
@@ -96,8 +145,24 @@ function reconstructSupervisorLaunchCommand(
   const manageDashboard = shouldManageDashboardForAgent(agent);
   const resolveDashboardPort = deps.resolveDashboardPort ?? resolveSandboxDashboardPort;
   const dashboardPort = String(resolveDashboardPort(sandboxName));
-  const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : "";
   const hermesDashboardEnabled = entry.hermesDashboardEnabled === true;
+  const loopbackDashboardUrl = `http://127.0.0.1:${dashboardPort}`;
+  let chatUiUrl = manageDashboard ? loopbackDashboardUrl : "";
+  if (persistedAgent === "hermes" && manageDashboard && hermesDashboardEnabled) {
+    const readWorkloadAuthority =
+      deps.readManagedWorkloadAuthority ?? readManagedWorkloadAuthority;
+    const profile = readWorkloadAuthority(entry)?.profile;
+    if (profile?.dashboard.agent !== "hermes" || profile.dashboard.browserUrl === undefined) {
+      if (!quiet) {
+        console.error("  Trusted container recovery stopped because the Hermes dashboard profile");
+        console.error(
+          "  has no recorded browser URL. Rerun onboarding before retrying recovery.",
+        );
+      }
+      return null;
+    }
+    chatUiUrl = profile.dashboard.browserUrl;
+  }
   const { envArgs } = buildSandboxRuntimeEnvArgs({
     agent,
     chatUiUrl,
@@ -138,8 +203,8 @@ export function relaunchManagedSupervisorSession(
   const entry = getSandbox(sandboxName);
   if (!entry) return null;
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
-  if (driver !== null && driver !== "docker" && driver !== "vm") return null;
-  const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, deps);
+  if (!usesLegacyManagedGatewayRecovery(entry)) return null;
+  const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, quiet, deps);
   if (startupCommand === null) return null;
 
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;

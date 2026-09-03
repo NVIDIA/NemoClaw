@@ -20,7 +20,22 @@
  */
 
 import type { GatewayReuseState } from "../state/gateway";
+import {
+  BASE_GATEWAY_COMPAT_CONTAINER_NAME,
+  BASE_GATEWAY_NAME,
+  isDefaultGatewayPort,
+  resolveGatewayCompatContainerName,
+  resolveGatewayName,
+} from "./gateway-binding/identity";
 import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
+
+export {
+  BASE_GATEWAY_COMPAT_CONTAINER_NAME,
+  BASE_GATEWAY_NAME,
+  isDefaultGatewayPort,
+  resolveGatewayCompatContainerName,
+  resolveGatewayName,
+};
 
 export {
   assertManagedGatewayStateDirectoryParentTrusted,
@@ -33,25 +48,6 @@ export {
   resolveGatewayStateDirName,
   UnsafeGatewayStateDirectoryError,
 } from "./gateway/state-dir";
-
-/** Gateway registration name used for the default gateway port. */
-export const BASE_GATEWAY_NAME = "nemoclaw";
-/** Docker-driver gateway compatibility container name for the default port. */
-export const BASE_GATEWAY_COMPAT_CONTAINER_NAME = "nemoclaw-openshell-gateway";
-
-export function isDefaultGatewayPort(port: number): boolean {
-  return port === DEFAULT_GATEWAY_PORT;
-}
-
-/**
- * Resolve the OpenShell gateway registration name for a gateway port. The
- * default port keeps the bare `nemoclaw` name for backward compatibility; any
- * other port gets a `nemoclaw-<port>` name so its lifecycle commands
- * (add/select/remove/start/destroy) never target another sandbox's gateway.
- */
-export function resolveGatewayName(port: number): string {
-  return isDefaultGatewayPort(port) ? BASE_GATEWAY_NAME : `${BASE_GATEWAY_NAME}-${port}`;
-}
 
 /** Resolve the gateway port encoded by a canonical NemoClaw gateway name. */
 export function resolveGatewayPortFromName(gatewayName: string): number | null {
@@ -172,12 +168,6 @@ export function resolveCoreOnboardGatewayBinding(options: {
  * `docker run --name ...` (and the pre-launch `docker rm`) from tearing down
  * the first sandbox's compat gateway container.
  */
-export function resolveGatewayCompatContainerName(port: number): string {
-  return isDefaultGatewayPort(port)
-    ? BASE_GATEWAY_COMPAT_CONTAINER_NAME
-    : `${BASE_GATEWAY_COMPAT_CONTAINER_NAME}-${port}`;
-}
-
 /** Gateway state classifiers from `state/gateway`, each bound to a gateway name. */
 export interface GatewayNameBoundClassifiers {
   hasStaleGateway(gwInfoOutput?: string): boolean;
