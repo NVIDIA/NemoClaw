@@ -10,6 +10,7 @@ import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts"
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -19,7 +20,6 @@ import {
   type FakeDockerApi,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
-import { applyFakePolicy } from "./openclaw-pairing-helpers.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   expectExitZero,
@@ -631,15 +631,13 @@ PY`,
       DISCORD_TOKEN,
       redactionValues,
     );
-    await applyFakePolicy({
-      host,
-      sandboxName: SANDBOX_NAME,
-      api: fakeGateway,
+    await applyFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+      endpoint: fakeGateway,
       protocol: "websocket",
       rewrite: "websocket-credential-rewrite",
       providerName: `${SANDBOX_NAME}-discord-bridge`,
       env,
-      redactions: redactionValues,
+      redactionValues,
       artifactName: "apply-hermes-fake-discord-gateway-policy",
       allowedBinaries: [
         "/opt/hermes/.venv/bin/python3",
@@ -731,15 +729,13 @@ PY`,
       env,
       redactionValues,
     });
-    await applyFakePolicy({
-      host,
-      sandboxName: SANDBOX_NAME,
-      api: fakeRest,
+    await applyFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+      endpoint: fakeRest,
       protocol: "rest",
       rewrite: "request-body-credential-rewrite",
       providerName: `${SANDBOX_NAME}-discord-bridge`,
       env,
-      redactions: redactionValues,
+      redactionValues,
       artifactName: "apply-hermes-fake-discord-rest-policy",
       allowedBinaries: [
         "/opt/hermes/.venv/bin/python3",

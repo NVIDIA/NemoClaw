@@ -14,7 +14,7 @@ import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-provide
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
+const HELPER = path.resolve(import.meta.dirname, "../fixtures/gateway-provider-policy-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
@@ -277,8 +277,8 @@ describe("Hermes Discord E2E policy binding", () => {
     };
     const command = vi
       .fn<HostCliClient["command"]>()
-      .mockResolvedValueOnce(successfulProbe(YAML.stringify(originalPolicy)))
       .mockResolvedValueOnce(successfulProbe(providerName))
+      .mockResolvedValueOnce(successfulProbe(YAML.stringify(originalPolicy)))
       .mockImplementationOnce(async (_command, args = []) => recordAppliedPolicy(args));
     const host = {
       command,
@@ -302,8 +302,8 @@ describe("Hermes Discord E2E policy binding", () => {
     });
 
     expect(command.mock.calls.map(([, args]) => args)).toEqual([
-      ["policy", "get", "--base", "e2e-hermes-discord"],
       ["sandbox", "provider", "list", "-g", "nemoclaw", "e2e-hermes-discord"],
+      ["policy", "get", "--base", "e2e-hermes-discord"],
       ["policy", "set", "--policy", expect.any(String), "--wait", "e2e-hermes-discord"],
     ]);
     expect(appliedPolicies).toHaveLength(1);

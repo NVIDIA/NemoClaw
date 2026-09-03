@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
@@ -30,7 +31,6 @@ import {
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
 import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
-import { applyFakePolicy } from "../live/openclaw-pairing-helpers.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
@@ -73,6 +73,22 @@ function successfulCommand(stdout = "") {
 
 function failedCommand(stderr: string) {
   return { ...successfulCommand(), exitCode: 1, stderr };
+}
+
+function fakeEndpointPolicy(
+  port: number,
+  protocol: "rest" | "websocket",
+  binaries: readonly string[],
+): string {
+  return JSON.stringify({
+    version: 1,
+    network_policies: {
+      fixture: {
+        endpoints: [{ host: "host.openshell.internal", port, protocol }],
+        binaries: binaries.map((binaryPath) => ({ path: binaryPath })),
+      },
+    },
+  });
 }
 
 function optionValues(args: string[], option: string): string[] {
@@ -434,30 +450,41 @@ async function tcpRequest(host: string, port: number, payload: string): Promise<
 describe("messaging provider installed-runtime proofs", () => {
   it("propagates caller-selected binaries through fake policy application", async () => {
     const commands: Array<{ command: string; args: string[] }> = [];
+    const providerName = "e2e-hermes-discord-discord-bridge";
+    const allowedBinaries = ["/opt/hermes/.venv/bin/python3", "/opt/hermes/.venv/bin/python"];
     const host = {
       openshellCommandPath: "/usr/local/bin/openshell",
       command: async (command: string, args: string[]) => {
         commands.push({ command, args });
-        return successfulCommand();
+        return args[0] === "sandbox"
+          ? successfulCommand(providerName)
+          : args[0] === "policy" && args[1] === "get"
+            ? successfulCommand(fakeEndpointPolicy(43_117, "websocket", allowedBinaries))
+            : successfulCommand();
       },
     } as unknown as HostCliClient;
-    const allowedBinaries = ["/opt/hermes/.venv/bin/python3", "/opt/hermes/.venv/bin/python"];
 
-    await applyFakePolicy({
-      host,
-      sandboxName: "e2e-hermes-discord",
-      api: { kind: "discord-gateway", port: "43117", captureFile: "/tmp/capture.jsonl" },
+    await applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
+      endpoint: { port: "43117" },
       protocol: "websocket",
       rewrite: "websocket-credential-rewrite",
-      providerName: "e2e-hermes-discord-discord-bridge",
+      providerName,
       env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
-      redactions: ["test-fixture-token"],
+      redactionValues: ["test-fixture-token"],
       artifactName: "apply-hermes-fake-discord-gateway-policy",
       allowedBinaries,
     });
 
-    expect(commands).toHaveLength(2);
+    expect(commands).toHaveLength(4);
     expect(commands[0]?.args).toEqual([
+      "sandbox",
+      "provider",
+      "list",
+      "-g",
+      "nemoclaw",
+      "e2e-hermes-discord",
+    ]);
+    expect(commands[1]?.args).toEqual([
       "policy",
       "update",
       "e2e-hermes-discord",
@@ -473,46 +500,53 @@ describe("messaging provider installed-runtime proofs", () => {
       allowedBinaries[1],
       "--wait",
     ]);
-    expect(commands[1]?.args).toEqual([
-      "-lc",
-      expect.stringContaining("--assert-binaries"),
-      "bind-fake-websocket-policy",
-      "/usr/local/bin/openshell",
+    expect(commands[2]?.args).toEqual(["policy", "get", "--base", "e2e-hermes-discord"]);
+    expect(commands[3]?.args).toEqual([
+      "policy",
+      "set",
+      "--policy",
+      expect.any(String),
+      "--wait",
       "e2e-hermes-discord",
-      "e2e-hermes-discord-discord-bridge",
-      "host.openshell.internal",
-      "43117",
-      "websocket",
-      expect.stringMatching(/test\/e2e\/fixtures\/hermes-discord-policy-binding\.ts$/u),
-      ...allowedBinaries,
     ]);
   });
 
   it("binds the fake Discord REST proof to Hermes Python and excludes Node", async () => {
     const commands: Array<{ command: string; args: string[] }> = [];
+    const providerName = "e2e-hermes-discord-discord-bridge";
+    const allowedBinaries = ["/opt/hermes/.venv/bin/python"];
     const host = {
       openshellCommandPath: "/usr/local/bin/openshell",
       command: async (command: string, args: string[]) => {
         commands.push({ command, args });
-        return successfulCommand();
+        return args[0] === "sandbox"
+          ? successfulCommand(providerName)
+          : args[0] === "policy" && args[1] === "get"
+            ? successfulCommand(fakeEndpointPolicy(43_118, "rest", allowedBinaries))
+            : successfulCommand();
       },
     } as unknown as HostCliClient;
-    const allowedBinaries = ["/opt/hermes/.venv/bin/python"];
 
-    await applyFakePolicy({
-      host,
-      sandboxName: "e2e-hermes-discord",
-      api: { kind: "discord-message", port: "43118", captureFile: "/tmp/capture.jsonl" },
+    await applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
+      endpoint: { port: "43118" },
       protocol: "rest",
       rewrite: "request-body-credential-rewrite",
-      providerName: "e2e-hermes-discord-discord-bridge",
+      providerName,
       env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
-      redactions: ["test-fixture-token"],
+      redactionValues: ["test-fixture-token"],
       artifactName: "apply-hermes-fake-discord-rest-policy",
       allowedBinaries,
     });
 
     expect(commands[0]?.args).toEqual([
+      "sandbox",
+      "provider",
+      "list",
+      "-g",
+      "nemoclaw",
+      "e2e-hermes-discord",
+    ]);
+    expect(commands[1]?.args).toEqual([
       "policy",
       "update",
       "e2e-hermes-discord",
@@ -526,19 +560,42 @@ describe("messaging provider installed-runtime proofs", () => {
       allowedBinaries[0],
       "--wait",
     ]);
-    expect(commands[0]?.args).not.toContain("/usr/local/bin/node");
-    expect(commands[1]?.args).toEqual([
-      "-lc",
-      expect.stringContaining("--assert-binaries"),
-      "bind-fake-rest-policy",
-      "/usr/local/bin/openshell",
+    expect(commands[1]?.args).not.toContain("/usr/local/bin/node");
+    expect(commands[2]?.args).toEqual(["policy", "get", "--base", "e2e-hermes-discord"]);
+    expect(commands[3]?.args).toEqual([
+      "policy",
+      "set",
+      "--policy",
+      expect.any(String),
+      "--wait",
       "e2e-hermes-discord",
-      "e2e-hermes-discord-discord-bridge",
-      "host.openshell.internal",
-      "43118",
-      "rest",
-      expect.stringMatching(/test\/e2e\/fixtures\/hermes-discord-policy-binding\.ts$/u),
-      ...allowedBinaries,
+    ]);
+  });
+
+  it("rejects fake endpoint policy mutation when the provider is not attached", async () => {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const host = {
+      openshellCommandPath: "/usr/local/bin/openshell",
+      command: async (command: string, args: string[]) => {
+        commands.push({ command, args });
+        return successfulCommand("another-provider");
+      },
+    } as unknown as HostCliClient;
+
+    await expect(
+      applyFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
+        endpoint: { port: "43118" },
+        protocol: "rest",
+        rewrite: "request-body-credential-rewrite",
+        providerName: "e2e-hermes-discord-discord-bridge",
+        env: { DISCORD_BOT_TOKEN: "test-fixture-token" },
+        redactionValues: ["test-fixture-token"],
+        artifactName: "apply-hermes-fake-discord-rest-policy",
+        allowedBinaries: ["/opt/hermes/.venv/bin/python"],
+      }),
+    ).rejects.toThrow("is not attached to sandbox e2e-hermes-discord");
+    expect(commands.map(({ args }) => args)).toEqual([
+      ["sandbox", "provider", "list", "-g", "nemoclaw", "e2e-hermes-discord"],
     ]);
   });
 

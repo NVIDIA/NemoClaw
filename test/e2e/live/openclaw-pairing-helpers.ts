@@ -9,7 +9,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   type FakeDockerApi,
   runDiscordGatewayClient,
@@ -181,79 +180,6 @@ export async function startFakeSlackApi(
     env,
     redactionValues: redactions,
   });
-}
-
-export async function applyFakePolicy(options: {
-  host: HostCliClient;
-  sandboxName: string;
-  api: FakeDockerApi;
-  protocol: "rest" | "websocket";
-  rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
-  providerName: string;
-  env: NodeJS.ProcessEnv;
-  redactions: string[];
-  artifactName: string;
-  allowedBinaries?: readonly string[];
-}): Promise<void> {
-  const policyHost = "host.openshell.internal";
-  const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
-  const allowedBinaries = options.allowedBinaries ?? ["/usr/local/bin/node", "/usr/bin/node"];
-  const args = [
-    "policy",
-    "update",
-    options.sandboxName,
-    "--add-endpoint",
-    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-  ];
-  for (const method of methods)
-    args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
-  args.push(...allowedBinaries.flatMap((binary) => ["--binary", binary]), "--wait");
-  const result = await options.host.command("openshell", args, {
-    artifactName: options.artifactName,
-    env: options.env,
-    redactionValues: options.redactions,
-    timeoutMs: 120_000,
-  });
-  expectExitZero(result, options.artifactName);
-
-  const binding = await options.host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-openshell="$1"
-sandbox_name="$2"
-provider_name="$3"
-policy_host="$4"
-policy_port="$5"
-policy_protocol="$6"
-policy_helper="$7"
-shift 7
-"$openshell" policy get --base "$sandbox_name" >"$policy_file"
-node --import tsx "$policy_helper" "$policy_file" "$provider_name" "$policy_host" "$policy_port" "$policy_protocol"
-node --import tsx "$policy_helper" --assert-binaries "$policy_file" "$policy_host" "$policy_port" "$policy_protocol" "$@"
-"$openshell" policy set --policy "$policy_file" --wait "$sandbox_name"`,
-      `bind-fake-${options.protocol}-policy`,
-      options.host.openshellCommandPath,
-      options.sandboxName,
-      options.providerName,
-      policyHost,
-      String(options.api.port),
-      options.protocol,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
-      ...allowedBinaries,
-    ],
-    {
-      artifactName: `${options.artifactName}-credential-binding`,
-      cwd: REPO_ROOT,
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binding, `${options.artifactName} credential binding`);
 }
 
 export async function assertOpenClawStateRoot(
