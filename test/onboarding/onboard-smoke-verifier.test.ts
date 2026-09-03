@@ -21,6 +21,27 @@ describe("Hermes onboard smoke verification", () => {
     expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-router")).toBe(true);
   });
 
+  it("sends the NVIDIA Endpoints host smoke through Chat Completions (#10879)", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      {
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      },
+    ]);
+
+    // Before #10879 the runtime verifier returned before any probe, so a model
+    // the credential cannot invoke onboarded clean and first failed at `status`.
+    expect(calls.filter((call) => call[0] === "runCurlProbe")).toEqual([
+      [
+        "runCurlProbe",
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        "Authorization: Bearer resolved-NVIDIA_INFERENCE_API_KEY",
+      ],
+    ]);
+  });
+
   it("skips only the Hermes OAuth smoke path in the runtime verifier", async () => {
     const calls = await runVerifyOnboardSmokeHarness([
       { credentialEnv: "OPENAI_API_KEY" },

@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { isNvcfFunctionNotFoundForAccount } from "../../inference/nvcf-model-access";
 
 import {
   buildDcodeSandboxInferenceInvocationArgs,
@@ -34,6 +39,40 @@ function openshellResult(status: number, stdout: string, stderr: string) {
     output: [null, stdout, stderr],
   };
 }
+
+/**
+ * Run the generated probe command under a real shell with a stub curl that
+ * serves `body` at `code`, so the in-sandbox classification is exercised rather
+ * than simulated. Returns the probe's stdout.
+ */
+function runProbeCommandWithBody(code: string, body: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-probe-parity-"));
+  const bin = path.join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(path.join(dir, "body.txt"), body);
+  writeFileSync(
+    path.join(bin, "curl"),
+    [
+      "#!/bin/sh",
+      'out=""; prev=""',
+      'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
+      `cat ${JSON.stringify(path.join(dir, "body.txt"))} > "$out"`,
+      `printf '%s' ${JSON.stringify(code)}`,
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(input)], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+  });
+  return run.stdout || "";
+}
+
+const NVCF_BODY_VARIANTS = [
+  ["canonical", `{"status":404,"detail":"Function 'abc-123': Not found for account 'acct-42'"}`],
+  ["case variant", `{"status":404,"detail":"Function 'abc-123': not FOUND for ACCOUNT 'acct-42'"}`],
+  ["extra whitespace", `{"status":404,"detail":"Function  'abc-123':   Not found for account"}`],
+] as const;
 
 describe("sandbox inference invocation probe", () => {
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
@@ -94,7 +133,7 @@ describe("sandbox inference invocation probe", () => {
     // The pattern reaches the sandbox shell-quoted, so match its stable tail.
     expect(command).toContain("Not found for account");
     expect(command).toContain("nemoclaw-probe:nvcf-function-not-found");
-    expect(command).toMatch(/404\)[^;]*grep -qE/);
+    expect(command).toMatch(/404\)[^;]*grep -qiE/);
     expect(command).toContain('case "$code" in 2??) cat "$body"; exit 0 ;;');
   });
 
@@ -145,6 +184,38 @@ describe("sandbox inference invocation probe", () => {
     expect(result.ok).toBe(false);
     expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
     expect(JSON.stringify(result)).not.toContain("not deployed for your account");
+  });
+
+  it.each(NVCF_BODY_VARIANTS)(
+    "classifies a %s NVCF 404 body in the sandbox exactly as the host predicate does (#10879)",
+    (_label, body) => {
+      // Parity guard: the host classifier and the in-sandbox shell rule share
+      // one contract in nvcf-model-access.ts and must not drift.
+      expect(isNvcfFunctionNotFoundForAccount(body)).toBe(true);
+
+      const stdout = runProbeCommandWithBody("404", body);
+
+      expect(stdout).toContain("nemoclaw-probe:nvcf-function-not-found");
+      expect(stdout).not.toContain("acct-42");
+      expect(stdout).not.toContain("abc-123");
+    },
+  );
+
+  it("leaves a generic 404 body unclassified and unreported (#10879)", () => {
+    const body = "404 page not found";
+
+    expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
+
+    const stdout = runProbeCommandWithBody("404", body);
+
+    expect(stdout.trim()).toBe("404");
+  });
+
+  it("keeps a non-404 failure body out of the probe output (#6195)", () => {
+    const stdout = runProbeCommandWithBody("500", '{"echoed_value":"canary-replay-marker"}');
+
+    expect(stdout.trim()).toBe("500");
+    expect(stdout).not.toContain("canary-replay-marker");
   });
 
   it("accepts a successful completion through the stored gateway route (#6195)", () => {

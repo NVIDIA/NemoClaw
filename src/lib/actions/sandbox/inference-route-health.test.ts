@@ -9,6 +9,7 @@ import {
 import {
   buildSandboxInferenceRouteHealth,
   probeSandboxInferenceGatewayHealth,
+  runSandboxInferenceInvocationProbe,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
 
@@ -125,6 +126,32 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     endpoint: "https://inference.local/v1/models",
     httpStatus,
     detail: `probe returned ${httpStatus}`,
+  });
+
+  it.each([
+    ["openai-completions", "https://inference.local/v1/chat/completions"],
+    ["openai-responses", "https://inference.local/v1/responses"],
+    ["anthropic-messages", "https://inference.local/v1/messages"],
+  ])("names the %s endpoint when the probe itself throws (#10879)", (api, endpoint) => {
+    const invocation = runSandboxInferenceInvocationProbe(
+      {
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron",
+        preferredInferenceApi: api,
+      },
+      () => {
+        throw new Error("openshell exec exploded");
+      },
+    );
+
+    expect(invocation).toMatchObject({ ok: false, httpStatus: null, endpoint });
+    expect(
+      buildSandboxInferenceRouteHealth(gateway(200), null, invocation, {
+        agentName: "openclaw",
+        provider: "compatible-endpoint",
+      }).endpoint,
+    ).toBe(endpoint);
   });
 
   it("names the request that failed, not the models route (#10879)", () => {

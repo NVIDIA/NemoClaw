@@ -14,6 +14,7 @@ import {
 import {
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  resolveSandboxInferenceInvocationEndpoint,
   type SandboxInferenceInvocationInput,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
@@ -336,6 +337,10 @@ export function runSandboxInferenceInvocationProbe(
       ok: false,
       detail: "sandbox inference invocation probe could not run",
       httpStatus: null,
+      // An abnormal probe still failed against the selected API family's path.
+      // Without this the row falls back to the models route and misdirects
+      // recovery to a request that never ran (#10879).
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
 }

@@ -5,7 +5,12 @@ import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-c
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
-import { nvcfFunctionNotFoundMessage } from "../../inference/nvcf-model-access";
+import {
+  NVCF_FUNCTION_NOT_FOUND_MARKER,
+  NVCF_FUNCTION_NOT_FOUND_SHELL_ERE,
+  NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS,
+  nvcfFunctionNotFoundMessage,
+} from "../../inference/nvcf-model-access";
 import { shellQuote } from "../../runner";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
@@ -45,18 +50,6 @@ export type SandboxInferenceInvocationDeps = {
 export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
 export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 30_000;
 const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
-/**
- * Fixed token the in-sandbox probe prints when a 404 body carries the NVIDIA
- * Cloud Functions "Not found for account" signature. Classifying inside the
- * sandbox keeps the promise that status diagnostics never carry a response
- * body (#6195): only this constant can cross the boundary, never the body it
- * was matched against.
- */
-const NVCF_FUNCTION_NOT_FOUND_MARKER = "nemoclaw-probe:nvcf-function-not-found";
-// Matches the same signature as isNvcfFunctionNotFoundForAccount(), which the
-// onboarding probe already applies to this provider family. Kept as a POSIX
-// ERE so the probe needs nothing beyond the shell utilities it already uses.
-const NVCF_FUNCTION_NOT_FOUND_ERE = "Function '[^']+': *Not found for account";
 
 function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   endpoint: string;
@@ -102,6 +95,13 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   };
 }
 
+/** The endpoint this input's API family posts to, for callers that report a hop. */
+export function resolveSandboxInferenceInvocationEndpoint(
+  input: SandboxInferenceInvocationInput,
+): string {
+  return buildProbeRequest(input).endpoint;
+}
+
 export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
 ): string {
@@ -120,7 +120,7 @@ export function buildSandboxInferenceInvocationCommand(
     // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
     // here instead, so status can name the cause the onboarding probe already
     // recognises without carrying the body that proved it (#10879).
-    `case "$code" in 2??) cat "$body"; exit 0 ;; 404) grep -qE ${shellQuote(NVCF_FUNCTION_NOT_FOUND_ERE)} "$body" && printf '%s\\n' ${shellQuote(NVCF_FUNCTION_NOT_FOUND_MARKER)}; exit 1 ;; *) exit 1 ;; esac`,
+    `case "$code" in 2??) cat "$body"; exit 0 ;; 404) grep ${NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS} ${shellQuote(NVCF_FUNCTION_NOT_FOUND_SHELL_ERE)} "$body" && printf '%s\\n' ${shellQuote(NVCF_FUNCTION_NOT_FOUND_MARKER)}; exit 1 ;; *) exit 1 ;; esac`,
   ].join("; ");
 }
 
@@ -209,7 +209,7 @@ export function probeSandboxInferenceInvocation(
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
-      endpoint: buildProbeRequest(input).endpoint,
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
   if (result.status === 0) {
@@ -229,7 +229,7 @@ export function probeSandboxInferenceInvocation(
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus,
-      endpoint: buildProbeRequest(input).endpoint,
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
@@ -248,6 +248,6 @@ export function probeSandboxInferenceInvocation(
         ? `${detail}: ${nvcfFunctionNotFoundMessage(input.model).replace(/\.$/, "")}`
         : detail,
     httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
-    endpoint: buildProbeRequest(input).endpoint,
+    endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
 }

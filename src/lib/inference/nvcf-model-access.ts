@@ -25,6 +25,28 @@ export function isNvcfFunctionNotFoundForAccount(message: string): boolean {
 }
 
 /**
+ * The same condition as `isNvcfFunctionNotFoundForAccount`, expressed as a
+ * POSIX extended regular expression for the in-sandbox status probe, which must
+ * classify the body where it is and forward only a verdict (#10879).
+ *
+ * Both forms live here so the two cannot drift: the host and the sandbox must
+ * agree on what an account-entitlement 404 is, or the same provider response
+ * yields a remediation during onboarding and a bare HTTP 404 at `status`.
+ * `NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS` carries the case-insensitive flag
+ * that `/i` supplies on the TypeScript side; `[[:space:]]` mirrors `\s`.
+ */
+export const NVCF_FUNCTION_NOT_FOUND_SHELL_ERE =
+  "Function[[:space:]]+'[^']+':[[:space:]]*Not found for account";
+export const NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS = "-qiE";
+
+/**
+ * Verdict token the in-sandbox probe prints when the body matches. Only this
+ * constant crosses the sandbox boundary, never the body it was matched against,
+ * so status diagnostics still carry no response body (#6195).
+ */
+export const NVCF_FUNCTION_NOT_FOUND_MARKER = "nemoclaw-probe:nvcf-function-not-found";
+
+/**
  * Build the user-facing message for an NVCF "Function not found for account"
  * failure. The model is in the catalog but cannot be invoked from this key.
  *
