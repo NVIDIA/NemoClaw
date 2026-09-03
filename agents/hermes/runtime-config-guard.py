@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
 import errno
 import fcntl
 import grp
@@ -24,7 +23,6 @@ import struct
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass, field
 
 import yaml
@@ -54,12 +52,10 @@ MCP_HASH_STATE_RE = re.compile(
 )
 NEMOCLAW_START_ARGV = (b"nemoclaw-start", b"/usr/local/bin/nemoclaw-start")
 OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
-# Keep this in exact parity with manifest config_file + config.shields_files +
-# .config-hash. The host manifest remains authoritative for host transitions;
-# the integration test protects this separate in-image recovery boundary.
+# Keep this in parity with the generated config, environment, and hash files.
+# The integration test protects this separate in-image recovery boundary.
 SEALED_FILE_NAMES = ("config.yaml", ".env", ".config-hash")
 RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
-SHIELDS_TRANSITION_LEASE_SECONDS = 300
 STATE_WORKER_LEASE_SECONDS = 15 * 60
 HERMES_STARTUP_READY_FILE = "/run/nemoclaw/hermes-startup-ready"
 HERMES_ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
@@ -71,7 +67,6 @@ DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS = frozenset(
     {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
 )
 _DIRECTORY_FSYNC_WARNING_EMITTED = False
-_DIRECTORY_METADATA_FSYNC_WARNING_EMITTED = False
 INSTALLED_RUNTIME_CONFIG_GUARD = (
     "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 )
@@ -744,63 +739,6 @@ def _startup_ready_marker_absent() -> bool:
     return False
 
 
-def _root_lifecycle_marker_state() -> str:
-    try:
-        opened = _open_regular(HERMES_ROOT_LIFECYCLE_MARKER)
-    except FileNotFoundError:
-        return "absent"
-    except (OSError, UnsafePathError) as exc:
-        raise UnsafePathError("Hermes root lifecycle marker is unsafe") from exc
-    try:
-        marker = opened.snapshot
-        if (
-            marker.uid != 0
-            or marker.gid != 0
-            or marker.mode != 0o444
-            or marker.nlink != 1
-            or not secrets.compare_digest(opened.read_bytes(64), b"root-separated\n")
-        ):
-            raise UnsafePathError("Hermes root lifecycle marker is unsafe")
-    finally:
-        opened.close()
-    return "root-separated"
-
-
-def _attested_shields_runtime_topology() -> str:
-    marker_state = _root_lifecycle_marker_state()
-    if marker_state == "root-separated":
-        if (
-            os.geteuid() == 0
-            and _pid1_is_nemoclaw_start()
-            and _process_effective_uid(1) == 0
-        ):
-            return marker_state
-        raise UnsafePathError(
-            "Hermes root lifecycle marker does not match the live PID 1 topology"
-        )
-
-    if (
-        os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD
-        or os.geteuid() != 0
-        or not _startup_ready_marker_absent()
-    ):
-        return "unknown"
-    try:
-        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
-    except KeyError:
-        return "unknown"
-    if sandbox_uid <= 0:
-        return "unknown"
-    if _openshell_supervised_nonroot_start_is_live(0, sandbox_uid):
-        if (
-            _root_lifecycle_marker_state() != marker_state
-            or not _startup_ready_marker_absent()
-        ):
-            raise UnsafePathError(
-                "Hermes runtime topology changed during attestation"
-            )
-        return "same-uid-nonroot"
-    return "unknown"
 
 
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
@@ -846,12 +784,6 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
     host_actions = {
         "seal-restart",
         "write-config",
-        "begin-shields-transition",
-        "apply-shields-transition",
-        "finish-shields-transition",
-        "prepare-shields-abort",
-        "abort-shields-transition",
-        "run-state-dir-transition",
     }
     pid1_is_nemoclaw_start = _pid1_is_nemoclaw_start()
     startup_ready = _startup_ready_for_current_pid1()
@@ -871,18 +803,6 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
             raise UnsafePathError(
                 "Hermes runtime config guard refuses mutation under a foreign PID 1"
             )
-        return
-    if (
-        action
-        in {
-            "begin-shields-transition",
-            "apply-shields-transition",
-            "finish-shields-transition",
-            "run-state-dir-transition",
-        }
-        and startup_owner
-        and os.getppid() == 1
-    ):
         return
     if action in host_actions and not startup_ready:
         # The macOS VM compatibility path runs NemoClaw PID 1 without root and
@@ -1128,21 +1048,6 @@ def _fsync_directory_after_replace(dir_fd: int) -> None:
             )
             _DIRECTORY_FSYNC_WARNING_EMITTED = True
 
-
-def _fsync_directory_metadata(dir_fd: int) -> None:
-    global _DIRECTORY_METADATA_FSYNC_WARNING_EMITTED
-
-    try:
-        os.fsync(dir_fd)
-    except OSError as exc:
-        if exc.errno not in DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS:
-            raise
-        if not _DIRECTORY_METADATA_FSYNC_WARNING_EMITTED:
-            print(
-                "[security] directory fsync is unsupported; the Hermes root metadata update completed without a directory durability barrier",
-                file=sys.stderr,
-            )
-            _DIRECTORY_METADATA_FSYNC_WARNING_EMITTED = True
 
 
 def _atomic_replace_preserving_flags(
@@ -1530,10 +1435,9 @@ def refresh_hashes(
 
     # `both` is the transaction contract: both trust anchors must advance or
     # the caller rolls the config write back. `compat` remains best-effort for
-    # legacy startup paths where an old locked image can expose a read-only
-    # in-tree anchor.
-    # Hash refresh is an atomic rename, so directory write authority is what
-    # matters; a correctly shields-locked compatibility file is itself 0444.
+    # legacy startup paths where an old image can expose a read-only in-tree
+    # anchor. Hash refresh is an atomic rename, so directory write authority
+    # is what matters.
     compat_writable = os.access(hermes_dir, os.W_OK)
     # Applying a healthy gateway's intent must use the real atomic write as
     # the authority check. `os.access` is only a best-effort legacy probe and
@@ -1777,11 +1681,8 @@ def _mutable_nonroot_reconciliation_posture_is_allowed(
         return False
 
     # OpenShell can present the live non-root home as private 0700 after the
-    # managed supervisor/dashboard has started. Shields-down transitions use
-    # the canonical set-id 03770 form. Both are sandbox-owned mutable roots;
-    # a shields-up posture must never be reconciled here. The locked root also
-    # carries 03770 since #7865, so the sandbox-owner check below — not the
-    # mode — is what keeps the two apart.
+    # managed supervisor/dashboard has started. The canonical root uses 03770.
+    # Both are sandbox-owned mutable roots.
     if (
         hermes_meta.get("uid") != sandbox_uid
         or hermes_meta.get("gid") != sandbox_gid
@@ -2178,84 +2079,6 @@ def _release_mutation_lock(lock_path: str, token: str) -> None:
         os.close(parent_fd)
 
 
-def _claim_transition_worker(
-    state_file: str, lock_token: str, purpose: str
-) -> dict[str, object]:
-    if not re.fullmatch(r"[0-9a-f]{64}", lock_token):
-        raise UnsafePathError("refusing invalid Hermes transition worker token")
-    state_data = _load_restart_state(state_file)
-    recorded = state_data.get("mutation_lock_token")
-    lock_path = state_data.get("mutation_lock_path")
-    if (
-        not isinstance(recorded, str)
-        or not isinstance(lock_path, str)
-        or not secrets.compare_digest(recorded, lock_token)
-    ):
-        raise UnsafePathError(
-            "refusing Hermes transition worker lock token mismatch"
-        )
-
-    # Read the owner and capture the exact inode snapshot through one
-    # descriptor. The compare-before-replace below then prevents two host
-    # workers from both observing the dead begin owner and stealing the lease
-    # from each other between separate read/open operations.
-    opened = _open_regular(lock_path)
-    try:
-        snapshot = opened.snapshot
-        if (
-            snapshot.uid != os.geteuid()
-            or snapshot.gid != os.getegid()
-            or snapshot.mode != 0o600
-            or snapshot.nlink != 1
-        ):
-            raise UnsafePathError("refusing unsafe Hermes config mutation lock")
-        raw_owner = opened.read_bytes(MAX_MUTATION_LOCK_BYTES)
-    finally:
-        opened.close()
-    try:
-        owner = json.loads(raw_owner.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise UnsafePathError("refusing corrupt Hermes config mutation lock") from exc
-    if not isinstance(owner, dict):
-        raise UnsafePathError("refusing corrupt Hermes config mutation lock")
-    owner_token = owner.get("token")
-    if not isinstance(owner_token, str) or not secrets.compare_digest(
-        owner_token, lock_token
-    ):
-        raise UnsafePathError("refusing mismatched Hermes mutation lock owner")
-    if _mutation_lock_owner_is_live(owner) and owner.get("pid") != os.getpid():
-        raise UnsafePathError("Hermes transition worker is still active")
-
-    payload = (
-        json.dumps(
-            {
-                "version": 1,
-                "token": lock_token,
-                "purpose": purpose,
-                "pid": os.getpid(),
-                "pid_start_time": _process_start_time(os.getpid()),
-            },
-            sort_keys=True,
-        )
-        + "\n"
-    ).encode("utf-8")
-    _atomic_replace(
-        lock_path,
-        payload,
-        expected=snapshot,
-        mode=0o600,
-        uid=os.geteuid(),
-        gid=os.getegid(),
-    )
-    transition = state_data.get("shields_transition")
-    if isinstance(transition, dict):
-        transition["lease_expires_ns"] = (
-            time.time_ns() + STATE_WORKER_LEASE_SECONDS * 1_000_000_000
-        )
-        state_data["shields_transition"] = transition
-        _write_restart_state(state_file, state_data, create=False)
-    return state_data
-
 
 def recover_dead_prestate_mutation_lock(state_file: str) -> bool:
     """Remove only a dead, fully published lock that has no recovery state."""
@@ -2376,14 +2199,6 @@ def _mutation_lock_owner_is_live(owner: dict[str, object]) -> bool:
         b"/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
         os.path.realpath(__file__).encode("utf-8"),
     }
-    state_guard_names = {
-        b"/usr/local/lib/nemoclaw/state-dir-guard.py",
-        os.path.realpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "state-dir-guard.py")
-        ).encode("utf-8"),
-    }
-    if purpose.startswith("state-dir-"):
-        return any(argument in guard_names | state_guard_names for argument in cmdline)
     if not any(argument in guard_names for argument in cmdline):
         return False
     return any(
@@ -2391,12 +2206,6 @@ def _mutation_lock_owner_is_live(owner: dict[str, object]) -> bool:
         for action in (
             b"seal-restart",
             b"write-config",
-            b"transition-shields",
-            b"begin-shields-transition",
-            b"apply-shields-transition",
-            b"finish-shields-transition",
-            b"prepare-shields-abort",
-            b"abort-shields-transition",
         )
     )
 
@@ -2429,35 +2238,10 @@ def inspect_mutation_owner(state_file: str, expected_token: str = "") -> str:
         and state_token
         and secrets.compare_digest(expected_token, state_token)
     )
-    original_locked = False
-    if state_data is not None and "files" in state_data:
-        original_locked = _restart_state_was_locked(state_data)
     active = owner is not None and _mutation_lock_owner_is_live(owner)
-    if state_data is not None and str(state_data.get("phase", "")).startswith(
-        "shields-transition-"
-    ):
-        transition = state_data.get("shields_transition")
-        lease_expires_ns = (
-            transition.get("lease_expires_ns") if isinstance(transition, dict) else None
-        )
-        if isinstance(lease_expires_ns, int) and time.time_ns() < lease_expires_ns:
-            active = True
-    recovery_safe = not (
-        state_data is not None
-        and str(state_data.get("phase", "")).startswith("shields-transition-")
-    )
-    resumable_lock = bool(
-        state_data is not None
-        and state_data.get("phase")
-        in ("shields-transition-pending", "shields-transition-applied")
-        and isinstance(state_data.get("shields_transition"), dict)
-        and state_data["shields_transition"].get("mode") == "locked"
-    )
     return (
         f"state={int(state_exists)} lock={int(lock_exists)} "
-        f"owner_active={int(active)} token_match={int(token_match)} "
-        f"original_locked={int(original_locked)} recovery_safe={int(recovery_safe)} "
-        f"resumable_lock={int(resumable_lock)}"
+        f"owner_active={int(active)} token_match={int(token_match)}"
     )
 
 
@@ -2557,6 +2341,10 @@ def _restore_restart_seal(
     if not os.path.exists(state_file):
         return False
     state_data = _load_restart_state(state_file)
+    if state_data.get("purpose") not in {"restart-seal", "config-write"}:
+        raise UnsafePathError(
+            "retired Hermes config state cannot be recovered in place; rebuild or recreate the sandbox"
+        )
     lock_token = state_data.get("mutation_lock_token")
     lock_path = state_data.get("mutation_lock_path")
     if not isinstance(lock_token, str) or not isinstance(lock_path, str):
@@ -2698,6 +2486,8 @@ def seal_restart(
     mutation_lock_token: str | None = None,
     expected_config_sha256: str | None = None,
 ) -> bool:
+    if purpose not in {"restart-seal", "config-write"}:
+        raise UnsafePathError("refusing unsupported Hermes config transaction purpose")
     if os.path.exists(state_file):
         raise UnsafePathError("Hermes restart seal is already active")
     mutation_lock_token = mutation_lock_token or secrets.token_hex(32)
@@ -2712,6 +2502,7 @@ def seal_restart(
         "mutation_lock_path": mutation_lock_path,
         "hermes_dir": hermes_dir,
         "hash_file": hash_file,
+        "purpose": purpose,
     }
     try:
         _write_restart_state(state_file, state_data, create=True)
@@ -2783,7 +2574,7 @@ def seal_restart(
         _write_restart_state(state_file, state_data, create=False)
 
         os.fchown(parent_fd, os.geteuid(), os.getegid())
-        os.fchmod(parent_fd, 0o700 if purpose == "shields-mutable" else 0o755)
+        os.fchmod(parent_fd, 0o755)
         current_hermes = os.stat(hermes_name, dir_fd=parent_fd, follow_symlinks=False)
         if not _same_inode(current_hermes, hermes_meta):
             raise UnsafePathError("refusing raced Hermes directory before restart seal")
@@ -2816,7 +2607,7 @@ def seal_restart(
         try:
             _verify_strict_hash(hermes_dir, hash_file)
         except StrictHashMismatchError:
-            if purpose not in ("config-write", "shields-mutable") or expected_config_sha256 is None:
+            if purpose != "config-write" or expected_config_sha256 is None:
                 raise
             _reconcile_nonroot_startup_api_key_hash(
                 hermes_dir,
@@ -2868,18 +2659,9 @@ def seal_restart(
         state_data["files"] = file_states
         _write_restart_state(state_file, state_data, create=False)
 
-        # Mutable Hermes normally needs to create top-level runtime state while
-        # a short restart seal is active. A shields transition is different:
-        # the host is about to mutate a recursive state tree, so never reopen a
-        # writable root between seal_restart() returning and begin publishing
-        # its pending phase.
-        if purpose == "shields-mutable":
-            os.fchown(hermes_fd, os.geteuid(), os.getegid())
-            os.fchmod(hermes_fd, 0o700)
-        elif purpose == "shields-locked":
-            os.fchown(hermes_fd, os.geteuid(), os.getegid())
-            os.fchmod(hermes_fd, 0o755)
-        elif hermes_meta["uid"] != os.geteuid() or hermes_meta["mode"] & 0o022:
+        # Keep top-level runtime state writable while the short restart seal is
+        # active.
+        if hermes_meta["uid"] != os.geteuid() or hermes_meta["mode"] & 0o022:
             os.fchown(hermes_fd, os.geteuid(), hermes_meta["gid"])
             os.fchmod(hermes_fd, 0o3770)
     except Exception:
@@ -2896,7 +2678,7 @@ def seal_restart(
             os.close(hermes_fd)
         if parent_fd is not None:
             os.close(parent_fd)
-    return _restart_state_was_locked(state_data)
+    return False
 
 
 def unseal_restart(hermes_dir: str, state_file: str) -> None:
@@ -2941,811 +2723,6 @@ def _record_current_sealed_inodes(
     _write_restart_state(state_file, state_data, create=False)
 
 
-def _is_locked_hermes_root(uid: object, gid: object, mode: object) -> bool:
-    """Report whether a recorded `.hermes` root is in the shields-locked posture.
-
-    The current locked root is root-owned in the sandbox group and keeps the
-    set-id/sticky shape so Hermes can still write its top-level runtime state
-    (#7865). Sandboxes locked before that change recorded a root:root 0755
-    root, so keep accepting it here: rollback and re-lock must classify an
-    already-locked sandbox correctly, and the host verifier reports the legacy
-    shape as drift so `shields up` repairs it.
-    """
-    if uid != os.geteuid():
-        return False
-    if gid == os.getegid() and mode == 0o755:
-        return True
-    try:
-        _, sandbox_gid = _sandbox_identity()
-    except UnsafePathError:
-        return False
-    return gid == sandbox_gid and mode == 0o3770
-
-
-def _restart_state_was_locked(state_data: dict[str, object]) -> bool:
-    recorded = state_data.get("original_locked")
-    if isinstance(recorded, bool):
-        return recorded
-    hermes_meta = state_data.get("hermes")
-    files = state_data.get("files")
-    if not isinstance(hermes_meta, dict) or not isinstance(files, dict):
-        raise UnsafePathError("refusing malformed Hermes restart seal metadata")
-    if not _is_locked_hermes_root(
-        hermes_meta.get("uid"), hermes_meta.get("gid"), hermes_meta.get("mode")
-    ):
-        return False
-    for name in ("config.yaml", ".env"):
-        file_state = files.get(name)
-        original = file_state.get("original") if isinstance(file_state, dict) else None
-        if not isinstance(original, dict):
-            raise UnsafePathError(
-                f"refusing missing Hermes restart metadata for {name}"
-            )
-        if original.get("uid") != os.geteuid() or original.get("mode") != 0o444:
-            return False
-    return True
-
-
-def _make_private_quarantine(parent_fd: int) -> tuple[int, str]:
-    name = f".nemoclaw-hermes-quarantine.{os.getpid()}.{secrets.token_hex(8)}"
-    os.mkdir(name, 0o700, dir_fd=parent_fd)
-    fd = _open_child_directory(parent_fd, name, name)
-    try:
-        os.fchown(fd, os.geteuid(), os.getegid())
-        os.fchmod(fd, 0o700)
-    except Exception:
-        os.close(fd)
-        raise
-    return fd, name
-
-
-def _quarantine_entry(parent_fd: int, name: str) -> None:
-    quarantine_fd, _quarantine_name = _make_private_quarantine(parent_fd)
-    try:
-        os.rename(
-            name,
-            f"entry.{secrets.token_hex(8)}",
-            src_dir_fd=parent_fd,
-            dst_dir_fd=quarantine_fd,
-        )
-        os.fsync(quarantine_fd)
-        os.fsync(parent_fd)
-    finally:
-        os.close(quarantine_fd)
-
-
-def _clear_entry_mutation_flags(parent_fd: int, name: str) -> None:
-    try:
-        fd = os.open(
-            name,
-            os.O_RDONLY
-            | os.O_NONBLOCK
-            | _no_follow_flag()
-            | _cloexec_flag(),
-            dir_fd=parent_fd,
-        )
-    except OSError as exc:
-        if exc.errno in (errno.ELOOP, errno.ENOENT, errno.ENXIO):
-            return
-        raise
-    try:
-        flags = _get_inode_flags(fd)
-        _set_inode_flags(fd, flags & ~(FS_IMMUTABLE_FL | FS_APPEND_FL))
-    finally:
-        os.close(fd)
-
-
-def _fresh_replace_at(
-    parent_fd: int,
-    name: str,
-    data: bytes,
-    *,
-    mode: int,
-) -> os.stat_result:
-    temp_name = f".{name}.nemoclaw.{os.getpid()}.{secrets.token_hex(8)}"
-    temp_fd = os.open(
-        temp_name,
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | _no_follow_flag()
-        | _cloexec_flag(),
-        0o600,
-        dir_fd=parent_fd,
-    )
-    published = False
-    try:
-        os.fchown(temp_fd, os.geteuid(), os.getegid())
-        os.fchmod(temp_fd, mode)
-        view = memoryview(data)
-        while view:
-            written = os.write(temp_fd, view)
-            if written <= 0:
-                raise OSError(errno.EIO, f"short write while sealing {name}")
-            view = view[written:]
-        os.fsync(temp_fd)
-        os.close(temp_fd)
-        temp_fd = -1
-
-        try:
-            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            current = None
-        if current is not None:
-            if stat.S_ISDIR(current.st_mode):
-                _clear_entry_mutation_flags(parent_fd, name)
-                _quarantine_entry(parent_fd, name)
-            else:
-                _clear_entry_mutation_flags(parent_fd, name)
-        os.replace(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-        published = True
-        os.fsync(parent_fd)
-        replacement = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-        if (
-            not stat.S_ISREG(replacement.st_mode)
-            or replacement.st_nlink != 1
-            or replacement.st_uid != os.geteuid()
-            or replacement.st_gid != os.getegid()
-            or stat.S_IMODE(replacement.st_mode) != mode
-        ):
-            raise UnsafePathError(f"fresh Hermes seal verification failed for {name}")
-        return replacement
-    finally:
-        if temp_fd >= 0:
-            os.close(temp_fd)
-        if not published:
-            try:
-                os.unlink(temp_name, dir_fd=parent_fd)
-            except FileNotFoundError:
-                pass
-
-
-def _read_hardening_input(
-    hermes_fd: int, name: str, hermes_dev: int
-) -> tuple[bytes | None, os.stat_result | None, str | None]:
-    path = f"Hermes {name}"
-    try:
-        fd = os.open(
-            name,
-            os.O_RDONLY
-            | os.O_NONBLOCK
-            | _no_follow_flag()
-            | _cloexec_flag(),
-            dir_fd=hermes_fd,
-        )
-    except FileNotFoundError:
-        return None, None, f"{path} is missing"
-    except OSError as exc:
-        return None, None, f"{path} is unsafe: {exc}"
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            return None, st, f"{path} is not a regular file"
-        if st.st_dev != hermes_dev:
-            return None, st, f"{path} crosses a filesystem boundary"
-        snapshot = FileSnapshot.from_stat(st)
-        opened = OpenFile(path, fd, snapshot)
-        try:
-            data = opened.read_bytes(_sealed_file_limit(name))
-        except UnsafePathError as exc:
-            return None, st, str(exc)
-        return data, st, None
-    finally:
-        os.close(fd)
-
-
-def _seal_shields_locked(
-    hermes_dir: str,
-    hash_file: str,
-    state_file: str,
-    rollback_mode: str,
-    expected_hermes_device: int | None = None,
-    expected_hermes_inode: int | None = None,
-) -> tuple[str, bool]:
-    """Monotonically contain a mutable Hermes namespace.
-
-    Unlike restart/config-write preflight, deadline hardening never grants a
-    mutable file, stale digest, or hostile entry veto power over containment.
-    It freezes the outer namespace first, then either publishes fresh bounded
-    inputs or leaves a root-only unavailable posture.
-    """
-
-    if (expected_hermes_device is None) != (expected_hermes_inode is None):
-        raise UnsafePathError(
-            "refusing incomplete provider-fenced Hermes state root identity"
-        )
-    if os.path.exists(state_file):
-        raise UnsafePathError("Hermes restart seal is already active")
-    lock_token = secrets.token_hex(32)
-    lock_path = os.path.join(
-        os.path.dirname(state_file), "hermes-config-mutation.lock"
-    )
-    _acquire_mutation_lock(lock_path, lock_token, "shields-locked", state_file)
-    state_data: dict[str, object] = {
-        "version": 1,
-        "phase": "acquired",
-        "mutation_lock_token": lock_token,
-        "mutation_lock_path": lock_path,
-        "hermes_dir": hermes_dir,
-        "hash_file": hash_file,
-    }
-    try:
-        _write_restart_state(state_file, state_data, create=True)
-    except Exception:
-        _release_mutation_lock(lock_path, lock_token)
-        raise
-
-    parent_path, hermes_name = _split_path(hermes_dir)
-    parent_fd = _open_directory(parent_path)
-    hermes_fd: int | None = None
-    try:
-        parent_st = os.fstat(parent_fd)
-        parent_meta = _inode_metadata(parent_st)
-        parent_flags = _get_inode_flags(parent_fd)
-        state_data.update(
-            {
-                "phase": "shields-transition-hardening",
-                "parent": parent_meta,
-                "parent_flags": parent_flags,
-                "shields_transition": {
-                    "mode": "locked",
-                    "rollback_mode": rollback_mode,
-                    "lease_expires_ns": time.time_ns()
-                    + SHIELDS_TRANSITION_LEASE_SECONDS * 1_000_000_000,
-                },
-            }
-        )
-        _write_restart_state(state_file, state_data, create=False)
-
-        # This is the outer namespace containment boundary. No .hermes lookup
-        # occurs until pre-open directory descriptors lose sandbox write access.
-        _set_inode_flags(
-            parent_fd, parent_flags & ~(FS_IMMUTABLE_FL | FS_APPEND_FL)
-        )
-        os.fchown(parent_fd, os.geteuid(), os.getegid())
-        os.fchmod(parent_fd, 0o700)
-        os.fsync(parent_fd)
-
-        unavailable_reasons: list[str] = []
-        original_locked = False
-        try:
-            hermes_lstat = os.stat(
-                hermes_name, dir_fd=parent_fd, follow_symlinks=False
-            )
-        except FileNotFoundError:
-            hermes_lstat = None
-
-        if expected_hermes_device is not None and (
-            hermes_lstat is None or not stat.S_ISDIR(hermes_lstat.st_mode)
-        ):
-            state_data["phase"] = "shields-transition-state-root-drift"
-            _write_restart_state(state_file, state_data, create=False)
-            raise UnsafePathError(
-                "refusing Hermes config root that differs from the provider fence"
-            )
-
-        if hermes_lstat is not None and stat.S_ISDIR(hermes_lstat.st_mode):
-            if expected_hermes_device is not None and (
-                hermes_lstat.st_dev != expected_hermes_device
-                or hermes_lstat.st_ino != expected_hermes_inode
-            ):
-                state_data["phase"] = "shields-transition-state-root-drift"
-                _write_restart_state(state_file, state_data, create=False)
-                raise UnsafePathError(
-                    "refusing Hermes config root that differs from the provider fence"
-                )
-            if (
-                hermes_lstat.st_dev != parent_st.st_dev
-                and expected_hermes_device is None
-            ):
-                state_data["phase"] = "shields-transition-cross-device"
-                _write_restart_state(state_file, state_data, create=False)
-                raise UnsafePathError(
-                    "refusing cross-device Hermes config root; /sandbox remains frozen"
-                )
-            hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-        else:
-            if hermes_lstat is not None:
-                unavailable_reasons.append("Hermes config root was not a directory")
-                _clear_entry_mutation_flags(parent_fd, hermes_name)
-                _quarantine_entry(parent_fd, hermes_name)
-            else:
-                unavailable_reasons.append("Hermes config root was missing")
-            os.mkdir(hermes_name, 0o700, dir_fd=parent_fd)
-            hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-            os.fchown(hermes_fd, os.geteuid(), os.getegid())
-            os.fchmod(hermes_fd, 0o700)
-
-        hermes_st = os.fstat(hermes_fd)
-        if expected_hermes_device is not None and (
-            hermes_st.st_dev != expected_hermes_device
-            or hermes_st.st_ino != expected_hermes_inode
-        ):
-            state_data["phase"] = "shields-transition-state-root-drift"
-            _write_restart_state(state_file, state_data, create=False)
-            raise UnsafePathError(
-                "refusing Hermes config root that differs from the provider fence"
-            )
-        if hermes_st.st_dev != parent_st.st_dev and expected_hermes_device is None:
-            state_data["phase"] = "shields-transition-cross-device"
-            _write_restart_state(state_file, state_data, create=False)
-            raise UnsafePathError(
-                "refusing cross-device Hermes config root; /sandbox remains frozen"
-            )
-        hermes_meta = _inode_metadata(hermes_st)
-        hermes_flags = _get_inode_flags(hermes_fd)
-        _set_inode_flags(
-            hermes_fd, hermes_flags & ~(FS_IMMUTABLE_FL | FS_APPEND_FL)
-        )
-        os.fchown(hermes_fd, os.geteuid(), os.getegid())
-        os.fchmod(hermes_fd, 0o700)
-
-        inputs: dict[str, bytes] = {}
-        initial_stats: dict[str, os.stat_result | None] = {}
-        for name in ("config.yaml", ".env"):
-            data, input_st, reason = _read_hardening_input(
-                hermes_fd, name, hermes_st.st_dev
-            )
-            initial_stats[name] = input_st
-            if reason is not None or data is None:
-                unavailable_reasons.append(reason or f"Hermes {name} is unavailable")
-                inputs[name] = b"NEMOCLAW_HERMES_CONFIG_UNAVAILABLE\n"
-            else:
-                inputs[name] = data
-
-        original_locked = (
-            not unavailable_reasons
-            and _is_locked_hermes_root(
-                hermes_meta["uid"], hermes_meta["gid"], hermes_meta["mode"]
-            )
-            and all(
-                initial_stats[name] is not None
-                and initial_stats[name].st_uid == os.geteuid()
-                and initial_stats[name].st_gid == os.getegid()
-                and stat.S_IMODE(initial_stats[name].st_mode) == 0o444
-                and initial_stats[name].st_nlink == 1
-                for name in ("config.yaml", ".env")
-            )
-        )
-        unavailable = bool(unavailable_reasons)
-        file_mode = 0o400 if unavailable else 0o444
-        try:
-            mcp_digest = _canonical_mcp_servers_digest(
-                inputs["config.yaml"].decode("utf-8")
-            )
-        except (UnicodeDecodeError, UnsafePathError):
-            # Containment cannot let a malformed mutable input veto shields-up.
-            # Semantic MCP inspection still rejects those frozen config bytes.
-            mcp_digest = hashlib.sha256(b"{}").hexdigest()
-        hash_text = (
-            f"{hashlib.sha256(inputs['config.yaml']).hexdigest()}  "
-            f"{os.path.join(hermes_dir, 'config.yaml')}\n"
-            f"{hashlib.sha256(inputs['.env']).hexdigest()}  "
-            f"{os.path.join(hermes_dir, '.env')}\n"
-            f"{MCP_HASH_STATE_PREFIX} intended={mcp_digest} applied={mcp_digest}\n"
-        )
-        if len(hash_text.encode("utf-8")) > MAX_HASH_BYTES:
-            raise UnsafePathError("refusing oversized synthesized Hermes hash")
-
-        file_states: dict[str, dict[str, object]] = {}
-        for name in ("config.yaml", ".env"):
-            replacement = _fresh_replace_at(
-                hermes_fd, name, inputs[name], mode=file_mode
-            )
-            file_states[name] = {
-                "original": _inode_metadata(replacement),
-                "sealed": _inode_metadata(replacement),
-                "flags": 0,
-            }
-
-        compat_bytes = hash_text.encode("utf-8")
-        compat_st = _fresh_replace_at(
-            hermes_fd, ".config-hash", compat_bytes, mode=file_mode
-        )
-        file_states[".config-hash"] = {
-            "original": _inode_metadata(compat_st),
-            "sealed": _inode_metadata(compat_st),
-            "flags": 0,
-        }
-        _write_hash(hash_file, hash_text)
-        _fresh_replace_at(
-            hermes_fd, RESTART_ORPHAN_MARKER_NAME, b"", mode=0o400
-        )
-
-        state_data.update(
-            {
-                "phase": "shields-transition-pending",
-                "parent": parent_meta,
-                "parent_flags": parent_flags,
-                "hermes": hermes_meta,
-                "hermes_flags": hermes_flags,
-                "files": file_states,
-                "original_locked": original_locked,
-            }
-        )
-        transition = state_data["shields_transition"]
-        if not isinstance(transition, dict):
-            raise UnsafePathError("refusing malformed Hermes hardening transition")
-        transition["original_locked"] = original_locked
-        transition["unavailable"] = unavailable
-        transition["unavailable_reasons"] = unavailable_reasons
-        state_data["shields_transition"] = transition
-        _write_restart_state(state_file, state_data, create=False)
-
-        # The recursive state guard recognizes this root-only 0500 clamp and
-        # may restore 0755 only after its independent verification pass.
-        os.fchmod(hermes_fd, 0o500)
-        os.fsync(hermes_fd)
-        return lock_token, original_locked
-    finally:
-        if hermes_fd is not None:
-            os.close(hermes_fd)
-        os.close(parent_fd)
-
-
-def _resume_shields_locked(
-    hermes_dir: str,
-    hash_file: str,
-    state_file: str,
-) -> tuple[str, bool] | None:
-    if not os.path.exists(state_file):
-        return None
-    state_data = _load_restart_state(state_file)
-    transition = state_data.get("shields_transition")
-    if (
-        state_data.get("phase")
-        not in ("shields-transition-pending", "shields-transition-applied")
-        or not isinstance(transition, dict)
-        or transition.get("mode") != "locked"
-    ):
-        raise UnsafePathError(
-            "Hermes config mutation is already sealed in a non-resumable phase"
-        )
-    if os.path.normpath(str(state_data.get("hermes_dir", ""))) != os.path.normpath(
-        hermes_dir
-    ) or os.path.normpath(str(state_data.get("hash_file", ""))) != os.path.normpath(
-        hash_file
-    ):
-        raise UnsafePathError("refusing to resume a different Hermes transition")
-    token = state_data.get("mutation_lock_token")
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    files = state_data.get("files")
-    if (
-        not isinstance(token, str)
-        or not re.fullmatch(r"[0-9a-f]{64}", token)
-        or not isinstance(parent_meta, dict)
-        or not isinstance(hermes_meta, dict)
-        or not isinstance(files, dict)
-    ):
-        raise UnsafePathError("refusing malformed resumable Hermes transition")
-
-    # A resumed begin must atomically replace the dead prior owner before it
-    # mutates the clamped namespace. Otherwise two recovery callers can both
-    # observe the same dead worker and race the recursive pass.
-    state_data = _claim_transition_worker(
-        state_file, token, "begin-shields-transition"
-    )
-    transition = state_data.get("shields_transition")
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    files = state_data.get("files")
-    if (
-        not isinstance(transition, dict)
-        or transition.get("mode") != "locked"
-        or not isinstance(parent_meta, dict)
-        or not isinstance(hermes_meta, dict)
-        or not isinstance(files, dict)
-    ):
-        raise UnsafePathError("refusing raced resumable Hermes transition")
-
-    parent_path, hermes_name = _split_path(hermes_dir)
-    parent_fd = _open_directory(parent_path)
-    hermes_fd: int | None = None
-    try:
-        if not _same_inode(os.fstat(parent_fd), parent_meta):
-            raise UnsafePathError("refusing resume because /sandbox changed")
-        _set_inode_flags(
-            parent_fd,
-            _get_inode_flags(parent_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(parent_fd, os.geteuid(), os.getegid())
-        os.fchmod(parent_fd, 0o700)
-        hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-        if not _same_inode(os.fstat(hermes_fd), hermes_meta):
-            raise UnsafePathError("refusing resume because .hermes changed")
-        _set_inode_flags(
-            hermes_fd,
-            _get_inode_flags(hermes_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(hermes_fd, os.geteuid(), os.getegid())
-        os.fchmod(hermes_fd, 0o500)
-        _ensure_restart_orphan_marker(hermes_fd)
-        expected_mode = 0o400 if transition.get("unavailable") is True else 0o444
-        for name in SEALED_FILE_NAMES:
-            file_state = files.get(name)
-            sealed = file_state.get("sealed") if isinstance(file_state, dict) else None
-            if not isinstance(sealed, dict):
-                raise UnsafePathError(
-                    f"refusing resume without sealed metadata for {name}"
-                )
-            fd = os.open(
-                name,
-                os.O_RDONLY | _no_follow_flag() | _cloexec_flag(),
-                dir_fd=hermes_fd,
-            )
-            try:
-                current = os.fstat(fd)
-                if (
-                    not stat.S_ISREG(current.st_mode)
-                    or current.st_nlink != 1
-                    or not _same_inode(current, sealed)
-                    or current.st_uid != os.geteuid()
-                    or current.st_gid != os.getegid()
-                    or stat.S_IMODE(current.st_mode) != expected_mode
-                ):
-                    raise UnsafePathError(
-                        f"refusing resume because sealed {name} changed"
-                    )
-            finally:
-                os.close(fd)
-        if transition.get("unavailable") is not True:
-            _verify_strict_hash(hermes_dir, hash_file)
-            _verify_compat_hash(
-                hash_file, os.path.join(hermes_dir, ".config-hash")
-            )
-        transition["lease_expires_ns"] = (
-            time.time_ns() + SHIELDS_TRANSITION_LEASE_SECONDS * 1_000_000_000
-        )
-        state_data["shields_transition"] = transition
-        _write_restart_state(state_file, state_data, create=False)
-        os.fsync(hermes_fd)
-        os.fsync(parent_fd)
-    finally:
-        if hermes_fd is not None:
-            os.close(hermes_fd)
-        os.close(parent_fd)
-    return token, _restart_state_was_locked(state_data)
-
-
-def _takeover_expired_mutable_transition(
-    hermes_dir: str, hash_file: str, state_file: str
-) -> bool:
-    if not os.path.exists(state_file):
-        return False
-    state_data = _load_restart_state(state_file)
-    transition = state_data.get("shields_transition")
-    if not isinstance(transition, dict) or transition.get("mode") != "mutable":
-        return False
-    if state_data.get("phase") not in (
-        "shields-transition-pending",
-        "shields-transition-applied",
-    ):
-        raise UnsafePathError(
-            "mutable Hermes transition is sealed in a non-takeover phase"
-        )
-    if os.path.normpath(str(state_data.get("hermes_dir", ""))) != os.path.normpath(
-        hermes_dir
-    ) or os.path.normpath(str(state_data.get("hash_file", ""))) != os.path.normpath(
-        hash_file
-    ):
-        raise UnsafePathError("refusing takeover of a different Hermes transition")
-    token = state_data.get("mutation_lock_token")
-    lock_path = state_data.get("mutation_lock_path")
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    if (
-        not isinstance(token, str)
-        or not re.fullmatch(r"[0-9a-f]{64}", token)
-        or not isinstance(lock_path, str)
-        or not isinstance(parent_meta, dict)
-        or not isinstance(hermes_meta, dict)
-    ):
-        raise UnsafePathError("refusing malformed mutable transition takeover")
-    lock_parent_fd, owner = _read_mutation_lock(lock_path)
-    os.close(lock_parent_fd)
-    owner_token = owner.get("token")
-    if not isinstance(owner_token, str) or not secrets.compare_digest(
-        owner_token, token
-    ):
-        raise UnsafePathError("refusing mutable takeover with mismatched owner token")
-    if _mutation_lock_owner_is_live(owner):
-        raise UnsafePathError(
-            "Hermes mutable transition worker is still active; retry locked takeover"
-        )
-    lease_expires_ns = transition.get("lease_expires_ns")
-    if not isinstance(lease_expires_ns, int) or time.time_ns() < lease_expires_ns:
-        raise UnsafePathError(
-            "Hermes mutable transition lease has not expired; retry locked takeover"
-        )
-
-    # Take ownership with a compare-and-replace of the exact dead lock inode
-    # before freezing anything. A delayed state-dir worker using the old token
-    # must either win this claim first (and remain live) or lose without being
-    # able to race the fresh locked namespace.
-    state_data = _claim_transition_worker(
-        state_file, token, "begin-shields-transition"
-    )
-    transition = state_data.get("shields_transition")
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    if (
-        state_data.get("phase")
-        not in ("shields-transition-pending", "shields-transition-applied")
-        or not isinstance(transition, dict)
-        or transition.get("mode") != "mutable"
-        or not isinstance(parent_meta, dict)
-        or not isinstance(hermes_meta, dict)
-        or os.path.normpath(str(state_data.get("hermes_dir", "")))
-        != os.path.normpath(hermes_dir)
-        or os.path.normpath(str(state_data.get("hash_file", "")))
-        != os.path.normpath(hash_file)
-    ):
-        raise UnsafePathError("refusing raced mutable transition takeover")
-
-    parent_path, hermes_name = _split_path(hermes_dir)
-    parent_fd = _open_directory(parent_path)
-    hermes_fd: int | None = None
-    try:
-        parent_st = os.fstat(parent_fd)
-        if not _same_inode(parent_st, parent_meta):
-            raise UnsafePathError("refusing mutable takeover because /sandbox changed")
-        _set_inode_flags(
-            parent_fd,
-            _get_inode_flags(parent_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(parent_fd, os.geteuid(), os.getegid())
-        os.fchmod(parent_fd, 0o700)
-        hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-        hermes_st = os.fstat(hermes_fd)
-        if not _same_inode(hermes_st, hermes_meta):
-            raise UnsafePathError("refusing mutable takeover because .hermes changed")
-        if hermes_st.st_dev != parent_st.st_dev:
-            raise UnsafePathError(
-                "refusing cross-device mutable transition takeover"
-            )
-        _set_inode_flags(
-            hermes_fd,
-            _get_inode_flags(hermes_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(hermes_fd, os.geteuid(), os.getegid())
-        os.fchmod(hermes_fd, 0o700)
-        os.fsync(hermes_fd)
-        os.fsync(parent_fd)
-    finally:
-        if hermes_fd is not None:
-            os.close(hermes_fd)
-        os.close(parent_fd)
-
-    # The namespace is now monotonically root-only. Remove the obsolete state
-    # first; a kill before lock release becomes the safe pre-state-lock recovery
-    # case, and a kill afterward remains recognizable by the persistent marker.
-    os.unlink(state_file)
-    _release_mutation_lock(lock_path, token)
-    return True
-
-
-def begin_shields_transition(
-    hermes_dir: str,
-    hash_file: str,
-    state_file: str,
-    mode: str,
-    rollback_mode: str = "",
-    expected_hermes_device: int | None = None,
-    expected_hermes_inode: int | None = None,
-) -> tuple[str, bool]:
-    if mode not in ("locked", "mutable"):
-        raise UnsafePathError(f"refusing unsupported Hermes shields transition: {mode}")
-    if rollback_mode and rollback_mode not in ("locked", "mutable"):
-        raise UnsafePathError(
-            f"refusing unsupported Hermes shields rollback posture: {rollback_mode}"
-        )
-
-    if mode == "locked":
-        if _takeover_expired_mutable_transition(
-            hermes_dir, hash_file, state_file
-        ):
-            return _seal_shields_locked(
-                hermes_dir,
-                hash_file,
-                state_file,
-                rollback_mode or "mutable",
-                expected_hermes_device,
-                expected_hermes_inode,
-            )
-        resumed = _resume_shields_locked(hermes_dir, hash_file, state_file)
-        if resumed is not None:
-            return resumed
-        return _seal_shields_locked(
-            hermes_dir,
-            hash_file,
-            state_file,
-            rollback_mode or "mutable",
-            expected_hermes_device,
-            expected_hermes_inode,
-        )
-
-    # A fresh managed non-root Hermes start mints exactly one API_SERVER_KEY and
-    # refreshes its sandbox-owned compatibility anchor, while the root-owned
-    # strict anchor deliberately remains unchanged. The first shields-down is
-    # the next root transaction and must admit that same narrowly reviewed
-    # reconciliation as write-config. Derive the expected config digest from
-    # the existing strict anchor so shields can never bless config drift.
-    strict_config_sha256, _strict_env_sha256, _strict_mcp_state = _parse_config_hash(
-        _read_hash_file(hash_file),
-        os.path.join(hermes_dir, "config.yaml"),
-        os.path.join(hermes_dir, ".env"),
-    )
-    original_locked = seal_restart(
-        hermes_dir,
-        hash_file,
-        state_file,
-        purpose="shields-mutable",
-        expected_config_sha256=strict_config_sha256,
-    )
-    try:
-        state_data = _load_restart_state(state_file)
-        lock_token = state_data.get("mutation_lock_token")
-        if not isinstance(lock_token, str):
-            raise UnsafePathError(
-                "refusing malformed Hermes shields transition metadata"
-            )
-
-        # A mutable target weakens nested state directories, so keep the config
-        # root inaccessible throughout that fan-out: 0755 would expose a
-        # partially unlocked tree if the host were killed mid-pass. A locked
-        # target is monotonic hardening and can remain readable by the gateway.
-        # The exact original/desired metadata remains in the root-only state.
-        hermes_fd = _open_directory(hermes_dir)
-        try:
-            _set_inode_flags(
-                hermes_fd,
-                _get_inode_flags(hermes_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-            )
-            os.fchown(hermes_fd, os.geteuid(), os.getegid())
-            os.fchmod(hermes_fd, 0o700 if mode == "mutable" else 0o755)
-        finally:
-            os.close(hermes_fd)
-
-        state_data["phase"] = "shields-transition-pending"
-        state_data["shields_transition"] = {
-            "mode": mode,
-            "original_locked": original_locked,
-            "rollback_mode": rollback_mode
-            or ("locked" if original_locked else "mutable"),
-            "lease_expires_ns": time.time_ns()
-            + SHIELDS_TRANSITION_LEASE_SECONDS * 1_000_000_000,
-        }
-        _write_restart_state(state_file, state_data, create=False)
-        return lock_token, original_locked
-    except Exception:
-        try:
-            unseal_restart(hermes_dir, state_file)
-        except Exception:
-            # Retain the root-owned token and frozen tree for PID 1 recovery;
-            # the original transition failure remains authoritative.
-            pass
-        raise
-
-
-def _load_owned_shields_transition(
-    state_file: str, lock_token: str, phases: tuple[str, ...]
-) -> tuple[dict[str, object], dict[str, object], str]:
-    state_data = _load_restart_state(state_file)
-    recorded_token = state_data.get("mutation_lock_token")
-    transition = state_data.get("shields_transition")
-    if (
-        state_data.get("phase") not in phases
-        or not isinstance(recorded_token, str)
-        or not isinstance(transition, dict)
-    ):
-        raise UnsafePathError("refusing operation without an owned shields transition")
-    if not secrets.compare_digest(recorded_token, lock_token):
-        raise UnsafePathError("refusing shields transition lock token mismatch")
-    mode = transition.get("mode")
-    if mode not in ("locked", "mutable"):
-        raise UnsafePathError("refusing malformed Hermes shields transition mode")
-    return state_data, transition, str(mode)
 
 
 def _sandbox_identity() -> tuple[int, int]:
@@ -3758,778 +2735,15 @@ def _sandbox_identity() -> tuple[int, int]:
         raise UnsafePathError("sandbox account lookup failed") from exc
 
 
-def _configure_shields_target_metadata(
-    state_data: dict[str, object],
-    transition: dict[str, object],
-    hermes_dir: str,
-    mode: str,
-    *,
-    capture_original: bool,
-) -> bool:
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    files = state_data.get("files")
-    if (
-        not isinstance(parent_meta, dict)
-        or not isinstance(hermes_meta, dict)
-        or not isinstance(files, dict)
-    ):
-        raise UnsafePathError("refusing malformed Hermes shields transition metadata")
-
-    if capture_original:
-        transition["original_metadata"] = {
-            "parent": copy.deepcopy(parent_meta),
-            "parent_flags": state_data.get("parent_flags", 0),
-            "hermes": copy.deepcopy(hermes_meta),
-            "hermes_flags": state_data.get("hermes_flags", 0),
-            "files": {
-                name: {
-                    "original": copy.deepcopy(files[name]["original"]),
-                    "flags": files[name].get("flags", 0),
-                }
-                for name in SEALED_FILE_NAMES
-                if isinstance(files.get(name), dict)
-                and isinstance(files[name].get("original"), dict)
-            },
-        }
-        original_metadata = transition["original_metadata"]
-        original_files = (
-            original_metadata.get("files")
-            if isinstance(original_metadata, dict)
-            else None
-        )
-        if not isinstance(original_files, dict) or len(original_files) != len(
-            SEALED_FILE_NAMES
-        ):
-            raise UnsafePathError(
-                "refusing incomplete Hermes shields rollback metadata"
-            )
-
-    sandbox_uid, sandbox_gid = _sandbox_identity()
-    if mode not in ("locked", "mutable"):
-        raise UnsafePathError(f"refusing unsupported Hermes shields target: {mode}")
-
-    locked = mode == "locked"
-    desired_uid = os.geteuid() if locked else sandbox_uid
-    desired_gid = os.getegid() if locked else sandbox_gid
-    desired_file_mode = 0o444 if locked else 0o640
-    # The config root keeps one set-id/sticky shape in both postures; only its
-    # owner changes. Hermes writes its top-level runtime state directly here —
-    # auth.json, the drain request, and the temporary files that back every
-    # atomic gateway_state/pid replace — so a root-owned root without group
-    # write stops every gateway launch and the supervisor quarantines relaunch
-    # until the sandbox is recreated (#7865). Root ownership plus the sticky
-    # bit is what protects the sealed entries under lockdown: the sandbox
-    # identity manages its own runtime files but cannot unlink or rename the
-    # root-owned config, which is the same trade `/sandbox` already makes.
-    desired_dir_mode = 0o3770
-    # `/sandbox` must remain a usable home, but its sticky root-owned entry
-    # prevents the sandbox identity from renaming the root-owned `.hermes`
-    # lock root out from under the protected files.
-    parent_meta.update(
-        {
-            "uid": desired_uid,
-            "gid": sandbox_gid,
-            "mode": 0o1775 if locked else 0o755,
-        }
-    )
-
-    state_data["parent"] = parent_meta
-    state_data["parent_flags"] = int(state_data.get("parent_flags", 0)) & ~(
-        FS_IMMUTABLE_FL | FS_APPEND_FL
-    )
-    hermes_meta.update(
-        {"uid": desired_uid, "gid": sandbox_gid, "mode": desired_dir_mode}
-    )
-    state_data["hermes"] = hermes_meta
-    state_data["hermes_flags"] = int(state_data.get("hermes_flags", 0)) & ~(
-        FS_IMMUTABLE_FL | FS_APPEND_FL
-    )
-
-    chattr_applied = mode == "locked"
-    hermes_fd = _open_directory(hermes_dir)
-    try:
-        for name in SEALED_FILE_NAMES:
-            file_state = files.get(name)
-            original = (
-                file_state.get("original") if isinstance(file_state, dict) else None
-            )
-            if not isinstance(file_state, dict) or not isinstance(original, dict):
-                raise UnsafePathError(
-                    f"refusing missing Hermes shields transition metadata for {name}"
-                )
-            original.update(
-                {"uid": desired_uid, "gid": desired_gid, "mode": desired_file_mode}
-            )
-            file_state["original"] = original
-            fd = os.open(
-                name,
-                os.O_RDONLY | _no_follow_flag() | _cloexec_flag(),
-                dir_fd=hermes_fd,
-            )
-            try:
-                current_flags = _get_inode_flags(fd)
-                desired_flags = current_flags & ~(FS_IMMUTABLE_FL | FS_APPEND_FL)
-                if mode == "locked":
-                    try:
-                        _set_inode_flags(fd, desired_flags | FS_IMMUTABLE_FL)
-                        desired_flags = _get_inode_flags(fd)
-                    except (OSError, UnsafePathError):
-                        chattr_applied = False
-                        desired_flags = _get_inode_flags(fd) & ~FS_IMMUTABLE_FL
-                file_state["flags"] = desired_flags
-            finally:
-                os.close(fd)
-    finally:
-        os.close(hermes_fd)
-
-    state_data["files"] = files
-    transition["chattr_applied"] = chattr_applied
-    state_data["shields_transition"] = transition
-    return chattr_applied
 
 
-def _enforce_unavailable_shields_posture(
-    state_data: dict[str, object], hermes_dir: str
-) -> None:
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    if not isinstance(parent_meta, dict) or not isinstance(hermes_meta, dict):
-        raise UnsafePathError("refusing malformed Hermes unavailable metadata")
-    parent_path, hermes_name = _split_path(hermes_dir)
-    parent_fd = _open_directory(parent_path)
-    hermes_fd: int | None = None
-    try:
-        if not _same_inode(os.fstat(parent_fd), parent_meta):
-            raise UnsafePathError(
-                "refusing unavailable clamp because /sandbox changed"
-            )
-        _set_inode_flags(
-            parent_fd,
-            _get_inode_flags(parent_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(parent_fd, os.geteuid(), os.getegid())
-        os.fchmod(parent_fd, 0o700)
-        hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-        if not _same_inode(os.fstat(hermes_fd), hermes_meta):
-            raise UnsafePathError(
-                "refusing unavailable clamp because .hermes changed"
-            )
-        _set_inode_flags(
-            hermes_fd,
-            _get_inode_flags(hermes_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(hermes_fd, os.geteuid(), os.getegid())
-        os.fchmod(hermes_fd, 0o500)
-        for name in SEALED_FILE_NAMES:
-            fd = os.open(
-                name,
-                os.O_RDONLY | _no_follow_flag() | _cloexec_flag(),
-                dir_fd=hermes_fd,
-            )
-            try:
-                st = os.fstat(fd)
-                if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-                    raise UnsafePathError(
-                        f"refusing unsafe unavailable Hermes path: {name}"
-                    )
-                _set_inode_flags(
-                    fd,
-                    _get_inode_flags(fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-                )
-                os.fchown(fd, os.geteuid(), os.getegid())
-                os.fchmod(fd, 0o400)
-            finally:
-                os.close(fd)
-        os.fsync(hermes_fd)
-        os.fsync(parent_fd)
-    finally:
-        if hermes_fd is not None:
-            os.close(hermes_fd)
-        os.close(parent_fd)
 
 
-def apply_shields_transition(
-    hermes_dir: str, state_file: str, lock_token: str
-) -> tuple[str, bool]:
-    _claim_transition_worker(state_file, lock_token, "apply-shields-transition")
-    state_data, transition, mode = _load_owned_shields_transition(
-        state_file,
-        lock_token,
-        ("shields-transition-pending", "shields-transition-applied"),
-    )
-    if mode == "locked" and transition.get("unavailable") is True:
-        _enforce_unavailable_shields_posture(state_data, hermes_dir)
-        reasons = transition.get("unavailable_reasons")
-        detail = "; ".join(str(value) for value in reasons) if isinstance(reasons, list) else "unsafe Hermes config entries"
-        raise UnsafePathError(
-            "Hermes config was sealed root-only and is unavailable: " + detail
-        )
-    if mode == "locked":
-        hermes_fd = _open_directory(hermes_dir)
-        try:
-            hermes_st = os.fstat(hermes_fd)
-            if (
-                hermes_st.st_uid == os.geteuid()
-                and hermes_st.st_gid == os.getegid()
-                and stat.S_IMODE(hermes_st.st_mode) == 0o500
-            ):
-                raise UnsafePathError(
-                    "Hermes recursive shields lock has not completed; retaining root-only 0500 clamp for retry"
-                )
-        finally:
-            os.close(hermes_fd)
-    if state_data.get("phase") == "shields-transition-applied":
-        parent_meta = state_data.get("parent")
-        if not isinstance(parent_meta, dict):
-            raise UnsafePathError("refusing applied shields resume without parent metadata")
-        parent_fd = _open_directory(_split_path(hermes_dir)[0])
-        try:
-            if not _same_inode(os.fstat(parent_fd), parent_meta):
-                raise UnsafePathError(
-                    "refusing applied shields resume because /sandbox changed"
-                )
-            _set_inode_flags(
-                parent_fd,
-                _get_inode_flags(parent_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-            )
-            os.fchown(parent_fd, os.geteuid(), os.getegid())
-            os.fchmod(parent_fd, 0o755)
-            # Re-apply the recorded config-root posture. The pending phase
-            # clamps this root to a transient root-only mode, so an interruption
-            # between publishing the applied phase and restoring the seal leaves
-            # the clamp in place; finish would then refuse the drifted root and
-            # wedge the transaction instead of converging. Repairing here keeps
-            # resume idempotent, and the inode pin below is what makes it safe.
-            hermes_meta = state_data.get("hermes")
-            if not isinstance(hermes_meta, dict):
-                raise UnsafePathError(
-                    "refusing applied shields resume without .hermes metadata"
-                )
-            resumed_fd = _open_child_directory(
-                parent_fd, _split_path(hermes_dir)[1], hermes_dir
-            )
-            try:
-                if not _same_inode(os.fstat(resumed_fd), hermes_meta):
-                    raise UnsafePathError(
-                        "refusing applied shields resume because .hermes changed"
-                    )
-                _set_inode_flags(
-                    resumed_fd,
-                    _get_inode_flags(resumed_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-                )
-                # Chown can clear set-id bits, so the mode restore follows it.
-                os.fchown(resumed_fd, hermes_meta["uid"], hermes_meta["gid"])
-                os.fchmod(resumed_fd, hermes_meta["mode"])
-            finally:
-                os.close(resumed_fd)
-        finally:
-            os.close(parent_fd)
-        hash_file = str(state_data.get("hash_file", ""))
-        if not hash_file:
-            raise UnsafePathError("refusing applied shields resume without hash path")
-        _verify_strict_hash(hermes_dir, hash_file)
-        _verify_compat_hash(
-            hash_file, os.path.join(hermes_dir, ".config-hash")
-        )
-        transition["lease_expires_ns"] = (
-            time.time_ns() + SHIELDS_TRANSITION_LEASE_SECONDS * 1_000_000_000
-        )
-        state_data["shields_transition"] = transition
-        _write_restart_state(state_file, state_data, create=False)
-        return mode, transition.get("chattr_applied") is True
-    chattr_applied = _configure_shields_target_metadata(
-        state_data,
-        transition,
-        hermes_dir,
-        mode,
-        capture_original=True,
-    )
-    transition["lease_expires_ns"] = (
-        time.time_ns() + SHIELDS_TRANSITION_LEASE_SECONDS * 1_000_000_000
-    )
-    state_data["shields_transition"] = transition
-    state_data["phase"] = "shields-transition-applied"
-    _write_restart_state(state_file, state_data, create=False)
-    _restore_restart_seal(state_file, verify_hash=True, retain_transaction=True)
-    return mode, chattr_applied
 
 
-def _replace_applied_mutable_inodes(
-    state_data: dict[str, object], hermes_dir: str, hash_file: str
-) -> None:
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    files = state_data.get("files")
-    if (
-        not isinstance(parent_meta, dict)
-        or not isinstance(hermes_meta, dict)
-        or not isinstance(files, dict)
-    ):
-        raise UnsafePathError("refusing malformed Hermes mutable rollback metadata")
-
-    parent_path, hermes_name = _split_path(hermes_dir)
-    parent_fd = _open_directory(parent_path)
-    hermes_fd: int | None = None
-    try:
-        if not _same_inode(os.fstat(parent_fd), parent_meta):
-            raise UnsafePathError(
-                "refusing mutable rollback because the sandbox directory changed"
-            )
-        _set_inode_flags(
-            parent_fd,
-            _get_inode_flags(parent_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(parent_fd, os.geteuid(), os.getegid())
-        os.fchmod(parent_fd, 0o700)
-        hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-        if not _same_inode(os.fstat(hermes_fd), hermes_meta):
-            raise UnsafePathError(
-                "refusing mutable rollback because the Hermes directory changed"
-            )
-
-        # Revoke the sandbox identity's directory mutation authority before
-        # inspecting names. Fresh replacement inodes below invalidate every
-        # writable descriptor opened after `apply mutable`.
-        _set_inode_flags(
-            hermes_fd,
-            _get_inode_flags(hermes_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(hermes_fd, os.geteuid(), os.getegid())
-        # Host state-dir rollback runs as root. Keep the tree inaccessible to
-        # sandbox processes until that rollback is complete and abort commits.
-        os.fchmod(hermes_fd, 0o700)
-
-        for name in SEALED_FILE_NAMES:
-            file_state = files.get(name)
-            trusted_text = (
-                file_state.get("trusted_base64")
-                if isinstance(file_state, dict)
-                else None
-            )
-            if not isinstance(file_state, dict) or not isinstance(trusted_text, str):
-                raise UnsafePathError(
-                    f"refusing mutable rollback without trusted bytes for {name}"
-                )
-            trusted = _decode_bounded_base64(
-                trusted_text,
-                _sealed_file_limit(name),
-                f"trusted rollback bytes for {name}",
-            )
-
-            path = os.path.join(hermes_dir, name)
-            opened = _open_regular(path)
-            try:
-                _set_inode_flags(
-                    opened.fd,
-                    _get_inode_flags(opened.fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-                )
-                snapshot = FileSnapshot.from_stat(os.fstat(opened.fd))
-            finally:
-                opened.close()
-            _atomic_replace(
-                path,
-                trusted,
-                expected=snapshot,
-                mode=0o444,
-                uid=os.geteuid(),
-                gid=os.getegid(),
-            )
-            replacement = os.stat(name, dir_fd=hermes_fd, follow_symlinks=False)
-            if not stat.S_ISREG(replacement.st_mode) or replacement.st_nlink != 1:
-                raise UnsafePathError(f"refusing unsafe rollback replacement: {name}")
-            file_state["sealed"] = _inode_metadata(replacement)
-
-        state_data["files"] = files
-        _verify_strict_hash(hermes_dir, hash_file)
-        _verify_compat_hash(hash_file, os.path.join(hermes_dir, ".config-hash"))
-    finally:
-        if hermes_fd is not None:
-            os.close(hermes_fd)
-        os.close(parent_fd)
 
 
-def _freeze_shields_directories(state_data: dict[str, object], hermes_dir: str) -> None:
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    if not isinstance(parent_meta, dict) or not isinstance(hermes_meta, dict):
-        raise UnsafePathError("refusing malformed Hermes rollback directory metadata")
-    parent_path, hermes_name = _split_path(hermes_dir)
-    parent_fd = _open_directory(parent_path)
-    hermes_fd: int | None = None
-    try:
-        if not _same_inode(os.fstat(parent_fd), parent_meta):
-            raise UnsafePathError(
-                "refusing rollback freeze because the sandbox directory changed"
-            )
-        _set_inode_flags(
-            parent_fd,
-            _get_inode_flags(parent_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(parent_fd, os.geteuid(), os.getegid())
-        os.fchmod(parent_fd, 0o700)
 
-        hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-        if not _same_inode(os.fstat(hermes_fd), hermes_meta):
-            raise UnsafePathError(
-                "refusing rollback freeze because the Hermes directory changed"
-            )
-        _set_inode_flags(
-            hermes_fd,
-            _get_inode_flags(hermes_fd) & ~(FS_IMMUTABLE_FL | FS_APPEND_FL),
-        )
-        os.fchown(hermes_fd, os.geteuid(), os.getegid())
-        # Host state-dir rollback runs as root. Keep the tree inaccessible to
-        # sandbox processes until that rollback is complete and abort commits.
-        os.fchmod(hermes_fd, 0o700)
-    finally:
-        if hermes_fd is not None:
-            os.close(hermes_fd)
-        os.close(parent_fd)
-
-
-def _reconcile_private_mutable_shields_root(
-    hermes_fd: int,
-    hermes_st: os.stat_result,
-    hermes_meta: dict[str, object],
-    mode: str,
-) -> tuple[os.stat_result, str]:
-    if (
-        mode != "mutable"
-        or stat.S_IMODE(hermes_st.st_mode) != 0o700
-        or hermes_st.st_uid != hermes_meta.get("uid")
-        or hermes_st.st_gid != hermes_meta.get("gid")
-        or hermes_meta.get("mode") != 0o3770
-    ):
-        return hermes_st, "exact"
-
-    topology = _attested_shields_runtime_topology()
-    if topology == "same-uid-nonroot":
-        # The pinned OpenShell supervisor/entrypoint proof establishes that the
-        # non-root entrypoint and every child it can launch share the sandbox
-        # uid. A private sandbox-owned root remains traversable to that gateway.
-        confirmed = os.fstat(hermes_fd)
-        if (
-            not _same_inode(confirmed, hermes_meta)
-            or confirmed.st_uid != hermes_meta.get("uid")
-            or confirmed.st_gid != hermes_meta.get("gid")
-            or stat.S_IMODE(confirmed.st_mode) != 0o700
-        ):
-            raise UnsafePathError(
-                "refusing shields finish because the private same-UID Hermes root drifted during attestation"
-            )
-        return confirmed, "same-uid-nonroot"
-    if topology == "root-separated":
-        # The root entrypoint launches Hermes as the dedicated gateway uid in
-        # the sandbox group. Restore the descriptor-pinned set-id/sticky root
-        # before committing the transaction so that gateway can traverse it.
-        os.fchmod(hermes_fd, 0o3770)
-        repaired = os.fstat(hermes_fd)
-        if (
-            not _same_inode(repaired, hermes_meta)
-            or repaired.st_uid != hermes_meta.get("uid")
-            or repaired.st_gid != hermes_meta.get("gid")
-            or stat.S_IMODE(repaired.st_mode) != 0o3770
-        ):
-            raise UnsafePathError(
-                "refusing shields finish because the root-separated Hermes root could not be restored"
-            )
-        return repaired, "root-separated"
-    raise UnsafePathError(
-        "refusing shields finish because private mutable .hermes lacks an attested same-UID topology"
-    )
-
-
-def _enforce_final_shields_root_posture(
-    hermes_fd: int,
-    hermes_meta: dict[str, object],
-    mode: str,
-    posture: str,
-) -> os.stat_result:
-    expected_mode = hermes_meta.get("mode")
-    if posture == "root-separated":
-        if mode != "mutable" or expected_mode != 0o3770:
-            raise UnsafePathError(
-                "refusing shields finish because the root-separated Hermes posture is inconsistent"
-            )
-        # The sandbox owner can chmod its root after the initial topology check.
-        # Repair the pinned descriptor again at the commit boundary, make the
-        # metadata update durable where directory fsync is supported, and only
-        # trust the fresh stat collected after both operations.
-        os.fchmod(hermes_fd, 0o3770)
-        _fsync_directory_metadata(hermes_fd)
-        allowed_modes = (0o3770,)
-    elif posture == "same-uid-nonroot":
-        if mode != "mutable" or expected_mode != 0o3770:
-            raise UnsafePathError(
-                "refusing shields finish because the same-UID Hermes posture is inconsistent"
-            )
-        # Both modes are intentional for a same-UID mutable runtime: 03770 is
-        # the canonical posture, while 0700 remains traversable by the gateway.
-        allowed_modes = (0o700, 0o3770)
-    elif posture == "exact":
-        if not isinstance(expected_mode, int):
-            raise UnsafePathError(
-                "refusing shields finish because the expected Hermes mode is malformed"
-            )
-        allowed_modes = (expected_mode,)
-    else:
-        raise UnsafePathError(
-            "refusing shields finish because the Hermes root posture is unknown"
-        )
-
-    current = os.fstat(hermes_fd)
-    if (
-        not _same_inode(current, hermes_meta)
-        or current.st_uid != hermes_meta.get("uid")
-        or current.st_gid != hermes_meta.get("gid")
-        or stat.S_IMODE(current.st_mode) not in allowed_modes
-    ):
-        raise UnsafePathError(
-            "refusing shields finish because the final .hermes metadata drifted"
-        )
-    return current
-
-
-def finish_shields_transition(
-    hermes_dir: str, hash_file: str, state_file: str, lock_token: str
-) -> tuple[str, bool]:
-    _claim_transition_worker(state_file, lock_token, "finish-shields-transition")
-    state_data, transition, mode = _load_owned_shields_transition(
-        state_file, lock_token, ("shields-transition-applied",)
-    )
-    parent_meta = state_data.get("parent")
-    hermes_meta = state_data.get("hermes")
-    files = state_data.get("files")
-    if (
-        not isinstance(parent_meta, dict)
-        or not isinstance(hermes_meta, dict)
-        or not isinstance(files, dict)
-    ):
-        raise UnsafePathError("refusing malformed Hermes shields finish metadata")
-
-    parent_path, hermes_name = _split_path(hermes_dir)
-    parent_fd = _open_directory(parent_path)
-    hermes_fd: int | None = None
-    try:
-        parent_st = os.fstat(parent_fd)
-        if not _same_inode(parent_st, parent_meta):
-            raise UnsafePathError("refusing shields finish because /sandbox changed")
-        if (
-            parent_st.st_uid != os.geteuid()
-            or parent_st.st_gid != os.getegid()
-            or stat.S_IMODE(parent_st.st_mode) != 0o755
-        ):
-            raise UnsafePathError(
-                "refusing shields finish because /sandbox is not frozen"
-            )
-
-        hermes_fd = _open_child_directory(parent_fd, hermes_name, hermes_dir)
-        hermes_st = os.fstat(hermes_fd)
-        if not _same_inode(hermes_st, hermes_meta):
-            raise UnsafePathError("refusing shields finish because .hermes changed")
-        hermes_st, root_posture = _reconcile_private_mutable_shields_root(
-            hermes_fd, hermes_st, hermes_meta, mode
-        )
-        if (
-            hermes_st.st_uid != hermes_meta.get("uid")
-            or hermes_st.st_gid != hermes_meta.get("gid")
-            or (
-                stat.S_IMODE(hermes_st.st_mode) != hermes_meta.get("mode")
-                and root_posture != "same-uid-nonroot"
-            )
-        ):
-            raise UnsafePathError(
-                "refusing shields finish because .hermes metadata drifted"
-            )
-
-        for name in SEALED_FILE_NAMES:
-            file_state = files.get(name)
-            if not isinstance(file_state, dict):
-                raise UnsafePathError(f"refusing missing shields metadata for {name}")
-            sealed = file_state.get("sealed")
-            desired = file_state.get("original")
-            if not isinstance(sealed, dict) or not isinstance(desired, dict):
-                raise UnsafePathError(f"refusing malformed shields metadata for {name}")
-            fd = os.open(
-                name,
-                os.O_RDONLY | _no_follow_flag() | _cloexec_flag(),
-                dir_fd=hermes_fd,
-            )
-            try:
-                current = os.fstat(fd)
-                if (
-                    not stat.S_ISREG(current.st_mode)
-                    or current.st_nlink != 1
-                    or not _same_inode(current, sealed)
-                    or current.st_uid != desired.get("uid")
-                    or current.st_gid != desired.get("gid")
-                    or stat.S_IMODE(current.st_mode) != desired.get("mode")
-                    or _get_inode_flags(fd) != int(file_state.get("flags", 0))
-                ):
-                    raise UnsafePathError(
-                        f"refusing shields finish because {name} metadata drifted"
-                    )
-            finally:
-                os.close(fd)
-
-        marker_fd = os.open(
-            RESTART_ORPHAN_MARKER_NAME,
-            os.O_RDONLY | _no_follow_flag() | _cloexec_flag(),
-            dir_fd=hermes_fd,
-        )
-        try:
-            marker_st = os.fstat(marker_fd)
-            if (
-                not stat.S_ISREG(marker_st.st_mode)
-                or marker_st.st_uid != os.geteuid()
-                or marker_st.st_gid != os.getegid()
-                or stat.S_IMODE(marker_st.st_mode) != 0o400
-                or marker_st.st_nlink != 1
-            ):
-                raise UnsafePathError("refusing unsafe Hermes restart orphan marker")
-        finally:
-            os.close(marker_fd)
-
-        _verify_strict_hash(hermes_dir, hash_file)
-        _verify_compat_hash(hash_file, os.path.join(hermes_dir, ".config-hash"))
-        os.fchmod(parent_fd, parent_meta["mode"])
-        _set_inode_flags(parent_fd, int(state_data.get("parent_flags", 0)))
-        _enforce_final_shields_root_posture(
-            hermes_fd, hermes_meta, mode, root_posture
-        )
-        _remove_restart_orphan_marker(hermes_fd)
-        # Parent ownership is the last persistent metadata change. Seal rejects
-        # set-id parent modes, so this chown cannot clear a prepared mode bit.
-        # A crash before it leaves root ownership as the orphan discriminator;
-        # a successful chown means the persistent metadata is exact.
-        os.fchown(parent_fd, parent_meta["uid"], parent_meta["gid"])
-    finally:
-        if hermes_fd is not None:
-            os.close(hermes_fd)
-        os.close(parent_fd)
-    recorded_token = state_data["mutation_lock_token"]
-    lock_path = state_data["mutation_lock_path"]
-    if not isinstance(recorded_token, str) or not isinstance(lock_path, str):
-        raise UnsafePathError("refusing malformed Hermes shields lock metadata")
-    _release_mutation_lock(lock_path, recorded_token)
-    os.unlink(state_file)
-    return mode, transition.get("chattr_applied") is True
-
-
-def prepare_shields_abort(hermes_dir: str, state_file: str, lock_token: str) -> None:
-    _claim_transition_worker(state_file, lock_token, "prepare-shields-abort")
-    state_data, transition, mode = _load_owned_shields_transition(
-        state_file,
-        lock_token,
-        ("shields-transition-pending", "shields-transition-applied"),
-    )
-    rollback_mode = transition.get("rollback_mode")
-    if rollback_mode not in ("locked", "mutable"):
-        raise UnsafePathError(
-            "refusing shields abort without a trusted rollback posture"
-        )
-    hash_file = state_data.get("hash_file")
-    if not isinstance(hash_file, str) or not hash_file:
-        raise UnsafePathError("refusing shields abort without a strict hash path")
-
-    if state_data.get("phase") == "shields-transition-applied":
-        original_metadata = transition.get("original_metadata")
-        if not isinstance(original_metadata, dict):
-            raise UnsafePathError("refusing shields abort without rollback metadata")
-        if not isinstance(original_metadata.get("parent"), dict):
-            raise UnsafePathError("refusing malformed shields rollback metadata")
-        if mode == "mutable":
-            _replace_applied_mutable_inodes(state_data, hermes_dir, hash_file)
-        else:
-            _freeze_shields_directories(state_data, hermes_dir)
-    else:
-        _freeze_shields_directories(state_data, hermes_dir)
-
-    _configure_shields_target_metadata(
-        state_data,
-        transition,
-        hermes_dir,
-        str(rollback_mode),
-        capture_original=False,
-    )
-
-    # The token-bound recursive worker validates its action against this mode.
-    # Once abort preparation has committed rollback metadata, the remaining
-    # recursive pass is the rollback posture, not the failed forward posture.
-    transition["mode"] = rollback_mode
-    state_data["phase"] = "shields-transition-aborting"
-    state_data["shields_transition"] = transition
-    _write_restart_state(state_file, state_data, create=False)
-
-
-def abort_shields_transition(hermes_dir: str, state_file: str, lock_token: str) -> None:
-    _claim_transition_worker(state_file, lock_token, "abort-shields-transition")
-    state_data, _transition, _mode = _load_owned_shields_transition(
-        state_file,
-        lock_token,
-        ("shields-transition-aborting",),
-    )
-
-    state_data["phase"] = "sealed"
-    state_data.pop("shields_transition", None)
-    _write_restart_state(state_file, state_data, create=False)
-    _restore_restart_seal(state_file, verify_hash=True)
-
-
-def run_state_dir_transition(
-    hermes_dir: str,
-    state_file: str,
-    lock_token: str,
-    action: str,
-    state_lock_plan_json: str,
-) -> None:
-    if action not in ("lock", "unlock"):
-        raise UnsafePathError("refusing unsupported Hermes state-dir action")
-    state_data = _claim_transition_worker(
-        state_file, lock_token, f"state-dir-{action}"
-    )
-    transition = state_data.get("shields_transition")
-    expected_mode = "locked" if action == "lock" else "mutable"
-    if not isinstance(transition, dict) or transition.get("mode") != expected_mode:
-        raise UnsafePathError(
-            "Hermes state-dir action does not match the owned shields transition"
-        )
-    installed = "/usr/local/lib/nemoclaw/state-dir-guard.py"
-    checkout = os.path.realpath(
-        os.path.join(
-            os.path.dirname(__file__), "..", "..", "scripts", "state-dir-guard.py"
-        )
-    )
-    helper = installed if os.path.isfile(installed) else checkout
-    if not os.path.isfile(helper):
-        raise UnsafePathError("Hermes state-dir guard is unavailable")
-    if state_lock_plan_json:
-        plan_args = ["--plan-json", state_lock_plan_json]
-    else:
-        plan_file = "/usr/local/share/nemoclaw/state-lock-plan.json"
-        if not os.path.isfile(plan_file):
-            raise UnsafePathError("Hermes state lock plan is unavailable")
-        plan_args = ["--plan-file", plan_file]
-    # Preserve this exact PID/start identity as GNU timeout while it owns and
-    # waits for the recursive worker. Cancel the Python alarm before exec so
-    # timeout alone owns TERM/KILL tree cleanup and no orphan child survives.
-    signal.alarm(0)
-    os.execvp(
-        "timeout",
-        [
-            "timeout",
-            "--signal=TERM",
-            "--kill-after=5s",
-            "12m",
-            sys.executable,
-            helper,
-            action,
-            "--config-dir",
-            hermes_dir,
-            *plan_args,
-        ],
-    )
 
 
 def _recover_config_write_transaction(hermes_dir: str, state_file: str) -> None:
@@ -4659,10 +2873,6 @@ def write_config_transaction(
     committed = False
     try:
         state_data = _load_restart_state(state_file)
-        if _restart_state_was_locked(state_data):
-            raise UnsafePathError(
-                "Hermes config writes are unavailable while shields are up; run shields down first"
-            )
         opened = _open_regular(config_path)
         try:
             original_bytes = opened.read_bytes(MAX_CONFIG_INPUT_BYTES)
@@ -5043,10 +3253,8 @@ def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
 
     if snapshot.mode & 0o222 == 0:
         raise UnsafePathError(
-            "Hermes startup cannot update .env while shields are up; rebuild or recreate the sandbox"
+            "Hermes startup cannot update the read-only .env file; rebuild or recreate the sandbox"
         )
-    # Preserve the active posture: mutable images are 0640, while shields-up
-    # startup must keep the root-owned 0444 contract after a generated update.
     _write_existing(env_path, updated_text, snapshot)
     refresh_hashes(hermes_dir, hash_file, mode)
     print("minted=1" if minted else "updated=1")
@@ -5099,7 +3307,7 @@ def provider_placeholders(
 
     if snapshot.mode & 0o222 == 0:
         raise UnsafePathError(
-            "Hermes startup cannot update provider placeholders while shields are up; rebuild or recreate the sandbox"
+            "Hermes startup cannot update read-only provider placeholders; rebuild or recreate the sandbox"
         )
 
     try:
@@ -5142,14 +3350,8 @@ def main() -> int:
             "seal-restart",
             "unseal-restart",
             "inspect-mutation-owner",
-            "begin-shields-transition",
-            "apply-shields-transition",
-            "finish-shields-transition",
-            "prepare-shields-abort",
-            "abort-shields-transition",
             "write-config",
             "recover-prestate-lock",
-            "run-state-dir-transition",
         ),
     )
     parser.add_argument("--hermes-dir", required=True)
@@ -5162,14 +3364,6 @@ def main() -> int:
     parser.add_argument("--state-file", default="")
     parser.add_argument("--expected-config-sha256", default="")
     parser.add_argument("--lock-token", default="")
-    parser.add_argument("--state-action", choices=("lock", "unlock"), default="")
-    parser.add_argument("--state-lock-plan-json", default="")
-    parser.add_argument("--shields-mode", choices=("locked", "mutable"), default="")
-    parser.add_argument(
-        "--rollback-shields-mode", choices=("locked", "mutable"), default=""
-    )
-    parser.add_argument("--expected-hermes-device", default="")
-    parser.add_argument("--expected-hermes-inode", default="")
     parser.add_argument("--startup-owner", action="store_true")
     parser.add_argument("--mcp-state-exit-code", action="store_true")
     args = parser.parse_args()
@@ -5234,13 +3428,13 @@ def main() -> int:
                 )
             if args.lock_token and not re.fullmatch(r"[0-9a-f]{64}", args.lock_token):
                 raise UnsafePathError("seal-restart requires a valid lock token")
-            original_locked = seal_restart(
+            seal_restart(
                 args.hermes_dir,
                 args.hash_file,
                 args.state_file,
                 mutation_lock_token=args.lock_token or None,
             )
-            print(f"sealed=1 original_locked={int(original_locked)}")
+            print("sealed=1")
         elif args.action == "unseal-restart":
             if not args.state_file:
                 raise UnsafePathError("unseal-restart requires --state-file")
@@ -5254,76 +3448,6 @@ def main() -> int:
                     "inspect-mutation-owner requires a valid lock token"
                 )
             print(inspect_mutation_owner(args.state_file, args.lock_token))
-        elif args.action == "begin-shields-transition":
-            if not args.hash_file or not args.state_file or not args.shields_mode:
-                raise UnsafePathError(
-                    "begin-shields-transition requires --hash-file, --state-file, and --shields-mode"
-                )
-            expected_hermes_device = None
-            expected_hermes_inode = None
-            if args.expected_hermes_device or args.expected_hermes_inode:
-                if not re.fullmatch(
-                    r"[1-9][0-9]*", args.expected_hermes_device
-                ) or not re.fullmatch(
-                    r"[1-9][0-9]*", args.expected_hermes_inode
-                ):
-                    raise UnsafePathError(
-                        "begin-shields-transition requires a complete valid Hermes state-root identity"
-                    )
-                expected_hermes_device = int(args.expected_hermes_device)
-                expected_hermes_inode = int(args.expected_hermes_inode)
-            lock_token, original_locked = begin_shields_transition(
-                args.hermes_dir,
-                args.hash_file,
-                args.state_file,
-                args.shields_mode,
-                args.rollback_shields_mode,
-                expected_hermes_device,
-                expected_hermes_inode,
-            )
-            print(f"lock_token={lock_token} original_locked={int(original_locked)}")
-        elif args.action == "apply-shields-transition":
-            if not args.state_file or not re.fullmatch(
-                r"[0-9a-f]{64}", args.lock_token
-            ):
-                raise UnsafePathError(
-                    "apply-shields-transition requires --state-file and a valid --lock-token"
-                )
-            mode, chattr_applied = apply_shields_transition(
-                args.hermes_dir, args.state_file, args.lock_token
-            )
-            print(f"shields_mode={mode} chattr_applied={int(chattr_applied)}")
-        elif args.action == "finish-shields-transition":
-            if (
-                not args.hash_file
-                or not args.state_file
-                or not re.fullmatch(r"[0-9a-f]{64}", args.lock_token)
-            ):
-                raise UnsafePathError(
-                    "finish-shields-transition requires --hash-file, --state-file, and a valid --lock-token"
-                )
-            mode, chattr_applied = finish_shields_transition(
-                args.hermes_dir, args.hash_file, args.state_file, args.lock_token
-            )
-            print(f"shields_mode={mode} chattr_applied={int(chattr_applied)}")
-        elif args.action == "prepare-shields-abort":
-            if not args.state_file or not re.fullmatch(
-                r"[0-9a-f]{64}", args.lock_token
-            ):
-                raise UnsafePathError(
-                    "prepare-shields-abort requires --state-file and a valid --lock-token"
-                )
-            prepare_shields_abort(args.hermes_dir, args.state_file, args.lock_token)
-            print("abort_prepared=1")
-        elif args.action == "abort-shields-transition":
-            if not args.state_file or not re.fullmatch(
-                r"[0-9a-f]{64}", args.lock_token
-            ):
-                raise UnsafePathError(
-                    "abort-shields-transition requires --state-file and a valid --lock-token"
-                )
-            abort_shields_transition(args.hermes_dir, args.state_file, args.lock_token)
-            print("aborted=1")
         elif args.action == "write-config":
             if (
                 not args.hash_file
@@ -5349,22 +3473,6 @@ def main() -> int:
                 )
             recovered = recover_dead_prestate_mutation_lock(args.state_file)
             print(f"recovered={int(recovered)}")
-        elif args.action == "run-state-dir-transition":
-            if (
-                not args.state_file
-                or not args.state_action
-                or not re.fullmatch(r"[0-9a-f]{64}", args.lock_token)
-            ):
-                raise UnsafePathError(
-                    "run-state-dir-transition requires --state-file, --state-action, and a valid --lock-token"
-                )
-            run_state_dir_transition(
-                args.hermes_dir,
-                args.state_file,
-                args.lock_token,
-                args.state_action,
-                args.state_lock_plan_json,
-            )
     except UnsafePathError as exc:
         _die(str(exc))
     except OSError as exc:
