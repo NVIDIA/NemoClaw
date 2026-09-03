@@ -540,27 +540,23 @@ describe("release-latest-tag.sh", () => {
   it.each([["base image", "Base-image candidate", "plan-bound base-image candidate"]])(
     "does not accept %s evidence copied from an earlier candidate",
     (_kind, field, error) => {
-      const fixture = createFixture();
-      pushTag(fixture, "v0.0.1", fixture.firstCommit);
-      const earlierCandidate = commit(fixture, "earlier release candidate");
-      const releaseCommit = commit(fixture, "planned release commit");
-      const planPath = path.join(fixture.root, "release", "plan.json");
-      const { plan } = createPlan(fixture, planPath, releaseCommit);
-      const staleBrief = completeBrief(plan).replace(
-        `- ${field}: \`${releaseCommit}\``,
-        `- ${field}: \`${earlierCandidate}\``,
-      );
-      const result = cutFromPlan(
-        fixture,
-        planPath,
-        confirmationFor(plan),
-        writeBrief(fixture, staleBrief),
-      );
+      const fixture = createFixture(); pushTag(fixture, "v0.0.1", fixture.firstCommit);
+      const earlierCandidate = commit(fixture, "earlier release candidate"), releaseCommit = commit(fixture, "planned release commit"), planPath = path.join(fixture.root, "release", "plan.json"), { plan } = createPlan(fixture, planPath, releaseCommit);
+      const staleBrief = completeBrief(plan).replace(`- ${field}: \`${releaseCommit}\``, `- ${field}: \`${earlierCandidate}\``);
+      const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture, staleBrief));
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(error);
       expect(localTagObject(fixture, "v0.0.2")).toBe("");
     },
-  ); it("rejects a brief that differs from inspected Launchable evidence", () => {
+  );
+  it.each([["fails", "process.exit(1);"], ["emits no receipt", ""]])("rejects a Launchable inspector that %s", (_case, source) => {
+    const fixture = createFixture(); pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit"), planPath = path.join(fixture.root, "release", "plan.json"), { plan } = createPlan(fixture, planPath, releaseCommit);
+    fs.writeFileSync(fixture.launchableInspector, source);
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture));
+    expect([result.status, localTagObject(fixture, plan.nextTag), run(fixture.root, ["git", "--git-dir", fixture.remote, "tag", "--list", plan.nextTag])]).toEqual([1, "", ""]);
+  });
+  it("rejects a brief that differs from inspected Launchable evidence", () => {
     const fixture = createFixture(); pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit"),
       planPath = path.join(fixture.root, "release", "plan.json"),

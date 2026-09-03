@@ -913,7 +913,9 @@ only `staging Brev Launchable identity`. It builds the candidate
 image, deploys the standing Launchable, waits for workspace and SSH readiness,
 checks the concrete boot image and baked runtime identity, and confirms two
 consecutive absent workspace observations during cleanup. A passing run uploads
-`lane.log`, `launchable-identity.json`, and `cleanup.json`. A failed run uploads
+`lane.log`, `workspace-recovery.json`, `launchable-identity.json`, and `cleanup.json`. The
+recovery receipt records the workflow-bound workspace identity before creation and during recovery;
+use the [canonical incomplete-cleanup procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/launchable-evidence.md#recover-incomplete-cleanup). A failed run uploads
 the bounded evidence produced before failure only when preparation created the
 evidence directory; a preparation failure produces no lane artifact. After
 workspace preparation, `cleanup.json` records the final cleanup result. The
