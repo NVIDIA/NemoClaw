@@ -283,4 +283,20 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       detail: "no provider and model were recorded for this sandbox",
     });
   });
+
+  it("fails closed when a model was recorded without its provider (#10543)", () => {
+    const result = probeOnboardInferenceInvocation({
+      sandboxName: "my-sandbox",
+      gatewayName: "my-gateway",
+      agentName: DCODE_AGENT,
+      model: "openai/gpt-4o-mini",
+      provider: null,
+      preferredInferenceApi: null,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      detail: "no provider and model were recorded for this sandbox",
+    });
+  });
 });
