@@ -3,82 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
-  classifySessionState,
-  type ForwardEntry,
   getActiveSandboxSessions,
-  getForwardsForSandbox,
-  hasActiveForwards,
-  parseForwardList,
   parseSshProcesses,
   type SessionDetectionDeps,
 } from "./sandbox-session";
-
-describe("parseForwardList", () => {
-  it("returns empty array for empty/null input", () => {
-    expect(parseForwardList("")).toEqual([]);
-    expect(parseForwardList(null)).toEqual([]);
-    expect(parseForwardList(undefined)).toEqual([]);
-  });
-
-  it("skips header row", () => {
-    const output = "SANDBOX  BIND  PORT  PID  STATUS\n";
-    expect(parseForwardList(output)).toEqual([]);
-  });
-
-  it("parses single forward entry", () => {
-    const output = `SANDBOX  BIND  PORT  PID  STATUS
-my-sandbox  127.0.0.1  18789  12345  running`;
-    const entries = parseForwardList(output);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toEqual({
-      sandboxName: "my-sandbox",
-      bind: "127.0.0.1",
-      port: "18789",
-      pid: 12345,
-      status: "running",
-    });
-  });
-
-  it("strips ANSI colors from forward list output", () => {
-    const output = `SANDBOX BIND      PORT     PID        STATUS
-hermes  127.0.0.1 8642     50394      \u001b[32mrunning\u001b[39m`;
-    expect(parseForwardList(output)).toEqual([
-      {
-        sandboxName: "hermes",
-        bind: "127.0.0.1",
-        port: "8642",
-        pid: 50394,
-        status: "running",
-      },
-    ]);
-  });
-
-  it("parses multiple forward entries", () => {
-    const output = `SANDBOX  BIND  PORT  PID  STATUS
-sandbox-1  127.0.0.1  18789  100  running
-sandbox-2  127.0.0.1  18790  200  running
-sandbox-1  127.0.0.1  11434  101  stopped`;
-    const entries = parseForwardList(output);
-    expect(entries).toHaveLength(3);
-    expect(entries[0].sandboxName).toBe("sandbox-1");
-    expect(entries[1].sandboxName).toBe("sandbox-2");
-    expect(entries[2].status).toBe("stopped");
-  });
-
-  it("handles missing PID gracefully", () => {
-    const output = "my-sandbox  127.0.0.1  18789  -  running";
-    const entries = parseForwardList(output);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].pid).toBeNull();
-  });
-
-  it("handles lines with insufficient columns", () => {
-    const output = "incomplete line\nmy-sandbox  127.0.0.1  18789  999  running";
-    const entries = parseForwardList(output);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].sandboxName).toBe("my-sandbox");
-  });
-});
 
 describe("parseSshProcesses", () => {
   it("returns empty array for empty input", () => {
@@ -203,105 +131,9 @@ describe("parseSshProcesses", () => {
   });
 });
 
-describe("hasActiveForwards", () => {
-  const entries: ForwardEntry[] = [
-    { sandboxName: "dev", bind: "127.0.0.1", port: "18789", pid: 100, status: "running" },
-    { sandboxName: "prod", bind: "127.0.0.1", port: "18790", pid: 200, status: "stopped" },
-  ];
-
-  it("returns true when sandbox has running forwards", () => {
-    expect(hasActiveForwards(entries, "dev")).toBe(true);
-  });
-
-  it("returns false when sandbox has only stopped forwards", () => {
-    expect(hasActiveForwards(entries, "prod")).toBe(false);
-  });
-
-  it("returns false for unknown sandbox", () => {
-    expect(hasActiveForwards(entries, "unknown")).toBe(false);
-  });
-});
-
-describe("getForwardsForSandbox", () => {
-  const entries: ForwardEntry[] = [
-    { sandboxName: "dev", bind: "127.0.0.1", port: "18789", pid: 100, status: "running" },
-    { sandboxName: "dev", bind: "127.0.0.1", port: "11434", pid: 101, status: "running" },
-    { sandboxName: "prod", bind: "127.0.0.1", port: "18790", pid: 200, status: "running" },
-  ];
-
-  it("filters entries for specific sandbox", () => {
-    const result = getForwardsForSandbox(entries, "dev");
-    expect(result).toHaveLength(2);
-    expect(result.every((e) => e.sandboxName === "dev")).toBe(true);
-  });
-
-  it("returns empty for unknown sandbox", () => {
-    expect(getForwardsForSandbox(entries, "unknown")).toEqual([]);
-  });
-});
-
-describe("classifySessionState", () => {
-  it("detects active sessions from SSH processes", () => {
-    const forwards: ForwardEntry[] = [];
-    const sessions = [{ sandboxName: "dev", pid: 100, sshHost: "openshell-dev.default" }];
-    const result = classifySessionState(forwards, sessions, "dev");
-    expect(result.hasActiveSessions).toBe(true);
-    expect(result.sessionCount).toBe(1);
-    expect(result.forwardCount).toBe(0);
-    expect(result.sources).toContain("ssh");
-  });
-
-  it("forward-only does not count as active SSH session", () => {
-    const forwards: ForwardEntry[] = [
-      { sandboxName: "dev", bind: "127.0.0.1", port: "18789", pid: 100, status: "running" },
-    ];
-    const sessions: { sandboxName: string; pid: number; sshHost: string }[] = [];
-    const result = classifySessionState(forwards, sessions, "dev");
-    expect(result.hasActiveSessions).toBe(false);
-    expect(result.forwardCount).toBe(1);
-    expect(result.sources).toContain("forward");
-    expect(result.sources).not.toContain("ssh");
-  });
-
-  it("reports both sources when present", () => {
-    const forwards: ForwardEntry[] = [
-      { sandboxName: "dev", bind: "127.0.0.1", port: "18789", pid: 100, status: "running" },
-    ];
-    const sessions = [{ sandboxName: "dev", pid: 200, sshHost: "openshell-dev.default" }];
-    const result = classifySessionState(forwards, sessions, "dev");
-    expect(result.hasActiveSessions).toBe(true);
-    expect(result.sessionCount).toBe(1);
-    expect(result.forwardCount).toBe(1);
-    expect(result.sources).toContain("forward");
-    expect(result.sources).toContain("ssh");
-  });
-
-  it("ignores sessions for other sandboxes", () => {
-    const forwards: ForwardEntry[] = [];
-    const sessions = [{ sandboxName: "prod", pid: 100, sshHost: "openshell-prod.default" }];
-    const result = classifySessionState(forwards, sessions, "dev");
-    expect(result.hasActiveSessions).toBe(false);
-    expect(result.sessionCount).toBe(0);
-    expect(result.forwardCount).toBe(0);
-  });
-
-  it("counts multiple sessions", () => {
-    const forwards: ForwardEntry[] = [];
-    const sessions = [
-      { sandboxName: "dev", pid: 100, sshHost: "openshell-dev.default" },
-      { sandboxName: "dev", pid: 200, sshHost: "openshell-dev.default" },
-    ];
-    const result = classifySessionState(forwards, sessions, "dev");
-    expect(result.hasActiveSessions).toBe(true);
-    expect(result.sessionCount).toBe(2);
-    expect(result.forwardCount).toBe(0);
-  });
-});
-
 describe("getActiveSandboxSessions", () => {
   it("returns detected=false when no deps available", () => {
     const deps: SessionDetectionDeps = {
-      getForwardList: () => null,
       getSshProcesses: () => null,
     };
     const result = getActiveSandboxSessions("dev", deps);
@@ -311,7 +143,6 @@ describe("getActiveSandboxSessions", () => {
 
   it("returns detected=false for empty sandbox name", () => {
     const deps: SessionDetectionDeps = {
-      getForwardList: () => "some output",
       getSshProcesses: () => "some output",
     };
     const result = getActiveSandboxSessions("", deps);
@@ -320,7 +151,6 @@ describe("getActiveSandboxSessions", () => {
 
   it("detects sessions from pgrep output", () => {
     const deps: SessionDetectionDeps = {
-      getForwardList: () => "",
       getSshProcesses: () => "12345 ssh -F /tmp/cfg openshell-my-sandbox.default\n",
     };
     const result = getActiveSandboxSessions("my-sandbox", deps);
@@ -333,7 +163,6 @@ describe("getActiveSandboxSessions", () => {
     const sandboxId = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
     const resolveSandboxId = vi.fn(() => sandboxId);
     const deps: SessionDetectionDeps = {
-      getForwardList: () => "",
       getSshProcesses: () =>
         `12345 ssh -o ProxyCommand=/usr/local/bin/openshell ssh-proxy --sandbox-id ${sandboxId} --token t -tt -o RequestTTY=force sandbox`,
       resolveSandboxId,
@@ -357,7 +186,6 @@ describe("getActiveSandboxSessions", () => {
   it("does not resolve a durable ID for a host-alias session (#9316)", () => {
     const resolveSandboxId = vi.fn(() => "unused-id");
     const deps: SessionDetectionDeps = {
-      getForwardList: () => "",
       getSshProcesses: () => "12345 ssh -F /tmp/cfg openshell-my-sandbox.default\n",
       resolveSandboxId,
     };
@@ -368,23 +196,17 @@ describe("getActiveSandboxSessions", () => {
     expect(result.sessions).toHaveLength(1);
   });
 
-  it("returns detected=false when pgrep unavailable (forward list alone insufficient)", () => {
+  it("returns detected=false when SSH process discovery is unavailable", () => {
     const deps: SessionDetectionDeps = {
-      getForwardList: () =>
-        "SANDBOX  BIND  PORT  PID  STATUS\nmy-sandbox  127.0.0.1  18789  999  running\n",
       getSshProcesses: () => null,
     };
     const result = getActiveSandboxSessions("my-sandbox", deps);
-    // SSH process detection is the authoritative source; forward list alone
-    // cannot determine interactive sessions (dashboard forward always runs).
     expect(result.detected).toBe(false);
     expect(result.sessions).toEqual([]);
   });
 
-  it("integrates both sources", () => {
+  it("returns discovered SSH sessions", () => {
     const deps: SessionDetectionDeps = {
-      getForwardList: () =>
-        "SANDBOX  BIND  PORT  PID  STATUS\ndev  127.0.0.1  18789  100  running\n",
       getSshProcesses: () => "200 ssh -F /tmp/cfg openshell-dev.default\n",
     };
     const result = getActiveSandboxSessions("dev", deps);

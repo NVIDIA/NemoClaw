@@ -328,7 +328,7 @@ The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8
 
 NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`, so it rejects every port in that range as a dashboard port for any agent. When all ports in the API range are occupied, the error lists the owner for each port. Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
 
-On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts. For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build. If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources. NemoClaw releases the reservation immediately before `openshell forward start` runs. If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
+On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts. For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build. If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources. NemoClaw releases the reservation immediately before its receipt-owned ForwardTcp service starts. If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
 
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover. The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
 
@@ -4366,32 +4366,24 @@ Deployment verification probes the OpenAI-compatible API inside the sandbox and 
 
 ```text
 ✗ api: port forward not working (connection refused)
-  The OpenAI-compatible API on port 8642 is not reachable from the host. Run: openshell forward start --background 8642 <name>
+  The OpenAI-compatible API on port 8642 is not reachable from the host. Run: nemoclaw <name> recover
 ```
 
-Use the forward recovery below only when the in-sandbox `gateway` check passed. The output omits passing checks, so confirm that it contains no `gateway` failure. If the output contains a `gateway` failure, follow that diagnostic first. Do not restart the host forward until the in-sandbox API responds.
+Use the forward recovery below only when the in-sandbox `gateway` check passed. The output omits passing checks, so confirm that it contains no `gateway` failure. If the output contains a `gateway` failure, follow that diagnostic first.
 
-When the `gateway` check passed and only the `api` check failed, the API remains reachable inside the sandbox. Each Hermes sandbox owns an API port allocated from `8642` through `8652`, so use the port from the `api` diagnostic instead of assuming the default. First, list the active OpenShell port forwards:
+When the `gateway` check passed and only the `api` check failed, the API remains reachable inside the sandbox. Restore the receipt-owned host forward through NemoClaw:
 
 ```bash
-openshell forward list
+nemoclaw <name> recover
 ```
 
-If no row owns the API port, start its port forward:
-
-```bash
-openshell forward start --background <port> <name>
-```
-
-Continue only when the command exits with status `0`. If the command reports that the port is in use, follow [Port Already in Use](#port-already-in-use) immediately. Replace that section's example port `18789` with the API port from the `api` diagnostic. Apply its process-ownership, service-manager, and active-work conditions before you stop a listener. Do not run the health probe after `openshell forward start` fails.
-
-After `openshell forward start` exits with status `0`, probe the health endpoint:
+Then probe the allocated API port from the diagnostic:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 http://127.0.0.1:<port>/health
 ```
 
-An HTTP status of `200` or `401` means the host port forward is reachable. Any other status, `000`, or connection failure requires fresh diagnostics. Rerun `$$nemoclaw onboard` and follow the reported `gateway` or `api` failure.
+An HTTP status of `200` or `401` means the managed host forward is reachable. Any other status, `000`, or connection failure requires fresh diagnostics. Run `$$nemoclaw <name> status`, then follow the reported gateway or ForwardTcp ownership guidance. Do not create a separate `openshell forward start` process for a NemoClaw-managed port.
 
 ### `docker port` shows no mapping for 8642 even though forwarding works
 
