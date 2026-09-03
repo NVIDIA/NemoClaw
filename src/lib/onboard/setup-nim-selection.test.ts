@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import http from "node:http";
 
 import { describe, it } from "vitest";
 
 import { requireValue } from "../core/require-value";
+import { MIN_PROBE_REPLY_TOKENS } from "../inference/max-tokens-field";
+import { probeOpenAiLikeEndpointOptimized } from "../inference/onboard-probes";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
+import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
 import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
@@ -332,4 +336,101 @@ describe("createRemoteModelValidator", () => {
       assert.equal(receivedOptions?.useNvidiaEndpointProbePayload, true);
     },
   );
+
+  it("sends the NVIDIA request payload only for NVIDIA Endpoints providers (#10880)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const endpointUrl = `http://provider.example.test:${address.port}/v1`;
+    const selectionValidation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint: (endpoint, model, apiKey, options = {}) =>
+        probeOpenAiLikeEndpointOptimized(endpoint, model, apiKey, {
+          ...options,
+          validationSessionOptions: {
+            allowPrivateAddressesForTesting: true,
+            lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+          },
+        }),
+      promptValidationRecovery: async () => {
+        throw new Error("validation recovery must not run");
+      },
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator({
+      OPENAI_ENDPOINT_URL: endpointUrl,
+      ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+      requireValue,
+      isBackToSelection: (_value): _value is never => false,
+      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: selectionValidation.validateOpenAiLikeSelection,
+      shouldRequireResponsesToolCalling: () => false,
+      shouldSkipResponsesProbe: () => true,
+      getProbeAuthMode: () => undefined,
+    });
+    const model = "nvidia/nemotron-3-super-120b-a12b";
+
+    try {
+      for (const [selectedKey, provider] of [
+        ["build", "nvidia-prod"],
+        ["openai", "openai-api"],
+      ] as const) {
+        const state = makeState();
+        state.provider = provider;
+        state.endpointUrl = endpointUrl;
+        state.model = model;
+        assert.equal(
+          await validateSelectedRemoteModel({
+            selected: { key: selectedKey },
+            remoteConfig: {
+              label: provider === "nvidia-prod" ? "NVIDIA Endpoints" : "OpenAI",
+              endpointUrl,
+              helpUrl: null,
+            },
+            state,
+            selectedCredentialEnv:
+              provider === "nvidia-prod" ? "NVIDIA_INFERENCE_API_KEY" : "OPENAI_API_KEY",
+          }),
+          "selected",
+        );
+      }
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+
+    assert.equal(observedBodies.length, 2);
+    assert.deepEqual(observedBodies[0], {
+      model,
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: MIN_PROBE_REPLY_TOKENS,
+      temperature: 1,
+      top_p: 0.95,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    assert.ok(!("temperature" in observedBodies[1]));
+    assert.ok(!("top_p" in observedBodies[1]));
+    assert.ok(!("chat_template_kwargs" in observedBodies[1]));
+  });
 });

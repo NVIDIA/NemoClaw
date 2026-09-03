@@ -965,6 +965,9 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
 const { promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
+const {
+  usesNvidiaEndpointProbePayload,
+}: typeof import("./inference/openai-probe-models") = require("./inference/openai-probe-models");
 
 // Build context helpers — delegated to src/lib/build-context.ts
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
@@ -2280,6 +2283,8 @@ async function handleRemoteProviderSelection(
           "Please choose a provider/model again.",
           remoteConfig.helpUrl,
           withCredentialMutationGuard(state, {
+            provider: state.provider,
+            useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(state.provider),
             requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
             skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
             authMode: getProbeAuthMode(state.provider),

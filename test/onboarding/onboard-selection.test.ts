@@ -3161,6 +3161,80 @@ reportChildScenario(async () => {
     );
   });
 
+  it("keeps the NVIDIA request payload for final build-provider revalidation (#10880)", () => {
+    const workspace = onboardProcessWorkspace("nemoclaw-onboard-build-payload-");
+    const { root: tmpDir } = workspace;
+    const fakeBin = workspace.binDir;
+    const payloadLogPath = path.join(tmpDir, "chat-payloads.jsonl");
+
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"choices":[{"message":{"content":"OK"}}]}'
+status="200"
+outfile=""
+payload=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    --config) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/chat/completions$'; then
+  printf '%s\n' "$payload" >> "$NEMOCLAW_CHAT_PAYLOAD_LOG"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+${onboardChildRuntimeSource}
+const runner = require(${runnerPath});
+runner.runCapture = () => "";
+const { setupNim } = require(${onboardPath});
+
+reportChildScenario(async () => {
+  process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+  process.env.NEMOCLAW_PROVIDER = "build";
+  process.env.NEMOCLAW_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+  process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test";
+  return setupNim(null);
+});
+`;
+    const result = workspace.runNodeSource(script, {
+      name: "build-payload-check.js",
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        HTTPS_PROXY: "http://proxy.invalid:8080",
+        https_proxy: "http://proxy.invalid:8080",
+        NO_PROXY: "",
+        no_proxy: "",
+        NEMOCLAW_CHAT_PAYLOAD_LOG: payloadLogPath,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payloads = fs
+      .readFileSync(payloadLogPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(payloads.length, 1);
+    for (const payload of payloads) {
+      assert.equal(payload.temperature, 1);
+      assert.equal(payload.top_p, 0.95);
+      assert.deepEqual(payload.chat_template_kwargs, { enable_thinking: false });
+    }
+  });
+
   it("treats a pasted NVIDIA API key at the retry prompt as retry and re-prompts securely", async () => {
     const state = makeRemoteSelectionState({
       model: "nim/meta/llama-3.1-70b-instruct",
