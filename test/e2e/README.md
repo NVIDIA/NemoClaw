@@ -634,9 +634,10 @@ The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
 The recreation remains the replacement boundary. Initial onboarding and
 recreation each run once. If canonical CLI device pairing does not appear, the
-test records distinct structured diagnostics and bounded `failed-no-retry`
-evidence, then stops without automatically resuming the ambiguously mutated
-session. `tools.invoke` assertions prove the plugin version after restart and recreation.
+test attempts to record distinct structured diagnostics, always records bounded
+`failed-no-retry` evidence, and then stops without automatically resuming the
+ambiguously mutated session. `tools.invoke` assertions prove the plugin version
+after restart and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
 deterministic wrapper argument rewriting. Deterministic tests own exact package
