@@ -3,11 +3,14 @@
 
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import { buildProviderRoutedEnv } from "./model-router-provider-routed-inference-helpers.ts";
+import {
+  buildProviderRoutedEnv,
+  EXPECTED_MODEL_ROUTER_SELECTED_MODEL,
+  modelRouterSelectedModel,
+} from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
 // onboard boundary plus a valid sandbox inference.local completion constrained
@@ -83,10 +86,9 @@ test(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
-    expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
     progress.phase("request a routed inference.local completion");
-    await runtime.expectInferenceLocalChatCompletion(
+    const completion = await runtime.expectInferenceLocalChatCompletion(
       { sandboxName: SANDBOX_NAME },
       {
         artifactName: "sandbox-inference-local-routed-completion",
@@ -95,9 +97,13 @@ test(
         model: "nvidia-routed",
         prompt: "Reply with a short greeting.",
         redactionValues: [apiKey],
-        routingModels: ["gpt-oss-20b-high"],
+        routingModels: [EXPECTED_MODEL_ROUTER_SELECTED_MODEL],
         timeoutMs: 120_000,
       },
+    );
+    const selectedModel = modelRouterSelectedModel(completion.result.stdout);
+    expect(onboard.exitCode === 0 ? selectedModel : null).toBe(
+      EXPECTED_MODEL_ROUTER_SELECTED_MODEL,
     );
 
     progress.phase("record the routed inference contract result");
@@ -105,8 +111,8 @@ test(
       id: "model-router-provider-routed-inference",
       assertions: {
         runtimeProviderAvailable: true,
-        onboardCompleted: onboard.exitCode === 0,
-        routedCompletion: true,
+        onboardExitCode: onboard.exitCode,
+        routerSelectedModel: selectedModel,
       },
     });
   },

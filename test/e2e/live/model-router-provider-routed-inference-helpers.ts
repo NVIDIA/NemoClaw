@@ -3,6 +3,19 @@
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
+export const EXPECTED_MODEL_ROUTER_SELECTED_MODEL = "gpt-oss-20b-high";
+
+export function modelRouterSelectedModel(responseBody: string): string | null {
+  try {
+    const parsed = JSON.parse(responseBody) as unknown;
+    const selectedModel =
+      parsed && typeof parsed === "object" ? (parsed as { model?: unknown }).model : undefined;
+    return typeof selectedModel === "string" && selectedModel.trim() ? selectedModel : null;
+  } catch {
+    return null;
+  }
+}
+
 export function buildProviderRoutedEnv(
   apiKey: string,
   sandboxName: string,
