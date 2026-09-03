@@ -82,13 +82,14 @@ describe("NemoClawConfig v1", () => {
     );
   });
 
-  it("rejects credential transport and operation-control names (#10938)", () => {
-    for (const env of ["NEMOCLAW_PROVIDER_KEY", "OPENSHELL_SECRET", "VITEST_TOKEN", "CI"]) {
+  it.each(["NEMOCLAW_PROVIDER_KEY", "OPENSHELL_SECRET", "VITEST_TOKEN", "CI"])(
+    "rejects reserved credential reference %s (#10938)",
+    (env) => {
       const value = structuredClone(config()) as unknown as Record<string, any>;
       value.spec.inferenceProviders[0].credential = { env };
       expect(() => validateNemoClawConfig(value)).toThrow("not an allowed credential reference");
-    }
-  });
+    },
+  );
 
   it("emits the same canonical YAML for mapping insertion order changes (#10938)", () => {
     const value = config();
