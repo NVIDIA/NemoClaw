@@ -275,6 +275,105 @@ resolve_nemoclaw_gateway_port() {
   printf "%s" "$port"
 }
 
+is_explicit_nemoclaw_gateway_port() {
+  local raw="${NEMOCLAW_GATEWAY_PORT:-}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  [[ -n "$raw" ]]
+}
+
+validate_gateway_port_candidate() {
+  local port="${1:-}"
+  port="${port#"${port%%[![:space:]]*}"}"
+  port="${port%"${port##*[![:space:]]}"}"
+  if [[ ! "$port" =~ ^0*([0-9]{1,5})$ ]]; then
+    return 1
+  fi
+  port="$((10#${BASH_REMATCH[1]}))"
+  if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+    return 1
+  fi
+  if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
+    return 1
+  fi
+  case "$port" in
+    8000 | 8080 | 8081 | 11434 | 11435 | 11436 | 11437 | 11438)
+      return 1
+      ;;
+  esac
+  if [ "$port" -ge 8642 ] && [ "$port" -le 8652 ]; then
+    return 1
+  fi
+  local -a configured_ports=(
+    "${NEMOCLAW_DASHBOARD_PORT:-18789}"
+    "${NEMOCLAW_VLLM_PORT:-8000}"
+    "${NEMOCLAW_OLLAMA_PORT:-11434}"
+    "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
+    "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT:-11436}"
+    "${NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT:-11437}"
+    "${NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT:-11438}"
+  )
+  local i configured_port
+  for i in "${!configured_ports[@]}"; do
+    configured_port="${configured_ports[$i]}"
+    configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
+    configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
+    if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+candidate_gateway_port_is_available() {
+  local port="$1"
+  validate_gateway_port_candidate "$port" || return 1
+
+  if command_exists lsof; then
+    if lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+      return 1
+    fi
+  elif command_exists ss; then
+    if ss -H -t -l -n "sport = :${port}" 2>/dev/null | grep -q .; then
+      return 1
+    fi
+  elif command_exists fuser; then
+    if fuser "${port}/tcp" >/dev/null 2>&1; then
+      return 1
+    fi
+  fi
+
+  local state_root state_dir pid_file pid
+  state_root="$(nemoclaw_state_root 2>/dev/null || true)"
+  if [[ -n "$state_root" ]]; then
+    state_dir="${state_root}/gateways/${port}"
+    if [[ -d "$state_dir" ]]; then
+      pid_file="${state_dir}/openshell-gateway.pid"
+      if [[ -f "$pid_file" ]]; then
+        if IFS= read -r pid <"$pid_file" 2>/dev/null && [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+          if kill -0 "$pid" 2>/dev/null; then
+            return 1
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  return 0
+}
+
+find_safe_alternate_gateway_port() {
+  local candidate
+  local -a candidates=(8990 8991 8992 8993 8994 8995 8996 8997 8998 8999 9000 9001 9002 9003 9004 9005)
+  for candidate in "${candidates[@]}"; do
+    if candidate_gateway_port_is_available "$candidate"; then
+      printf "%s" "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 nemoclaw_state_root() {
   local home="${HOME%/}"
   [ -n "$home" ] || home="/"
@@ -909,6 +1008,14 @@ print_done() {
     printf "\n"
     printf "  ${C_YELLOW}${C_BOLD}Existing sandbox upgrade did not finish.${C_RESET}\n"
     printf "  ${C_YELLOW}One or more pre-existing sandboxes failed to upgrade. See the messages above for the affected sandbox name, any preserved backup path, and recovery steps (${C_BOLD}%s onboard --resume${C_RESET}${C_YELLOW} / ${C_BOLD}%s <name> rebuild${C_RESET}${C_YELLOW}).${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+  fi
+  local _gateway_port
+  _gateway_port="$(resolve_nemoclaw_gateway_port 2>/dev/null || echo 8080)"
+  if [ "$_gateway_port" -ne 8080 ]; then
+    printf "\n"
+    printf "  ${C_CYAN}Gateway environment:${C_RESET}\n"
+    printf "    %sexport NEMOCLAW_GATEWAY_PORT=%s%s\n" "$C_GREEN" "$_gateway_port" "$C_RESET"
+    printf "  ${C_DIM}Run this export in other terminal sessions before CLI commands targeting this gateway.${C_RESET}\n"
   fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
@@ -1843,7 +1950,17 @@ install_nemoclaw_openshell_gateway_user_service() {
       error "Could not determine whether the effective upstream OpenShell gateway user service is compatible."
     fi
     if activation_path="$(enabled_openshell_gateway_user_service_activation_path)"; then
-      error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+      if is_explicit_nemoclaw_gateway_port; then
+        error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+      fi
+      local alternate_port
+      if alternate_port="$(find_safe_alternate_gateway_port)"; then
+        NEMOCLAW_GATEWAY_PORT="$alternate_port"
+        export NEMOCLAW_GATEWAY_PORT
+        warn "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Automatically selected safe alternate gateway port ${alternate_port} to isolate the gateway environment without modifying the existing service."
+        return 0
+      fi
+      error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Could not automatically select a safe alternate gateway port. Restore the systemd user manager, disable that service, or specify a free supported port with NEMOCLAW_GATEWAY_PORT before rerunning NemoClaw. The installer did not change the unit or activation path."
     else
       activation_status=$?
       if [[ "$activation_status" -eq 2 ]]; then

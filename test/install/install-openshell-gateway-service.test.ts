@@ -389,7 +389,7 @@ describe("install.sh OpenShell gateway service", () => {
   it.each([
     "openshell-gateway",
     "nemoclaw-openshell-gateway",
-  ])("blocks standalone fallback when an enabled %s user service could claim port 8080 (#8926)", (serviceName) => {
+  ])("blocks standalone fallback when an enabled %s user service could claim explicit port 8080 (#8926)", (serviceName) => {
     const home = makeTempRoot();
     const activationPath = path.join(
       home,
@@ -412,7 +412,10 @@ describe("install.sh OpenShell gateway service", () => {
         "upstream_openshell_gateway_user_service_installed() { return 0; }",
         "install_nemoclaw_openshell_gateway_user_service",
       ].join("\n"),
-      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+      {
+        PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_GATEWAY_PORT: "8080",
+      },
     );
 
     expect(result.status).toBe(1);
@@ -421,6 +424,108 @@ describe("install.sh OpenShell gateway service", () => {
     expect(result.stderr).toContain("Restore the systemd user manager");
     expect(fs.lstatSync(activationPath).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it.each([
+    "openshell-gateway",
+    "nemoclaw-openshell-gateway",
+  ])("automatically selects safe alternate gateway port when enabled %s claims port 8080 and port is unset (#10824)", (serviceName) => {
+    const home = makeTempRoot();
+    const activationPath = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+      `${serviceName}.service`,
+    );
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-package-unit.service"), activationPath);
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic: "Failed to connect to bus: No medium found",
+      status: 1,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+        'printf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"',
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(activationPath);
+    expect(result.stdout).toContain("Automatically selected safe alternate gateway port 8990");
+    expect(result.stdout).toContain("SELECTED_PORT=8990");
+    expect(fs.lstatSync(activationPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("selects next available candidate port 8991 when 8990 is occupied (#10824)", () => {
+    const home = makeTempRoot();
+    const activationPath = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+      "openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-package-unit.service"), activationPath);
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic: "Failed to connect to bus: No medium found",
+      status: 1,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        'candidate_gateway_port_is_available() { if [ "$1" -eq 8990 ]; then return 1; fi; return 0; }',
+        "install_nemoclaw_openshell_gateway_user_service",
+        'printf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"',
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Automatically selected safe alternate gateway port 8991");
+    expect(result.stdout).toContain("SELECTED_PORT=8991");
+  });
+
+  it("fails closed when no alternate candidate port is available (#10824)", () => {
+    const home = makeTempRoot();
+    const activationPath = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+      "openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-package-unit.service"), activationPath);
+    const systemctl = writeUpstreamSystemctlStub(home, {
+      diagnostic: "Failed to connect to bus: No medium found",
+      status: 1,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "find_safe_alternate_gateway_port() { return 1; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not automatically select a safe alternate gateway port");
   });
 
   it.each([
@@ -434,7 +539,7 @@ describe("install.sh OpenShell gateway service", () => {
     ["transient", "runtime/systemd/transient/default.target.requires"],
     ["upheld", "xdg-data/systemd/user/default.target.upholds"],
     ["data directory", "xdg-data/systemd/user/default.target.requires"],
-  ])("blocks standalone fallback for an activation link in the %s root (#8926)", (_root, relativeDirectory) => {
+  ])("blocks standalone fallback for an activation link in the %s root when port 8080 is explicit (#8926)", (_root, relativeDirectory) => {
     const home = makeTempRoot();
     const activationDirectory = path.join(home, relativeDirectory);
     const activationPath = path.join(activationDirectory, "openshell-gateway.service");
@@ -446,6 +551,7 @@ describe("install.sh OpenShell gateway service", () => {
     });
     const env: NodeJS.ProcessEnv = {
       PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      NEMOCLAW_GATEWAY_PORT: "8080",
       ...(relativeDirectory.startsWith("runtime/")
         ? { XDG_RUNTIME_DIR: path.join(home, "runtime") }
         : {}),
