@@ -182,7 +182,10 @@ export function assertOnboardSystemReadiness(
       options.allowDeferredN1xManagedVllm ??
       process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
-  const advisories = planHostAdvisories(host, { resuming: options.resuming });
+  const advisories = planHostAdvisories(host, {
+    providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
+    resuming: options.resuming,
+  });
   if (admission.admitted) {
     if (options.presentAdvisories !== false) {
       printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));

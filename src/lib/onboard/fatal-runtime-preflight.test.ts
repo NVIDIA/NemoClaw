@@ -473,6 +473,13 @@ describe("report-backed runtime readiness (#7411)", () => {
         throw new Error("exit");
       });
       vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const host = {
+        ...hostWithMissingGpuIntegration(),
+        dockerInstalled: false,
+        dockerReachable: false,
+        dockerRunning: false,
+        runtime: "unknown" as const,
+      };
       const gpu: GpuDetection = {
         type: "nvidia",
         platform: "linux",
@@ -483,12 +490,18 @@ describe("report-backed runtime readiness (#7411)", () => {
       };
 
       expect(() =>
-        assertOnboardHostReadiness(hostWithMissingGpuIntegration(), gpu, {
+        assertOnboardHostReadiness(host, gpu, {
           explicitlyOptedOutGpuPassthrough: false,
           exitProcess: exit,
         }),
       ).toThrow("exit");
       expect(mocks.prepareRuntimeHost).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(console.error)
+          .mock.calls.map(([line]) => line)
+          .join("\n"),
+      ).not.toContain("Install Docker");
     },
   );
 });

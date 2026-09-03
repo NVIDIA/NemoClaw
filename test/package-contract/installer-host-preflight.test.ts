@@ -65,7 +65,16 @@ function runInstallerHostAdmissionTest(
       ...host,
     })};
 exports.assessHost = () => host;
-exports.planHostAdvisories = () => [];
+exports.planHostAdvisories = (_host, options = {}) =>
+  !options.providerOwnsHostReadiness &&
+  host.additionalFindingIds?.includes("host.docker.unavailable")
+    ? [{
+        id: "install_docker",
+        title: "Install Docker",
+        reason: "Docker is required before onboarding can create a gateway or sandbox.",
+        commands: ["Install Docker Engine, then rerun \`nemoclaw onboard\`."],
+      }]
+    : [];
 `,
   );
   fs.writeFileSync(
@@ -291,10 +300,12 @@ describe("installer host preflight package contract", () => {
     });
     expect(admitted.result.status, admitted.output).toBe(0);
     expect(admitted.output).not.toMatch(/Host preflight found issues/);
+    expect(admitted.output).not.toContain("Install Docker");
 
     const rejected = runInstallerHostAdmissionTest(host);
     expect(rejected.result.status).toBe(1);
     expect(rejected.output).toContain("host.docker.unavailable");
+    expect(rejected.output).toContain("Install Docker");
   });
 
   it("fails closed when selected provider resolution throws", () => {

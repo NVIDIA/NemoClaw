@@ -3829,7 +3829,6 @@ run_installer_host_preflight() {
         const { loadGatewayManagementDeclaration } = require(gatewayManagementPath);
         const { configuredRuntimeProviderOwnsHostReadiness } = require(gatewayRuntimePath);
         const host = assessHost();
-        const actions = planHostAdvisories(host);
         const gatewayManagement = loadGatewayManagementDeclaration();
         const allowStorageRemediation =
           gatewayManagement.ok &&
@@ -3840,6 +3839,9 @@ run_installer_host_preflight() {
             environment: process.env,
             platform: process.platform,
           });
+        const actions = planHostAdvisories(host, {
+          providerOwnsHostReadiness: selectedRuntimeOwnsHostReadiness,
+        });
         const readiness = createHostReadinessReport(
           { nemoclawVersion: "installer", sourceRevision: "installer" },
           {
